@@ -1,0 +1,9 @@
+# Build artifacts
+build/
+rxiq_trace
+
+# Generated traces (regenerable via `make trace`)
+trace.*.out
+stderr*.log
+trace.*.head
+stderr.head

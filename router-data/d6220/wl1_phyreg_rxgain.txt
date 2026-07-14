@@ -1,0 +1,57 @@
+# wl -i wl1 phyreg readings of rxgain ctrl registers
+# Target chip: 0x14e4:0x43b3 (BCM4352-family AC-PHY rev 1) on Netgear D6220
+# Firmware: OEM Netgear (driverrev 0x70e590e ~= 7.14.89.14, kernel 3.4)
+# Pre-condition: wl1 up + associated to a phone tethering AP (5 GHz)
+
+# --- Reading on chanspec 5g100/20 (UNII-2 extended) -------------------------
+# Active sub-band for ch.100 = 5500 MHz: boundary between 5gm and 5gh per
+# subband5gver=0x4 (boundaries 5250 / 5500 / 5745 MHz). Either way triso=15
+# (saturated) per nvram_dump.
+
+wl -i wl1 chanspec 5g100/20
+# Chanspec set to 0xd064
+
+wl -i wl1 phyreg 0x6f9
+0x1602
+wl -i wl1 phyreg 0x8f9
+0x1602
+wl -i wl1 phyreg 0xaf9
+0x1602
+
+# --- Reading on chanspec 5g36/20 (UNII-1) -----------------------------------
+# Active sub-band: 5gl, triso=6 (NOT saturated).
+# Re-read after chanspec switch, no re-association forced.
+
+wl -i wl1 chanspec 5g36/20
+# Chanspec set to 0xd024
+
+wl -i wl1 phyreg 0x6f9
+0x1602
+wl -i wl1 phyreg 0x8f9
+0x1602
+wl -i wl1 phyreg 0xaf9
+0x1602
+
+# --- Notes ------------------------------------------------------------------
+# Bits 14:8 of 0x1602 = 0x16 = 22.
+# Formula 6.30 (audited, DSL-3580L 6.30 reference):
+#   gainctx = (triso + 4) << 1
+# Expected for triso=6 (5gl):  (6+4)<<1  = 0x14
+# Expected for triso=15 (5gm/5gh): (15+4)<<1 = 0x26
+# Observed: 0x16 invariant of chanspec.
+#
+# Two robust facts and one unresolved delta:
+#   (1) Three core registers identical -> populator runs once on init,
+#       does NOT re-fire on chanspec switch in this OEM driver (7.14).
+#   (2) Sub-band frozen at init default (presumably 5gl since the value
+#       is closer to expected 0x14 than to 0x26).
+#   (3) Delta 0x16 - 0x14 = +2 in bits 14:8 not explained by 6.30 audit.
+#       Three candidates, indistinguishable from register reads alone:
+#         (a) formula evolved 6.30 -> 7.14 to (triso+5)<<1
+#         (b) a constant +2 added at runtime by the 7.14 populator
+#         (c) the default sub-band value comes from a source giving
+#             triso = 7 (no nvram_dump field corresponds to that, so this
+#             would be a reverse-engineering miss)
+#       Tagged as SALAME; distinguishable black-box by sampling triso=15
+#       (5gm/5gh): force a fresh attach-time populate per sub-band and
+#       re-read phyreg 0x{6,8,a}f9.

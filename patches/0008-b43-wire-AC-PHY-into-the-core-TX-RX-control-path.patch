@@ -1,0 +1,109 @@
+From 3378b4d6a0f218f6781ffb7054aa447c54d74369 Mon Sep 17 00:00:00 2001
+From: Alessio Ferri <alessio.ferri@mythread.it>
+Date: Tue, 7 Jul 2026 23:12:41 +0000
+Subject: [PATCH 8/9] b43: wire AC-PHY into the core TX/RX control path
+
+The AC-PHY (B43_PHYTYPE_AC) is N/HT-like, but the core TX *and* RX paths
+never learned about it, so a fully initialised radio transmitted nothing
+and every received frame was mishandled.
+
+TX:
+ - b43_generate_txhdr()/b43_generate_tx_phy_ctl1(): fill the per-frame
+   phy_ctl1 for AC as for N/HT (BW20 / SISO / coding+modulation). For
+   legacy 5 GHz OFDM -- the MVP bring-up target -- that mapping matches;
+   VHT / 40-80 MHz want a vendor-trace cross-check before being trusted.
+ - b43_dummy_transmission(): emit the TXE0_PHYCTL1 (0x1A02) setup for AC.
+
+RX (b43_rx(), the part that was entirely missing):
+ - link-quality/signal: AC reuses the HT per-antenna power layout
+   (phy_ht_power0..2). Flagged for an RX-trace cross-check.
+ - band/frequency: AC joins N/LP/HT (5/2 GHz by B43_RX_CHAN_5GHZ +
+   channel cookie). Without this status.band/freq were left unset and
+   frames were dropped or mis-banded.
+
+Core rate setup:
+ - b43_rate_memory_init(): AC joins the OFDM group. It previously fell to
+   the default -> B43_WARN_ON and no OFDM/CCK rate memory was programmed.
+ - b43_supported_bands(): guard the by-PHY fallback for AC (dual-band).
+   The real BCM4352/4360 dev_ids are resolved earlier; this only avoids a
+   spurious WARN_ON on the fallback path.
+
+Lives in core (xmit.c, main.c), outside the AC-PHY register series.
+
+Signed-off-by: Alessio Ferri <alessio.ferri@mythread.it>
+---
+ drivers/net/wireless/broadcom/b43/main.c | 9 ++++++++-
+ drivers/net/wireless/broadcom/b43/xmit.c | 9 +++++++--
+ 2 files changed, 15 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/net/wireless/broadcom/b43/main.c b/drivers/net/wireless/broadcom/b43/main.c
+index 82a52521..d1366aed 100644
+--- a/drivers/net/wireless/broadcom/b43/main.c
++++ b/drivers/net/wireless/broadcom/b43/main.c
+@@ -796,7 +796,7 @@ void b43_dummy_transmission(struct b43_wldev *dev, bool ofdm, bool pa_on)
+ 	value = (ofdm ? 0x41 : 0x40);
+ 	b43_write16(dev, B43_MMIO_TXE0_PHYCTL, value);
+ 	if (phy->type == B43_PHYTYPE_N || phy->type == B43_PHYTYPE_LP ||
+-	    phy->type == B43_PHYTYPE_LCN)
++	    phy->type == B43_PHYTYPE_LCN || phy->type == B43_PHYTYPE_AC)
+ 		b43_write16(dev, B43_MMIO_TXE0_PHYCTL1, 0x1A02);
+ 
+ 	b43_write16(dev, B43_MMIO_TXE0_WM_0, 0x0000);
+@@ -3207,6 +3207,7 @@ static void b43_rate_memory_init(struct b43_wldev *dev)
+ 	case B43_PHYTYPE_LP:
+ 	case B43_PHYTYPE_HT:
+ 	case B43_PHYTYPE_LCN:
++	case B43_PHYTYPE_AC:
+ 		b43_rate_memory_write(dev, B43_OFDM_RATE_6MB, 1);
+ 		b43_rate_memory_write(dev, B43_OFDM_RATE_9MB, 1);
+ 		b43_rate_memory_write(dev, B43_OFDM_RATE_12MB, 1);
+@@ -5400,6 +5401,12 @@ static void b43_supported_bands(struct b43_wldev *dev, bool *have_2ghz_phy,
+ 
+ 	/* As a fallback, try to guess using PHY type */
+ 	switch (dev->phy.type) {
++	case B43_PHYTYPE_AC:
++		/* Dual-band (BCM4352/4360). Real dev_ids are resolved above;
++		 * this only guards the by-PHY fallback. */
++		*have_2ghz_phy = true;
++		*have_5ghz_phy = true;
++		return;
+ 	case B43_PHYTYPE_G:
+ 	case B43_PHYTYPE_N:
+ 	case B43_PHYTYPE_LP:
+diff --git a/drivers/net/wireless/broadcom/b43/xmit.c b/drivers/net/wireless/broadcom/b43/xmit.c
+index f0b08259..6361d891 100644
+--- a/drivers/net/wireless/broadcom/b43/xmit.c
++++ b/drivers/net/wireless/broadcom/b43/xmit.c
+@@ -254,7 +254,8 @@ int b43_generate_txhdr(struct b43_wldev *dev,
+ 	u16 phy_ctl = 0;
+ 	bool fill_phy_ctl1 = (phy->type == B43_PHYTYPE_LP ||
+ 			      phy->type == B43_PHYTYPE_N ||
+-			      phy->type == B43_PHYTYPE_HT);
++			      phy->type == B43_PHYTYPE_HT ||
++			      phy->type == B43_PHYTYPE_AC);
+ 	u8 extra_ft = 0;
+ 	struct ieee80211_rate *txrate;
+ 	struct ieee80211_tx_rate *rates;
+@@ -719,7 +720,10 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
+ 	/* Link quality statistics */
+ 	switch (chanstat & B43_RX_CHAN_PHYTYPE) {
+ 	case B43_PHYTYPE_HT:
+-		/* TODO: is max the right choice? */
++	case B43_PHYTYPE_AC:
++		/* AC reuses the HT per-antenna power layout (phy_ht_power*);
++		 * wants an RX-trace cross-check before VHT is trusted.
++		 * TODO: is max the right choice? */
+ 		status.signal = max_t(__s8,
+ 			max(rxhdr->phy_ht_power0, rxhdr->phy_ht_power1),
+ 			rxhdr->phy_ht_power2);
+@@ -790,6 +794,7 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
+ 	case B43_PHYTYPE_N:
+ 	case B43_PHYTYPE_LP:
+ 	case B43_PHYTYPE_HT:
++	case B43_PHYTYPE_AC:
+ 		/* chanid is the SHM channel cookie. Which is the plain
+ 		 * channel number in b43. */
+ 		if (chanstat & B43_RX_CHAN_5GHZ)
+-- 
+2.43.0
+

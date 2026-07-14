@@ -1,0 +1,144 @@
+# wl phytable readings of rxgain ctrl tables 0x44 / 0x45
+# Target chip: 0x14e4:0x43a2 (BCM4360 r2069 rev 1) on agcombo board
+# Firmware: OEM (driverrev 0x70e2b15 ~= 7.14.43.21, ucoderev 0x3a004b1)
+# Pre-condition: wl1 up, populator has run
+#
+# Output format (verified empirically with multi-width probe at offset 0):
+#   width=8  -> 0xXX000044(...)  : XX is the byte at (id, offset);
+#                                  low byte = id echo (artifact, discard)
+#   width=16 -> halfword at offset, packed LE, id echo in LSB
+#   width=32 -> word at offset, packed LE, NO id echo
+#   Tables are byte-stride. width=8 is the authoritative read.
+#
+# Footprint (offsets actually written by the populator):
+#   0x44: 0..1, 8..13, 16..22, 32..41   (25 byte)
+#   0x45: 8, 16, 32..41                 (12 byte)
+#   Untouched offsets stay zero (chip-side init clears the table memory).
+
+# --- Width disambiguation (single cell, table 0x44 offset 0) -----------------
+
+wl -i wl1 phytable 0x44 0 8
+0xc000044(201326660)
+wl -i wl1 phytable 0x44 0 16
+0xc0044(786500)
+wl -i wl1 phytable 0x44 0 32
+0xc(12)
+
+# --- Reading on chanspec 5g100/20 --------------------------------------------
+# Active sub-band per subband5gver=0x4: 5gm or 5gh (boundary at 5500 MHz).
+# Populator on 7.14 is single-shot at attach time and does NOT re-fire on
+# chanspec switch (verified register-side via phyreg 0x6f9/0x8f9/0xaf9
+# returning 0x1602 invariant of chanspec, table-side via phytable 0x44 32 8
+# returning 0x07 invariant of chanspec). So the dump below is the 5gl
+# attach-time image regardless of the active chanspec at sample time.
+
+wl -i wl1 chanspec 5g100/20
+# Chanspec set to 0xd064
+
+wl -i wl1 phytable 0x44 0 8
+0xc000044(201326660)
+wl -i wl1 phytable 0x44 1 8
+0xc000044(201326660)
+wl -i wl1 phytable 0x44 8 8
+0xfe000044(-33554364)
+wl -i wl1 phytable 0x44 9 8
+0xfe000044(-33554364)
+wl -i wl1 phytable 0x44 10 8
+0x4000044(67108932)
+wl -i wl1 phytable 0x44 11 8
+0xa000044(167772228)
+wl -i wl1 phytable 0x44 12 8
+0x10000044(268435524)
+wl -i wl1 phytable 0x44 13 8
+0x17000044(385876036)
+wl -i wl1 phytable 0x44 16 8
+0xf8000044(-134217660)
+wl -i wl1 phytable 0x44 17 8
+0xf8000044(-134217660)
+wl -i wl1 phytable 0x44 18 8
+0xfb000044(-83886012)
+wl -i wl1 phytable 0x44 19 8
+0xfe000044(-33554364)
+wl -i wl1 phytable 0x44 20 8
+0x2000044(33554500)
+wl -i wl1 phytable 0x44 21 8
+0x5000044(83886148)
+wl -i wl1 phytable 0x44 22 8
+0x9000044(150995012)
+wl -i wl1 phytable 0x44 32 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 33 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 34 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 35 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 36 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 37 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 38 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 39 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 40 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 41 8
+0x7000044(117440580)
+
+wl -i wl1 phytable 0x45 8 8
+0x1000045(16777285)
+wl -i wl1 phytable 0x45 16 8
+0x1000045(16777285)
+wl -i wl1 phytable 0x45 32 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 33 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 34 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 35 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 36 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 37 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 38 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 39 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 40 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 41 8
+0x2000045(33554501)
+
+# --- Reading on chanspec 5g36/20 (cross-check, 5gl by chanspec too) ----------
+# Single sample to confirm the populator does not re-fire on chanspec switch
+# table-side; 0x44[32] is one of the cells most likely to depend on sub-band
+# (uniform 0x07 across the [32..41] slice).
+
+wl -i wl1 chanspec 5g36/20
+# Chanspec set to 0xd024
+
+wl -i wl1 phytable 0x44 32 8
+0x7000044(117440580)
+
+# --- Decoded byte image (high-order byte of each width=8 print) --------------
+#
+# Table 0x44:
+#   off  byte    off  byte    off  byte
+#     0  0x0c      8  0xfe     16  0xf8
+#     1  0x0c      9  0xfe     17  0xf8
+#                 10  0x04     18  0xfb
+#                 11  0x0a     19  0xfe
+#                 12  0x10     20  0x02
+#                 13  0x17     21  0x05
+#                              22  0x09
+#    32..41  all 0x07
+#
+# Table 0x45:
+#    8     0x01
+#   16     0x01
+#   32..41 all 0x02
+#
+# Encoded into kernel-patch/new_files/rxgain_phy_ac.c as
+# b43_phy_ac_rxgain_5g_tbl_44_5gl[] / b43_phy_ac_rxgain_5g_tbl_45_5gl[].

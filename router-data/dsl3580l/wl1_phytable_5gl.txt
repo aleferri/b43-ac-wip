@@ -1,0 +1,312 @@
+# wl phytable readings of rxgain ctrl tables 0x44 / 0x45
+# Target chip: 0x14e4:0x43b3 (BCM4352-family) on DSL-3580L board
+# Firmware: OEM 6.30.102.7
+# Pre-condition: wl1 up, populator has run, chanspec on a 5gl channel.
+#
+# Output format (verified empirically on agcombo with multi-width probe):
+#   width=8 -> 0xXX0000{44|45}(...)  : XX is the byte at (id, offset);
+#                                       low byte = id echo (artifact, discard)
+#   tables are byte-stride, width=8 is the authoritative read
+#
+# Side-band info: phyreg 0x6f9 = 0x1402 reads back gainctx = 0x14
+# (= (triso+4)<<1 with triso=6) for 5gl. This is the canonical 6.30
+# formula without the +2 correction the 7.14 branch later added.
+
+# --- Chanspec verification before dump ---------------------------------------
+
+wl -i wl1 chanspec 5g36/20
+# Chanspec set to 0xd024
+wl -i wl1 phyreg 0x6f9
+# 0x1402
+
+# --- Table 0x44, full 0..63 sweep --------------------------------------------
+
+wl -i wl1 phytable 0x44 0 8
+0xc000044(201326660)
+wl -i wl1 phytable 0x44 1 8
+0xc000044(201326660)
+wl -i wl1 phytable 0x44 2 8
+0xc000044(201326660)
+wl -i wl1 phytable 0x44 3 8
+0xc000044(201326660)
+wl -i wl1 phytable 0x44 4 8
+0xc000044(201326660)
+wl -i wl1 phytable 0x44 5 8
+0xc000044(201326660)
+wl -i wl1 phytable 0x44 6 8
+0xc000044(201326660)
+wl -i wl1 phytable 0x44 7 8
+0xc000044(201326660)
+wl -i wl1 phytable 0x44 8 8
+0xfb000044(-83886012)
+wl -i wl1 phytable 0x44 9 8
+0xfb000044(-83886012)
+wl -i wl1 phytable 0x44 10 8
+0x1000044(16777284)
+wl -i wl1 phytable 0x44 11 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 12 8
+0xd000044(218103876)
+wl -i wl1 phytable 0x44 13 8
+0x14000044(335544388)
+wl -i wl1 phytable 0x44 14 8
+0xd000044(218103876)
+wl -i wl1 phytable 0x44 15 8
+0x17000044(385876036)
+wl -i wl1 phytable 0x44 16 8
+0xf8000044(-134217660)
+wl -i wl1 phytable 0x44 17 8
+0xf8000044(-134217660)
+wl -i wl1 phytable 0x44 18 8
+0xfb000044(-83886012)
+wl -i wl1 phytable 0x44 19 8
+0xfe000044(-33554364)
+wl -i wl1 phytable 0x44 20 8
+0x2000044(33554500)
+wl -i wl1 phytable 0x44 21 8
+0x5000044(83886148)
+wl -i wl1 phytable 0x44 22 8
+0x9000044(150995012)
+wl -i wl1 phytable 0x44 23 8
+0xff000044(-16777148)
+wl -i wl1 phytable 0x44 24 8
+0xf8000044(-134217660)
+wl -i wl1 phytable 0x44 25 8
+0xf8000044(-134217660)
+wl -i wl1 phytable 0x44 26 8
+0xfb000044(-83886012)
+wl -i wl1 phytable 0x44 27 8
+0xfe000044(-33554364)
+wl -i wl1 phytable 0x44 28 8
+0x2000044(33554500)
+wl -i wl1 phytable 0x44 29 8
+0x5000044(83886148)
+wl -i wl1 phytable 0x44 30 8
+0x9000044(150995012)
+wl -i wl1 phytable 0x44 31 8
+0xff000044(-16777148)
+wl -i wl1 phytable 0x44 32 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 33 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 34 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 35 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 36 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 37 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 38 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 39 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 40 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 41 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 42 8
+0x44(68)
+wl -i wl1 phytable 0x44 43 8
+0x44(68)
+wl -i wl1 phytable 0x44 44 8
+0x44(68)
+wl -i wl1 phytable 0x44 45 8
+0x44(68)
+wl -i wl1 phytable 0x44 46 8
+0x44(68)
+wl -i wl1 phytable 0x44 47 8
+0x44(68)
+wl -i wl1 phytable 0x44 48 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 49 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 50 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 51 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 52 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 53 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 54 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 55 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 56 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 57 8
+0x7000044(117440580)
+wl -i wl1 phytable 0x44 58 8
+0x44(68)
+wl -i wl1 phytable 0x44 59 8
+0x44(68)
+wl -i wl1 phytable 0x44 60 8
+0x44(68)
+wl -i wl1 phytable 0x44 61 8
+0x44(68)
+wl -i wl1 phytable 0x44 62 8
+0x44(68)
+wl -i wl1 phytable 0x44 63 8
+0x44(68)
+
+# --- Table 0x45, full 0..63 sweep --------------------------------------------
+
+wl -i wl1 phytable 0x45 0 8
+0x45(69)
+wl -i wl1 phytable 0x45 1 8
+0x45(69)
+wl -i wl1 phytable 0x45 2 8
+0x45(69)
+wl -i wl1 phytable 0x45 3 8
+0x45(69)
+wl -i wl1 phytable 0x45 4 8
+0x45(69)
+wl -i wl1 phytable 0x45 5 8
+0x45(69)
+wl -i wl1 phytable 0x45 6 8
+0x45(69)
+wl -i wl1 phytable 0x45 7 8
+0x45(69)
+wl -i wl1 phytable 0x45 8 8
+0x1000045(16777285)
+wl -i wl1 phytable 0x45 9 8
+0x1000045(16777285)
+wl -i wl1 phytable 0x45 10 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 11 8
+0x3000045(50331717)
+wl -i wl1 phytable 0x45 12 8
+0x4000045(67108933)
+wl -i wl1 phytable 0x45 13 8
+0x5000045(83886149)
+wl -i wl1 phytable 0x45 14 8
+0x6000045(100663365)
+wl -i wl1 phytable 0x45 15 8
+0x7000045(117440581)
+wl -i wl1 phytable 0x45 16 8
+0x1000045(16777285)
+wl -i wl1 phytable 0x45 17 8
+0x1000045(16777285)
+wl -i wl1 phytable 0x45 18 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 19 8
+0x3000045(50331717)
+wl -i wl1 phytable 0x45 20 8
+0x4000045(67108933)
+wl -i wl1 phytable 0x45 21 8
+0x5000045(83886149)
+wl -i wl1 phytable 0x45 22 8
+0x6000045(100663365)
+wl -i wl1 phytable 0x45 23 8
+0x7000045(117440581)
+wl -i wl1 phytable 0x45 24 8
+0x1000045(16777285)
+wl -i wl1 phytable 0x45 25 8
+0x1000045(16777285)
+wl -i wl1 phytable 0x45 26 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 27 8
+0x3000045(50331717)
+wl -i wl1 phytable 0x45 28 8
+0x4000045(67108933)
+wl -i wl1 phytable 0x45 29 8
+0x5000045(83886149)
+wl -i wl1 phytable 0x45 30 8
+0x6000045(100663365)
+wl -i wl1 phytable 0x45 31 8
+0x7000045(117440581)
+wl -i wl1 phytable 0x45 32 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 33 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 34 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 35 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 36 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 37 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 38 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 39 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 40 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 41 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 42 8
+0x45(69)
+wl -i wl1 phytable 0x45 43 8
+0x45(69)
+wl -i wl1 phytable 0x45 44 8
+0x45(69)
+wl -i wl1 phytable 0x45 45 8
+0x45(69)
+wl -i wl1 phytable 0x45 46 8
+0x45(69)
+wl -i wl1 phytable 0x45 47 8
+0x45(69)
+wl -i wl1 phytable 0x45 48 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 49 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 50 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 51 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 52 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 53 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 54 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 55 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 56 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 57 8
+0x2000045(33554501)
+wl -i wl1 phytable 0x45 58 8
+0x45(69)
+wl -i wl1 phytable 0x45 59 8
+0x45(69)
+wl -i wl1 phytable 0x45 60 8
+0x45(69)
+wl -i wl1 phytable 0x45 61 8
+0x45(69)
+wl -i wl1 phytable 0x45 62 8
+0x45(69)
+wl -i wl1 phytable 0x45 63 8
+0x45(69)
+
+# --- Decoded byte image (high-order byte of each width=8 print) --------------
+#
+# Table 0x44 (offsets 0..63, zero outside the slices below):
+#   [ 0..7 ]: 0c 0c 0c 0c 0c 0c 0c 0c     (header byte replicated)
+#   [ 8..15]: fb fb 01 07 0d 14 0d 17     (block A, signed: -5 -5 1 7 13 20 13 23)
+#   [16..23]: f8 f8 fb fe 02 05 09 ff     (block B, signed: -8 -8 -5 -2 2 5 9 -1)
+#   [24..31]: f8 f8 fb fe 02 05 09 ff     (block B duplicate)
+#   [32..41]: 07 07 07 07 07 07 07 07 07 07
+#   [48..57]: 07 07 07 07 07 07 07 07 07 07  (duplicate of [32..41])
+#
+# Table 0x45 (offsets 0..63, zero outside the slices below):
+#   [ 8..15]: 01 01 02 03 04 05 06 07     (linear ramp with first dup)
+#   [16..23]: 01 01 02 03 04 05 06 07     (same as [8..15])
+#   [24..31]: 01 01 02 03 04 05 06 07     (same again, three copies)
+#   [32..41]: 02 02 02 02 02 02 02 02 02 02
+#   [48..57]: 02 02 02 02 02 02 02 02 02 02  (duplicate of [32..41])
+#
+# Encoded into kernel-patch/new_files/rxgain_phy_ac.c as
+# b43_phy_ac_rxgain_5g_tbl_44_5gl[64] / b43_phy_ac_rxgain_5g_tbl_45_5gl[64].
+#
+# Cross-board comparison with router-data/agcombo/agcombo_phytable_5gl.txt:
+#   - Block B [16..22]: identical byte-for-byte across DSL (BCM43b3) and
+#     agcombo (BCM4360).
+#   - Block A [8..13]: differs by a uniform +3 signed offset on agcombo
+#     (0xfe fe 04 0a 10 17 vs DSL 0xfb fb 01 07 0d 14). Plausibly a
+#     board- or chain-count-dependent calibration term.
+#   - All [24..31] / [48..57] duplicate slices are zero on agcombo
+#     because the 7.14 single-shot populator never fires the second-pass
+#     descriptor entries.
