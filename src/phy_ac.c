@@ -1234,6 +1234,13 @@ static void b43_phy_ac_rxcore_setstate(struct b43_wldev *dev, u8 coremask)
 	 * both d6220 captures (attach /, down-to-bss-up
 	 * #53398/#53426); exact field semantics unconfirmed. */
 	b43_phy_write(dev, 0x16d8, 0xffff);
+	/*
+	 * Vendor down-to-bss-up trace #53399: DELAY usec=5848 subito dopo
+	 * la WR wide-open. Probabile stabilizzazione del gain override prima
+	 * di modificare mode/RF-sequence. Senza questa attesa i run_rfseq_cmd
+	 * successivi partono su HW in transizione (osservato: hang post-TBL 0x20).
+	 */
+	udelay(5850);
 
 	b43_phy_maskset(dev, 0x0160, (u16)~0x0007, coremask);
 	b43_phy_maskset(dev, B43_PHY_AC_RF_SEQ_MODE, (u16)~0x0070,
@@ -1597,9 +1604,12 @@ static void b43_phy_ac_run_rfseq_cmd(struct b43_wldev *dev, u16 cmd_bit)
 	b43_phy_set(dev, 0x0400, 0x0003);
 	b43_phy_set(dev, 0x0402, cmd_bit);
 
-	/* Poll fino a done bit set (max 10 letture). */
+	/* Poll fino a done bit set (max 10 letture). Vendor down-to-bss-up
+	 * #53411: DELAY usec=1027 tra le prime due RD di 0x0403 (poll con
+	 * attesa tra iterazioni). udelay(200) x 10 = 2ms max, sufficiente. */
 	for (i = 0; i < 10; i++) {
 		u16 v = b43_phy_read_log(dev, 0x0403);
+		udelay(200);
 		if (v & 0x0001)
 			break;
 	}
@@ -2189,6 +2199,7 @@ static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
 	 */
 	b43_actab_write_bulk(dev, 0x20, 0x0000, 8, 128,
 			     b43_acphy_tbl_0x20_gaincurve);
+	b43info(dev->wl, "[SENTINEL] TBL 0x20 gaincurve bulk done\n");
 
 	/*
 	 * Per-core PHY setup post TBL 0x20 (6 op per 2 core attivi,
@@ -2217,6 +2228,7 @@ static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
 					(u16)~0x0010, 0x0000);
 		}
 	}
+	b43info(dev->wl, "[SENTINEL] per-core PHY setup post-TBL 0x20 done\n");
 
 	/*
 	 * Setup radio per-core "step 1" (d6220 ch36 #34698-#34749, 52 op).
@@ -2224,6 +2236,7 @@ static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
 	 * 0x054b shared (byte high/low per core 0/1). Vedi helper.
 	 */
 	b43_phy_ac_radio_percore_setup_1(dev);
+	b43info(dev->wl, "[SENTINEL] radio_percore_setup_1 done\n");
 
 	/*
 	 * PHY per-core loop su TUTTI i core silicon (d6220 ch36 #34750-#34755,

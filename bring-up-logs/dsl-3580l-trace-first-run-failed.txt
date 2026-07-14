@@ -1,0 +1,260 @@
+[  141.550000] printk: legacy console [netcon0] enabled
+[  141.550000] netconsole: network logging started
+[  149.020000] b43-phy2: Broadcom 6362 WLAN found (core revision 22)
+[  149.020000] b43-phy2: Found PHY: Analog 9, Type 4 (N), Revision 8
+[  149.030000] b43-phy2: Found Radio: Manuf 0x17F, ID 0x2057, Revision 8, Version 0
+[  149.040000] b43-phy3: Broadcom 4352 WLAN found (core revision 42)
+[  149.050000] b43-phy3: Found PHY: Analog 12, Type 11 (AC), Revision 1
+[  149.050000] b43-phy3: Found Radio: Manuf 0x17F, ID 0x2069, Revision 4, Version 0
+[  149.070000] Broadcom 43xx driver loaded [ Features: NL ]
+[  185.540000] b43-phy3: Loading firmware version 784.2 (2012-08-15 21:43:22)
+[  185.540000] b43-phy3: phy-ac: num_cores=3 coremask=0x3
+[  185.550000] b43-phy3: phy-ac: radio pwron 0x040b readback: 0161 0161
+[  185.560000] b43-phy3: radio 2069: rccal lpf cap 0xb7 (E=0x0b39 F=0x0c2c)
+[  185.560000] b43-phy3: [TXLPFLOG] lock saved=0x0000
+[  185.570000] b43-phy3: [TXLPFLOG] actab_wr id=0x01 off=0x0000 width=16 len=128 gate=0x0002
+[  185.580000] b43-phy3: [TXLPFLOG] actab_wr id=0x02 off=0x0000 width=8 len=38 gate=0x0002
+[  185.590000] b43-phy3: [TXLPFLOG] actab_wr id=0x05 off=0x0000 width=32 len=22 gate=0x0002
+[  185.590000] b43-phy3: [TXLPFLOG] actab_wr id=0x06 off=0x0000 width=32 len=18 gate=0x0002
+[  185.600000] b43-phy3: [TXLPFLOG] actab_wr id=0x40 off=0x0000 width=16 len=128 gate=0x0002
+[  185.610000] b43-phy3: [TXLPFLOG] actab_wr id=0x60 off=0x0000 width=16 len=128 gate=0x0002
+[  185.620000] b43-phy3: [TXLPFLOG] actab_wr id=0x40 off=0x0000 width=16 len=128 gate=0x0002
+[  185.630000] b43-phy3: [TXLPFLOG] actab_wr id=0x60 off=0x0000 width=16 len=128 gate=0x0002
+[  185.640000] b43-phy3: [TXLPFLOG] actab_wr id=0x47 off=0x0000 width=32 len=64 gate=0x0002
+[  185.650000] b43-phy3: [TXLPFLOG] actab_wr id=0x67 off=0x0000 width=32 len=64 gate=0x0002
+[  185.650000] b43-phy3: [TXLPFLOG] actab_wr id=0x48 off=0x0000 width=32 len=64 gate=0x0002
+[  185.660000] b43-phy3: [TXLPFLOG] actab_wr id=0x68 off=0x0000 width=32 len=64 gate=0x0002
+[  185.670000] b43-phy3: [TXLPFLOG] actab_wr id=0x04 off=0x0000 width=8 len=256 gate=0x0002
+[  185.680000] b43-phy3: [TXLPFLOG] actab_wr id=0x03 off=0x0000 width=32 len=256 gate=0x0002
+[  185.690000] b43-phy3: [TXLPFLOG] actab_wr id=0x41 off=0x0000 width=32 len=128 gate=0x0002
+[  185.700000] b43-phy3: [TXLPFLOG] actab_wr id=0x42 off=0x0000 width=16 len=128 gate=0x0002
+[  185.710000] b43-phy3: [TXLPFLOG] actab_wr id=0x61 off=0x0000 width=32 len=128 gate=0x0002
+[  185.720000] b43-phy3: [TXLPFLOG] actab_wr id=0x62 off=0x0000 width=16 len=128 gate=0x0002
+[  185.720000] b43-phy3: [TXLPFLOG] unlock saved=0x0000 mask=0xfffd val=0x0000
+[  185.730000] b43-phy3: phy-ac: set_channel ch36 (5180 MHz) start
+[  185.740000] b43-phy3: phy-ac: channel_switch_prep 0x0140 cur=0x0df7 -> 0x0df4
+[  185.750000] b43-phy3: [TXLPFLOG] lock saved=0x03d0
+[  185.750000] b43-phy3: [TXLPFLOG] lock saved=0x03d2
+[  185.760000] b43-phy3: [TXLPFLOG] actab_wr id=0x0a off=0x0000 width=8 len=32 gate=0x03d2
+[  185.760000] b43-phy3: [TXLPFLOG] actab_wr id=0x0a off=0x0020 width=8 len=32 gate=0x03d2
+[  185.770000] b43-phy3: [TXLPFLOG] actab_wr id=0x0a off=0x0040 width=8 len=32 gate=0x03d2
+[  185.780000] b43-phy3: [TXLPFLOG] unlock saved=0x03d2 mask=0xfffd val=0x0002
+[  185.790000] b43-phy3: [TXLPFLOG] lock saved=0x03d2
+[  185.790000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0142 width=16 len=1 gate=0x03d2
+[  185.800000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0362 width=16 len=1 gate=0x03d2
+[  185.810000] b43-phy3: [TXLPFLOG] txlpf core=0 stage=0 off_lo=0x0142 off_hi=0x0362 lo_read=0x00db hi_read=0x0101 lo_write=0x50db hi_write=0x0151 f0=-1 f3=-1 f6=-1 f9=183 f17=183
+[  185.830000] b43-phy3: [TXLPFLOG] formula core=0 stage=0 f_predicted=0xae f_actual=0xa8 delta=-6
+[  185.840000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0142 width=16 len=1 gate=0x03d2
+[  185.840000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0362 width=16 len=1 gate=0x03d2
+[  185.850000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0143 width=16 len=1 gate=0x03d2
+[  185.860000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0363 width=16 len=1 gate=0x03d2
+[  185.870000] b43-phy3: [TXLPFLOG] txlpf core=0 stage=1 off_lo=0x0143 off_hi=0x0363 lo_read=0x00db hi_read=0x0101 lo_write=0x50db hi_write=0x0151 f0=-1 f3=-1 f6=-1 f9=183 f17=183
+[  185.880000] b43-phy3: [TXLPFLOG] formula core=0 stage=1 f_predicted=0xae f_actual=0xa8 delta=-6
+[  185.890000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0143 width=16 len=1 gate=0x03d2
+[  185.900000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0363 width=16 len=1 gate=0x03d2
+[  185.910000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0144 width=16 len=1 gate=0x03d2
+[  185.920000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0364 width=16 len=1 gate=0x03d2
+[  185.930000] b43-phy3: [TXLPFLOG] txlpf core=0 stage=2 off_lo=0x0144 off_hi=0x0364 lo_read=0x00db hi_read=0x0101 lo_write=0x50db hi_write=0x0151 f0=-1 f3=-1 f6=-1 f9=183 f17=183
+[  185.940000] b43-phy3: [TXLPFLOG] formula core=0 stage=2 f_predicted=0xae f_actual=0xa8 delta=-6
+[  185.950000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0144 width=16 len=1 gate=0x03d2
+[  185.960000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0364 width=16 len=1 gate=0x03d2
+[  185.970000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0145 width=16 len=1 gate=0x03d2
+[  185.980000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0365 width=16 len=1 gate=0x03d2
+[  185.990000] b43-phy3: [TXLPFLOG] txlpf core=0 stage=3 off_lo=0x0145 off_hi=0x0365 lo_read=0x0123 hi_read=0x0101 lo_write=0x5123 hi_write=0x0151 f0=-1 f3=-1 f6=-1 f9=183 f17=183
+[  186.000000] b43-phy3: [TXLPFLOG] formula core=0 stage=3 f_predicted=0xae f_actual=0xa8 delta=-6
+[  186.010000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0145 width=16 len=1 gate=0x03d2
+[  186.020000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0365 width=16 len=1 gate=0x03d2
+[  186.030000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0146 width=16 len=1 gate=0x03d2
+[  186.040000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0366 width=16 len=1 gate=0x03d2
+[  186.040000] b43-phy3: [TXLPFLOG] txlpf core=0 stage=4 off_lo=0x0146 off_hi=0x0366 lo_read=0x0123 hi_read=0x0101 lo_write=0x5123 hi_write=0x0151 f0=-1 f3=-1 f6=-1 f9=183 f17=183
+[  186.060000] b43-phy3: [TXLPFLOG] formula core=0 stage=4 f_predicted=0xae f_actual=0xa8 delta=-6
+[  186.070000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0146 width=16 len=1 gate=0x03d2
+[  186.080000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0366 width=16 len=1 gate=0x03d2
+[  186.090000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0147 width=16 len=1 gate=0x03d2
+[  186.100000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0367 width=16 len=1 gate=0x03d2
+[  186.100000] b43-phy3: [TXLPFLOG] txlpf core=0 stage=5 off_lo=0x0147 off_hi=0x0367 lo_read=0x0123 hi_read=0x0101 lo_write=0x5123 hi_write=0x0151 f0=-1 f3=-1 f6=-1 f9=183 f17=183
+[  186.120000] b43-phy3: [TXLPFLOG] formula core=0 stage=5 f_predicted=0xae f_actual=0xa8 delta=-6
+[  186.130000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0147 width=16 len=1 gate=0x03d2
+[  186.140000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0367 width=16 len=1 gate=0x03d2
+[  186.150000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0148 width=16 len=1 gate=0x03d2
+[  186.150000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0368 width=16 len=1 gate=0x03d2
+[  186.160000] b43-phy3: [TXLPFLOG] txlpf core=0 stage=6 off_lo=0x0148 off_hi=0x0368 lo_read=0x016b hi_read=0x0101 lo_write=0x516b hi_write=0x0151 f0=-1 f3=-1 f6=-1 f9=183 f17=183
+[  186.180000] b43-phy3: [TXLPFLOG] formula core=0 stage=6 f_predicted=0xae f_actual=0xa8 delta=-6
+[  186.190000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0148 width=16 len=1 gate=0x03d2
+[  186.200000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0368 width=16 len=1 gate=0x03d2
+[  186.200000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0149 width=16 len=1 gate=0x03d2
+[  186.210000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0369 width=16 len=1 gate=0x03d2
+[  186.220000] b43-phy3: [TXLPFLOG] txlpf core=0 stage=7 off_lo=0x0149 off_hi=0x0369 lo_read=0x016b hi_read=0x0101 lo_write=0x516b hi_write=0x0151 f0=-1 f3=-1 f6=-1 f9=183 f17=183
+[  186.240000] b43-phy3: [TXLPFLOG] formula core=0 stage=7 f_predicted=0xae f_actual=0xa8 delta=-6
+[  186.250000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0149 width=16 len=1 gate=0x03d2
+[  186.250000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0369 width=16 len=1 gate=0x03d2
+[  186.260000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x014a width=16 len=1 gate=0x03d2
+[  186.270000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x036a width=16 len=1 gate=0x03d2
+[  186.280000] b43-phy3: [TXLPFLOG] txlpf core=0 stage=8 off_lo=0x014a off_hi=0x036a lo_read=0x00db hi_read=0x0101 lo_write=0x50db hi_write=0x0151 f0=-1 f3=-1 f6=-1 f9=183 f17=183
+[  186.300000] b43-phy3: [TXLPFLOG] formula core=0 stage=8 f_predicted=0xae f_actual=0xa8 delta=-6
+[  186.310000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x014a width=16 len=1 gate=0x03d2
+[  186.310000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x036a width=16 len=1 gate=0x03d2
+[  186.320000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0152 width=16 len=1 gate=0x03d2
+[  186.330000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0372 width=16 len=1 gate=0x03d2
+[  186.340000] b43-phy3: [TXLPFLOG] txlpf core=1 stage=0 off_lo=0x0152 off_hi=0x0372 lo_read=0x00db hi_read=0x0101 lo_write=0x50db hi_write=0x0151 f0=-1 f3=-1 f6=-1 f9=183 f17=183
+[  186.360000] b43-phy3: [TXLPFLOG] formula core=1 stage=0 f_predicted=0xae f_actual=0xa8 delta=-6
+[  186.360000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0152 width=16 len=1 gate=0x03d2
+[  186.370000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0372 width=16 len=1 gate=0x03d2
+[  186.380000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0153 width=16 len=1 gate=0x03d2
+[  186.390000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0373 width=16 len=1 gate=0x03d2
+[  186.400000] b43-phy3: [TXLPFLOG] txlpf core=1 stage=1 off_lo=0x0153 off_hi=0x0373 lo_read=0x00db hi_read=0x0101 lo_write=0x50db hi_write=0x0151 f0=-1 f3=-1 f6=-1 f9=183 f17=183
+[  186.410000] b43-phy3: [TXLPFLOG] formula core=1 stage=1 f_predicted=0xae f_actual=0xa8 delta=-6
+[  186.420000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0153 width=16 len=1 gate=0x03d2
+[  186.430000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0373 width=16 len=1 gate=0x03d2
+[  186.440000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0154 width=16 len=1 gate=0x03d2
+[  186.450000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0374 width=16 len=1 gate=0x03d2
+[  186.460000] b43-phy3: [TXLPFLOG] txlpf core=1 stage=2 off_lo=0x0154 off_hi=0x0374 lo_read=0x00db hi_read=0x0101 lo_write=0x50db hi_write=0x0151 f0=-1 f3=-1 f6=-1 f9=183 f17=183
+[  186.470000] b43-phy3: [TXLPFLOG] formula core=1 stage=2 f_predicted=0xae f_actual=0xa8 delta=-6
+[  186.480000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0154 width=16 len=1 gate=0x03d2
+[  186.490000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0374 width=16 len=1 gate=0x03d2
+[  186.500000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0155 width=16 len=1 gate=0x03d2
+[  186.510000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0375 width=16 len=1 gate=0x03d2
+[  186.520000] b43-phy3: [TXLPFLOG] txlpf core=1 stage=3 off_lo=0x0155 off_hi=0x0375 lo_read=0x0123 hi_read=0x0101 lo_write=0x5123 hi_write=0x0151 f0=-1 f3=-1 f6=-1 f9=183 f17=183
+[  186.530000] b43-phy3: [TXLPFLOG] formula core=1 stage=3 f_predicted=0xae f_actual=0xa8 delta=-6
+[  186.540000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0155 width=16 len=1 gate=0x03d2
+[  186.550000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0375 width=16 len=1 gate=0x03d2
+[  186.560000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0156 width=16 len=1 gate=0x03d2
+[  186.570000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0376 width=16 len=1 gate=0x03d2
+[  186.570000] b43-phy3: [TXLPFLOG] txlpf core=1 stage=4 off_lo=0x0156 off_hi=0x0376 lo_read=0x0123 hi_read=0x0101 lo_write=0x5123 hi_write=0x0151 f0=-1 f3=-1 f6=-1 f9=183 f17=183
+[  186.590000] b43-phy3: [TXLPFLOG] formula core=1 stage=4 f_predicted=0xae f_actual=0xa8 delta=-6
+[  186.600000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0156 width=16 len=1 gate=0x03d2
+[  186.610000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0376 width=16 len=1 gate=0x03d2
+[  186.620000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0157 width=16 len=1 gate=0x03d2
+[  186.620000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0377 width=16 len=1 gate=0x03d2
+[  186.630000] b43-phy3: [TXLPFLOG] txlpf core=1 stage=5 off_lo=0x0157 off_hi=0x0377 lo_read=0x0123 hi_read=0x0101 lo_write=0x5123 hi_write=0x0151 f0=-1 f3=-1 f6=-1 f9=183 f17=183
+[  186.650000] b43-phy3: [TXLPFLOG] formula core=1 stage=5 f_predicted=0xae f_actual=0xa8 delta=-6
+[  186.660000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0157 width=16 len=1 gate=0x03d2
+[  186.670000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0377 width=16 len=1 gate=0x03d2
+[  186.670000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0158 width=16 len=1 gate=0x03d2
+[  186.680000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0378 width=16 len=1 gate=0x03d2
+[  186.690000] b43-phy3: [TXLPFLOG] txlpf core=1 stage=6 off_lo=0x0158 off_hi=0x0378 lo_read=0x016b hi_read=0x0101 lo_write=0x516b hi_write=0x0151 f0=-1 f3=-1 f6=-1 f9=183 f17=183
+[  186.710000] b43-phy3: [TXLPFLOG] formula core=1 stage=6 f_predicted=0xae f_actual=0xa8 delta=-6
+[  186.720000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0158 width=16 len=1 gate=0x03d2
+[  186.730000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0378 width=16 len=1 gate=0x03d2
+[  186.730000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0159 width=16 len=1 gate=0x03d2
+[  186.740000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0379 width=16 len=1 gate=0x03d2
+[  186.750000] b43-phy3: [TXLPFLOG] txlpf core=1 stage=7 off_lo=0x0159 off_hi=0x0379 lo_read=0x016b hi_read=0x0101 lo_write=0x516b hi_write=0x0151 f0=-1 f3=-1 f6=-1 f9=183 f17=183
+[  186.770000] b43-phy3: [TXLPFLOG] formula core=1 stage=7 f_predicted=0xae f_actual=0xa8 delta=-6
+[  186.780000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0159 width=16 len=1 gate=0x03d2
+[  186.780000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0379 width=16 len=1 gate=0x03d2
+[  186.790000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x015a width=16 len=1 gate=0x03d2
+[  186.800000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x037a width=16 len=1 gate=0x03d2
+[  186.810000] b43-phy3: [TXLPFLOG] txlpf core=1 stage=8 off_lo=0x015a off_hi=0x037a lo_read=0x00db hi_read=0x0101 lo_write=0x50db hi_write=0x0151 f0=-1 f3=-1 f6=-1 f9=183 f17=183
+[  186.830000] b43-phy3: [TXLPFLOG] formula core=1 stage=8 f_predicted=0xae f_actual=0xa8 delta=-6
+[  186.830000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x015a width=16 len=1 gate=0x03d2
+[  186.840000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x037a width=16 len=1 gate=0x03d2
+[  186.850000] b43-phy3: [TXLPFLOG] unlock saved=0x03d2 mask=0xfffd val=0x0002
+[  186.860000] b43-phy3: [TXLPFLOG] lock saved=0x03d2
+[  186.860000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x03fb width=16 len=1 gate=0x03d2
+[  186.870000] b43-phy3: [TXLPFLOG] dacbuf core=0 stage=0 off=0x03fb shift=0 cur=0x0b2c field=0x002c out=0x0b2c dacbuf_cap=0x000c
+[  186.880000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x03fb width=16 len=1 gate=0x03d2
+[  186.890000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x03fb width=16 len=1 gate=0x03d2
+[  186.900000] b43-phy3: [TXLPFLOG] dacbuf core=0 stage=1 off=0x03fb shift=6 cur=0x0b2c field=0x002c out=0x0b2c dacbuf_cap=0x000c
+[  186.910000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x03fb width=16 len=1 gate=0x03d2
+[  186.920000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x03fc width=16 len=1 gate=0x03d2
+[  186.930000] b43-phy3: [TXLPFLOG] dacbuf core=0 stage=2 off=0x03fc shift=0 cur=0x0b2c field=0x002c out=0x0b2c dacbuf_cap=0x000c
+[  186.940000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x03fc width=16 len=1 gate=0x03d2
+[  186.950000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x03fc width=16 len=1 gate=0x03d2
+[  186.960000] b43-phy3: [TXLPFLOG] dacbuf core=0 stage=3 off=0x03fc shift=6 cur=0x0b2c field=0x002c out=0x0b2c dacbuf_cap=0x000c
+[  186.970000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x03fc width=16 len=1 gate=0x03d2
+[  186.980000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x03fe width=16 len=1 gate=0x03d2
+[  186.990000] b43-phy3: [TXLPFLOG] dacbuf core=0 stage=4 off=0x03fe shift=0 cur=0x0b2c field=0x002c out=0x0b2c dacbuf_cap=0x000c
+[  187.000000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x03fe width=16 len=1 gate=0x03d2
+[  187.010000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x03fe width=16 len=1 gate=0x03d2
+[  187.010000] b43-phy3: [TXLPFLOG] dacbuf core=0 stage=5 off=0x03fe shift=6 cur=0x0b2c field=0x002c out=0x0b2c dacbuf_cap=0x000c
+[  187.030000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x03fe width=16 len=1 gate=0x03d2
+[  187.030000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x03ff width=16 len=1 gate=0x03d2
+[  187.040000] b43-phy3: [TXLPFLOG] dacbuf core=0 stage=6 off=0x03ff shift=0 cur=0x0b2c field=0x002c out=0x0b2c dacbuf_cap=0x000c
+[  187.050000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x03ff width=16 len=1 gate=0x03d2
+[  187.060000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x03ff width=16 len=1 gate=0x03d2
+[  187.070000] b43-phy3: [TXLPFLOG] dacbuf core=0 stage=7 off=0x03ff shift=6 cur=0x0b2c field=0x002c out=0x0b2c dacbuf_cap=0x000c
+[  187.080000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x03ff width=16 len=1 gate=0x03d2
+[  187.090000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x03fa width=16 len=1 gate=0x03d2
+[  187.100000] b43-phy3: [TXLPFLOG] dacbuf core=0 stage=8 off=0x03fa shift=0 cur=0x002c field=0x002c out=0x002c dacbuf_cap=0x000c
+[  187.110000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x03fa width=16 len=1 gate=0x03d2
+[  187.120000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x006b width=16 len=1 gate=0x03d2
+[  187.130000] b43-phy3: [TXLPFLOG] dacbuf core=1 stage=0 off=0x006b shift=0 cur=0x0b2c field=0x002c out=0x0b2c dacbuf_cap=0x000c
+[  187.140000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x006b width=16 len=1 gate=0x03d2
+[  187.150000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x006b width=16 len=1 gate=0x03d2
+[  187.160000] b43-phy3: [TXLPFLOG] dacbuf core=1 stage=1 off=0x006b shift=6 cur=0x0b2c field=0x002c out=0x0b2c dacbuf_cap=0x000c
+[  187.170000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x006b width=16 len=1 gate=0x03d2
+[  187.180000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x006c width=16 len=1 gate=0x03d2
+[  187.190000] b43-phy3: [TXLPFLOG] dacbuf core=1 stage=2 off=0x006c shift=0 cur=0x0b2c field=0x002c out=0x0b2c dacbuf_cap=0x000c
+[  187.200000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x006c width=16 len=1 gate=0x03d2
+[  187.210000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x006c width=16 len=1 gate=0x03d2
+[  187.210000] b43-phy3: [TXLPFLOG] dacbuf core=1 stage=3 off=0x006c shift=6 cur=0x0b2c field=0x002c out=0x0b2c dacbuf_cap=0x000c
+[  187.230000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x006c width=16 len=1 gate=0x03d2
+[  187.230000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x006e width=16 len=1 gate=0x03d2
+[  187.240000] b43-phy3: [TXLPFLOG] dacbuf core=1 stage=4 off=0x006e shift=0 cur=0x0b2c field=0x002c out=0x0b2c dacbuf_cap=0x000c
+[  187.250000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x006e width=16 len=1 gate=0x03d2
+[  187.260000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x006e width=16 len=1 gate=0x03d2
+[  187.270000] b43-phy3: [TXLPFLOG] dacbuf core=1 stage=5 off=0x006e shift=6 cur=0x0b2c field=0x002c out=0x0b2c dacbuf_cap=0x000c
+[  187.280000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x006e width=16 len=1 gate=0x03d2
+[  187.290000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x006f width=16 len=1 gate=0x03d2
+[  187.300000] b43-phy3: [TXLPFLOG] dacbuf core=1 stage=6 off=0x006f shift=0 cur=0x0b2c field=0x002c out=0x0b2c dacbuf_cap=0x000c
+[  187.310000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x006f width=16 len=1 gate=0x03d2
+[  187.320000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x006f width=16 len=1 gate=0x03d2
+[  187.330000] b43-phy3: [TXLPFLOG] dacbuf core=1 stage=7 off=0x006f shift=6 cur=0x0b2c field=0x002c out=0x0b2c dacbuf_cap=0x000c
+[  187.340000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x006f width=16 len=1 gate=0x03d2
+[  187.350000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x006a width=16 len=1 gate=0x03d2
+[  187.360000] b43-phy3: [TXLPFLOG] dacbuf core=1 stage=8 off=0x006a shift=0 cur=0x002c field=0x002c out=0x002c dacbuf_cap=0x000c
+[  187.370000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x006a width=16 len=1 gate=0x03d2
+[  187.380000] b43-phy3: [TXLPFLOG] unlock saved=0x03d2 mask=0xfffd val=0x0002
+[  187.380000] b43-phy3: [TXLPFLOG] lock saved=0x03d2
+[  187.390000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0140 width=16 len=1 gate=0x03d2
+[  187.400000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0360 width=16 len=1 gate=0x03d2
+[  187.410000] b43-phy3: [TXLPFLOG] rxlpf core=0 stage=0 off_lo=0x0140 off_hi=0x0360 lo_read=0x2000 hi_read=0x0000 lo_write=0x2440 hi_write=0x0150 cap0=0x00b7 cap1=0x00b7
+[  187.420000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0140 width=16 len=1 gate=0x03d2
+[  187.430000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0360 width=16 len=1 gate=0x03d2
+[  187.440000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0150 width=16 len=1 gate=0x03d2
+[  187.450000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0370 width=16 len=1 gate=0x03d2
+[  187.460000] b43-phy3: [TXLPFLOG] rxlpf core=1 stage=0 off_lo=0x0150 off_hi=0x0370 lo_read=0x2000 hi_read=0x0000 lo_write=0x2440 hi_write=0x0150 cap0=0x00b7 cap1=0x00b7
+[  187.470000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0150 width=16 len=1 gate=0x03d2
+[  187.480000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0370 width=16 len=1 gate=0x03d2
+[  187.490000] b43-phy3: [TXLPFLOG] unlock saved=0x03d2 mask=0xfffd val=0x0002
+[  187.490000] b43-phy3: [TXLPFLOG] lock saved=0x03d2
+[  187.500000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0141 width=16 len=1 gate=0x03d2
+[  187.510000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0361 width=16 len=1 gate=0x03d2
+[  187.520000] b43-phy3: [TXLPFLOG] rxlpf core=0 stage=1 off_lo=0x0141 off_hi=0x0361 lo_read=0x2009 hi_read=0x0000 lo_write=0x2349 hi_write=0x0150 cap0=0x00b7 cap1=0x00b7
+[  187.530000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0141 width=16 len=1 gate=0x03d2
+[  187.540000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0361 width=16 len=1 gate=0x03d2
+[  187.550000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0151 width=16 len=1 gate=0x03d2
+[  187.560000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0371 width=16 len=1 gate=0x03d2
+[  187.570000] b43-phy3: [TXLPFLOG] rxlpf core=1 stage=1 off_lo=0x0151 off_hi=0x0371 lo_read=0x2009 hi_read=0x0000 lo_write=0x2349 hi_write=0x0150 cap0=0x00b7 cap1=0x00b7
+[  187.580000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0151 width=16 len=1 gate=0x03d2
+[  187.590000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0371 width=16 len=1 gate=0x03d2
+[  187.600000] b43-phy3: [TXLPFLOG] unlock saved=0x03d2 mask=0xfffd val=0x0002
+[  187.600000] b43-phy3: [TXLPFLOG] lock saved=0x03d2
+[  187.610000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0441 width=16 len=1 gate=0x03d2
+[  187.620000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0440 width=16 len=1 gate=0x03d2
+[  187.630000] b43-phy3: [TXLPFLOG] rxlpf core=0 stage=2 off_lo=0x0441 off_hi=0x0440 lo_read=0x2012 hi_read=0x0000 lo_write=0x2352 hi_write=0x0150 cap0=0x00b7 cap1=0x00b7
+[  187.640000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0441 width=16 len=1 gate=0x03d2
+[  187.650000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0440 width=16 len=1 gate=0x03d2
+[  187.660000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0443 width=16 len=1 gate=0x03d2
+[  187.670000] b43-phy3: [TXLPFLOG] actab_rd id=0x07 off=0x0442 width=16 len=1 gate=0x03d2
+[  187.680000] b43-phy3: [TXLPFLOG] rxlpf core=1 stage=2 off_lo=0x0443 off_hi=0x0442 lo_read=0x2012 hi_read=0x0000 lo_write=0x2352 hi_write=0x0150 cap0=0x00b7 cap1=0x00b7
+[  187.690000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0443 width=16 len=1 gate=0x03d2
+[  187.700000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0442 width=16 len=1 gate=0x03d2
+[  187.710000] b43-phy3: [TXLPFLOG] unlock saved=0x03d2 mask=0xfffd val=0x0002
+[  187.710000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0020 width=16 len=16 gate=0x03d2
+[  187.720000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0090 width=16 len=16 gate=0x03d2
+[  187.730000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0121 width=16 len=2 gate=0x03d2
+[  187.740000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0131 width=16 len=2 gate=0x03d2
+[  187.750000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0124 width=16 len=2 gate=0x03d2
+[  187.760000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0137 width=16 len=2 gate=0x03d2
+[  187.770000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0000 width=16 len=16 gate=0x03d2
+[  187.770000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x0010 width=16 len=16 gate=0x03d2
+[  187.780000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x03c6 width=16 len=1 gate=0x03d2
+[  187.790000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x03c7 width=16 len=1 gate=0x03d2
+[  187.800000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x03d6 width=16 len=1 gate=0x03d2
+[  187.810000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x03d7 width=16 len=1 gate=0x03d2
+[  187.820000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x03e6 width=16 len=1 gate=0x03d2
+[  187.820000] b43-phy3: [TXLPFLOG] actab_wr id=0x07 off=0x03e7 width=16 len=1 gate=0x03d2
+[  187.830000] b43-phy3: [TXLPFLOG] actab_wr id=0x10 off=0x04c4 width=32 len=243 gate=0x03d2
+[  187.840000] b43-phy3: [TXLPFLOG] unlock saved=0x03d0 mask=0xfffd val=0x0000
+[  187.850000] b43-phy3: [TXLPFLOG] actab_wr id=0x20 off=0x0000 width=8 len=128 gate=0x03d2
