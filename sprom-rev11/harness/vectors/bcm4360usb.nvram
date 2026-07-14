@@ -1,0 +1,65 @@
+# BCM4360 USB rev-11 reference NVRAM (chip family of the DSL-3580L target).
+#
+# Source: asuswrt-merlin/release/src-rt-7.x.main/src/shared/bcmsrom.c,
+# `defaultsromvars_4360usb[]` (GPLv2 with linking exception). Same NVRAM
+# also appears in landonf/bhnd_nvram_fmt and hynnet/hiwifi-openwrt-HC5661.
+#
+# Used as a NVRAM-only second test vector: the harness synthesizes a raw
+# SROM image from these values using the patch's offsets/encoding, then
+# runs bcma_sprom_extract_r11() and diffs the output against this NVRAM.
+#
+# Why this vector earns its keep alongside the DSL-3580L dump:
+#   - rxgains*triso* values are 9 (not 15-saturated as on DSL-3580L), so
+#     the (trelnabyp<<7)|(triso<<3)|elnagain encoding is exercised on a
+#     non-degenerate triplet.
+#   - aa2g=3 (vs 0 on DSL-3580L) — exercises the 2.4 GHz header path.
+#   - 2 chains populated (chain 2 left zeroed) — exercises the per-chain
+#     block stride independently of DSL-3580L's 3-chain config.
+#   - subband5gver=0x4 confirmed on a different board, same value as
+#     DSL-3580L: cross-board evidence that this is the canonical rev-11
+#     5 GHz partition descriptor (4-segment layout, see top-level README).
+#
+# Fields not declared in the upstream defaultsromvars are absent below;
+# the harness treats them as zero in the synthetic SROM and skips diff
+# checks for them.
+
+sromrev=11
+boardtype=0x623
+devid=0x43a0
+boardrev=0x1200
+boardflags=0x10001000
+boardflags2=0x0
+boardflags3=0x0
+macaddr=00:90:4c:0e:60:11
+ccode=0
+regrev=0
+aa2g=0x3
+aa5g=0x3
+txchain=0x3
+rxchain=0x3
+antswitch=0
+subband5gver=0x4
+
+# Chain 0
+maxp2ga0=76
+pa2ga0=0xff34,0x19d6,0xfccf
+rxgains2gelnagaina0=4
+rxgains2gtrisoa0=9
+rxgains2gtrelnabypa0=1
+rxgains5gelnagaina0=3
+rxgains5gtrisoa0=9
+rxgains5gtrelnabypa0=1
+maxp5ga0=72,72,76,76
+pa5ga0=0xff2b,0x1652,0xfd2b,0xff2f,0x167a,0xfd29,0xff29,0x1615,0xfd2e,0xff2b,0x15c9,0xfd3a
+
+# Chain 1
+maxp2ga1=76
+pa2ga1=0xff27,0x1895,0xfced
+rxgains2gelnagaina1=4
+rxgains2gtrisoa1=9
+rxgains2gtrelnabypa1=1
+rxgains5gelnagaina1=3
+rxgains5gtrisoa1=9
+rxgains5gtrelnabypa1=1
+maxp5ga1=72,72,72,72
+pa5ga1=0xff27,0x171b,0xfd14,0xff2d,0x1741,0xfd0f,0xff33,0x1705,0xfd1a,0xff32,0x1666,0xfd2c

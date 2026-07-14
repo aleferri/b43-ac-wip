@@ -1,0 +1,10 @@
+# chmod +x pcicfg
+# chmod +x mempeek
+# wl -i wl1 down
+# ./pcicfg /proc/bus/pci/02/00.0 0x80 0x18000000
+scritto 0x18000000 @ /proc/bus/pci/02/00.0+0x80
+# ./mempeek 0x1100061c
+0x1100061c: 0x000007ff  (bswap 0xff070000)
+# ./pcicfg /proc/bus/pci/02/00.0 0x80 0x18001000
+scritto 0x18001000 @ /proc/bus/pci/02/00.0+0x80
+

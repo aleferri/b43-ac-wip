@@ -1,0 +1,76 @@
+From a4b7259ec79e194c0f266aa6775baa55375aee20 Mon Sep 17 00:00:00 2001
+From: Alessio Ferri <alessio.ferri@mythread.it>
+Date: Wed, 8 Jul 2026 23:38:21 +0000
+Subject: [PATCH 3/9] b43: register a dedicated 5 GHz channel set for the
+ AC-PHY
+
+b43_setup_bands() gave every non-N PHY the legacy A-PHY 5 GHz table,
+which lists ch 184-216 (5920-6080 MHz). On the AC-PHY those now fall in
+cfg80211's 6 GHz grid, where they are not valid 20 MHz centres.
+
+Add a dedicated table with the 802.11ac UNII 20 MHz channels (36-165)
+and route the AC-PHY to it. The table is placed before #undef CHAN5G.
+
+Signed-off-by: Alessio Ferri <alessio.ferri@mythread.it>
+---
+ drivers/net/wireless/broadcom/b43/main.c | 30 ++++++++++++++++++++++++
+ 1 file changed, 30 insertions(+)
+
+diff --git a/drivers/net/wireless/broadcom/b43/main.c b/drivers/net/wireless/broadcom/b43/main.c
+index 817448e5..82a52521 100644
+--- a/drivers/net/wireless/broadcom/b43/main.c
++++ b/drivers/net/wireless/broadcom/b43/main.c
+@@ -317,6 +317,23 @@ static struct ieee80211_channel b43_5ghz_aphy_chantable[] = {
+ 	CHAN5G(208, 0),		CHAN5G(212, 0),
+ 	CHAN5G(216, 0),
+ };
++
++/* 802.11ac UNII 20 MHz channels supported by the BCM4352/4360 AC-PHY. */
++static struct ieee80211_channel b43_5ghz_acphy_chantable[] = {
++	CHAN5G(36, 0),		CHAN5G(40, 0),
++	CHAN5G(44, 0),		CHAN5G(48, 0),
++	CHAN5G(52, 0),		CHAN5G(56, 0),
++	CHAN5G(60, 0),		CHAN5G(64, 0),
++	CHAN5G(100, 0),		CHAN5G(104, 0),
++	CHAN5G(108, 0),		CHAN5G(112, 0),
++	CHAN5G(116, 0),		CHAN5G(120, 0),
++	CHAN5G(124, 0),		CHAN5G(128, 0),
++	CHAN5G(132, 0),		CHAN5G(136, 0),
++	CHAN5G(140, 0),		CHAN5G(144, 0),
++	CHAN5G(149, 0),		CHAN5G(153, 0),
++	CHAN5G(157, 0),		CHAN5G(161, 0),
++	CHAN5G(165, 0),
++};
+ #undef CHAN4G
+ #undef CHAN5G
+ 
+@@ -344,6 +361,14 @@ static struct ieee80211_supported_band b43_band_5GHz_aphy = {
+ 	.n_bitrates	= b43_a_ratetable_size,
+ };
+ 
++static struct ieee80211_supported_band b43_band_5GHz_acphy = {
++	.band		= NL80211_BAND_5GHZ,
++	.channels	= b43_5ghz_acphy_chantable,
++	.n_channels	= ARRAY_SIZE(b43_5ghz_acphy_chantable),
++	.bitrates	= b43_a_ratetable,
++	.n_bitrates	= b43_a_ratetable_size,
++};
++
+ static struct ieee80211_supported_band b43_band_2GHz = {
+ 	.band		= NL80211_BAND_2GHZ,
+ 	.channels	= b43_2ghz_chantable,
+@@ -5286,6 +5311,11 @@ static int b43_setup_bands(struct b43_wldev *dev,
+ 	if (have_2ghz_phy)
+ 		hw->wiphy->bands[NL80211_BAND_2GHZ] = limited_2g ?
+ 			&b43_band_2ghz_limited : &b43_band_2GHz;
++	if (dev->phy.type == B43_PHYTYPE_AC) {
++		if (have_5ghz_phy)
++			hw->wiphy->bands[NL80211_BAND_5GHZ] =
++				&b43_band_5GHz_acphy;
++	} else
+ 	if (dev->phy.type == B43_PHYTYPE_N) {
+ 		if (have_5ghz_phy)
+ 			hw->wiphy->bands[NL80211_BAND_5GHZ] = limited_5g ?
+-- 
+2.43.0
+
