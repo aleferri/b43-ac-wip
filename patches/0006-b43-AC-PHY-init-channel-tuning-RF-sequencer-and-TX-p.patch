@@ -1,4 +1,4 @@
-From 4759ca713177469f0f61975b67a5296b75105c63 Mon Sep 17 00:00:00 2001
+From b69e55c72125b95eb5e83c96000289f368f56174 Mon Sep 17 00:00:00 2001
 From: Alessio Ferri <alessio.ferri@mythread.it>
 Date: Tue, 14 Jul 2026 11:58:35 +0000
 Subject: [PATCH 6/9] b43: AC-PHY init, channel tuning, RF sequencer, and TX
@@ -15,17 +15,17 @@ Signed-off-by: Alessio Ferri <alessio.ferri@mythread.it>
 ---
  drivers/net/wireless/broadcom/b43/Kconfig     |    4 +-
  .../wireless/broadcom/b43/helpers_phy_ac.c    |   61 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 7430 ++++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 7443 ++++++++++++++++-
  drivers/net/wireless/broadcom/b43/phy_ac.h    |  646 +-
  .../wireless/broadcom/b43/rxiqcal_phy_ac.c    |  842 ++
  .../wireless/broadcom/b43/rxiqcal_phy_ac.h    |   58 +
- 6 files changed, 9020 insertions(+), 21 deletions(-)
+ 6 files changed, 9033 insertions(+), 21 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/rxiqcal_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/rxiqcal_phy_ac.h
 
 diff --git a/drivers/net/wireless/broadcom/b43/Kconfig b/drivers/net/wireless/broadcom/b43/Kconfig
-index 4559549b8..58313f26c 100644
+index 4559549..58313f2 100644
 --- a/drivers/net/wireless/broadcom/b43/Kconfig
 +++ b/drivers/net/wireless/broadcom/b43/Kconfig
 @@ -149,8 +149,8 @@ config B43_PHY_LCN
@@ -41,7 +41,7 @@ index 4559549b8..58313f26c 100644
  	  PCI: BCM4352, BCM4360
 diff --git a/drivers/net/wireless/broadcom/b43/helpers_phy_ac.c b/drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
 new file mode 100644
-index 000000000..2f801e565
+index 0000000..2f801e5
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
 @@ -0,0 +1,61 @@
@@ -107,7 +107,7 @@ index 000000000..2f801e565
 +	b43_maskset32(dev, B43_MMIO_MACCTL, mask, set);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index fe102ea3d..ac9dc2380 100644
+index fe102ea..12cf1bb 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -1,17 +1,24 @@
@@ -171,7 +171,7 @@ index fe102ea3d..ac9dc2380 100644
  static enum b43_txpwr_result
  b43_phy_ac_op_recalc_txpower(struct b43_wldev *dev, bool ignore_tssi)
  {
-@@ -72,17 +101,7384 @@ static void b43_phy_ac_op_adjust_txpower(struct b43_wldev *dev)
+@@ -72,17 +101,7397 @@ static void b43_phy_ac_op_adjust_txpower(struct b43_wldev *dev)
  {
  }
  
@@ -1318,6 +1318,13 @@ index fe102ea3d..ac9dc2380 100644
 +	 * both d6220 captures (attach /, down-to-bss-up
 +	 * #53398/#53426); exact field semantics unconfirmed. */
 +	b43_phy_write(dev, 0x16d8, 0xffff);
++	/*
++	 * Vendor down-to-bss-up trace #53399: DELAY usec=5848 subito dopo
++	 * la WR wide-open. Probabile stabilizzazione del gain override prima
++	 * di modificare mode/RF-sequence. Senza questa attesa i run_rfseq_cmd
++	 * successivi partono su HW in transizione (osservato: hang post-TBL 0x20).
++	 */
++	udelay(5850);
 +
 +	b43_phy_maskset(dev, 0x0160, (u16)~0x0007, coremask);
 +	b43_phy_maskset(dev, B43_PHY_AC_RF_SEQ_MODE, (u16)~0x0070,
@@ -1681,9 +1688,12 @@ index fe102ea3d..ac9dc2380 100644
 +	b43_phy_set(dev, 0x0400, 0x0003);
 +	b43_phy_set(dev, 0x0402, cmd_bit);
 +
-+	/* Poll fino a done bit set (max 10 letture). */
++	/* Poll fino a done bit set (max 10 letture). Vendor down-to-bss-up
++	 * #53411: DELAY usec=1027 tra le prime due RD di 0x0403 (poll con
++	 * attesa tra iterazioni). udelay(200) x 10 = 2ms max, sufficiente. */
 +	for (i = 0; i < 10; i++) {
 +		u16 v = b43_phy_read_log(dev, 0x0403);
++		udelay(200);
 +		if (v & 0x0001)
 +			break;
 +	}
@@ -2273,6 +2283,7 @@ index fe102ea3d..ac9dc2380 100644
 +	 */
 +	b43_actab_write_bulk(dev, 0x20, 0x0000, 8, 128,
 +			     b43_acphy_tbl_0x20_gaincurve);
++	b43info(dev->wl, "[SENTINEL] TBL 0x20 gaincurve bulk done\n");
 +
 +	/*
 +	 * Per-core PHY setup post TBL 0x20 (6 op per 2 core attivi,
@@ -2301,6 +2312,7 @@ index fe102ea3d..ac9dc2380 100644
 +					(u16)~0x0010, 0x0000);
 +		}
 +	}
++	b43info(dev->wl, "[SENTINEL] per-core PHY setup post-TBL 0x20 done\n");
 +
 +	/*
 +	 * Setup radio per-core "step 1" (d6220 ch36 #34698-#34749, 52 op).
@@ -2308,6 +2320,7 @@ index fe102ea3d..ac9dc2380 100644
 +	 * 0x054b shared (byte high/low per core 0/1). Vedi helper.
 +	 */
 +	b43_phy_ac_radio_percore_setup_1(dev);
++	b43info(dev->wl, "[SENTINEL] radio_percore_setup_1 done\n");
 +
 +	/*
 +	 * PHY per-core loop su TUTTI i core silicon (d6220 ch36 #34750-#34755,
@@ -7567,7 +7580,7 @@ index fe102ea3d..ac9dc2380 100644
 +}
 +
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.h b/drivers/net/wireless/broadcom/b43/phy_ac.h
-index 35705a113..c041e20ad 100644
+index 35705a1..c041e20 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.h
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.h
 @@ -112,6 +112,25 @@ struct b43_phy_ac {
@@ -8231,7 +8244,7 @@ index 35705a113..c041e20ad 100644
  #endif /* B43_PHY_AC_H_ */
 diff --git a/drivers/net/wireless/broadcom/b43/rxiqcal_phy_ac.c b/drivers/net/wireless/broadcom/b43/rxiqcal_phy_ac.c
 new file mode 100644
-index 000000000..e3a12bd32
+index 0000000..e3a12bd
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/rxiqcal_phy_ac.c
 @@ -0,0 +1,842 @@
@@ -9079,7 +9092,7 @@ index 000000000..e3a12bd32
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/rxiqcal_phy_ac.h b/drivers/net/wireless/broadcom/b43/rxiqcal_phy_ac.h
 new file mode 100644
-index 000000000..9ffb21545
+index 0000000..9ffb215
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/rxiqcal_phy_ac.h
 @@ -0,0 +1,58 @@
