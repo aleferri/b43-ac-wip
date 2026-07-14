@@ -1256,6 +1256,7 @@ static void b43_r2069_prefregs_init(struct b43_wldev *dev)
 void b43_radio_2069_init(struct b43_wldev *dev)
 {
 	u16 saved_728;
+	unsigned int i;
 
 	saved_728 = b43_phy_read_log(dev, 0x0728);
 	b43_phy_read_log(dev, 0x0408);	/* #51263: base letta prima delle write sotto; loggata per HW (write assoluta) */
@@ -1274,9 +1275,16 @@ void b43_radio_2069_init(struct b43_wldev *dev)
 	b43_phy_write(dev, 0x0720, 0x03ff);
 	b43_phy_write(dev, B43_PHY_AC_RFCTL_CMD, 0x0c00);
 
-	/* --- Setup + udelay(100) --- */
-	udelay(100);
 	b43_phy_write(dev, B43_PHY_AC_RFCTL_CMD, 0x0c01);
+	/*
+	 * #51275: hold armed ~1032us while the RF/analog lock completes;
+	 * poll the done bit (0x0408 bit 1), keep the fixed budget as floor.
+	 */
+	for (i = 0; i < 15; i++) {
+		udelay(100);
+		if (i >= 11 && (b43_phy_read(dev, B43_PHY_AC_RFCTL_CMD) & 0x0002))
+			break;
+	}
 	b43_phy_write(dev, B43_PHY_AC_RFCTL_CMD, 0x0c00);
 
 	if (dev->phy.radio_rev == 4)
