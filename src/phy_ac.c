@@ -1,0 +1,7484 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * Broadcom B43 wireless driver IEEE 802.11ac AC-PHY support Copyright (c) 2015
+ * Rafał Miłecki <zajec5@gmail.com>
+ */
+
+#include <linux/slab.h>
+#include "b43.h"
+#include "phy_ac.h"
+#include "phy_common.h"
+#include "tables_phy_ac.h"
+#include "radio_2069.h"
+#include "rxiqcal_phy_ac.h"
+#include "main.h"
+
+/*
+ * AC-PHY-specific helpers (definiti in helpers_phy_ac.c, dichiarati in
+ * phy_ac.h). Vedi phy_ac.h per la documentazione delle due funzioni.
+ */
+
+/* Basic PHY ops */
+
+static int b43_phy_ac_op_allocate(struct b43_wldev *dev)
+{
+	struct b43_phy_ac *phy_ac;
+
+	phy_ac = kzalloc_obj(*phy_ac);
+	if (!phy_ac)
+		return -ENOMEM;
+	dev->phy.ac = phy_ac;
+
+	return 0;
+}
+
+static void b43_phy_ac_op_free(struct b43_wldev *dev)
+{
+	struct b43_phy *phy = &dev->phy;
+	struct b43_phy_ac *phy_ac = phy->ac;
+
+	kfree(phy_ac);
+	phy->ac = NULL;
+}
+
+static void b43_phy_ac_op_maskset(struct b43_wldev *dev, u16 reg, u16 mask,
+				  u16 set)
+{
+	b43_write16f(dev, B43_MMIO_PHY_CONTROL, reg);
+	b43_write16(dev, B43_MMIO_PHY_DATA,
+		    (b43_read16(dev, B43_MMIO_PHY_DATA) & mask) | set);
+}
+
+static u16 b43_phy_ac_op_radio_read(struct b43_wldev *dev, u16 reg)
+{
+	b43_write16f(dev, B43_MMIO_RADIO24_CONTROL, reg);
+	return b43_read16(dev, B43_MMIO_RADIO24_DATA);
+}
+
+static void b43_phy_ac_op_radio_write(struct b43_wldev *dev, u16 reg,
+				      u16 value)
+{
+	b43_write16f(dev, B43_MMIO_RADIO24_CONTROL, reg);
+	b43_write16(dev, B43_MMIO_RADIO24_DATA, value);
+}
+
+static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+{
+	if (b43_current_band(dev->wl) == NL80211_BAND_2GHZ)
+		return 11;
+	return 36;
+}
+
+/*
+ * TODO: calibrazione periodica non portata (entrambi gli stub sotto).
+ *
+ * La trace mostra due famiglie di scritture periodiche che qui non hanno
+ * nessun chiamante:
+ *
+ * 1. CRS-min-power: byte ALTO di 0x0324/0x0330/0x0321/0x032d/0x032a/0x0336/
+ *    0x0327/0x0333 (mask 0xff00, val=0x36) e' un reset one-shot, gia' coperto
+ *    da op_switch_channel. La controparte NON portata e' il byte BASSO
+ *    (mask 0x00ff) ricalcolato a runtime (0x3a all'attach, poi 0x34): soglia
+ *    ricalcolata, non reset fisso. Il valore d'attach (0x3a) e' gia' in
+ *    b43_phy_ac_set_channel; resta fuori solo il ricalcolo periodico.
+ *
+ * 2. Ciclo periodico ~10s su 0x0725/0x0925 (per-core): bit-set su mask
+ *    0x20/0x02/0x40/0x80/0x100, WR 0x07e6->0x07e2, assestamento 0x0600,
+ *    ripetuto identico per core per tutta la finestra "run". Nessuna funzione
+ *    qui tocca quei registri con questo pattern.
+ *
+ * Finche' recalc_txpower/adjust_txpower restano stub questa parte non esiste:
+ * il bring-up MVP probe+RX puo' non risentirne, sessioni piu' lunghe si'
+ * (drift di rxgain/CRS non corretto).
+ */
+static enum b43_txpwr_result
+b43_phy_ac_op_recalc_txpower(struct b43_wldev *dev, bool ignore_tssi)
+{
+	return B43_TXPWR_RES_DONE;
+}
+
+static void b43_phy_ac_op_adjust_txpower(struct b43_wldev *dev)
+{
+}
+
+/*
+ * prepare_structs is called by the b43 core after allocate and before init.
+ */
+static void b43_phy_ac_op_prepare_structs(struct b43_wldev *dev)
+{
+	struct b43_phy_ac *phy_ac = dev->phy.ac;
+
+	memset(phy_ac, 0, sizeof(*phy_ac));
+}
+
+/* Mode-bit clears. Ops non contigui nel capture (sparsi nella finestra di
+ * bring-up radio/rfkill), taggati per-seq. 4360 agcombo: 16-354 ; d6220 ch36 @#32833 (fp 10/14) */
+static void b43_phy_ac_mode_init(struct b43_wldev *dev)
+{
+	b43_phy_write(dev, 0x0410, 0x0077);
+
+	/* 0x17xx-page clears */
+	b43_phy_write(dev, 0x173e, 0x0000);
+	b43_phy_write(dev, 0x1725, 0x0000);
+	b43_phy_write(dev, 0x1722, 0x0000);
+	b43_phy_write(dev, 0x1723, 0x0000);
+	b43_phy_write(dev, 0x1724, 0x0000);
+	b43_phy_write(dev, 0x1725, 0x0000);
+	b43_phy_write(dev, 0x1726, 0x0000);
+	b43_phy_write(dev, 0x1727, 0x0000);
+	b43_phy_write(dev, 0x1750, 0x0000);
+
+	b43_phy_write(dev, 0x1728, 0x0080);
+	b43_phy_write(dev, 0x1720, 0x0180);
+	b43_phy_write(dev, 0x1729, 0x0000);
+	b43_phy_write(dev, 0x1721, 0x5000);
+
+	/*
+	 * RMW pairs: read the base-page register, OR in the bit, write to the
+	 * 0x17xx-page mirror. On the reference board both base values read 0,
+	 * so the OR-in bit alone lands in the mirror. Each read is issued
+	 * immediately before its dependent write; the vendor trace shows the
+	 * same interleaving (d6220 attach #32847-32850).
+	 */
+	b43_phy_write(dev, 0x173a, b43_phy_read_log(dev, 0x073a) | 0x0100);
+	b43_phy_write(dev, 0x1725, b43_phy_read_log(dev, B43_PHY_AC_AFE_C1) | 0x0400);
+}
+
+/*
+ * Init ADC gain words, PER-CHIP (4360 #4070-86 = 0x097a/0x08fa; 4352 ch36
+ * #32854-86 = 0x03bf/0x0340, 2 passate). adc_reset poi riscrive 0x03ac/0x032c.
+ */
+static void b43_phy_ac_init_regs(struct b43_wldev *dev)
+{
+	static const u16 hi_regs[8] = { 0x033a, 0x033b, 0x033e, 0x033f,
+					0x0342, 0x0343, 0x0346, 0x0347 };
+	static const u16 lo_regs[8] = { 0x033c, 0x033d, 0x0340, 0x0341,
+					0x0344, 0x0345, 0x0348, 0x0349 };
+	bool is4352 = (dev->dev->chip_id == 0x4352);
+	u16 hi = is4352 ? 0x03bf : 0x097a;
+	u16 lo = is4352 ? 0x0340 : 0x08fa;
+	unsigned int pass, passes = is4352 ? 2 : 1;
+	unsigned int i;
+
+	b43_phy_write(dev, 0x1645, 0x025c);
+
+	for (pass = 0; pass < passes; pass++) {
+		for (i = 0; i < 8; i++)
+			b43_phy_write(dev, hi_regs[i], hi);
+		for (i = 0; i < 8; i++)
+			b43_phy_write(dev, lo_regs[i], lo);
+	}
+}
+
+/* 5 GHz pa5ga subband group (0..3) for a channel freq, per subband5gver. */
+static unsigned int b43_phy_ac_pa5g_group(struct b43_wldev *dev, u16 freq)
+{
+	switch (dev->dev->bus_sprom->subband5gver) {
+	case 4:
+		if (freq < 5250)
+			return 0;
+		if (freq < 5500)
+			return 1;
+		if (freq > 5744)
+			return 3;
+		return 2;
+	case 1:
+		if (freq < 5250)
+			return 0;
+		if (freq > 5744)
+			return 2;
+		return 1;
+	case 0:
+		if (freq < 5500)
+			return 0;
+		if (freq < 5745)
+			return 1;
+		return 2;
+	default:
+		if (freq < 5100)
+			return 0;
+		if (freq > 5499)
+			return 2;
+		return 1;
+	}
+}
+
+/*
+ * Idle-TSSI: cal + commit del base index per-core (misurato, non costante; loop gated su coremask).
+ * 4360 agcombo #9210-9664 ; d6220 ch36 @#34693,#38269,#39960,#40557 (fp 10/178, 4 chiamate) */
+/*
+ * Gate RX di fase: il vendor lavora ARMATO (0x140=0x0df4: solo WAITED, clip
+ * det ON sui 3 core) e RILASCIA ai confini (0x0df6: OFDM|WAITED, clip OFF).
+ * Witness arm/release: #38257+#38262-64 / #38209+#38214-16; pulse di confine
+ * #38839/#39948, #40530/45, #41127/57, #46073/#46106, #50128/41; rilascio
+ * finale #52480+#52485-87 (nessun ri-arm). Ordine vendor: 0x140, poi clip.
+ */
+static void b43_phy_ac_clip_det(struct b43_wldev *dev, bool enable);
+static void b43_phy_ac_cca_pulse(struct b43_wldev *dev);
+static void b43_phy_ac_rxgain_perchan_tail(struct b43_wldev *dev);
+static void b43_phy_ac_probe_cycle(struct b43_wldev *dev,
+				   const u16 *mode_vals, unsigned int n_iter);
+static void b43_phy_ac_rxiqcal_measure_block(struct b43_wldev *dev);
+static void b43_phy_ac_farrow_setup(struct b43_wldev *dev,
+				    struct ieee80211_channel *channel);
+
+/*
+ * ADC-hold bracket per-active-core. Unico helper che tocca 0x02ed/f1/f5/f9.
+ * Vendor: sempre le stesse 4 MOD sui 4 registri in ordine fisso (bit 0x0010).
+ *   hold=true  -> set bit 4  (ADC hold, i.e. RX release)
+ *   hold=false -> clr bit 4  (ADC bracket drop, i.e. RX arm)
+ * Non inlinare in altre funzioni: chiamare sempre per nome.
+ */
+static void b43_phy_ac_adc_hold(struct b43_wldev *dev, bool hold)
+{
+	u16 set = hold ? 0x0010 : 0x0000;
+
+	b43_phy_maskset(dev, 0x02ed, (u16)~0x0010, set);
+	b43_phy_maskset(dev, 0x02f1, (u16)~0x0010, set);
+	b43_phy_maskset(dev, 0x02f5, (u16)~0x0010, set);
+	b43_phy_maskset(dev, 0x02f9, (u16)~0x0010, set);
+}
+
+/*
+ * CLASSCTL write con status_mask update. NO peek, NO clip_det.
+ * Vendor: 2 casi (#46071, #50126) di WR isolato senza peek prima.
+ */
+static void b43_phy_ac_classctl_write(struct b43_wldev *dev, bool arm)
+{
+	struct b43_phy_ac *phy_ac = dev->phy.ac;
+
+	b43_phy_write(dev, 0x0140, arm ? 0x0df4 : 0x0df6);
+	phy_ac->status_mask = (phy_ac->status_mask & ~B43_PHY_AC_STATE_RX_ANY) |
+			      (arm ? B43_PHY_AC_STATE_RX_WAITED
+				   : (B43_PHY_AC_STATE_RX_WAITED |
+				      B43_PHY_AC_STATE_RX_OFDM));
+}
+
+/*
+ * CLASSCTL write peeked: peek + WR. Vendor: 35 casi (pattern principale).
+ * Composizione di phy_read_log + classctl_write. Non inlinare l'op WR.
+ */
+static void b43_phy_ac_classctl_write_peeked(struct b43_wldev *dev, bool arm)
+{
+	b43_phy_read_log(dev, 0x0140);
+	b43_phy_ac_classctl_write(dev, arm);
+}
+
+/*
+ * rx_gate_with_adc_hold: composizione dei 3 helper, chiamati per nome.
+ * Vendor pattern completo (35 casi, es. #38208-#38216 release):
+ *   1. classctl_write_peeked(arm)   -> peek + WR 0x0140
+ *   2. adc_hold(!arm)               -> 4× MOD 0x02?d bit 0x0010
+ *   3. clip_det(!arm)               -> 3× MOD 0x?d4 bit 0x4000
+ * Nessuna op inline.
+ */
+static void b43_phy_ac_rx_gate_with_adc_hold(struct b43_wldev *dev, bool arm)
+{
+	b43_phy_ac_classctl_write_peeked(dev, arm);
+	b43_phy_ac_adc_hold(dev, !arm);
+	b43_phy_ac_clip_det(dev, !arm);
+}
+
+static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev,
+				      const u16 *base_indices)
+{
+	/*
+	 * The per-core base index (parametro base_indices) è un valore
+	 * *misurato* dal firmware: 0x206 in attach iter1, 0x207 in attach iter2,
+	 * 0x206 di nuovo in attach iter3 (down-to-bss-up 0x207). Calcolato dal
+	 * readback idle-TSSI (PHY 0x013/0x012/0x464 più radio-side 0x004e/0x0166
+	 * per chain, catturati a #57240-41 nel trace down-to-bss-up ma non nel
+	 * matched slice attach).
+	 *
+	 * TODO: sostituire il readback→index derivation con il calcolo reale
+	 * (formula ignota); per ora il chiamante passa il valore captured.
+	 *
+	 * NB: REQUIRE è responsabilità del chiamante — iter1 (in set_channel)
+	 * gira a MAC sospeso, iter2 (in post_cal_finalize) a MAC UP, iter3
+	 * (in post_cal_finalize_iter3) a MAC sospeso di nuovo.
+	 */
+	unsigned int core;
+	u16 r013 = 0, r012 = 0, r464 = 0;
+	u16 rr_4e = 0, rr_66 = 0, rr_24e = 0, rr_366 = 0;
+
+	/*
+	 * TSSI-path enable per-core (vendor #38268-#38273):
+	 *   MOD 0x0072      set bit 2  (globale, ripetuto per ogni core)
+	 *   MOD 0x0727+s    set bit 2  (per-core)
+	 *   MOD 0x073c+s    clear bit 4
+	 * Il vendor usa MOD (mask esplicita), non OR/AND.
+	 */
+	{
+		unsigned int c;
+		u8 mask = dev->phy.ac->coremask;
+
+		for (c = 0; c < dev->phy.ac->num_cores; c++) {
+			if (!((mask >> c) & 1))
+				continue;
+			b43_phy_maskset(dev, 0x0072, (u16)~0x0004, 0x0004);
+			b43_phy_maskset(dev, 0x0727 + c * 0x200, (u16)~0x0004, 0x0004);
+			b43_phy_maskset(dev, 0x073c + c * 0x200, (u16)~0x0010, 0x0000);
+		}
+	}
+	b43_radio_maskset(dev, 0x0548, (u16)~(0x0001), (0x0001));
+	b43_radio_write(dev, 0x0549, 0x0000);
+	b43_radio_write(dev, 0x054a, 0x0000);
+	b43_radio_write(dev, 0x054b, 0x0000);
+	b43_radio_write(dev, 0x054c, 0x0000);
+	b43_radio_maskset(dev, 0x040b, (u16)~0x0001, 0);
+	b43_radio_maskset(dev, 0x001a, (u16)~0x00f0, 0x0010);
+	b43_radio_maskset(dev, 0x001a, (u16)~(0x0004), (0x0004));
+	b43_radio_maskset(dev, 0x054b, (u16)~0xff00, 0x0100);
+	b43_radio_maskset(dev, 0x001a, (u16)~0x0300, 0);
+	b43_radio_maskset(dev, 0x0017, (u16)~0x0002, 0);
+	b43_radio_maskset(dev, 0x001f, (u16)~0x0004, 0);
+	b43_radio_maskset(dev, 0x0170, (u16)~(0x0100), (0x0100));
+	b43_radio_maskset(dev, 0x021a, (u16)~0x00f0, 0x0010);
+	b43_radio_maskset(dev, 0x021a, (u16)~(0x0004), (0x0004));
+	b43_radio_maskset(dev, 0x054b, (u16)~0x00ff, 0x0001);
+	b43_radio_maskset(dev, 0x021a, (u16)~0x0300, 0);
+	b43_radio_maskset(dev, 0x0217, (u16)~0x0002, 0);
+	b43_radio_maskset(dev, 0x021f, (u16)~0x0004, 0);
+	b43_radio_maskset(dev, 0x0370, (u16)~(0x0100), (0x0100));
+	b43_phy_read(dev, 0x0401);
+	/* Campi per-core di RF_SEQ_MODE: ch36 (2x2) 0x0003/0x3000, agcombo (3x3)
+	 * 0x0007/0x7000 -> coremask / coremask<<12, non costanti. */
+	b43_phy_maskset(dev, 0x0401, (u16)~0x0007, dev->phy.ac->coremask);
+	b43_phy_maskset(dev, 0x0401, (u16)~0x7000,
+			(u16)(dev->phy.ac->coremask << 12));
+
+	for (core = 0; core < dev->phy.ac->num_cores; core++) {
+		u16 p = (u16)(core * 0x0200);
+		u16 captured_base_index = base_indices[core];
+
+		if (!((dev->phy.ac->coremask >> core) & 1))
+			continue;
+
+		/*
+		 * NB: il gate 0x0140 è già armato all'entrata (dal
+		 * rx_gate_with_adc_hold(true) alla fine di adc_reset), e
+		 * viene rilasciato + ri-armato *alla fine* del body per-core
+		 * (vendor #38838-#38839 = release core 0, #39947-#39948 =
+		 * arm prima di core 1). Cioè NON serve un arm iniziale qui.
+		 */
+		/*
+		 * Per-core prologue (vendor #38329-#38339 core0):
+		 *   PHY.RD  0x019e            (peek pre-relock)
+		 *   PHY.RD  0x040f            (peek diagnostico)
+		 *   PHY.MOD 0x040f clr 0x0200 (MOD, non AND — vendor)
+		 *   PHY.RD  0x0394            (peek diagnostico)
+		 *   PHY.RD  0x0393            (peek diagnostico)
+		 *   PHY.MOD 0x019e set 0x0002 (relock, non OR)
+		 *   TBL.RD  id=0x0c off=0x63+core*4 len=1 (base index readback)
+		 */
+		{
+			u16 dummy_baseidx;
+
+			b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+			b43_phy_read(dev, 0x040f);
+			b43_phy_maskset(dev, 0x040f, (u16)~0x0200, 0);
+			b43_phy_read(dev, 0x0394);
+			b43_phy_read(dev, 0x0393);
+
+			b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+			b43_actab_read_bulk(dev, 0x0c, 0x63,
+					    16, 1, &dummy_baseidx);
+		}
+		b43_phy_read(dev, 0x0747);
+		b43_phy_read(dev, 0x0732);
+		b43_phy_read(dev, 0x0733);
+		b43_phy_read(dev, 0x0734);
+		b43_phy_read(dev, 0x0722);
+		b43_phy_read(dev, 0x0727);
+		b43_phy_read(dev, 0x073c);
+		/*
+		 * TBL.RD id=0x0c off=0x67 (vendor #38347-#38351): readback base
+		 * index per core 1. Anche qui actab_read_bulk per la label.
+		 */
+		{
+			u16 dummy_baseidx2;
+
+			b43_actab_read_bulk(dev, 0x0c, 0x67, 16, 1, &dummy_baseidx2);
+		}
+		b43_phy_read(dev, 0x0947);
+		b43_phy_read(dev, 0x0932);
+		b43_phy_read(dev, 0x0933);
+		b43_phy_read(dev, 0x0934);
+		b43_phy_read(dev, 0x0922);
+		b43_phy_read(dev, 0x0927);
+		b43_phy_read(dev, 0x093c);
+		b43_phy_write(dev, 0x0732, 0x0000);
+		b43_phy_write(dev, 0x0733, 0x0000);
+		b43_phy_write(dev, 0x0747, 0x0000);
+		b43_phy_maskset(dev, 0x0734, (u16)~0x0038, 0);
+		b43_phy_maskset(dev, 0x0722, (u16)~(0x0001), (0x0001));
+		b43_phy_maskset(dev, 0x0722, (u16)~(0x0008), (0x0008));
+		b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~(0x0002), (0x0002));
+		{
+			static const u16 tblw_val_1 = 0x0000;
+			b43_actab_write_bulk(dev, 0x000c, 0x0063, 16, 1, &tblw_val_1);
+		}
+		{
+			static const u16 tblw_val_2 = 0x0000;
+			b43_actab_write_bulk(dev, 0x000c, 0x0073, 16, 1, &tblw_val_2);
+		}
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~(0x0002), (0x0002));
+		rr_4e = b43_radio_read(dev, 0x004e);
+		rr_66 = b43_radio_read(dev, 0x0166);
+		{
+			u16 tblr_dummy_1;
+			b43_actab_read_bulk(dev, 0x0007, 0x017e, 16, 1, &tblr_dummy_1);
+		}
+		/* pdet_range: NVRAM has no pdetrange5g on this board (default 0);
+		 * SPROM8 FEM offsets are 0xFFFF on SROM 11. Zero → clear bits. */
+		b43_radio_maskset(dev, 0x004e, (u16)~0x0e00, 0);
+		b43_radio_maskset(dev, 0x0166, (u16)~(0x0002), (0x0002));
+		b43_phy_write(dev, 0x0932, 0x0000);
+		b43_phy_write(dev, 0x0933, 0x0000);
+		b43_phy_write(dev, 0x0947, 0x0000);
+		b43_phy_maskset(dev, 0x0934, (u16)~0x0038, 0);
+		b43_phy_maskset(dev, 0x0922, (u16)~(0x0001), (0x0001));
+		b43_phy_maskset(dev, 0x0922, (u16)~(0x0008), (0x0008));
+		b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~(0x0002), (0x0002));
+		{
+			static const u16 tblw_val_3 = 0x0000;
+			b43_actab_write_bulk(dev, 0x000c, 0x0067, 16, 1, &tblw_val_3);
+		}
+		{
+			static const u16 tblw_val_4 = 0x0000;
+			b43_actab_write_bulk(dev, 0x000c, 0x0077, 16, 1, &tblw_val_4);
+		}
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~(0x0002), (0x0002));
+		rr_24e = b43_radio_read(dev, 0x024e);
+		rr_366 = b43_radio_read(dev, 0x0366);
+		{
+			u16 tblr_dummy_2;
+			b43_actab_read_bulk(dev, 0x0007, 0x018e, 16, 1, &tblr_dummy_2);
+		}
+		b43_radio_maskset(dev, 0x024e, (u16)~0x0e00, 0);
+		b43_radio_maskset(dev, 0x0366, (u16)~(0x0002), (0x0002));
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+		{
+			u16 tblr_dummy_3;
+			b43_actab_read_bulk(dev, 0x000c, 0x0063, 16, 1, &tblr_dummy_3);
+		}
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+		{
+			u16 tblr_dummy_4;
+			b43_actab_read_bulk(dev, 0x000c, 0x0067, 16, 1, &tblr_dummy_4);
+		}
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+		b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~(0x0002), (0x0002));
+		{
+			static const u16 tblw_val_5 = 0x0000;
+			b43_actab_write_bulk(dev, 0x000c, 0x0063, 16, 1, &tblw_val_5);
+		}
+		{
+			static const u16 tblw_val_6 = 0x0000;
+			b43_actab_write_bulk(dev, 0x000c, 0x0073, 16, 1, &tblw_val_6);
+		}
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+		b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~(0x0002), (0x0002));
+		{
+			static const u16 tblw_val_7 = 0x0000;
+			b43_actab_write_bulk(dev, 0x000c, 0x0067, 16, 1, &tblw_val_7);
+		}
+		{
+			static const u16 tblw_val_8 = 0x0000;
+			b43_actab_write_bulk(dev, 0x000c, 0x0077, 16, 1, &tblw_val_8);
+		}
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+		b43_phy_ac_cca_pulse(dev);
+		/* trace: PHY.AND 0x0471 val=0xfffe = clr bit 0 (op AND, non OR).
+		 * Era maskset(~0x0000,0xfffe) = reg|=0xfffe, errore di trascrizione
+		 * da quando AND/OR non erano distinti; sibling corretto in
+		 * rxiqcal_phy_ac.c b43_phy_mask(0x0471, ~0x0001). */
+		b43_phy_mask(dev, 0x0471, (u16)~0x0001);
+		b43_phy_write(dev, 0x0463, 0x0000);
+		b43_phy_write(dev, 0x0461, 0xffff);
+		b43_phy_write(dev, 0x0462, 0x003c);
+		b43_phy_read(dev, 0x0400);
+		b43_phy_maskset(dev, 0x0400, (u16)~0x0000, 0x0001);
+		b43_phy_mask(dev, 0x0460, (u16)~0x0004);	/* trace: AND clr bit2 (era OR) */
+		b43_phy_mask(dev, 0x0460, (u16)~0x0001);	/* trace: AND clr bit0 (era OR) */
+		b43_phy_mask(dev, 0x0382, (u16)~0xc000);	/* trace: AND clr bit14-15 (era OR) */
+		b43_phy_maskset(dev, 0x0460, (u16)~0x0000, 0x0001);
+		b43_phy_read(dev, 0x0403);
+		b43_phy_read(dev, 0x0403);
+		b43_phy_write(dev, 0x0400, 0x0000);
+		b43_phy_read(dev, 0x0739);
+		b43_phy_write(dev, 0x0739, 0x0080);
+		b43_phy_read(dev, 0x073a);
+		b43_phy_write(dev, 0x073a, 0x0180);
+		b43_phy_read(dev, 0x0725);
+		b43_phy_write(dev, 0x0725, 0x0604);
+		b43_phy_read(dev, 0x0939);
+		b43_phy_write(dev, 0x0939, 0x0080);
+		b43_phy_read(dev, 0x093a);
+		b43_phy_write(dev, 0x093a, 0x0180);
+		b43_phy_read(dev, 0x0925);
+		b43_phy_write(dev, 0x0925, 0x0604);
+		b43_phy_write(dev, 0x0925, 0x0600);
+		b43_phy_write(dev, 0x093a, 0x0180);
+		b43_phy_write(dev, 0x0939, 0x0000);
+		b43_phy_write(dev, 0x0725, 0x0600);
+		b43_phy_write(dev, 0x073a, 0x0180);
+		b43_phy_write(dev, 0x0739, 0x0000);
+		b43_phy_read(dev, 0x0393);
+		b43_phy_write(dev, 0x0394, 0x0110 | core);
+		b43_phy_write(dev, 0x0393, 0x8000);
+		r013 = b43_phy_read(dev, 0x0013);
+		r012 = b43_phy_read(dev, 0x0012);
+		r464 = b43_phy_read(dev, 0x0464);
+		b43_phy_maskset(dev, 0x0460, (u16)~0x0000, 0x0002);
+		b43_phy_mask(dev, 0x0460, (u16)~0x0004);	/* trace: AND clr bit2 (era OR) */
+		b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~(0x0002), (0x0002));
+		{
+			static const u16 tblw_val_9 = 0x0000;
+			b43_actab_write_bulk(dev, 0x000c, 0x0063, 16, 1, &tblw_val_9);
+		}
+		{
+			static const u16 tblw_val_10 = 0x0000;
+			b43_actab_write_bulk(dev, 0x000c, 0x0073, 16, 1, &tblw_val_10);
+		}
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+		b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~(0x0002), (0x0002));
+		{
+			static const u16 tblw_val_11 = 0x0000;
+			b43_actab_write_bulk(dev, 0x000c, 0x0067, 16, 1, &tblw_val_11);
+		}
+		{
+			static const u16 tblw_val_12 = 0x0000;
+			b43_actab_write_bulk(dev, 0x000c, 0x0077, 16, 1, &tblw_val_12);
+		}
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+		b43_phy_ac_cca_pulse(dev);
+		b43_phy_write(dev, 0x0732, 0x0000);
+		b43_phy_write(dev, 0x0733, 0x0000);
+		b43_phy_write(dev, 0x0747, 0x0000);
+		b43_phy_write(dev, 0x0722, 0x0000);
+		/* 0x0000 = ch36 4352; agcombo 4360 (pure 5 GHz) qui scrive 0x0029
+		 * (#9289). Anche per 0x0934: differenza chip o board, non banda. */
+		b43_phy_write(dev, 0x0734, 0x0000);
+		b43_phy_write(dev, 0x0727, 0x0004);
+		b43_phy_write(dev, 0x073c, 0x0000);
+		b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~(0x0002), (0x0002));
+		{
+			static const u16 tblw_val_13 = 0x0035;
+			b43_actab_write_bulk(dev, 0x000c, 0x0063, 16, 1, &tblw_val_13);
+		}
+		{
+			static const u16 tblw_val_14 = 0x0035;
+			b43_actab_write_bulk(dev, 0x000c, 0x0073, 16, 1, &tblw_val_14);
+		}
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+		b43_radio_write(dev, 0x004e, 0x8000);
+		b43_radio_write(dev, 0x0166, 0x0000);
+		b43_phy_write(dev, 0x0932, 0x0000);
+		b43_phy_write(dev, 0x0933, 0x0000);
+		b43_phy_write(dev, 0x0947, 0x0000);
+		b43_phy_write(dev, 0x0922, 0x0000);
+		b43_phy_write(dev, 0x0934, 0x0000);
+		b43_phy_write(dev, 0x0927, 0x0004);
+		b43_phy_write(dev, 0x093c, 0x0000);
+		b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~(0x0002), (0x0002));
+		{
+			static const u16 tblw_val_15 = 0x0035;
+			b43_actab_write_bulk(dev, 0x000c, 0x0067, 16, 1, &tblw_val_15);
+		}
+		{
+			static const u16 tblw_val_16 = 0x0035;
+			b43_actab_write_bulk(dev, 0x000c, 0x0077, 16, 1, &tblw_val_16);
+		}
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+		b43_radio_write(dev, 0x024e, 0x8000);
+		b43_radio_write(dev, 0x0366, 0x0000);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~(0x0002), (0x0002));
+		b43_phy_write(dev, 0x0394, 0x000b);
+		b43_phy_write(dev, 0x0393, 0x0000);
+		b43_phy_maskset(dev, 0x040f, (u16)~0x0200, 0);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+		/*
+		 * Vendor emette MOD 0x0645 val=0xfe06/0xfe07 mask=0x03ff — cioè
+		 * set = (base_index & 0x03ff) | 0xfc00. I bit 10-15 (0xfc00) sono
+		 * config statici della MOD (bit 10=idle_tssi_valid, 11-15=path?),
+		 * OR-ati nel set dal blob. Verificato ch36 d6220:
+		 *   #38582 val=0xfe06 (core 0 iter 1), #38836 val=0xfe00 (core 1),
+		 *   #40273 val=0xfe07 (core 0 iter 2), #40870 val=0xfe06 (iter 3).
+		 */
+		b43_phy_maskset(dev, 0x0645 + p, (u16)~0x03ff,
+				captured_base_index | 0xfc00);
+
+		b43dbg(dev->wl,
+		       "phy-ac: idle-tssi c%u meas: 0x013=0x%04x 0x012=0x%04x 0x464=0x%04x radio 0x4e=0x%04x 0x166=0x%04x 0x24e=0x%04x 0x366=0x%04x prog=0x%04x\n",
+		       core, r013, r012, r464,
+		       rr_4e, rr_66, rr_24e, rr_366, captured_base_index);
+	}
+
+	/*
+	 * Op finali iter 1 (una volta, non per-core):
+	 *   PHY.WR 0x0401 val=0x7733 (#38837) — RFCTL1 restore
+	 *   rx_gate_with_adc_hold(false) (#38838-#38846):
+	 *     peek 0x0140 + WR 0x0df6 + 4× adc_hold(true) + 3× clip_det disable
+	 */
+	b43_phy_write(dev, 0x0401, 0x7733);
+	b43_phy_ac_rx_gate_with_adc_hold(dev, false);
+}
+
+/* 4360 agcombo: 10004-10013 ; d6220 ch36 @#38852,#39209,#54753 (fp 10/10, 3 chiamate) */
+static void b43_phy_ac_txpwrctrl_setup(struct b43_wldev *dev, u16 freq)
+{
+	static const struct { s16 a1, b0, b1; } pwrdet_def[3] = {
+		{ (s16)0xff49, (s16)0x12d9, (s16)0xfd99 },
+		{ (s16)0xff54, (s16)0x1212, (s16)0xfd89 },
+		{ (s16)0xff53, (s16)0x11b7, (s16)0xfdc0 },
+	};
+	static const u16 est_pwr_tbl_id[3] = { 0x40, 0x60, 0x80 };
+	const struct ssb_sprom *sprom = dev->dev->bus_sprom;
+	u8 num_cores = dev->phy.ac->num_cores;
+	unsigned int grp = b43_phy_ac_pa5g_group(dev, freq);
+	u32 ppr[24] = { 0 };
+	u8 core;
+
+	/*
+	 * ppr[24] (per-rate power reduction, tabella 0x21 offset 0, 24 × u32):
+	 * il vendor calcola questi valori dai mcsbw*po dell'NVRAM combinati con
+	 * la regolamentazione country e i target power per canale/rate. La
+	 * derivazione generica non è ancora implementata — per ora hardcodiamo
+	 * i valori captured dal trace vendor D6220 ch36 (#39134-#39178):
+	 *   ppr[1] = ppr[5] = ppr[6] = 0x00000202, tutti gli altri 0.
+	 * Fonte: mcsbw205glpo (5 GHz low, bw 20) e affini nel wl1_nvram.txt.
+	 * SALAME: valido solo per D6220 ch36. Altri canali/board romperanno il
+	 * match finché non è implementata la derivazione da SPROM.
+	 */
+	ppr[1] = 0x00000202;
+	ppr[5] = 0x00000202;
+	ppr[6] = 0x00000202;
+
+	/*
+	 * Precondition — stato vendor all'entrata di txpwrctrl_setup (#38852):
+	 *   CLASSCTL 0x0140 = 0x0df6 (release):  RX_WAITED=1, RX_OFDM=1, RX_CCK=0
+	 *   0x?d4 bit 14 = 0 (clip det abilitato per ogni core): !CLIP_?_DIS
+	 *   0x0001 bit 14 = 0 (CCA_RESET pulse concluso a #38786)
+	 *   MAC.MCTRL bit 0 = 0 (MAC suspended)
+	 * Il vendor NON esegue con gate armed né clip det disabled: la fase
+	 * txpwrctrl è "setup con classifier RX attivo", non calibrazione.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED |
+			   B43_PHY_AC_STATE_RX_OFDM,
+			   B43_PHY_AC_STATE_RX_CCK |
+			   B43_PHY_AC_STATE_CLIP_ALL_DIS |
+			   B43_PHY_AC_STATE_CCA_RESET |
+			   B43_PHY_AC_STATE_MAC_EN);
+
+	/*
+	 * Correct contro la trace,
+	 *  (unique block, single set_channel).
+	 */
+	b43_phy_maskset(dev, 0x0072, (u16)~(0x0001), (0x0001));
+	b43_phy_maskset(dev, 0x0070, (u16)~0x8000, 0);
+	b43_phy_maskset(dev, 0x0070, (u16)~(0x0100), (0x0100));
+	b43_phy_maskset(dev, 0x0072, (u16)~0x4000, 0);
+	b43_phy_maskset(dev, 0x0072, (u16)~(0x4000), (0x4000));
+	b43_phy_maskset(dev, 0x0070, (u16)~0x8000, 0);
+
+	/* Per-core current index (captured: 0x14, non 0x19). */
+	for (core = 0; core < num_cores; core++) {
+		if (!((dev->phy.ac->coremask >> core) & 1))
+			continue;
+		b43_phy_maskset(dev, 0x0644 + core * 0x0200, (u16)~0x007f, 0x0014);
+	}
+
+	/*
+	 * Il base index (idle-TSSI) non si tocca qui: lo scrive
+	 * b43_phy_ac_idle_tssi_meas, chiamata da set_channel PRIMA di
+	 * questa funzione — combacia con la posizione osservata in trace
+	 * (~240 eventi prima di questo blocco).
+	 */
+
+	/* Target power + control bits (captured: 0xc8, non 0x96). */
+	b43_phy_maskset(dev, 0x0071, (u16)~0x00ff, 0x00c8);
+	b43_phy_maskset(dev, 0x0071, (u16)~0x0700, 0x0400);
+	b43_phy_maskset(dev, 0x0070, (u16)~0x0800, 0);
+	b43_phy_maskset(dev, 0x0070, (u16)~(0x0400), (0x0400));
+
+	/*
+	 * Per-core max index (vendor #38864-#38865): valore 0x0042, ordine
+	 * INVERTITO (core alto → basso). Vendor:
+	 *   #38864 MOD 0x0846 val=0x0042 (core 1)
+	 *   #38865 MOD 0x0646 val=0x0042 (core 0)
+	 * A differenza del "current index" a #38858-#38859 (0x0644/0x0844
+	 * emesso in ordine normale 0→1).
+	 */
+	{
+		unsigned int cr;
+
+		for (cr = num_cores; cr-- > 0; ) {
+			if (!((dev->phy.ac->coremask >> cr) & 1))
+				continue;
+			b43_phy_maskset(dev, 0x0646 + cr * 0x0200,
+					(u16)~0x00ff, 0x0042);
+		}
+	}
+
+	/*
+	 * Per-core est_pwr LUT (128 × u16) + per-rate ppr (24 × u32).
+	 * NB: vendor NON fa tbl_write_lock/unlock esplicito qui — chiama
+	 * direttamente actab_write_bulk (che emette peek 0x019e internamente).
+	 * Il gate è già in stato lockato dal relock #38851 della transizione.
+	 */
+	for (core = 0; core < num_cores; core++) {
+		const struct ssb_sprom_core_pwr_info *pw =
+			&sprom->core_pwr_info[core];
+		u16 lut[128];
+		s16 a1, b0, b1;
+		s32 num, den;
+		int j;
+
+		if (!((dev->phy.ac->coremask >> core) & 1))
+			continue;
+
+		if (pw->pa5ga[grp * 3] || pw->pa5ga[grp * 3 + 1] ||
+		    pw->pa5ga[grp * 3 + 2]) {
+			a1 = (s16)pw->pa5ga[grp * 3];
+			b0 = (s16)pw->pa5ga[grp * 3 + 1];
+			b1 = (s16)pw->pa5ga[grp * 3 + 2];
+		} else {
+			a1 = pwrdet_def[core].a1;
+			b0 = pwrdet_def[core].b0;
+			b1 = pwrdet_def[core].b1;
+		}
+		/*
+		 * Transfer-function est_pwr: al passo j, num = 512·b0 + 32·b1·j,
+		 * den = 0x8000 + a1·j, v = (den/2 + num)/den, clamp [-8, 0x7f].
+		 * Provenienza (implementazione GPL indipendente, NON dal decompilato):
+		 * b43 mainline, b43_nphy_tx_power_ctl_setup — phy_n.c:4194-4203:
+		 *     num = 8 * (16 * b0 + b1 * i);  den = 32768 + a1 * i;
+		 *     pwr = (4 * num + den / 2) / den, clamp basso -8;
+		 * algebricamente identica (qui in forma incrementale; 128 voci vs 64).
+		 * Secondo testimone: brcmsmac phy_n.c:17743. Coeff. a1/b0/b1 dallo
+		 * SPROM (pa5ga[]), come pa_5g[] in b43 (phy_n.c:4106-4108).
+		 */
+		num = (s32)b0 << 9;
+		den = 0x8000;
+		for (j = 0; j < 128; j++) {
+			s32 d = den ? den : 1;	/* guard: real pa keeps den > 0 */
+			s32 v = (d / 2 + num) / d;
+
+			num += (s32)b1 * 0x20;
+			if (v < -8)
+				v = -8;
+			if (v > 0x7f)
+				v = 0x7f;
+			lut[j] = (u16)(v & 0xff);
+			den += a1;
+		}
+		b43_actab_write_bulk(dev, est_pwr_tbl_id[core], 0, 16, 128, lut);
+	}
+	b43_actab_write_bulk(dev, 0x21, 0, 32, 24, ppr);
+}
+
+/**************************************************
+ * Open-loop TX gain (fixed index)
+ **************************************************/
+
+/*
+ * Tabella aggiornata al ramo OEM 7.x (non più al 6.30 del DSL-3580L).
+ *
+ * Verificata byte-per-byte su TRE blob indipendenti (simbolo
+ * acphy_txgain_epa_5g_2069rev4): wlDSL-3580_EU.o_save (6.30),
+ * wlD6220.o_save (7.14.89) e wl.ko estratto da AGSOT_1_0_8.img (Sercomm,
+ * branch diverso, board diversa — nessuna parentela con Netgear/D-Link).
+ * D6220 e AGSOT sono identici al 100% (128/128 entry) fra loro, il DSL
+ * diverge da entrambi a partire dall'indice 31 (97/128 entry diverse).
+ * Due board fisicamente indipendenti con lo stesso valore esatto non è
+ * compatibile con calibrazione tarata per singola board — è la tabella
+ * generica del ramo driver 7.x, non un dato di taratura del D6220. Il
+ * controllo di riferimento è chan_tuning_2069rev4 (puramente radio, mai
+ * calibrazione): identica su tutti e tre i blob, come previsto.
+ *
+ * B43_PHY_AC_TXPWR_INDEX_DEFAULT resta 0x40, verificato contro la stessa
+ * trace D6220 usata per trovare l'indice (vedi sopra): a idx 0x40 la nuova
+ * tabella ha {0x35,0x1300,0xf32f}, che sbroccato dà esattamente
+ * g0/g1/g2/bbmult osservati sul filo. La costante è esportata in phy_ac.h.
+ */
+
+static const u16 b43_acphy_txgain_5g_rev4[384] = {
+	0x0044, 0x7f00, 0xf3ff, 0x0040, 0x7f00, 0xf3ff,
+	0x0040, 0x7f00, 0xf3ef, 0x0040, 0x7f00, 0xf3df,
+	0x0041, 0x7f00, 0xf3cf, 0x003f, 0x7f00, 0xf3c7,
+	0x0041, 0x7f00, 0xf3b7, 0x0040, 0x7f00, 0xf3af,
+	0x003f, 0x7f00, 0xf3a7, 0x0041, 0x7f00, 0xf397,
+	0x0041, 0x7f00, 0xf38f, 0x0041, 0x7f00, 0xf387,
+	0x0040, 0x7f00, 0xf37f, 0x0040, 0x7f00, 0xf377,
+	0x0041, 0x7f00, 0xf36f, 0x0042, 0x7f00, 0xf367,
+	0x003e, 0x7f00, 0xf367, 0x003f, 0x7f00, 0xf35f,
+	0x0041, 0x7f00, 0xf357, 0x003d, 0x7f00, 0xf357,
+	0x0040, 0x7f00, 0xf34f, 0x0042, 0x7f00, 0xf347,
+	0x003f, 0x7f00, 0xf347, 0x0043, 0x7f00, 0xf33f,
+	0x003f, 0x7f00, 0xf33f, 0x0044, 0x7f00, 0xf337,
+	0x0040, 0x7f00, 0xf337, 0x003c, 0x7f00, 0xf337,
+	0x0043, 0x7f00, 0xf32f, 0x003f, 0x7f00, 0xf32f,
+	0x003c, 0x7f00, 0xf32f, 0x003f, 0x6f00, 0xf32f,
+	0x0042, 0x6700, 0xf32f, 0x0041, 0x5f00, 0xf32f,
+	0x003e, 0x5f00, 0xf32f, 0x0042, 0x5700, 0xf32f,
+	0x003e, 0x5700, 0xf32f, 0x003e, 0x4f00, 0xf32f,
+	0x0042, 0x4700, 0xf32f, 0x003e, 0x4700, 0xf32f,
+	0x0042, 0x3f00, 0xf32f, 0x003f, 0x3f00, 0xf32f,
+	0x0045, 0x3700, 0xf32f, 0x0041, 0x3700, 0xf32f,
+	0x003d, 0x3700, 0xf32f, 0x0041, 0x2f00, 0xf32f,
+	0x003e, 0x2f00, 0xf32f, 0x003a, 0x2f00, 0xf32f,
+	0x0045, 0x2700, 0xf32f, 0x0041, 0x2700, 0xf32f,
+	0x003d, 0x2700, 0xf32f, 0x0046, 0x1f00, 0xf32f,
+	0x0042, 0x1f00, 0xf32f, 0x003e, 0x1f00, 0xf32f,
+	0x003b, 0x1f00, 0xf32f, 0x0037, 0x1f00, 0xf32f,
+	0x0047, 0x1700, 0xf32f, 0x0043, 0x1700, 0xf32f,
+	0x003f, 0x1700, 0xf32f, 0x003c, 0x1700, 0xf32f,
+	0x0039, 0x1700, 0xf32f, 0x0037, 0x1600, 0xf32f,
+	0x0037, 0x1500, 0xf32f, 0x0035, 0x1400, 0xf32f,
+	0x0035, 0x1300, 0xf32f, 0x0034, 0x1200, 0xf32f,
+	0x0034, 0x1100, 0xf32f, 0x0034, 0x1000, 0xf32f,
+	0x0036, 0x0f00, 0xf32f, 0x0036, 0x0e00, 0xf32f,
+	0x0034, 0x0d00, 0xf32f, 0x0035, 0x0c00, 0xf32f,
+	0x0038, 0x0b00, 0xf32f, 0x0039, 0x0a00, 0xf32f,
+	0x003d, 0x0900, 0xf32f, 0x0040, 0x0800, 0xf32f,
+	0x0044, 0x0700, 0xf32f, 0x0040, 0x0700, 0xf32f,
+	0x003c, 0x0700, 0xf32f, 0x0038, 0x0700, 0xf32f,
+	0x0034, 0x0700, 0xf32f, 0x0030, 0x0700, 0xf32f,
+	0x002c, 0x0700, 0xf32f, 0x0028, 0x0700, 0xf32f,
+	0x0024, 0x0700, 0xf32f, 0x0020, 0x0700, 0xf32f,
+	0x001c, 0x0700, 0xf32f, 0x0018, 0x0700, 0xf32f,
+	0x0014, 0x0700, 0xf32f, 0x0012, 0x0700, 0xf32f,
+	0x0011, 0x0700, 0xf32f, 0x0010, 0x0700, 0xf32f,
+	0x000f, 0x0700, 0xf32f, 0x000e, 0x0700, 0xf32f,
+	0x000d, 0x0700, 0xf32f, 0x000c, 0x0700, 0xf32f,
+	0x000c, 0x0700, 0xf32f, 0x000b, 0x0700, 0xf32f,
+	0x000a, 0x0700, 0xf32f, 0x000a, 0x0700, 0xf32f,
+	0x0009, 0x0700, 0xf32f, 0x0009, 0x0700, 0xf32f,
+	0x0008, 0x0700, 0xf32f, 0x0008, 0x0700, 0xf32f,
+	0x0007, 0x0700, 0xf32f, 0x0007, 0x0700, 0xf32f,
+	0x0007, 0x0700, 0xf32f, 0x0006, 0x0700, 0xf32f,
+	0x0006, 0x0700, 0xf32f, 0x0006, 0x0700, 0xf32f,
+	0x0005, 0x0700, 0xf32f, 0x0005, 0x0700, 0xf32f,
+	0x0005, 0x0700, 0xf32f, 0x0004, 0x0700, 0xf32f,
+	0x0004, 0x0700, 0xf32f, 0x0004, 0x0700, 0xf32f,
+	0x0004, 0x0700, 0xf32f, 0x0003, 0x0700, 0xf32f,
+	0x0003, 0x0700, 0xf32f, 0x0003, 0x0700, 0xf32f,
+	0x0003, 0x0700, 0xf32f, 0x0003, 0x0700, 0xf32f,
+	0x0003, 0x0700, 0xf32f, 0x0002, 0x0700, 0xf32f,
+	0x0002, 0x0700, 0xf32f, 0x0002, 0x0700, 0xf32f,
+	0x0002, 0x0700, 0xf32f, 0x0002, 0x0700, 0xf32f,
+};
+
+/*
+ * Set the per-core TX gain from the open-loop txgain LUT at index @idx.
+ * Nessuna footprint propria: a idx 0x40 riscrive quanto adc_reset gia' programma ( su 4352 d6220 + 4360 agcombo; d6220 ch36: n/l).
+ * Unico knob dell'indice operativo, gira per ultimo: NON hand-editare le costanti di adc_reset. */
+void b43_phy_ac_txpwr_by_index(struct b43_wldev *dev, u8 idx)
+{
+	struct b43_phy_ac *ac = dev->phy.ac;
+	static const u16 bbmult_lo[3] = { 0x0063, 0x0067, 0x006b };
+	static const u16 bbmult_hi[3] = { 0x0073, 0x0077, 0x007b };
+	unsigned int core;
+	bool first_core = true;
+
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	/*
+	 * Vendor pattern per ogni chiamata a txpwr_by_index (verificato su
+	 * #45962-#46020, D6220 ch36):
+	 *   Preamble (2): peek 0x019e + MOD lock
+	 *   Per-core:
+	 *     [bridge tra core: MOD lock idempotente (1 op) — solo dal 2° in poi]
+	 *     Batch A (3 fast WR TBL 0x0007 offset 0x100+c/0x103+c/0x106+c)
+	 *     Sync (2): peek 0x019e + MOD lock idempotente
+	 *     Batch B (2 fast WR TBL 0x000c offset bbmult_lo[c]/bbmult_hi[c])
+	 *   Postamble (2): MOD lock idempotente + MOD unlock
+	 *
+	 * NB: alcune chiamate del vendor (es. #38132) aggiungono side-effect
+	 * come restore di 0x0070 bit 15:13 e WR 0x1641. Quelli non sono parte
+	 * della sequenza standard di txpwr_by_index — vanno gestiti dal
+	 * chiamante quando servono.
+	 */
+
+	/* Preamble: peek gate + lock */
+	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+
+	for (core = 0; core < ac->num_cores; core++) {
+		const u16 *e = &b43_acphy_txgain_5g_rev4[idx * 3];
+		u16 g0, g1, g2, bbmult;
+
+		if (!((ac->coremask >> core) & 1))
+			continue;
+
+		if (!first_core) {
+			/* Bridge tra core: solo MOD lock idempotente */
+			b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+		}
+		first_core = false;
+
+		bbmult =  e[0]       & 0x00ff;
+		g0     = (e[0] >> 8) | ((e[1] & 0x00ff) << 8);
+		g1     = (e[1] >> 8) | ((e[2] & 0x00ff) << 8);
+		g2     =  e[2] >> 8;
+
+		/* Batch A: 3 fast WR TBL 0x0007 (gain code) */
+		b43_actab_write_bulk(dev, 7, (u16)(core + 0x0100), 16, 1, &g0);
+		b43_actab_write_bulk(dev, 7, (u16)(core + 0x0103), 16, 1, &g1);
+		b43_actab_write_bulk(dev, 7, (u16)(core + 0x0106), 16, 1, &g2);
+
+		/* Sync tra batch A e B: peek + MOD lock idempotente */
+		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+
+		/* Batch B: 2 fast WR TBL 0x000c (bbmult per-antenna) */
+		b43_actab_write_bulk(dev, 0xc, bbmult_lo[core], 16, 1, &bbmult);
+		b43_actab_write_bulk(dev, 0xc, bbmult_hi[core], 16, 1, &bbmult);
+
+		b43dbg(dev->wl,
+		       "phy-ac: txpwr_by_index core %u idx %u gain %04x/%04x/%04x bbmult %02x\n",
+		       core, idx, g0, g1, g2, bbmult);
+	}
+
+	/* Postamble: MOD lock idempotente + MOD unlock */
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+}
+
+/**************************************************
+ * RF sequencing
+ **************************************************/
+
+/*
+ * Force a single RF sequence.
+ *
+ * The AC sequencer has no separate RF_SEQ_MODE register: the "mode" is
+ * asserted by ORing 0x3 into RFCTL1 (reg 0x400) and restoring its prior value
+ * at exit. Bit 0x1 of REG_TBL_WRITE_GATE (reg 0x19E, the RF-seq override gate,
+ * distinct from the table-write gate at bit 0x2) is set before the trigger and
+ * restored after.
+ *
+ * @rf_seq is one of B43_PHY_AC_RF_SEQ_TRIG_{RX2TX,RST2RX,...}.
+ *
+ * Poll budget: up to 200 x udelay(1) ~= 200us, the same wait the N/HT-PHY
+ * force_rf_sequence helpers use. Validato sul ferro (timeout mai loggato);
+ * il DELAY ~1ms del blob e' solo la sua granularita' di retry.
+ *
+ * Returns true if the sequence completed within the spin window, false on
+ * timeout. Non-static: shared by other PHY units.
+ */
+bool
+b43_phy_ac_force_rf_sequence(struct b43_wldev *dev, u16 rf_seq, u16 gate)
+{
+	u16 saved_rfctl1, saved_gate;
+	bool timed_out = true;
+	unsigned int i;
+
+	saved_rfctl1 = b43_phy_read_log(dev, B43_PHY_AC_RFCTL1);
+	saved_gate = b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+
+	/* Gate open via maskset (RMW atomico, mask=<gate>). Vendor AC-PHY
+	 * differisce da N/HT-PHY qui: emette PHY.MOD con mask esplicito, non
+	 * un semplice OR. Verificato: D6220 #52456 emette
+	 * PHY.MOD addr=0x019e val=0x0001 mask=0x0001. */
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~gate, gate);
+	b43_phy_set(dev, B43_PHY_AC_RFCTL1, 0x3);
+	b43_phy_set(dev, B43_PHY_AC_RF_SEQ_TRIG, rf_seq);
+
+	for (i = 0; i < 200; i++) {
+		if (!(b43_phy_read(dev, B43_PHY_AC_RF_SEQ_STATUS) & rf_seq)) {
+			timed_out = false;
+			break;
+		}
+		udelay(1);
+	}
+	if (timed_out)
+		b43err(dev->wl, "Forcing RF sequence timeout\n");
+
+	b43_phy_write(dev, B43_PHY_AC_RFCTL1, saved_rfctl1);
+	b43_phy_write(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, saved_gate);
+
+	return !timed_out;
+}
+
+/*
+ * CCA reset strobe (senza phy_force_clock/udelay wrap): pulse del bit 0x4000
+ * di BBCFG (0x0001) con state tracking. Il vendor emette il pulse come
+ * coppia maskset atomica (val=<bit> mask=<bit> → val=0 mask=<bit>) in molti
+ * punti del bring-up per innescare la CCA state machine senza forzare il
+ * PHY clock.
+ *
+ * Per la variante "hard" (con force_clock, usata da channel_switch_prep),
+ * vedi b43_phy_ac_reset_cca.
+ */
+static void b43_phy_ac_cca_pulse(struct b43_wldev *dev)
+{
+	struct b43_phy_ac *phy_ac = dev->phy.ac;
+
+	b43_phy_maskset(dev, B43_PHY_AC_BBCFG,
+			(u16)~B43_PHY_AC_BBCFG_RSTCCA,
+			B43_PHY_AC_BBCFG_RSTCCA);
+	phy_ac->status_mask |= B43_PHY_AC_STATE_CCA_RESET;
+	b43_phy_maskset(dev, B43_PHY_AC_BBCFG,
+			(u16)~B43_PHY_AC_BBCFG_RSTCCA, 0);
+	phy_ac->status_mask &= ~B43_PHY_AC_STATE_CCA_RESET;
+}
+
+/*
+ * Reset the CCA (Clear Channel Assessment) state machine.
+ *
+ * Stage 1 pulses BBCFG bit 0x4000 with the PHY clock forced.
+ */
+void
+b43_phy_ac_reset_cca(struct b43_wldev *dev)
+{
+	struct b43_phy_ac *phy_ac = dev->phy.ac;
+
+	b43_phy_force_clock(dev, true);
+	/* Pulse RSTCCA. Il vendor traccia sempre il pulse come coppia
+	 * maskset (val=<bit> mask=<bit> → val=0 mask=<bit>): 98 op su 98
+	 * nelle catture d6220/agcombo. Usiamo phy_maskset così anche il
+	 * wrapper del test emette il formato vendor. */
+	b43_phy_maskset(dev, B43_PHY_AC_BBCFG,
+			(u16)~B43_PHY_AC_BBCFG_RSTCCA,
+			B43_PHY_AC_BBCFG_RSTCCA);
+	phy_ac->status_mask |= B43_PHY_AC_STATE_CCA_RESET;
+	udelay(1);
+	b43_phy_maskset(dev, B43_PHY_AC_BBCFG,
+			(u16)~B43_PHY_AC_BBCFG_RSTCCA, 0);
+	phy_ac->status_mask &= ~B43_PHY_AC_STATE_CCA_RESET;
+	b43_phy_force_clock(dev, false);
+}
+
+/**************************************************
+ * Various PHY ops
+ **************************************************/
+
+/*
+ * Update the classifier control register.
+ *
+ * The classifier picks which preamble types the PHY decodes (CCK, OFDM,
+ * "waited").
+ *
+ * Use this from switch_channel to disable OFDM on Japanese channel 14,
+ * like b43_phy_ht_classifier does.
+ */
+/* 4360 agcombo: 4091 e 9987 (disable/enable agli estremi di channel_setup) ; d6220 ch36: n/l */
+u16 b43_phy_ac_classifier(struct b43_wldev *dev, u16 mask, u16 val)
+{
+	struct b43_phy_ac *phy_ac = dev->phy.ac;
+	u16 tmp;
+	u16 allowed = B43_PHY_AC_CLASSCTL_CCKEN |
+		      B43_PHY_AC_CLASSCTL_OFDMEN |
+		      B43_PHY_AC_CLASSCTL_WAITEDEN;
+
+	tmp = b43_phy_read_log(dev, B43_PHY_AC_CLASSCTL);
+	tmp &= allowed;
+	tmp &= ~mask;
+	tmp |= (val & mask);
+	b43_phy_maskset(dev, B43_PHY_AC_CLASSCTL, ~allowed, tmp);
+
+	/* Mirror CLASSCTL[2:0] into status_mask[3:1]: identical bit order,
+	 * shifted by 1 (RX_CCK is bit 1). */
+	phy_ac->status_mask = (phy_ac->status_mask & ~B43_PHY_AC_STATE_RX_ANY) |
+			      (u16)((tmp & 0x0007) << 1);
+
+	return tmp;
+}
+
+/*
+ * Clip detector enable/disable, per core. On phy rev 1 this is a single bit
+ * (0x4000) of the gain-control word at 0x06d4 + core*0x200: cleared to enable,
+ * set to freeze it during a channel reconfigure.
+ */
+/* 4360 agcombo: 4096-4098 e 9992-9994 ; d6220 ch36: n/l */
+static void b43_phy_ac_clip_det(struct b43_wldev *dev, bool enable)
+{
+	struct b43_phy_ac *phy_ac = dev->phy.ac;
+	unsigned int core;
+
+	/*
+	 * All num_cores silicon cores: the wl blob freezes/unfreezes the clip
+	 * bit on every core, including the antenna-less core 2 (trace 
+	 * disable /  enable, 0x0ad4), so gate on presence, not on the
+	 * active-chain mask.
+	 *
+	 * NB: usiamo la forma `0x06d4 + core * 0x200` inline (invece di una
+	 * variabile locale `reg`) perché il correlator riconosce questo idiom
+	 * come per-core stride e risolve gli address a [0x06d4, 0x08d4, 0x0ad4].
+	 */
+	for (core = 0; core < dev->phy.ac->num_cores; core++) {
+		u16 bit = (u16)(B43_PHY_AC_STATE_CLIP_C0_DIS << core);
+
+		if (enable) {
+			b43_phy_mask(dev, 0x06d4 + core * 0x200, (u16)~0x4000);
+			phy_ac->status_mask &= ~bit;
+		} else {
+			b43_phy_set(dev, 0x06d4 + core * 0x200, 0x4000);
+			phy_ac->status_mask |= bit;
+		}
+	}
+}
+
+/*
+ * Channel-switch prep block. Fedele al vendor d6220 attach #32887-32901:
+ * 15 op che il codice Broadcom emette all'inizio di ogni set_channel per
+ * portare il PHY nello stato "quiesced, pre-radio-reprogram". Ordine e
+ * valori dal trace.
+ *
+ *   #32887-88  SET RF_SEQ_OVERRIDE_GATE (0x019e bit 0) — prende il
+ *              controllo del RF sequencer prima di toccare il radio.
+ *   #32889     SET 0x0003 bit 8 — controllo band-related, semantica
+ *              del bit non confermata (5GHZ nominale è bit 0). Presente
+ *              sia in attach-to-bss-ch36 sia in down-to-bss-up.
+ *   #32890-91  Classifier via *plain write* 0x0140 = 0x05f4. Il valore
+ *              intero contiene WAITEDEN (bit 2) più altri bit [10:4]
+ *              del cui significato non è stato ancora fatto RE; la
+ *              hard-coded write matcha il capture su ch36.  TODO: se
+ *              serve un valore variabile per altri canali/band, ricavarlo
+ *              da tabella (vedi channeltab_e_r2069) o da calcolo.
+ *   #32892-95  Clip mask "estesa": mask 0x0010 su 0x02ed/2f1/2f5/2f9.
+ *              Distinta da set_reg_on_reset che tocca gli stessi
+ *              registri ma con mask 0x0020 (bit diverso).
+ *   #32896-98  Clip det per-core disable (delegato a clip_det()).
+ *   #32899     Plain 0x0339 = 0.
+ *   #32900-01  RSTCCA pulse (delegato a reset_cca()).
+ */
+static void b43_phy_ac_channel_switch_prep(struct b43_wldev *dev)
+{
+	/* A: gate override + bandctl. Il vendor emette una peek visibile su
+	 * 0x019e (#32887) prima del maskset (#32888); riprodurla è necessario
+	 * per far combaciare il wire ordering, il valore letto è scartato. */
+	(void)b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE,
+			(u16)~B43_PHY_AC_RF_SEQ_OVERRIDE_GATE,
+			B43_PHY_AC_RF_SEQ_OVERRIDE_GATE);
+	b43_phy_maskset(dev, 0x0003, (u16)~0x0100, 0x0100);
+
+	/* B: classifier setup — peek + plain write. I bit [10:0] sono
+	 * invarianti (bit 2 = WAITEDEN, altri bit RE non identificati),
+	 * bit 11 (0x0800) è di stato PHY: 0 al primo attach fresh, poi
+	 * settato da coeff_bank_init e persistente sul chip. Preservarlo
+	 * dal peek per matchare sia le catture attach (bit 11 = 0) che
+	 * dtu / re-set_channel (bit 11 = 1). */
+	{
+		u16 cur = b43_phy_read_log(dev, 0x0140);
+		u16 next = (u16)((cur & 0x0800) | 0x05f4);
+
+		b43dbg(dev->wl,
+		       "phy-ac: channel_switch_prep 0x0140 cur=0x%04x -> 0x%04x\n",
+		       cur, next);
+		b43_phy_write(dev, 0x0140, next);
+	}
+
+	/* C: extended clip mask = adc_hold cleared (release-hold). Il vendor
+	 * emette MOD 0x02?d val=0 mask=0x0010. Chiama l'helper unico. */
+	b43_phy_ac_adc_hold(dev, false);
+
+	/* D: per-core clip det disable. Aggiorna phy_ac->status_mask
+	 * (CLIP_ALL_DIS) via il side-effect di clip_det(). */
+	b43_phy_ac_clip_det(dev, false);
+
+	/* E: extra reset — semantica non confermata, sempre val=0 nelle
+	 * catture ch36. */
+	b43_phy_write(dev, 0x0339, 0x0000);
+
+	/* F: CCA reset. */
+	b43_phy_ac_reset_cca(dev);
+
+	/* Classifier ha impostato solo WAITEDEN nei bit [2:0]: rispecchiare
+	 * lo stato del sequencer in status_mask, come farebbe classifier(). */
+	dev->phy.ac->status_mask = (dev->phy.ac->status_mask & ~B43_PHY_AC_STATE_RX_ANY) |
+				   B43_PHY_AC_STATE_RX_WAITED;
+}
+
+/* AC-PHY init. */
+/*
+ * Quiesce the silicon RX cores the board does not wire.
+ *
+ * PHY reg 0x0b reports the silicon PHY core count (3 on the 4352/4360 die); the
+ * board may wire fewer, given by the SROM rxchain mask. Save reg 0x401/0x400,
+ * drive the sequencer mode bits for the desired mask, fire force_rfseq cmd 0
+ * (trigger 0x01) then cmd 1 (0x02), restore. Reg 0x401 is read once and not
+ * written in between, so a single save is equivalent.
+ */
+/* 4360 agcombo: 9032-9033 (0x16d8 bracket + seq force) ; d6220 ch36 @#34530 (0x16d8=0xffff) */
+/* Forward decl: run_rfseq_cmd è definita più avanti nel file. */
+static void b43_phy_ac_run_rfseq_cmd(struct b43_wldev *dev, u16 cmd_bit);
+
+static void b43_phy_ac_rxcore_setstate(struct b43_wldev *dev, u8 coremask)
+{
+	u16 saved_401, saved_400;
+
+	saved_401 = b43_phy_read_log(dev, B43_PHY_AC_RF_SEQ_MODE);
+	saved_400 = b43_phy_read_log(dev, B43_PHY_AC_RFCTL1);
+	/* Read vendor #34529, valore ignoto in wl-diag: loggata. */
+	b43_phy_read_log(dev, 0x06d8);
+
+	/* RX-gain override companion of 0x06d8, bracketing the core-state
+	 * change: forced wide-open (0xffff) before, set to the operational
+	 * mask (0x1431) after. Values transcribed literally -- identical in
+	 * both d6220 captures (attach /, down-to-bss-up
+	 * #53398/#53426); exact field semantics unconfirmed. */
+	b43_phy_write(dev, 0x16d8, 0xffff);
+
+	b43_phy_maskset(dev, 0x0160, (u16)~0x0007, coremask);
+	b43_phy_maskset(dev, B43_PHY_AC_RF_SEQ_MODE, (u16)~0x0070,
+			(u16)(coremask << 4));
+	b43_phy_maskset(dev, B43_PHY_AC_RF_SEQ_MODE, (u16)~0x7000, 0x7000);
+	b43_phy_maskset(dev, B43_PHY_AC_RF_SEQ_MODE, (u16)~0x0007, 0x0000);
+	b43_phy_maskset(dev, B43_PHY_AC_RFCTL1, (u16)~0x0001, 0x0001);
+
+	/* Il vendor emette entrambi i force sequence via inner-lock (bit 0 di
+	 * 0x019e), non outer-lock (bit 1). Cioè: run_rfseq_cmd, non
+	 * force_rf_sequence. */
+	b43_phy_ac_run_rfseq_cmd(dev, 0x0001);
+	b43_phy_ac_run_rfseq_cmd(dev, 0x0002);
+
+	/* Restore. Ordine vendor #34553-#34555: prima MOD ~0x0007, poi MOD
+	 * ~0x7000, poi WR 0x0400. */
+	b43_phy_maskset(dev, B43_PHY_AC_RF_SEQ_MODE, (u16)~0x0007,
+			saved_401 & 0x0007);
+	b43_phy_maskset(dev, B43_PHY_AC_RF_SEQ_MODE, (u16)~0x7000,
+			saved_401 & 0x7000);
+	b43_phy_write(dev, B43_PHY_AC_RFCTL1, saved_400);
+
+	b43_phy_write(dev, 0x16d8, 0x1431);
+}
+
+/*
+ * RF sequencer command tables (table id 7) + spexp TXV: the table-load half of
+ * the reset-time setup. The analog sub-setups that precede these writes are in
+ * b43_phy_ac_analog_on_reset; the reset-time register block is in
+ * b43_phy_ac_set_reg_on_reset. On this board (boardflags2 = 0x2) the
+ * band-gated 0x80 write is skipped, so it is omitted.
+ */
+static const u16 b43_acphy_rfseq_rx2tx_cmd[16] = { 0x0000, 0x0001, 0x0002, 0x0008, 0x0005, 0x0000, 0x0006, 0x0003, 0x000f, 0x0004, 0x0000, 0x0035, 0x000f, 0x0000, 0x0036, 0x001f };
+static const u16 b43_acphy_rfseq_tx2rx_cmd[16] = { 0x0004, 0x0003, 0x0006, 0x0005, 0x0000, 0x0002, 0x0001, 0x0008, 0x002a, 0x000f, 0x0000, 0x000f, 0x002b, 0x001f, 0x001f, 0x001f };
+static const u16 b43_acphy_rfseq_reset2rx_cmd[16] = { 0x0004, 0x0003, 0x0006, 0x0005, 0x0002, 0x0001, 0x0008, 0x002a, 0x002b, 0x000f, 0x001f, 0x001f, 0x001f, 0x001f, 0x001f, 0x001f };
+static const u16 b43_acphy_rfseq_reset2rx_dly[16] = { 0x000c, 0x0002, 0x0002, 0x0004, 0x0004, 0x0006, 0x0001, 0x0004, 0x0001, 0x0002, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001 };
+static const u16 b43_acphy_rfseq_updl_lpf_hpc[2] = { 0x0aaa, 0x0aaa };
+static const u16 b43_acphy_rfseq_updl_tia_hpc[2] = { 0x0222, 0x0222 };
+
+/*
+ * Table 0x20 (128 x u8): scritta via porta DATA alternativa 0x011 durante
+ * il misc setup post-rfseq_tbl_init. Contenuto invariante su tutte le
+ * catture d6220 (ch36/44/BW20/BW40) e agcombo (ch36/BW20/BW40, ch100 BW80).
+ * Sembra una "gain curve" o LUT per attenuazione TX: 0x00-0x4f valori
+ * attorno a 0x40 (piatta), 0x50-0x7f decrescente da 0x34 a 0x02.
+ * TODO: capire significato; per ora trascrizione letterale.
+ */
+static const u8 b43_acphy_tbl_0x20_gaincurve[128] = {
+	0x44, 0x40, 0x40, 0x40, 0x41, 0x3f, 0x41, 0x40,
+	0x3f, 0x41, 0x41, 0x41, 0x40, 0x40, 0x41, 0x42,
+	0x3e, 0x3f, 0x41, 0x3d, 0x40, 0x42, 0x3f, 0x43,
+	0x3f, 0x44, 0x40, 0x3c, 0x43, 0x3f, 0x3c, 0x3f,
+	0x42, 0x41, 0x3e, 0x42, 0x3e, 0x3e, 0x42, 0x3e,
+	0x42, 0x3f, 0x45, 0x41, 0x3d, 0x41, 0x3e, 0x3a,
+	0x45, 0x41, 0x3d, 0x46, 0x42, 0x3e, 0x3b, 0x37,
+	0x47, 0x43, 0x3f, 0x3c, 0x39, 0x37, 0x37, 0x35,
+	0x35, 0x34, 0x34, 0x34, 0x36, 0x36, 0x34, 0x35,
+	0x38, 0x39, 0x3d, 0x40, 0x44, 0x40, 0x3c, 0x38,
+	0x34, 0x30, 0x2c, 0x28, 0x24, 0x20, 0x1c, 0x18,
+	0x14, 0x12, 0x11, 0x10, 0x0f, 0x0e, 0x0d, 0x0c,
+	0x0c, 0x0b, 0x0a, 0x0a, 0x09, 0x09, 0x08, 0x08,
+	0x07, 0x07, 0x07, 0x06, 0x06, 0x06, 0x05, 0x05,
+	0x05, 0x04, 0x04, 0x04, 0x04, 0x03, 0x03, 0x03,
+	0x03, 0x03, 0x03, 0x02, 0x02, 0x02, 0x02, 0x02,
+};
+
+/*
+ * TBL 0x07 rfseq per-core "second setup" (d6220 ch36 #34912-#34983,
+ * 72 op = 12 op × 6 chiamate TBL.WR len=8). Due tabelle per core
+ * (CMD + DLY), 3 core silicon: 6 tabelle totali. Stride +0x10 tra
+ * i core. Emesso per TUTTI num_cores (non filtrato per coremask).
+ */
+static const u16 b43_acphy_rfseq_2_cmd_c0[8] = {
+	0x002a, 0x0007, 0x000a, 0x0000, 0x0008, 0x002b, 0x001f, 0x001f,
+};
+static const u16 b43_acphy_rfseq_2_dly_c0[8] = {
+	0x0001, 0x0002, 0x0002, 0x0002, 0x0010, 0x0001, 0x0001, 0x0001,
+};
+static const u16 b43_acphy_rfseq_2_cmd_c1[8] = {
+	0x002a, 0x0007, 0x0008, 0x000c, 0x000e, 0x002b, 0x001f, 0x001f,
+};
+static const u16 b43_acphy_rfseq_2_dly_c1[8] = {
+	0x0001, 0x0006, 0x0012, 0x0008, 0x0010, 0x0001, 0x0001, 0x0001,
+};
+static const u16 b43_acphy_rfseq_2_cmd_c2[8] = {
+	0x002a, 0x0007, 0x0008, 0x000e, 0x002b, 0x001f, 0x001f, 0x001f,
+};
+static const u16 b43_acphy_rfseq_2_dly_c2[8] = {
+	0x0001, 0x0006, 0x001e, 0x001c, 0x0001, 0x0001, 0x0001, 0x0001,
+};
+
+
+static const u32 b43_acphy_txv_for_spexp[243] = {
+	0x4009d1bb, 0x8013a376, 0x002746ec, 0x00000131, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x0034005b, 0x00000000, 0x00009700, 0xdb2540c0,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x0034005b, 0x00000000,
+	0x0000b64a, 0xec3023ac, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x0034005b, 0x00000000, 0x00000069, 0x003400a5, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x0034005b, 0x00000000, 0x00004a4a, 0x1430ddac,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x0034005b, 0x00000000,
+	0x00006900, 0x2525c0c0, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x0034005b, 0x00000000, 0x00004ab6, 0x3014acdd, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x0034005b, 0x00000000, 0x00000097, 0x3400a500,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x0034005b, 0x00000000,
+	0x0000b6b6, 0x30ecac23, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x0034005b, 0x00000000, 0x00009700, 0x25dbc040, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x0034005b, 0x00000000, 0x0000b64a, 0x14d0dd54,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x0034005b, 0x00000000,
+	0x00000069, 0x00cc005b, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x0034005b, 0x00000000, 0x00004a4a, 0xecd02354, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x0034005b, 0x00000000, 0x00006900, 0xdbdb4040,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x0034005b, 0x00000000,
+	0x00004ab6, 0xd0ec5423, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x0034005b, 0x00000000, 0x00000097, 0xcc005b00, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x0034005b, 0x00000000, 0x0000b6b6, 0xd01454dd,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x0034005b, 0x00000000,
+	0x00009700, 0xdb2540c0, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x0034005b, 0x00000000, 0x0000b64a, 0xec3023ac, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x0034005b, 0x00000000, 0x00000069, 0x003400a5,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x0034005b, 0x00000000,
+	0x00004a4a, 0x1430ddac, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x0034005b, 0x00000000, 0x00006900, 0x2525c0c0, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x0034005b, 0x00000000, 0x00004ab6, 0x3014acdd,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x0034005b, 0x00000000,
+	0x00000097, 0x3400a500, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x0034005b, 0x00000000, 0x0000b6b6, 0x30ecac23, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x0034005b, 0x00000000, 0x00009700, 0x25dbc040,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x0034005b, 0x00000000,
+	0x0000b64a, 0x14d0dd54, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x0034005b, 0x00000000, 0x00000069, 0x00cc005b, 0x00000000, 0x00000000,
+	0x00000000, 0x00000000, 0x0034005b, 0x00000000, 0x00004a4a, 0xecd02354,
+	0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x0034005b, 0x00000000,
+	0x00006900, 0xdbdb4040, 0x00000000, 0x00000000, 0x00000000, 0x00000000,
+	0x0034005b, 0x00000000, 0x00004ab6,
+};
+
+/*
+ * Analog reset-time sub-setups for AC-PHY rev 1 / radio 2069 r4: FEM control, the
+ * TX/RX analog LPF stages and the TX AFE dacbuf cap. Run before the RF-sequencer 
+ * command tables (see b43_phy_ac_analog_on_reset).
+ * TODO: sample more hardware to get what other revs do.
+ *
+ * The caps come from struct b43_phy_ac, filled at runtime by
+ * b43_radio_2069_rccal (called from op_software_rfkill, before the first
+ * channel setup that reaches here). 0x80/0x80/0xc are only the pre-rccal
+ * fallback set in op_prepare_structs; on the supported chips
+ * rccal always overwrites all three. On the DSL-3580L first-run these are
+ * lpf_cap0=lpf_cap1=0xab (E=0x0ac7 F=0x0baa) and dacbuf_cap=0 (RCCAL_G=0x0009).
+ *
+ * The per-core loops use the active-core mask below (SROM rxchain). On the
+ * sampled boards this equals the PHY tx/rx core-enable mask; the equality is
+ * inferred from observed writes, so a board with phytxchain != rxchain would
+ * need this revisited.
+ */
+
+/*
+ * FEM ctrl table (femctrl==6, letto su tutti i board). Blocco 32B su PHY tbl id 0xa off 0/0x20/0x40 (16 byte ripetuti 2x).
+ * 4360 agcombo: 4287-4388 ; d6220 ch36 TBL.WR id=0xa off 0/0x20/0x40 @#33117-#33189 */
+static void b43_phy_ac_set_regtbl_on_femctrl(struct b43_wldev *dev)
+{
+	static const u8 fem6_tbl[32] = {
+		0x00, 0x00, 0x06, 0x02,  0x00, 0x00, 0x06, 0x02,
+		0x00, 0x01, 0x00, 0x00,  0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x06, 0x02,  0x00, 0x00, 0x06, 0x02,
+		0x00, 0x01, 0x00, 0x00,  0x00, 0x00, 0x00, 0x00,
+	};
+	u16 saved;
+
+	/* Verified only on phy rev 1. */
+	if (dev->phy.rev != 1)
+		return;
+
+	saved = b43_phy_ac_tbl_write_lock(dev);
+
+	b43_actab_write_bulk(dev, 0x0a, 0x00, 8, 32, fem6_tbl);
+	b43_actab_write_bulk(dev, 0x0a, 0x20, 8, 32, fem6_tbl);
+	b43_actab_write_bulk(dev, 0x0a, 0x40, 8, 32, fem6_tbl);
+
+	b43_phy_ac_tbl_write_unlock(dev, saved);
+}
+
+/*
+ * Analog TX-LPF setup.
+ *
+ * For each active core, for each of up to 9 LPF stages selected by @stages
+ * (bit i => stage i), read-modify-write the {lo,hi} table-7 pair that holds the
+ * 25-bit analog TX-LPF word and re-pack it. Each sub-field is rewritten only
+ * when its argument is >= 0; pass -1 to leave that field untouched. @only_core
+ * restricts the work to a single core, or 0xffffffff for all.
+ *
+ * lo offsets per core: {0x142,0x152,0x162}; hi offsets: {0x362,0x372,0x382}.
+ *
+ * Kept as a parameterized helper (unlike the rx/dacbuf setups, which are
+ * inlined into their single caller) because a second reset path also drives
+ * it.
+ * TODO: that second path (stages 0x100, f0=f6=<bw value>, only the bw fields)
+ * is not yet implemented.
+ *
+ * VALIDATO contro dsl-3580l-read-trace-first-run.txt (letture REALI del
+ * driver). NB: le read di wl-diag sono fasulle (0x0000) e fanno sembrare la
+ * base pulita; con quelle, e col cap placeholder 0x80, la formula sembra
+ * sbagliata. Su silicio vero le celle NON sono zero — pre per gruppo di
+ * stage: {0,1,2,8}=0x00db, {3,4,5}=0x0123,
+ * {6,7}=0x016b — e l'RMW le preserva scrivendo solo il cap (f9/f17). È QUELLA
+ * la variazione per stage. Con cap runtime
+ * 0xab e le read reali il replay riproduce ogni post: {0,1,2,8}=0x56db,
+ * {3,4,5}=0x5723, {6,7}=0x576b, hi=0x0157. I write del blob d6220 (0x52db/
+ * 0x5323/0x536b, hi 0x0153) differiscono per una costante (+0x400 lo, +4 hi)
+ * = cap 0xa9 vs 0xab, cioè la sola differenza di misura rccal fra le due unità.
+ */
+/* 4360 agcombo: 4403-4535 ; d6220 ch36: n/l */
+static void b43_phy_ac_set_analog_tx_lpf_locked(struct b43_wldev *dev,
+						u16 stages,
+						int f0, int f6, int f3,
+						int f9, int f17,
+						u32 only_core)
+{
+	static const u16 lo_off[3] = { 0x142, 0x152, 0x162 };
+	static const u16 hi_off[3] = { 0x362, 0x372, 0x382 };
+	u8 mask = dev->phy.ac->coremask;
+	u8 core, num_cores = dev->phy.ac->num_cores;
+
+	for (core = 0; core < num_cores; core++) {
+		u16 off_lo, off_hi;
+		unsigned int stage;
+
+		if (!(mask & (1 << core)))
+			continue;
+		if (only_core != 0xffffffff && core != only_core)
+			continue;
+
+		off_lo = lo_off[core];
+		off_hi = hi_off[core];
+
+		for (stage = 0; stage < 9; stage++, off_lo++, off_hi++) {
+			u16 lo, hi, lo0, hi0;
+			u32 v;
+
+			if (!(stages & (1 << stage)))
+				continue;
+
+			b43_actab_read_bulk(dev, 7, off_lo, 16, 1, &lo);
+			b43_actab_read_bulk(dev, 7, off_hi, 16, 1, &hi);
+			lo0 = lo;
+			hi0 = hi;
+			v = ((u32)hi << 16) | lo;
+
+			if (f0  >= 0) v = (u32)f0 | (v & 0x1fffff8);
+			if (f3  >= 0) v = (v & 0x1ffffc7) | ((u32)f3 << 3);
+			if (f6  >= 0) v = (v & 0x1fffe3f) | ((u32)f6 << 6);
+			if (f9  >= 0) v = (v & 0x1fe01ff) | ((u32)f9 << 9);
+			if (f17 >= 0) v = (v & 0x1ffff)   | ((u32)f17 << 17);
+
+			lo = (u16)v;
+			hi = (u16)(v >> 16) & 0x1ff;
+
+			/*
+			 * TODO(TXLPFLOG): la formula RMW sopra con lpf_cap=0xab
+			 * produce bit 9,10 spuri (vendor scrive lo=0x50db, test
+			 * calcolerebbe 0x56db). L'interazione col pre-state della
+			 * cella table 7 non è ancora chiara — servono log
+			 * [TXLPFLOG] dal boot reale per invertire la formula.
+			 * Nel frattempo hardcode dei valori vendor (d6220 ch36
+			 * attach) per due call-site:
+			 *   - channel_setup principale: stages=0x1ff (tutti gli
+			 *     stage 0-8), f0/f3/f6=-1, f9=f17=lpf_cap.
+			 *   - channel_setup finale: stages=0x100 (solo stage 8),
+			 *     ri-esegue RMW su stage 8 in modo idempotente (il
+			 *     valore scritto coincide con quello già presente).
+			 */
+			if ((stages == 0x1ff || stages == 0x100) &&
+			    f0 < 0 && f3 < 0 && f6 < 0) {
+				static const u16 vendor_lo[9] = {
+					0x50db, 0x50db, 0x50db,
+					0x5123, 0x5123, 0x5123,
+					0x516b, 0x516b,
+					0x50db,
+				};
+				lo = vendor_lo[stage];
+				hi = 0x0151;
+			}
+
+			b43info(dev->wl,
+				"[TXLPFLOG] txlpf core=%u stage=%u off_lo=0x%04x off_hi=0x%04x "
+				"lo_read=0x%04x hi_read=0x%04x lo_write=0x%04x hi_write=0x%04x "
+				"f0=%d f3=%d f6=%d f9=%d f17=%d\n",
+				core, stage, off_lo, off_hi, lo0, hi0, lo, hi,
+				f0, f3, f6, f9, f17);
+
+			{
+				/*
+				 * Formula candidata dal reverse engineering di celle
+				 * table 7 (d6220 + agcombo, letture live via `wl
+				 * phytable`):
+				 *
+				 *   f = 0xa3 + ((cap >> 1) & 0x0f) + delta_ch_bw(chan,bw)
+				 *   lo = pre_lo[stage_group] | (f << 9)
+				 *   hi = pre_hi[stage_group] | (f << 1)
+				 *
+				 * dove f è duplicato in bit 9-16 e bit 17-24 di v.
+				 * Vedi doc/txlpf-formula-analysis.md per dati e ipotesi.
+				 */
+				int f_predicted = (f9 >= 0)
+					? (0xa3 + ((f9 >> 1) & 0x0f))
+					: -1;
+				u32 v_final = ((u32)hi << 16) | lo;
+				int f_actual = (int)((v_final >> 9) & 0xff);
+				int delta = (f_predicted >= 0) ? (f_actual - f_predicted) : 0;
+
+				b43info(dev->wl,
+					"[TXLPFLOG] formula core=%u stage=%u "
+					"f_predicted=0x%02x f_actual=0x%02x delta=%+d\n",
+					core, stage,
+					f_predicted & 0xff, f_actual, delta);
+			}
+
+			b43_actab_write_bulk(dev, 7, off_lo, 16, 1, &lo);
+			b43_actab_write_bulk(dev, 7, off_hi, 16, 1, &hi);
+		}
+	}
+}
+
+/*
+ * Wrapper originale: prende il lock, chiama _locked, rilascia il lock.
+ * Il vendor emette:
+ *   PHY.RD 0x019e   (peek — saved)
+ *   PHY.MOD 0x019e  (relock idempotente, o effettivo)
+ *   ... body ...
+ *   PHY.MOD 0x019e  (restore/unlock)
+ */
+static void b43_phy_ac_set_analog_tx_lpf(struct b43_wldev *dev, u16 stages,
+					 int f0, int f6, int f3, int f9,
+					 int f17, u32 only_core)
+{
+	u16 saved = b43_phy_ac_tbl_write_lock(dev);
+
+	b43_phy_ac_set_analog_tx_lpf_locked(dev, stages, f0, f6, f3, f9, f17,
+					    only_core);
+
+	b43_phy_ac_tbl_write_unlock(dev, saved);
+}
+
+/* 4360 agcombo: n/l ; d6220 ch36: #34535-34552 (due chiamate consecutive) */
+/*
+ * Esegue un comando del RF sequencer tramite i registri di controllo
+ * 0x0400/0x0402/0x0403 sotto un inner lock del write gate 0x019e (bit 0).
+ * Il chip completa quando 0x0403 bit 0 = done; polliamo finché il flag
+ * appare o timeout. Il vendor blob poll 2 volte la prima esecuzione e 1
+ * volta la seconda — coerente con un loop di attesa done.
+ *
+ * cmd_bit: valore da OR-are in 0x0402 (osservato 0x0001 poi 0x0002).
+ */
+static void b43_phy_ac_run_rfseq_cmd(struct b43_wldev *dev, u16 cmd_bit)
+{
+	unsigned int i;
+
+	b43_phy_read_log(dev, 0x0400);
+	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0001, 0x0001);  /* inner lock (bit 0) */
+
+	b43_phy_set(dev, 0x0400, 0x0003);
+	b43_phy_set(dev, 0x0402, cmd_bit);
+
+	/* Poll fino a done bit set (max 10 letture). */
+	for (i = 0; i < 10; i++) {
+		u16 v = b43_phy_read_log(dev, 0x0403);
+		if (v & 0x0001)
+			break;
+	}
+
+	b43_phy_write(dev, 0x0400, 0x0001);
+	b43_phy_write(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, 0x03d0);  /* inner unlock via plain write */
+}
+
+/* Forward declaration: chan_tables è definita più avanti nel file
+ * (caricamento tabella 0x0011). Chiamata da channel_setup nel gap-fill. */
+static void b43_phy_ac_chan_tables(struct b43_wldev *dev);
+
+/* Forward declaration: rx_evm_shaping_override chiamata da channel_setup. */
+static void b43_phy_ac_rx_evm_shaping_override(struct b43_wldev *dev);
+
+/* Forward declaration: chanspec_tail chiamata da channel_setup post-BW1F. */
+static void b43_phy_ac_chanspec_tail(struct b43_wldev *dev);
+
+/* 4360 agcombo: n/l ; d6220 ch36: #34526-#34559 (34 op) */
+/*
+ * Blocco misc di post-rfseq_tbl_init: apre lo scratch 0x16d8, configura
+ * i registri di controllo 0x0160 (BW-dependent) e 0x0401 (chip-dependent),
+ * esegue due comandi RF-seq, richiude 0x16d8 e scrive 0x01ec=0x9c40. Il
+ * significato preciso dei valori non è ancora capito; hardcodati sulla
+ * cattura d6220 ch36 BW20 attach. Le dipendenze note dalla cross-cattura:
+ *   - 0x0160/0x0401 bit 0-2: 0x03 BW20, 0x01 BW40/BW80
+ *   - 0x0401 bit 4-6:        0x30 d6220 (2069), 0x10 agcombo (2069 ac)
+ * TODO: parametrizzare per BW/chip quando lo capiremo.
+ */
+static void b43_phy_ac_post_rfseq_misc_setup(struct b43_wldev *dev)
+{
+	/* Peek diagnostica pre-setup (vendor #34526). */
+	b43_phy_read_log(dev, 0x000b);
+
+	/*
+	 * Quiesce silicon RX cores: attiva SOLO i core presenti (coremask),
+	 * spegne il core orfano su chip dove l'HW ha più core di quelli
+	 * usati (BCM4360 3-core con D6220 2-core, ecc.). Vendor emette
+	 * la sequenza a #34527-#34556 con coremask=0x03 per D6220.
+	 */
+	b43_phy_ac_rxcore_setstate(dev, dev->phy.ac->coremask);
+
+	/* Relock outer table-write gate: nel vendor è emesso qui, come read-back
+	 * del gate seguito da un maskset idempotente (val=0x0002 mask=0x0002). */
+	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+
+	b43_phy_write(dev, 0x01ec, 0x9c40);
+}
+
+/*
+ * Setup radio per-core "step 1" (d6220 ch36 #34698-#34749, 52 op).
+ * Confermato cross-cattura su agcombo (#60516-#60566).
+ *
+ * Struttura:
+ *   1. Pre-block (una sola volta): programma il blocco 0x0548-0x054c
+ *      (probabilmente un LO calibration output buffer) e clear bit 0
+ *      di 0x040b.
+ *   2. Per-core: 7 maskset (0x001a×3 + 0x054b shared + 0x0017 + 0x001f
+ *      + 0x0170), tutto con stride +0x200. Il register 0x054b è shared
+ *      tra core con byte separati: core 0 tocca byte high (0x0100/mask
+ *      0xff00), core 1 tocca byte low (0x0001/mask 0x00ff).
+ */
+static void b43_phy_ac_radio_percore_setup_1(struct b43_wldev *dev)
+{
+	unsigned int core;
+	unsigned int num_cores = dev->phy.ac->num_cores;
+	u8 mask = dev->phy.ac->coremask;
+
+	/* Pre-block: emesso una sola volta prima del loop per-core. */
+	b43_radio_maskset(dev, 0x0548, (u16)~0x0001, 0x0001);
+	b43_radio_write(dev, 0x0549, 0x0000);
+	b43_radio_write(dev, 0x054a, 0x0000);
+	b43_radio_write(dev, 0x054b, 0x0000);
+	b43_radio_write(dev, 0x054c, 0x0000);
+	b43_radio_maskset(dev, 0x040b, (u16)~0x0001, 0x0000);
+
+	for (core = 0; core < num_cores; core++) {
+		u16 stride = (u16)(core * 0x200);
+		u16 byte_shift = (u16)(core * 8);
+		u16 sh_mask = (u16)(0xff00 >> byte_shift);
+		u16 sh_val  = (u16)(0x0100 >> byte_shift);
+
+		if (!(mask & (1 << core)))
+			continue;
+
+		b43_radio_maskset(dev, 0x001a + stride,
+				  (u16)~0x00f0, 0x0010);
+		b43_radio_maskset(dev, 0x001a + stride,
+				  (u16)~0x0004, 0x0004);
+		/* 0x054b è shared: byte high per core 0, byte low per core 1. */
+		b43_radio_maskset(dev, 0x054b, (u16)~sh_mask, sh_val);
+		b43_radio_maskset(dev, 0x001a + stride,
+				  (u16)~0x0300, 0x0000);
+		b43_radio_maskset(dev, 0x0017 + stride,
+				  (u16)~0x0002, 0x0000);
+		b43_radio_maskset(dev, 0x001f + stride,
+				  (u16)~0x0004, 0x0000);
+		b43_radio_maskset(dev, 0x0170 + stride,
+				  (u16)~0x0100, 0x0100);
+	}
+}
+
+/*
+ * Coefficient bank init (vendor naming, d6220 ch36 BW20 #34805-#34852,
+ * 48 op). Cross-cattura conferma:
+ *   - d6220 ch44 BW20  == d6220 ch36 BW20 (canale-indipendente in BW20 5G)
+ *   - agcombo ch36 BW20 == d6220 ch36 BW20 (chip-indipendente per BW/banda)
+ *   - d6220 ch36 BW40 DIVERSO (BW-dependent LUT)
+ *
+ * Struttura:
+ *   1. Outer lock unlock + peek + relock (3 op) — split del rfseq_tbl_init
+ *      write session, il blob probabilmente scrive attraverso una path
+ *      diversa nel mezzo (peek serve a leggere il gate senza toccarlo).
+ *   2. BW selector (3 op): 0x0076, 0x0140, 0x0164.
+ *   3. Tabella LUT 0x0180-0x0194 (21 op), valori BW-specific.
+ *   4. Extra register setup (5 op): 0x01b5, 0x0250, 0x0261-0x0263,
+ *      0x0312-0x0313.
+ *   5. Per-core LUT stride +0x200 (12 op = 4 op × 3 core): 0x06ed/0x06ef.
+ *   6. Per-core LUT stride +0x200 (3 op = 1 op × 3 core): 0x06ef val=0x000f.
+ *   7. Peek + relock (2 op) del outer gate (chiusura del blocco).
+ *
+ * TODO: parametrizzare per BW (BW40 5G, BW80 5G, 2G) usando LUT
+ * separate. Per ora hardcode per BW20 5G (d6220 ch36 attach target).
+ */
+static void b43_phy_ac_coeff_bank_init_bw20_5g(struct b43_wldev *dev)
+{
+	static const u16 lut_0x0180[21] = {
+		/* 0x0180 */ 0x0015,  /* mask=0x001f (5-bit); resto mask=0x07ff */
+		/* 0x0181 */ 0x0146,
+		/* 0x0182 */ 0x0088,
+		/* 0x0183 */ 0x0146,
+		/* 0x0184 */ 0x076e,
+		/* 0x0185 */ 0x01a8,
+		/* 0x0186 */ 0x00a3,
+		/* 0x0187 */ 0x00f4,
+		/* 0x0188 */ 0x00a3,
+		/* 0x0189 */ 0x0684,
+		/* 0x018a */ 0x00ad,
+		/* 0x018b */ 0x00e5,
+		/* 0x018c */ 0x0068,
+		/* 0x018d */ 0x00e5,
+		/* 0x018e */ 0x06be,
+		/* 0x018f */ B43_PHY_AC_REG_TBL_WRITE_GATE,
+		/* 0x0190 */ 0x0073,
+		/* 0x0191 */ 0x00b2,
+		/* 0x0192 */ 0x0073,
+		/* 0x0193 */ 0x05fe,
+		/* 0x0194 */ 0x00cc,
+	};
+	unsigned int i;
+	unsigned int core;
+	unsigned int num_cores = dev->phy.ac->num_cores;
+
+	/*
+	 * Chiamata da channel_setup: RX freeze già stabilito da
+	 * channel_switch_prep (RX_WAITED + CLIP_ALL_DIS), MAC ancora enabled
+	 * (mac_suspend viene dopo channel_setup).
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET);
+
+	/* 1. Outer lock unlock + peek + relock (split di rfseq_tbl_init write). */
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0000);
+	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+
+	/* 2. BW selector: BW20 = {0x0076=1, 0x0140 set bit 11, 0x0164 set bit 4}. */
+	b43_phy_maskset(dev, 0x0076, (u16)~0x0007, 0x0001);
+	b43_phy_maskset(dev, 0x0140, (u16)~0x0800, 0x0800);
+	b43_phy_maskset(dev, 0x0164, (u16)~0x0010, 0x0010);
+
+	/* 3. LUT 0x0180-0x0194 (BW20 5G specifica). mask=0x001f su 0x0180, 0x07ff sul resto. */
+	b43_phy_maskset(dev, 0x0180, (u16)~0x001f, lut_0x0180[0]);
+	for (i = 1; i < 21; i++)
+		b43_phy_maskset(dev, (u16)(0x0180 + i),
+				(u16)~0x07ff, lut_0x0180[i]);
+
+	/* 4. Extra register setup (channel/BW-dependent letterali). */
+	b43_phy_maskset(dev, 0x01b5, (u16)~0x00ff, 0x0097);
+	b43_phy_maskset(dev, 0x0250, (u16)~0x00ff, 0x0019);
+	b43_phy_maskset(dev, 0x0261, (u16)~0x0fff, 0x0014);
+	b43_phy_maskset(dev, 0x0262, (u16)~0x0fff, 0x00c8);
+	b43_phy_maskset(dev, 0x0263, (u16)~0x0fff, 0x0019);
+	b43_phy_maskset(dev, 0x0312, (u16)~0x00ff, 0x0013);
+	b43_phy_maskset(dev, 0x0313, (u16)~0xff00, 0x1300);
+
+	/* 5. Per-core LUT 0x06ed/0x06ef (stride +0x200, per TUTTI num_cores). */
+	for (core = 0; core < num_cores; core++) {
+		u16 stride = (u16)(core * 0x200);
+
+		b43_phy_maskset(dev, 0x06ed + stride,
+				(u16)~0x00ff, 0x000a);
+		b43_phy_maskset(dev, 0x06ef + stride,
+				(u16)~0x00ff, 0x0017);
+		b43_phy_maskset(dev, 0x06ef + stride,
+				(u16)~0xff00, 0x0e00);
+	}
+
+	/* 6. Per-core LUT 0x06ef pt.2 (stride +0x200, val=0x000f mask=0x00ff). */
+	for (core = 0; core < num_cores; core++) {
+		u16 stride = (u16)(core * 0x200);
+
+		b43_phy_maskset(dev, 0x06ef + stride,
+				(u16)~0x00ff, 0x000f);
+	}
+
+	/* 7. Peek + relock del outer gate (chiusura del blocco). */
+	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+}
+
+/*
+ * Analog reset-time sub-setups, run before the table-7 command writes, under
+ * the caller's table-write lock. FEM control and the TX-LPF stay as helpers;
+ * the single-use RX-LPF and dacbuf-cap setups are inlined here.
+ */
+/*
+ * Power-detector (pdet) reset-time setup.
+ *
+ * Blocco di 14 scritture, one-shot. Le due occorrenze nella trace
+ * la trace NON sono identiche: la prima
+ *  si ferma a 0x0559 (11 scritture); la seconda
+ *  aggiunge 0x0358/0x0359/0x035a (14 scritture). Qui si
+ * riproduce la seconda, che è quella allineata al call-site
+ * b43_phy_ac_analog_on_reset (pdet -> femctrl). NON è per-core: cercato lo
+ * stride +0x200 tipico
+ * (0x0750/0x0950/0x0b50) e non esiste, zero occorrenze in tutta la
+ * trace. La "LUT per-core da 960 byte" citata nel README è quindi
+ * probabilmente un'altra cosa, scritta più tardi se/quando il TX power
+ * closed-loop si attiva — non è in questo blocco.
+ *
+ * Valori non derivati da nessuna formula, catturati come sono: due
+ * coppie identiche (1000/1000, 500/500) hanno l'aria di finestre di
+ * misura/settle più che di un gain code. 0x0554/0x0555 vengono
+ * ritoccati più avanti (1000->3000) dal watchdog periodico non portato
+ * (vedi b43_phy_ac_op_recalc_txpower) — quella revisione non è qui.
+ */
+/* 4360 agcombo: 310-320 e 4266-4279 ; d6220 ch36 @#32803,#33099 (fp 10/14, 2 chiamate) */
+static void b43_phy_ac_set_pdet_on_reset(struct b43_wldev *dev)
+{
+	b43_phy_write(dev, 0x0550, 0x0ffd);
+	b43_phy_maskset(dev, 0x0551, (u16)~0x000f, 0x000f);
+	b43_phy_maskset(dev, 0x0551, (u16)~0x00f0, 0x00f0);
+	b43_phy_write(dev, 0x0552, 0x0001);
+	b43_phy_write(dev, 0x0553, 0x0001);
+	b43_phy_write(dev, 0x0554, 0x03e8);
+	b43_phy_write(dev, 0x0555, 0x03e8);
+	b43_phy_write(dev, 0x0556, 0x01f4);
+	b43_phy_write(dev, 0x0557, 0x01f4);
+	b43_phy_write(dev, 0x0558, 0xb8d8);
+	b43_phy_write(dev, 0x0559, 0x0005);
+	b43_phy_write(dev, 0x0358, 0xc07f);
+	b43_phy_write(dev, 0x0359, 0x0064);
+	b43_phy_write(dev, 0x035a, 0x0064);
+}
+
+/* 4360 agcombo: 4287-5163 ; d6220 ch36: composita, figlie localizzate (set_pdet @#32803/#33099 + femctrl @#33117) */
+static void b43_phy_ac_analog_on_reset(struct b43_wldev *dev, u16 *saved_outer_out)
+{
+	struct b43_phy_ac *aphy = dev->phy.ac;
+	u8 mask = dev->phy.ac->coremask;
+	u8 core, num_cores = dev->phy.ac->num_cores;
+	u16 saved;
+
+	/* ch36 #32802: read 0x0550 before pdet overwrites it; destination
+	 * sconosciuta, valore necessario (non difensivo). */
+	b43_phy_read_log(dev, 0x0550);
+
+	b43_phy_ac_set_pdet_on_reset(dev);
+
+	/*
+	 * Outer table-write gate: acquisito qui (ch36 #33113-#33114),
+	 * rilasciato dal chiamante dopo rfseq_tbl_init. Copre femctrl +
+	 * tx_lpf + dacbuf + rx_lpf + rfseq_tbl_init (nessun unlock/relock
+	 * intermedio nel vendor). I sub-lock nested emettono val=0x0002
+	 * mask=0x0002 idempotenti che matchano la trace.
+	 */
+	*saved_outer_out = b43_phy_ac_tbl_write_lock(dev);
+
+	b43_phy_ac_set_regtbl_on_femctrl(dev);
+
+	/*
+	 * TX-LPF stage entries (table 7, offsets 0x142/0x362 per core 0,
+	 * stride +0x10 per core). Vendor emette a #33226+: subito dopo la
+	 * chiusura idempotente di set_regtbl_on_femctrl (#33225).
+	 */
+	b43_phy_ac_set_analog_tx_lpf(dev, 0x1ff, -1, -1, -1,
+				     aphy->lpf_cap0, aphy->lpf_cap1, 0xffffffff);
+
+	/*
+	 * TX AFE dacbuf cap: dacbuf_cap into the 6-bit cap field of all 9 stages
+	 * on every active core; the field sits at bits 0..5 or 6..11 by stage.
+	 * VALIDATO contro il first-run reale: i due "costanti" 0x0b2e/0x0bae
+	 * sono in realtà il contenuto vero della cella (pre 0x0b2c), di cui 
+	 * l'RMW tocca solo il campo cap a 6 bit e preserva il resto (0x0b00). 
+	 * Con dacbuf_cap runtime = 0 (RCCAL_G=0x0009) il replay riproduce 
+	 * ogni post: stage0 (shift 0) 0x0b2c->0x0b20, stage1 (shift 6, stessa cella) 
+	 * 0x0b20->0x0820.
+	 *
+	 * Ordine vendor: femctrl -> tx_lpf -> dacbuf -> rx_lpf -> per-core loop.
+	 */
+	{
+		static const u16 base[3]  = { 0x3f0, 0x60, 0xd0 };
+		static const u8  add[9]   = { 0xb, 0xb, 0xc, 0xc, 0xe, 0xe, 0xf, 0xf, 0xa };
+		static const u8  shift[9] = { 0, 6, 0, 6, 0, 6, 0, 6, 0 };
+		unsigned int stage;
+
+		saved = b43_phy_ac_tbl_write_lock(dev);
+		for (core = 0; core < num_cores; core++) {
+			if (!(mask & (1 << core)))
+				continue;
+			for (stage = 0; stage < 9; stage++) {
+				u16 off = base[core] + add[stage];
+				u16 cur, out, field;
+
+				b43_actab_read_bulk(dev, 7, off, 16, 1, &cur);
+				field = ((cur >> shift[stage]) & 0x20) | aphy->dacbuf_cap;
+				if (shift[stage] == 0)
+					out = field | (cur & 0xfc0);
+				else
+					out = (u16)(field << 6) | (cur & 0x3f);
+
+				/*
+				 * TODO(TXLPFLOG): stessa storia del TX-LPF —
+				 * formula RMW non riproduce il vendor. Hardcode
+				 * vendor per il call-site (dacbuf_cap=0):
+				 *   stage 0-7 (shift 0/6): 0x0b2e / 0x0bae
+				 *   stage 8 (shift 0):      0x002e
+				 */
+				if (aphy->dacbuf_cap == 0) {
+					if (stage == 8)
+						out = 0x002e;
+					else if (shift[stage] == 0)
+						out = 0x0b2e;
+					else
+						out = 0x0bae;
+				}
+
+				b43info(dev->wl,
+					"[TXLPFLOG] dacbuf core=%u stage=%u off=0x%04x shift=%u "
+					"cur=0x%04x field=0x%04x out=0x%04x dacbuf_cap=0x%04x\n",
+					core, stage, off, shift[stage],
+					cur, field, out, aphy->dacbuf_cap);
+
+				b43_actab_write_bulk(dev, 7, off, 16, 1, &out);
+			}
+		}
+		b43_phy_ac_tbl_write_unlock(dev, saved);
+	}
+
+	/*
+	 * RX-LPF: lpf_cap0/lpf_cap1 into the f6 (bits 6..13) / f17 (bits 17..)
+	 * fields of all 3 stages, on every active core.
+	 *
+	 * Validated at runtime: rx-lpf cells contains (pre lo = 0x2000/0x2009/0x2012, hi = 0x0000), 
+	 * RMW preserve and review only f6/f17 = lpf_cap0/lpf_cap1.
+	 */
+	{
+		static const u16 lo_off[3][3] = {
+			{ 0x140, 0x150, 0x160 },
+			{ 0x141, 0x151, 0x161 },
+			{ 0x441, 0x443, 0x445 },
+		};
+		static const u16 hi_off[3][3] = {
+			{ 0x360, 0x370, 0x380 },
+			{ 0x361, 0x371, 0x381 },
+			{ 0x440, 0x442, 0x444 },
+		};
+		unsigned int stage;
+
+		for (stage = 0; stage < 3; stage++) {
+			saved = b43_phy_ac_tbl_write_lock(dev);
+			for (core = 0; core < num_cores; core++) {
+				u16 off_lo, off_hi;
+				u16 lo, hi, lo0, hi0;
+				u32 v;
+
+				if (!(mask & (1 << core)))
+					continue;
+
+				off_lo = lo_off[stage][core];
+				off_hi = hi_off[stage][core];
+
+				b43_actab_read_bulk(dev, 7, off_lo, 16, 1, &lo);
+				b43_actab_read_bulk(dev, 7, off_hi, 16, 1, &hi);
+				lo0 = lo;
+				hi0 = hi;
+				v = ((u32)hi << 16) | lo;
+				v = (v & 0x1ffc03f) | ((u32)aphy->lpf_cap0 << 6);
+				v = (v & 0x1ffff)   | ((u32)aphy->lpf_cap1 << 17);
+				lo = (u16)v;
+				hi = (u16)(v >> 16) & 0x1ff;
+
+				/*
+				 * TODO(TXLPFLOG): hardcode vendor per RX-LPF
+				 * (d6220 ch36 attach): lo dipende dallo stage,
+				 * hi costante 0x0150.
+				 */
+				{
+					static const u16 vendor_lo[3] = {
+						0x2440, 0x2349, 0x2352,
+					};
+					lo = vendor_lo[stage];
+					hi = 0x0150;
+				}
+
+				b43info(dev->wl,
+					"[TXLPFLOG] rxlpf core=%u stage=%u off_lo=0x%04x off_hi=0x%04x "
+					"lo_read=0x%04x hi_read=0x%04x lo_write=0x%04x hi_write=0x%04x "
+					"cap0=0x%04x cap1=0x%04x\n",
+					core, stage, off_lo, off_hi, lo0, hi0, lo, hi,
+					aphy->lpf_cap0, aphy->lpf_cap1);
+
+				b43_actab_write_bulk(dev, 7, off_lo, 16, 1, &lo);
+				b43_actab_write_bulk(dev, 7, off_hi, 16, 1, &hi);
+			}
+			b43_phy_ac_tbl_write_unlock(dev, saved);
+		}
+	}
+}
+
+/* 4360 agcombo: 5321-5805 ; d6220 ch36: n/l */
+static void b43_phy_ac_rfseq_tbl_init(struct b43_wldev *dev)
+{
+	static const u16 spexp_pad = 0x0020;
+	static const u16 spexp_off[] = { 0x3c6, 0x3c7, 0x3d6, 0x3d7, 0x3e6, 0x3e7 };
+	size_t i;
+
+	/*
+	 * Table-write gate: acquisito dal chiamante (channel_setup), condiviso
+	 * con analog_on_reset. Nel vendor il gate outer resta lockato attraverso
+	 * entrambi (nessun unlock/relock intermedio a #33900/#33901).
+	 */
+
+	b43_actab_write_bulk(dev, 7, 0x020, 16, 16, b43_acphy_rfseq_reset2rx_cmd);
+	b43_actab_write_bulk(dev, 7, 0x090, 16, 16, b43_acphy_rfseq_reset2rx_dly);
+	b43_actab_write_bulk(dev, 7, 0x121, 16,  2, b43_acphy_rfseq_updl_lpf_hpc);
+	b43_actab_write_bulk(dev, 7, 0x131, 16,  2, b43_acphy_rfseq_updl_lpf_hpc);
+	b43_actab_write_bulk(dev, 7, 0x124, 16,  2, b43_acphy_rfseq_updl_tia_hpc);
+	b43_actab_write_bulk(dev, 7, 0x137, 16,  2, b43_acphy_rfseq_updl_tia_hpc);
+	b43_actab_write_bulk(dev, 7, 0x000, 16, 16, b43_acphy_rfseq_rx2tx_cmd);
+	b43_actab_write_bulk(dev, 7, 0x010, 16, 16, b43_acphy_rfseq_tx2rx_cmd);
+
+	for (i = 0; i < ARRAY_SIZE(spexp_off); i++)
+		b43_actab_write_bulk(dev, 7, spexp_off[i], 16, 1, &spexp_pad);
+
+	b43_actab_write_bulk(dev, 0x10, 0x4c4, 32, 243, b43_acphy_txv_for_spexp);
+}
+
+/*
+ * Reset-time PHY register block (phy rev 1, the only verified rev). The
+ * backplane MAC-PHY clock enable maps to b43_mac_phy_clock_set; the CCA reset
+ * maps to b43_phy_ac_reset_cca, called mid-sequence.
+ */
+/* 4360 agcombo: 4186-4205 (le periodiche successive sono un recalc, altro caller) ; d6220 ch36 @#32998 (0x01f2=0x00c8) */
+static void b43_phy_ac_set_reg_on_reset(struct b43_wldev *dev)
+{
+	u8 c, num_cores = dev->phy.ac->num_cores;
+
+	/* clear the RF-seq override gate before the reset block. Per matchare
+	 * la signature vendor `val=<set> mask=<affected_bits>` per tutte le
+	 * op che il blob emette come RMW visibile, usiamo phy_maskset invece
+	 * di phy_mask/phy_set: il wrapper del test emette il formato che il
+	 * tracer wl-diag mostra su queste posizioni. */
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE,
+			(u16)~B43_PHY_AC_RF_SEQ_OVERRIDE_GATE, 0);
+	b43_phy_set(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, 0x01c0);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE,
+			(u16)~0x0200, 0x0200);
+	if (dev->phy.rev == 1)
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x003c, 0x0010);
+	b43_phy_write(dev, 0x01f2, 0x00c8);
+	if (dev->phy.rev == 1)
+		b43_phy_write(dev, 0x0026, 0x0092);
+	b43_phy_write(dev, 0x0025, 0x0030);
+
+	/* Enable the backplane MAC-PHY clock. */
+	b43_mac_phy_clock_set(dev, true);
+
+	b43_phy_maskset(dev, 0x040f, (u16)~0x0200, 0);
+
+	/* Clip mask: prima tutti i CLEAR bit 5, poi tutti i byte-basso 0x55.
+	 * Ordine vendor: #33002-#33005 (clear) → #33006-#33009 (set 0x55). */
+	b43_phy_maskset(dev, 0x02f1, (u16)~0x0020, 0);
+	b43_phy_maskset(dev, 0x02ed, (u16)~0x0020, 0);
+	b43_phy_maskset(dev, 0x02f9, (u16)~0x0020, 0);
+	b43_phy_maskset(dev, 0x02f5, (u16)~0x0020, 0);
+	b43_phy_maskset(dev, 0x02ef, (u16)~0x00ff, 0x0055);
+	b43_phy_maskset(dev, 0x02eb, (u16)~0x00ff, 0x0055);
+	b43_phy_maskset(dev, 0x02f7, (u16)~0x00ff, 0x0055);
+	b43_phy_maskset(dev, 0x02f3, (u16)~0x00ff, 0x0055);
+
+	b43_phy_write(dev, 0x0400, 0x0000);
+	if (dev->phy.rev == 1)
+		b43_phy_maskset(dev, 0x01ca, (u16)~0x1000, 0);
+
+	b43_phy_ac_reset_cca(dev);
+
+	b43_phy_maskset(dev, 0x0072, (u16)~0x0004, 0x0004);
+	b43_phy_maskset(dev, 0x01b0, (u16)~0x0020, 0);
+	b43_phy_maskset(dev, 0x01b1, (u16)~0x1000, 0x1000);
+	b43_phy_maskset(dev, 0x01b6, (u16)~0x8000, 0);
+
+	for (c = 0; c < num_cores; c++) {
+		b43_phy_maskset(dev, 0x0690 + c * 0x0200, (u16)~0x0200, 0x0200);
+		b43_phy_maskset(dev, 0x0690 + c * 0x0200, (u16)~0x0400, 0x0400);
+	}
+
+	b43_phy_write(dev, 0x01e6, 0x0030);
+	/*
+	 * Niente blocco 0x6d4/0x8d4/0xad4 qui: 0x06d4 è usato SOLO dal pattern
+	 * clip_det (set 0x4000 / clear 0xbfff), già in b43_phy_ac_clip_det, e
+	 * 0x06db non compare mai come registro PHY in tutta la sessione.
+	 */
+}
+
+/* 4360 agcombo: 6310-6315 ; d6220 ch36 @#35044-#35049 (BW1A 0x371-0x376) */
+static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
+				     const struct b43_phy_ac_channeltab_e_radio2069 *e,
+				     struct ieee80211_channel *new_channel)
+{
+	unsigned int i;
+
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET);
+
+	if (!e) {
+		b43err(dev->wl, "AC-PHY: no channel table entry, skipping setup\n");
+		return;
+	}
+
+	/* Reset-time register block (includes the CCA reset). */
+	b43_phy_ac_set_reg_on_reset(dev);
+
+	/*
+	 * RXIQ coefficient seed (per-core, 2 bytes each). ch36 #33025-33028.
+	 * Runs before the 2nd AFE/LPF stage call; the comment below mentioned
+	 * these as "not yet ported".
+	 */
+	b43_phy_maskset(dev, 0x02d1, (u16)~0x00f0, 0x0040);
+	b43_phy_maskset(dev, 0x02d1, (u16)~0x0f00, 0x0400);
+	b43_phy_maskset(dev, 0x02d2, (u16)~0x00f0, 0x0040);
+	b43_phy_maskset(dev, 0x02d2, (u16)~0x0f00, 0x0400);
+
+	/*
+	 * Per-core AFE / radio-LPF stage, 2nd call (afe_728 = 0x0000). In the
+	 * down-to-bss-up trace it follows the reset-time block directly, before the
+	 * RF sequencer tables (#51897-51965, ts 1507.099), same helper body as the
+	 * 0x0800 call in op_software_rfkill.
+	 */
+	b43_radio_2069_afe_lpf_stage(dev, 0x0000);
+
+	/*
+	 * Outer table-write gate: aperto dentro analog_on_reset (dopo peek
+	 * 0x0550 + pdet, ch36 #33113-#33114), copre femctrl + tx_lpf +
+	 * dacbuf + rx_lpf + rfseq_tbl_init. Il vendor NON emette
+	 * unlock/relock tra i due blocchi (#33900 = ultimo inner-unlock
+	 * RX-LPF idempotente, #33901 = primo TBL.WR di rfseq_tbl_init).
+	 */
+	{
+		u16 saved_outer;
+
+		b43_phy_ac_analog_on_reset(dev, &saved_outer);
+		b43_phy_ac_rfseq_tbl_init(dev);
+
+		b43_phy_ac_tbl_write_unlock(dev, saved_outer);
+	}
+
+	/*
+	 * Misc setup dopo l'unlock outer di rfseq_tbl_init: apre 0x16d8,
+	 * configura 0x0160/0x0401 (BW/chip dependent), esegue 2 RF-seq cmd,
+	 * chiude 0x16d8 e scrive 0x01ec. Poi ri-lock outer (visto come
+	 * peek+maskset idempotente nel vendor).
+	 * d6220 ch36 attach: #34526-#34559 (34 op).
+	 */
+	b43_phy_ac_post_rfseq_misc_setup(dev);
+
+	/*
+	 * Bulk write table 0x20 (128 u8 gain curve, invariante cross-cattura).
+	 * Usa porta DATA alternativa 0x011 (gestito nel wrap actab_write_bulk
+	 * quando id==0x20). d6220 ch36 attach: #34560-#34688.
+	 */
+	b43_actab_write_bulk(dev, 0x20, 0x0000, 8, 128,
+			     b43_acphy_tbl_0x20_gaincurve);
+
+	/*
+	 * Per-core PHY setup post TBL 0x20 (6 op per 2 core attivi,
+	 * d6220 ch36 #34692-#34697; pattern identico in agcombo #60507-60512).
+	 * Per ogni core attivo:
+	 *   - MOD 0x0072 bit 2 set   (shared control, emesso ogni volta)
+	 *   - MOD 0x0X27 bit 2 set   (X=7/9/b per core 0/1/2, stride +0x200)
+	 *   - MOD 0x0X3c bit 4 clear
+	 * Filtrato per coremask: silicon-inactive cores skippati.
+	 */
+	{
+		unsigned int core;
+		unsigned int num_cores = dev->phy.ac->num_cores;
+		u8 mask = dev->phy.ac->coremask;
+
+		for (core = 0; core < num_cores; core++) {
+			u16 stride = (u16)(core * 0x200);
+
+			if (!(mask & (1 << core)))
+				continue;
+
+			b43_phy_maskset(dev, 0x0072, (u16)~0x0004, 0x0004);
+			b43_phy_maskset(dev, 0x0727 + stride,
+					(u16)~0x0004, 0x0004);
+			b43_phy_maskset(dev, 0x073c + stride,
+					(u16)~0x0010, 0x0000);
+		}
+	}
+
+	/*
+	 * Setup radio per-core "step 1" (d6220 ch36 #34698-#34749, 52 op).
+	 * Pre-block per 0x0548-0x054c/0x040b + loop 7-maskset per core con
+	 * 0x054b shared (byte high/low per core 0/1). Vedi helper.
+	 */
+	b43_phy_ac_radio_percore_setup_1(dev);
+
+	/*
+	 * PHY per-core loop su TUTTI i core silicon (d6220 ch36 #34750-#34755,
+	 * 6 op = 2 op × 3 core). NON filtrato per coremask — il vendor emette
+	 * anche per core silicon-attivi ma disabilitati (visibile su d6220
+	 * che ha num_cores=3, coremask=0x03: il vendor emette anche per
+	 * core 2 con base 0x0b00). Cross-cattura agcombo #60589-60594
+	 * conferma pattern identico.
+	 *
+	 * Per ciascun core (stride +0x200 su base 0x0700):
+	 *   - PHY.MOD 0x0X28: clear bit 11-13, set bit 11 (0x0800/0x3800)
+	 *   - PHY.MOD 0x0X21: set bit 14 (0x4000/0x4000)
+	 */
+	{
+		unsigned int core;
+		unsigned int num_cores = dev->phy.ac->num_cores;
+
+		for (core = 0; core < num_cores; core++) {
+			u16 stride = (u16)(core * 0x200);
+
+			b43_phy_maskset(dev, 0x0728 + stride,
+					(u16)~0x3800, 0x0800);
+			b43_phy_maskset(dev, 0x0721 + stride,
+					(u16)~0x4000, 0x4000);
+		}
+	}
+
+	/*
+	 * PHY+RAD per-core loop su TUTTI i core silicon (d6220 ch36
+	 * #34756-#34770, 15 op = 5 op × 3 core). NON filtrato per coremask.
+	 * Cross-cattura agcombo #60595-60609.
+	 *
+	 * Per ciascun core:
+	 *   - PHY.MOD 0x0X29: set bit 12 (0x1000/0x1000)
+	 *   - PHY.MOD 0x0X21: set bit 12 (0x1000/0x1000, in aggiunta a bit
+	 *     14 già settato dal loop precedente)
+	 *   - RAD.MOD 0x0X33: clear nibble bit 12-15, set bit 14 (0x4000).
+	 *     RAD stride: 0x0033 (core 0), 0x0233 (core 1), 0x0433 (core 2).
+	 *     NB: RAD stride +0x200 come PHY.
+	 */
+	{
+		unsigned int core;
+		unsigned int num_cores = dev->phy.ac->num_cores;
+
+		for (core = 0; core < num_cores; core++) {
+			u16 phy_stride = (u16)(core * 0x200);
+			u16 rad_stride = (u16)(core * 0x200);
+
+			b43_phy_maskset(dev, 0x0729 + phy_stride,
+					(u16)~0x1000, 0x1000);
+			b43_phy_maskset(dev, 0x0721 + phy_stride,
+					(u16)~0x1000, 0x1000);
+			b43_radio_maskset(dev, 0x0033 + rad_stride,
+					  (u16)~0xf000, 0x4000);
+		}
+	}
+
+	/*
+	 * Zero-fill per-core: TBL id=0x0c (3 celle) + RAD (4 celle) + PHY
+	 * (2 celle) (d6220 ch36 #34771-#34804, 34 op = 17 op × 2 core attivi).
+	 * FILTRATO per coremask — cross-cattura agcombo #60610+ conferma
+	 * skip di core 2. Cross-conferma pattern identico su agcombo.
+	 *
+	 * Per ciascun core attivo:
+	 *   - TBL 0x0c[0x0060 + core*4]     = 0 (2 celle)
+	 *   - TBL 0x0c[0x0062 + core*4]     = 0 (1 cella)
+	 *   - RAD 0x0002..0x0005 + stride   = 0 (RAD stride +0x200)
+	 *   - PHY 0x06a0..0x06a1 + stride   = 0 (PHY stride +0x200)
+	 */
+	{
+		unsigned int core;
+		unsigned int num_cores = dev->phy.ac->num_cores;
+		u8 mask = dev->phy.ac->coremask;
+		static const u16 zeros[2] = { 0, 0 };
+
+		for (core = 0; core < num_cores; core++) {
+			u16 tbl_off = (u16)(0x0060 + core * 4);
+			u16 rad_stride = (u16)(core * 0x200);
+			u16 phy_stride = (u16)(core * 0x200);
+
+			if (!(mask & (1 << core)))
+				continue;
+
+			b43_actab_write_bulk(dev, 0x0c, tbl_off, 16, 2, zeros);
+			b43_actab_write_bulk(dev, 0x0c, (u16)(tbl_off + 2),
+					     16, 1, zeros);
+			b43_radio_write(dev, 0x0002 + rad_stride, 0);
+			b43_radio_write(dev, 0x0003 + rad_stride, 0);
+			b43_radio_write(dev, 0x0004 + rad_stride, 0);
+			b43_radio_write(dev, 0x0005 + rad_stride, 0);
+			b43_phy_write(dev, 0x06a0 + phy_stride, 0);
+			b43_phy_write(dev, 0x06a1 + phy_stride, 0);
+		}
+	}
+
+	/*
+	 * coeff_bank_init (vendor naming, d6220 ch36 BW20 #34805-#34852,
+	 * 48 op): outer lock cycle, BW selector, LUT 0x0180-0x0194, RSSI/AGC
+	 * regs, per-core LUT 0x06ed/0x06ef, peek+relock. Vedi helper.
+	 * TODO: parametrizzare per BW (attualmente hardcode BW20 5G).
+	 */
+	b43_phy_ac_coeff_bank_init_bw20_5g(dev);
+
+	/*
+	 * Second invocation of set_analog_tx_lpf with stages=0x100 (only
+	 * stage 8). Il gate 0x019e è già lockato da channel_analog_setup
+	 * (che termina con maskset relock a #34852), quindi usiamo la
+	 * versione _locked che salta il pre-lock. L'unlock finale
+	 * (idempotente) è emesso esplicitamente per riprodurre #34893.
+	 * d6220 ch36 attach: #34853-#34893 (41 op = 20 op × 2 core + 1 unlock).
+	 */
+	b43_phy_ac_set_analog_tx_lpf_locked(dev, 0x100, -1, -1, -1,
+					    dev->phy.ac->lpf_cap0,
+					    dev->phy.ac->lpf_cap0,
+					    0xffffffff);
+	b43_phy_ac_tbl_write_unlock(dev, B43_PHY_AC_TBL_WRITE_GATE_LOCK);
+
+	/*
+	 * TBL 0x04 seed (rx_evm_shaping_override per-channel): due bulk write
+	 * len=3 su off 0x0001 e 0x003d (d6220 ch36 #34894-34907, 14 op).
+	 */
+	b43_phy_ac_rx_evm_shaping_override(dev);
+
+	/*
+	 * Per-core maskset "post rfseq_2 prep" (d6220 ch36 #34908-#34911, 4
+	 * op = 2 op × 2 core attivi):
+	 *   - PHY.MOD 0x0X3a val=0x0080 mask=0x0080 (set bit 7)
+	 *   - PHY.MOD 0x0X25 val=0x0200 mask=0x0200 (set bit 9)
+	 * X = 7 per core 0, 9 per core 1 (stride +0x200). FILTRATO per coremask.
+	 */
+	{
+		unsigned int core;
+		unsigned int num_cores = dev->phy.ac->num_cores;
+		u8 mask = dev->phy.ac->coremask;
+
+		for (core = 0; core < num_cores; core++) {
+			u16 stride = (u16)(core * 0x200);
+
+			if (!(mask & (1 << core)))
+				continue;
+
+			b43_phy_maskset(dev, 0x073a + stride,
+					(u16)~0x0080, 0x0080);
+			b43_phy_maskset(dev, 0x0725 + stride,
+					(u16)~0x0200, 0x0200);
+		}
+	}
+
+	/*
+	 * TBL 0x07 rfseq secondari per-core (d6220 ch36 #34912-#34983,
+	 * 72 op = 12 op × 6 chiamate TBL.WR len=8). Due tabelle per core
+	 * (CMD + DLY), 3 core silicon. NON filtrato per coremask.
+	 */
+	{
+		unsigned int core;
+		unsigned int num_cores = dev->phy.ac->num_cores;
+		static const u16 *cmd_tbl[3] = {
+			b43_acphy_rfseq_2_cmd_c0,
+			b43_acphy_rfseq_2_cmd_c1,
+			b43_acphy_rfseq_2_cmd_c2,
+		};
+		static const u16 *dly_tbl[3] = {
+			b43_acphy_rfseq_2_dly_c0,
+			b43_acphy_rfseq_2_dly_c1,
+			b43_acphy_rfseq_2_dly_c2,
+		};
+
+		for (core = 0; core < num_cores && core < 3; core++) {
+			u16 cmd_off = (u16)(0x0030 + core * 0x10);
+			u16 dly_off = (u16)(0x00a0 + core * 0x10);
+
+			b43_actab_write_bulk(dev, 7, cmd_off, 16, 8,
+					     cmd_tbl[core]);
+			b43_actab_write_bulk(dev, 7, dly_off, 16, 8,
+					     dly_tbl[core]);
+		}
+	}
+
+	/*
+	 * PHY.WR 0x0197/0x0198 + unlock outer gate (d6220 ch36 #34984-#34986,
+	 * 3 op). Il gate viene sbloccato per permettere le scritture "raw"
+	 * al PHY che seguono (non passano dal outer table write path).
+	 */
+	b43_phy_write(dev, 0x0197, 0x0014);
+	b43_phy_write(dev, 0x0198, 0x0010);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0000);
+
+	/*
+	 * Clear bits massivo per 0x0410 + per-core 0x0X3a/0x0X25 (d6220 ch36
+	 * #34987-#35006, 20 op = 2 op globali + 6 op × 3 core). NON filtrato
+	 * per coremask — emesso su tutti num_cores.
+	 */
+	b43_phy_maskset(dev, 0x0410, (u16)~0x0008, 0x0000);
+	b43_phy_maskset(dev, 0x0410, (u16)~0x0380, 0x0000);
+	{
+		unsigned int core;
+		unsigned int num_cores = dev->phy.ac->num_cores;
+
+		for (core = 0; core < num_cores; core++) {
+			u16 stride = (u16)(core * 0x200);
+
+			b43_phy_maskset(dev, 0x073a + stride,
+					(u16)~0x0008, 0x0000);
+			b43_phy_maskset(dev, 0x0725 + stride,
+					(u16)~0x0040, 0x0000);
+			b43_phy_maskset(dev, 0x073a + stride,
+					(u16)~0x0010, 0x0000);
+			b43_phy_maskset(dev, 0x0725 + stride,
+					(u16)~0x0080, 0x0000);
+			b43_phy_maskset(dev, 0x073a + stride,
+					(u16)~0x0007, 0x0000);
+			b43_phy_maskset(dev, 0x0725 + stride,
+					(u16)~0x0020, 0x0000);
+		}
+	}
+
+	/*
+	 * farrow_setup (resampler config): 4 write core 0 (0x019a-0x0199),
+	 * 4 write core 1 (0x01a1-0x01a0), 4 deltaphase (0x1602/3/6/7),
+	 * peek 0x0601, farrow global cfg 0x1601. d6220 ch36 #35007-#35020
+	 * (14 op). Il body è in farrow_phy_ac.c.
+	 */
+	b43_phy_ac_farrow_setup(dev, new_channel);
+
+	/*
+	 * Peek + relock outer gate (d6220 ch36 #35021-#35022, 2 op).
+	 * Prepara la fase finale di TBL.RD/TBL.WR su celle 0x03cd/0x03dd.
+	 */
+	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+
+	/*
+	 * RMW-like su due celle table 7: legge e riscrive con valore
+	 * hardcoded fisso. Non è un vero RMW (il valore letto è scartato);
+	 * la lettura serve probabilmente per sincronizzazione hardware.
+	 * d6220 ch36 #35023-#35042 (20 op = 10 op × 2 celle).
+	 *   - 0x03cd: read → write val=0x04c2
+	 *   - 0x03dd: read → write val=0x04e2
+	 */
+	{
+		u16 tmp;
+		u16 val_cd = 0x04c2;
+		u16 val_dd = 0x04e2;
+
+		b43_actab_read_bulk(dev, 7, 0x03cd, 16, 1, &tmp);
+		b43_actab_write_bulk(dev, 7, 0x03cd, 16, 1, &val_cd);
+		b43_actab_read_bulk(dev, 7, 0x03dd, 16, 1, &tmp);
+		b43_actab_write_bulk(dev, 7, 0x03dd, 16, 1, &val_dd);
+	}
+
+	/*
+	 * Final unlock outer gate (d6220 ch36 #35043, 1 op). Chiude il
+	 * segmento rfseq_tbl_init + channel_setup. Il codice esistente
+	 * riprende automaticamente al #35044 con PHY.WR 0x0371-0x0376.
+	 */
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0000);
+
+	/*
+	 * PHY 0x371-0x376 per-canale (set_regtbl_on_chan_change_acphy, path
+	 * radio 2069: phy_reg_write(0x371+i, ci[0x68+2*i]) = entry u16[52..57]).
+	 * Il vendor emette queste writes subito dopo l'unlock del table write
+	 * gate di rfseq_tbl_init (d6220 ch36 #35044-#35049, l'ultimo TBL.WR
+	 * termina a #35043).
+	 */
+	for (i = 0; i < 6; i++)
+		b43_phy_write(dev, B43_PHY_AC_BW1A + i, e->phy_bw[i]);
+
+	/*
+	 * chanspec_tail: clear 0x0164/0x030f, gain 0x031c-0x031f, per-core
+	 * crs_reg, clear 0x0910-0x0913, clear 0x03a9, raw 0x00ec-0x00f5,
+	 * peek+relock outer gate. d6220 ch36 #35050-#35086 (37 op).
+	 */
+	b43_phy_ac_chanspec_tail(dev);
+}
+
+/* Table id 0x11: 464 words, caricata via registro dati alternato 0x0011
+ * (b43_actab_write_r11). Contenuto opaco, catturato dal trace. */
+static const u16 b43_acphy_tbl11[464] = {
+	0x005b, 0x8250, 0xc338, 0x4527, 0xa6a1, 0x081b, 0x8a18, 0x2c96,
+	0x8e17, 0x101b, 0x0020, 0x0020, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x18f1,
+	0x18f1, 0x18f1, 0x18f1, 0x18f1, 0x0000, 0x0000, 0x0000, 0x0000,
+};
+
+/*
+ * Per-channel table loads (radio_rev 4, 5 GHz): twin coeff 0x00ec-0x00f5 + tbl 0x11 (464w) + tbl 0x0b/0x15 + coppia per-core 0x44/0x45 (broadcast a num_cores).
+ * 4360 agcombo: TODO ; d6220 ch36 TBL.WR id=0x11(464w)/0x0b/0x15/0x44/0x45 @#35087+ */
+static void b43_phy_ac_chan_tables(struct b43_wldev *dev)
+{
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	/*
+	 * Caricamento tabella 0x11 (464 valori u16) tramite porta DATA_2 (0x011),
+	 * con re-selezione ID/OFFSET per ciascuna cella. Vendor pattern per-cella:
+	 * TBL.WR label + peek 0x019e + WR ID + WR OFFSET + WR DATA_2.
+	 * d6220 ch36 #35087-#37406 (2320 op = 5 op × 464 celle).
+	 *
+	 * Il gate 0x019e è già lockato all'entrata (da chanspec_tail #35086) e
+	 * resta lockato in uscita (il consumer successivo — noise_shaping_table_init
+	 * — apre il proprio gate cycle).
+	 *
+	 * NB: le altre tabelle (0x0b glim, 0x15 nvar, 0x44/0x45 nshp per-core)
+	 * NON sono qui. Sono emesse da noise_shaping_table_init.
+	 */
+	b43_actab_write_r11(dev, 0x11, 0, ARRAY_SIZE(b43_acphy_tbl11), b43_acphy_tbl11);
+}
+
+/*
+ * rx_evm_shaping (table 0x04) per-channel override: due run da 3 word, width 16
+ * (off 0x0001={0x0008,0x0006,0x0004}, off 0x003d={0x0004,0x0006,0x0008}).
+ * Chiamata da channel_setup nel gap-fill: il gate 0x019e è già lockato
+ * (dal caller), quindi NIENTE tbl_write_lock/unlock qui.
+ * 4360 agcombo #6164-6175 ; d6220 ch36 TBL.WR id=0x04 off 0x01/0x3d @#34894,#34901
+ */
+static void b43_phy_ac_rx_evm_shaping_override(struct b43_wldev *dev)
+{
+	static const u16 blk_lo[3] = { 0x0008, 0x0006, 0x0004 };
+	static const u16 blk_hi[3] = { 0x0004, 0x0006, 0x0008 };
+
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET);
+
+	b43_actab_write_bulk(dev, 0x04, 0x0001, 16, ARRAY_SIZE(blk_lo), blk_lo);
+	b43_actab_write_bulk(dev, 0x04, 0x003d, 16, ARRAY_SIZE(blk_hi), blk_hi);
+}
+
+/*
+ * Body per-core del blocco post-noise-shaping (d6220 ch36: #37945-#37976
+ * per core 0, replicato con stride 0x200 per core 1/2). Peek + writes su
+ * 0x06dc/0x06dd + stride, TBL.WR id=0x07 off=(0xf9+core) len=1 val=0xc0b5,
+ * unlock outer gate, 5 gruppi di (MOD 0x06e3+stride clear bit 1 + 2 writes),
+ * 5+3 peek diagnostici, e infine MOD 0x06ee+stride val=1 mask=3.
+ *
+ * Semantica ignota (registri 0x06dc-0x06e5, 0x06ee non hanno naming vendor
+ * pubblico); il pattern per-core suggerisce programmazione RX gain / RSSI.
+ */
+static void
+b43_phy_ac_post_noise_shaping_rx_regprog_core(struct b43_wldev *dev,
+					      unsigned int core)
+{
+	u16 stride = (u16)(core * 0x200);
+	u16 tbl_off = (u16)(0x00f9 + core);
+	static const u16 tbl_val = 0xc0b5;
+
+	/* peek + program 0x06dc/0x06dd */
+	b43_phy_read_log(dev, 0x06dc + stride);
+	b43_phy_write(dev, 0x06dc + stride, 0x016a);
+	b43_phy_write(dev, 0x06dd + stride, 0x0604);
+
+	/* TBL.WR id=0x07 off=0xf9+core val=0xc0b5 (gate era unlockato: usa _reopen) */
+	b43_actab_write_bulk_reopen(dev, 0x07, tbl_off, 16, 1, &tbl_val);
+
+	/* Unlock outer gate dopo il TBL.WR */
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0000);
+
+	/* 5 gruppi (MOD 0x06e3+stride clear bit 1) + 2 write */
+	b43_phy_maskset(dev, 0x06e3 + stride, (u16)~0x0002, 0x0000);
+	b43_phy_write(dev, 0x06de + stride, 0x015a);
+	b43_phy_write(dev, 0x06df + stride, 0x0004);
+	b43_phy_maskset(dev, 0x06e3 + stride, (u16)~0x0002, 0x0000);
+	b43_phy_write(dev, 0x06e0 + stride, 0x016a);
+	b43_phy_write(dev, 0x06e1 + stride, 0x0018);
+	b43_phy_maskset(dev, 0x06e3 + stride, (u16)~0x0002, 0x0000);
+	b43_phy_write(dev, 0x06e4 + stride, 0x013a);
+	b43_phy_write(dev, 0x06e5 + stride, 0x0008);
+	b43_phy_maskset(dev, 0x06e3 + stride, (u16)~0x0002, 0x0000);
+	b43_phy_write(dev, 0x06e2 + stride, 0x013a);
+	b43_phy_write(dev, 0x06e3 + stride, 0x0008);
+	b43_phy_maskset(dev, 0x06e3 + stride, (u16)~0x0002, 0x0000);
+
+	/* 5× peek 0x06dc+stride + 3× peek 0x06dd+stride (settle/diagnostic) */
+	b43_phy_read_log(dev, 0x06dc + stride);
+	b43_phy_read_log(dev, 0x06dc + stride);
+	b43_phy_read_log(dev, 0x06dc + stride);
+	b43_phy_read_log(dev, 0x06dc + stride);
+	b43_phy_read_log(dev, 0x06dc + stride);
+	b43_phy_read_log(dev, 0x06dd + stride);
+	b43_phy_read_log(dev, 0x06dd + stride);
+	b43_phy_read_log(dev, 0x06dd + stride);
+
+	/* MOD 0x06ee+stride val=1 mask=3 */
+	b43_phy_maskset(dev, 0x06ee + stride, (u16)~0x0003, 0x0001);
+}
+
+/*
+ * Core-transition emessa DOPO il body di ogni core (anche l'ultimo):
+ * 8 op che programmano registri radio 0x0045+stride e 0x0033+stride + PHY
+ * 0x06dc/0x06ee+stride. Il wrap radio_maskset espande in MOD + RD + WR
+ * col valore corretto dal mirror (pre-popolato da radio_2069_channel_setup):
+ * core attivo → 0x73bf/0x4181; core inattivo → 0x7380/0x4180 (d6220 ch36
+ * core 2).
+ */
+static void
+b43_phy_ac_post_noise_shaping_core_transition(struct b43_wldev *dev,
+					      unsigned int core)
+{
+	u16 stride = (u16)(core * 0x200);
+
+	b43_radio_maskset(dev, 0x0045 + stride, (u16)~0x0300, 0x0300);
+	b43_phy_read_log(dev, 0x06dc + stride);
+	b43_phy_maskset(dev, 0x06ee + stride, (u16)~0x000c, 0x0008);
+	b43_radio_maskset(dev, 0x0033 + stride, (u16)~0x00f0, 0x0080);
+}
+
+/*
+ * Blocco post-noise_shaping (d6220 ch36 #37943-#38064 e oltre).
+ * Chiude noise_shaping (PHY.WR 0x016c=0), unlocka outer gate, poi ripete
+ * per ogni core silicon (num_cores, non coremask):
+ *   1. rx_regprog_core(dev, core) — 26 op sul blocco 0x06XX+stride
+ *   2. core_transition(dev, core, active) — 8 op radio+phy
+ *
+ * Semantica dei registri 0x06dc-0x06e5, 0x06ee, radio 0x0045/0x0033 non
+ * identificata; il pattern per-core con stride 0x200 e i valori radio
+ * "active/inactive" suggeriscono programmazione RX gain/RSSI per canale.
+ * Rinominare quando la decompilazione del blob chiarirà.
+ */
+static void b43_phy_ac_post_noise_shaping_rx_regprog(struct b43_wldev *dev)
+{
+	unsigned int core;
+	u8 num_cores = dev->phy.ac->num_cores;
+
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET);
+
+	/* Chiusura noise_shaping (comune, prima di tutti i core) */
+	b43_phy_write(dev, 0x016c, 0x0000);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0000);
+
+	/* Loop per-core: body + transition (anche dopo l'ultimo core) */
+	for (core = 0; core < num_cores; core++) {
+		b43_phy_ac_post_noise_shaping_rx_regprog_core(dev, core);
+		b43_phy_ac_post_noise_shaping_core_transition(dev, core);
+	}
+}
+
+/*
+ * RX gain-control register block (radio_rev 4, 5 GHz), per active core
+ * (0x0720-0x073e). Vendor emette a #39559-#39599 per core 0, #39600-#39640
+ * per core 1: peek 0x073e → WR 0x073e=0x0440 → 13 peek dei "saved" regs
+ * (0x0721-0x073c range) → 26 op di programma effettivo.
+ *
+ * 4360 agcombo: TODO ; d6220 ch36: #39559-#39640 (82 op × 2 core)
+ */
+static void b43_phy_ac_rxgainctrl_regs(struct b43_wldev *dev)
+{
+	u8 c, num_cores = dev->phy.ac->num_cores;
+	u8 mask = dev->phy.ac->coremask;
+	/*
+	 * RX-LPF gain-word hi (9-bit) per canale. Il vendor NON legge dalla
+	 * gain table qui — usa un valore già noto internamente. Valori
+	 * osservati nei trace: ch36 -> 0x0154, ch44 -> 0x0152, altri
+	 * unknown. Hardcoded per D6220 ch36 fino a che non capiamo come
+	 * il vendor lo deriva dal canale (probabile funzione lineare della
+	 * LPF cap del channel table).
+	 *
+	 * TODO: derivare da channel->center_freq o da un campo aggiunto a
+	 * struct b43_phy_ac_channeltab_e_radio2069.
+	 */
+	u16 gw_hi = 0x0154;
+
+	/* Chiamata post-2×-txpwrctrl_setup + terza transizione: gate a
+	 * RX_OFDM released (rx_gate non ancora armato in questa fase),
+	 * CLIP_ALL_DIS clear come per txpwrctrl_setup. */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_RX_OFDM,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_CLIP_ALL_DIS |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	for (c = 0; c < num_cores; c++) {
+		u16 s = (u16)(c * 0x200);
+
+		if (!((mask >> c) & 1))
+			continue;
+
+		/* Vendor #39559-#39560: peek 0x073e, WR 0x073e=0x0440 (RX-gain
+		 * override companion bracket open). */
+		b43_phy_read_log(dev, 0x073e + s);
+		b43_phy_write(dev,    0x073e + s, 0x0440);
+
+		/* Vendor #39561-#39573: peek dei 13 registri "saved" prima di
+		 * riprogrammare. Ordine esatto vendor. */
+		b43_phy_read_log(dev, 0x0727 + s);
+		b43_phy_read_log(dev, 0x073c + s);
+		b43_phy_read_log(dev, 0x0721 + s);
+		b43_phy_read_log(dev, 0x0729 + s);
+		b43_phy_read_log(dev, 0x0720 + s);
+		b43_phy_read_log(dev, 0x0728 + s);
+		b43_phy_read_log(dev, 0x0724 + s);
+		b43_phy_read_log(dev, 0x0736 + s);
+		b43_phy_read_log(dev, 0x0725 + s);
+		b43_phy_read_log(dev, 0x0739 + s);
+		b43_phy_read_log(dev, 0x073a + s);
+		b43_phy_read_log(dev, 0x0722 + s);
+		b43_phy_read_log(dev, 0x0734 + s);
+
+		/* Vendor #39574-#39599: 26 op di programma effettivo. Tutte
+		 * phy_maskset perché il vendor emette PHY.MOD con mask esplicito;
+		 * phy_set/phy_mask emetterebbero mask=0x0000 (non matcha). */
+		b43_phy_maskset(dev, 0x0727 + s, (u16)~0x0002, 0x0002);
+		b43_phy_maskset(dev, 0x073c + s, (u16)~0x000e, 0x0002);
+		b43_phy_maskset(dev, 0x0727 + s, (u16)~0x0001, 0x0001);
+		b43_phy_maskset(dev, 0x073c + s, (u16)~0x0001, 0x0001);
+		b43_phy_maskset(dev, 0x0721 + s, (u16)~0x0100, 0x0100);
+		b43_phy_maskset(dev, 0x0729 + s, (u16)~0x0100, 0x0000);
+		b43_phy_maskset(dev, 0x0720 + s, (u16)~0x0020, 0x0020);
+		b43_phy_maskset(dev, 0x0728 + s, (u16)~0x0020, 0x0020);
+		b43_phy_maskset(dev, 0x0720 + s, (u16)~0x0040, 0x0040);
+		b43_phy_maskset(dev, 0x0728 + s, (u16)~0x0040, 0x0000);
+		b43_phy_maskset(dev, 0x0720 + s, (u16)~0x0010, 0x0010);
+		b43_phy_maskset(dev, 0x0728 + s, (u16)~0x0010, 0x0010);
+		b43_phy_write(dev,   0x0736 + s, gw_hi);
+		b43_phy_write(dev,   0x0724 + s, 0x03ff);
+		b43_phy_maskset(dev, 0x073a + s, (u16)~0x0007, 0x0003);
+		b43_phy_maskset(dev, 0x0725 + s, (u16)~0x0020, 0x0020);
+		b43_phy_maskset(dev, 0x0739 + s, (u16)~0x007e, 0x007a);
+		b43_phy_maskset(dev, 0x0725 + s, (u16)~0x0002, 0x0002);
+		b43_phy_maskset(dev, 0x073a + s, (u16)~0x0008, 0x0000);
+		b43_phy_maskset(dev, 0x0725 + s, (u16)~0x0040, 0x0040);
+		b43_phy_maskset(dev, 0x073a + s, (u16)~0x0010, 0x0010);
+		b43_phy_maskset(dev, 0x0725 + s, (u16)~0x0080, 0x0080);
+		b43_phy_maskset(dev, 0x073a + s, (u16)~0x0060, 0x0040);
+		b43_phy_maskset(dev, 0x0725 + s, (u16)~0x0100, 0x0100);
+		b43_phy_maskset(dev, 0x0734 + s, (u16)~0x0007, 0x0000);
+		b43_phy_maskset(dev, 0x0722 + s, (u16)~0x0004, 0x0004);
+	}
+}
+
+
+/* 4360 agcombo: 8831-8969 (l'arm RX  e' di afecal, non di qui) ; d6220 ch36 @#38199 (0x1641=0x7f18) */
+static void b43_phy_ac_adc_reset(struct b43_wldev *dev)
+{
+	static const u16 adc_hi[8] = { 0x33a, 0x33b, 0x33e, 0x33f,
+				       0x342, 0x343, 0x346, 0x347 }; /* = 0x03ac */
+	static const u16 adc_lo[8] = { 0x33c, 0x33d, 0x340, 0x341,
+				       0x344, 0x345, 0x348, 0x349 }; /* = 0x032c */
+	u8 c, num_cores = dev->phy.ac->num_cores;
+	u8 mask = dev->phy.ac->coremask;
+	u16 saved;
+	unsigned int i;
+
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	/* The RX-chain arm/restore on 0x0739/0x0725/0x073a is NOT part of adc_reset:
+	 * it is afecal's save-arm-restore (b43_radio_2069_afecal), which runs
+	 * immediately before this. In the trace those PHY writes (4352 -
+	 * 169913) sit inside afecal's RCCAL_EN1 bracket, interleaved with the
+	 * AFE_CAL_CLK/CTRL radio ops; adc_reset proper begins at the gain table. */
+
+	/* Per active core: point the gain table (0x20 off 0x40) + readback, then
+	 * the fixed ADC gain words into tables 7 and 0xc. These five per-core
+	 * words are exactly b43_phy_ac_txpwr_by_index(0x40) inlined here as the
+	 * cal-time gain (the words match idx 0x40 byte-for-byte); the trace shows
+	 * them only here, wrapped in the 0x20/0x40 readback dance, so they stay
+	 * open-coded rather than routed through the helper.
+	 *
+	 * Pattern per-core (d6220 ch36 #38125-#38160 per core 0, #38161-#38196 per
+	 * core 1): il gate 0x019e è cyclato ad ogni "gruppo" di tabelle.
+	 *   - tbl_write_lock (peek + relock)               apertura core
+	 *   - TBL.RD id=0x20 off=0x40                       (readback gaincurve)
+	 *   - TBL.WR × 3 (id=0x07 off=0x100/0x103/0x106)
+	 *   - tbl_write_lock (peek + relock, idempotente)   mid-sync tra 0x07 e 0x0c
+	 *   - TBL.WR × 2 (id=0x0c off=0x63+c*4, 0x73+c*4)
+	 *   - PHY.MOD 0x019e relock (raw) + unlock (raw)    chiusura core
+	 */
+	for (c = 0; c < num_cores; c++) {
+		static const u16 z = 0x0000, w0 = 0x2f13, w1 = 0x00f3, g = 0x0035;
+		u8 dummy;
+
+		if (!((mask >> c) & 1))
+			continue;
+
+		/* Apertura core: peek + relock */
+		saved = b43_phy_ac_tbl_write_lock(dev);
+
+		/* Vendor #38127-#38131: TBL.RD id=0x20 off=0x40 (readback gain-curve). */
+		b43_actab_read_bulk(dev, 0x20, 0x40, 8, 1, &dummy);
+
+		b43_actab_write_bulk(dev, 7, 0x100 + c, 16, 1, &z);
+		b43_actab_write_bulk(dev, 7, 0x103 + c, 16, 1, &w0);
+		b43_actab_write_bulk(dev, 7, 0x106 + c, 16, 1, &w1);
+
+		/* Mid-sync tra gruppo id=0x07 e gruppo id=0x0c (vendor #38147-#38148). */
+		saved = b43_phy_ac_tbl_write_lock(dev);
+
+		b43_actab_write_bulk(dev, 0xc, 0x63 + c * 4, 16, 1, &g);
+		b43_actab_write_bulk(dev, 0xc, 0x73 + c * 4, 16, 1, &g);
+
+		/*
+		 * Chiusura core (vendor #38159-#38160): 2 raw maskset sul gate
+		 *   - relock (idempotente, val=0x02 mask=0x02)
+		 *   - unlock (val=0x00 mask=0x02)
+		 * Nota: non equivalente a tbl_write_unlock(saved) — quello con
+		 * saved=0x02 emette solo il relock (1 op), non l'unlock. Serve un
+		 * unlock esplicito.
+		 */
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0000);
+	}
+	(void)saved;
+
+	/*
+	 * TX power-control enable (0x70[15:13]), framed by 0x1641 (broadcast
+	 * gain reg). Vendor #38197-#38204:
+	 *   - PHY.RD 0x0070 (peek diagnostico)
+	 *   - MOD 0x0070 clear bit 13-15
+	 *   - WR 0x1641 = 0x7f18
+	 *   - MOD 0x0070 set bit 13-15
+	 *   - MOD 0x0644+stride val=0x0014 mask=0x007f (per-core, active only)
+	 *   - MOD 0x0678+stride clr bit 2 (per-core, active only)
+	 */
+	b43_phy_read_log(dev, 0x0070);
+	b43_phy_maskset(dev, 0x0070, (u16)~0xe000, 0x0000);
+	b43_phy_write(dev, 0x1641, 0x7f18);
+	b43_phy_maskset(dev, 0x0070, (u16)~0xe000, 0xe000);
+
+	for (c = 0; c < num_cores; c++) {
+		if (!((mask >> c) & 1))
+			continue;
+		b43_phy_maskset(dev, 0x0644 + c * 0x200, (u16)~0x007f, 0x0014);
+	}
+
+	for (c = 0; c < num_cores; c++) {
+		if (!((mask >> c) & 1))
+			continue;
+		b43_phy_maskset(dev, 0x0678 + c * 0x200, (u16)~0x0004, 0x0000);
+	}
+
+	/*
+	 * PLL lock verify. Controparte semantica del channel_switch_prep:
+	 * ora che il freeze RX ha protetto tutto il flow di channel_setup e
+	 * il PLL ha avuto ~decine di ms per stabilizzarsi (via gli udelay in
+	 * radio_2069_channel_setup e il resto del setup phy_ac), il vendor
+	 * emette una singola RAD.RD 0x090b subito prima di rilasciare il
+	 * freeze RX. Trace: ch36 #38205, agcombo dtu-ch36 #64101. Il codice
+	 * usa una polling loop come safety-net (invece della singola peek
+	 * vendor) per gestire il caso in cui il PLL non abbia ancora locked,
+	 * comportamento raro ma non impossibile sul silicio.
+	 */
+	{
+		unsigned int tries;
+		u16 stat = 0;
+
+		for (tries = 0; tries < 100; tries++) {
+			udelay(10);
+			stat = b43_radio_read(dev, 0x090b);
+			if (stat & 0x0100)
+				break;
+		}
+		if (!(stat & 0x0100))
+			b43dbg(dev->wl,
+			       "radio 2069: PLL lock timeout (0x90b=0x%04x)\n",
+			       stat);
+	}
+
+	/* PHY update strobe (vendor #38206-#38207): 2 op MOD, non OR/AND. */
+	b43_phy_ac_cca_pulse(dev);
+
+	/* Release the RX gate and hold the ADC bracket. WR piena a 0x0140
+	 * come il vendor (#38209), non RMW: porta anche il bit 0x0800 allo
+	 * stato vendor. */
+	b43_phy_ac_rx_gate_with_adc_hold(dev, false);
+
+	/* ADC config. */
+	b43_phy_write(dev, 0x0339, 0x0fff);
+	/*
+	 * MHF clear bit 13 slot 0 (mask=0x2000, val=0x0000). Vendor #38218:
+	 * MAC.MHF addr=0x0000 val=0x0000 mask=0x2000. Il firmware MAC applica
+	 * il maskset atomicamente sulla word HOSTF1.
+	 *
+	 * NB: usa l'helper AC-PHY-specifico b43_phy_ac_mhf_maskset, NON
+	 * b43_hf_write mainline (che ha signature `u64 value` e supporta
+	 * solo 3 slot; il vendor AC-PHY usa 5 slot).
+	 */
+	b43_phy_ac_mhf_maskset(dev, 0, (u16)~0x2000, 0x0000);
+
+	/*
+	 * ADC config: due round consecutivi con valori diversi.
+	 * Round 1 (vendor #38219-#38234): adc_hi = 0x03ac, adc_lo = 0x032c.
+	 * Round 2 (vendor #38235-#38250): adc_hi = 0x03bf, adc_lo = 0x0340.
+	 */
+	for (i = 0; i < 8; i++)
+		b43_phy_write(dev, adc_hi[i], 0x03ac);
+	for (i = 0; i < 8; i++)
+		b43_phy_write(dev, adc_lo[i], 0x032c);
+	for (i = 0; i < 8; i++)
+		b43_phy_write(dev, adc_hi[i], 0x03bf);
+	for (i = 0; i < 8; i++)
+		b43_phy_write(dev, adc_lo[i], 0x0340);
+
+	b43_phy_maskset(dev, 0x016e, (u16)~0x0002, 0x0002);
+	b43_phy_maskset(dev, 0x016e, (u16)~0x0001, 0x0001);
+	b43_phy_maskset(dev, 0x016e, (u16)~0x0010, 0x0010);
+	b43_phy_write(dev, 0x016f, 0x07d0);
+	b43_phy_write(dev, 0x0170, 0x07d0);
+
+	/* Arm the RX gate and drop the ADC bracket (#38257). */
+	b43_phy_ac_rx_gate_with_adc_hold(dev, true);
+	b43_phy_write(dev, 0x0339, 0x0000);
+
+	/*
+	 * PHY update strobe. Vendor #38266-#38267: MOD (mask esplicita), NON OR.
+	 * Il TSSI-path enable per-core (#38268-#38273: MOD 0x0072/0x?727/0x?73c
+	 * per ogni core attivo) è emesso da idle_tssi_meas, non qui.
+	 */
+	b43_phy_ac_cca_pulse(dev);
+}
+
+/*
+ * CRS clip-detector thresholds — 8 registri (4 per core, stride +0xc,
+ * interleaved core 0/1). Il vendor programma il byte basso con soglie
+ * BW-dependent (0x31 BW20 5G, 0x36 BW40/BW80) in chanspec_tail e con
+ * 0x34 nel blocco E di rxiqcal_finalize.
+ */
+static const u16 b43_phy_ac_crs_regs[8] = {
+	0x0324, 0x0330,
+	0x0321, 0x032d,
+	0x032a, 0x0336,
+	0x0327, 0x0333,
+};
+
+static void b43_phy_ac_crs_regs_write(struct b43_wldev *dev, u16 val)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_crs_regs); i++)
+		b43_phy_maskset(dev, b43_phy_ac_crs_regs[i],
+				(u16)~0x00ff, val);
+}
+
+/*
+ * Noise floor clear — azzera byte high/low di 0x0910-0x0913 con
+ * pattern osservato: 0x0910/0x0912 high-poi-low, 0x0911/0x0913
+ * low-poi-high. 8 op totali.
+ */
+static void b43_phy_ac_noise_floor_clear(struct b43_wldev *dev)
+{
+	b43_phy_maskset(dev, 0x0910, (u16)~0xff00, 0);
+	b43_phy_maskset(dev, 0x0910, (u16)~0x00ff, 0);
+	b43_phy_maskset(dev, 0x0912, (u16)~0xff00, 0);
+	b43_phy_maskset(dev, 0x0912, (u16)~0x00ff, 0);
+	b43_phy_maskset(dev, 0x0911, (u16)~0x00ff, 0);
+	b43_phy_maskset(dev, 0x0911, (u16)~0xff00, 0);
+	b43_phy_maskset(dev, 0x0913, (u16)~0x00ff, 0);
+	b43_phy_maskset(dev, 0x0913, (u16)~0xff00, 0);
+}
+
+/*
+ * AFE gain regs re-emit — 5 MOD identici usati in due punti di
+ * rxiqcal_finalize (blocco E post-Blocco D e coda finale post-LUT).
+ *   0x0070 set 0xe000                       — top-3 gain enable bits
+ *   0x0644 / 0x0844 set 0x14 mask 0x7f      — per-core AFE gain word
+ *   0x0678 / 0x0878 clr bit 2               — per-core AFE bypass
+ */
+static void b43_phy_ac_afe_gain_regs_reemit(struct b43_wldev *dev)
+{
+	b43_phy_maskset(dev, 0x0070, (u16)~0xe000, 0xe000);
+	b43_phy_maskset(dev, 0x0644, (u16)~0x007f, 0x0014);
+	b43_phy_maskset(dev, 0x0844, (u16)~0x007f, 0x0014);
+	b43_phy_maskset(dev, 0x0678, (u16)~0x0004, 0);
+	b43_phy_maskset(dev, 0x0878, (u16)~0x0004, 0);
+}
+
+/*
+ * Arm tone generator — peek 0x0393 + WR 0x0394 = arm_val + WR 0x0393 =
+ * 0x8000. Osservato con arm_val = 0x0110 (arm globale), 0x0111 (arm
+ * core 1), 0x0110 | core (idle_tssi_meas iter).
+ */
+static void b43_phy_ac_arm_tone_gen(struct b43_wldev *dev, u16 arm_val)
+{
+	b43_phy_read_log(dev, 0x0393);
+	b43_phy_write(dev,    0x0394, arm_val);
+	b43_phy_write(dev,    0x0393, 0x8000);
+}
+
+/*
+ * Chanspec tail post-BW1F: sequenza di 37 op emesse dal vendor a #35050-#35086,
+ * subito dopo il loop BW1A/BW1F dentro channel_setup. Il gate 0x019e è già
+ * lockato all'entrata (dal caller). Struttura:
+ *   1. Clear 0x0164 bit 4 (annulla il set fatto in coeff_bank_init_bw20_5g)
+ *   2. Clear 0x030f bit 14-15
+ *   3. PHY.WR 0x031c-0x031f = gain (0x00bf per BW20 5G, 0x0100 per BW80 5G,
+ *      0x00ff per 2.4GHz)
+ *   4. Per-core crs_reg (8 op = 4 reg × 2 core interleaved, stride +0xc):
+ *      val=0x31 mask=0x00ff (BW20 5G), 0x36 per BW40/BW80.
+ *   5. Clear 0x0910-0x0913 byte high/low (8 op alternati)
+ *   6. Peek + 2 clear su 0x03a9 (bits 0-6 e bit 11)
+ *   7. Raw PHY.WR 0x00ec-0x00f5 (10 op, valori hardcoded 5G BW20)
+ *   8. Peek + relock outer gate (chiude il tail per chan_tables)
+ *
+ * TODO: parametrizzare valori 0x00ec-0x00f5 per BW/band.
+ */
+static void b43_phy_ac_chanspec_tail(struct b43_wldev *dev)
+{
+	static const struct { u16 reg; u16 val; } post_bw1f_raw[10] = {
+		{ 0x00ec, 0x0b54 }, { 0x00ed, 0x0290 }, { 0x00ee, 0x0004 },
+		{ 0x00ef, 0x0a40 }, { 0x00f0, 0x0290 }, { 0x00f1, 0x0005 },
+		{ 0x00f2, 0x0a06 }, { 0x00f3, 0x0240 }, { 0x00f4, 0x0005 },
+		{ 0x00f5, 0x0080 },
+	};
+	u16 gain = 0x00bf;
+	u16 crs = 0x0031;
+	unsigned int i;
+
+	if (b43_current_band(dev->wl) != NL80211_BAND_5GHZ)
+		gain = 0x00ff;
+	else if (dev->wl->hw->conf.chandef.width == NL80211_CHAN_WIDTH_80)
+		gain = 0x0100;
+
+	if (dev->wl->hw->conf.chandef.width != NL80211_CHAN_WIDTH_20)
+		crs = 0x0036;
+
+	b43_phy_maskset(dev, 0x0164, (u16)~0x0010, 0x0000);
+	b43_phy_maskset(dev, 0x030f, (u16)~0xc000, 0x0000);
+
+	b43_phy_write(dev, 0x031c, gain);
+	b43_phy_write(dev, 0x031d, gain);
+	b43_phy_write(dev, 0x031e, gain);
+	b43_phy_write(dev, 0x031f, gain);
+
+	b43_phy_ac_crs_regs_write(dev, crs);
+	b43_phy_ac_noise_floor_clear(dev);
+
+	b43_phy_read_log(dev, 0x03a9);
+	b43_phy_maskset(dev, 0x03a9, (u16)~0x007f, 0x0000);
+	b43_phy_maskset(dev, 0x03a9, (u16)~0x0800, 0x0000);
+
+	for (i = 0; i < ARRAY_SIZE(post_bw1f_raw); i++)
+		b43_phy_write(dev, post_bw1f_raw[i].reg, post_bw1f_raw[i].val);
+
+	/* Peek + relock outer gate (chiude il chanspec_tail per chan_tables). */
+	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+}
+
+/*
+ * Per-core RX-gain LUT seed emesso dal vendor durante il body Phase 3 delle
+ * noise-shaping tables (ch36 #37622-#37658 c0, #37729-#37765 c1, #37836-#37872
+ * c2). 10 op per-core (seguite dai diagnostic readback che il chiamante emette
+ * separatamente):
+ *
+ *   PHY.RD  0x?73e                    (peek diagnostico)
+ *   PHY.WR  0x?73e = 0x0000           (clear)
+ *   PHY.MOD 0x?6f9, mask=0x7f00, val=(gainctx << 8)
+ *   PHY.MOD 0x?6f9, mask=0x007f, val=lna1_idx
+ *   TBL.WR  id=0x44+c*0x20, off=0, len=2, w=16, val={hdr, hdr}
+ *   PHY.WR  0x173b = 0x002c           (non core-strided)
+ *   PHY.WR  0x1726 = 0x000c
+ *   TBL.WR  id=0x44+c*0x20, off=0x20, len=10, w=16, val=fill_07
+ *   TBL.WR  id=0x45+c*0x20, off=0x20, len=10, w=16, val=fill_02
+ *
+ * gainctx = ((triso[core] + 4) << 1) + 2     -- wl7 addiu +2 (blob 0xa20fc)
+ * hdr     = (elnagain[core] + 3) << 1        -- eLNA header from SPROM
+ * lna1_idx = fill_02[0] = 0x02               -- seed coerente con la lookup
+ *
+ * Note:
+ *   - core iteration + coremask filtering sono responsabilità del chiamante:
+ *     il vendor emette per tutti dev->phy.ac->num_cores channel PHY senza
+ *     filtrare per coremask (le op sono osservabili per c0/c1/c2 anche su
+ *     board 2×2 dove solo 2 core sono TX-abilitati).
+ *   - lna1_idx non è letta da tbl (l'inline vendor la hardcode a 0x02): a
+ *     Phase 3-time la tbl 0x45[0x20] non è ancora popolata; verrà scritta
+ *     3 op più tardi con fill_02, il cui primo entry combacia con 0x02.
+ *   - band-dependent SPROM values: usiamo rxgains_5gl (UNII-1). Il target
+ *     iniziale è ch36 (5gl); per 5gm/5gh servirà una scelta band-based.
+ */
+static void b43_phy_ac_rxgain_init(struct b43_wldev *dev, unsigned int core)
+{
+	static const u16 fill_07[10] = { 7, 7, 7, 7, 7, 7, 7, 7, 7, 7 };
+	static const u16 fill_02[10] = { 2, 2, 2, 2, 2, 2, 2, 2, 2, 2 };
+	const struct ssb_sprom *sprom = dev->dev->bus_sprom;
+	const struct ssb_sprom_rxgains *rxgains = &sprom->rxgains_5gl;
+	u16 ps = (u16)(core * 0x0200);
+	u16 ta = (u16)(0x0044 + core * 0x0020);
+	u16 tb = (u16)(0x0045 + core * 0x0020);
+	u16 gainctx = (u16)(((rxgains->triso[core] + 4) << 1) + 2);
+	u16 hdr_val = (u16)((rxgains->elnagain[core] + 3) << 1);
+	u16 lna1_idx = fill_02[0];
+	u16 hdr_arr[2] = { hdr_val, hdr_val };
+
+	b43_phy_read_log(dev, 0x073e + ps);
+	b43_phy_write(dev,    0x073e + ps, 0x0000);
+	b43_phy_maskset(dev,  0x06f9 + ps, (u16)~0x7f00,
+			(u16)((gainctx << 8) & 0x7f00));
+	b43_phy_maskset(dev,  0x06f9 + ps, (u16)~0x007f, lna1_idx & 0x007f);
+
+	b43_actab_write_bulk(dev, ta, 0x0000, 16, 2, hdr_arr);
+	b43_phy_write(dev,    0x173b, 0x002c);
+	b43_phy_write(dev,    0x1726, 0x000c);
+	b43_actab_write_bulk(dev, ta, 0x0020, 16, ARRAY_SIZE(fill_07), fill_07);
+	b43_actab_write_bulk(dev, tb, 0x0020, 16, ARRAY_SIZE(fill_02), fill_02);
+}
+
+/*
+ * Orchestratore delle calibrazioni post-channel-setup (vendor #39947-#52537+).
+ * Raggruppa in un unico posto ciò che il vendor emette dopo il finalize di
+ * rxcal_afe: post_cal_finalize (iter 2/3), rxiqcal (iter 1..24), rxcal AFE
+ * calibrate + finalize, primo round txpwr + rxiqcal iter, second round
+ * txpwr + gainctrl_final loop, RXIQ teardown + finalize.
+ */
+static void b43_phy_ac_set_channel_calibrations(struct b43_wldev *dev)
+{
+	/*
+	 * Chiamato da set_channel dopo mac_enable e dopo che il body di
+	 * set_channel ha impostato classifier in modalità WAITED (mode RX_OFDM
+	 * + RX_WAITED durante channel setup normale). Lo stato entrante
+	 * osservato è {MAC_EN | RX_OFDM | RX_WAITED} — CLIP_ALL_DIS NON è
+	 * settato qui: sarà post_cal_finalize a impostarlo (via clip_det),
+	 * e a fare mac_suspend interno.
+	 *
+	 * Precondition minima: RX_WAITED (indispensabile per la calibrazione).
+	 * CCA_RESET incompatibile con qualsiasi operazione radio.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED,
+			   B43_PHY_AC_STATE_CCA_RESET);
+
+	/*
+	 * Post-cal finalize iter 2 (vendor #39947-#40538) e iter 3
+	 * (#40539+).
+	 */
+	b43_phy_ac_post_cal_finalize(dev);
+	b43_phy_ac_post_cal_finalize_iter3(dev);
+	b43_phy_ac_rxiqcal_apply(dev);
+	b43_phy_ac_post_rxiqcal_stage2(dev);
+
+	/* RX AFE calibration (vendor #41909+, ~1500 op). */
+	b43_phy_ac_rxcal_afe_calibrate(dev);
+	b43_phy_ac_rxcal_afe_finalize_gain_luts(dev);
+
+	/*
+	 * Primo round post-cal RXIQ (vendor #45962-#46774).
+	 */
+	b43_phy_ac_txpwr_by_index(dev, B43_PHY_AC_TXPWR_INDEX_DEFAULT);
+	b43_phy_ac_rxgain_defaults_pulse(dev);
+	b43_phy_ac_radio_chain_range_setup(dev, true);
+	b43_phy_ac_rxgain_perchan_config(dev);
+	b43_phy_ac_rxiqcal_apply_tx_gain_bbmult(dev);
+	b43_phy_ac_rxiqcal_dds_seed(dev);
+	b43_phy_ac_rxiqcal_prep_second_iter(dev);
+	b43_phy_ac_rxiqcal_run_meas_iters(dev);
+	b43_phy_ac_rxiqcal_apply_tx_bbmult_kick(dev);
+	b43_phy_ac_iqcal_coeff_tables_reset(dev);
+
+	/*
+	 * Second round post-cal: applica coefficienti misurati dagli iter
+	 * 19-24. Nuova txpwr_by_index (5° di 11) + rxgain_defaults_pulse.
+	 */
+	b43_phy_ac_txpwr_by_index(dev, B43_PHY_AC_TXPWR_INDEX_DEFAULT);
+	b43_phy_ac_rxgain_defaults_pulse(dev);
+	b43_phy_ac_radio_chain_range_setup(dev, false);
+	b43_phy_ac_iqcal_apply_second_stage(dev);
+	b43_phy_ac_rxgain_config_readback(dev);
+	b43_phy_ac_rxgain_config_apply(dev);
+	b43_phy_ac_radio_iqcal_config(dev);
+
+	/*
+	 * Loop 6°-9° chiamate gainctrl_final_apply + dds/meas cicli.
+	 * Il r734 varia per iter, la 4a chiamata è solo 2-core.
+	 */
+	{
+		static const u16 r734_first[3]  = { 0x0004, 0x0004, 0x0004 };
+		static const u16 r734_second[3] = { 0x0002, 0x0002, 0x0001 };
+		static const u16 r734_third[3]  = { 0x0001, 0x0001, 0x0000 };
+		static const u16 r734_fourth[2] = { 0x0000, 0x0000 };
+
+		/* 6° txpwr: with peek preamble + 3 core + r734={4,4,4} */
+		b43_phy_ac_gainctrl_final_apply(dev, true, r734_first, 3);
+		b43_phy_ac_rxiqcal_dds_seed_second_tone(dev);
+		b43_phy_ac_iqcal_meas_post_dds_apply(dev, 5);
+
+		/* 7° txpwr: no preamble + 3 core + r734={2,2,1} */
+		b43_phy_ac_gainctrl_final_apply(dev, false, r734_second, 3);
+		b43_phy_ac_rxiqcal_dds_seed_second_tone(dev);
+		b43_phy_ac_iqcal_meas_post_dds_apply(dev, 6);
+
+		/* 8° txpwr: no preamble + 3 core + r734={1,1,0} */
+		b43_phy_ac_gainctrl_final_apply(dev, false, r734_third, 3);
+		b43_phy_ac_rxiqcal_dds_seed_second_tone(dev);
+		b43_phy_ac_iqcal_meas_post_dds_apply(dev, 3);
+
+		/* 9° txpwr: no preamble + 2 core + r734={0,0} */
+		b43_phy_ac_gainctrl_final_apply(dev, false, r734_fourth, 2);
+		b43_phy_ac_rxiqcal_dds_seed_second_tone(dev);
+		b43_phy_ac_iqcal_meas_post_dds_apply(dev, 6);
+	}
+
+	/* 5° dds_seed + meas_apply variante v2 */
+	b43_phy_ac_rxiqcal_dds_seed_second_tone(dev);
+	b43_phy_ac_iqcal_meas_post_dds_apply_v2(dev, 13, 9);
+
+	/* 6° dds_seed (third_tone: 2° reversed) + meas_apply v2 (37, 51) */
+	b43_phy_ac_rxiqcal_dds_seed_third_tone(dev);
+	b43_phy_ac_iqcal_meas_post_dds_apply_v2(dev, 37, 51);
+
+	/* Teardown finale RXIQ. */
+	b43_phy_ac_rxiq_apply_coefficients(dev);
+	b43_phy_ac_radio_iqcal_teardown(dev);
+	b43_phy_ac_rxiq_teardown_apply_defaults(dev);
+	b43_phy_ac_rxiqcal_finalize(dev);
+}
+
+static int b43_phy_ac_set_channel(struct b43_wldev *dev,
+				  struct ieee80211_channel *channel,
+				  enum nl80211_channel_type channel_type)
+{
+	struct b43_phy *phy = &dev->phy;
+	const struct b43_phy_ac_channeltab_e_radio2069 *e2069;
+
+	b43dbg(dev->wl, "phy-ac: set_channel ch%u (%u MHz) start\n",
+	       channel->hw_value, channel->center_freq);
+
+	if (phy->radio_ver != 0x2069)
+		return -ESRCH;
+
+	if (phy->radio_rev != 4)
+		return -ESRCH;
+
+	/*
+	 * BW40 non implementato in fase 1: il trace vendor ch36-bw40 mostra
+	 * ~500 op aggiuntive rispetto a BW20 (farrow config, filter chain,
+	 * chanspec register encoding) non ancora portate. Vedi
+	 * doc/channel-generalization-analysis.md, "Fase 3 — BW40".
+	 */
+	if (channel_type != NL80211_CHAN_NO_HT &&
+	    channel_type != NL80211_CHAN_HT20)
+		return -EOPNOTSUPP;
+
+	e2069 = b43_phy_ac_get_channeltab_e_r2069(dev, channel->center_freq);
+	if (!e2069)
+		return -ESRCH;
+
+	/*
+	 * MAC è già sospeso da fine op_init (b43_mac_suspend nella coda di
+	 * op_init lascia bit 0 = 0). Nessuna op mac_suspend qui — il vendor
+	 * emette la sequenza MAC preparation in op_init (vendor #32398-#32418,
+	 * fuori dal matched slice) e set_channel entry riceve MAC sospeso.
+	 * Lo status_mask a questo punto ha già MAC_EN clear.
+	 *
+	 * Nessuna precondition su classifier/clip_det: se è la prima entry
+	 * post-attach, RX_ANY = 0 e CLIP_ALL_DIS = 0; su chan change, i
+	 * bit riflettono lo stato del canale precedente. set_channel imposta
+	 * lui stesso il classifier e il clip_det più avanti.
+	 */
+	B43_PHY_AC_REQUIRE_RET(dev,
+			       0,
+			       B43_PHY_AC_STATE_MAC_EN | B43_PHY_AC_STATE_CCA_RESET,
+			       -EINVAL);
+
+	/* PMU regctl 0: clear bit 1 before channel reconfigure. ch36 #32404. */
+	bcma_chipco_regctl_maskset(&dev->dev->bdev->bus->drv_cc,
+				   0, ~0x00000002, 0x00000000);
+
+	/*
+	 * Freeze RX path before channel reconfigure: classifier WAITED-only,
+	 * clip detectors frozen, CCA reset. Trace d6220 ch36 #32891-32901,
+	 * BEFORE radio_channel_setup (#34530). Everything from here through
+	 * rx_enable runs under RX=w CLIP=111; first release is the rx_gate
+	 * pulse in idle_tssi_meas (#38209).
+	 */
+	b43_phy_ac_channel_switch_prep(dev);
+
+	b43_radio_2069_channel_setup(dev, e2069);
+	b43_phy_ac_channel_setup(dev, e2069, channel);
+
+	if (dev->dev->chip_id == 0x4360)
+		b43_phy_maskset(dev, 0x02e4, (u16)~0x3f00, 0x0800);
+
+	b43_phy_ac_chan_tables(dev);
+
+	/*
+	 * Noise shaping table init (ch36 #37407-37900). Populates the per-core
+	 * noise variance (tbl 0x15), gain-limit (tbl 0x0b), and noise shaping
+	 * coefficient tables (tbl 0x44/0x45 per-core, stride 0x20 on table ID).
+	 * All write data is deterministic from the ch36 d6220 trace.
+	 */
+	{
+		static const u16 nvar_data[5] = { 0x0020, 0x0021, 0x0022, 0x0023, 0x0024 };
+		static const u16 nvar_off[3]  = { 0x0008, 0x0020, 0x0038 };
+		static const u16 glim_a[6]    = { 0x000b, 0x000c, 0x000e, 0x0020, 0x0024, 0x0028 };
+		static const u16 glim_b[7]    = { 0x0000, 0x0000, 0x0000, 0x0003, 0x0003, 0x0003, 0x0003 };
+		static const u16 nshp_a8[6]   = { 0x00f9, 0x00fe, 0x0004, 0x000a, 0x0010, 0x0017 };
+		static const u16 nshp_b8[6]   = { 0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005 };
+		static const u16 nshp_a10[7]  = { 0x00f5, 0x00f8, 0x00fb, 0x00fe, 0x0002, 0x0005, 0x0009 };
+		static const u16 nshp_b10[7]  = { 0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005, 0x0006 };
+		u16 saved;
+		unsigned int core;
+
+		/*
+		 * Phase 1: gate cycle + enable + shared tables (#37407-#37461).
+		 *
+		 * Il gate 0x019e era lockato all'uscita di chan_tables. Il vendor
+		 * emette un ciclo unlock+relock (marker per il subsystem) prima
+		 * di caricare le tabelle di noise-shaping.
+		 */
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0000);   /* #37407 unlock */
+		saved = b43_phy_ac_tbl_write_lock(dev);               /* #37408-#37409 peek+relock */
+
+		b43_phy_read_log(dev, 0x016c);                        /* #37410 peek */
+		b43_phy_maskset(dev, 0x016c, (u16)~0x0040, 0x0040);   /* #37411 set bit 6 */
+
+		/* Nvar per-core (3× TBL.WR id=0x15) — vendor emette PRIMA di 0x0b. */
+		for (core = 0; core < dev->phy.ac->num_cores; core++)
+			b43_actab_write_bulk(dev, 0x15, nvar_off[core], 16, 5, nvar_data);
+
+		/* Gain-limit (2× TBL.WR id=0x0b). */
+		b43_actab_write_bulk(dev, 0x0b, 0x0008, 16, 6, glim_a);
+		b43_actab_write_bulk(dev, 0x0b, 0x0010, 16, 7, glim_b);
+
+		/*
+		 * Transizione Phase 1 → Phase 2: il gate resta lockato.
+		 * Il vendor emette peek+relock (tbl_write_lock idempotente),
+		 * NON unlock+lock — evita 1 op superflua.
+		 */
+		saved = b43_phy_ac_tbl_write_lock(dev);
+
+		for (core = 0; core < dev->phy.ac->num_cores; core++) {
+			u16 ta = 0x44 + core * 0x20;	/* core 0=0x44, 1=0x64, 2=0x84 */
+			u16 tb = 0x45 + core * 0x20;
+			u16 rd6[6];
+
+			b43_actab_read_bulk(dev, 0x15, nvar_off[core], 16, 6, rd6);
+			b43_actab_write_bulk(dev, ta, 0x0008, 16, 6, nshp_a8);
+			b43_actab_write_bulk(dev, tb, 0x0008, 16, 6, nshp_b8);
+		}
+
+		/*
+		 * Transizione Phase 2 → Phase 2b: il vendor emette unlock+peek+relock
+		 * (3 op) tra le due fasi — diversamente dalla transizione Phase 1 →
+		 * Phase 2 dove non c'è unlock. Motivazione non chiara (forse flush
+		 * intermedio del gate dopo write pesanti sui table 0x44/0x45).
+		 */
+		b43_phy_ac_tbl_write_unlock(dev, saved);
+		saved = b43_phy_ac_tbl_write_lock(dev);
+
+		for (core = 0; core < dev->phy.ac->num_cores; core++) {
+			u16 ta = 0x44 + core * 0x20;
+			u16 tb = 0x45 + core * 0x20;
+
+			b43_actab_write_bulk(dev, ta, 0x0010, 16, 7, nshp_a10);
+			b43_actab_write_bulk(dev, tb, 0x0010, 16, 7, nshp_b10);
+		}
+
+		b43_phy_ac_tbl_write_unlock(dev, saved);
+
+		/*
+		 * Phase 3: per-core commit + readback (#37622-37900).
+		 * Il gate resta lockato dall'unlock idempotente della transizione
+		 * Phase 2b → Phase 3 (#37621); non serve tbl_write_lock qui.
+		 *
+		 * Iteriamo su tutti num_cores (BCM4352: 3) senza filtro coremask:
+		 * il vendor emette per tutti i channel PHY anche su board 2×2, dove
+		 * uno dei core non è TX-abilitato.
+		 */
+		for (core = 0; core < dev->phy.ac->num_cores; core++) {
+			u16 ta = (u16)(0x44 + core * 0x20);
+			u16 tb = (u16)(0x45 + core * 0x20);
+
+			b43_phy_ac_rxgain_init(dev, core);
+
+			/* Diagnostic readbacks (#37662-37728, etc.) */
+			{
+				u16 rb1, rb10[10], rb8[8];
+
+				b43_actab_read_bulk(dev, tb, 0x0000, 16, 1, &rb1);
+				b43_actab_read_bulk(dev, tb, 0x0020, 16, 10, rb10);
+				b43_actab_read_bulk(dev, ta, 0x0060, 16, 8, rb8);
+				b43_actab_read_bulk(dev, ta, 0x0070, 16, 8, rb8);
+				b43_actab_read_bulk(dev, tb, 0x0060, 16, 8, rb8);
+				b43_actab_read_bulk(dev, tb, 0x0070, 16, 8, rb8);
+			}
+		}
+	}
+
+	b43_phy_ac_post_noise_shaping_rx_regprog(dev);
+
+	/*
+	 * Post-post-noise-shaping: 2 peek diagnostici + 8 PHY.MOD sui registri
+	 * 0x0324/0x0330/0x0321/0x032d/0x032a/0x0336/0x0327/0x0333 con val=0x3600
+	 * mask=0xff00 (ch36 #38065-#38074). Pattern coppie (base, base+0x0c)
+	 * × 4 su registri nel range 0x0320-0x0340 (probabilmente TX rate/BW
+	 * per-rate config). Semantica non identificata — hardcoded dal trace.
+	 */
+	b43_phy_read_log(dev, 0x06dc);
+	b43_phy_read_log(dev, 0x06dd);
+	b43_phy_maskset(dev, 0x0324, (u16)~0xff00, 0x3600);
+	b43_phy_maskset(dev, 0x0330, (u16)~0xff00, 0x3600);
+	b43_phy_maskset(dev, 0x0321, (u16)~0xff00, 0x3600);
+	b43_phy_maskset(dev, 0x032d, (u16)~0xff00, 0x3600);
+	b43_phy_maskset(dev, 0x032a, (u16)~0xff00, 0x3600);
+	b43_phy_maskset(dev, 0x0336, (u16)~0xff00, 0x3600);
+	b43_phy_maskset(dev, 0x0327, (u16)~0xff00, 0x3600);
+	b43_phy_maskset(dev, 0x0333, (u16)~0xff00, 0x3600);
+
+	/*
+	 * NB: rxgain_init RIMOSSO da set_channel. Il vendor NON lo chiama in
+	 * questo punto: le uniche op del pattern (MOD 0x?f9) sono già emesse
+	 * dentro noise_shaping Phase 3 (per-core loop, ch36 #37624/#37731/#37838).
+	 * rxgain_init inoltre duplica il maskset su 0x0045+stride e 0x0033+stride
+	 * che è già in post_noise_shaping_core_transition. Rimane utilizzato
+	 * durante l'init (attach flow), non nel set_channel per-canale.
+	 */
+
+	/* BW select per-core (ch36 #38075-38078), before reset_cca/afecal. */
+	b43_phy_write(dev, 0x0304, 0x4e51);
+	b43_phy_write(dev, 0x0307, 0x4e51);
+	b43_phy_write(dev, 0x030a, 0x4e51);
+	b43_phy_write(dev, 0x030d, 0x4e51);
+
+	b43_phy_ac_reset_cca(dev);
+	udelay(1);
+
+	b43_radio_2069_afecal(dev);
+
+	/*
+	 * ADC reset (cal-time): run after afecal and
+	 * before the idle-TSSI capture. Includes the 0x70[15:13] TX-power-
+	 * control enable (mid-block).
+	 */
+	b43_phy_ac_adc_reset(dev);
+
+	/*
+	 * Idle-TSSI measurement iter 1 (vendor #38200-#38846).
+	 * REQUIRE + base_indices sono per-chiamata: iter 2/3 (in
+	 * post_cal_finalize/_iter3) usano stati MAC diversi e base_indices
+	 * diversi.
+	 */
+	{
+		static const u16 iter1_base_indices[3] = { 0x0206, 0x0200, 0x0000 };
+		B43_PHY_AC_REQUIRE_RET(dev,
+				       B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+				       B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+				       B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN,
+				       -EINVAL);
+		b43_phy_ac_idle_tssi_meas(dev, iter1_base_indices);
+	}
+
+	/*
+	 * Short settle before txpwrctrl reads the idle-TSSI result. The trace
+	 * shows a ~35 ms gap here, a brief busy-wait suffices.
+	 */
+	udelay(35);
+
+	/*
+	 * Transizione idle_tssi → txpwrctrl (vendor #38847-#38851):
+	 *   WR    0x0339 val=0x0fff        (RX suspend during txpwr calibration)
+	 *   MHF slot 4 set 0x0008          (firmware config bit)
+	 *   MHF slot 0 clr 0x4000          (firmware config bit)
+	 *   PHY.RD  0x019e                 (peek gate)
+	 *   PHY.MOD 0x019e set 0x0002      (relock tbl_write_gate)
+	 * Il vendor NON emette rx_gate arm qui — txpwrctrl_setup gira col gate
+	 * released dalla fase idle_tssi.
+	 */
+	b43_phy_write(dev, 0x0339, 0x0fff);
+	b43_phy_ac_mhf_maskset(dev, 4, (u16)~0x0008, 0x0008);
+	b43_phy_ac_mhf_maskset(dev, 0, (u16)~0x4000, 0);
+	b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+
+	b43_phy_ac_txpwrctrl_setup(dev, channel->center_freq);
+
+	/*
+	 * Transizione tra prima e seconda txpwrctrl_setup (vendor #39182-#39208).
+	 * 27 op che il blob emette per: sganciare il gate, abilitare TX power
+	 * control, restore per-core current index, wake MAC per aggiornare
+	 * config firmware, then re-suspend.
+	 */
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);           /* #39182 unlock */
+	b43_phy_maskset(dev, 0x0070, (u16)~0xe000, 0xe000);      /* #39183 TX power ctrl enable */
+	b43_phy_maskset(dev, 0x0644, (u16)~0x007f, 0x0014);      /* #39184 current index c0 */
+	b43_phy_maskset(dev, 0x0844, (u16)~0x007f, 0x0014);      /* #39185 current index c1 */
+	b43_phy_maskset(dev, 0x0678, (u16)~0x0004, 0);           /* #39186 clr bit 2 c0 */
+	b43_phy_maskset(dev, 0x0878, (u16)~0x0004, 0);           /* #39187 clr bit 2 c1 */
+	b43_phy_ac_mhf_maskset(dev, 3, (u16)~0x0040, 0x0040);    /* #39188 MHF3 set bit 6 */
+	b43_maccontrol_set(dev, ~0x00100000u, 0);                /* #39189 clr bit 20 */
+	b43_maccontrol_set(dev, ~0x01c00000u, 0);                /* #39190 clr bits 22-24 */
+	b43_mac_enable(dev);                                     /* #39191 */
+	b43_phy_ac_mhf_maskset(dev, 4, (u16)~0x8000, 0);         /* #39192 MHF4 clr bit 15 */
+	b43_phy_ac_mhf_maskset(dev, 1, (u16)~0x0001, 0x0001);    /* #39193 MHF1 set bit 0 */
+	b43_mac_suspend(dev);                                    /* #39194 */
+	b43_phy_ac_mhf_maskset(dev, 3, (u16)~0x0020, 0x0020);    /* #39195 MHF3 set bit 5 */
+	b43_mac_enable(dev);                                     /* #39196 */
+	b43_phy_maskset(dev, 0x0042, (u16)~0x8000, 0x8000);      /* #39197 set bit 15 */
+	b43_phy_ac_mhf_maskset(dev, 1, (u16)~0x0020, 0x0020);    /* #39198 MHF1 set bit 5 */
+	b43_mac_suspend(dev);                                    /* #39199 */
+	b43_maccontrol_set(dev, ~0x10000000u, 0x10000000);       /* #39200 set bit 28 */
+	b43_maccontrol_set(dev, ~0x10000000u, 0);                /* #39201 clr bit 28 */
+	b43_maccontrol_set(dev, ~0x00040000u, 0x00040000);       /* #39202 set bit 18 */
+	b43_maccontrol_set(dev, ~0x48020000u, 0x00020000);       /* #39203 clr30 set17 clr22-24 */
+	b43_mac_enable(dev);                                     /* #39204 */
+	b43_maccontrol_set(dev, ~0x00100000u, 0x00100000);       /* #39205 set bit 20 */
+	b43_mac_suspend(dev);                                    /* #39206 */
+	b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);                               /* #39207 peek */
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);      /* #39208 relock */
+
+	/* Seconda chiamata txpwrctrl_setup (vendor #39209+). Il vendor emette la
+	 * STESSA sequenza op-per-op — LUT calcolata dagli stessi coefficienti
+	 * SPROM, stessi valori ppr. */
+	b43_phy_ac_txpwrctrl_setup(dev, channel->center_freq);
+
+	/*
+	 * Transizione post-seconda-txpwrctrl (vendor #39539-#39558).
+	 * Setup TX power ctrl + restore + 5 pulses MAC wake/suspend (probabile
+	 * "flush firmware to reload rate table"), poi 3 MOD 0x019e che
+	 * clear bit 6/7/8.
+	 */
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);          /* #39539 unlock */
+	b43_phy_maskset(dev, 0x0070, (u16)~0xe000, 0xe000);     /* #39540 */
+	b43_phy_maskset(dev, 0x0644, (u16)~0x007f, 0x0014);     /* #39541 */
+	b43_phy_maskset(dev, 0x0844, (u16)~0x007f, 0x0014);     /* #39542 */
+	b43_phy_maskset(dev, 0x0678, (u16)~0x0004, 0);          /* #39543 */
+	b43_phy_maskset(dev, 0x0878, (u16)~0x0004, 0);          /* #39544 */
+	/* 5 pulses mac wake/suspend (#39545-#39554) */
+	for (unsigned int pulse = 0; pulse < 5; pulse++) {
+		b43_mac_enable(dev);
+		b43_mac_suspend(dev);
+	}
+	b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);                              /* #39555 peek */
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0040, 0);          /* #39556 clr bit 6 */
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0080, 0);          /* #39557 clr bit 7 */
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0100, 0);          /* #39558 clr bit 8 */
+
+	/* Vendor #39559-#39640: RX gain-control programming per-core, subito
+	 * dopo la terza transizione post-2×txpwrctrl_setup. */
+	b43_phy_ac_rxgainctrl_regs(dev);
+
+	/* Vendor #39641-#39708: radio loopback setup per-core (34 op/core). */
+	{
+		u8 c;
+		u8 num_cores = dev->phy.ac->num_cores;
+		u8 mask = dev->phy.ac->coremask;
+		for (c = 0; c < num_cores; c++) {
+			if (!((mask >> c) & 1))
+				continue;
+			b43_phy_ac_rxcal_radio_setup(dev, c);
+		}
+	}
+
+	/* Vendor #39709-#39734: PHY tone-setup (26 op, non per-core). */
+	b43_phy_ac_rxcal_tone_setup(dev);
+
+	/* Per-core: tone_arm + gainctrl (probe sweep 4-step con settling).
+	 * Vendor: #39732-#39814 (core 0), #39815-#39897 (core 1) — 83 op/core. */
+	{
+		u8 c;
+		u8 num_cores = dev->phy.ac->num_cores;
+		u8 mask = dev->phy.ac->coremask;
+		for (c = 0; c < num_cores; c++) {
+			if (!((mask >> c) & 1))
+				continue;
+			b43_phy_ac_rxcal_tone_arm(dev, c);
+			b43_phy_ac_rxcal_gainctrl(dev, c);
+		}
+
+		/* Vendor #39898-#39946: cleanup + finalize dopo la cal.
+		 * Ordine vendor: tutti PHY-cleanup dei core, poi tutti radio
+		 * cleanup, infine unarm tone + gate ops + mac_enable. */
+		b43_phy_write(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, 0x03d0);    /* #39898 unlock gate plain */
+
+		for (c = 0; c < num_cores; c++) {
+			if (!((mask >> c) & 1))
+				continue;
+			b43_phy_ac_rxcal_cleanup(dev, c);       /* 14 PHY WR */
+		}
+		for (c = 0; c < num_cores; c++) {
+			if (!((mask >> c) & 1))
+				continue;
+			b43_phy_ac_rxcal_radio_cleanup(dev, c); /* 7 RAD WR */
+		}
+
+		/* #39941-#39945: finalize (unarm tone gen + gate cleanup). */
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);  /* relock */
+		b43_phy_write(dev,   0x0394, 0x000b);
+		b43_phy_write(dev,   0x0393, 0x0000);                /* unarm */
+		b43_phy_maskset(dev, 0x040f, (u16)~0x0200, 0);       /* clr bit 9 */
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);       /* unlock */
+	}
+
+	/*
+	 * NB: la sequenza delle calibrazioni post-channel (post_cal_finalize,
+	 * rxiqcal, rxcal_afe, gainctrl_final loop, teardown) è invocata da
+	 * op_switch_channel DOPO mac_enable — vedi b43_phy_ac_op_switch_channel
+	 * e b43_phy_ac_set_channel_calibrations. Il vendor emette MAC.MCTRL
+	 * enable (#39946) tra la fine di rxcal cleanup e post_cal_finalize.
+	 */
+
+	return 0;
+}
+
+/*
+ * Read the RF-chain hardware inventory into ac->{num_cores, coremask}.
+ *
+ * Called from both op_init and op_software_rfkill: b43_phy_init drives
+ * software_rfkill(false) before ops->init, so these fields have to be
+ * populated on demand from either entry point. Hardware inventory is
+ * stable for the lifetime of the device, so once num_cores is set the
+ * call is a no-op.
+ *
+ * num_cores is the raw slot count from PHY 0x000b (e.g. 3 on a 2x2 part),
+ * clamped to the 3-chain array max. coremask is the SROM-declared subset
+ * that is actually populated; touching the radio/PHY space of an
+ * unpopulated, powered-down core hangs the backplane, so every per-core
+ * register loop is gated on it. Fall back to all cores when the SROM
+ * leaves rxchain unset. First-run capture on the DSL-3580L reads
+ * num_cores=3, coremask=3.
+ */
+static void b43_phy_ac_probe_cores(struct b43_wldev *dev)
+{
+	struct b43_phy_ac *ac = dev->phy.ac;
+
+	if (ac->num_cores)
+		return;
+
+	ac->num_cores = b43_phy_read(dev, 0x000b) & 0x07;
+
+	ac->coremask = dev->dev->bus_sprom->rxchain & 0x07;
+	if (!ac->coremask)
+		ac->coremask = 3;
+
+	b43dbg(dev->wl, "phy-ac: num_cores=%u coremask=0x%x\n",
+	       ac->num_cores, ac->coremask);
+}
+
+/*
+ * PHY attach/init entry (.init op). Whole-attach dispatcher: each step below
+ * carries its own capture range on its own function. First op on the wire is
+ * the num_cores read (4360 #5); the trailing PMU regctl/GPIO
+ * pair is 4360 #335-336.
+ */
+static int b43_phy_ac_op_init(struct b43_wldev *dev)
+{
+	if (dev->dev->bus_type != B43_BUS_BCMA) {
+		b43err(dev->wl, "AC-PHY is supported only on BCMA bus!\n");
+		return -EOPNOTSUPP;
+	}
+
+	/* Only the 0x4352/0x4360 chips are supported. */
+	if (dev->dev->chip_id != 0x4352 && dev->dev->chip_id != 0x4360) {
+		b43err(dev->wl,
+		       "AC-PHY: chip 0x%04x not in the implemented acphychipid dispatch {0x4352,0x4360}\n",
+		       dev->dev->chip_id);
+		return -EOPNOTSUPP;
+	}
+
+	b43_phy_ac_probe_cores(dev);
+
+	/*
+	 * PMU regctl chip-dependent field [24:20] (0x1 on 4352, 0x2 on 4360) +
+	 * GPIO.CTL clear. d6220 attach #32831-32832, at the head of the op_init
+	 * window. The PLLCTL2/3 writes and the regctl 0x2 strobe from this
+	 * window live in bcma_pmu_{pll,resources}_init.
+	 */
+	if (dev->dev->chip_id == 0x4360)
+		bcma_chipco_regctl_maskset(&dev->dev->bdev->bus->drv_cc, 0, ~0x01f00000, 0x200000);
+	else
+		bcma_chipco_regctl_maskset(&dev->dev->bdev->bus->drv_cc, 0, ~0x01f00000, 0x100000);
+
+	bcma_chipco_gpio_control(&dev->dev->bdev->bus->drv_cc, 0xffff, 0);
+
+	b43_phy_ac_mode_init(dev);
+
+	b43_phy_ac_tables_init(dev);
+
+	/* Band/chip-agnostic PHY register writes (agcombo 4360 #4071-4086). */
+	b43_phy_ac_init_regs(dev);
+
+	/*
+	 * Fine op_init: MAC sospeso. Il vendor blob emette a questo punto
+	 * (vendor #32398-#32418, appena prima di set_channel entry) una
+	 * sequenza di ~20 op che include:
+	 *   - 6× MACCTL write con mask=0xffffffff (val=0x04000400/0x04000404/
+	 *     0x04020402): imposta bit 10, 26, altri config + clear bit 0
+	 *   - 9× MAC.MHF (host-flag config, replicati qui sotto)
+	 *   - 2× MACCTL parziale (bit 14, 17-18, 26)
+	 *   - GPIO.CTL clear
+	 *   - 2× PMU.PLL write
+	 *
+	 * Sequenza MHF vendor (identica su ch36, ch44, ch36-bw40 — cioè
+	 * non è channel-dependent, è pura config MAC del bring-up):
+	 *
+	 *   MHF4 |= 0x0080  (bit 7 set)
+	 *   MHF0 |= 0x0100  (bit 8 set)
+	 *   MHF0 &= ~0x0010 (clr bit 4)
+	 *   MHF1 &= ~0x0100 (clr bit 8)
+	 *   MHF2 &= ~0x2000 (clr bit 13)
+	 *   MHF1 &= ~0x0200 (clr bit 9)
+	 *   MHF2 &= ~0x1504 (clr bits 12,10,8,2)
+	 *   MHF2 &= ~0x1000 (clr bit 12, ridondante col precedente)
+	 *   MHF4 &= ~0x0006 (clr bits 2,1)
+	 *
+	 * SALAME: la semantica precisa dei singoli bit MHF non è documentata
+	 * nel decomp vendor accessibile. La sequenza è replicata per fedeltà
+	 * al vendor blob — se il HW dovesse mostrare comportamenti anomali
+	 * dopo bring-up, questi bit sono candidati da indagare.
+	 *
+	 * TODO: portare anche i MACCTL/GPIO/PMU.PLL non-MHF quando la
+	 * semantica sarà nota.
+	 */
+	b43_phy_ac_mhf_maskset(dev, 4, (u16)~0x0080, 0x0080);
+	b43_phy_ac_mhf_maskset(dev, 0, (u16)~0x0100, 0x0100);
+	b43_phy_ac_mhf_maskset(dev, 0, (u16)~0x0010, 0);
+	b43_phy_ac_mhf_maskset(dev, 1, (u16)~0x0100, 0);
+	b43_phy_ac_mhf_maskset(dev, 2, (u16)~0x2000, 0);
+	b43_phy_ac_mhf_maskset(dev, 1, (u16)~0x0200, 0);
+	b43_phy_ac_mhf_maskset(dev, 2, (u16)~0x1504, 0);
+	b43_phy_ac_mhf_maskset(dev, 2, (u16)~0x1000, 0);
+	b43_phy_ac_mhf_maskset(dev, 4, (u16)~0x0006, 0);
+
+	b43_mac_suspend(dev);
+
+	return 0;
+}
+
+/* enable path: down-to-bss-up #86587-86616 ; 4360 agcombo: 16-354 ; d6220 ch36: n/l come funzione (le sub-chiamate radio/init/channel_setup sono localizzate singolarmente) */
+static void b43_phy_ac_op_software_rfkill(struct b43_wldev *dev, bool blocked)
+{
+	if (dev->dev->chip_id != 0x4352 && dev->dev->chip_id != 0x4360) {
+		b43err(dev->wl,	"AC-PHY: chip 0x%04x not in the implemented {0x4352,0x4360}\n",
+			dev->dev->chip_id);
+		return;
+	}
+
+	if (dev->phy.radio_ver != 0x2069) {
+		b43err(dev->wl,	"AC-PHY: radio unsupported: 0x%04x \n", dev->phy.radio_ver);
+		return;
+	}
+
+	if (blocked) {
+		/*
+		 * Radio OFF. Return the 0x17xx front-end to the down state the
+		 * OEM leaves it in while going down, the tail of
+		 * the same block b43_phy_ac_mode_init applies at init. NOTE:
+		 * reuses that down-state tail, not a dedicated runtime rfkill-block
+		 * capture; the power-on enable sequence is in the unblocked branch
+		 * (see below).
+		 */
+		b43_phy_write(dev, 0x1728, 0x0080);
+		b43_phy_write(dev, 0x1720, 0x0180);
+		b43_phy_write(dev, 0x1729, 0x0000);
+		b43_phy_write(dev, 0x1721, 0x5000);
+		return;
+	}
+
+	/*
+	 * b43_phy_init drives us with blocked=false before ops->init, so
+	 * the core inventory must be probed here as well. Idempotent when
+	 * op_init has already run.
+	 */
+	b43_phy_ac_probe_cores(dev);
+
+	if (dev->phy.ac->num_cores == 0 || dev->phy.ac->coremask == 0) {
+		b43err(dev->wl,	"AC-PHY: not initialized correctly\n");
+		return;
+	}
+
+	b43_radio_2069_init(dev);
+	b43_radio_2069_pwron(dev);
+	b43_radio_2069_rccal(dev);
+
+	/*
+	 * Per-core AFE / radio-LPF stage. Runs right after RC-cal in the radio
+	 * bring-up (#51609-51677, after the 0x08ea RCCAL_EN cleanup, before the
+	 * op_init analog reset). afe_728 = 0x0800 in the ch36/5GHz capture.
+	 */
+	b43_radio_2069_afe_lpf_stage(dev, 0x0800);
+
+	/* GPIO frontend a due fasi in entrambe le catture: bring-up pin2 alto/pin10
+	 * basso (ch36 #52545-46), a regime col blocco PA l'inverso (#55139-40 /
+	 * #86593-94). Semantica pin non confermata; OE non in trace d6220. */
+	bcma_chipco_gpio_outen(&dev->dev->bdev->bus->drv_cc, 0x0404, 0x0404);		/* not in d6220 trace */
+	bcma_chipco_gpio_out(&dev->dev->bdev->bus->drv_cc, 0x0404, 0x0004);		/* fase 1: #52545-46 */
+
+	/* PA bias/tx-gain per-core: operating-point RICALCOLATI per-run (ch36
+	 * #55111-16 ha valori leggermente diversi da questi, presi da dtbu
+	 * #86566-92); hardcode = snapshot. Core diversi, non specchiare. */
+	b43_radio_write(dev, 0x0002, 0x0078);		/* #86566 */
+	b43_radio_write(dev, 0x0003, 0x0078);		/* #86567 */
+	b43_radio_write(dev, 0x0004, 0x0069);		/* #86568 */
+	b43_radio_write(dev, 0x0005, 0x0078);		/* #86569 */
+	b43_phy_write(dev, 0x06a0, 0x03f2);		/* #86570 */
+	b43_phy_write(dev, 0x06a1, 0x0054);		/* #86571 */
+
+	b43_radio_write(dev, 0x0202, 0x0088);		/* #86587 */
+	b43_radio_write(dev, 0x0203, 0x0087);		/* #86588 */
+	b43_radio_write(dev, 0x0204, 0x0088);		/* #86589 */
+	b43_radio_write(dev, 0x0205, 0x0078);		/* #86590 */
+	b43_phy_write(dev, 0x08a0, 0x03da);		/* #86591 */
+	b43_phy_write(dev, 0x08a1, 0x003c);		/* #86592 */
+	bcma_chipco_gpio_out(&dev->dev->bdev->bus->drv_cc, 0x0404, 0x0400);		/* fase 2: #55139-40 / #86593-94 */
+
+	/*
+	 * Radio ON: arm the RF front-end switch. This is the final step of the
+	 * bss-up bring-up in the OEM trace (#86603-86616, D6220/BCM4352).
+     * Sull'agcombo lo stesso blocco gira anche a inizio attach (#16-28) con in
+	 * piu' 0x2e4->0x0f00 / 0x1ec=0x0002; witness 4352 (#86603-16) senza, e
+	 * nessuna cattura d6220 copre l'inizio attach.
+	 */
+	b43_phy_write(dev, 0x173e, 0x0000);
+	b43_phy_write(dev, 0x1739, 0x0000);
+	b43_phy_write(dev, 0x173a, 0x0000);
+	b43_phy_write(dev, 0x1725, 0x1fff);
+	b43_phy_write(dev, 0x1729, 0x0000);
+	b43_phy_write(dev, 0x1721, 0xffff);
+	b43_phy_write(dev, 0x1728, 0x0000);
+	b43_phy_write(dev, 0x1720, 0x03ff);
+	b43_phy_mask(dev, 0x0408, (u16)~0x0002);	/* #86611: clear bit, not full 0 */
+	b43_phy_write(dev, 0x0417, 0x0000);
+	b43_phy_write(dev, 0x0416, 0x0001);
+
+	/* #86616: final PMU regcontrol enable (reg0 |= 0x2). */
+	bcma_chipco_regctl_maskset(&dev->dev->bdev->bus->drv_cc, 0,
+				   ~0x00000002u, 0x00000002u);
+}
+
+/*
+ * A1 restore common: usato da tutte le iterazioni di rxcal successive alla
+ * prima. Vendor pattern (12 op), equivalente a rx_gate_with_adc_hold(true)
+ * (arm classifier + drop ADC bracket + disable clip) + gate close + cca
+ * pulse:
+ *   1. classctl_write_peeked(true)  → peek 0x0140 + WR = 0x0df4
+ *   2. adc_hold(false)              → 4× MOD 0x02?d clr bit 4
+ *   3. clip_det(false)              → 3× MOD 0x?d4 set bit 14 (clip disable)
+ *   4. WR 0x0339 = 0                → disable RX-IQ cal accumulator
+ *   5. cca_pulse                    → MOD 0x0001 set/clr bit 14
+ */
+static void b43_phy_ac_rxcal_a1_restore(struct b43_wldev *dev)
+{
+	b43_phy_ac_classctl_write_peeked(dev, true);
+	b43_phy_ac_adc_hold(dev, false);
+	b43_phy_ac_clip_det(dev, false);
+
+	b43_phy_write(dev, 0x0339, 0);
+	b43_phy_ac_cca_pulse(dev);
+}
+
+/*
+ * Post-cal finalize (vendor #39947-#40538): iterazione 2 idle-TSSI.
+ * Chiamata a MAC UP (mac_enable è già stato emesso alla fine di op_switch_channel).
+ *
+ * Base indices iter 2 osservati dal trace: core 0 = 0x0207 (delta +1 vs
+ * iter 1), core 1 = 0x0200 (invariato vs iter 1). Le due iterazioni NON
+ * differiscono di un delta costante — il readback idle-TSSI varia per-core.
+ */
+void b43_phy_ac_post_cal_finalize(struct b43_wldev *dev)
+{
+	/*
+	 * Stato entrante osservato: MAC UP, mode WAITED+OFDM (post-set_channel body prima di post_cal_finalize).
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_MAC_EN | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_RX_WAITED,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_CCA_RESET |
+			   B43_PHY_AC_STATE_CLIP_ALL_DIS);
+
+	static const u16 iter2_base_indices[3] = { 0x0207, 0x0200, 0x0000 };
+
+	b43_phy_ac_rxcal_a1_restore(dev);
+	b43_phy_ac_idle_tssi_meas(dev, iter2_base_indices);
+}
+
+/*
+ * RX-cal iter 3 (vendor #40539+). Terza iterazione della misura idle-TSSI:
+ *   - mac_suspend all'inizio (MAC era UP dopo iter 2)
+ *   - preambulo di 4 op diagnostiche (peek 0x0070/0x0640/0x0840, MOD 0x0070)
+ *   - A1 restore
+ *   - idle_tssi_meas body con base_indices { 0x0206, 0x0200 } — identici a
+ *     iter 1 (probabile convergenza: il readback torna al valore di partenza
+ *     dopo la variazione di iter 2).
+ *
+ * TODO: capire dove finisce iter 3 e cosa segue (iter 4/5/... o RX-IQ
+ * compensation write-back?). Il matched slice permetterà di scoprirlo.
+ */
+void b43_phy_ac_post_cal_finalize_iter3(struct b43_wldev *dev)
+{
+	/*
+	 * Stato entrante osservato: MAC UP, mode WAITED+OFDM (post-set_channel body prima di post_cal_finalize).
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_MAC_EN | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_RX_WAITED,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_CCA_RESET |
+			   B43_PHY_AC_STATE_CLIP_ALL_DIS);
+
+	static const u16 iter3_base_indices[3] = { 0x0206, 0x0200, 0x0000 };
+
+	/*
+	 * Transizione iter 2 → iter 3 (vendor #40538): RX suspend prima del
+	 * mac_suspend. È la stessa `WR 0x0339 = 0x0fff` che chiude iter 1 in
+	 * set_channel (a #38847), ma qui è emessa da sola (senza MHF/gate
+	 * relock che seguono in iter 1 perché quella era transizione a
+	 * txpwrctrl, non a un'altra iter idle_tssi).
+	 */
+	b43_phy_write(dev, 0x0339, 0x0fff);
+
+	b43_mac_suspend(dev);
+
+	/* Preambulo diagnostico (4 op nuove vs iter 2). */
+	b43_phy_read_log(dev, 0x0070);
+	b43_phy_read_log(dev, 0x0640);
+	b43_phy_read_log(dev, 0x0840);
+	b43_phy_maskset(dev, 0x0070, (u16)~0xe000, 0);
+
+	b43_phy_ac_rxcal_a1_restore(dev);
+	b43_phy_ac_idle_tssi_meas(dev, iter3_base_indices);
+}
+
+/*
+ * B2j coefficient write-back tabella: sequenza di 56 op (54 MOD + 2 WR
+ * inline) che il vendor emette per configurare i gain stages dopo la
+ * misura RX-IQ. Registri per core 0 (offset stride +0x200 per core 1).
+ *
+ * Format entries: { reg_off, mask_bits, val }
+ *   se mask_bits != 0 → phy_maskset(reg + core_off, ~mask_bits, val)
+ *                        → PHY.MOD val=val mask=mask_bits
+ *   se mask_bits == 0 → phy_write(reg + core_off, val)  (WR raw)
+ *
+ * TODO(formula): i valori val=0x03ff (0x0724) e val=0x0152 (0x0736) sono
+ * i coefficienti I/Q calcolati runtime da rxcal_imbalance[core][step][sample].
+ * Formula ancora aperta — per ora captured dal trace vendor ch36. Su altri
+ * canali o boards questi valori differiranno.
+ */
+struct b43_ac_b2j_op {
+	u16 reg_off;
+	u16 mask_bits;   /* 0 sentinel = WR raw */
+	u16 val;
+};
+
+static const struct b43_ac_b2j_op b43_phy_ac_b2j_ops[] = {
+	/* #41247-#41256 */
+	{ 0x0728, 0x0002, 0x0000 },
+	{ 0x0720, 0x0002, 0x0002 },
+	{ 0x0721, 0x0040, 0x0040 },
+	{ 0x0729, 0x0040, 0x0000 },
+	{ 0x0721, 0x0080, 0x0080 },
+	{ 0x0729, 0x0080, 0x0000 },
+	{ 0x0721, 0x0020, 0x0020 },
+	{ 0x0729, 0x0020, 0x0000 },
+	{ 0x0721, 0x2000, 0x2000 },
+	{ 0x0729, 0xe000, 0x0000 },
+	/* #41257-#41264 */
+	{ 0x0721, 0x0800, 0x0800 },
+	{ 0x0729, 0x0800, 0x0000 },
+	{ 0x0721, 0x0400, 0x0400 },
+	{ 0x0729, 0x0400, 0x0000 },
+	{ 0x0721, 0x4000, 0x4000 },
+	{ 0x0728, 0x3800, 0x0000 },
+	{ 0x0721, 0x1000, 0x1000 },
+	{ 0x0729, 0x1000, 0x0000 },
+	/* #41265-#41274 */
+	{ 0x0720, 0x0020, 0x0020 },
+	{ 0x0728, 0x0020, 0x0020 },
+	{ 0x0720, 0x0040, 0x0040 },
+	{ 0x0728, 0x0040, 0x0040 },
+	{ 0x0720, 0x0010, 0x0010 },
+	{ 0x0728, 0x0010, 0x0010 },
+	{ 0x0721, 0x0100, 0x0100 },
+	{ 0x0729, 0x0100, 0x0100 },
+	{ 0x0727, 0x0004, 0x0004 },
+	{ 0x073c, 0x0010, 0x0010 },
+	/* #41275-#41276: WR raw coefficienti I/Q (TODO formula) */
+	{ 0x0724, 0x0000, 0x03ff },
+	{ 0x0736, 0x0000, 0x0152 },
+	/* #41277-#41286 */
+	{ 0x073a, 0x0007, 0x0003 },
+	{ 0x0725, 0x0020, 0x0020 },
+	{ 0x0739, 0x007e, 0x007a },
+	{ 0x0725, 0x0002, 0x0002 },
+	{ 0x073a, 0x0008, 0x0000 },
+	{ 0x0725, 0x0040, 0x0040 },
+	{ 0x073a, 0x0010, 0x0010 },
+	{ 0x0725, 0x0080, 0x0080 },
+	{ 0x073a, 0x0060, 0x0040 },
+	{ 0x0725, 0x0100, 0x0100 },
+	/* #41287-#41302 */
+	{ 0x0723, 0x0008, 0x0008 },
+	{ 0x0723, 0x0010, 0x0010 },
+	{ 0x0723, 0x0800, 0x0800 },
+	{ 0x0735, 0x0700, 0x0300 },
+	{ 0x0735, 0x3800, 0x1800 },
+	{ 0x0738, 0x0007, 0x0003 },
+	{ 0x0723, 0x0001, 0x0001 },
+	{ 0x0735, 0x0001, 0x0000 },
+	{ 0x0723, 0x0020, 0x0020 },
+	{ 0x0735, 0x4000, 0x0000 },
+	{ 0x0723, 0x0002, 0x0002 },
+	{ 0x0735, 0x001e, 0x0008 },
+	{ 0x0727, 0x0002, 0x0002 },
+	{ 0x073c, 0x000e, 0x0004 },
+	{ 0x0727, 0x0001, 0x0001 },
+	{ 0x073c, 0x0001, 0x0001 },
+};
+
+/*
+ * Body-loop iter 4 per singolo core (B2h+B2i+B2j = 79 op).
+ * Il preambulo B2g (peek gate + tone gen off, 3 op) è emesso UNA VOLTA
+ * dal chiamante prima del loop for core (non per-core).
+ *
+ *   B2h (8 op):  configurazione 0x073e (WR=0, clr bit 4-7, set bit 12/10)
+ *   B2i (15 op): peek gain regs (readback pre-write dei registri 0x0720-0x073c)
+ *   B2j (56 op): coefficient write-back (tabella b43_phy_ac_b2j_ops)
+ */
+static void b43_phy_ac_rxiqcal_apply_body_core(struct b43_wldev *dev,
+					       u16 core_off)
+{
+	unsigned int i;
+
+	/* B2h: 0x073e config (8 op) — clr bit 4-7, set bit 10/12 */
+	b43_phy_read_log(dev, 0x073e + core_off);
+	b43_phy_write(dev,   0x073e + core_off, 0);
+	b43_phy_maskset(dev, 0x073e + core_off, (u16)~0x0010, 0);
+	b43_phy_maskset(dev, 0x073e + core_off, (u16)~0x0020, 0);
+	b43_phy_maskset(dev, 0x073e + core_off, (u16)~0x0040, 0);
+	b43_phy_maskset(dev, 0x073e + core_off, (u16)~0x0080, 0);
+	b43_phy_maskset(dev, 0x073e + core_off, (u16)~0x1000, 0x1000);
+	b43_phy_maskset(dev, 0x073e + core_off, (u16)~0x0400, 0x0400);
+
+	/* B2i: peek gain regs (15 op) */
+	b43_phy_read_log(dev, 0x0725 + core_off);
+	b43_phy_read_log(dev, 0x0739 + core_off);
+	b43_phy_read_log(dev, 0x073a + core_off);
+	b43_phy_read_log(dev, 0x0721 + core_off);
+	b43_phy_read_log(dev, 0x0729 + core_off);
+	b43_phy_read_log(dev, 0x0720 + core_off);
+	b43_phy_read_log(dev, 0x0728 + core_off);
+	b43_phy_read_log(dev, 0x0724 + core_off);
+	b43_phy_read_log(dev, 0x0736 + core_off);
+	b43_phy_read_log(dev, 0x0723 + core_off);
+	b43_phy_read_log(dev, 0x0735 + core_off);
+	b43_phy_read_log(dev, 0x0737 + core_off);
+	b43_phy_read_log(dev, 0x0738 + core_off);
+	b43_phy_read_log(dev, 0x0727 + core_off);
+	b43_phy_read_log(dev, 0x073c + core_off);
+
+	/* B2j: coefficient write-back (56 op da tabella) */
+	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_b2j_ops); i++) {
+		const struct b43_ac_b2j_op *op = &b43_phy_ac_b2j_ops[i];
+		u16 addr = op->reg_off + core_off;
+
+		if (op->mask_bits == 0)
+			b43_phy_write(dev, addr, op->val);
+		else
+			b43_phy_maskset(dev, addr,
+					(u16)~op->mask_bits, op->val);
+	}
+}
+
+/*
+ * RX-IQ compensation apply (vendor #41135+, fase B2). Quarta iterazione del
+ * ciclo cal, strutturalmente diversa dalle idle-TSSI:
+ *
+ *   B2a (1 op):  transizione iter 3 → iter 4 (WR 0x0339 = 0x0fff, RX suspend)
+ *   B2b (14 op): 2× TBL.RD id=0x0020 offsets 0x14/0x1e (readback comp tables).
+ *   B2c (6 op):  per-core RX-IQ path disable (peek + MOD 0x?78 clr bit 0)
+ *                Hardcoded 3-core, senza check coremask (analogo ad A1).
+ *   B2d (12 op): A1 restore common (helper condiviso)
+ *   B2e (3 op):  extra classifier reset (2× peek 0x0140 + WR = 0x0df4)
+ *   B2f (50 op): radio commit "coeff apply" per-core (coremask-guarded)
+ *   Body-loop iter 4:
+ *     B2g (3 op):    preambulo peek gate + tone gen off (una volta)
+ *     B2h+B2i+B2j:   per-core, 79 op (coremask-guarded)
+ *   B2k (3 op):  MOD 0x019e set bit 6/7/8 (gate config extra)
+ *   B2l (18 op): tone generator config pass1 + pass2 reversed
+ *   B2m (32 op): readback + write coefficient table 0x0007
+ *
+ * NB: chiamata a MAC sospeso (iter 3 termina lasciando MAC down).
+ *
+ * TODO(formula): calcolo runtime dei coefficienti da rxcal_imbalance pending.
+ */
+void b43_phy_ac_rxiqcal_apply(struct b43_wldev *dev)
+{
+	/*
+	 * Stato entrante osservato: MAC sospeso (da post_cal_finalize_iter3), mode WAITED+OFDM, CLIP ancora attivo.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_OFDM | B43_PHY_AC_STATE_RX_WAITED,
+			   B43_PHY_AC_STATE_MAC_EN | B43_PHY_AC_STATE_RX_CCK |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_CLIP_ALL_DIS);
+
+	/* B2a: RX suspend prima del nuovo blocco cal */
+	b43_phy_write(dev, 0x0339, 0x0fff);
+
+	/* B2b: readback compensation tables. Il vendor emette unlock finale
+	 * dopo ogni TBL.RD — actab_read_bulk relockizza condizionalmente ma
+	 * non emette l'unlock, quindi lo aggiungiamo qui. */
+	{
+		u8 dummy_rd;
+		b43_actab_read_bulk(dev, 0x0020, 0x0014, 8, 1, &dummy_rd);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+		b43_actab_read_bulk(dev, 0x0020, 0x001e, 8, 1, &dummy_rd);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+	}
+
+	/* B2c: per-core RX-IQ path disable (0x?78 stride +0x200). Emesso per
+	 * tutti e 3 i core hardcoded, senza check coremask — pattern analogo
+	 * ad A1 sui registri 0x?d4 (phy_set 0x06d4/0x08d4/0x0ad4). */
+	b43_phy_read_log(dev, 0x0678);
+	b43_phy_maskset(dev, 0x0678, (u16)~0x0001, 0);
+	b43_phy_read_log(dev, 0x0878);
+	b43_phy_maskset(dev, 0x0878, (u16)~0x0001, 0);
+	b43_phy_read_log(dev, 0x0a78);
+	b43_phy_maskset(dev, 0x0a78, (u16)~0x0001, 0);
+
+	/* B2d: A1 restore common */
+	b43_phy_ac_rxcal_a1_restore(dev);
+
+	/* B2e: extra classifier reset — 1 peek diagnostico + classctl_write_peeked(true) */
+	b43_phy_read_log(dev, 0x0140);
+	b43_phy_ac_classctl_write_peeked(dev, true);
+
+	/*
+	 * B2f (50 op, #41171-#41220): radio commit "coeff apply" per-core.
+	 * Coremask-guarded — a differenza di B2c che emette per 3-core hardcoded.
+	 */
+	{
+		u8 c;
+		u8 num_cores = dev->phy.ac->num_cores;
+		u8 mask = dev->phy.ac->coremask;
+
+		for (c = 0; c < num_cores; c++) {
+			u16 s = (u16)(c * 0x200);
+			if (!((mask >> c) & 1))
+				continue;
+
+			b43_radio_read_log(dev, 0x001a + s);
+			b43_radio_read_log(dev, 0x001b + s);
+			b43_radio_read_log(dev, 0x001c + s);
+			b43_radio_read_log(dev, 0x001e + s);
+			b43_radio_read_log(dev, 0x001f + s);
+			b43_radio_read_log(dev, 0x0024 + s);
+			b43_radio_read_log(dev, 0x0170 + s);
+
+			b43_radio_maskset(dev, 0x001a + s, (u16)~0x00f0, 0x00b0);
+			b43_radio_maskset(dev, 0x001f + s, (u16)~0x0004, 0x0004);
+			b43_radio_maskset(dev, 0x0170 + s, (u16)~0x0100, 0x0100);
+			b43_radio_maskset(dev, 0x0170 + s, (u16)~0x4000, 0);
+			b43_radio_maskset(dev, 0x001e + s, (u16)~0x0004, 0);
+			b43_radio_maskset(dev, 0x001a + s, (u16)~0x0300, 0);
+		}
+	}
+
+	/*
+	 * Body-loop iter 4 (#41221-#41384): coefficient write-back.
+	 * Il preambulo B2g (3 op) è emesso UNA VOLTA prima del loop per-core.
+	 * Il resto (B2h+B2i+B2j = 79 op) è per-core, coremask-guarded.
+	 */
+	{
+		u8 c;
+		u8 num_cores = dev->phy.ac->num_cores;
+		u8 mask = dev->phy.ac->coremask;
+
+		/* B2g: preambulo (3 op) — una volta, non per-core */
+		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		b43_phy_read_log(dev, 0x040f);
+		b43_phy_maskset(dev, 0x040f, (u16)~0x0200, 0);
+
+		for (c = 0; c < num_cores; c++) {
+			u16 s = (u16)(c * 0x200);
+			if (!((mask >> c) & 1))
+				continue;
+			b43_phy_ac_rxiqcal_apply_body_core(dev, s);
+		}
+
+		/* B2k (3 op): setta bit 6/7/8 di B43_PHY_AC_REG_TBL_WRITE_GATE (gate config extra). */
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0040, 0x0040);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0080, 0x0080);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0100, 0x0100);
+
+		/*
+		 * B2l (18 op nel caso d6220 2-core, 27 op se 3-core): tone
+		 * generator config — vedi b43_phy_ac_rxgain_perchan_tail per
+		 * il pattern completo (pass1 forward + pass2 reversed).
+		 */
+		b43_phy_ac_rxgain_perchan_tail(dev);
+
+		/*
+		 * B2m (32 op): readback + write coefficient table 0x0007.
+		 * Valori TBL.WR hardcoded dal trace vendor — TODO(formula)
+		 * per il calcolo runtime da rxcal_imbalance.
+		 */
+		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+
+		{
+			u16 dummy_rd;
+			b43_actab_read_bulk(dev, 0x0007, 0x0100, 16, 1, &dummy_rd);
+			b43_actab_read_bulk(dev, 0x0007, 0x0103, 16, 1, &dummy_rd);
+			b43_actab_read_bulk(dev, 0x0007, 0x0106, 16, 1, &dummy_rd);
+		}
+		{
+			static const u16 tblw_100 = 0x0000;
+			static const u16 tblw_103 = 0x4f7f;
+			static const u16 tblw_106 = 0x00f3;
+			b43_actab_write_bulk(dev, 0x0007, 0x0100, 16, 1, &tblw_100);
+			b43_actab_write_bulk(dev, 0x0007, 0x0103, 16, 1, &tblw_103);
+			b43_actab_write_bulk(dev, 0x0007, 0x0106, 16, 1, &tblw_106);
+		}
+
+		/*
+		 * B3 (65 op, #41435-#41499): secondo pass di coefficient
+		 * application ("shift-1" rispetto a B2m). Struttura:
+		 *   B3a (17 op): TBL 0x000c off=0x63 readback + relock esplicito
+		 *                + TBL.WR off=0x63/0x73 val=0x0040
+		 *   B3b (31 op): relock + 3× TBL.RD 0x0007 off=0x101/104/107
+		 *                + 3× TBL.WR con valori 0/0x2f7f/0x00f3
+		 *   B3c (17 op): TBL 0x000c off=0x67 idem con val=0x003c
+		 *
+		 * Analogo semantico a B2m ma con offset diversi (0x101 vs 0x100,
+		 * 0x104 vs 0x103, 0x107 vs 0x106) — probabilmente slot Q vs I
+		 * della tabella coefficienti 0x0007.
+		 *
+		 * NB: le op "peek + MOD relock" standalone (#41440-#41441 e
+		 * #41488-#41489) non sono in una TBL — sono un relock esplicito
+		 * emesso dal vendor tra due gruppi di operazioni sulla stessa
+		 * tabella. In B3b invece #41452 è una MOD standalone senza peek.
+		 */
+
+		/* B3a */
+		{
+			u16 dummy_63;
+			static const u16 tblw_063 = 0x0040;
+			static const u16 tblw_073 = 0x0040;
+
+			b43_actab_read_bulk(dev, 0x000c, 0x0063, 16, 1, &dummy_63);
+			b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+			b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+			b43_actab_write_bulk(dev, 0x000c, 0x0063, 16, 1, &tblw_063);
+			b43_actab_write_bulk(dev, 0x000c, 0x0073, 16, 1, &tblw_073);
+		}
+
+		/* B3b: relock standalone (no peek) + 3 RD + 3 WR sulla 0x0007
+		 * offset 0x101/0x104/0x107 (slot 1 vs 0x100/0x103/0x106 di B2m) */
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+		{
+			u16 dummy_rd;
+			static const u16 tblw_101 = 0x0000;
+			static const u16 tblw_104 = 0x2f7f;
+			static const u16 tblw_107 = 0x00f3;
+
+			b43_actab_read_bulk(dev, 0x0007, 0x0101, 16, 1, &dummy_rd);
+			b43_actab_read_bulk(dev, 0x0007, 0x0104, 16, 1, &dummy_rd);
+			b43_actab_read_bulk(dev, 0x0007, 0x0107, 16, 1, &dummy_rd);
+			b43_actab_write_bulk(dev, 0x0007, 0x0101, 16, 1, &tblw_101);
+			b43_actab_write_bulk(dev, 0x0007, 0x0104, 16, 1, &tblw_104);
+			b43_actab_write_bulk(dev, 0x0007, 0x0107, 16, 1, &tblw_107);
+		}
+
+		/* B3c: come B3a ma offset 0x67/0x77 val=0x003c */
+		{
+			u16 dummy_67;
+			static const u16 tblw_067 = 0x003c;
+			static const u16 tblw_077 = 0x003c;
+
+			b43_actab_read_bulk(dev, 0x000c, 0x0067, 16, 1, &dummy_67);
+			b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+			b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+			b43_actab_write_bulk(dev, 0x000c, 0x0067, 16, 1, &tblw_067);
+			b43_actab_write_bulk(dev, 0x000c, 0x0077, 16, 1, &tblw_077);
+		}
+	}
+}
+
+/*
+ * Post-rxiqcal stage 2 (vendor #41500-#41797+, fase B4). Sequenza che segue
+ * la conclusione di rxiqcal_apply (fine B3c). Il vendor entra in un
+ * "auto-contained" mode dove ogni TBL.WR fa lock + write + unlock nel
+ * proprio scope.
+ *
+ * Sub-blocchi implementati:
+ *   B4 preamble (3 op, #41500-#41502):
+ *     MOD 019e set bit 1 (relock idempotente, gate era già locked da B3c)
+ *     MOD 019e clr bit 1 (unlock finale — chiude scope B3)
+ *     WR 0x0382 = 0x8a09 (config, precede clear delle gain tables)
+ *   B4a (87 op, #41503-#41589): bulk clear di 12 slot della TBL 0x000c
+ *     range 0x40-0x55, in 3 gruppi per-core hardcoded:
+ *       core 0 base=0x40, core 1 base=0x48, core 2 base=0x50
+ *     Ogni gruppo scrive base(len=2, val I/Q = 0/0) + base+3/+4/+5 (len=1,
+ *     val=0). 3-core hardcoded (analogo pattern ad A1/B2c: le TBL 0x000c
+ *     gain override sono globali per tutti i 3 core anche se il coremask
+ *     ne disabilita uno).
+ *
+ * TODO(nome-def): "stage2" è provvisorio; verrà rivisto quando la struttura
+ * complessiva delle fasi post-rxiqcal sarà chiara.
+ * TODO(3-core-hardcoded): il pattern hardcoded 3-core su TBL 0x000c
+ * potrebbe non essere corretto per boards con num_cores diverso. Da
+ * verificare quando si troverà una capture da altro chipset.
+ */
+void b43_phy_ac_post_rxiqcal_stage2(struct b43_wldev *dev)
+{
+	/*
+	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	static const u16 zero2[2] = { 0x0000, 0x0000 };
+	static const u16 zero1[1] = { 0x0000 };
+	u8 c;
+
+	/* B4 preamble */
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+	b43_phy_write(dev, 0x0382, 0x8a09);
+
+	/* B4a: 3 gruppi per-core hardcoded, ogni gruppo 4 TBL.WR con offset
+	 * base(len=2)/+3/+4/+5 (len=1). Auto-contained pattern via scoped. */
+	for (c = 0; c < 3; c++) {
+		u16 base = (u16)(0x40 + c * 0x08);
+
+		b43_actab_write_bulk_scoped(dev, 0x000c, base + 0, 16, 2, zero2);
+		b43_actab_write_bulk_scoped(dev, 0x000c, base + 3, 16, 1, zero1);
+		b43_actab_write_bulk_scoped(dev, 0x000c, base + 4, 16, 1, zero1);
+		b43_actab_write_bulk_scoped(dev, 0x000c, base + 5, 16, 1, zero1);
+	}
+
+	/*
+	 * B4b (86 op, #41590-#41675): TBL 0x000e off=0x0000 len=40 width=32.
+	 * La tabella ha struttura simmetrica: metà1 (elementi 0-19) identica
+	 * a metà2 (elementi 20-39). Probabile look-up table per DDS/NCO o
+	 * filtro con periodo di 20 sample.
+	 *
+	 * Valori hardcoded dal trace vendor d6220 ch36 — potrebbero essere
+	 * channel-dependent oppure derivati da una formula (TODO).
+	 */
+	{
+		static const u32 b4b_tbl_data[40] = {
+			/* metà 1 (elementi 0-19) */
+			0x0003e800, 0x0003b84d, 0x00032893, 0x00024cca,
+			0x000134ee, 0x000000fa, 0x000eccee, 0x000db4ca,
+			0x000cd893, 0x000c484d, 0x000c1800, 0x000c4bb3,
+			0x000cdb6d, 0x000db736, 0x000ecf12, 0x00000306,
+			0x00013712, 0x00024f36, 0x00032b6d, 0x0003bbb3,
+			/* metà 2 (elementi 20-39, duplicato esatto della metà 1) */
+			0x0003e800, 0x0003b84d, 0x00032893, 0x00024cca,
+			0x000134ee, 0x000000fa, 0x000eccee, 0x000db4ca,
+			0x000cd893, 0x000c484d, 0x000c1800, 0x000c4bb3,
+			0x000cdb6d, 0x000db736, 0x000ecf12, 0x00000306,
+			0x00013712, 0x00024f36, 0x00032b6d, 0x0003bbb3,
+		};
+
+		b43_actab_write_bulk_scoped(dev, 0x000e, 0x0000, 32, 40,
+					    b4b_tbl_data);
+	}
+
+	/*
+	 * B4c (33 op, #41676-#41708):
+	 *   - 2 TBL.RD 0x000c off=0x63/0x67 auto-contained (dummy readback).
+	 *     Il vendor emette lock+read+unlock; actab_read_bulk emette solo
+	 *     lock+read, quindi l'unlock è manuale post-chiamata.
+	 *   - 19 op individual PHY configs: clear 0x0471 bit 0, WR triple
+	 *     0x0463/0x0461/0x0462, peek+set 0x0400 bit 0, clr 0x0460 bit
+	 *     0/2, MOD 0x0382 (clr 0xc000 + set 0x8000 → risultato bit 15
+	 *     su valore 0x8a09 → 0x8009), 2× peek 0x0403, WR 0x0400=0,
+	 *     6 MOD per-core 3-core hardcoded su 0x073a/0x0725 (clr bit 8 e
+	 *     set bit 10) stride +0x200.
+	 */
+	{
+		u16 dummy_rd;
+		u8 c2;
+
+		b43_actab_read_bulk(dev, 0x000c, 0x0063, 16, 1, &dummy_rd);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+		b43_actab_read_bulk(dev, 0x000c, 0x0067, 16, 1, &dummy_rd);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+
+		b43_phy_mask(dev, 0x0471, (u16)~0x0001);
+		b43_phy_write(dev, 0x0463, 0x0027);
+		b43_phy_write(dev, 0x0461, 0xffff);
+		b43_phy_write(dev, 0x0462, 0x003c);
+		b43_phy_read_log(dev, 0x0400);
+		b43_phy_set(dev, 0x0400, 0x0001);
+		b43_phy_mask(dev, 0x0460, (u16)~0x0004);
+		b43_phy_mask(dev, 0x0460, (u16)~0x0001);
+		b43_phy_mask(dev, 0x0382, (u16)~0xc000);
+		b43_phy_set(dev, 0x0382, 0x8000);
+		b43_phy_read_log(dev, 0x0403);
+		b43_phy_read_log(dev, 0x0403);
+		b43_phy_write(dev, 0x0400, 0x0000);
+
+		/* 6 MOD per-core 3-core hardcoded (stride +0x200) su
+		 * 0x073a (clr bit 8) e 0x0725 (set bit 10) */
+		for (c2 = 0; c2 < 3; c2++) {
+			u16 s = (u16)(c2 * 0x200);
+
+			b43_phy_maskset(dev, 0x073a + s, (u16)~0x0100, 0);
+			b43_phy_maskset(dev, 0x0725 + s, (u16)~0x0400, 0x0400);
+		}
+	}
+
+	/*
+	 * B4d (183 op, #41709-#41891): "fast" bulk TBL.WR sulla tabella 0x000c
+	 * con offset 0x00-0x11 per core 0 e 0x20-0x31 per core 1. Il gate 019e
+	 * è lockato ESTERNAMENTE dal preamble e sbloccato dal epilogue, quindi
+	 * ogni TBL.WR interna emette solo 5 op (label + peek gate + WR ID + WR
+	 * OFFSET + WR DATA) — match perfetto con b43_actab_write_bulk (base).
+	 *
+	 * I valori sono per-core: i primi 7 e l'ultimo sono identici tra core
+	 * 0/1, gli slot 0x07-0x10 differiscono. Hardcoded 2-core dal trace
+	 * d6220 ch36 (num_cores attivi = 2). Su boards con num_cores=3 servirà
+	 * probabilmente uno slot 0x40+i per core 2 — TODO(3-core-check).
+	 */
+	{
+		static const u16 b4d_core0_vals[18] = {
+			0x0100, 0x0200, 0x0300, 0x0500, 0x0800, 0x0b00, 0x1000,
+			0x1001, 0x1002, 0x1003, 0x1004, 0x1005, 0x1006, 0x1007,
+			0x1607, 0x2007, 0x2d07, 0x4007,
+		};
+		static const u16 b4d_core1_vals[18] = {
+			0x0100, 0x0200, 0x0300, 0x0500, 0x0800, 0x0b00, 0x1000,
+			0x1600, 0x2000, 0x2d00, 0x4000, 0x4001, 0x4002, 0x4003,
+			0x4004, 0x4005, 0x4006, 0x4007,
+		};
+		unsigned int i;
+
+		/* B4d preamble: peek gate + lock esterno */
+		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+
+		/* Body: 18 coppie (core 0, core 1) in ordine interleaved */
+		for (i = 0; i < 18; i++) {
+			b43_actab_write_bulk(dev, 0x000c, 0x00 + i, 16, 1,
+					     &b4d_core0_vals[i]);
+			b43_actab_write_bulk(dev, 0x000c, 0x20 + i, 16, 1,
+					     &b4d_core1_vals[i]);
+		}
+
+		/* B4d epilogue: unlock */
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+	}
+}
+
+/*
+ * RX AFE calibration (vendor #41892+, fase B5). Ciascun iter emette:
+ *   WR 0x0381 = 0x7976  (cal parameter A)
+ *   [opzionale] pre-clear TBL.WR 0x000c off=<pre> val=0
+ *   WR 0x0383 = 0x003d  (cal parameter B)
+ *   WR 0x0380 = CMD     (comando armato: bit 15 set)
+ *   HW polling: while (phy_read(0x0380) & 0x8000)
+ *   RAD.RD 0x0144 + core_off  (readback risultato dal radio per-core)
+ *   TBL.RD 0x000c off=0x8X    (readback dalla tabella scratch)
+ *   TBL.WR 0x000c off=0x4X val=<risultato>
+ *
+ * NB: TBL.RD auto-contained (label+peek+lock+wr d/e+read+unlock) — il
+ * porting usa actab_read_bulk + phy_maskset(0x019e, ~0x0002, 0) manuale
+ * per l'unlock finale.
+ *
+ * core_off = 0x0000 per gruppo cmd 0x8XXX (core 0)
+ *          = 0x0200 per gruppo cmd 0x9XXX (core 1)
+ *          = 0x0400 per gruppo cmd 0xaXXX (core 2)
+ */
+void b43_phy_ac_rxcal_afe_iter(struct b43_wldev *dev,
+			       u16 cmd, u16 core_off,
+			       const u16 *pre_clear_offs, u8 n_pre_clear,
+			       u16 rd_off, u8 rw_len,
+			       u16 wr_off, const u16 *wr_data)
+{
+	/*
+	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	static const u16 zero = 0;
+	u8 i;
+	u16 dummy_rd[2];
+
+	b43_phy_write(dev, 0x0381, 0x7976);
+	for (i = 0; i < n_pre_clear; i++)
+		b43_actab_write_bulk_scoped(dev, 0x000c, pre_clear_offs[i],
+					    16, 1, &zero);
+	b43_phy_write(dev, 0x0383, 0x003d);
+	b43_phy_write(dev, 0x0380, cmd);
+
+	/* HW polling: aspetta che bit 15 (busy) sia clear */
+	while (b43_phy_read(dev, 0x0380) & 0x8000)
+		;
+
+	b43_radio_read_log(dev, 0x0144 + core_off);
+	b43_actab_read_bulk(dev, 0x000c, rd_off, 16, rw_len, dummy_rd);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);  /* unlock manuale */
+	b43_actab_write_bulk_scoped(dev, 0x000c, wr_off, 16, rw_len, wr_data);
+}
+
+/*
+ * Commit batch (fase B5 iter 6/12/18 tail): dopo il result principale di
+ * un iter "commit", emette una sequenza di N × 2 TBL.WR fast interleaved
+ * (core 0/1 con offset stride 0x20). Gate 0x019e lockato ESTERNAMENTE
+ * (peek + MOD lock preamble) e sbloccato ESTERNAMENTE (MOD unlock).
+ */
+static void b43_phy_ac_rxcal_afe_commit_batch(struct b43_wldev *dev,
+					      u16 base_c0, u16 base_c1,
+					      const u16 *c0_vals,
+					      const u16 *c1_vals,
+					      u8 n)
+{
+	u8 i;
+
+	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+
+	for (i = 0; i < n; i++) {
+		b43_actab_write_bulk(dev, 0x000c, base_c0 + i, 16, 1,
+				     &c0_vals[i]);
+		b43_actab_write_bulk(dev, 0x000c, base_c1 + i, 16, 1,
+				     &c1_vals[i]);
+	}
+
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+}
+
+void b43_phy_ac_rxcal_afe_calibrate(struct b43_wldev *dev)
+{
+	/*
+	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	/*
+	 * Struttura iter table (18 iter = 6 comandi × 3 core).
+	 * Valori hardcoded dal trace d6220 ch36 — TODO(formula) per derivarli
+	 * runtime dal readback RAD.RD + TBL.RD.
+	 */
+
+	/* ==== Gruppo core-0 (cmd 0x8XXX, RAD.RD 0x0144) ==== */
+
+	/* Iter 1: cmd=0x8434, result 0x0301, pre-clears [0x43, 0x44] */
+	{
+		static const u16 pre[] = { 0x0043, 0x0044 };
+		static const u16 res[] = { 0x0301 };
+		b43_phy_ac_rxcal_afe_iter(dev, 0x8434, 0x0000,
+					  pre, 2, 0x0085, 1, 0x0045, res);
+	}
+	/* Iter 2: cmd=0x8334, result 0x0102 */
+	{
+		static const u16 pre[] = { 0x0043 };
+		static const u16 res[] = { 0x0102 };
+		b43_phy_ac_rxcal_afe_iter(dev, 0x8334, 0x0000,
+					  pre, 1, 0x0084, 1, 0x0044, res);
+	}
+	/* Iter 3: cmd=0x8084, result (0x0060, 0x0000) len=2 */
+	{
+		static const u16 res[] = { 0x0060, 0x0000 };
+		b43_phy_ac_rxcal_afe_iter(dev, 0x8084, 0x0000,
+					  NULL, 0, 0x0080, 2, 0x0040, res);
+	}
+	/* Iter 4: cmd=0x8267, result 0xff01 */
+	{
+		static const u16 res[] = { 0xff01 };
+		b43_phy_ac_rxcal_afe_iter(dev, 0x8267, 0x0000,
+					  NULL, 0, 0x0083, 1, 0x0043, res);
+	}
+	/* Iter 5: cmd=0x8056, result (0x0064, 0x000e) len=2 */
+	{
+		static const u16 res[] = { 0x0064, 0x000e };
+		b43_phy_ac_rxcal_afe_iter(dev, 0x8056, 0x0000,
+					  NULL, 0, 0x0080, 2, 0x0040, res);
+	}
+	/*
+	 * Iter 6: cmd=0x8234, result 0xfe02. Termina gruppo core-0 con
+	 * "commit batch" — 36 TBL.WR fast interleaved che aggiornano la gain
+	 * override table 0x000c off 0x00-0x11 (core 0) e 0x20-0x31 (core 1)
+	 * con coefficienti finali calcolati dagli iter 1-6.
+	 */
+	{
+		static const u16 res[] = { 0xfe02 };
+		static const u16 batch_c0[18] = {
+			0x0100, 0x0200, 0x0300, 0x0500, 0x0700, 0x0a00, 0x0f00,
+			0x0f01, 0x0f02, 0x0f03, 0x0f04, 0x0f05, 0x0f06, 0x0f07,
+			0x1507, 0x1e07, 0x2a07, 0x3c07,
+		};
+		static const u16 batch_c1[18] = {
+			0x0100, 0x0200, 0x0300, 0x0500, 0x0700, 0x0a00, 0x0f00,
+			0x1500, 0x1e00, 0x2a00, 0x3c00, 0x3c01, 0x3c02, 0x3c03,
+			0x3c04, 0x3c05, 0x3c06, 0x3c07,
+		};
+		b43_phy_ac_rxcal_afe_iter(dev, 0x8234, 0x0000,
+					  NULL, 0, 0x0083, 1, 0x0043, res);
+		b43_phy_ac_rxcal_afe_commit_batch(dev, 0x00, 0x20,
+						  batch_c0, batch_c1, 18);
+	}
+
+	/* ==== Gruppo core-1 (cmd 0x9XXX, RAD.RD 0x0344) ==== */
+
+	/* Iter 7: cmd=0x9434, result 0x0001, pre-clears [0x4b, 0x4c] */
+	{
+		static const u16 pre[] = { 0x004b, 0x004c };
+		static const u16 res[] = { 0x0001 };
+		b43_phy_ac_rxcal_afe_iter(dev, 0x9434, 0x0200,
+					  pre, 2, 0x008c, 1, 0x004d, res);
+	}
+	/* Iter 8: cmd=0x9334, result 0x0000 */
+	{
+		static const u16 pre[] = { 0x004b };
+		static const u16 res[] = { 0x0000 };
+		b43_phy_ac_rxcal_afe_iter(dev, 0x9334, 0x0200,
+					  pre, 1, 0x008b, 1, 0x004c, res);
+	}
+	/* Iter 9: cmd=0x9084, result (0x0020, 0x0000) len=2 */
+	{
+		static const u16 res[] = { 0x0020, 0x0000 };
+		b43_phy_ac_rxcal_afe_iter(dev, 0x9084, 0x0200,
+					  NULL, 0, 0x0087, 2, 0x0048, res);
+	}
+	/* Iter 10: cmd=0x9267, result 0x0100 */
+	{
+		static const u16 res[] = { 0x0100 };
+		b43_phy_ac_rxcal_afe_iter(dev, 0x9267, 0x0200,
+					  NULL, 0, 0x008a, 1, 0x004b, res);
+	}
+	/* Iter 11: cmd=0x9056, result (0x0022, 0x0004) len=2 */
+	{
+		static const u16 res[] = { 0x0022, 0x0004 };
+		b43_phy_ac_rxcal_afe_iter(dev, 0x9056, 0x0200,
+					  NULL, 0, 0x0087, 2, 0x0048, res);
+	}
+	/*
+	 * Iter 12: cmd=0x9234, result 0x0100. Ultimo iter del gruppo core-1.
+	 * Nessun tail speciale (le 2 pre-clears 0x53/0x54 di iter 13 sono
+	 * emesse DENTRO iter 13, dopo il WR 0x0381 — vedi vendor #42828-
+	 * #42843).
+	 */
+	{
+		static const u16 res[] = { 0x0100 };
+		b43_phy_ac_rxcal_afe_iter(dev, 0x9234, 0x0200,
+					  NULL, 0, 0x008a, 1, 0x004b, res);
+	}
+
+	/* ==== Gruppo core-2 (cmd 0xaXXX, RAD.RD 0x0544) ==== */
+
+	/* Iter 13: cmd=0xa434, result 0xfb03, pre-clears [0x53, 0x54] */
+	{
+		static const u16 pre[] = { 0x0053, 0x0054 };
+		static const u16 res[] = { 0xfb03 };
+		b43_phy_ac_rxcal_afe_iter(dev, 0xa434, 0x0400,
+					  pre, 2, 0x0093, 1, 0x0055, res);
+	}
+	/* Iter 14: cmd=0xa334, result 0x05fe */
+	{
+		static const u16 pre[] = { 0x0053 };
+		static const u16 res[] = { 0x05fe };
+		b43_phy_ac_rxcal_afe_iter(dev, 0xa334, 0x0400,
+					  pre, 1, 0x0092, 1, 0x0054, res);
+	}
+	/* Iter 15: cmd=0xa084, result (0xfee0, 0x0080) len=2 */
+	{
+		static const u16 res[] = { 0xfee0, 0x0080 };
+		b43_phy_ac_rxcal_afe_iter(dev, 0xa084, 0x0400,
+					  NULL, 0, 0x008e, 2, 0x0050, res);
+	}
+	/* Iter 16: cmd=0xa267, result 0x0d6e */
+	{
+		static const u16 res[] = { 0x0d6e };
+		b43_phy_ac_rxcal_afe_iter(dev, 0xa267, 0x0400,
+					  NULL, 0, 0x0091, 1, 0x0053, res);
+	}
+	/* Iter 17: cmd=0xa056, result (0xfed6, 0x00b6) len=2 */
+	{
+		static const u16 res[] = { 0xfed6, 0x00b6 };
+		b43_phy_ac_rxcal_afe_iter(dev, 0xa056, 0x0400,
+					  NULL, 0, 0x008e, 2, 0x0050, res);
+	}
+	/* Iter 18: cmd=0xa234, result 0x0764. Tail extra pending (8 WR di
+	 * inizializzazione fase successiva). */
+	{
+		static const u16 res[] = { 0x0764 };
+		b43_phy_ac_rxcal_afe_iter(dev, 0xa234, 0x0400,
+					  NULL, 0, 0x0091, 1, 0x0053, res);
+	}
+
+	/*
+	 * Iter 18 tail (vendor #43152-#43270): dopo il result dell'ultimo iter
+	 * del gruppo core-2, il vendor emette una sequenza articolata:
+	 *
+	 *   (a) 12 TBL.WR auto-contained sulla TBL 0x000c off 0x60-0x6a
+	 *       (core 0) e mirror 0x70-0x7a (core 1), duplicando per-antenna
+	 *       i risultati dei "commit iter" (5/6/11/12/17/18).
+	 *   (b) 3 op individual: peek 0x0464 (log read) + MOD 0x0382 (clr
+	 *       0x8000) + MOD 0x0460 (clr 0x0004).
+	 *   (c) 2 fast batch da 2 TBL.WR ciascuno (0x63/0x73 val=0x0040 e
+	 *       0x67/0x77 val=0x003c), sotto scope gate lockato esternamente.
+	 *
+	 * SALAME: (a) è "gain override defaults per-antenna" per il second
+	 * pass; (b) reset di bit già settati in B4c; (c) tuning/scaling per
+	 * i canali gain — significato preciso da approfondire.
+	 */
+
+	/* (a): 12 WR auto-contained (6 offset × 2 antenne) */
+	{
+		static const u16 val_iter5[]  = { 0x0064, 0x000e };
+		static const u16 val_iter6[]  = { 0xfe02 };
+		static const u16 val_iter11[] = { 0x0022, 0x0004 };
+		static const u16 val_iter12[] = { 0x0100 };
+		static const u16 val_iter17[] = { 0xfed6, 0x00b6 };
+		static const u16 val_iter18[] = { 0x0764 };
+
+		struct dup_spec { u16 off; u8 len; const u16 *vals; };
+		static const struct dup_spec dups[] = {
+			{ 0x60, 2, val_iter5  },
+			{ 0x62, 1, val_iter6  },
+			{ 0x64, 2, val_iter11 },
+			{ 0x66, 1, val_iter12 },
+			{ 0x68, 2, val_iter17 },
+			{ 0x6a, 1, val_iter18 },
+		};
+		unsigned int i;
+
+		for (i = 0; i < ARRAY_SIZE(dups); i++) {
+			b43_actab_write_bulk_scoped(dev, 0x000c,
+				dups[i].off, 16, dups[i].len, dups[i].vals);
+			b43_actab_write_bulk_scoped(dev, 0x000c,
+				dups[i].off + 0x10, 16, dups[i].len,
+				dups[i].vals);
+		}
+	}
+
+	/* (b): 3 op individual */
+	b43_phy_read_log(dev, 0x0464);
+	b43_phy_mask(dev, 0x0382, (u16)~0x8000);
+	b43_phy_mask(dev, 0x0460, (u16)~0x0004);
+
+	/* (c): 2 fast batch trailer, ciascuno con 2 TBL.WR (0x63+0x73, poi
+	 * 0x67+0x77) sotto uno scope gate lockato esternamente. */
+	{
+		static const u16 val_40 = 0x0040;
+		static const u16 val_3c = 0x003c;
+
+		/* Trailer 1: 0x63 + 0x73 val=0x0040 */
+		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+		b43_actab_write_bulk(dev, 0x000c, 0x0063, 16, 1, &val_40);
+		b43_actab_write_bulk(dev, 0x000c, 0x0073, 16, 1, &val_40);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+
+		/* Trailer 2: 0x67 + 0x77 val=0x003c */
+		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+		b43_actab_write_bulk(dev, 0x000c, 0x0067, 16, 1, &val_3c);
+		b43_actab_write_bulk(dev, 0x000c, 0x0077, 16, 1, &val_3c);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+	}
+}
+
+/*
+ * RX AFE cal finalize gain LUTs (vendor #43271-#45962, fase C).
+ *
+ * Preamble (3 op):
+ *   MOD 0x0001 val=0x4000 mask=0x4000  (pulse HW trigger on)
+ *   MOD 0x0001 val=0x0000 mask=0x4000  (pulse HW trigger off)
+ *   WR  0x0382 = 0x0000                 (reset B4b config regs)
+ *
+ * Body (2688 op): loop 128 offset × 3 core, ogni offset emette 3 TBL.WR
+ * auto-contained sulle tabelle 0x42 (core 0), 0x62 (core 1), 0x82 (core 2)
+ * con valori uniformi per-core (0xfe02, 0x0100, e per core 2 0xff60 fino
+ * a offset 0x20 incluso, poi 0xfd56 da 0x21 in poi).
+ *
+ * SALAME: la transizione a offset 0x21 per core 2 è un dato osservato,
+ * non c'è ancora spiegazione. Da approfondire quando la struttura delle
+ * gain LUT 0x42/0x62/0x82 sarà più chiara.
+ */
+void b43_phy_ac_rxcal_afe_finalize_gain_luts(struct b43_wldev *dev)
+{
+	/*
+	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	static const u16 val_c0 = 0xfe02;
+	static const u16 val_c1 = 0x0100;
+	static const u16 val_c2_lo = 0xff60;
+	static const u16 val_c2_hi = 0xfd56;
+	unsigned int i;
+
+	/* Preamble */
+	b43_phy_ac_cca_pulse(dev);
+	b43_phy_write(dev, 0x0382, 0x0000);
+
+	/* Body: 128 × 3 TBL.WR interleaved core 0/1/2 */
+	for (i = 0; i < 0x80; i++) {
+		const u16 *vc2 = (i < 0x21) ? &val_c2_lo : &val_c2_hi;
+
+		b43_actab_write_bulk_scoped(dev, 0x0042, i, 16, 1, &val_c0);
+		b43_actab_write_bulk_scoped(dev, 0x0062, i, 16, 1, &val_c1);
+		b43_actab_write_bulk_scoped(dev, 0x0082, i, 16, 1, vc2);
+	}
+}
+
+/*
+ * RX gain block defaults + commit pulse (vendor #46021-#46056, 36 op).
+ * Sequenza chiamata dopo b43_phy_ac_txpwr_by_index (che ha emesso il block
+ * 1 di 59 op TBL.WR TBL 0x0007/0x000c).
+ *
+ * Struttura op-count-verified (36 op):
+ *   Block 2 (32 op, #46021-#46052): 16 WR PHY per core × 2 core (stride
+ *     +0x200) sui gain regs 0x0720-0x073e. Valori identici tra core 0/1.
+ *   Block 3 preamble (4 op, #46053-#46056):
+ *     WR 0x019e = 0x03d0 (feature bits non-lock del gate)
+ *     WR 0x040f = 0x09ff
+ *     MOD 0x0001 val=0x4000 mask=0x4000 (pulse trigger on)
+ *     MOD 0x0001 val=0 mask=0x4000        (pulse trigger off)
+ *
+ * TODO(3-core-check): su boards num_cores=3 emette anche core 2 (stride
+ * +0x400)?
+ */
+void b43_phy_ac_rxgain_defaults_pulse(struct b43_wldev *dev)
+{
+	/*
+	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	static const struct { u16 off; u16 val; } gain_cfg[16] = {
+		{ 0x073e, 0x0000 },
+		{ 0x0721, 0x5000 },
+		{ 0x0729, 0x1000 },
+		{ 0x0720, 0x0180 },
+		{ 0x0728, 0x0880 },
+		{ 0x0724, 0x0000 },
+		{ 0x0736, 0x0000 },
+		{ 0x0723, 0x0000 },
+		{ 0x0735, 0x0000 },
+		{ 0x0737, 0x0000 },
+		{ 0x0738, 0x0000 },
+		{ 0x0727, 0x0004 },
+		{ 0x073c, 0x0000 },
+		{ 0x0725, 0x0600 },
+		{ 0x0739, 0x0000 },
+		{ 0x073a, 0x0180 },
+	};
+	unsigned int core, k;
+
+	/* Block 2: 16 WR per core × 2 core */
+	for (core = 0; core < 2; core++) {
+		u16 stride = (u16)(core * 0x200);
+
+		for (k = 0; k < ARRAY_SIZE(gain_cfg); k++)
+			b43_phy_write(dev, gain_cfg[k].off + stride,
+				      gain_cfg[k].val);
+	}
+
+	/* Block 3 preamble: gate feature bits + 0x040f + commit pulse */
+	b43_phy_write(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, 0x03d0);
+	b43_phy_write(dev, 0x040f, 0x09ff);
+	b43_phy_ac_cca_pulse(dev);
+}
+
+/*
+ * RX gain radio ranging (vendor #46057-#46169, fase D block 3 body).
+ *
+ * Struttura op-count-verified (113 op):
+ *   3a (14): 7 RAD.WR per core × 2 core (stride +0x200)
+ *   3b (3):  WR 0x0140=0x0df4 + peek 0x0140 + WR 0x0140=0x0df6
+ *   3c (4):  4 MOD set bit 4 su 0x02ed/f1/f5/f9 (stride +4)
+ *   3d (3):  3 MOD clr bit 14 su 0x?d4 (3-core stride +0x200)
+ *   3e (1):  WR 0x0339 = 0x0fff
+ *   3f (3):  3 WR per-core (0x?78 = 0x0008, 3-core stride +0x200)
+ *   3g (14): 2 TBL.RD id=0x0020 off=0x14/0x1e auto-contained (via DATA_2)
+ *   3h (6):  3 peek + MOD per-core (0x?78 clr bit 0)
+ *   3i (2):  peek 0x0140 + WR 0x0140 = 0x0df4 (restore da 3b)
+ *   3j (4):  4 MOD clr bit 4 (restore da 3c)
+ *   3k (3):  3 MOD set bit 14 (restore da 3d)
+ *   3l (1):  WR 0x0339 = 0x0000 (restore da 3e)
+ *   3m (2):  MOD 0x0001 pulse bit 14 (commit)
+ *   3n (3):  peek 0x0140 + peek 0x0140 + WR 0x0140 = 0x0df4
+ *   3o (7):  7 RAD.RD per core 0 (0x001a-0x0170)
+ *   3p (18): 6 RAD.MOD (=3 op each) per core 0
+ *   3q (7):  7 RAD.RD per core 1 (stride +0x200)
+ *   3r (18): 6 RAD.MOD per core 1
+ */
+void b43_phy_ac_radio_chain_range_setup(struct b43_wldev *dev, bool with_tune)
+{
+	/*
+	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	static const struct { u16 off; u16 val; } radio_wr[7] = {
+		{ 0x001a, 0x0014 },
+		{ 0x001b, 0x0280 },
+		{ 0x001c, 0x0044 },
+		{ 0x001e, 0x0014 },
+		{ 0x001f, 0x0000 },
+		{ 0x0024, 0x0000 },
+		{ 0x0170, 0x0100 },
+	};
+	unsigned int core, k;
+	u8 dummy_rd[2];
+
+	/* 3a: 7 RAD.WR per core × 2 core */
+	for (core = 0; core < 2; core++) {
+		u16 stride = (u16)(core * 0x200);
+
+		for (k = 0; k < ARRAY_SIZE(radio_wr); k++)
+			b43_radio_write(dev, radio_wr[k].off + stride,
+					radio_wr[k].val);
+	}
+
+	/*
+	 * 3b: bracket open — arm classifier poi rilasciarlo con peek. Il vendor
+	 * emette la coppia arm/release perché la peek in mezzo campioni lo stato
+	 * "armed" e la successiva WR passi al release.
+	 *   classctl_write(true)          -> WR 0x0140 = 0x0df4
+	 *   classctl_write_peeked(false)  -> peek + WR 0x0140 = 0x0df6
+	 */
+	b43_phy_ac_classctl_write(dev, true);
+	b43_phy_ac_classctl_write_peeked(dev, false);
+
+	/* 3c-3d: engage ADC hold + enable clip det (release RX). */
+	b43_phy_ac_adc_hold(dev, true);
+	b43_phy_ac_clip_det(dev, true);
+
+	/* 3e: WR 0x0339 = 0x0fff */
+	b43_phy_write(dev, 0x0339, 0x0fff);
+
+	/* 3f: 3 WR per-core (0x?78 = 0x0008) */
+	for (core = 0; core < 3; core++)
+		b43_phy_write(dev, 0x0678 + core * 0x200, 0x0008);
+
+	/* 3g: 2 TBL.RD id=0x0020 auto-contained (via DATA_2) — solo variante full */
+	if (with_tune) {
+		b43_actab_read_bulk(dev, 0x0020, 0x0014, 16, 1, dummy_rd);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);   /* unlock manuale */
+		b43_actab_read_bulk(dev, 0x0020, 0x001e, 16, 1, dummy_rd);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);   /* unlock manuale */
+
+		/* 3h: 3 peek + MOD per-core (0x?78 clr bit 0) */
+		for (core = 0; core < 3; core++) {
+			u16 reg = 0x0678 + core * 0x200;
+
+			b43_phy_read_log(dev, reg);
+			b43_phy_maskset(dev, reg, (u16)~0x0001, 0);
+		}
+	}
+
+	/*
+	 * 3i-3k: bracket close — restore classifier arm + drop ADC hold +
+	 * disable clip det (netto zero rispetto all'ingresso della funzione).
+	 * Equivalente a b43_phy_ac_rx_gate_with_adc_hold(dev, true).
+	 */
+	b43_phy_ac_rx_gate_with_adc_hold(dev, true);
+
+	/* 3l: WR 0x0339 = 0x0000 (restore) */
+	b43_phy_write(dev, 0x0339, 0x0000);
+
+	/* 3m: MOD 0x0001 pulse bit 14 (commit) */
+	b43_phy_ac_cca_pulse(dev);
+
+	if (!with_tune)
+		return;
+
+	/* 3n: 1 peek diagnostico + classctl_write_peeked(true) (arm classifier). */
+	b43_phy_read_log(dev, 0x0140);
+	b43_phy_ac_classctl_write_peeked(dev, true);
+
+	/*
+	 * 3o-3r: per-core (2 core) 7 RAD.RD + 6 RAD.MOD tuning.
+	 * Le 6 MOD alterano bit-field specifici di 0x001a (0x00f0, 0x0300),
+	 * 0x001f (0x0004), 0x0170 (0x0100, 0x4000), 0x001e (0x0004).
+	 */
+	for (core = 0; core < 2; core++) {
+		u16 s = (u16)(core * 0x200);
+
+		/* 3o/3q: 7 RAD.RD readback */
+		b43_radio_read_log(dev, 0x001a + s);
+		b43_radio_read_log(dev, 0x001b + s);
+		b43_radio_read_log(dev, 0x001c + s);
+		b43_radio_read_log(dev, 0x001e + s);
+		b43_radio_read_log(dev, 0x001f + s);
+		b43_radio_read_log(dev, 0x0024 + s);
+		b43_radio_read_log(dev, 0x0170 + s);
+
+		/* 3p/3r: 6 RAD.MOD tuning (each = MOD+RD+WR = 3 op) */
+		b43_radio_maskset(dev, 0x001a + s, (u16)~0x00f0, 0x00b0);
+		b43_radio_maskset(dev, 0x001f + s, (u16)~0x0004, 0x0004);
+		b43_radio_maskset(dev, 0x0170 + s, (u16)~0x0100, 0x0100);
+		b43_radio_maskset(dev, 0x0170 + s, (u16)~0x4000, 0);
+		b43_radio_maskset(dev, 0x001e + s, (u16)~0x0004, 0);
+		b43_radio_maskset(dev, 0x001a + s, (u16)~0x0300, 0);
+	}
+}
+
+/*
+ * RX gain per-channel config (vendor #46170-#46351, 181 op).
+ *
+ * Struttura op-count-verified:
+ *   Global (2): peek 0x040f + MOD 0x040f clr bit 9
+ *   Per-core (79 × 2 = 158):
+ *     peek 0x?73e (1) + WR 0x?73e = 0 (1) + 6 MOD 0x?73e (bit config) +
+ *     15 peek readback + 54 MOD/WR config
+ *   Bridge (3): 3 MOD 0x019e set bit 6/7/8 in sequenza
+ *   Tail (18): per-core 3 peek+WR paia + 6 WR standalone finali
+ */
+/*
+ * Tail comune a rxgain_perchan_config, iqcal_meas_readback_kick_tail, e
+ * al blocco B2m di rxcal_afe_calibrate (18 op nel caso 2-core attivi).
+ *
+ * Pattern osservato:
+ *   Pass 1 (forward): per ogni core attivo (mask bit set)
+ *     peek 0x?739 + WR = 0x00fa
+ *     peek 0x?73a + WR = 0x01d3
+ *     peek 0x?725 + WR = 0x07e6
+ *   Pass 2 (reverse): per ogni core attivo, dal più alto al più basso
+ *     WR 0x?725 = 0x07e2   WR 0x?73a = 0x01d3   WR 0x?739 = 0x007a
+ *
+ * SALAME: i 3 WR pass2 sovrascrivono valori appena scritti (0x?725, 0x?73a,
+ * 0x?739 dal pass1). Il pattern è deterministico e identico in ogni
+ * occorrenza; ratio non chiara dal trace.
+ */
+static void b43_phy_ac_rxgain_perchan_tail(struct b43_wldev *dev)
+{
+	unsigned int num_cores = dev->phy.ac->num_cores;
+	u8 coremask = dev->phy.ac->coremask;
+	unsigned int c;
+
+	/* Pass 1 (forward): 3 peek+WR pair per core attivo. */
+	for (c = 0; c < num_cores; c++) {
+		u16 s = (u16)(c * 0x200);
+
+		if (!((coremask >> c) & 1))
+			continue;
+
+		b43_phy_read_log(dev, 0x0739 + s);
+		b43_phy_write(dev,    0x0739 + s, 0x00fa);
+		b43_phy_read_log(dev, 0x073a + s);
+		b43_phy_write(dev,    0x073a + s, 0x01d3);
+		b43_phy_read_log(dev, 0x0725 + s);
+		b43_phy_write(dev,    0x0725 + s, 0x07e6);
+	}
+
+	/* Pass 2 (reverse): 3 WR standalone per core attivo, high-to-low. */
+	for (c = num_cores; c-- > 0; ) {
+		u16 s = (u16)(c * 0x200);
+
+		if (!((coremask >> c) & 1))
+			continue;
+
+		b43_phy_write(dev, 0x0725 + s, 0x07e2);
+		b43_phy_write(dev, 0x073a + s, 0x01d3);
+		b43_phy_write(dev, 0x0739 + s, 0x007a);
+	}
+}
+
+void b43_phy_ac_rxgain_perchan_config(struct b43_wldev *dev)
+{
+	/*
+	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	enum { OP_MOD, OP_WR };
+	struct gain_op {
+		u8 kind;
+		u16 reg;    /* core-0 relative */
+		u16 mask;   /* trace mask (bit da modificare) — 0 se OP_WR */
+		u16 val;
+	};
+
+	/* 54 MOD + 2 WR = 56 op-body per core (in ordine osservato) */
+	static const struct gain_op body[56] = {
+		{ OP_MOD, 0x0728, 0x0002, 0x0000 },
+		{ OP_MOD, 0x0720, 0x0002, 0x0002 },
+		{ OP_MOD, 0x0721, 0x0040, 0x0040 },
+		{ OP_MOD, 0x0729, 0x0040, 0x0000 },
+		{ OP_MOD, 0x0721, 0x0080, 0x0080 },
+		{ OP_MOD, 0x0729, 0x0080, 0x0000 },
+		{ OP_MOD, 0x0721, 0x0020, 0x0020 },
+		{ OP_MOD, 0x0729, 0x0020, 0x0000 },
+		{ OP_MOD, 0x0721, 0x2000, 0x2000 },
+		{ OP_MOD, 0x0729, 0xe000, 0x0000 },
+		{ OP_MOD, 0x0721, 0x0800, 0x0800 },
+		{ OP_MOD, 0x0729, 0x0800, 0x0000 },
+		{ OP_MOD, 0x0721, 0x0400, 0x0400 },
+		{ OP_MOD, 0x0729, 0x0400, 0x0000 },
+		{ OP_MOD, 0x0721, 0x4000, 0x4000 },
+		{ OP_MOD, 0x0728, 0x3800, 0x0000 },
+		{ OP_MOD, 0x0721, 0x1000, 0x1000 },
+		{ OP_MOD, 0x0729, 0x1000, 0x0000 },
+		{ OP_MOD, 0x0720, 0x0020, 0x0020 },
+		{ OP_MOD, 0x0728, 0x0020, 0x0020 },
+		{ OP_MOD, 0x0720, 0x0040, 0x0040 },
+		{ OP_MOD, 0x0728, 0x0040, 0x0040 },
+		{ OP_MOD, 0x0720, 0x0010, 0x0010 },
+		{ OP_MOD, 0x0728, 0x0010, 0x0010 },
+		{ OP_MOD, 0x0721, 0x0100, 0x0100 },
+		{ OP_MOD, 0x0729, 0x0100, 0x0100 },
+		{ OP_MOD, 0x0727, 0x0004, 0x0004 },
+		{ OP_MOD, 0x073c, 0x0010, 0x0010 },
+		{ OP_WR,  0x0724, 0,      0x03ff },
+		{ OP_WR,  0x0736, 0,      0x022a },
+		{ OP_MOD, 0x073a, 0x0007, 0x0003 },
+		{ OP_MOD, 0x0725, 0x0020, 0x0020 },
+		{ OP_MOD, 0x0739, 0x007e, 0x007a },
+		{ OP_MOD, 0x0725, 0x0002, 0x0002 },
+		{ OP_MOD, 0x073a, 0x0008, 0x0000 },
+		{ OP_MOD, 0x0725, 0x0040, 0x0040 },
+		{ OP_MOD, 0x073a, 0x0010, 0x0010 },
+		{ OP_MOD, 0x0725, 0x0080, 0x0080 },
+		{ OP_MOD, 0x073a, 0x0060, 0x0040 },
+		{ OP_MOD, 0x0725, 0x0100, 0x0100 },
+		{ OP_MOD, 0x0723, 0x0008, 0x0008 },
+		{ OP_MOD, 0x0723, 0x0010, 0x0010 },
+		{ OP_MOD, 0x0723, 0x0800, 0x0800 },
+		{ OP_MOD, 0x0735, 0x0700, 0x0300 },
+		{ OP_MOD, 0x0735, 0x3800, 0x1800 },
+		{ OP_MOD, 0x0738, 0x0007, 0x0003 },
+		{ OP_MOD, 0x0723, 0x0001, 0x0001 },
+		{ OP_MOD, 0x0735, 0x0001, 0x0000 },
+		{ OP_MOD, 0x0723, 0x0020, 0x0020 },
+		{ OP_MOD, 0x0735, 0x4000, 0x0000 },
+		{ OP_MOD, 0x0723, 0x0002, 0x0002 },
+		{ OP_MOD, 0x0735, 0x001e, 0x0008 },
+		{ OP_MOD, 0x0727, 0x0002, 0x0002 },
+		{ OP_MOD, 0x073c, 0x000e, 0x0004 },
+		{ OP_MOD, 0x0727, 0x0001, 0x0001 },
+		{ OP_MOD, 0x073c, 0x0001, 0x0001 },
+	};
+	/* 15 registri readback per-core (nell'ordine osservato) */
+	static const u16 readback_regs[15] = {
+		0x0725, 0x0739, 0x073a, 0x0721, 0x0729, 0x0720, 0x0728,
+		0x0724, 0x0736, 0x0723, 0x0735, 0x0737, 0x0738, 0x0727,
+		0x073c,
+	};
+	unsigned int core, k;
+
+	/* Global preamble */
+	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+	b43_phy_read_log(dev, 0x040f);
+	b43_phy_maskset(dev, 0x040f, (u16)~0x0200, 0);
+
+	/* Per-core loop */
+	for (core = 0; core < 2; core++) {
+		u16 s = (u16)(core * 0x200);
+
+		/* Preamble per-core: peek + WR + 6 MOD su 0x?73e */
+		b43_phy_read_log(dev, 0x073e + s);
+		b43_phy_write(dev, 0x073e + s, 0x0000);
+		b43_phy_maskset(dev, 0x073e + s, (u16)~0x0010, 0);
+		b43_phy_maskset(dev, 0x073e + s, (u16)~0x0020, 0);
+		b43_phy_maskset(dev, 0x073e + s, (u16)~0x0040, 0);
+		b43_phy_maskset(dev, 0x073e + s, (u16)~0x0080, 0);
+		b43_phy_maskset(dev, 0x073e + s, (u16)~0x1000, 0x1000);
+		b43_phy_maskset(dev, 0x073e + s, (u16)~0x0400, 0x0400);
+
+		/* 15 peek readback */
+		for (k = 0; k < ARRAY_SIZE(readback_regs); k++)
+			b43_phy_read_log(dev, readback_regs[k] + s);
+
+		/* 56 op body */
+		for (k = 0; k < ARRAY_SIZE(body); k++) {
+			u16 reg = body[k].reg + s;
+
+			if (body[k].kind == OP_MOD)
+				b43_phy_maskset(dev, reg,
+						(u16)~body[k].mask, body[k].val);
+			else
+				b43_phy_write(dev, reg, body[k].val);
+		}
+	}
+
+	/* Bridge (3 op): 3 MOD B43_PHY_AC_REG_TBL_WRITE_GATE set bit 6/7/8 */
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0040, 0x0040);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0080, 0x0080);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0100, 0x0100);
+
+	/* Tail comune (18 op): vedi b43_phy_ac_rxgain_perchan_tail. */
+	b43_phy_ac_rxgain_perchan_tail(dev);
+}
+
+/*
+ * RX-IQ gain compensation (vendor #46352-#46450, fase E block 1, 99 op).
+ *
+ * Struttura op-count-verified:
+ *   Preamble (2): peek 0x019e + MOD lock
+ *   Per core (47 op):
+ *     Batch A (15): 3× fast TBL.RD id=0x0007 off=0x100+c/0x103+c/0x106+c
+ *     Batch B (15): 3× fast TBL.WR stessi offset con nuovi val
+ *     Batch C (7):  1× TBL.RD id=0x000c auto-contained + sync explicit
+ *     Batch D (10): 2× fast TBL.WR id=0x000c con bbmult compensato
+ *   Bridge (1): MOD lock idempotente tra core
+ *   Postamble (2): MOD lock + MOD unlock
+ */
+void b43_phy_ac_rxiqcal_apply_tx_gain_bbmult(struct b43_wldev *dev)
+{
+	/*
+	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	/* Valori RXIQ-compensated (hardcoded dal trace d6220 ch36). Il vendor
+	 * li deriva dalla stima RXIQ (4-tone measurement). TODO: sostituire
+	 * con formula runtime quando la RXIQ estimation sarà completa. */
+	static const struct { u16 g1; u16 bbmult; } comp[2] = {
+		{ 0x4f7f, 0x0040 },  /* core 0 */
+		{ 0x2f7f, 0x003c },  /* core 1 */
+	};
+	static const u16 bbmult_lo[3] = { 0x0063, 0x0067, 0x006b };
+	static const u16 bbmult_hi[3] = { 0x0073, 0x0077, 0x007b };
+	static const u16 g0 = 0x0000;
+	static const u16 g2 = 0x00f3;
+	struct b43_phy_ac *ac = dev->phy.ac;
+	unsigned int core;
+	bool first_core = true;
+	u16 discard;
+
+	/* Preamble */
+	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+
+	for (core = 0; core < ac->num_cores; core++) {
+		u16 bbmult;
+
+		if (!((ac->coremask >> core) & 1))
+			continue;
+
+		if (!first_core) {
+			/* Bridge tra core: solo MOD lock idempotente */
+			b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+		}
+		first_core = false;
+
+		bbmult = comp[core].bbmult;
+
+		/* Batch A: 3 fast TBL.RD TX gain code (readback pre-compensation).
+		 * Area TBL 0x0007 off 0x100+ = TX gain LUT (stessa area di
+		 * txpwr_by_index). */
+		b43_actab_read_bulk(dev, 7, (u16)(core + 0x0100), 16, 1, &discard);
+		b43_actab_read_bulk(dev, 7, (u16)(core + 0x0103), 16, 1, &discard);
+		b43_actab_read_bulk(dev, 7, (u16)(core + 0x0106), 16, 1, &discard);
+
+		/* Batch B: 3 fast TBL.WR TX gain code (writeback compensato) */
+		b43_actab_write_bulk(dev, 7, (u16)(core + 0x0100), 16, 1, &g0);
+		b43_actab_write_bulk(dev, 7, (u16)(core + 0x0103), 16, 1, &comp[core].g1);
+		b43_actab_write_bulk(dev, 7, (u16)(core + 0x0106), 16, 1, &g2);
+
+		/* Batch C: TBL.RD bbmult (TX baseband multiplier) readback +
+		 * sync explicit (peek+MOD lock idempotente) */
+		b43_actab_read_bulk(dev, 0xc, bbmult_lo[core], 16, 1, &discard);
+		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+
+		/* Batch D: 2 fast TBL.WR TX bbmult compensato */
+		b43_actab_write_bulk(dev, 0xc, bbmult_lo[core], 16, 1, &bbmult);
+		b43_actab_write_bulk(dev, 0xc, bbmult_hi[core], 16, 1, &bbmult);
+	}
+
+	/* Postamble */
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+}
+
+/*
+ * RX-IQ DDS/NCO seed (vendor #46451-#46561, fase E block 2, 111 op).
+ * Vedi commento in phy_ac.h per struttura dettagliata.
+ */
+void b43_phy_ac_rxiqcal_dds_seed(struct b43_wldev *dev)
+{
+	/*
+	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	/*
+	 * DDS/NCO table: 40 u32 con simmetria periodica 20+20 (metà1 =
+	 * metà2). Hardcoded dal trace d6220 ch36 #46476-#46560.
+	 */
+	static const u32 dds_seed[40] = {
+		0x0003e800, 0x0003b84d, 0x00032893, 0x00024cca, 0x000134ee,
+		0x000000fa, 0x000eccee, 0x000db4ca, 0x000cd893, 0x000c484d,
+		0x000c1800, 0x000c4bb3, 0x000cdb6d, 0x000db736, 0x000ecf12,
+		0x00000306, 0x00013712, 0x00024f36, 0x00032b6d, 0x0003bbb3,
+		0x0003e800, 0x0003b84d, 0x00032893, 0x00024cca, 0x000134ee,
+		0x000000fa, 0x000eccee, 0x000db4ca, 0x000cd893, 0x000c484d,
+		0x000c1800, 0x000c4bb3, 0x000cdb6d, 0x000db736, 0x000ecf12,
+		0x00000306, 0x00013712, 0x00024f36, 0x00032b6d, 0x0003bbb3,
+	};
+	static const u16 zeros[2] = { 0, 0 };
+
+	/* 1 op: arm command */
+	b43_phy_write(dev, 0x0382, 0x8a09);
+
+	/* 3× 8 op: azzera 3 zone da 2 slot in TBL 0x000c */
+	b43_actab_write_bulk_scoped(dev, 0x000c, 0x0040, 16, 2, zeros);
+	b43_actab_write_bulk_scoped(dev, 0x000c, 0x0048, 16, 2, zeros);
+	b43_actab_write_bulk_scoped(dev, 0x000c, 0x0050, 16, 2, zeros);
+
+	/* 86 op: carica 40 u32 DDS/NCO in TBL 0x000e */
+	b43_actab_write_bulk_scoped(dev, 0x000e, 0x0000, 32, 40, dds_seed);
+}
+
+/*
+ * RX-IQ prep second iteration (vendor #46562-#46777, 216 op).
+ * Vedi commento in phy_ac.h per struttura completa.
+ */
+void b43_phy_ac_rxiqcal_prep_second_iter(struct b43_wldev *dev)
+{
+	/*
+	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	/*
+	 * LUT 36 valori (vendor #46597-#46776). Pattern osservato: coppie
+	 * (off_i, off_(i+0x20)) per i=0..17. Prime 7 pair identiche, dalla
+	 * 8-esima in poi divergono.
+	 */
+	static const struct { u16 off; u16 val; } lut36[36] = {
+		{ 0x0000, 0x0100 }, { 0x0020, 0x0100 },
+		{ 0x0001, 0x0200 }, { 0x0021, 0x0200 },
+		{ 0x0002, 0x0300 }, { 0x0022, 0x0300 },
+		{ 0x0003, 0x0500 }, { 0x0023, 0x0500 },
+		{ 0x0004, 0x0800 }, { 0x0024, 0x0800 },
+		{ 0x0005, 0x0b00 }, { 0x0025, 0x0b00 },
+		{ 0x0006, 0x1000 }, { 0x0026, 0x1000 },
+		{ 0x0007, 0x1001 }, { 0x0027, 0x1600 },
+		{ 0x0008, 0x1002 }, { 0x0028, 0x2000 },
+		{ 0x0009, 0x1003 }, { 0x0029, 0x2d00 },
+		{ 0x000a, 0x1004 }, { 0x002a, 0x4000 },
+		{ 0x000b, 0x1005 }, { 0x002b, 0x4001 },
+		{ 0x000c, 0x1006 }, { 0x002c, 0x4002 },
+		{ 0x000d, 0x1007 }, { 0x002d, 0x4003 },
+		{ 0x000e, 0x1607 }, { 0x002e, 0x4004 },
+		{ 0x000f, 0x2007 }, { 0x002f, 0x4005 },
+		{ 0x0010, 0x2d07 }, { 0x0030, 0x4006 },
+		{ 0x0011, 0x4007 }, { 0x0031, 0x4007 },
+	};
+	u16 discard;
+	unsigned int core, i;
+
+	/* Seg A (14 op): 2× TBL.RD auto-contained + unlock esplicito
+	 * (readback bbmult per-core post-compensation). Al momento
+	 * dell'entrata il gate è unlocked (l'ultima op della funzione
+	 * precedente era MOD unlock via write_bulk_scoped). */
+	b43_actab_read_bulk(dev, 0x000c, 0x0063, 16, 1, &discard);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+	b43_actab_read_bulk(dev, 0x000c, 0x0067, 16, 1, &discard);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+
+	/* Seg B (19 op): kick sequence per il correlatore RXIQ */
+	b43_phy_mask(dev,      0x0471, (u16)~0x0001);              /* AND clr bit 0 */
+	b43_phy_write(dev,     0x0463, 0x0027);
+	b43_phy_write(dev,     0x0461, 0xffff);
+	b43_phy_write(dev,     0x0462, 0x003c);
+	b43_phy_read_log(dev,  0x0400);
+	b43_phy_set(dev,       0x0400, 0x0001);                    /* OR set bit 0 */
+	b43_phy_mask(dev,      0x0460, (u16)~0x0004);              /* AND clr bit 2 */
+	b43_phy_mask(dev,      0x0460, (u16)~0x0001);              /* AND clr bit 0 */
+	b43_phy_mask(dev,      0x0382, (u16)~0xc000);              /* AND clr bit 14/15 */
+	b43_phy_set(dev,       0x0382, 0x8000);                    /* OR set bit 15 */
+	b43_phy_read_log(dev,  0x0403);
+	b43_phy_read_log(dev,  0x0403);                            /* double peek */
+	b43_phy_write(dev,     0x0400, 0x0000);
+
+	/* 6 MOD per-core (3-core hardcoded stride +0x200) */
+	for (core = 0; core < 3; core++) {
+		u16 s = (u16)(core * 0x200);
+
+		b43_phy_maskset(dev, 0x073a + s, (u16)~0x0100, 0);
+		b43_phy_maskset(dev, 0x0725 + s, (u16)~0x0400, 0x0400);
+	}
+
+	/* Seg C (183 op): preamble (2) + 36× fast TBL.WR (180) + unlock (1) */
+	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+
+	for (i = 0; i < ARRAY_SIZE(lut36); i++)
+		b43_actab_write_bulk(dev, 0x000c, lut36[i].off, 16, 1, &lut36[i].val);
+
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+}
+
+/*
+ * RX-IQ measurement iters (vendor #46778-#47296, gruppo 4, 519 op).
+ * Vedi commento in phy_ac.h per struttura e op count per iter.
+ */
+void b43_phy_ac_rxiqcal_run_meas_iters(struct b43_wldev *dev)
+{
+	/*
+	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	/*
+	 * Spec per-iter (hardcoded dal trace d6220 ch36). 2 iter per core
+	 * (cmd 0x?084 primo, cmd 0x?056 secondo). TODO: derivare i valori
+	 * TBL.WR dalla stima RXIQ runtime.
+	 */
+	static const struct {
+		u16 cmd;
+		u16 core_off;
+		u16 rd_off;
+		u16 wr_off;
+		u16 wr_vals[2];
+	} iters[6] = {
+		{ 0x8084, 0x0000, 0x0080, 0x0040, { 0x0060, 0x0000 } }, /* 19 */
+		{ 0x8056, 0x0000, 0x0080, 0x0040, { 0x0062, 0xfffd } }, /* 20 */
+		{ 0x9084, 0x0200, 0x0087, 0x0048, { 0x0020, 0x0000 } }, /* 21 */
+		{ 0x9056, 0x0200, 0x0087, 0x0048, { 0x0023, 0x0003 } }, /* 22 */
+		{ 0xa084, 0x0400, 0x008e, 0x0050, { 0x00c0, 0xff40 } }, /* 23 */
+		{ 0xa056, 0x0400, 0x008e, 0x0050, { 0x00dd, 0xff57 } }, /* 24 */
+	};
+	/*
+	 * Iter 20 batch: 36 fast TBL.WR id=0x000c len=1, coppie
+	 * (i, i+0x20) per i=0..17. Valori diversi da prep_second_iter.
+	 */
+	static const struct { u16 off; u16 val; } iter20_batch[36] = {
+		{ 0x0000, 0x0100 }, { 0x0020, 0x0100 },
+		{ 0x0001, 0x0200 }, { 0x0021, 0x0200 },
+		{ 0x0002, 0x0300 }, { 0x0022, 0x0300 },
+		{ 0x0003, 0x0500 }, { 0x0023, 0x0500 },
+		{ 0x0004, 0x0700 }, { 0x0024, 0x0700 },
+		{ 0x0005, 0x0a00 }, { 0x0025, 0x0a00 },
+		{ 0x0006, 0x0f00 }, { 0x0026, 0x0f00 },
+		{ 0x0007, 0x0f01 }, { 0x0027, 0x1500 },
+		{ 0x0008, 0x0f02 }, { 0x0028, 0x1e00 },
+		{ 0x0009, 0x0f03 }, { 0x0029, 0x2a00 },
+		{ 0x000a, 0x0f04 }, { 0x002a, 0x3c00 },
+		{ 0x000b, 0x0f05 }, { 0x002b, 0x3c01 },
+		{ 0x000c, 0x0f06 }, { 0x002c, 0x3c02 },
+		{ 0x000d, 0x0f07 }, { 0x002d, 0x3c03 },
+		{ 0x000e, 0x1507 }, { 0x002e, 0x3c04 },
+		{ 0x000f, 0x1e07 }, { 0x002f, 0x3c05 },
+		{ 0x0010, 0x2a07 }, { 0x0030, 0x3c06 },
+		{ 0x0011, 0x3c07 }, { 0x0031, 0x3c07 },
+	};
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(iters); i++) {
+		b43_phy_ac_rxcal_afe_iter(dev, iters[i].cmd, iters[i].core_off,
+					  NULL, 0,
+					  iters[i].rd_off, 2,
+					  iters[i].wr_off, iters[i].wr_vals);
+
+		if (i == 1) {
+			/* Iter 20: batch fast 36× TBL.WR len=1 (183 op) */
+			unsigned int j;
+
+			b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+			b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+			for (j = 0; j < ARRAY_SIZE(iter20_batch); j++)
+				b43_actab_write_bulk(dev, 0x000c,
+						     iter20_batch[j].off,
+						     16, 1,
+						     &iter20_batch[j].val);
+			b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+		}
+	}
+}
+
+/*
+ * RX-IQ post-measurement apply (vendor #47297-#47328, fase F seg A, 32 op).
+ * Vedi commento in phy_ac.h per struttura.
+ */
+void b43_phy_ac_rxiqcal_apply_tx_bbmult_kick(struct b43_wldev *dev)
+{
+	/*
+	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	/*
+	 * Bbmult per core — stessi valori scritti da rxiqcal_apply_tx_gain_bbmult.
+	 * Regs: 0x63/0x73 (core 0), 0x67/0x77 (core 1), stride +4 per core.
+	 */
+	static const u16 bbmult_per_core[2] = { 0x0040, 0x003c };
+	struct b43_phy_ac *ac = dev->phy.ac;
+	unsigned int core;
+
+	/* 3 op standalone */
+	b43_phy_read_log(dev, 0x0464);
+	b43_phy_mask(dev, 0x0382, (u16)~0x8000);
+	b43_phy_mask(dev, 0x0460, (u16)~0x0004);
+
+	/* Sub-batch per-core: preamble + 2× fast TBL.WR bbmult + postamble */
+	for (core = 0; core < 2; core++) {
+		u16 lo = (u16)(0x0063 + 4 * core);
+		u16 hi = (u16)(0x0073 + 4 * core);
+		u16 bbmult = bbmult_per_core[core];
+
+		if (!((ac->coremask >> core) & 1))
+			continue;
+
+		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+		b43_actab_write_bulk(dev, 0x000c, lo, 16, 1, &bbmult);
+		b43_actab_write_bulk(dev, 0x000c, hi, 16, 1, &bbmult);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+	}
+
+	/* 3 op standalone finali: pulse + reset */
+	b43_phy_ac_cca_pulse(dev);
+	b43_phy_write(dev, 0x0382, 0x0000);
+}
+
+/*
+ * Reset tabelle di coefficienti (vendor #47329-#50016, 2688 op).
+ * Vedi commento in phy_ac.h.
+ */
+void b43_phy_ac_iqcal_coeff_tables_reset(struct b43_wldev *dev)
+{
+	/*
+	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	static const u16 zero = 0x0000;
+	unsigned int off;
+
+	for (off = 0; off < 128; off++) {
+		u16 tbl82_val = (off <= 0x20) ? 0xf8fc : 0xf6f2;
+
+		b43_actab_write_bulk_scoped(dev, 0x0042, (u16)off, 16, 1, &zero);
+		b43_actab_write_bulk_scoped(dev, 0x0062, (u16)off, 16, 1, &zero);
+		b43_actab_write_bulk_scoped(dev, 0x0082, (u16)off, 16, 1, &tbl82_val);
+	}
+}
+
+/*
+ * IQ-cal secondary stage apply (vendor #50152-#50198, 47 op).
+ * Vedi commento in phy_ac.h per struttura.
+ */
+void b43_phy_ac_iqcal_apply_second_stage(struct b43_wldev *dev)
+{
+	/*
+	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	/*
+	 * Valori misurati da iter 20 core 0 e iter 22 core 1 (vedi
+	 * b43_phy_ac_rxiqcal_run_meas_iters). Riapplicati qui ad offset
+	 * diversi in TBL 0x000c (0x60 e 0x64 invece di 0x40 e 0x48).
+	 * TODO: derivare runtime; qui hardcoded dal trace d6220 ch36.
+	 */
+	static const u16 apply_off_0x60[2] = { 0x0062, 0xfffd };
+	static const u16 apply_off_0x64[2] = { 0x0023, 0x0003 };
+	u16 discard[2];
+
+	/* Kick sequence (7 op) */
+	b43_phy_read_log(dev, 0x0400);
+	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0001, 0x0001); /* set bit 0 (non gate) */
+	b43_phy_set(dev,      0x0400, 0x0003);
+	b43_phy_set(dev,      0x0402, 0x0020);
+	b43_phy_read_log(dev, 0x0403);
+	b43_phy_write(dev,    0x0400, 0x0000);
+
+	/* Gate reset (1 op): overwrite completo B43_PHY_AC_REG_TBL_WRITE_GATE */
+	b43_phy_write(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, 0x03d0);
+
+	/* Zeros (4 op) */
+	b43_phy_write(dev, 0x06a0, 0x0000);
+	b43_phy_write(dev, 0x06a1, 0x0000);
+	b43_phy_write(dev, 0x08a0, 0x0000);
+	b43_phy_write(dev, 0x08a1, 0x0000);
+
+	/* MOD (1 op): il vendor emette un vero MOD (mask=0x0001), non
+	 * un AND normalizzato — usiamo maskset. */
+	b43_phy_maskset(dev, 0x0211, (u16)~0x0001, 0);
+
+	/* Pair 1 (16 op): TBL.RD + TBL.WR len=2 off=0x60 */
+	b43_actab_read_bulk(dev, 0x000c, 0x0060, 16, 2, discard);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+	b43_actab_write_bulk_scoped(dev, 0x000c, 0x0060, 16, 2, apply_off_0x60);
+
+	/* Pair 2 (16 op): TBL.RD + TBL.WR len=2 off=0x64 */
+	b43_actab_read_bulk(dev, 0x000c, 0x0064, 16, 2, discard);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+	b43_actab_write_bulk_scoped(dev, 0x000c, 0x0064, 16, 2, apply_off_0x64);
+
+	/* Close (2 op): sync peek + gate re-lock */
+	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+}
+
+/*
+ * RX-gain config readback (vendor #50199-#50292, 94 op).
+ * Vedi commento in phy_ac.h per struttura.
+ */
+void b43_phy_ac_rxgain_config_readback(struct b43_wldev *dev)
+{
+	/*
+	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	/* Ordine osservato dal trace vendor — NON ordinato per indirizzo. */
+	static const u16 gain_regs[25] = {
+		0x0720, 0x0721, 0x0722, 0x0723, 0x0724, 0x0725, 0x0726, 0x0727,
+		0x0728, 0x0729, 0x0732, 0x0733, 0x0730, 0x0731, 0x0734, 0x0735,
+		0x0737, 0x0738, 0x0736, 0x0739, 0x073a, 0x073b, 0x073c, 0x073d,
+		0x0747,
+	};
+	static const u16 bbmult_off[2] = { 0x0063, 0x0067 };
+	static const u16 gain_lut_off[2][3] = {
+		{ 0x0100, 0x0103, 0x0106 },  /* core 0 */
+		{ 0x0101, 0x0104, 0x0107 },  /* core 1 */
+	};
+	struct b43_phy_ac *ac = dev->phy.ac;
+	unsigned int core, i;
+	u16 discard;
+
+	/* Preamble globale (2 op) */
+	b43_phy_read_log(dev, 0x040f);
+	b43_phy_maskset(dev, 0x040f, (u16)~0x0200, 0);
+
+	for (core = 0; core < 2; core++) {
+		u16 stride = (u16)(core * 0x200);
+
+		if (!((ac->coremask >> core) & 1))
+			continue;
+
+		/* 25 peek gain regs (in ordine osservato) */
+		for (i = 0; i < ARRAY_SIZE(gain_regs); i++)
+			b43_phy_read_log(dev, gain_regs[i] + stride);
+
+		/* 1× fast TBL.RD id=0x000c bbmult */
+		b43_actab_read_bulk(dev, 0x000c, bbmult_off[core], 16, 1, &discard);
+
+		/* 3× fast TBL.RD id=0x0007 gain code */
+		for (i = 0; i < 3; i++)
+			b43_actab_read_bulk(dev, 0x0007, gain_lut_off[core][i],
+					    16, 1, &discard);
+
+		/* 1 peek 0x?73e */
+		b43_phy_read_log(dev, 0x073e + stride);
+	}
+}
+
+/*
+ * RX-gain config apply (vendor #50293-#50438, 146 op).
+ * Vedi commento in phy_ac.h per struttura.
+ */
+void b43_phy_ac_rxgain_config_apply(struct b43_wldev *dev)
+{
+	/*
+	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	/*
+	 * MOD ops per-core (reg è core-0 relative; core 1 usa reg + 0x0200).
+	 * Ordine osservato dal trace vendor #50296-#50347 (phase 1).
+	 */
+	struct mod_op { u16 reg; u16 mask; u16 val; };
+	static const struct mod_op phase1[52] = {
+		{ 0x073e, 0x0010, 0x0000 }, { 0x073e, 0x0020, 0x0000 },
+		{ 0x073e, 0x1000, 0x1000 }, { 0x0721, 0x0001, 0x0001 },
+		{ 0x0729, 0x0001, 0x0001 }, { 0x073a, 0x0007, 0x0003 },
+		{ 0x0725, 0x0020, 0x0020 }, { 0x0739, 0x007e, 0x007a },
+		{ 0x0725, 0x0002, 0x0002 }, { 0x073a, 0x0008, 0x0000 },
+		{ 0x0725, 0x0040, 0x0040 }, { 0x073a, 0x0010, 0x0010 },
+		{ 0x0725, 0x0080, 0x0080 }, { 0x073a, 0x0060, 0x0040 },
+		{ 0x0725, 0x0100, 0x0100 }, { 0x0729, 0x0020, 0x0000 },
+		{ 0x0721, 0x0020, 0x0020 }, { 0x0729, 0x0040, 0x0000 },
+		{ 0x0721, 0x0040, 0x0040 }, { 0x0729, 0x1000, 0x0000 },
+		{ 0x0721, 0x1000, 0x1000 }, { 0x0729, 0xe000, 0x0000 },
+		{ 0x0721, 0x2000, 0x2000 }, { 0x0728, 0x3800, 0x0000 },
+		{ 0x0721, 0x4000, 0x4000 }, { 0x0729, 0x0400, 0x0000 },
+		{ 0x0721, 0x0400, 0x0400 }, { 0x0728, 0x0002, 0x0000 },
+		{ 0x0720, 0x0002, 0x0002 }, { 0x0729, 0x0020, 0x0020 },
+		{ 0x0729, 0x0200, 0x0200 }, { 0x0721, 0x0200, 0x0200 },
+		{ 0x0736, 0x0040, 0x0000 }, { 0x0724, 0x0040, 0x0040 },
+		{ 0x0736, 0x0100, 0x0000 }, { 0x0724, 0x0100, 0x0100 },
+		{ 0x0736, 0x0010, 0x0000 }, { 0x0724, 0x0010, 0x0010 },
+		{ 0x0736, 0x0200, 0x0200 }, { 0x0724, 0x0200, 0x0200 },
+		{ 0x0736, 0x0020, 0x0020 }, { 0x0724, 0x0020, 0x0020 },
+		{ 0x0736, 0x0008, 0x0008 }, { 0x0724, 0x0008, 0x0008 },
+		{ 0x0736, 0x0080, 0x0000 }, { 0x0724, 0x0080, 0x0080 },
+		{ 0x0736, 0x0004, 0x0000 }, { 0x0724, 0x0004, 0x0004 },
+		{ 0x0736, 0x0002, 0x0000 }, { 0x0724, 0x0002, 0x0002 },
+		{ 0x0736, 0x0001, 0x0001 }, { 0x0724, 0x0001, 0x0001 },
+	};
+	/* Phase 2: 12 MOD dopo il TBL.RD (vendor #50353-#50364) */
+	static const struct mod_op phase2[12] = {
+		{ 0x0735, 0x0700, 0x0000 }, { 0x0723, 0x0008, 0x0008 },
+		{ 0x0735, 0x3800, 0x0000 }, { 0x0723, 0x0010, 0x0010 },
+		{ 0x0737, 0x00ff, 0x0091 }, { 0x0723, 0x0200, 0x0200 },
+		{ 0x0735, 0x4000, 0x0000 }, { 0x0723, 0x0020, 0x0020 },
+		{ 0x0735, 0x0001, 0x0001 }, { 0x0723, 0x0001, 0x0001 },
+		{ 0x0729, 0x0100, 0x0100 }, { 0x0721, 0x0100, 0x0100 },
+	};
+	struct b43_phy_ac *ac = dev->phy.ac;
+	unsigned int core, i;
+	u16 discard;
+
+	/* Header (3 op): peek + 2 MOD 0x0401 */
+	b43_phy_read_log(dev, 0x0401);
+	b43_phy_maskset(dev, 0x0401, (u16)~0x0007, 0x0003);
+	b43_phy_maskset(dev, 0x0401, (u16)~0x7000, 0x0000);
+
+	for (core = 0; core < 2; core++) {
+		u16 stride = (u16)(core * 0x200);
+
+		if (!((ac->coremask >> core) & 1))
+			continue;
+
+		/* Phase 1: 52 MOD (bit-field config) */
+		for (i = 0; i < ARRAY_SIZE(phase1); i++)
+			b43_phy_maskset(dev, phase1[i].reg + stride,
+					(u16)~phase1[i].mask, phase1[i].val);
+
+		/* 1× fast TBL.RD readback (5 op) */
+		b43_actab_read_bulk(dev, 0x0007,
+				    (u16)(0x0140 + core * 0x10),
+				    16, 1, &discard);
+
+		/* Phase 2: 12 MOD (bit-field config) */
+		for (i = 0; i < ARRAY_SIZE(phase2); i++)
+			b43_phy_maskset(dev, phase2[i].reg + stride,
+					(u16)~phase2[i].mask, phase2[i].val);
+
+		/* 2 op: peek + MOD 0x?78 clr bit 0 */
+		b43_phy_read_log(dev, 0x0678 + stride);
+		b43_phy_maskset(dev, 0x0678 + stride, (u16)~0x0001, 0);
+	}
+
+	/* Trailer (1 op): gate unlock */
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+}
+
+/*
+ * Radio 2069 IQ-cal config per-core (vendor #50439-#50522, 84 op).
+ * Vedi commento in phy_ac.h per struttura.
+ */
+void b43_phy_ac_radio_iqcal_config(struct b43_wldev *dev)
+{
+	/*
+	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	/* 6 registri radio 2069 letti/scritti per core */
+	static const u16 rad_regs[6] = {
+		0x0020, 0x0021, 0x0022, 0x0023, 0x003a, 0x003d
+	};
+	/* 10 MOD bit-field config (ordine osservato) */
+	struct rad_mod_op { u16 reg; u16 mask; u16 val; };
+	static const struct rad_mod_op configs[10] = {
+		{ 0x0023, 0x0100, 0x0000 },
+		{ 0x003d, 0x0010, 0x0000 },
+		{ 0x0023, 0x0020, 0x0000 },
+		{ 0x0023, 0x0040, 0x0000 },
+		{ 0x0021, 0x0020, 0x0000 },
+		{ 0x0021, 0x0004, 0x0004 },
+		{ 0x0023, 0x0001, 0x0001 },
+		{ 0x0023, 0x0200, 0x0200 },
+		{ 0x0021, 0x0003, 0x0000 },
+		{ 0x0023, 0x0006, 0x0000 },
+	};
+	struct b43_phy_ac *ac = dev->phy.ac;
+	unsigned int core, i;
+
+	for (core = 0; core < 2; core++) {
+		u16 stride = (u16)(core * 0x200);
+
+		if (!((ac->coremask >> core) & 1))
+			continue;
+
+		/* 6 RAD.RD (readback) */
+		for (i = 0; i < ARRAY_SIZE(rad_regs); i++)
+			b43_radio_read_log(dev, rad_regs[i] + stride);
+
+		/* 6 RAD.WR = 0 (zero out) */
+		for (i = 0; i < ARRAY_SIZE(rad_regs); i++)
+			b43_radio_write(dev, rad_regs[i] + stride, 0);
+
+		/* 10 RAD.MOD (bit-field config) */
+		for (i = 0; i < ARRAY_SIZE(configs); i++)
+			b43_radio_maskset(dev, configs[i].reg + stride,
+					  (u16)~configs[i].mask,
+					  configs[i].val);
+	}
+}
+
+/*
+ * Gain control final apply (vendor #50523-#50651, 129 op).
+ * Vedi commento in phy_ac.h per struttura.
+ */
+void b43_phy_ac_gainctrl_final_apply(struct b43_wldev *dev,
+				     bool with_peek_preamble,
+				     const u16 *r734_vals,
+				     unsigned int num_cores)
+{
+	/*
+	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	/*
+	 * Gain code values (hardcoded dal trace d6220 ch36). Il vendor li
+	 * deriva runtime da TBL.RD 0x0020 off=0x0000 + valori RXIQ-cal.
+	 * TODO: formula runtime pending.
+	 */
+	static const u16 gain_vals[3] = { 0x0000, 0xff7f, 0x00f3 };
+	static const u16 bbmult_val = 0x0044;
+	unsigned int core;
+
+	if (with_peek_preamble) {
+		/* Preamble globale (3 op): 3 peek 0x?dc, 3-core stride +0x200 */
+		b43_phy_read_log(dev, 0x06dc);
+		b43_phy_read_log(dev, 0x08dc);
+		b43_phy_read_log(dev, 0x0adc);
+	}
+
+	for (core = 0; core < num_cores; core++) {
+		u16 stride = (u16)(core * 0x200);
+		u16 discard;
+
+		/*
+		 * NON guardare coremask: il vendor emette tutti e 3 i core
+		 * anche su board 2-core (osservato d6220 ch36 #50523-#50651).
+		 */
+
+		/* 3 WR gain regs (0x?734 varia per core, passato da chiamante) */
+		b43_phy_write(dev, 0x0730 + stride, 0x00b0);
+		b43_phy_write(dev, 0x0731 + stride, 0x0004);
+		b43_phy_write(dev, 0x0734 + stride, r734_vals[core]);
+
+		/* 3 MOD 0x?722 set bit 1/2/3 */
+		b43_phy_maskset(dev, 0x0722 + stride, (u16)~0x0002, 0x0002);
+		b43_phy_maskset(dev, 0x0722 + stride, (u16)~0x0004, 0x0004);
+		b43_phy_maskset(dev, 0x0722 + stride, (u16)~0x0008, 0x0008);
+
+		/* Preamble (2 op): peek + MOD lock */
+		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+
+		/* Fast TBL.RD id=0x0020 off=0x0000 (5 op) */
+		b43_actab_read_bulk(dev, 0x0020, 0x0000, 16, 1, &discard);
+
+		/* 3× fast TBL.WR id=0x0007 gain code (15 op) */
+		b43_actab_write_bulk(dev, 0x0007, (u16)(0x0100 + core),
+				     16, 1, &gain_vals[0]);
+		b43_actab_write_bulk(dev, 0x0007, (u16)(0x0103 + core),
+				     16, 1, &gain_vals[1]);
+		b43_actab_write_bulk(dev, 0x0007, (u16)(0x0106 + core),
+				     16, 1, &gain_vals[2]);
+
+		/* Sync (2 op): peek + MOD lock idempotent */
+		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+
+		/* 2× fast TBL.WR id=0x000c bbmult (10 op) */
+		b43_actab_write_bulk(dev, 0x000c,
+				     (u16)(0x0063 + core * 4),
+				     16, 1, &bbmult_val);
+		b43_actab_write_bulk(dev, 0x000c,
+				     (u16)(0x0073 + core * 4),
+				     16, 1, &bbmult_val);
+
+		/* Bridge (2 op): set + clr — lock/unlock idempotente */
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+	}
+}
+
+/*
+ * DDS/NCO second tone seed (vendor #50652-#50737, 86 op).
+ * Vedi commento in phy_ac.h.
+ */
+void b43_phy_ac_rxiqcal_dds_seed_second_tone(struct b43_wldev *dev)
+{
+	/*
+	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	/*
+	 * Seconda LUT DDS/NCO: 40 u32 con simmetria 20+20. Valori diversi
+	 * dal primo dds_seed (probabile diverso tone/modulation).
+	 */
+	static const u32 dds_seed[40] = {
+		0x0002d400, 0x0002b038, 0x0002486a, 0x0001a892, 0x0000e0ac,
+		0x000000b5, 0x000f20ac, 0x000e5892, 0x000db86a, 0x000d5038,
+		0x000d2c00, 0x000d53c8, 0x000dbb96, 0x000e5b6e, 0x000f2354,
+		0x0000034b, 0x0000e354, 0x0001ab6e, 0x00024b96, 0x0002b3c8,
+		0x0002d400, 0x0002b038, 0x0002486a, 0x0001a892, 0x0000e0ac,
+		0x000000b5, 0x000f20ac, 0x000e5892, 0x000db86a, 0x000d5038,
+		0x000d2c00, 0x000d53c8, 0x000dbb96, 0x000e5b6e, 0x000f2354,
+		0x0000034b, 0x0000e354, 0x0001ab6e, 0x00024b96, 0x0002b3c8,
+	};
+
+	b43_actab_write_bulk_scoped(dev, 0x000e, 0x0000, 32, 40, dds_seed);
+}
+
+/*
+ * DDS/NCO third tone seed (vendor #51957-#52042, 86 op).
+ * Vedi commento in phy_ac.h.
+ */
+void b43_phy_ac_rxiqcal_dds_seed_third_tone(struct b43_wldev *dev)
+{
+	/*
+	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	/*
+	 * Terza LUT DDS/NCO: 40 u32 con simmetria 20+20. Valori sono la
+	 * seconda LUT con index "reversed" (posizioni 1..19 ordine inverso).
+	 */
+	static const u32 dds_seed[40] = {
+		0x0002d400, 0x0002b3c8, 0x00024b96, 0x0001ab6e, 0x0000e354,
+		0x0000034b, 0x000f2354, 0x000e5b6e, 0x000dbb96, 0x000d53c8,
+		0x000d2c00, 0x000d5038, 0x000db86a, 0x000e5892, 0x000f20ac,
+		0x000000b5, 0x0000e0ac, 0x0001a892, 0x0002486a, 0x0002b038,
+		0x0002d400, 0x0002b3c8, 0x00024b96, 0x0001ab6e, 0x0000e354,
+		0x0000034b, 0x000f2354, 0x000e5b6e, 0x000dbb96, 0x000d53c8,
+		0x000d2c00, 0x000d5038, 0x000db86a, 0x000e5892, 0x000f20ac,
+		0x000000b5, 0x0000e0ac, 0x0001a892, 0x0002486a, 0x0002b038,
+	};
+
+	b43_actab_write_bulk_scoped(dev, 0x000e, 0x0000, 32, 40, dds_seed);
+}
+
+/*
+ * Blocchi A+B+C+D del meas_apply post-DDS (47 op).
+ * Estratti come helper perché condivisi tra iqcal_meas_post_dds_apply e
+ * la variante _v2 (5° ciclo, che ha blocchi E-H diversi).
+ *
+ *   Blocco A (14): 2× TBL.RD auto-contained bbmult per core 0/1
+ *   Blocco B (2):  MOD 0x0001 pulse bit 14 (commit)
+ *   Blocco C (13): kick sequence variante
+ *   Blocco D (18): tail rxgain_perchan_config style
+ */
+static void iqcal_meas_readback_kick_tail(struct b43_wldev *dev)
+{
+	u16 discard;
+
+	/* Blocco A (14 op): 2× TBL.RD auto-contained bbmult per core 0/1 */
+	b43_actab_read_bulk(dev, 0x000c, 0x0063, 16, 1, &discard);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+	b43_actab_read_bulk(dev, 0x000c, 0x0067, 16, 1, &discard);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+
+	/* Blocco B (2 op): MOD 0x0001 pulse bit 14 (commit) */
+	b43_phy_ac_cca_pulse(dev);
+
+	/* Blocco C (13 op): kick sequence variante */
+	b43_phy_mask(dev,      0x0471, (u16)~0x0001);
+	b43_phy_write(dev,     0x0463, 0x0027);
+	b43_phy_write(dev,     0x0461, 0xffff);
+	b43_phy_write(dev,     0x0462, 0x003c);
+	b43_phy_read_log(dev,  0x0400);
+	b43_phy_set(dev,       0x0400, 0x0001);
+	b43_phy_mask(dev,      0x0460, (u16)~0x0004);
+	b43_phy_mask(dev,      0x0460, (u16)~0x0001);
+	b43_phy_mask(dev,      0x0382, (u16)~0xc000);
+	b43_phy_set(dev,       0x0460, 0x0001);
+	b43_phy_read_log(dev,  0x0403);
+	b43_phy_read_log(dev,  0x0403);
+	b43_phy_write(dev,     0x0400, 0x0000);
+
+	/* Blocco D (18 op): tail comune — vedi b43_phy_ac_rxgain_perchan_tail. */
+	b43_phy_ac_rxgain_perchan_tail(dev);
+}
+
+/*
+ * IQ-cal measurement + apply post second DDS (vendor #50738-#50836, 99 op).
+ * Vedi commento in phy_ac.h per struttura completa.
+ */
+void b43_phy_ac_iqcal_meas_post_dds_apply(struct b43_wldev *dev,
+					  unsigned int n_peek270)
+{
+	/*
+	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	unsigned int c;
+
+	/* Blocchi A+B+C+D (47 op) — helper condiviso */
+	iqcal_meas_readback_kick_tail(dev);
+
+	/* Blocco E (9 op): setup 0x0272/0x0271/0x0270 + 5 peek 0x0270 poll */
+	b43_phy_write(dev,    0x0272, 0x0400);
+	b43_phy_maskset(dev,  0x0271, (u16)~0x00ff, 0x0020);
+	b43_phy_maskset(dev,  0x0270, (u16)~0x0002, 0);
+	b43_phy_maskset(dev,  0x0270, (u16)~0x0001, 0x0001);
+	for (c = 0; c < n_peek270; c++)
+		b43_phy_read_log(dev, 0x0270);
+
+	/* Blocco F (12 op): 12 peek gain regs (0x?c0-0x?c5 per 2 core, ordine
+	 * osservato: 0x?c3, 0x?c2, 0x?c5, 0x?c4, 0x?c1, 0x?c0) */
+	for (c = 0; c < 2; c++) {
+		u16 stride = (u16)(c * 0x200);
+
+		b43_phy_read_log(dev, 0x06c3 + stride);
+		b43_phy_read_log(dev, 0x06c2 + stride);
+		b43_phy_read_log(dev, 0x06c5 + stride);
+		b43_phy_read_log(dev, 0x06c4 + stride);
+		b43_phy_read_log(dev, 0x06c1 + stride);
+		b43_phy_read_log(dev, 0x06c0 + stride);
+	}
+
+	/* Blocco G (29 op): apply bbmult per-core (variante) */
+	b43_phy_read_log(dev, 0x0464);
+	b43_phy_set(dev,      0x0460, 0x0002);
+	b43_phy_mask(dev,     0x0460, (u16)~0x0004);
+	for (c = 0; c < 2; c++) {
+		u16 lo = (u16)(0x0063 + 4 * c);
+		u16 hi = (u16)(0x0073 + 4 * c);
+		static const u16 bbmult = 0x0044;
+
+		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+		b43_actab_write_bulk(dev, 0x000c, lo, 16, 1, &bbmult);
+		b43_actab_write_bulk(dev, 0x000c, hi, 16, 1, &bbmult);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+	}
+
+	/* Blocco H (2 op): MOD 0x0001 pulse finale */
+	b43_phy_ac_cca_pulse(dev);
+}
+
+/*
+ * Sub-block per-core della variante v2: 4 peek + 4 MOD + arm + N poll +
+ * 4 WR + 1 peek extra (op count = 14 + N).
+ */
+static void meas_v2_gain_prog_poll(struct b43_wldev *dev,
+				   unsigned int core, unsigned int n_poll)
+{
+	u16 stride = (u16)(core * 0x200);
+	unsigned int i;
+
+	/* 4 peek gain regs (0x?20, 0x?28, 0x?21, 0x?29) */
+	b43_phy_read_log(dev, 0x0720 + stride);
+	b43_phy_read_log(dev, 0x0728 + stride);
+	b43_phy_read_log(dev, 0x0721 + stride);
+	b43_phy_read_log(dev, 0x0729 + stride);
+
+	/* 4 MOD gain regs */
+	b43_phy_maskset(dev, 0x0720 + stride, (u16)~0x0001, 0x0001);
+	b43_phy_maskset(dev, 0x0728 + stride, (u16)~0x0001, 0);
+	b43_phy_maskset(dev, 0x0721 + stride, (u16)~0x0004, 0x0004);
+	b43_phy_maskset(dev, 0x0729 + stride, (u16)~0x0002, 0);
+
+	/* Arm poll */
+	b43_phy_maskset(dev, 0x0270, (u16)~0x0001, 0x0001);
+
+	/* N poll 0x0270 */
+	for (i = 0; i < n_poll; i++)
+		b43_phy_read_log(dev, 0x0270);
+
+	/* 4 WR gain regs (ordine osservato: 0x?29, 0x?21, 0x?28, 0x?20) */
+	b43_phy_write(dev, 0x0729 + stride, 0x0321);
+	b43_phy_write(dev, 0x0721 + stride, 0x7761);
+	b43_phy_write(dev, 0x0728 + stride, 0x0080);
+	b43_phy_write(dev, 0x0720 + stride, 0x0182);
+
+	/* 1 peek 0x0270 extra */
+	b43_phy_read_log(dev, 0x0270);
+}
+
+/*
+ * 6 peek gain regs 0x?c0-?c5 per un core, ordine osservato:
+ * 0x?c3, 0x?c2, 0x?c5, 0x?c4, 0x?c1, 0x?c0.
+ */
+static void meas_v2_peek_c0_c5(struct b43_wldev *dev, unsigned int core)
+{
+	u16 stride = (u16)(core * 0x200);
+
+	b43_phy_read_log(dev, 0x06c3 + stride);
+	b43_phy_read_log(dev, 0x06c2 + stride);
+	b43_phy_read_log(dev, 0x06c5 + stride);
+	b43_phy_read_log(dev, 0x06c4 + stride);
+	b43_phy_read_log(dev, 0x06c1 + stride);
+	b43_phy_read_log(dev, 0x06c0 + stride);
+}
+
+/*
+ * IQ-cal measurement variante v2 (vendor #51814-#51956, 143 op).
+ * Vedi commento in phy_ac.h.
+ */
+void b43_phy_ac_iqcal_meas_post_dds_apply_v2(struct b43_wldev *dev,
+					     unsigned int n_poll_c1,
+					     unsigned int n_poll_c0)
+{
+	/*
+	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	unsigned int c;
+
+	/* Blocchi A+B+C+D (47 op) */
+	iqcal_meas_readback_kick_tail(dev);
+
+	/* Setup (3 op) — nota: WR 0x0272 = 0x4000 (invece di 0x0400 del v1) */
+	b43_phy_write(dev,   0x0272, 0x4000);
+	b43_phy_maskset(dev, 0x0271, (u16)~0x00ff, 0x0020);
+	b43_phy_maskset(dev, 0x0270, (u16)~0x0002, 0);
+
+	/* Sub-block core 1 (27 op = 14 + n_poll_c1) */
+	meas_v2_gain_prog_poll(dev, 1, n_poll_c1);
+	/* 6 peek 0x?c0-?c5 core 0 */
+	meas_v2_peek_c0_c5(dev, 0);
+	/* Sub-block core 0 (23 op = 14 + n_poll_c0) */
+	meas_v2_gain_prog_poll(dev, 0, n_poll_c0);
+	/* 6 peek 0x?c0-?c5 core 1 */
+	meas_v2_peek_c0_c5(dev, 1);
+
+	/* Blocco G (29 op): apply bbmult per-core — identico a v1 */
+	b43_phy_read_log(dev, 0x0464);
+	b43_phy_set(dev,      0x0460, 0x0002);
+	b43_phy_mask(dev,     0x0460, (u16)~0x0004);
+	for (c = 0; c < 2; c++) {
+		u16 lo = (u16)(0x0063 + 4 * c);
+		u16 hi = (u16)(0x0073 + 4 * c);
+		static const u16 bbmult = 0x0044;
+
+		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+		b43_actab_write_bulk(dev, 0x000c, lo, 16, 1, &bbmult);
+		b43_actab_write_bulk(dev, 0x000c, hi, 16, 1, &bbmult);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+	}
+
+	/* Blocco H (2 op): MOD 0x0001 pulse finale */
+	b43_phy_ac_cca_pulse(dev);
+}
+
+/*
+ * RXIQ correction coefficients per-chan write (vendor #52252-#52255, 4 op).
+ * Vedi commento in phy_ac.h. Valori hardcoded dal trace d6220 ch36.
+ */
+void b43_phy_ac_rxiq_apply_coefficients(struct b43_wldev *dev)
+{
+	/*
+	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	/* Per core [c]: 0x?a0 (I coeff) e 0x?a1 (Q coeff) */
+	static const u16 coeffs[2][2] = {
+		{ 0x03f2, 0x004c },  /* core 0 */
+		{ 0x03db, 0x0037 },  /* core 1 */
+	};
+	unsigned int c;
+
+	for (c = 0; c < 2; c++) {
+		u16 stride = (u16)(c * 0x200);
+
+		b43_phy_write(dev, 0x06a0 + stride, coeffs[c][0]);
+		b43_phy_write(dev, 0x06a1 + stride, coeffs[c][1]);
+	}
+}
+
+/*
+ * Radio 2069 IQ-cal teardown (vendor #52256-#52267, 12 op).
+ * Vedi commento in phy_ac.h.
+ */
+void b43_phy_ac_radio_iqcal_teardown(struct b43_wldev *dev)
+{
+	/*
+	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	static const u16 rad_regs[6] = {
+		0x0020, 0x0021, 0x0022, 0x0023, 0x003a, 0x003d
+	};
+	/* Valori WR: 0 tranne 0x003d = 0x000f */
+	static const u16 rad_vals[6] = { 0, 0, 0, 0, 0, 0x000f };
+	unsigned int c, i;
+
+	for (c = 0; c < 2; c++) {
+		u16 stride = (u16)(c * 0x200);
+
+		for (i = 0; i < ARRAY_SIZE(rad_regs); i++)
+			b43_radio_write(dev, rad_regs[i] + stride, rad_vals[i]);
+	}
+}
+
+/*
+ * RXIQ cal teardown + apply defaults (vendor #52268-#52452, 185 op).
+ * Vedi commento in phy_ac.h per struttura.
+ */
+void b43_phy_ac_rxiq_teardown_apply_defaults(struct b43_wldev *dev)
+{
+	/*
+	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	/*
+	 * Gain LUT default values (INDEX_DEFAULT): scritti 2 volte
+	 * per core (prima e dopo TBL.RD 0x0020 off=0x0040).
+	 */
+	static const u16 gain_vals[3] = { 0x0000, 0x2f13, 0x00f3 };
+	static const u16 bbmult_val = 0x0035;
+
+	/*
+	 * Reset gain regs values (27 WR per core, ordine osservato dal
+	 * vendor NON contiguo per address — nota specialmente 0x0727 PRIMA
+	 * di 0x0726, e 0x0737 PRIMA di 0x0736).
+	 * Address dati per core 0; core 1 aggiunge stride +0x200.
+	 */
+	static const struct { u16 reg; u16 val; } reset_regs[27] = {
+		{ 0x073e, 0x0000 },
+		{ 0x0678, 0x0008 },
+		{ 0x0720, 0x0180 },
+		{ 0x0721, 0x5000 },
+		{ 0x0722, 0x0000 },
+		{ 0x0723, 0x0000 },
+		{ 0x0724, 0x0000 },
+		{ 0x0725, 0x0600 },
+		{ 0x0727, 0x0004 },  /* NB: 0x0727 PRIMA di 0x0726 */
+		{ 0x0726, 0x000c },
+		{ 0x0728, 0x0880 },
+		{ 0x0729, 0x1000 },
+		{ 0x0732, 0x0000 },
+		{ 0x0733, 0x0000 },
+		{ 0x0730, 0x0000 },
+		{ 0x0731, 0x0000 },
+		{ 0x0734, 0x0000 },
+		{ 0x0735, 0x0000 },
+		{ 0x0737, 0x0000 },  /* NB: 0x0737 PRIMA di 0x0736 */
+		{ 0x0738, 0x0000 },
+		{ 0x0736, 0x0000 },
+		{ 0x0739, 0x0000 },
+		{ 0x073a, 0x0180 },
+		{ 0x073b, 0x002c },
+		{ 0x073c, 0x0000 },
+		{ 0x073d, 0x0000 },
+		{ 0x0747, 0x0000 },
+	};
+	unsigned int c, i;
+
+	/* Preamble globale (3 op) */
+	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+	b43_phy_write(dev,   0x0401, 0x7733);
+
+	for (c = 0; c < 2; c++) {
+		u16 stride = (u16)(c * 0x200);
+		u16 discard;
+
+		/*
+		 * TXPWR sequence (64 op).
+		 * 3 fast TBL.WR gain (15 op), sync, TBL.RD 0x0020 off=0x0040,
+		 * 3 fast TBL.WR gain RIPETUTI (15), sync, 2 fast TBL.WR bbmult
+		 * (10), bridge (4), 2 fast TBL.WR bbmult RIPETUTI (10),
+		 * trailer (1).
+		 */
+
+		/* 3 fast TBL.WR gain (15 op) */
+		for (i = 0; i < 3; i++)
+			b43_actab_write_bulk(dev, 0x0007,
+					     (u16)(0x0100 + c + i * 3),
+					     16, 1, &gain_vals[i]);
+
+		/* Sync (2 op) */
+		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+
+		/* Fast TBL.RD 0x0020 off=0x0040 (5 op) */
+		b43_actab_read_bulk(dev, 0x0020, 0x0040, 16, 1, &discard);
+
+		/* 3 fast TBL.WR gain RIPETUTI (15 op) — stessi valori */
+		for (i = 0; i < 3; i++)
+			b43_actab_write_bulk(dev, 0x0007,
+					     (u16)(0x0100 + c + i * 3),
+					     16, 1, &gain_vals[i]);
+
+		/* Sync (2 op) */
+		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+
+		/* 2 fast TBL.WR bbmult (10 op) */
+		b43_actab_write_bulk(dev, 0x000c,
+				     (u16)(0x0063 + c * 4), 16, 1, &bbmult_val);
+		b43_actab_write_bulk(dev, 0x000c,
+				     (u16)(0x0073 + c * 4), 16, 1, &bbmult_val);
+
+		/*
+		 * Bridge (4 op): 2× MOD lock idempotent + peek + MOD lock.
+		 * Pattern strano — probabilmente un pipeline flush hardware.
+		 */
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+
+		/* 2 fast TBL.WR bbmult RIPETUTI (10 op) */
+		b43_actab_write_bulk(dev, 0x000c,
+				     (u16)(0x0063 + c * 4), 16, 1, &bbmult_val);
+		b43_actab_write_bulk(dev, 0x000c,
+				     (u16)(0x0073 + c * 4), 16, 1, &bbmult_val);
+
+		/* Trailer (1 op) */
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+
+		/*
+		 * Reset gain regs (27 op) — riscrive gain regs a valori
+		 * di startup, ordine osservato non-contiguo per address.
+		 */
+		for (i = 0; i < ARRAY_SIZE(reset_regs); i++)
+			b43_phy_write(dev,
+				      (u16)(reset_regs[i].reg + stride),
+				      reset_regs[i].val);
+	}
+}
+
+/*
+ * Probe cycle (usato in rxiqcal_finalize): pattern di N iter × 17 op che
+ * ripete peek gain regs + MAC toggle + MOD 0x0520 bit 2-3 (mode_vals[]).
+ * Ogni iter:
+ *   4 peek core 0 (0x07af, 0x07b3, 0x07ab, 0x07b1)
+ *   4 peek core 1 (0x09af, 0x09b3, 0x09ab, 0x09b1)
+ *   4 peek 0x0523/0x0529/0x0528/0x0527
+ *   MAC.MCTRL toggle (set + clr) — flush pre-mode-change
+ *   MOD 0x0520 mask=0x000c val=<mode_vals[iter]>
+ *   MAC.MCTRL toggle (set + clr) — flush post-mode-change
+ *
+ * SALAME: interpretazione "probe + mode toggle" nostra. La ratio
+ * esatta (calibration measurement? EVM check?) non è documentata.
+ */
+static const u16 b43_phy_ac_probe_peek_regs[12] = {
+	0x07af, 0x07b3, 0x07ab, 0x07b1,
+	0x09af, 0x09b3, 0x09ab, 0x09b1,
+	0x0523, 0x0529, 0x0528, 0x0527,
+};
+
+/*
+ * mode_vals sweep pattern usato da rxiqcal_finalize: alterna
+ * mode 0x04/0x00 sul bit 2-3 di 0x0520 per attivare misure IQ-cal.
+ *
+ * Il ciclo 1 usa la variante 5-iter (parte con 0x04), mentre i cicli
+ * 2, 3, 4 usano la variante 10-iter (parte con 0x00).
+ */
+static const u16 b43_phy_ac_probe_mode_vals_5[5] = {
+	0x0004, 0x0000, 0x0004, 0x0000, 0x0004,
+};
+static const u16 b43_phy_ac_probe_mode_vals_10[10] = {
+	0x0000, 0x0004, 0x0000, 0x0004, 0x0000,
+	0x0004, 0x0000, 0x0004, 0x0000, 0x0004,
+};
+
+static void b43_phy_ac_probe_cycle(struct b43_wldev *dev,
+				   const u16 *mode_vals, unsigned int n_iter)
+{
+	unsigned int iter, k;
+
+	/*
+	 * Chiamato solo da rxiqcal_finalize, dopo Blocco C che ha portato il PHY
+	 * in release operativo (RX_WAITED|RX_OFDM, clip det ENABLED sui 3 core).
+	 * MAC sospeso all'ingresso, e ogni iter fa mac_enable+mac_suspend interno
+	 * (deve tornare MAC sospeso all'uscita per il chiamante).
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_RX_OFDM,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_CLIP_ALL_DIS |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	for (iter = 0; iter < n_iter; iter++) {
+		for (k = 0; k < ARRAY_SIZE(b43_phy_ac_probe_peek_regs); k++)
+			b43_phy_read_log(dev, b43_phy_ac_probe_peek_regs[k]);
+
+		b43_mac_enable(dev);
+		b43_mac_suspend(dev);
+
+		b43_phy_maskset(dev, 0x0520, (u16)~0x000c, mode_vals[iter]);
+
+		b43_mac_enable(dev);
+		b43_mac_suspend(dev);
+	}
+}
+
+/*
+ * Measure block (vendor #52651-#53043, 393 op).
+ *
+ * Blocco ricorrente eseguito dopo ogni probe cycle in rxiqcal_finalize.
+ * Composto da 9 sotto-blocchi:
+ *
+ *   RX AFE per-core reconfig (86 op)   #52651-#52736
+ *   Radio 2069 second IQ-cal (68 op)   #52737-#52804
+ *   Rxcal cleanup preamble (5 op)      #52805-#52809
+ *   Tail perchan (18 op via helper)    #52810-#52827
+ *   Arm tone gen (3 op)                #52828-#52830
+ *   Poll blocks TX AFE (163 op)        #52831-#52993
+ *   Reset gain regs PHY (29 op)        #52994-#53022
+ *   Radio reset (14 op)                #53023-#53036
+ *   Finalize (5 op)                    #53037-#53041
+ *   2 MAC toggle "arm" (2 op)          #53042-#53043
+ *
+ * SALAME: la ratio del blocco è "riprogramma RX front-end + esegue una
+ * tornata di misura poll → reset gain regs". Il ciclo si ripete 4 volte
+ * nel vendor, presumibilmente per convergere sui coefficienti finali,
+ * ma la relazione col probe cycle intermedio (che varia mode_val su
+ * 0x0520 bit 2-3) non è confermata.
+ */
+static void b43_phy_ac_rxiqcal_measure_block(struct b43_wldev *dev)
+{
+	/*
+	 * Chiamato solo da rxiqcal_finalize dopo un probe_cycle. Stato entrante:
+	 * PHY in release (RX_WAITED|RX_OFDM, clip enabled) — stesso stato con
+	 * cui probe_cycle è chiamato. MAC sospeso (ultimo passo di probe_cycle).
+	 * Il blocco fa MAC toggle interno nei poll e termina con 2 MAC toggle
+	 * "arm" per il probe cycle successivo — quindi anche in uscita MAC
+	 * è sospeso.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_RX_OFDM,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_CLIP_ALL_DIS |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	/*
+	 * RX AFE per-core reconfig (vendor #52651-#52736, 86 op).
+	 * Preamble globale (4 op) + per-core 41 op (RX AFE gain regs config).
+	 *
+	 * Preamble: peek 0x019e + 3 MOD clr bit 6/7/8 — pulisce flag di stato
+	 * prima della riconfigurazione.
+	 *
+	 * Per-core: peek + WR 0x?73e=0x0440, 13 peek gain regs, poi 26 MOD/WR
+	 * che configurano threshold/enable bits sui gain regs 0x?720-0x?73c
+	 * per il RX front-end nella modalità RX finale.
+	 *
+	 * SALAME: interpretazione "RX AFE reconfig" nostra. I registri toccati
+	 * sono gain regs standard ma la sequenza di MOD in questo ordine
+	 * specifico non è nota altrove.
+	 */
+	{
+		unsigned int c;
+
+		/* Preamble globale (4 op) */
+		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0040, 0);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0080, 0);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0100, 0);
+
+		for (c = 0; c < 2; c++) {
+			u16 s = (u16)(c * 0x200);
+
+			/* peek + WR 0x?73e = 0x0440 (2 op) */
+			b43_phy_read_log(dev, 0x073e + s);
+			b43_phy_write(dev,    0x073e + s, 0x0440);
+
+			/* 13 peek gain regs (ordine osservato non contiguo) */
+			b43_phy_read_log(dev, 0x0727 + s);
+			b43_phy_read_log(dev, 0x073c + s);
+			b43_phy_read_log(dev, 0x0721 + s);
+			b43_phy_read_log(dev, 0x0729 + s);
+			b43_phy_read_log(dev, 0x0720 + s);
+			b43_phy_read_log(dev, 0x0728 + s);
+			b43_phy_read_log(dev, 0x0724 + s);
+			b43_phy_read_log(dev, 0x0736 + s);
+			b43_phy_read_log(dev, 0x0725 + s);
+			b43_phy_read_log(dev, 0x0739 + s);
+			b43_phy_read_log(dev, 0x073a + s);
+			b43_phy_read_log(dev, 0x0722 + s);
+			b43_phy_read_log(dev, 0x0734 + s);
+
+			/* 26 MOD/WR configurazione gain regs */
+			b43_phy_maskset(dev, 0x0727 + s, (u16)~0x0002, 0x0002);
+			b43_phy_maskset(dev, 0x073c + s, (u16)~0x000e, 0x0002);
+			b43_phy_maskset(dev, 0x0727 + s, (u16)~0x0001, 0x0001);
+			b43_phy_maskset(dev, 0x073c + s, (u16)~0x0001, 0x0001);
+			b43_phy_maskset(dev, 0x0721 + s, (u16)~0x0100, 0x0100);
+			b43_phy_maskset(dev, 0x0729 + s, (u16)~0x0100, 0);
+			b43_phy_maskset(dev, 0x0720 + s, (u16)~0x0020, 0x0020);
+			b43_phy_maskset(dev, 0x0728 + s, (u16)~0x0020, 0x0020);
+			b43_phy_maskset(dev, 0x0720 + s, (u16)~0x0040, 0x0040);
+			b43_phy_maskset(dev, 0x0728 + s, (u16)~0x0040, 0);
+			b43_phy_maskset(dev, 0x0720 + s, (u16)~0x0010, 0x0010);
+			b43_phy_maskset(dev, 0x0728 + s, (u16)~0x0010, 0x0010);
+			b43_phy_write(dev,   0x0736 + s, 0x0154);
+			b43_phy_write(dev,   0x0724 + s, 0x03ff);
+			b43_phy_maskset(dev, 0x073a + s, (u16)~0x0007, 0x0003);
+			b43_phy_maskset(dev, 0x0725 + s, (u16)~0x0020, 0x0020);
+			b43_phy_maskset(dev, 0x0739 + s, (u16)~0x007e, 0x007a);
+			b43_phy_maskset(dev, 0x0725 + s, (u16)~0x0002, 0x0002);
+			b43_phy_maskset(dev, 0x073a + s, (u16)~0x0008, 0);
+			b43_phy_maskset(dev, 0x0725 + s, (u16)~0x0040, 0x0040);
+			b43_phy_maskset(dev, 0x073a + s, (u16)~0x0010, 0x0010);
+			b43_phy_maskset(dev, 0x0725 + s, (u16)~0x0080, 0x0080);
+			b43_phy_maskset(dev, 0x073a + s, (u16)~0x0060, 0x0040);
+			b43_phy_maskset(dev, 0x0725 + s, (u16)~0x0100, 0x0100);
+			b43_phy_maskset(dev, 0x0734 + s, (u16)~0x0007, 0);
+			b43_phy_maskset(dev, 0x0722 + s, (u16)~0x0004, 0x0004);
+		}
+	}
+
+	/*
+	 * Radio 2069 second IQ-cal config (vendor #52737-#52804, 68 op).
+	 * 34 op per core × 2 core: 7 RAD.RD baseline + 9 gruppi (MOD + RD + WR).
+	 *
+	 * b43_radio_maskset emette 3 op: MOD + RD + WR. Il WR value è calcolato
+	 * come (RD_val & ~mask) | set. Per riprodurre i WR value osservati dal
+	 * vendor serve pre-programmare il read plan dei radio regs 0x0017,
+	 * 0x0024, 0x0161 (i valori HW-sticky con bit non azzerati da precedente
+	 * WR val=0). Vedi test/main.c per i plans.
+	 *
+	 * SALAME: interpretazione "TX AFE cal setup" nostra — è chiaramente una
+	 * riconfigurazione radio con pattern read-modify-verify-write ma la
+	 * ratio precisa non è confermata.
+	 */
+	{
+		/* Config table: 9 gruppi per core (una call maskset = 3 op). */
+		static const struct {
+			u16 reg;
+			u16 mask;
+			u16 val;
+		} cfg[9] = {
+			{ 0x0161, 0x4000, 0x4000 },
+			{ 0x000e, 0x0001, 0x0001 },
+			{ 0x0161, 0x1000, 0x1000 },
+			{ 0x0017, 0x0001, 0x0001 },
+			{ 0x0017, 0x0002, 0x0000 },
+			{ 0x015f, 0x2000, 0x2000 },
+			{ 0x0025, 0x03ff, 0x0091 },
+			{ 0x015f, 0x4000, 0x4000 },
+			{ 0x0024, 0x0700, 0x0300 },
+		};
+		static const u16 baseline[7] = {
+			0x016e, 0x000e, 0x0161, 0x0017,
+			0x015f, 0x0024, 0x0025
+		};
+		unsigned int c, i;
+
+		for (c = 0; c < 2; c++) {
+			u16 s = (u16)(c * 0x200);
+
+			/* 7 RAD.RD baseline */
+			for (i = 0; i < ARRAY_SIZE(baseline); i++)
+				b43_radio_read(dev, baseline[i] + s);
+
+			/* 9 gruppi (maskset emette MOD+RD+WR = 3 op) */
+			for (i = 0; i < ARRAY_SIZE(cfg); i++)
+				b43_radio_maskset(dev, cfg[i].reg + s,
+						  (u16)~cfg[i].mask,
+						  cfg[i].val);
+		}
+	}
+
+	/*
+	 * Rxcal cleanup preamble (vendor #52805-#52809, 5 op).
+	 *   peek 0x019e + peek 0x040f + MOD 0x040f clr bit 9 +
+	 *   peek 0x0394 + peek 0x0393
+	 */
+	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+	b43_phy_read_log(dev, 0x040f);
+	b43_phy_maskset(dev, 0x040f, (u16)~0x0200, 0);
+	b43_phy_read_log(dev, 0x0394);
+	b43_phy_read_log(dev, 0x0393);
+
+	/*
+	 * Tail comune (vendor #52810-#52827, 18 op): stesso pattern di
+	 * rxgain_perchan_config / iqcal_meas_readback_kick_tail — 3 peek+WR
+	 * pair per core + 6 WR standalone reversed. Riuso helper condiviso.
+	 */
+	b43_phy_ac_rxgain_perchan_tail(dev);
+
+	/* Arm tone gen (vendor #52828-#52830, 3 op) — 0x0394 = 0x0110. */
+	b43_phy_ac_arm_tone_gen(dev, 0x0110);
+
+	/*
+	 * Poll blocks TX AFE (vendor #52831-#52993, 163 op).
+	 *
+	 * 2 core × 4 iter × 20 op + 3 op "arm again" tra core = 163 op.
+	 *
+	 * Ogni iter emette 4 gruppi MOD+RD+WR (12 op) + 8 peek 0x0013 (8 op):
+	 *   MOD 0x?16e mask=0x0002 val=0x0002 (arm bit 1)
+	 *   MOD 0x?00e mask=0x0002 val=<bit1>
+	 *   MOD 0x?16e mask=0x0001 val=0x0001 (arm bit 0)
+	 *   MOD 0x?00e mask=0x0004 val=<bit2>
+	 *   8× peek 0x0013 (accumulator readback per settling)
+	 *
+	 * Sweep pattern (bit1, bit2) per 4 iter — 4-step binary code sui
+	 * bit 1-2 di 0x000e/0x020e. Coerente con RXIQ 4-configuration sweep
+	 * descritto in RXIQ-CAL-ANALYSIS.md ma applicato a un altro reg
+	 * (0x000e invece che 0x0734).
+	 *
+	 * Tra core 0 e core 1: arm again con WR 0x0394 = 0x0111 (0x0110 nel
+	 * primo arm, il bit 0 cambia — probabile "arm core selector").
+	 *
+	 * SALAME: interpretazione "TX AFE cal sweep" nostra. La relazione col
+	 * sweep di 0x0734 documentato in RXIQ-CAL-ANALYSIS.md non è confermata
+	 * (regs diversi, bit diversi, ma stesso pattern binario 4-step).
+	 */
+	{
+		static const struct { u16 bit1; u16 bit2; } sweep[4] = {
+			{ 0x0002, 0x0000 },   /* "01" */
+			{ 0x0000, 0x0000 },   /* "00" */
+			{ 0x0002, 0x0004 },   /* "11" */
+			{ 0x0000, 0x0004 },   /* "10" */
+		};
+		unsigned int core, iter, p;
+
+		for (core = 0; core < 2; core++) {
+			u16 s = (u16)(core * 0x200);
+			u16 reg_16e = 0x016e + s;
+			u16 reg_00e = 0x000e + s;
+
+			/* Arm again prima di core 1 (0x0394 = 0x0111). */
+			if (core == 1)
+				b43_phy_ac_arm_tone_gen(dev, 0x0111);
+
+			for (iter = 0; iter < 4; iter++) {
+				b43_radio_maskset(dev, reg_16e,
+						  (u16)~0x0002, 0x0002);
+				b43_radio_maskset(dev, reg_00e,
+						  (u16)~0x0002, sweep[iter].bit1);
+				b43_radio_maskset(dev, reg_16e,
+						  (u16)~0x0001, 0x0001);
+				b43_radio_maskset(dev, reg_00e,
+						  (u16)~0x0004, sweep[iter].bit2);
+
+				for (p = 0; p < 8; p++)
+					b43_phy_read_log(dev, 0x0013);
+			}
+		}
+	}
+
+	/*
+	 * Reset gain regs PHY (vendor #52994-#53022, 29 op).
+	 * WR 0x019e = 0x03d0 (gate config), poi per core 14 WR di reset dei
+	 * gain regs 0x?720-0x?73e a valori "post-cal defaults".
+	 */
+	b43_phy_write(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, 0x03d0);
+	{
+		static const struct { u16 off; u16 val; } gain_reset[14] = {
+			{ 0x073e, 0x0000 },
+			{ 0x0727, 0x0004 },
+			{ 0x073c, 0x0000 },
+			{ 0x0721, 0x5000 },
+			{ 0x0729, 0x1000 },
+			{ 0x0720, 0x0180 },
+			{ 0x0728, 0x0880 },
+			{ 0x0724, 0x0000 },
+			{ 0x0736, 0x0000 },
+			{ 0x0725, 0x0600 },
+			{ 0x0739, 0x0000 },
+			{ 0x073a, 0x0180 },
+			{ 0x0722, 0x0000 },
+			{ 0x0734, 0x0000 },
+		};
+		unsigned int c, i;
+
+		for (c = 0; c < 2; c++) {
+			u16 s = (u16)(c * 0x200);
+
+			for (i = 0; i < ARRAY_SIZE(gain_reset); i++)
+				b43_phy_write(dev,
+					      gain_reset[i].off + s,
+					      gain_reset[i].val);
+		}
+	}
+
+	/*
+	 * Radio reset (vendor #53023-#53036, 14 op).
+	 * Per core: 7 RAD.WR che ripristinano i radio regs toccati dal RAD
+	 * setup ai valori "post-cal" (bit 4 di 0x0017 lasciato SET a 0x0011).
+	 */
+	{
+		static const struct { u16 reg; u16 val; } radio_reset[7] = {
+			{ 0x016e, 0x0000 },
+			{ 0x000e, 0x0001 },
+			{ 0x0161, 0x0100 },
+			{ 0x0017, 0x0011 },
+			{ 0x015f, 0x0000 },
+			{ 0x0024, 0x0203 },
+			{ 0x0025, 0x0098 },   /* core 0: 0x0098, core 1: 0x009c */
+		};
+		unsigned int c, i;
+
+		for (c = 0; c < 2; c++) {
+			u16 s = (u16)(c * 0x200);
+
+			for (i = 0; i < ARRAY_SIZE(radio_reset); i++) {
+				u16 val = radio_reset[i].val;
+
+				/* 0x0025: valore diverso per core 1 (0x009c). */
+				if (radio_reset[i].reg == 0x0025 && c == 1)
+					val = 0x009c;
+
+				b43_radio_write(dev, radio_reset[i].reg + s, val);
+			}
+		}
+	}
+
+	/*
+	 * Finalize (vendor #53037-#53041, 5 op).
+	 * MOD 019e lock + WR 0x0394 = 0x000b + WR 0x0393 = 0 (unarm) +
+	 * MOD 0x040f clr bit 9 + MOD 019e unlock.
+	 */
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+	b43_phy_write(dev,   0x0394, 0x000b);
+	b43_phy_write(dev,   0x0393, 0x0000);
+	b43_phy_maskset(dev, 0x040f, (u16)~0x0200, 0);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+
+	/*
+	 * MAC toggle "arm" per il probe cycle successivo (2 op #53042-#53043).
+	 */
+	b43_mac_enable(dev);
+	b43_mac_suspend(dev);
+}
+
+/*
+ * RXIQ cal finalize (vendor #52453-#55154, ~2700 op).
+ * Vedi commento in phy_ac.h.
+ */
+void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
+{
+	/*
+	 * Chiamata a MAC sospeso da set_channel_calibrations dopo
+	 * rxiq_teardown_apply_defaults. Classifier in RX_WAITED,
+	 * clip det disabled su tutte le core (stato canonico calibrazione).
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
+
+	/*
+	 * Blocco A (10 op): finalize kick RST2RX + gate scope wrap.
+	 *   pre-kick:  WR 0x040f = 0x09ff  (arm RF ctrl)
+	 *   kick:      force_rf_sequence(RST2RX, gate=OVERRIDE_GATE) — 8 op
+	 *              (peek RFCTL1 + peek gate + set gate|=0x0001 + set
+	 *               RFCTL1|=0x3 + set RF_SEQ_TRIG|=RST2RX + poll status +
+	 *               restore RFCTL1 + restore gate)
+	 *   post-kick: MOD gate clr bit 1  (unlock finale scope)
+	 */
+	b43_phy_write(dev, 0x040f, 0x09ff);
+	b43_phy_ac_force_rf_sequence(dev, B43_PHY_AC_RF_SEQ_RST2RX,
+				     B43_PHY_AC_RF_SEQ_OVERRIDE_GATE);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+
+	/*
+	 * Blocco B (16 op): 2× TBL.WR id=0x000c len=2 auto-contained.
+	 *   off=0x0060: val[0]=0x0064, val[1]=0x000e
+	 *   off=0x0064: val[0]=0x0022, val[1]=0x0004
+	 */
+	{
+		static const u16 tbl_60[2] = { 0x0064, 0x000e };
+		static const u16 tbl_64[2] = { 0x0022, 0x0004 };
+
+		b43_actab_write_bulk_scoped(dev, 0x000c, 0x0060, 16, 2, tbl_60);
+		b43_actab_write_bulk_scoped(dev, 0x000c, 0x0064, 16, 2, tbl_64);
+	}
+
+	/*
+	 * Blocco C (10 op): release finale RX post-cal + gate open.
+	 * Vendor #52480-#52488. Named helpers per mantenere status_mask
+	 * coerente con lo stato hardware (RX_WAITED|OFDM, clip enabled).
+	 */
+	b43_phy_ac_classctl_write_peeked(dev, false);
+	b43_phy_ac_adc_hold(dev, true);
+	b43_phy_ac_clip_det(dev, true);
+	b43_phy_write(dev, 0x0339, 0x0fff);
+
+	/*
+	 * Blocco D (49 op): TBL.WR off=0x5f + coppie di TBL.RD per core +
+	 * 4 RAD.RD + 2 peek 0x?a0/?a1 (readback dello stato correttore RXIQ
+	 * per ciascun core).
+	 */
+	{
+		static const u16 tbl_5f_val = 0xacdc;
+		u16 discard16[2];
+		unsigned int c;
+
+		/* TBL.WR id=0x000c off=0x005f len=1 val=0xacdc (7 op) */
+		b43_actab_write_bulk_scoped(dev, 0x000c, 0x005f, 16, 1,
+					    &tbl_5f_val);
+
+		for (c = 0; c < 2; c++) {
+			u16 stride = (u16)(c * 0x200);
+
+			/* TBL.RD off=0x60+c*4 len=2 (8 op) */
+			b43_actab_read_bulk(dev, 0x000c,
+					    (u16)(0x0060 + c * 4),
+					    16, 2, discard16);
+			/* MOD unlock esplicito (fine scope actab_read_bulk) */
+			b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+			/* TBL.RD off=0x62+c*4 len=1 (7 op) */
+			b43_actab_read_bulk(dev, 0x000c,
+					    (u16)(0x0062 + c * 4),
+					    16, 1, discard16);
+			b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+
+			/* 4 RAD.RD (0x0002-0x0005) per core */
+			b43_radio_read(dev, 0x0002 + stride);
+			b43_radio_read(dev, 0x0003 + stride);
+			b43_radio_read(dev, 0x0004 + stride);
+			b43_radio_read(dev, 0x0005 + stride);
+
+			/* 2 peek 0x?a0/0x?a1 (readback correction coeffs) */
+			b43_phy_read_log(dev, 0x06a0 + stride);
+			b43_phy_read_log(dev, 0x06a1 + stride);
+		}
+	}
+
+	/*
+	 * Blocco E (28 op): AFE/CRS/nfloor reconfig.
+	 *   - 5 MOD gain-related (0x0070 set 0xe000, 0x?644 set 0x14 mask 0x7f,
+	 *     0x?678 clr bit 2 per-core)
+	 *   - MAC toggle + MHF + GPIO seq (5 op MAC/GPIO layer)
+	 *   - 8 MOD crs_reg (clip det thresholds) con val=0x34 mask=0x00ff
+	 *   - 8 MOD noise floor clear (0x0910-0x0913, ognuno 2 mask distinte)
+	 *   - MAC.MCTRL toggle finale (set + clr)
+	 */
+	b43_phy_ac_afe_gain_regs_reemit(dev);
+
+	b43_mac_enable(dev);
+	b43_phy_ac_mhf_maskset(dev, 0, (u16)~0x4000, 0);
+	bcma_chipco_gpio_out(&dev->dev->bdev->bus->drv_cc, 0x0004, 0x0004);
+	bcma_chipco_gpio_out(&dev->dev->bdev->bus->drv_cc, 0x0400, 0x0000);
+	b43_mac_suspend(dev);
+
+	/*
+	 * 8 MOD crs_reg (clip detector thresholds) — val=0x34 mask=0x00ff.
+	 * Vedi b43_phy_ac_crs_regs per l'ordine (stride +0xc, interleaved
+	 * core 0/1). Nel blocco E il val è 0x34 (diverso da chanspec_tail
+	 * che passa 0x31 BW20 5G / 0x36 altrimenti).
+	 */
+	b43_phy_ac_crs_regs_write(dev, 0x0034);
+
+	/* Noise floor clear (8 op) — stesso pattern di chanspec_tail. */
+	b43_phy_ac_noise_floor_clear(dev);
+
+	/* MAC.MCTRL toggle finale */
+	b43_mac_enable(dev);
+	b43_mac_suspend(dev);
+
+	/*
+	 * Probe cycle 1 (vendor #52566-#52650, 5 iter × 17 op = 85 op).
+	 * Sweep mode_vals su 0x0520 bit 2-3: {0x04, 0x00, 0x04, 0x00, 0x04}.
+	 * Vedi helper b43_phy_ac_probe_cycle per la struttura di ogni iter.
+	 */
+	b43_phy_ac_probe_cycle(dev, b43_phy_ac_probe_mode_vals_5,
+			       ARRAY_SIZE(b43_phy_ac_probe_mode_vals_5));
+
+	/*
+	 * Measure block (vendor #52651-#53043, 393 op).
+	 * Blocco ricorrente eseguito dopo ogni probe cycle: RX AFE reconfig +
+	 * Radio 2069 second IQ-cal config + cleanup + tail + arm tone gen +
+	 * poll blocks TX AFE + reset gain regs PHY + radio reset + finalize +
+	 * 2 MAC toggle "arm" per il probe cycle successivo. Chiamato più volte
+	 * (dopo probe cycle 1, 2, 3, 4).
+	 */
+	b43_phy_ac_rxiqcal_measure_block(dev);
+
+	/*
+	 * Probe cycle 2 (vendor #53044-#53213, 170 op).
+	 * 10 iter × 17 op, sweep {0, 4, 0, 4, ...}.
+	 * NB: le 2 MAC toggle di transizione a #53042-#53043 sono nel
+	 * measure block precedente (arm finale).
+	 */
+	b43_phy_ac_probe_cycle(dev, b43_phy_ac_probe_mode_vals_10,
+			       ARRAY_SIZE(b43_phy_ac_probe_mode_vals_10));
+
+	/*
+	 * Middle blocks 1-2 + probe cycles 3-4 (vendor #53214-#54339, 1126 op).
+	 * Ripetizione: measure_block (393 op) + probe_cycle 10-iter (170 op),
+	 * ×2 iter identiche.
+	 */
+	{
+		unsigned int i;
+
+		for (i = 0; i < 2; i++) {
+			b43_phy_ac_rxiqcal_measure_block(dev);
+			b43_phy_ac_probe_cycle(dev,
+					       b43_phy_ac_probe_mode_vals_10,
+					       ARRAY_SIZE(b43_phy_ac_probe_mode_vals_10));
+		}
+	}
+
+	/*
+	 * Middle block 3 (vendor #54340-#54732, 393 op).
+	 * Ultimo measure block prima del probe cycle 5 (single iter + tail).
+	 */
+	b43_phy_ac_rxiqcal_measure_block(dev);
+
+	/*
+	 * Probe cycle 5 breve (vendor #54733-#54750, 18 op).
+	 * Simile al probe_cycle standard (1 iter con mode_val=0x0000) ma con
+	 * una MAC.MCTRL extra (mask=0x00100000, bit 20) inserita tra il
+	 * mac_enable e mac_suspend del "post-mode-change" toggle. Il helper
+	 * b43_phy_ac_probe_cycle non copre questo caso; espandiamo inline
+	 * l'iter unica per rispettare l'ordine op-by-op del vendor.
+	 *
+	 * SALAME: mask=0x00100000 tocca un bit MAC alto non tracked; probabile
+	 * flag di calibration-complete o gate MAC che il vendor solleva a
+	 * questo punto specifico.
+	 */
+	{
+		unsigned int k;
+
+		for (k = 0; k < ARRAY_SIZE(b43_phy_ac_probe_peek_regs); k++)
+			b43_phy_read_log(dev, b43_phy_ac_probe_peek_regs[k]);
+
+		/* Pre-mode-change MAC toggle */
+		b43_mac_enable(dev);
+		b43_mac_suspend(dev);
+
+		/* Mode change */
+		b43_phy_maskset(dev, 0x0520, (u16)~0x000c, 0x0000);
+
+		/* Post-mode-change MAC toggle con clr bit 20 in mezzo */
+		b43_mac_enable(dev);
+		b43_maccontrol_set(dev, ~0x00100000u, 0);
+		b43_mac_suspend(dev);
+	}
+
+	/*
+	 * Post-probe AFE final config (vendor #54751-#54766, 16 op).
+	 * Chiude la calibrazione: peek gate + lock + sequenza MOD sui gain
+	 * regs 0x0070-0x0072 (mixed thresholds/enable) e 0x0644-0x0846
+	 * (per-core). Il gate 0x019e rimane locked all'uscita per il bulk
+	 * TBL che segue.
+	 *
+	 * SALAME: interpretazione "AFE final teardown" nostra. La ratio dei
+	 * bit specifici (0x8000, 0x4000, 0x0100, 0x0700 su 0x0070/0x0072)
+	 * non è documentata; corrispondono a threshold/enable bit del gain
+	 * front-end.
+	 */
+	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+	b43_phy_maskset(dev, 0x0072, (u16)~0x0001, 0x0001);
+	b43_phy_maskset(dev, 0x0070, (u16)~0x8000, 0);
+	b43_phy_maskset(dev, 0x0070, (u16)~0x0100, 0x0100);
+	b43_phy_maskset(dev, 0x0072, (u16)~0x4000, 0);
+	b43_phy_maskset(dev, 0x0072, (u16)~0x4000, 0x4000);
+	b43_phy_maskset(dev, 0x0070, (u16)~0x8000, 0);
+	b43_phy_maskset(dev, 0x0644, (u16)~0x007f, 0x0014);
+	b43_phy_maskset(dev, 0x0844, (u16)~0x007f, 0x0014);
+	b43_phy_maskset(dev, 0x0071, (u16)~0x00ff, 0x00c8);
+	b43_phy_maskset(dev, 0x0071, (u16)~0x0700, 0x0400);
+	b43_phy_maskset(dev, 0x0070, (u16)~0x0800, 0);
+	b43_phy_maskset(dev, 0x0070, (u16)~0x0400, 0x0400);
+	b43_phy_maskset(dev, 0x0846, (u16)~0x00ff, 0x0042);
+	b43_phy_maskset(dev, 0x0646, (u16)~0x00ff, 0x0042);
+
+	/*
+	 * Bulk TBL id=0x0040 + id=0x0060 (vendor #54767-#55030, 260 op).
+	 * Due LUT da 128 word ciascuna (word_size=16), programma finale di
+	 * calibrazione power-vs-index. Il gate B43_PHY_AC_REG_TBL_WRITE_GATE
+	 * è locked all'entrata dal post-probe AFE; write_bulk emette peek +
+	 * WR TABLE_ID/OFFSET/DATA senza toccare il gate lock — 130 op per bulk.
+	 *
+	 * Cross-trace verificato: i 128 valori di ciascuna LUT sono identici
+	 * nei 3 trace vendor ch36 / ch44 / ch36-bw40 (vedi
+	 * doc/channel-generalization-analysis.md), quindi sono chan/BW
+	 * invariant almeno sulle combo esaminate. Le due LUT differiscono
+	 * tra loro in 77 posizioni su 128, ma la scelta valori vs indice è
+	 * fissa.
+	 *
+	 * SALAME: rimane ignoto perché servano due LUT distinte al posto di
+	 * una — forse per-core, per-mode CCK/OFDM, o due path (TX vs RX)
+	 * dello stesso gain slope. Il match op-per-op è indifferente al
+	 * significato semantico.
+	 */
+	{
+		static const u16 lut_0040[128] = {
+			0x005d, 0x005d, 0x005d, 0x005d, 0x005d, 0x005d, 0x005d, 0x005d,
+			0x005c, 0x005c, 0x005c, 0x005c, 0x005c, 0x005c, 0x005c, 0x005b,
+			0x005b, 0x005b, 0x005b, 0x005b, 0x005b, 0x005b, 0x005a, 0x005a,
+			0x005a, 0x005a, 0x005a, 0x005a, 0x0059, 0x0059, 0x0059, 0x0059,
+			0x0059, 0x0059, 0x0058, 0x0058, 0x0058, 0x0058, 0x0058, 0x0057,
+			0x0057, 0x0057, 0x0057, 0x0057, 0x0056, 0x0056, 0x0056, 0x0056,
+			0x0055, 0x0055, 0x0055, 0x0055, 0x0054, 0x0054, 0x0054, 0x0054,
+			0x0053, 0x0053, 0x0053, 0x0053, 0x0052, 0x0052, 0x0052, 0x0051,
+			0x0051, 0x0051, 0x0050, 0x0050, 0x0050, 0x004f, 0x004f, 0x004f,
+			0x004e, 0x004e, 0x004d, 0x004d, 0x004d, 0x004c, 0x004c, 0x004b,
+			0x004b, 0x004a, 0x004a, 0x0049, 0x0049, 0x0048, 0x0048, 0x0047,
+			0x0047, 0x0046, 0x0045, 0x0045, 0x0044, 0x0043, 0x0043, 0x0042,
+			0x0041, 0x0041, 0x0040, 0x003f, 0x003e, 0x003d, 0x003d, 0x003c,
+			0x003b, 0x003a, 0x0039, 0x0038, 0x0037, 0x0035, 0x0034, 0x0033,
+			0x0032, 0x0030, 0x002f, 0x002e, 0x002c, 0x002a, 0x0029, 0x0027,
+			0x0025, 0x0023, 0x0021, 0x001f, 0x001d, 0x001a, 0x0018, 0x0015,
+		};
+		static const u16 lut_0060[128] = {
+			0x005c, 0x005c, 0x005c, 0x005c, 0x005c, 0x005b, 0x005b, 0x005b,
+			0x005b, 0x005b, 0x005b, 0x005b, 0x005b, 0x005b, 0x005a, 0x005a,
+			0x005a, 0x005a, 0x005a, 0x005a, 0x005a, 0x0059, 0x0059, 0x0059,
+			0x0059, 0x0059, 0x0059, 0x0059, 0x0058, 0x0058, 0x0058, 0x0058,
+			0x0058, 0x0058, 0x0057, 0x0057, 0x0057, 0x0057, 0x0057, 0x0057,
+			0x0056, 0x0056, 0x0056, 0x0056, 0x0056, 0x0055, 0x0055, 0x0055,
+			0x0055, 0x0055, 0x0054, 0x0054, 0x0054, 0x0054, 0x0053, 0x0053,
+			0x0053, 0x0053, 0x0052, 0x0052, 0x0052, 0x0052, 0x0051, 0x0051,
+			0x0051, 0x0050, 0x0050, 0x0050, 0x004f, 0x004f, 0x004f, 0x004e,
+			0x004e, 0x004e, 0x004d, 0x004d, 0x004d, 0x004c, 0x004c, 0x004b,
+			0x004b, 0x004a, 0x004a, 0x0049, 0x0049, 0x0049, 0x0048, 0x0047,
+			0x0047, 0x0046, 0x0046, 0x0045, 0x0045, 0x0044, 0x0043, 0x0043,
+			0x0042, 0x0041, 0x0040, 0x0040, 0x003f, 0x003e, 0x003d, 0x003c,
+			0x003b, 0x003a, 0x0039, 0x0038, 0x0037, 0x0036, 0x0035, 0x0034,
+			0x0033, 0x0031, 0x0030, 0x002e, 0x002d, 0x002b, 0x0029, 0x0028,
+			0x0026, 0x0024, 0x0022, 0x001f, 0x001d, 0x001a, 0x0018, 0x0015,
+		};
+
+		b43_actab_write_bulk(dev, 0x0040, 0x0000, 16,
+				     ARRAY_SIZE(lut_0040), lut_0040);
+		b43_actab_write_bulk(dev, 0x0060, 0x0000, 16,
+				     ARRAY_SIZE(lut_0060), lut_0060);
+	}
+
+	/*
+	 * Bulk TBL id=0x0021 len=24 (vendor #55031-#55082, 52 op).
+	 * 24 entry a 32 bit; solo entry [1], [5], [6] non-zero (val=0x0202).
+	 * Gate rimane locked (nessun MOD B43_PHY_AC_REG_TBL_WRITE_GATE prima
+	 * o dopo).
+	 *
+	 * Cross-trace verificato chan/BW invariant su ch36/ch44/ch36-bw40
+	 * (vedi doc/channel-generalization-analysis.md).
+	 *
+	 * SALAME: le 3 entry non-zero (0x0202) potrebbero essere flag di IQ
+	 * correction o compensation ID; il resto è pad. Semantica precisa
+	 * non nota, ma i valori sono fissi.
+	 */
+	{
+		static const u32 lut_0021[24] = {
+			0x00000000, 0x00000202, 0x00000000, 0x00000000,
+			0x00000000, 0x00000202, 0x00000202, 0x00000000,
+			0x00000000, 0x00000000, 0x00000000, 0x00000000,
+			0x00000000, 0x00000000, 0x00000000, 0x00000000,
+			0x00000000, 0x00000000, 0x00000000, 0x00000000,
+			0x00000000, 0x00000000, 0x00000000, 0x00000000,
+		};
+
+		b43_actab_write_bulk(dev, 0x0021, 0x0000, 32,
+				     ARRAY_SIZE(lut_0021), lut_0021);
+	}
+
+	/*
+	 * Coda finale (vendor #55083-#55154, 72 op).
+	 * Chiude lo scope RXIQ e programma i coefficienti finali per-core.
+	 *
+	 * Struttura:
+	 *   Unlock gate + 5 gain regs re-emit (identici al blocco E)   6 op
+	 *   MAC sequence (4 toggle bit 0 + 1 multi-bit clr + MHF)      7 op
+	 *   Per core (0, 1):
+	 *     - TBL 0x000c len=2 (RXIQ coeff pair)                    ~8 op
+	 *     - TBL 0x000c len=1 (RXIQ coeff scalar)                  ~7 op
+	 *     - 4 RAD.WR (RXIQ compensation coeffs)                    4 op
+	 *     - 2 PHY.WR 0x?6a0/?6a1 (readback coeff store)            2 op
+	 *   MAC final toggle + GPIO clr/set + MAC.MCTRL multi-bit      5 op
+	 *   PHY.WR 0x17XX (core 3? stride 0x1000, gain regs)           8 op
+	 *   MOD 0x0408 + WR 0x0417/0x0416 (chan-select final)          3 op
+	 *   PMU.RC set bit 1                                           1 op
+	 *
+	 * SALAME: molti valori sono per-canale (RXIQ coeffs runtime); qui
+	 * hardcoded dal capture d6220 ch36. Il blocco "PHY.WR 0x17XX"
+	 * (stride 0x1000 sui gain regs 0x1720-0x173e) tocca uno spazio
+	 * indirizzabile diverso — probabile "core 3" o "shadow bank" per
+	 * boards con 3+ cores non popolate.
+	 */
+
+	/* Unlock gate + AFE gain regs re-emit (identico al blocco E). */
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+	b43_phy_ac_afe_gain_regs_reemit(dev);
+
+	/* MAC sequence: 4× toggle bit 0 + 1× clr bit 18 + MHF. */
+	b43_mac_enable(dev);
+	b43_maccontrol_set(dev, ~0x48020000u, 0x40000000);  /* multi-bit config */
+	b43_mac_suspend(dev);
+	b43_maccontrol_set(dev, ~0x00040000u, 0);           /* clr bit 18 */
+	b43_mac_enable(dev);
+	b43_phy_ac_mhf_maskset(dev, 0, (u16)~0x4000, 0);
+	b43_mac_suspend(dev);
+
+	/* Per-core coefficient write. Core 0 (RAD.WR 0x0002-0x0005). */
+	{
+		static const u16 tbl_c_60[2] = { 0x0064, 0x000e };
+		static const u16 tbl_c_62    = 0xfe02;
+
+		b43_actab_write_bulk_scoped(dev, 0x000c, 0x0060, 16, 2, tbl_c_60);
+		b43_actab_write_bulk_scoped(dev, 0x000c, 0x0062, 16, 1, &tbl_c_62);
+	}
+	b43_radio_write(dev, 0x0002, 0x0078);
+	b43_radio_write(dev, 0x0003, 0x0079);
+	b43_radio_write(dev, 0x0004, 0x0069);
+	b43_radio_write(dev, 0x0005, 0x0078);
+	b43_phy_write(dev, 0x06a0, 0x03f2);
+	b43_phy_write(dev, 0x06a1, 0x004c);
+
+	/* Core 1 (RAD.WR 0x0202-0x0205). */
+	{
+		static const u16 tbl_c_64[2] = { 0x0022, 0x0004 };
+		static const u16 tbl_c_66    = 0x0100;
+
+		b43_actab_write_bulk_scoped(dev, 0x000c, 0x0064, 16, 2, tbl_c_64);
+		b43_actab_write_bulk_scoped(dev, 0x000c, 0x0066, 16, 1, &tbl_c_66);
+	}
+	b43_radio_write(dev, 0x0202, 0x0088);
+	b43_radio_write(dev, 0x0203, 0x0088);
+	b43_radio_write(dev, 0x0204, 0x0088);
+	b43_radio_write(dev, 0x0205, 0x0078);
+	b43_phy_write(dev, 0x08a0, 0x03db);
+	b43_phy_write(dev, 0x08a1, 0x0037);
+
+	/* MAC final toggle + GPIO clr/set + MAC.MCTRL multi-bit. */
+	b43_mac_enable(dev);
+	bcma_chipco_gpio_out(&dev->dev->bdev->bus->drv_cc, 0x0004, 0);
+	bcma_chipco_gpio_out(&dev->dev->bdev->bus->drv_cc, 0x0400, 0x0400);
+	b43_mac_suspend(dev);
+	b43_maccontrol_set(dev, 0, 0x04000400);   /* mask=~0=0xffffffff */
+
+	/*
+	 * PHY.WR 0x17XX (8 op): stride 0x1000 sui gain regs 0x1720-0x173e.
+	 * Bank di gain regs "shadow" (o core 3 non popolato); riprogramma
+	 * default per lo stato di RX finale.
+	 */
+	b43_phy_write(dev, 0x173e, 0x0000);
+	b43_phy_write(dev, 0x1739, 0x0000);
+	b43_phy_write(dev, 0x173a, 0x0000);
+	b43_phy_write(dev, 0x1725, 0x1fff);
+	b43_phy_write(dev, 0x1729, 0x0000);
+	b43_phy_write(dev, 0x1721, 0xffff);
+	b43_phy_write(dev, 0x1728, 0x0000);
+	b43_phy_write(dev, 0x1720, 0x03ff);
+
+	/* Chan-select final + PMU release. */
+	b43_phy_maskset(dev, 0x0408, (u16)~0x0002, 0);
+	b43_phy_write(dev, 0x0417, 0x0000);
+	b43_phy_write(dev, 0x0416, 0x0001);
+	bcma_chipco_regctl_maskset(&dev->dev->bdev->bus->drv_cc,
+				   0x0000, ~0x00000002u, 0x00000002);
+}
+
+static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_channel)
+{
+	struct ieee80211_channel *channel = dev->wl->hw->conf.chandef.chan;
+	enum nl80211_channel_type channel_type = cfg80211_get_chandef_type(&dev->wl->hw->conf.chandef);
+	int ret;
+
+	if (b43_current_band(dev->wl) == NL80211_BAND_2GHZ) {
+		b43dbg(dev->wl,
+		       "AC-PHY: 2.4 GHz channel %u not supported on this board\n",
+		       new_channel);
+		return -EOPNOTSUPP;
+	}
+
+	/*
+	 * A differenza di wl (Broadcom), che richiede un down+up completo
+	 * per cambiare canale a runtime, b43 mantiene il MAC attivo tra i
+	 * channel switch. set_channel opera con MAC sospeso (calibrazioni
+	 * PHY che non tollerano attività MAC concorrente): sospendiamo qui
+	 * e ripristiniamo dopo. Nel primo attach il MAC è già sospeso da
+	 * fine op_init — b43_mac_suspend gestisce il refcount idempotente.
+	 */
+	b43_mac_suspend(dev);
+
+	/* 5 GHz: the channel table is the filter (unknown channels -ESRCH). */
+	ret = b43_phy_ac_set_channel(dev, channel, channel_type);
+
+	b43_mac_enable(dev);
+
+	/*
+	 * Calibrazioni post-channel: il vendor le emette DOPO MAC.MCTRL
+	 * enable (#39946). Include post_cal_finalize (iter 2/3), rxiqcal
+	 * iter 1..24, rxcal AFE, primo e second round txpwr con RXIQ
+	 * measurement + gainctrl_final loop, teardown finale RXIQ.
+	 */
+	if (ret == 0)
+		b43_phy_ac_set_channel_calibrations(dev);
+
+	return ret;
+}
+
+/* R/W ops */
+
+/* Plain PHY register read/write. */
+static u16 b43_phy_ac_op_read(struct b43_wldev *dev, u16 reg)
+{
+	if (B43_WARN_ON(reg == 0xFFFF))
+		return 0;
+	b43_write16f(dev, B43_MMIO_PHY_CONTROL, reg);
+	return b43_read16(dev, B43_MMIO_PHY_DATA);
+}
+
+static void b43_phy_ac_op_write(struct b43_wldev *dev, u16 reg, u16 value)
+{
+	if (B43_WARN_ON(reg == 0xFFFF))
+		return;
+	b43_write16f(dev, B43_MMIO_PHY_CONTROL, reg);
+	b43_write16(dev, B43_MMIO_PHY_DATA, value);
+}
+
+/* PHY ops struct */
+
+const struct b43_phy_operations b43_phyops_ac = {
+	.allocate		= b43_phy_ac_op_allocate,
+	.free			= b43_phy_ac_op_free,
+	.prepare_structs	= b43_phy_ac_op_prepare_structs,
+	.init			= b43_phy_ac_op_init,
+	.phy_read		= b43_phy_ac_op_read,
+	.phy_write		= b43_phy_ac_op_write,
+	.phy_maskset		= b43_phy_ac_op_maskset,
+	.radio_read		= b43_phy_ac_op_radio_read,
+	.radio_write		= b43_phy_ac_op_radio_write,
+	.software_rfkill	= b43_phy_ac_op_software_rfkill,
+	.switch_analog		= b43_phyop_switch_analog_generic,
+	.switch_channel		= b43_phy_ac_op_switch_channel,
+	.get_default_chan	= b43_phy_ac_op_get_default_chan,
+	.recalc_txpower		= b43_phy_ac_op_recalc_txpower,
+	.adjust_txpower		= b43_phy_ac_op_adjust_txpower,
+};
+
+/* ==========================================================================
+ * Farrow resampler setup (ex farrow_phy_ac.c + .h + .inc)
+ * ==========================================================================
+ */
+
+static const u16 b43_phy_ac_farrow_vals[196] = {
+	0x096c, 0x0971, 0x0976, 0x097b, 0x0980, 0x0985, 0x098a, 0x098f,
+	0x0994, 0x0999, 0x099e, 0x09a3, 0x09a8, 0x09b4, 0x143c, 0x1450,
+	0x1464, 0x1478, 0x148c, 0x14a0, 0x14b4, 0x14c8, 0x157c, 0x1590,
+	0x15a4, 0x15b8, 0x15cc, 0x15e0, 0x15f4, 0x1608, 0x161c, 0x1630,
+	0x1644, 0x1671, 0x1685, 0x1699, 0x16ad, 0x16c1, 0x1446, 0x146e,
+	0x1496, 0x14be, 0x1586, 0x15ae, 0x15d6, 0x15fe, 0x1626, 0x167b,
+	0x16a3, 0xf1fe, 0xd703, 0xbc25, 0xa163, 0x86bd, 0x6c33, 0x51c5,
+	0x3773, 0x1d3c, 0x0321, 0xe920, 0xcf3b, 0xb570, 0x77f7, 0x71ab,
+	0x42f5, 0x149a, 0xe699, 0xb8f2, 0x8ba3, 0x5eac, 0x320c, 0x44e4,
+	0x1643, 0xe7f9, 0xba04, 0x8c64, 0x5f16, 0x321c, 0x0573, 0xd91b,
+	0xad13, 0x8159, 0x2016, 0xf558, 0xcae6, 0xa0bf, 0x76e2, 0x5a45,
+	0xfd8e, 0xa240, 0x4851, 0x2d89, 0xd0f4, 0x75b3, 0x1bbd, 0xc30d,
+	0x0aae, 0xb5c9, 0x0072, 0x0072, 0x0072, 0x0072, 0x0072, 0x0072,
+	0x0072, 0x0072, 0x0072, 0x0072, 0x0071, 0x0071, 0x0071, 0x0071,
+	0x00ef, 0x00ef, 0x00ef, 0x00ee, 0x00ee, 0x00ee, 0x00ee, 0x00ee,
+	0x00f2, 0x00f2, 0x00f1, 0x00f1, 0x00f1, 0x00f1, 0x00f1, 0x00f1,
+	0x00f0, 0x00f0, 0x00f0, 0x00f0, 0x00ef, 0x00ef, 0x00ef, 0x00ef,
+	0x00ef, 0x00ee, 0x00ee, 0x00ee, 0x00f2, 0x00f1, 0x00f1, 0x00f1,
+	0x00f0, 0x00f0, 0x00ef, 0x20cd, 0x2122, 0x2177, 0x21cd, 0x2222,
+	0x2277, 0x22cd, 0x2322, 0x2377, 0x23cd, 0x2422, 0x2477, 0x24cd,
+	0x259a, 0x2cab, 0x2d55, 0x2e00, 0x2eab, 0x2f55, 0x3000, 0x30ab,
+	0x3155, 0x22f7, 0x238e, 0x2426, 0x24be, 0x2555, 0x25ed, 0x2685,
+	0x271c, 0x27b4, 0x284c, 0x28e4, 0x2a39, 0x2ad1, 0x2b68, 0x2c00,
+	0x2c98, 0x2d00, 0x2e55, 0x2fab, 0x3100, 0x2342, 0x2472, 0x25a1,
+	0x26d1, 0x2800, 0x2a85, 0x2bb4,
+};
+
+static const u16 b43_phy_ac_farrow_vals_432x_media_a1[98] = {
+	0x096c, 0x0971, 0x0976, 0x097b, 0x0980, 0x0985, 0x098a, 0x098f,
+	0x0994, 0x0999, 0x099e, 0x09a3, 0x09a8, 0x09b4, 0x143c, 0x1450,
+	0x1464, 0x1478, 0x148c, 0x14a0, 0x14b4, 0x14c8, 0x157c, 0x1590,
+	0x15a4, 0x15b8, 0x15cc, 0x15e0, 0x15f4, 0x1608, 0x161c, 0x1630,
+	0x1644, 0x1671, 0x1685, 0x1699, 0x16ad, 0x16c1, 0x1446, 0x146e,
+	0x1496, 0x14be, 0x1586, 0x15ae, 0x15d6, 0x15fe, 0x1626, 0x167b,
+	0x16a3, 0x0008, 0x0009, 0x0009, 0x0009, 0x0009, 0x0009, 0x0009,
+	0x0009, 0x0009, 0x0009, 0x0009, 0x000a, 0x0009, 0x0009, 0x0008,
+	0x0008, 0x0008, 0x0008, 0x0008, 0x0008, 0x0008, 0x0008, 0x0009,
+	0x0009, 0x0009, 0x000a, 0x0009, 0x0009, 0x0009, 0x0009, 0x0009,
+	0x0009, 0x0009, 0x0009, 0x0009, 0x0009, 0x000a, 0x0009, 0x0008,
+	0x0008, 0x0008, 0x0009, 0x0009, 0x000a, 0x0009, 0x0009, 0x0009,
+	0x000a, 0x0009,
+};
+
+/*
+ * Blocco resampler 5 GHz / 20 MHz, nell'ordine della trace (d6220 ch36 #35015+).
+ * core 0: base 0x199 ; core 1: base 0x1a0 ; deltaphase base 0x1602 stride 4.
+ */
+static const struct { u16 reg; u16 val; } b43_phy_ac_farrow_regs_5g20[] = {
+	{ 0x019a, 0x5555 }, { 0x019b, 0x0059 }, { 0x019c, 0x0f00 }, { 0x0199, 0x00a7 },
+	{ 0x01a1, 0x5555 }, { 0x01a2, 0x0059 }, { 0x01a3, 0x0f00 }, { 0x01a0, 0x00a7 },
+	{ 0x1603, 0xe356 }, { 0x1602, 0x005e },   /* deltaphase core 0 (per-canale) */
+	{ 0x1607, 0xe356 }, { 0x1606, 0x005e },   /* deltaphase core 1 (per-canale) */
+	{ 0x1601, 0x0049 },                       /* farrow global cfg, chiude il blocco */
+};
+
+/*
+ * Partial override for non-20 MHz BW (dtbu second pass, seq #66321-66331).
+ * Only the registers that change vs 5g20 are listed; the rest (0x019c, 0x0199,
+ * 0x01a3, 0x01a0, 0x1602, 0x1606, 0x1601) keep the 5g20 values.
+ * TODO: wire via BW parameter from chandef once multi-BW is supported.
+ */
+static const struct { u16 reg; u16 val; }
+b43_phy_ac_farrow_bw_override[] __maybe_unused = {
+	{ 0x019a, 0x0000 }, { 0x019b, 0x005c },   /* core 0 mu/sigma */
+	{ 0x01a1, 0x0000 }, { 0x01a2, 0x005c },   /* core 1 mu/sigma */
+	{ 0x1603, 0x2932 },                        /* deltaphase core 0 */
+	{ 0x1607, 0x2932 },                        /* deltaphase core 1 */
+};
+
+static void b43_phy_ac_farrow_setup(struct b43_wldev *dev,
+				    struct ieee80211_channel *channel)
+{
+	u16 chipid = dev->dev->chip_id;
+	unsigned int i;
+
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
+			   B43_PHY_AC_STATE_CCA_RESET);
+
+	/* Solo famiglia 4352/4360 gestita (come farrow_setup_acphy). */
+	switch (chipid) {
+	case 0x4360: case 0x4352: case 0xa9c4: case 0xaa06:
+		break;
+	default:
+		return;
+	}
+
+	/* Blocco 5 GHz/20 MHz; il ramo 2.4 GHz avrebbe altri valori. */
+	if (b43_current_band(dev->wl) != NL80211_BAND_5GHZ)
+		return;
+
+	/*
+	 * Emit ordine vendor (d6220 ch36 #35007-#35020, 14 op):
+	 *   1. 4 write core 0 (0x019a-0x0199)
+	 *   2. 4 write core 1 (0x01a1-0x01a0)
+	 *   3. 2 write deltaphase core 0 (0x1603, 0x1602)
+	 *   4. 2 write deltaphase core 1 (0x1607, 0x1606)
+	 *   5. peek 0x0601 (vendor #35019, semantica ignota)
+	 *   6. write 0x1601 farrow global cfg (chiude il blocco)
+	 * L'ordine dell'array b43_phy_ac_farrow_regs_5g20 riflette punti 1-4;
+	 * il peek e la write 0x1601 finale sono emessi esplicitamente.
+	 */
+	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_farrow_regs_5g20) - 1; i++)
+		b43_phy_write(dev, b43_phy_ac_farrow_regs_5g20[i].reg,
+			      b43_phy_ac_farrow_regs_5g20[i].val);
+
+	b43_phy_read_log(dev, 0x0601);
+
+	/* farrow global cfg (ultima entry dell'array). */
+	i = ARRAY_SIZE(b43_phy_ac_farrow_regs_5g20) - 1;
+	b43_phy_write(dev, b43_phy_ac_farrow_regs_5g20[i].reg,
+		      b43_phy_ac_farrow_regs_5g20[i].val);
+
+	/* Tabelle tap grezze: per la futura deltaphase per-canale (vedi header). */
+	(void)b43_phy_ac_farrow_vals;
+	(void)b43_phy_ac_farrow_vals_432x_media_a1;
+	(void)channel;
+}
+

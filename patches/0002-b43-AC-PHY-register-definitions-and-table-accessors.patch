@@ -1,0 +1,909 @@
+From 19d5bc114cf4440f54d65f9b1c7f35a3513eb332 Mon Sep 17 00:00:00 2001
+From: Alessio Ferri <alessio.ferri@mythread.it>
+Date: Tue, 14 Jul 2026 08:26:50 +0000
+Subject: [PATCH 2/9] b43: AC-PHY register definitions and table accessors
+
+Add the PHY register defines, struct b43_phy_ac fields (num_cores,
+coremask), channel table structures, and the table read/write helpers
+for 16/32-bit AC-PHY tables (including the r11 alternate data register
+path and the table-write gate lock/unlock).
+
+New files: tables_phy_ac.c, tables_phy_ac.h.
+
+Signed-off-by: Alessio Ferri <alessio.ferri@mythread.it>
+---
+ drivers/net/wireless/broadcom/b43/Makefile    |   1 +
+ drivers/net/wireless/broadcom/b43/phy_ac.h    | 159 +++++
+ .../net/wireless/broadcom/b43/tables_phy_ac.c | 607 ++++++++++++++++++
+ .../net/wireless/broadcom/b43/tables_phy_ac.h |  55 ++
+ 4 files changed, 822 insertions(+)
+ create mode 100644 drivers/net/wireless/broadcom/b43/tables_phy_ac.c
+ create mode 100644 drivers/net/wireless/broadcom/b43/tables_phy_ac.h
+
+diff --git a/drivers/net/wireless/broadcom/b43/Makefile b/drivers/net/wireless/broadcom/b43/Makefile
+index 54f92ce49..bf3788040 100644
+--- a/drivers/net/wireless/broadcom/b43/Makefile
++++ b/drivers/net/wireless/broadcom/b43/Makefile
+@@ -15,6 +15,7 @@ b43-$(CONFIG_B43_PHY_HT)	+= tables_phy_ht.o
+ b43-$(CONFIG_B43_PHY_HT)	+= radio_2059.o
+ b43-$(CONFIG_B43_PHY_LCN)	+= phy_lcn.o tables_phy_lcn.o
+ b43-$(CONFIG_B43_PHY_AC)	+= phy_ac.o
++b43-$(CONFIG_B43_PHY_AC)	+= tables_phy_ac.o
+ b43-y				+= sysfs.o
+ b43-y				+= xmit.o
+ b43-y				+= dma.o
+diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.h b/drivers/net/wireless/broadcom/b43/phy_ac.h
+index 02eb6c086..35705a113 100644
+--- a/drivers/net/wireless/broadcom/b43/phy_ac.h
++++ b/drivers/net/wireless/broadcom/b43/phy_ac.h
+@@ -4,6 +4,11 @@
+ 
+ #include "phy_common.h"
+ 
++struct ieee80211_channel;
++
++
++/* PHY register offsets, relative to PHY MMIO space. */
++
+ #define B43_PHY_AC_BBCFG			0x001
+ #define  B43_PHY_AC_BBCFG_RSTCCA		0x4000	/* Reset CCA */
+ #define B43_PHY_AC_BANDCTL			0x003	/* Band control */
+@@ -13,10 +18,31 @@
+ #define B43_PHY_AC_TABLE_DATA1			0x00f
+ #define B43_PHY_AC_TABLE_DATA2			0x010
+ #define B43_PHY_AC_TABLE_DATA3			0x011
++
++/* PHY-table access registers, used in pairs for bulk writes. */
++#define B43_PHY_AC_TABLE_DATA_LO		0x00f
++#define B43_PHY_AC_TABLE_DATA_HI		0x010
++#define B43_PHY_AC_TABLE_DATA_2		0x011
+ #define B43_PHY_AC_CLASSCTL			0x140	/* Classifier control */
+ #define  B43_PHY_AC_CLASSCTL_CCKEN		0x0001	/* CCK enable */
+ #define  B43_PHY_AC_CLASSCTL_OFDMEN		0x0002	/* OFDM enable */
+ #define  B43_PHY_AC_CLASSCTL_WAITEDEN		0x0004	/* Waited enable */
++
++
++/* RF Control & RF Sequencer. */
++#define B43_PHY_AC_RFCTL1			0x400	/* override save/restore + OR 0x3 */
++#define B43_PHY_AC_RF_SEQ_MODE			0x401
++#define B43_PHY_AC_RF_SEQ_TRIG			0x402
++#define B43_PHY_AC_RF_SEQ_STATUS		0x403
++
++/*
++ * Trigger values for RF_SEQ_TRIG (and corresponding bits read from
++ * RF_SEQ_STATUS).
++ */
++#define  B43_PHY_AC_RF_SEQ_RST2RX		0x0020	/* force_rfseq cmd 2 */
++/* force_rfseq cmd->bit: 0=0x01 1=0x02 2=0x20(RST2RX) 3=0x04 4=0x08 5=0x10 */
++/* PHY resampler/BW per-canale 0x371-0x376: valori da chan_tuning u16[52..57]
++ * (campo phy_bw[]), NON i valori radio chan_raw6. */
+ #define B43_PHY_AC_BW1A				0x371
+ #define B43_PHY_AC_BW2				0x372
+ #define B43_PHY_AC_BW3				0x373
+@@ -24,6 +50,13 @@
+ #define B43_PHY_AC_BW5				0x375
+ #define B43_PHY_AC_BW6				0x376
+ #define B43_PHY_AC_RFCTL_CMD			0x408
++
++/* Analog Front End (AFE), per RF core. */
++#define B43_PHY_AC_AFE_C1			0x725
++#define B43_PHY_AC_AFE_C1_OVER			0x739
++#define B43_PHY_AC_AFE_C2			0x925	/* by stride from C1 */
++#define B43_PHY_AC_AFE_C2_OVER			0x939
++
+ #define B43_PHY_AC_C1_CLIP			0x6d4
+ #define  B43_PHY_AC_C1_CLIP_DIS			0x4000
+ #define B43_PHY_AC_C2_CLIP			0x8d4
+@@ -31,9 +64,135 @@
+ #define B43_PHY_AC_C3_CLIP			0xad4
+ #define  B43_PHY_AC_C3_CLIP_DIS			0x4000
+ 
++/* PHY-table-write gate. */
++#define B43_PHY_AC_REG_TBL_WRITE_GATE		0x19E
++#define  B43_PHY_AC_TBL_WRITE_GATE_LOCK		0x0002
++#define  B43_PHY_AC_RF_SEQ_OVERRIDE_GATE	0x0001
++
++/*
++ * Software mirror of hardware enable/gate bits that gate correctness of
++ * downstream PHY sequences. Every mutation of one of the tracked HW
++ * registers must update status_mask in the same code path so the mirror
++ * stays in sync. Precondition checks read this field via
++ * B43_PHY_AC_REQUIRE() below; a failed check sets STATE_FAULTED sticky
++ * and every subsequent tracked entry point bails immediately, keeping
++ * the driver from touching HW in an inconsistent state.
++ *
++ * Bit assignments mirror the raw HW bits tracked by
++ * reverse-tools/annotate_enables.py, so the trace annotator and the
++ * driver agree on the state model.
++ */
++#define B43_PHY_AC_STATE_MAC_EN		0x0001	/* MAC.MCTRL bit 0: MAC running */
++#define B43_PHY_AC_STATE_RX_CCK		0x0002	/* CLASSCTL bit 0: CCK classifier on */
++#define B43_PHY_AC_STATE_RX_OFDM	0x0004	/* CLASSCTL bit 1: OFDM classifier on */
++#define B43_PHY_AC_STATE_RX_WAITED	0x0008	/* CLASSCTL bit 2: WAITED classifier on */
++#define B43_PHY_AC_STATE_RX_ANY		(B43_PHY_AC_STATE_RX_CCK  | \
++					 B43_PHY_AC_STATE_RX_OFDM | \
++					 B43_PHY_AC_STATE_RX_WAITED)
++#define B43_PHY_AC_STATE_CLIP_C0_DIS	0x0010	/* PHY 0x6d4 bit 0x4000 */
++#define B43_PHY_AC_STATE_CLIP_C1_DIS	0x0020	/* PHY 0x8d4 bit 0x4000 */
++#define B43_PHY_AC_STATE_CLIP_C2_DIS	0x0040	/* PHY 0xad4 bit 0x4000 */
++#define B43_PHY_AC_STATE_CLIP_ALL_DIS	(B43_PHY_AC_STATE_CLIP_C0_DIS | \
++					 B43_PHY_AC_STATE_CLIP_C1_DIS | \
++					 B43_PHY_AC_STATE_CLIP_C2_DIS)
++#define B43_PHY_AC_STATE_PHY_RUN	0x0080	/* BBCFG bit 0x8000: 1=running, 0=quiesced */
++#define B43_PHY_AC_STATE_CCA_RESET	0x0100	/* BBCFG bit 0x4000 (RSTCCA active) */
++#define B43_PHY_AC_STATE_FAULTED	0x8000	/* sticky: a precondition failed */
++
++/* Per-device PHY state. */
++
+ struct b43_phy_ac {
++	/* active RF-chain count (PHY reg 0x0B & 0x07), set at op_init */
++	u8 num_cores;
++	/* populated-chain bitmask (1 bit per present core), set at op_init */
++	u8 coremask;
++	/* Analog LPF / DAC-buffer caps; attach defaults, set in op_allocate. */
++	u8 lpf_cap0;	/* default 0x80 */
++	u8 lpf_cap1;	/* default 0x80 */
++	u8 dacbuf_cap;	/* default 0x0c */
++	/* Software mirror of tracked HW gate bits; see B43_PHY_AC_STATE_*. */
++	u16 status_mask;
+ };
+ 
++/*
++ * Precondition check. `want` bits MUST be set, `forbid` bits MUST be
++ * clear. On mismatch: log an error, set FAULTED, and return. Once
++ * FAULTED is set every subsequent REQUIRE returns immediately, so a
++ * single broken invariant does not cascade into HW damage.
++ *
++ * `dev` is evaluated more than once (must be a plain lvalue).
++ * `want` and `forbid` must be disjoint or the check is unsatisfiable;
++ * a zero `want`/`forbid` means "no requirement on that side".
++ *
++ * REQUIRE()	   -> use in functions returning void
++ * REQUIRE_RET()   -> use in functions returning a value
++ *
++ * NOTE on STATE_PHY_RUN: this bit is mirrored by the rxiqcal
++ * quiesce/restore path but is NOT settable at driver bring-up (the
++ * BBCFG[15] transition to 1 happens as part of the vendor init sequence,
++ * which the current driver does not route through a tracked mutator).
++ * Do not use STATE_PHY_RUN in `want`/`forbid` until a real mutator exists.
++ */
++#define B43_PHY_AC_REQUIRE(dev, want, forbid) do {			\
++	struct b43_phy_ac *__ac = (dev)->phy.ac;			\
++	u16 __sm = __ac->status_mask;					\
++	if (__sm & B43_PHY_AC_STATE_FAULTED)				\
++		return;							\
++	if ((__sm & (want)) != (want) || (__sm & (forbid))) {		\
++		b43err((dev)->wl,					\
++		       "phy_ac: %s precondition failed: "		\
++		       "status=0x%04x want=0x%04x forbid=0x%04x\n",	\
++		       __func__, __sm, (u16)(want), (u16)(forbid));	\
++		__ac->status_mask |= B43_PHY_AC_STATE_FAULTED;		\
++		return;							\
++	}								\
++} while (0)
++
++#define B43_PHY_AC_REQUIRE_RET(dev, want, forbid, ret) do {		\
++	struct b43_phy_ac *__ac = (dev)->phy.ac;			\
++	u16 __sm = __ac->status_mask;					\
++	if (__sm & B43_PHY_AC_STATE_FAULTED)				\
++		return (ret);						\
++	if ((__sm & (want)) != (want) || (__sm & (forbid))) {		\
++		b43err((dev)->wl,					\
++		       "phy_ac: %s precondition failed: "		\
++		       "status=0x%04x want=0x%04x forbid=0x%04x\n",	\
++		       __func__, __sm, (u16)(want), (u16)(forbid));	\
++		__ac->status_mask |= B43_PHY_AC_STATE_FAULTED;		\
++		return (ret);						\
++	}								\
++} while (0)
++
+ extern const struct b43_phy_operations b43_phyops_ac;
+ 
++
++bool b43_phy_ac_force_rf_sequence(struct b43_wldev *dev, u16 rf_seq, u16 gate);
++u16  b43_phy_ac_classifier(struct b43_wldev *dev, u16 mask, u16 val);
++
++/*
++ * The wl-diag trace records the address of every register read but not the
++ * value returned (the tracer only captures input args). So each read below is
++ * a hole in the trace. Route value-consuming reads through these to capture
++ * the real value on hardware; the log is compiled out when B43_DEBUG is 0
++ * (dead branch elided), so release builds pay nothing. `dev` must be a plain
++ * lvalue -- it is evaluated more than once.
++ */
++#define b43_phy_read_log(dev, reg) ({					\
++	u16 __r = (reg), __v = b43_phy_read((dev), __r);		\
++	if (B43_DEBUG)							\
++		b43dbg((dev)->wl, "phy   rd 0x%04x = 0x%04x\n",		\
++		       __r, __v);					\
++	__v;								\
++})
++#define b43_radio_read_log(dev, reg) ({					\
++	u16 __r = (reg), __v = b43_radio_read((dev), __r);		\
++	if (B43_DEBUG)							\
++		b43dbg((dev)->wl, "radio rd 0x%04x = 0x%04x\n",		\
++		       __r, __v);					\
++	__v;								\
++})
++
++void b43_phy_ac_farrow_setup(struct b43_wldev *dev,
++			     struct ieee80211_channel *channel);
++
+ #endif /* B43_PHY_AC_H_ */
+diff --git a/drivers/net/wireless/broadcom/b43/tables_phy_ac.c b/drivers/net/wireless/broadcom/b43/tables_phy_ac.c
+new file mode 100644
+index 000000000..0238e12c1
+--- /dev/null
++++ b/drivers/net/wireless/broadcom/b43/tables_phy_ac.c
+@@ -0,0 +1,607 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * Broadcom B43 wireless driver AC-PHY init tables and the bulk write path that
++ * feeds them into the chip.
++ */
++
++#include "b43.h"
++#include "phy_ac.h"
++#include "tables_phy_ac.h"
++
++/* PHY-table-write gate (file-local) */
++
++u16 b43_phy_ac_tbl_write_lock(struct b43_wldev *dev)
++{
++	u16 saved = b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
++
++	b43info(dev->wl, "[TXLPFLOG] lock saved=0x%04x\n", saved);
++
++	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE,
++			(u16)~B43_PHY_AC_TBL_WRITE_GATE_LOCK,
++			B43_PHY_AC_TBL_WRITE_GATE_LOCK);
++	return saved;
++}
++
++void b43_phy_ac_tbl_write_unlock(struct b43_wldev *dev, u16 saved)
++{
++	u16 mask = (u16)~B43_PHY_AC_TBL_WRITE_GATE_LOCK;
++	u16 val  = saved & B43_PHY_AC_TBL_WRITE_GATE_LOCK;
++
++	b43info(dev->wl, "[TXLPFLOG] unlock saved=0x%04x mask=0x%04x val=0x%04x\n",
++		saved, mask, val);
++
++	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, mask, val);
++}
++
++/* Bulk table write */
++
++/*
++ * b43_actab_write_bulk - write a contiguous run of values into one of the AC-
++ * PHY's internal tables.
++ */
++void b43_actab_write_bulk(struct b43_wldev *dev,
++			  u16 id, u16 offset, u8 width,
++			  size_t len, const void *data)
++{
++	size_t i;
++	u16 gate;
++
++	/*
++	 * PHY.RD 0x019e prima di ogni actab: NON è una peek difensiva sul
++	 * lock. È il valore che verrà ripristinato al termine di tx_lpf
++	 * (l'ultimo salvataggio del gate 0x019e prima del restore finale).
++	 * Il blob ricalcola questo saved ad ogni bulk; il tracer wl-diag
++	 * lo registra come PHY.RD 0x019e prima della sequenza WR TABLE_ID/
++	 * OFFSET/DATA.
++	 */
++	gate = b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
++	b43info(dev->wl,
++		"[TXLPFLOG] actab_wr id=0x%02x off=0x%04x width=%u len=%zu gate=0x%04x\n",
++		id, offset, width, (size_t)len, gate);
++
++	b43_phy_write(dev, B43_PHY_AC_TABLE_ID, id);
++	b43_phy_write(dev, B43_PHY_AC_TABLE_OFFSET, offset);
++
++	switch (width) {
++	case 8: {
++		const u8 *p = data;
++		/*
++		 * id=0x20 usa un DATA register alternativo (0x011) invece del
++		 * default DATA_LO (0x00f). Vedi vendor d6220 ch36 #34564+.
++		 */
++		u16 data_reg = (id == 0x20)
++			? B43_PHY_AC_TABLE_DATA_2
++			: B43_PHY_AC_TABLE_DATA_LO;
++
++		for (i = 0; i < len; i++)
++			b43_phy_write(dev, data_reg, p[i]);
++		break;
++	}
++	case 16: {
++		const u16 *p = data;
++
++		for (i = 0; i < len; i++)
++			b43_phy_write(dev, B43_PHY_AC_TABLE_DATA_LO, p[i]);
++		break;
++	}
++	case 32: {
++		const u32 *p = data;
++
++		for (i = 0; i < len; i++) {
++			b43_phy_write(dev, B43_PHY_AC_TABLE_DATA_HI,
++				      (u16)(p[i] >> 16));
++			b43_phy_write(dev, B43_PHY_AC_TABLE_DATA_LO,
++				      (u16)(p[i] & 0xffff));
++		}
++		break;
++	}
++	default:
++		b43warn(dev->wl,
++			"actab_write_bulk: unsupported width %u (id=0x%x len=%zu)\n",
++			width, id, len);
++		break;
++	}
++}
++
++/*
++ * Variante di write_bulk quando il gate 0x019e era UNLOCKATO all'entrata:
++ * emette peek + relock idempotente PRIMA delle WR TABLE_ID/OFFSET/DATA.
++ * Nel blob vendor questo è runtime-conditional; qui è una funzione dedicata.
++ */
++void b43_actab_write_bulk_reopen(struct b43_wldev *dev,
++				 u16 id, u16 offset, u8 width,
++				 size_t len, const void *data)
++{
++	size_t i;
++
++	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
++	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE,
++			(u16)~B43_PHY_AC_TBL_WRITE_GATE_LOCK,
++			B43_PHY_AC_TBL_WRITE_GATE_LOCK);
++
++	b43_phy_write(dev, B43_PHY_AC_TABLE_ID, id);
++	b43_phy_write(dev, B43_PHY_AC_TABLE_OFFSET, offset);
++
++	switch (width) {
++	case 16: {
++		const u16 *p = data;
++
++		for (i = 0; i < len; i++)
++			b43_phy_write(dev, B43_PHY_AC_TABLE_DATA_LO, p[i]);
++		break;
++	}
++	default:
++		b43warn(dev->wl,
++			"actab_write_bulk_reopen: unsupported width %u\n",
++			width);
++		break;
++	}
++}
++
++/*
++ * Variante "auto-contained" (vendor #41503+, fase B4): ogni TBL.WR ha il
++ * proprio scope gate — peek 019e + lock all'entrata, unlock finale
++ * all'uscita. È il pattern usato quando NON c'è un lock esterno mantenuto
++ * per più operazioni consecutive.
++ *
++ * Supporta width=16 (data via DATA_LO) e width=32 (data via DATA_HI + DATA_LO,
++ * hi-first come il case 32 di write_bulk).
++ */
++void b43_actab_write_bulk_scoped(struct b43_wldev *dev,
++				 u16 id, u16 offset, u8 width,
++				 size_t len, const void *data)
++{
++	size_t i;
++
++	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
++	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE,
++			(u16)~B43_PHY_AC_TBL_WRITE_GATE_LOCK,
++			B43_PHY_AC_TBL_WRITE_GATE_LOCK);
++
++	b43_phy_write(dev, B43_PHY_AC_TABLE_ID, id);
++	b43_phy_write(dev, B43_PHY_AC_TABLE_OFFSET, offset);
++
++	switch (width) {
++	case 16: {
++		const u16 *p = data;
++
++		for (i = 0; i < len; i++)
++			b43_phy_write(dev, B43_PHY_AC_TABLE_DATA_LO, p[i]);
++		break;
++	}
++	case 32: {
++		const u32 *p = data;
++
++		for (i = 0; i < len; i++) {
++			b43_phy_write(dev, B43_PHY_AC_TABLE_DATA_HI,
++				      (u16)(p[i] >> 16));
++			b43_phy_write(dev, B43_PHY_AC_TABLE_DATA_LO,
++				      (u16)(p[i] & 0xffff));
++		}
++		break;
++	}
++	default:
++		b43warn(dev->wl,
++			"actab_write_bulk_scoped: unsupported width %u\n",
++			width);
++		break;
++	}
++
++	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE,
++			(u16)~B43_PHY_AC_TBL_WRITE_GATE_LOCK, 0);
++}
++
++void b43_actab_read_bulk(struct b43_wldev *dev,
++			 u16 id, u16 offset, u8 width,
++			 size_t len, void *data)
++{
++	size_t i;
++	u16 gate;
++
++	/* Vedi actab_write_bulk: la peek 0x019e è il saved per il restore
++	 * al termine dello scope enclosing (tx_lpf o simile). */
++	gate = b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
++	b43info(dev->wl,
++		"[TXLPFLOG] actab_rd id=0x%02x off=0x%04x width=%u len=%zu gate=0x%04x\n",
++		id, offset, width, (size_t)len, gate);
++
++	/*
++	 * Il vendor emette un MOD 0x019e set 0x0002 (relock) *condizionale*:
++	 * solo quando la peek precedente ritorna gate unlocked (bit 1 = 0).
++	 * Casi (d6220 ch36):
++	 *   #38423 unlock + #38425 peek=0 + #38426 relock (relock emesso)
++	 *   #33228 (peek=0x02 già lockato) + #33230 WR d (no relock)
++	 * Questa condizionalità è specifica di actab_read_bulk — actab_write_bulk
++	 * non la fa mai (idem del vendor: TBL.WR sempre segue peek + WR d).
++	 */
++	if (!(gate & 0x0002))
++		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE,
++				(u16)~0x0002, 0x0002);
++
++	b43_phy_write(dev, B43_PHY_AC_TABLE_ID, id);
++	b43_phy_write(dev, B43_PHY_AC_TABLE_OFFSET, offset);
++
++	switch (width) {
++	case 8: {
++		u8 *p = data;
++		/*
++		 * id=0x20 usa DATA_2 (0x011) invece di DATA_LO. Vedi actab_write_bulk
++		 * per la controparte in scrittura (vendor d6220 ch36 #34564+, #38131).
++		 */
++		u16 data_reg = (id == 0x20)
++			? B43_PHY_AC_TABLE_DATA_2
++			: B43_PHY_AC_TABLE_DATA_LO;
++
++		for (i = 0; i < len; i++)
++			p[i] = b43_phy_read(dev, data_reg) & 0xff;
++		break;
++	}
++	case 16: {
++		u16 *p = data;
++		/*
++		 * id=0x20 usa DATA_2 (0x011) come per width=8 — verificato
++		 * al vendor d6220 #46085/#46092 (TBL.RD id=0x0020 off=0x14/0x1e
++		 * emette PHY.RD addr=0x0011).
++		 */
++		u16 data_reg = (id == 0x20)
++			? B43_PHY_AC_TABLE_DATA_2
++			: B43_PHY_AC_TABLE_DATA_LO;
++
++		for (i = 0; i < len; i++)
++			p[i] = b43_phy_read(dev, data_reg);
++		break;
++	}
++	case 32: {
++		u32 *p = data;
++
++		for (i = 0; i < len; i++) {
++			u16 lo = b43_phy_read(dev, B43_PHY_AC_TABLE_DATA_LO);
++			u16 hi = b43_phy_read(dev, B43_PHY_AC_TABLE_DATA_HI);
++
++			p[i] = ((u32)hi << 16) | lo;
++		}
++		break;
++	}
++	case 48: {
++		u16 *p = data;	/* three halfwords per entry, low first */
++
++		for (i = 0; i < len; i++) {
++			p[i * 3 + 0] = b43_phy_read(dev, B43_PHY_AC_TABLE_DATA_2);
++			p[i * 3 + 1] = b43_phy_read(dev, B43_PHY_AC_TABLE_DATA_2);
++			p[i * 3 + 2] = b43_phy_read(dev, B43_PHY_AC_TABLE_DATA_2);
++		}
++		break;
++	}
++	default:
++		b43warn(dev->wl,
++			"actab_read_bulk: unsupported width %u (id=0x%x len=%zu)\n",
++			width, id, len);
++		break;
++	}
++}
++
++/* Table descriptors and data */
++
++/*
++ * Sentinel for descriptors that are not per-core (one instance for the whole
++ * chip).
++ */
++#define TBL_SHARED		0xff
++
++struct b43_phy_ac_table_desc {
++	u16 id;
++	u16 offset;
++	u8 width;
++	u8 core;		/* 0..num_cores-1, or TBL_SHARED */
++	size_t len;
++	const void *data;	/* NULL = not yet populated */
++	const char *name;	/* for dmesg on skip */
++};
++
++/*
++ * The 24 rev-0 tables follow, one static const u{8,16,32} array per descriptor
++ * entry in b43_phy_ac_tables_rev0[] (declared further down).
++ */
++
++static const u8 acphy_tx_evm_tbl_rev0[38] = {
++	0x09, 0x0e, 0x11, 0x14, 0x17, 0x1a, 0x1d, 0x20,
++	0x09, 0x0e, 0x11, 0x14, 0x17, 0x1a, 0x1d, 0x20,
++	0x22, 0x24, 0x09, 0x0e, 0x11, 0x14, 0x17, 0x1a,
++	0x1d, 0x20, 0x22, 0x24, 0x09, 0x0e, 0x11, 0x14,
++	0x17, 0x1a, 0x1d, 0x20, 0x22, 0x24,
++};
++
++static const u32 acphy_sqthreshold_tbl_rev0[18] = {
++	0x18161616, 0x28171417, 0x34343434, 0x31323334,
++	0x414e453e, 0x5a444b6b, 0x666b6b6b, 0x66676967,
++	0x64656566, 0xc4646464, 0xd8e3e0e3, 0xd6ced8da,
++	0x0e0e0e0e, 0x0e0e0e0e, 0x00000000, 0x00000000,
++	0xbbb9b5b1, 0xc7c7c2bf,
++};
++
++static const u16 acphy_mcs_tbl_rev0[128] = {
++	0x0000, 0x0008, 0x000a, 0x0010, 0x0012, 0x0019, 0x001a, 0x001c,
++	0x0080, 0x0088, 0x008a, 0x0090, 0x0092, 0x0099, 0x009a, 0x009c,
++	0x0100, 0x0108, 0x010a, 0x0110, 0x0112, 0x0119, 0x011a, 0x011c,
++	0x0180, 0x0188, 0x018a, 0x0190, 0x0192, 0x0199, 0x019a, 0x019c,
++	0x0000, 0x0098, 0x00a0, 0x00a8, 0x009a, 0x00a2, 0x00aa, 0x0120,
++	0x0128, 0x0128, 0x0130, 0x0138, 0x0138, 0x0140, 0x0122, 0x012a,
++	0x012a, 0x0132, 0x013a, 0x013a, 0x0142, 0x01a8, 0x01b0, 0x01b8,
++	0x01b0, 0x01b8, 0x01c0, 0x01c8, 0x01c0, 0x01c8, 0x01d0, 0x01d0,
++	0x01d8, 0x01aa, 0x01b2, 0x01ba, 0x01b2, 0x01ba, 0x01c2, 0x01ca,
++	0x01c2, 0x01ca, 0x01d2, 0x01d2, 0x01da, 0x0001, 0x0002, 0x0004,
++	0x0009, 0x000c, 0x0011, 0x0014, 0x0018, 0x0020, 0x0021, 0x0022,
++	0x0024, 0x0081, 0x0082, 0x0084, 0x0089, 0x008c, 0x0091, 0x0094,
++	0x0098, 0x00a0, 0x00a1, 0x00a2, 0x00a4, 0x0007, 0x0007, 0x0007,
++	0x0007, 0x0007, 0x0007, 0x0007, 0x0007, 0x0007, 0x0007, 0x0007,
++	0x0007, 0x0007, 0x0007, 0x0007, 0x0007, 0x0007, 0x0007, 0x0007,
++	0x0007, 0x0007, 0x0007, 0x0007, 0x0007, 0x0007, 0x0007, 0x0007,
++};
++
++static const u32 phasetrack_tbl_rev0[22] = {
++	0x00035700, 0x0002cc9a, 0x00026666, 0x0001581f, 0x0001581f, 0x0001581f,
++	0x0001581f, 0x0001581f, 0x0001581f, 0x0001581f, 0x0001581f, 0x00035700,
++	0x0002cc9a, 0x00026666, 0x0001581f, 0x0001581f, 0x0001581f, 0x0001581f,
++	0x0001581f, 0x0001581f, 0x0001581f, 0x0001581f,
++};
++
++static const u16 est_pwr_lut_core0_rev0[128] = {
++	0x554a, 0x554a, 0x544a, 0x544a, 0x5449, 0x5449, 0x5349, 0x5349, 0x5248, 0x5249, 0x5248, 0x5248,
++	0x5147, 0x5147, 0x5147, 0x5147, 0x5046, 0x5046, 0x4f46, 0x4f46, 0x4f45, 0x4f45, 0x4e44, 0x4e44,
++	0x4e44, 0x4e44, 0x4d43, 0x4d43, 0x4c43, 0x4c43, 0x4c42, 0x4c42, 0x4b42, 0x4b42, 0x4a41, 0x4a41,
++	0x4940, 0x4940, 0x4940, 0x4940, 0x483f, 0x483f, 0x473e, 0x473e, 0x463e, 0x463e, 0x463d, 0x463d,
++	0x453c, 0x453c, 0x443b, 0x443b, 0x433b, 0x433b, 0x423a, 0x423a, 0x4139, 0x4139, 0x4038, 0x4038,
++	0x4037, 0x4037, 0x3f36, 0x3f36, 0x3e36, 0x3e36, 0x3d35, 0x3d35, 0x3c34, 0x3b34, 0x3a33, 0x3a33,
++	0x3932, 0x3932, 0x3831, 0x3830, 0x372f, 0x372f, 0x362e, 0x362e, 0x352d, 0x342d, 0x332c, 0x332c,
++	0x322b, 0x322a, 0x3129, 0x3029, 0x2f28, 0x2f27, 0x2e26, 0x2d26, 0x2c25, 0x2c24, 0x2b23, 0x2a23,
++	0x2922, 0x2821, 0x2720, 0x261f, 0x251e, 0x241d, 0x231c, 0x221b, 0x211a, 0x2019, 0x1f17, 0x1e16,
++	0x1d15, 0x1c14, 0x1a12, 0x1911, 0x180f, 0x170e, 0x150c, 0x140a, 0x1208, 0x1006, 0x0e03, 0x0d01,
++	0x0bfe, 0x09fb, 0x07f8, 0x05f5, 0x02f1, 0x00ec, 0xfde7, 0xfde7,
++};
++
++static const u16 est_pwr_lut_core1_rev0[128] = {
++	0x554a, 0x554a, 0x544a, 0x544a, 0x5449, 0x5449, 0x5349, 0x5349, 0x5248, 0x5249, 0x5248, 0x5248,
++	0x5147, 0x5147, 0x5147, 0x5147, 0x5046, 0x5046, 0x4f46, 0x4f46, 0x4f45, 0x4f45, 0x4e44, 0x4e44,
++	0x4e44, 0x4e44, 0x4d43, 0x4d43, 0x4c43, 0x4c43, 0x4c42, 0x4c42, 0x4b42, 0x4b42, 0x4a41, 0x4a41,
++	0x4940, 0x4940, 0x4940, 0x4940, 0x483f, 0x483f, 0x473e, 0x473e, 0x463e, 0x463e, 0x463d, 0x463d,
++	0x453c, 0x453c, 0x443b, 0x443b, 0x433b, 0x433b, 0x423a, 0x423a, 0x4139, 0x4139, 0x4038, 0x4038,
++	0x4037, 0x4037, 0x3f36, 0x3f36, 0x3e36, 0x3e36, 0x3d35, 0x3d35, 0x3c34, 0x3b34, 0x3a33, 0x3a33,
++	0x3932, 0x3932, 0x3831, 0x3830, 0x372f, 0x372f, 0x362e, 0x362e, 0x352d, 0x342d, 0x332c, 0x332c,
++	0x322b, 0x322a, 0x3129, 0x3029, 0x2f28, 0x2f27, 0x2e26, 0x2d26, 0x2c25, 0x2c24, 0x2b23, 0x2a23,
++	0x2922, 0x2821, 0x2720, 0x261f, 0x251e, 0x241d, 0x231c, 0x221b, 0x211a, 0x2019, 0x1f17, 0x1e16,
++	0x1d15, 0x1c14, 0x1a12, 0x1911, 0x180f, 0x170e, 0x150c, 0x140a, 0x1208, 0x1006, 0x0e03, 0x0d01,
++	0x0bfe, 0x09fb, 0x07f8, 0x05f5, 0x02f1, 0x00ec, 0xfde7, 0xfde7,
++};
++
++static const u16 est_pwr_lut_core2_rev0[128] = {
++	0x554a, 0x554a, 0x544a, 0x544a, 0x5449, 0x5449, 0x5349, 0x5349, 0x5248, 0x5249, 0x5248, 0x5248,
++	0x5147, 0x5147, 0x5147, 0x5147, 0x5046, 0x5046, 0x4f46, 0x4f46, 0x4f45, 0x4f45, 0x4e44, 0x4e44,
++	0x4e44, 0x4e44, 0x4d43, 0x4d43, 0x4c43, 0x4c43, 0x4c42, 0x4c42, 0x4b42, 0x4b42, 0x4a41, 0x4a41,
++	0x4940, 0x4940, 0x4940, 0x4940, 0x483f, 0x483f, 0x473e, 0x473e, 0x463e, 0x463e, 0x463d, 0x463d,
++	0x453c, 0x453c, 0x443b, 0x443b, 0x433b, 0x433b, 0x423a, 0x423a, 0x4139, 0x4139, 0x4038, 0x4038,
++	0x4037, 0x4037, 0x3f36, 0x3f36, 0x3e36, 0x3e36, 0x3d35, 0x3d35, 0x3c34, 0x3b34, 0x3a33, 0x3a33,
++	0x3932, 0x3932, 0x3831, 0x3830, 0x372f, 0x372f, 0x362e, 0x362e, 0x352d, 0x342d, 0x332c, 0x332c,
++	0x322b, 0x322a, 0x3129, 0x3029, 0x2f28, 0x2f27, 0x2e26, 0x2d26, 0x2c25, 0x2c24, 0x2b23, 0x2a23,
++	0x2922, 0x2821, 0x2720, 0x261f, 0x251e, 0x241d, 0x231c, 0x221b, 0x211a, 0x2019, 0x1f17, 0x1e16,
++	0x1d15, 0x1c14, 0x1a12, 0x1911, 0x180f, 0x170e, 0x150c, 0x140a, 0x1208, 0x1006, 0x0e03, 0x0d01,
++	0x0bfe, 0x09fb, 0x07f8, 0x05f5, 0x02f1, 0x00ec, 0xfde7, 0xfde7,
++};
++
++static const u16 papd_comp_rfpwr_tbl_core0_rev0[128] = {
++	0x0048, 0x0047, 0x0046, 0x0044, 0x0043, 0x0042, 0x0040, 0x003f, 0x003e, 0x003c, 0x003a, 0x0038,
++	0x0037, 0x0035, 0x0033, 0x0031, 0x002e, 0x002c, 0x002a, 0x0027, 0x0024, 0x0020, 0x001d, 0x0019,
++	0x0019, 0x0019, 0x0019, 0x0014, 0x0014, 0x0014, 0x000f, 0x000f, 0x000f, 0x0008, 0x0008, 0x0008,
++	0x0008, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0xfff7, 0xfff7, 0xfff7, 0xfff7, 0xfff7, 0xfff7,
++	0xfff7, 0xffe8, 0xffe8, 0xffe8, 0xffe8, 0xffe8, 0xffe8, 0xffe8, 0xffe8, 0xffe8, 0xffe8, 0xffe8,
++	0xffe8, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0,
++	0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0,
++	0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0,
++	0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0,
++	0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0,
++	0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0,
++};
++
++static const u16 papd_comp_rfpwr_tbl_core1_rev0[128] = {
++	0x0048, 0x0047, 0x0046, 0x0044, 0x0043, 0x0042, 0x0040, 0x003f, 0x003e, 0x003c, 0x003a, 0x0038,
++	0x0037, 0x0035, 0x0033, 0x0031, 0x002e, 0x002c, 0x002a, 0x0027, 0x0024, 0x0020, 0x001d, 0x0019,
++	0x0019, 0x0019, 0x0019, 0x0014, 0x0014, 0x0014, 0x000f, 0x000f, 0x000f, 0x0008, 0x0008, 0x0008,
++	0x0008, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0xfff7, 0xfff7, 0xfff7, 0xfff7, 0xfff7, 0xfff7,
++	0xfff7, 0xffe8, 0xffe8, 0xffe8, 0xffe8, 0xffe8, 0xffe8, 0xffe8, 0xffe8, 0xffe8, 0xffe8, 0xffe8,
++	0xffe8, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0,
++	0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0,
++	0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0,
++	0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0,
++	0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0,
++	0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0,
++};
++
++static const u16 papd_comp_rfpwr_tbl_core2_rev0[128] = {
++	0x0048, 0x0047, 0x0046, 0x0044, 0x0043, 0x0042, 0x0040, 0x003f, 0x003e, 0x003c, 0x003a, 0x0038,
++	0x0037, 0x0035, 0x0033, 0x0031, 0x002e, 0x002c, 0x002a, 0x0027, 0x0024, 0x0020, 0x001d, 0x0019,
++	0x0019, 0x0019, 0x0019, 0x0014, 0x0014, 0x0014, 0x000f, 0x000f, 0x000f, 0x0008, 0x0008, 0x0008,
++	0x0008, 0x0001, 0x0001, 0x0001, 0x0001, 0x0001, 0xfff7, 0xfff7, 0xfff7, 0xfff7, 0xfff7, 0xfff7,
++	0xfff7, 0xffe8, 0xffe8, 0xffe8, 0xffe8, 0xffe8, 0xffe8, 0xffe8, 0xffe8, 0xffe8, 0xffe8, 0xffe8,
++	0xffe8, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0,
++	0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0,
++	0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0,
++	0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0,
++	0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0,
++	0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0, 0xffd0,
++};
++
++static const u32 papd_comp_epsilon_tbl_core0_rev0[64] = {
++	0x00000000, 0x03fdfffe, 0x00002003, 0x03fe4001, 0x03ff000a, 0x03fea003,
++	0x03fe7fff, 0x03fe9fff, 0x03fee00a, 0x00000029, 0x0001403c, 0x0002004b,
++	0x0003a04b, 0x0004a04e, 0x0005e051, 0x0007004a, 0x0008003f, 0x00092034,
++	0x000aa02f, 0x000ba024, 0x000d2022, 0x000e8021, 0x0010001e, 0x0011e01c,
++	0x0013c018, 0x00152014, 0x00172010, 0x0019200a, 0x001a7ff9, 0x001bffe9,
++	0x001d7fd9, 0x001f1fc9, 0x0020bfb9, 0x0021ffa7, 0x00233f95, 0x00243f84,
++	0x00257f73, 0x00269f63, 0x00283f57, 0x002a1f53, 0x002bff4c, 0x002e3f4a,
++	0x002fbf3e, 0x0030ff2f, 0x00321f21, 0x00339f12, 0x0034df02, 0x00359eee,
++	0x0035ded8, 0x00361ec1, 0x0036beac, 0x00373e96, 0x0037de82, 0x003e5ea3,
++	0x004b5ef3, 0x0056bf29, 0x0061bf51, 0x00723fb9, 0x00926203, 0x01308ef5,
++	0x0152cfff, 0x01516fff, 0x014f6fff, 0x014e6fff,
++};
++
++static const u32 papd_comp_epsilon_tbl_core1_rev0[64] = {
++	0x00000000, 0x03fdfffe, 0x00002003, 0x03fe4001, 0x03ff000a, 0x03fea003,
++	0x03fe7fff, 0x03fe9fff, 0x03fee00a, 0x00000029, 0x0001403c, 0x0002004b,
++	0x0003a04b, 0x0004a04e, 0x0005e051, 0x0007004a, 0x0008003f, 0x00092034,
++	0x000aa02f, 0x000ba024, 0x000d2022, 0x000e8021, 0x0010001e, 0x0011e01c,
++	0x0013c018, 0x00152014, 0x00172010, 0x0019200a, 0x001a7ff9, 0x001bffe9,
++	0x001d7fd9, 0x001f1fc9, 0x0020bfb9, 0x0021ffa7, 0x00233f95, 0x00243f84,
++	0x00257f73, 0x00269f63, 0x00283f57, 0x002a1f53, 0x002bff4c, 0x002e3f4a,
++	0x002fbf3e, 0x0030ff2f, 0x00321f21, 0x00339f12, 0x0034df02, 0x00359eee,
++	0x0035ded8, 0x00361ec1, 0x0036beac, 0x00373e96, 0x0037de82, 0x003e5ea3,
++	0x004b5ef3, 0x0056bf29, 0x0061bf51, 0x00723fb9, 0x00926203, 0x01308ef5,
++	0x0152cfff, 0x01516fff, 0x014f6fff, 0x014e6fff,
++};
++
++static const u32 papd_comp_epsilon_tbl_core2_rev0[64] = {
++	0x00000000, 0x03fdfffe, 0x00002003, 0x03fe4001, 0x03ff000a, 0x03fea003,
++	0x03fe7fff, 0x03fe9fff, 0x03fee00a, 0x00000029, 0x0001403c, 0x0002004b,
++	0x0003a04b, 0x0004a04e, 0x0005e051, 0x0007004a, 0x0008003f, 0x00092034,
++	0x000aa02f, 0x000ba024, 0x000d2022, 0x000e8021, 0x0010001e, 0x0011e01c,
++	0x0013c018, 0x00152014, 0x00172010, 0x0019200a, 0x001a7ff9, 0x001bffe9,
++	0x001d7fd9, 0x001f1fc9, 0x0020bfb9, 0x0021ffa7, 0x00233f95, 0x00243f84,
++	0x00257f73, 0x00269f63, 0x00283f57, 0x002a1f53, 0x002bff4c, 0x002e3f4a,
++	0x002fbf3e, 0x0030ff2f, 0x00321f21, 0x00339f12, 0x0034df02, 0x00359eee,
++	0x0035ded8, 0x00361ec1, 0x0036beac, 0x00373e96, 0x0037de82, 0x003e5ea3,
++	0x004b5ef3, 0x0056bf29, 0x0061bf51, 0x00723fb9, 0x00926203, 0x01308ef5,
++	0x0152cfff, 0x01516fff, 0x014f6fff, 0x014e6fff,
++};
++
++static const u32 papd_cal_scalars_tbl_core0_rev0[64] = {
++	0x0b5e002d, 0x0ae2002f, 0x0a3b0032, 0x09a70035, 0x09220038, 0x08ab003b,
++	0x081f003f, 0x07a20043, 0x07340047, 0x06d2004b, 0x067a004f, 0x06170054,
++	0x05bf0059, 0x0571005e, 0x051e0064, 0x04d3006a, 0x04910070, 0x044c0077,
++	0x040f007e, 0x03d90085, 0x03a1008d, 0x036f0095, 0x033d009e, 0x030b00a8,
++	0x02e000b2, 0x02b900bc, 0x029200c7, 0x026d00d3, 0x024900e0, 0x022900ed,
++	0x020a00fb, 0x01ec010a, 0x01d20119, 0x01b7012a, 0x019e013c, 0x0188014e,
++	0x01720162, 0x015d0177, 0x0149018e, 0x013701a5, 0x012601be, 0x011501d8,
++	0x010601f4, 0x00f70212, 0x00e90231, 0x00dc0253, 0x00d00276, 0x00c4029b,
++	0x00b902c3, 0x00af02ed, 0x00a50319, 0x009c0348, 0x0093037a, 0x008b03af,
++	0x008303e6, 0x007c0422, 0x00750460, 0x006e04a3, 0x006804e9, 0x00620533,
++	0x005d0582, 0x005805d6, 0x0053062e, 0x004e068c,
++};
++
++static const u32 papd_cal_scalars_tbl_core1_rev0[64] = {
++	0x0b5e002d, 0x0ae2002f, 0x0a3b0032, 0x09a70035, 0x09220038, 0x08ab003b,
++	0x081f003f, 0x07a20043, 0x07340047, 0x06d2004b, 0x067a004f, 0x06170054,
++	0x05bf0059, 0x0571005e, 0x051e0064, 0x04d3006a, 0x04910070, 0x044c0077,
++	0x040f007e, 0x03d90085, 0x03a1008d, 0x036f0095, 0x033d009e, 0x030b00a8,
++	0x02e000b2, 0x02b900bc, 0x029200c7, 0x026d00d3, 0x024900e0, 0x022900ed,
++	0x020a00fb, 0x01ec010a, 0x01d20119, 0x01b7012a, 0x019e013c, 0x0188014e,
++	0x01720162, 0x015d0177, 0x0149018e, 0x013701a5, 0x012601be, 0x011501d8,
++	0x010601f4, 0x00f70212, 0x00e90231, 0x00dc0253, 0x00d00276, 0x00c4029b,
++	0x00b902c3, 0x00af02ed, 0x00a50319, 0x009c0348, 0x0093037a, 0x008b03af,
++	0x008303e6, 0x007c0422, 0x00750460, 0x006e04a3, 0x006804e9, 0x00620533,
++	0x005d0582, 0x005805d6, 0x0053062e, 0x004e068c,
++};
++
++static const u32 papd_cal_scalars_tbl_core2_rev0[64] = {
++	0x0b5e002d, 0x0ae2002f, 0x0a3b0032, 0x09a70035, 0x09220038, 0x08ab003b,
++	0x081f003f, 0x07a20043, 0x07340047, 0x06d2004b, 0x067a004f, 0x06170054,
++	0x05bf0059, 0x0571005e, 0x051e0064, 0x04d3006a, 0x04910070, 0x044c0077,
++	0x040f007e, 0x03d90085, 0x03a1008d, 0x036f0095, 0x033d009e, 0x030b00a8,
++	0x02e000b2, 0x02b900bc, 0x029200c7, 0x026d00d3, 0x024900e0, 0x022900ed,
++	0x020a00fb, 0x01ec010a, 0x01d20119, 0x01b7012a, 0x019e013c, 0x0188014e,
++	0x01720162, 0x015d0177, 0x0149018e, 0x013701a5, 0x012601be, 0x011501d8,
++	0x010601f4, 0x00f70212, 0x00e90231, 0x00dc0253, 0x00d00276, 0x00c4029b,
++	0x00b902c3, 0x00af02ed, 0x00a50319, 0x009c0348, 0x0093037a, 0x008b03af,
++	0x008303e6, 0x007c0422, 0x00750460, 0x006e04a3, 0x006804e9, 0x00620533,
++	0x005d0582, 0x005805d6, 0x0053062e, 0x004e068c,
++};
++
++#define TBL_POPULATED(_id, _off, _w, _core, _arr, _name) \
++	{ .id = (_id), .offset = (_off), .width = (_w), .core = (_core), \
++	  .len = ARRAY_SIZE(_arr), .data = (_arr), .name = (_name) }
++
++/* acphytbl_info_rev0 entries. */
++static const struct b43_phy_ac_table_desc b43_phy_ac_tables_rev0[] = {
++	TBL_POPULATED(0x01, 0, 16, TBL_SHARED, acphy_mcs_tbl_rev0,                "mcs"),
++	TBL_POPULATED(0x02, 0,  8, TBL_SHARED, acphy_tx_evm_tbl_rev0,             "tx_evm"),
++	TBL_POPULATED(0x05, 0, 32, TBL_SHARED, phasetrack_tbl_rev0,               "phasetrack"),
++	TBL_POPULATED(0x06, 0, 32, TBL_SHARED, acphy_sqthreshold_tbl_rev0,        "sqthreshold"),
++	TBL_POPULATED(0x40, 0, 16, 0,          est_pwr_lut_core0_rev0,            "est_pwr_lut_core0"),
++	TBL_POPULATED(0x60, 0, 16, 1,          est_pwr_lut_core1_rev0,            "est_pwr_lut_core1"),
++	TBL_POPULATED(0x80, 0, 16, 2,          est_pwr_lut_core2_rev0,            "est_pwr_lut_core2"),
++	TBL_POPULATED(0x40, 0, 16, 0,          papd_comp_rfpwr_tbl_core0_rev0,    "papd_comp_rfpwr_tbl_core0"),
++	TBL_POPULATED(0x60, 0, 16, 1,          papd_comp_rfpwr_tbl_core1_rev0,    "papd_comp_rfpwr_tbl_core1"),
++	TBL_POPULATED(0x80, 0, 16, 2,          papd_comp_rfpwr_tbl_core2_rev0,    "papd_comp_rfpwr_tbl_core2"),
++	TBL_POPULATED(0x47, 0, 32, 0,          papd_comp_epsilon_tbl_core0_rev0,  "papd_comp_epsilon_tbl_core0"),
++	TBL_POPULATED(0x67, 0, 32, 1,          papd_comp_epsilon_tbl_core1_rev0,  "papd_comp_epsilon_tbl_core1"),
++	TBL_POPULATED(0x87, 0, 32, 2,          papd_comp_epsilon_tbl_core2_rev0,  "papd_comp_epsilon_tbl_core2"),
++	TBL_POPULATED(0x48, 0, 32, 0,          papd_cal_scalars_tbl_core0_rev0,   "papd_cal_scalars_tbl_core0"),
++	TBL_POPULATED(0x68, 0, 32, 1,          papd_cal_scalars_tbl_core1_rev0,   "papd_cal_scalars_tbl_core1"),
++	TBL_POPULATED(0x88, 0, 32, 2,          papd_cal_scalars_tbl_core2_rev0,   "papd_cal_scalars_tbl_core2"),
++};
++
++#undef TBL_POPULATED
++
++/* Init */
++
++/* TODO: calibrate. */
++static void b43_phy_ac_tables_zero_cal(struct b43_wldev *dev)
++{
++	static const u32 zeros[256];
++	u8 c, num_cores = dev->phy.ac->num_cores;
++
++	b43_actab_write_bulk(dev, 0x04, 0,  8, 256, zeros);
++	b43_actab_write_bulk(dev, 0x03, 0, 32, 256, zeros);
++	for (c = 0; c < num_cores; c++) {
++		if (!((dev->phy.ac->coremask >> c) & 1))
++			continue;
++		b43_actab_write_bulk(dev, 0x41 + c * 0x20, 0, 32, 128, zeros);
++		b43_actab_write_bulk(dev, 0x42 + c * 0x20, 0, 16, 128, zeros);
++	}
++}
++
++/* 4360 agcombo: 787-5804 ; d6220 ch36: n/l come funzione (loader op_init table-driven); i singoli TBL.WR sono nel raw e testimoniati in chan_tables/femctrl/rx_evm */
++void b43_phy_ac_tables_init(struct b43_wldev *dev)
++{
++	const struct b43_phy_ac_table_desc *t;
++	u16 saved;
++	size_t i;
++
++	saved = b43_phy_ac_tbl_write_lock(dev);
++	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_tables_rev0); i++) {
++		t = &b43_phy_ac_tables_rev0[i];
++		if (t->core != TBL_SHARED && !((dev->phy.ac->coremask >> t->core) & 1))
++			continue;
++
++		if (t->data)
++			b43_actab_write_bulk(dev, t->id, t->offset, t->width, t->len, t->data);
++	}
++	
++	b43_phy_ac_tables_zero_cal(dev);
++	b43_phy_ac_tbl_write_unlock(dev, saved);
++}
++
++/*
++ * Alternate-port table write (id 0x11 style). The blob programs this table
++ * one word at a time via the data register 0x0011 (not DATA_LO 0x00f /
++ * DATA_HI 0x010), re-selecting id+offset for every word and with no address
++ * auto-increment -- see trace. Reproduced faithfully here.
++ */
++void b43_actab_write_r11(struct b43_wldev *dev,
++			 u16 id, u16 offset, size_t len, const u16 *data)
++{
++	size_t i;
++
++	/*
++	 * Pattern vendor per la tabella 0x11 (464 valori u16): per ogni cella,
++	 * peek 0x019e + WR TABLE_ID + WR TABLE_OFFSET + WR DATA_2 (0x0011).
++	 * Non usa auto-increment del TABLE_OFFSET (che sarebbe il comportamento
++	 * standard di actab_write_bulk); riseleziona ID/OFFSET per ciascuna
++	 * cella. La label TBL.WR è emessa dal wrap del tracer (--wrap link
++	 * trick, vedi test/wrap.c).
++	 * d6220 ch36 #35087+ (5 op per cella × 464 celle = 2320 op).
++	 */
++	for (i = 0; i < len; i++) {
++		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
++		b43_phy_write(dev, B43_PHY_AC_TABLE_ID, id);
++		b43_phy_write(dev, B43_PHY_AC_TABLE_OFFSET, (u16)(offset + i));
++		b43_phy_write(dev, B43_PHY_AC_TABLE_DATA_2, data[i]);
++	}
++}
+diff --git a/drivers/net/wireless/broadcom/b43/tables_phy_ac.h b/drivers/net/wireless/broadcom/b43/tables_phy_ac.h
+new file mode 100644
+index 000000000..54b2a622a
+--- /dev/null
++++ b/drivers/net/wireless/broadcom/b43/tables_phy_ac.h
+@@ -0,0 +1,55 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++#ifndef B43_TABLES_PHY_AC_H_
++#define B43_TABLES_PHY_AC_H_
++
++#include <linux/types.h>
++
++struct b43_wldev;
++
++/* Load the AC-PHY init tables into the PHY's table memory. */
++void b43_phy_ac_tables_init(struct b43_wldev *dev);
++
++/* Bulk write into one of the AC-PHY's internal tables. */
++void b43_actab_write_bulk(struct b43_wldev *dev,
++			  u16 id, u16 offset, u8 width,
++			  size_t len, const void *data);
++/*
++ * Variante di write_bulk usata quando il gate 0x019e è UNLOCKATO all'entrata
++ * (per esempio dopo b43_phy_ac_post_noise_shaping_rx_regprog #37944 unlock).
++ * Emette peek + relock idempotente + WR TABLE_ID/OFFSET/DATA — cioè +1 op
++ * (il relock) rispetto a write_bulk. Nel vendor blob è la stessa funzione
++ * di write_bulk che rileva runtime lo stato del gate; qui esplicitiamo la
++ * variante perché il tracer non simula il vero registro. */
++void b43_actab_write_bulk_reopen(struct b43_wldev *dev,
++				 u16 id, u16 offset, u8 width,
++				 size_t len, const void *data);
++/*
++ * Variante "auto-contained": emette peek 019e + relock + WR TABLE_ID/OFFSET/
++ * DATA + unlock finale. È il pattern osservato nella fase B4 (vendor
++ * #41503+): ogni TBL.WR ha il proprio scope gate, senza affidamento su un
++ * lock esterno mantenuto per più operazioni. +1 op (unlock finale) rispetto
++ * a write_bulk_reopen.
++ */
++void b43_actab_write_bulk_scoped(struct b43_wldev *dev,
++				 u16 id, u16 offset, u8 width,
++				 size_t len, const void *data);
++void b43_actab_read_bulk(struct b43_wldev *dev,
++			 u16 id, u16 offset, u8 width,
++			 size_t len, void *data);
++
++/*
++ * Some tables (e.g. id 0x11) are written one cell at a time through the
++ * alternate data register 0x0011 -- not DATA_LO/DATA_HI -- re-selecting
++ * id+offset per word. This helper reproduces that access.
++ */
++void b43_actab_write_r11(struct b43_wldev *dev,
++			 u16 id, u16 offset, size_t len, const u16 *data);
++
++/*
++ * Save+set / restore of bit 0x0002 of B43_PHY_AC_REG_TBL_WRITE_GATE (PHY reg
++ * 0x19E).
++ */
++u16  b43_phy_ac_tbl_write_lock(struct b43_wldev *dev);
++void b43_phy_ac_tbl_write_unlock(struct b43_wldev *dev, u16 saved);
++
++#endif /* B43_TABLES_PHY_AC_H_ */
+-- 
+2.43.0
+

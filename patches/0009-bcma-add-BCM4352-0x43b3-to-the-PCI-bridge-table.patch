@@ -1,0 +1,31 @@
+From b7ba4ac2b0c7de7e9a5ae457721bc6af2cdd19db Mon Sep 17 00:00:00 2001
+From: Alessio Ferri <alessio.ferri@mythread.it>
+Date: Tue, 7 Jul 2026 19:42:28 +0000
+Subject: [PATCH 9/9] bcma: add BCM4352 (0x43b3) to the PCI bridge table
+
+The BCM4352 is an AC PHY. It is missing from bcma_pci_bridge_tbl[],
+so bcma-pci-bridge does not bind. Add the ID.
+
+The chip identifies as BCM4352 (chip rev 3, PHY type AC); b43 with AC-PHY
+support handles it once bcma reaches the D11 core.
+
+Signed-off-by: Alessio Ferri <alessio.ferri@mythread.it>
+---
+ drivers/bcma/host_pci.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/bcma/host_pci.c b/drivers/bcma/host_pci.c
+index 3dc29850..f6cf722a 100644
+--- a/drivers/bcma/host_pci.c
++++ b/drivers/bcma/host_pci.c
+@@ -298,6 +298,7 @@ static const struct pci_device_id bcma_pci_bridge_tbl[] = {
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 0x43a9) },
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 0x43aa) },
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 0x43b1) },
++	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 0x43b3) },
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 0x4727) },
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 43227) },	/* 0xa8db, BCM43217 (sic!) */
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 43228) },	/* 0xa8dc */
+-- 
+2.43.0
+

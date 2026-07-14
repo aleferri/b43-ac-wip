@@ -1,0 +1,83 @@
+From eade2cf85679fc7f509cc792c37a3dbba68aeafb Mon Sep 17 00:00:00 2001
+From: Alessio Ferri <alessio.ferri@mythread.it>
+Date: Tue, 7 Jul 2026 19:42:21 +0000
+Subject: [PATCH 4/9] b43: 64 KB descriptor-ring alignment for the AC-PHY DMA64
+ engine
+
+The BCM4352-family (AC-PHY) DMA64 engine needs the descriptor ring
+64 KB-aligned and not crossing a 64 KB boundary; mainline only guarantees
+8 KB. Allocate a 64 KB ring on AC (dma_alloc_coherent aligns to the
+power-of-two size); factor the size into a shared helper so alloc and free
+stay in sync.
+
+The 64 KB requirement was found empirically: smaller alignments left the
+DMA64 engine non-functional, and raising the ring alignment until it came
+up settled on 64 KB.
+
+Content unchanged from the earlier version of this patch (no scratch/
+copy of dma.c exists to check for drift, and nothing in the rest of the
+series depends on or modifies this file); only its position in the
+series changed.
+
+Signed-off-by: Alessio Ferri <alessio.ferri@mythread.it>
+---
+ drivers/net/wireless/broadcom/b43/dma.c | 34 +++++++++++++++----------
+ 1 file changed, 21 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/net/wireless/broadcom/b43/dma.c b/drivers/net/wireless/broadcom/b43/dma.c
+index 05da6987..e1e39acc 100644
+--- a/drivers/net/wireless/broadcom/b43/dma.c
++++ b/drivers/net/wireless/broadcom/b43/dma.c
+@@ -404,19 +404,27 @@ static inline
+ 	}
+ }
+ 
++/*
++ * Descriptor-ring memory size (and, via dma_alloc_coherent()'s power-of-two
++ * alignment, its alignment): 4K for 30/32-bit DMA, 8K for 64-bit DMA. The 8K
++ * alignment matters because of a hardware bug where bit 0x00001000 of the DMA
++ * address leaks into B43_DMA64_RXSTATUS. The BCM4352-family AC-PHY DMA64
++ * engine additionally requires the ring to be 64 KB-aligned and to never
++ * cross a 64 KB boundary (found empirically by raising the ring alignment
++ * until the engine came up); the ring itself is far smaller, so a 64 KB allocation
++ * both gives that alignment and keeps the ring inside one 64 KB block.
++ */
++static unsigned int b43_dma_ringmemsize(struct b43_dmaring *ring)
++{
++	if (ring->dev->phy.type == B43_PHYTYPE_AC)
++		return 64 * 1024;
++	return (ring->type == B43_DMA_64BIT) ?
++		B43_DMA64_RINGMEMSIZE : B43_DMA32_RINGMEMSIZE;
++}
++
+ static int alloc_ringmemory(struct b43_dmaring *ring)
+ {
+-	/* The specs call for 4K buffers for 30- and 32-bit DMA with 4K
+-	 * alignment and 8K buffers for 64-bit DMA with 8K alignment.
+-	 * In practice we could use smaller buffers for the latter, but the
+-	 * alignment is really important because of the hardware bug. If bit
+-	 * 0x00001000 is used in DMA address, some hardware (like BCM4331)
+-	 * copies that bit into B43_DMA64_RXSTATUS and we get false values from
+-	 * B43_DMA64_RXSTATDPTR. Let's just use 8K buffers even if we don't use
+-	 * more than 256 slots for ring.
+-	 */
+-	u16 ring_mem_size = (ring->type == B43_DMA_64BIT) ?
+-				B43_DMA64_RINGMEMSIZE : B43_DMA32_RINGMEMSIZE;
++	unsigned int ring_mem_size = b43_dma_ringmemsize(ring);
+ 
+ 	ring->descbase = dma_alloc_coherent(ring->dev->dev->dma_dev,
+ 					    ring_mem_size, &(ring->dmabase),
+@@ -429,8 +437,8 @@ static int alloc_ringmemory(struct b43_dmaring *ring)
+ 
+ static void free_ringmemory(struct b43_dmaring *ring)
+ {
+-	u16 ring_mem_size = (ring->type == B43_DMA_64BIT) ?
+-				B43_DMA64_RINGMEMSIZE : B43_DMA32_RINGMEMSIZE;
++	unsigned int ring_mem_size = b43_dma_ringmemsize(ring);
++
+ 	dma_free_coherent(ring->dev->dev->dma_dev, ring_mem_size,
+ 			  ring->descbase, ring->dmabase);
+ }
+-- 
+2.43.0
+

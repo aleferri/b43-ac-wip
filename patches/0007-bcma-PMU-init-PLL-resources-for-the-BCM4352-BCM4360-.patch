@@ -1,0 +1,82 @@
+From a40b57a9b0b5b315a627ea6d11c2f390ad06e5c6 Mon Sep 17 00:00:00 2001
+From: Alessio Ferri <alessio.ferri@mythread.it>
+Date: Tue, 7 Jul 2026 19:42:27 +0000
+Subject: [PATCH 7/9] bcma: PMU init (PLL + resources) for the BCM4352/BCM4360
+ family
+
+Neither bcma_pmu_pll_init() nor bcma_pmu_resources_init() have a case
+for the BCM4352/BCM4360 family; both are no-ops for this chip today.
+
+PLL: the stock driver writes PLLCTL2/PLLCTL3 unconditionally during
+attach. Values captured from an MMIO trace of the stock driver's
+attach sequence on a BCM43b3 (BCM4352-family) device (Netgear D6220,
+wl-diag-d6220-4352-wl1-attach.txt, #161359-161360, last of three observed
+attach cycles in the capture -- see commit message discussion for why
+the earlier two are not used as-is). Only one crystal/board sample is
+available, so this is not split by xtalfreq like the existing 43142
+case; revisit if a board with a different crystal shows different
+values.
+
+Resources: program the PMU max resource mask to 0x7ff. This value was
+read back at runtime from the ChipCommon PMU of a live BCM4360 and is
+applied as-is; not yet confirmed on BCM4352 (D6220/DSL-3580L).
+
+Signed-off-by: Alessio Ferri <alessio.ferri@mythread.it>
+---
+ drivers/bcma/driver_chipcommon_pmu.c | 28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/drivers/bcma/driver_chipcommon_pmu.c b/drivers/bcma/driver_chipcommon_pmu.c
+index 263ef6fa..469f6d9a 100644
+--- a/drivers/bcma/driver_chipcommon_pmu.c
++++ b/drivers/bcma/driver_chipcommon_pmu.c
+@@ -156,6 +156,20 @@ static void bcma_pmu_pll_init(struct bcma_drv_cc *cc)
+ 			xtalfreq = 20000;
+ 		bcma_pmu2_pll_init0(cc, xtalfreq);
+ 		break;
++	case BCMA_CHIP_ID_BCM4352:
++	case BCMA_CHIP_ID_BCM4360:
++		/*
++		 * Vendor writes PLLCTL2/PLLCTL3 here unconditionally on this
++		 * family. Values captured from an MMIO trace of the stock
++		 * driver's attach sequence on a BCM43b3 (BCM4352-family)
++		 * device (Netgear D6220), not derived from a per-xtal
++		 * formula -- only one crystal/board sample available. May
++		 * need to be split by xtalfreq like the 43142 case above if
++		 * a board with a different crystal shows different values.
++		 */
++		bcma_chipco_pll_write(cc, BCMA_CC_PMU_PLL_CTL2, 0x0c31);
++		bcma_chipco_pll_write(cc, BCMA_CC_PMU_PLL_CTL3, 0x100e);
++		break;
+ 	}
+ }
+ 
+@@ -188,11 +202,25 @@ static void bcma_pmu_resources_init(struct bcma_drv_cc *cc)
+ 			  BCMA_RES_4314_WL_CORE_READY;
+ 		max_msk = 0x3FFFFFFF;
+ 		break;
++	case BCMA_CHIP_ID_BCM4352:
++	case BCMA_CHIP_ID_BCM4360:
++		/*
++		 * Read at runtime from the PMU of a live BCM4360; applied
++		 * as-is. TODO: confirm on BCM4352 (D6220/DSL-3580L).
++		 */
++		max_msk = 0x7ff;
++		break;
+ 	default:
+ 		bcma_debug(bus, "PMU resource config unknown or not needed for device 0x%04X\n",
+ 			   bus->chipinfo.id);
+ 	}
+ 
++	bcma_debug(bus,
++		   "PMU res mask pre-write: min=0x%08x max=0x%08x (writing min=0x%08x max=0x%08x)\n",
++		   bcma_pmu_read32(cc, BCMA_CC_PMU_MINRES_MSK),
++		   bcma_pmu_read32(cc, BCMA_CC_PMU_MAXRES_MSK),
++		   min_msk, max_msk);
++
+ 	/* Set the resource masks. */
+ 	if (min_msk)
+ 		bcma_pmu_write32(cc, BCMA_CC_PMU_MINRES_MSK, min_msk);
+-- 
+2.43.0
+
