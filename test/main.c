@@ -5,12 +5,15 @@
  * corresponding wl-diag capture after normalisation.
  *
  * Usage:
- *   ./rxiq_trace [flow]
- *     flow = rxiqcal (default) | rxiq_est_debug | switch_channel
+ *   ./rxiq_trace [flow] [board]
+ *     flow  = rxiq_est_debug (default) | rxiqcal | op_init | set_channel
+ *     board = d6220 (default) | agcombo
  *
- * The set of usable flows will grow as more of the scratch code links
- * cleanly; today the framework targets the rxiqcal module in isolation
- * (its file compiles standalone once the low-level b43 API is wrapped).
+ * set_channel drives the whole b43_phy_ac_op_switch_channel pipeline and
+ * is the broadest flow (~22k HW ops on d6220 ch36); the others exercise
+ * narrower slices. The full scratch driver (phy_ac.c + radio_2069.c +
+ * rxiqcal_phy_ac.c + tables_phy_ac.c) links and runs; see the Makefile
+ * SCRATCH_SRCS_FULL list.
  */
 
 #include <stdio.h>
@@ -41,6 +44,9 @@ struct board_profile {
 	 * mount_board lascia pa5ga = 0 (il caller cade sui pwrdet_def).
 	 */
 	u16 pa5ga[3][12];
+	/* maxp5ga per-core (3 core), 4 sub-band u8. NVRAM keys maxp5ga{0,1,2}.
+	 * Drives the per-core max TX index (maxp5ga[grp] - margin). */
+	u8 maxp5ga[3][4];
 	/* rxgains_5gl per-core (3 core). NVRAM keys rxgains5gelnagaina{0,1,2}
 	 * e rxgains5gtrisoa{0,1,2}. Usati per computare hdr = (elnagain+3)<<1
 	 * e gainctx = ((triso+4)<<1)+2 nel body Phase 3 di noise-shaping. */
@@ -72,6 +78,12 @@ static const struct board_profile PROFILE_D6220 = {
 	/* rxgains5gelnagaina{0,1,2}=3, rxgains5gtrisoa{0,1,2}=6 (NVRAM d6220). */
 	.rxgains_5gl_elnagain = { 3, 3, 3 },
 	.rxgains_5gl_triso    = { 6, 6, 6 },
+	/* maxp5ga{0,1,2} (NVRAM d6220). */
+	.maxp5ga = {
+		{ 72, 70, 86, 0 },
+		{ 72, 70, 86, 0 },
+		{ 76, 76, 76, 76 },
+	},
 };
 
 static const struct board_profile PROFILE_AGCOMBO = {
@@ -81,6 +93,12 @@ static const struct board_profile PROFILE_AGCOMBO = {
 	/* Same 5gl values as d6220 (NVRAM agcombo). */
 	.rxgains_5gl_elnagain = { 3, 3, 3 },
 	.rxgains_5gl_triso    = { 6, 6, 6 },
+	/* maxp5ga{0,1,2} (NVRAM agcombo). */
+	.maxp5ga = {
+		{ 74, 74, 82, 82 },
+		{ 74, 74, 82, 82 },
+		{ 74, 74, 82, 82 },
+	},
 };
 
 /* One-shot mock storage. Lives for the whole run. */
@@ -133,6 +151,9 @@ static void mount_board(const struct board_profile *p)
 	for (unsigned int c = 0; c < 3; c++)
 		memcpy(g_sprom.core_pwr_info[c].pa5ga, p->pa5ga[c],
 		       sizeof(g_sprom.core_pwr_info[c].pa5ga));
+	for (unsigned int c = 0; c < 3; c++)
+		memcpy(g_sprom.core_pwr_info[c].maxp5ga, p->maxp5ga[c],
+		       sizeof(g_sprom.core_pwr_info[c].maxp5ga));
 
 	g_bcma_dev.bus = &g_bcma_bus;
 	g_bus_dev.bus_type = B43_BUS_BCMA;
@@ -215,6 +236,30 @@ static void register_rxiq_read_plans(void)
 				(int)(sizeof(rxiq_poll_0x0270) / sizeof(u16)));
 	b43_test_plan_phy_reads(0x019e, tblacc_0x019e,
 				(int)(sizeof(tblacc_0x019e) / sizeof(u16)));
+}
+
+/*
+ * Board-specific read seeds. The wl-diag capture logs reads as val=UNDEFINED,
+ * so read-return values come from each board's reset defaults / NVRAM, not the
+ * trace. Most radio POR defaults seeded in main() are r2069-rev4 properties
+ * (identical on 0x4352 and 0x4360), but a few reads differ per chip and must be
+ * overridden here so an agcombo run is not served d6220 read values. Called
+ * after the shared seeds, so these win. Add agcombo values here as they are
+ * derived from the agcombo dumps (RCCAL E/F 0x0414/0x0415 still fall back to
+ * the shared d6220 seed — unverified for agcombo).
+ */
+static void register_board_read_plans(const struct board_profile *p)
+{
+	if (!strcmp(p->name, "agcombo")) {
+		/* CLASSCTL 0x0140: BCM4360 powers this register with bit 0x0800
+		 * set at reset (0x4352 leaves it clear). channel_switch_prep
+		 * preserves the peeked bit: (cur & 0x0800) | 0x05f4 -> 0x0df4 on
+		 * agcombo, 0x05f4 on d6220. Both agcombo captures confirm 0x0df4. */
+		b43_test_mirror_phy_set(0x0140, 0x0800);
+		/* Radio 0x0433 (core-2 0x0033 shadow): agcombo reads 0x0161 like
+		 * cores 0/1, not the d6220 core-2 default 0x0160 seeded in main(). */
+		b43_test_mirror_radio_set(0x0433, 0x0161);
+	}
 }
 
 int main(int argc, char **argv)
@@ -320,6 +365,9 @@ int main(int argc, char **argv)
 	b43_test_mirror_radio_set(0x0024, 0x0003);
 	b43_test_mirror_radio_set(0x0224, 0x0003);
 
+	/* Board-specific read overrides (win over the shared seeds above). */
+	register_board_read_plans(p);
+
 	if (!strcmp(flow, "rxiq_est_debug")) {
 		register_rxiq_read_plans();
 		b43_phy_ac_rxiq_est_debug(&g_wldev);
@@ -337,8 +385,121 @@ int main(int argc, char **argv)
 		 * exercise probe_cores' PHY read.
 		 */
 		g_ac.status_mask = 0;	/* op_init has no REQUIRE gates */
+		/*
+		 * pre_init_frontend RAD 0x0X33 (#51692/51697/51702): nibble
+		 * 0xf000 -> 0x4000 over HW background 0x0060 gives 0x4060.
+		 */
+		{
+			static const u16 r33[] = { 0x4060 };
+			u16 co;
+			for (co = 0; co <= 0x400; co += 0x200)
+				b43_test_plan_radio_reads(0x0033 + co, r33,
+							  ARRAY_SIZE(r33));
+		}
 		int r = b43_phyops_ac.init(&g_wldev);
 		fprintf(stderr, "test: op_init returned %d\n", r);
+	} else if (!strcmp(flow, "rfkill")) {
+		/*
+		 * software_rfkill(false): radio bring-up (2069 init/pwron/rccal),
+		 * afe_lpf_stage, GPIO frontend, PA bias and the radio-ON front-end
+		 * switch. Runs before op_init in the real driver; here in isolation.
+		 */
+		g_ac.status_mask = 0;
+
+		/*
+		 * rccal done-bit poll (R2069_RCCAL_STAT 0x0413, bit 4). Three
+		 * passes; vendor ch36 polls 2, 6, 6 times before done (ep
+		 * 32611-12, 32640-45, 32708-13). Done value = 0x0010 on the last
+		 * read of each run.
+		 */
+		{
+			static const u16 rccal_stat[] = {
+				0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0010,
+				0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0010,
+				0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0010,
+			};
+			b43_test_plan_radio_reads(0x0413, rccal_stat,
+						  ARRAY_SIZE(rccal_stat));
+		}
+
+		/*
+		 * 0x0407 bit 7 (0x0080) reads back clear after the prefregs write
+		 * of 0x8382, so the set-bit1 RMW writes 0x8302 (vendor #51319-21).
+		 * The write-mirror can't model the self-clear.
+		 */
+		{
+			static const u16 rad_0407[] = { 0x8302 };
+			b43_test_plan_radio_reads(0x0407, rad_0407,
+						  ARRAY_SIZE(rad_0407));
+		}
+		/*
+		 * 0x040c reads back 0x0200 (bit 9 set) at the epilogue bit-4
+		 * toggle (vendor: mask ->0x0200, set ->0x0210); the bit is a HW
+		 * default the write-mirror doesn't hold.
+		 */
+		{
+			static const u16 rad_040c[] = { 0x0200, 0x0201 };
+			b43_test_plan_radio_reads(0x040c, rad_040c,
+						  ARRAY_SIZE(rad_040c));
+		}
+		/*
+		 * EN2 / power-kick / RCCAL cfg+kick registers hold silicon
+		 * background bits that the write-mirror (starting at 0)
+		 * cannot reproduce. Seed each read with the vendor's post-RMW
+		 * value: for a maskset read==WR yields WR, since the vendor WR
+		 * already carries the set bits under the mask. Ordered per
+		 * read; vendor down-to-bss-up #51262-.
+		 */
+		{
+			static const u16 rad_08ed[] = { 0x4124, 0x4124, 0x4524 };
+			static const u16 rad_040b[] = {
+				0x0000, 0x0001,		/* kick clear, set */
+				0x0168, 0x0168,		/* pon0/pon1 readback */
+				0x0168,			/* final mask reads risen reg */
+			};
+			static const u16 rad_0410[] = {
+				0x1f80, 0x1f80, 0x1f80, 0x1f81, 0x1f80,
+				0x0f80, 0x0f90, 0x0f90, 0x0f91, 0x0f90,
+				0x0f90, 0x0f88, 0x0f88, 0x0f89,
+			};
+			static const u16 rad_0411[] = {
+				0x1c54, 0x1c55, 0x1c54, 0x7054, 0x7055,
+				0x7054, 0x4054, 0x4055, 0x4054,
+			};
+			/* measured RC code read by apply_code (pass 1) then the
+			 * dacbuf read (pass 2); low 5 bits = 0x09 (vendor #51517). */
+			static const u16 rad_0416[] = { 0x0009, 0x0009 };
+			b43_test_plan_radio_reads(0x08ed, rad_08ed,
+						  ARRAY_SIZE(rad_08ed));
+			b43_test_plan_radio_reads(0x040b, rad_040b,
+						  ARRAY_SIZE(rad_040b));
+			b43_test_plan_radio_reads(0x0410, rad_0410,
+						  ARRAY_SIZE(rad_0410));
+			b43_test_plan_radio_reads(0x0411, rad_0411,
+						  ARRAY_SIZE(rad_0411));
+			b43_test_plan_radio_reads(0x0416, rad_0416,
+						  ARRAY_SIZE(rad_0416));
+			/*
+			 * afe_lpf_stage per-core (after rccal, #51609-): 0x0045
+			 * set-0x0080 over HW background 0x3000; 0x0049 six clears
+			 * over background 0x0030 (no clr49 touches bits 4:5, so the
+			 * mirror carries it after the first seeded read).
+			 */
+			{
+				static const u16 r45[] = { 0x3080 };
+				static const u16 r49[] = { 0x0030 };
+				u16 co;
+				for (co = 0; co <= 0x400; co += 0x200) {
+					b43_test_plan_radio_reads(0x0045 + co,
+							r45, ARRAY_SIZE(r45));
+					b43_test_plan_radio_reads(0x0049 + co,
+							r49, ARRAY_SIZE(r49));
+				}
+			}
+		}
+
+		b43_phyops_ac.software_rfkill(&g_wldev, false);
+		fprintf(stderr, "test: software_rfkill(false) done\n");
 	} else if (!strcmp(flow, "set_channel")) {
 		/*
 		 * Stato entrante a set_channel (post-op_init): MAC sospeso,

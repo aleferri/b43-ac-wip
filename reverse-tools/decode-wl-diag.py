@@ -30,6 +30,8 @@ OPS = {
     13: "TBL.RD",   14: "TBL.WR",   15: "DELAY",
     16: "MAC.MCTRL",17: "MAC.MHF",  18: "MAC.MHF.RD",
     19: "PHY.AND",  20: "PHY.OR",
+    21: "SI.COREREG",
+    22: "ARGX",     23: "RETVAL",
     255: "DROP",
 }
 
@@ -46,6 +48,12 @@ TABLE    = {13, 14}                       # id=addr(a1), len=val(a2), off=aux(a3
 DELAY    = 15                             # niente addr; usec=val(a1)
 PHY_AND  = 19                             # addr + val=maschera-AND (bit tenuti)
 PHY_OR   = 20                             # addr + val=valore-OR (bit settati)
+COREREG  = 21                             # core reg: off=addr(a2), core=aux(a1); val non catturato
+# Record di continuazione (correlati al principale via 'for=#<parent_seq>'):
+#   ARGX  (22): arg su stack extra -> a5=addr, a6=val, parent=aux
+#   RETVAL(23): valore restituito da una read/rmw -> parent=addr, val=val
+ARGX     = 22
+RETVAL   = 23
 
 
 def h(v, wide):
@@ -79,6 +87,15 @@ def main():
             elif op in HAS_MASK:                   # addr + val + mask
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} "
                       f"addr={h(addr, False)} val={h(val, wide)} mask={h(aux, wide)}")
+            elif op == ARGX:                       # arg su stack, continuazione
+                print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} "
+                      f"for=#{aux} a5={h(addr, True)} a6={h(val, True)}")
+            elif op == RETVAL:                     # valore restituito, continuazione
+                print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} "
+                      f"for=#{addr} val={h(val, True)}")
+            elif op == COREREG:                    # core reg: core+off, valore non catturato all'ingresso
+                print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} "
+                      f"core={h(aux, False)} off={h(addr, False)} val=UNDEFINED")
             elif op == PHY_AND:                    # read & val ; bit azzerati = ~val
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} "
                       f"addr={h(addr, False)} val={h(val, False)} "

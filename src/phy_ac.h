@@ -97,6 +97,7 @@ struct ieee80211_channel;
 					 B43_PHY_AC_STATE_CLIP_C2_DIS)
 #define B43_PHY_AC_STATE_PHY_RUN	0x0080	/* BBCFG bit 0x8000: 1=running, 0=quiesced */
 #define B43_PHY_AC_STATE_CCA_RESET	0x0100	/* BBCFG bit 0x4000 (RSTCCA active) */
+#define B43_PHY_AC_STATE_AFE_ON		0x0200	/* RF front-end armed (enable_afe ON) */
 #define B43_PHY_AC_STATE_FAULTED	0x8000	/* sticky: a precondition failed */
 
 /* Per-device PHY state. */
@@ -112,6 +113,9 @@ struct b43_phy_ac {
 	u8 dacbuf_cap;	/* default 0x0c */
 	/* Software mirror of tracked HW gate bits; see B43_PHY_AC_STATE_*. */
 	u16 status_mask;
+	/* pa5ga/maxp5ga sub-band group (0..3) for the current channel, cached
+	 * by txpwrctrl_setup so later cal blocks can derive per-core power. */
+	u8 pa5g_grp;
 	/*
 	 * RX-IQ imbalance accumulator readings dal probe sweep in
 	 * b43_phy_ac_rxcal_gainctrl. Indicizzato [core][step_idx][sample]:
@@ -146,11 +150,14 @@ struct b43_phy_ac {
  * REQUIRE()	   -> use in functions returning void
  * REQUIRE_RET()   -> use in functions returning a value
  *
- * NOTE on STATE_PHY_RUN: this bit is mirrored by the rxiqcal
- * quiesce/restore path but is NOT settable at driver bring-up (the
- * BBCFG[15] transition to 1 happens as part of the vendor init sequence,
- * which the current driver does not route through a tracked mutator).
- * Do not use STATE_PHY_RUN in `want`/`forbid` until a real mutator exists.
+ * NOTE on STATE_PHY_RUN: mirrors BBCFG[15], kept only for parity with the
+ * annotator (annotate_enables.py tracks the same bit). No driver code sets or
+ * clears it, by design: the vendor never writes BBCFG[15] in the captured
+ * flows (attach-ch36 and down-to-bss-up show only RSTCCA / bit 0x4000 pulses
+ * on BBCFG), so the baseband run-state is established at chip power-on and is
+ * never toggled in the sequences the driver reproduces. Do not use
+ * STATE_PHY_RUN in `want`/`forbid`: it has no mutator and reflects nothing
+ * observable in these flows.
  */
 #define B43_PHY_AC_REQUIRE(dev, want, forbid) do {			\
 	struct b43_phy_ac *__ac = (dev)->phy.ac;			\

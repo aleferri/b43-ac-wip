@@ -154,10 +154,15 @@ static void b43_phy_ac_init_regs(struct b43_wldev *dev)
 					0x0342, 0x0343, 0x0346, 0x0347 };
 	static const u16 lo_regs[8] = { 0x033c, 0x033d, 0x0340, 0x0341,
 					0x0344, 0x0345, 0x0348, 0x0349 };
-	bool is4352 = (dev->dev->chip_id == 0x4352);
-	u16 hi = is4352 ? 0x03bf : 0x097a;
-	u16 lo = is4352 ? 0x0340 : 0x08fa;
-	unsigned int pass, passes = is4352 ? 2 : 1;
+	/* 0x4352 and 0x4360 are the same AC-PHY silicon (radio 2069 rev4, PHY
+	 * rev1): both cold-init these regs to 0x03bf/0x0340 over two passes
+	 * (down-to-bss agcombo #58369-58400, d6220 #51731+). The 0x097a/0x08fa
+	 * single-pass values belong to a different acphychipid. */
+	bool two_pass = (dev->dev->chip_id == 0x4352 ||
+			 dev->dev->chip_id == 0x4360);
+	u16 hi = two_pass ? 0x03bf : 0x097a;
+	u16 lo = two_pass ? 0x0340 : 0x08fa;
+	unsigned int pass, passes = two_pass ? 2 : 1;
 	unsigned int i;
 
 	b43_phy_write(dev, 0x1645, 0x025c);
@@ -648,6 +653,8 @@ static void b43_phy_ac_txpwrctrl_setup(struct b43_wldev *dev, u16 freq)
 	u32 ppr[24] = { 0 };
 	u8 core;
 
+	dev->phy.ac->pa5g_grp = (u8)grp;
+
 	/*
 	 * ppr[24] (per-rate power reduction, tabella 0x21 offset 0, 24 × u32):
 	 * il vendor calcola questi valori dai mcsbw*po dell'NVRAM combinati con
@@ -712,21 +719,27 @@ static void b43_phy_ac_txpwrctrl_setup(struct b43_wldev *dev, u16 freq)
 	b43_phy_maskset(dev, 0x0070, (u16)~(0x0400), (0x0400));
 
 	/*
-	 * Per-core max index (vendor #38864-#38865): valore 0x0042, ordine
-	 * INVERTITO (core alto → basso). Vendor:
-	 *   #38864 MOD 0x0846 val=0x0042 (core 1)
-	 *   #38865 MOD 0x0646 val=0x0042 (core 0)
-	 * A differenza del "current index" a #38858-#38859 (0x0644/0x0844
-	 * emesso in ordine normale 0→1).
+	 * Per-core max index, derived from the SROM max power for the current
+	 * 5 GHz sub-band. Emitted high core -> low core, matching the vendor
+	 * order (0x0846 before 0x0646; the current index above goes 0->1).
+	 *
+	 * TODO(margin): the -6 offset fits every capture available so far
+	 * (d6220 ch36 maxp=72 -> 0x42; agcombo ch36 maxp=74 -> 0x44; agcombo
+	 * ch100 maxp=82 -> 0x4c) but is a 3-point empirical fit on two maxp
+	 * values; confirm slope and offset against a board with a distinct
+	 * maxp5ga before trusting it outside 5gl/5gh.
 	 */
 	{
 		unsigned int cr;
 
 		for (cr = num_cores; cr-- > 0; ) {
+			u8 maxp;
+
 			if (!((dev->phy.ac->coremask >> cr) & 1))
 				continue;
+			maxp = sprom->core_pwr_info[cr].maxp5ga[grp];
 			b43_phy_maskset(dev, 0x0646 + cr * 0x0200,
-					(u16)~0x00ff, 0x0042);
+					(u16)~0x00ff, (u16)((maxp - 6) & 0x00ff));
 		}
 	}
 
@@ -1308,12 +1321,7 @@ static void b43_phy_ac_rxcore_setstate(struct b43_wldev *dev, u8 coremask)
 	 * both d6220 captures (attach /, down-to-bss-up
 	 * #53398/#53426); exact field semantics unconfirmed. */
 	b43_phy_write(dev, 0x16d8, 0xffff);
-	/*
-	 * Vendor down-to-bss-up trace #53399: DELAY usec=5848 subito dopo
-	 * la WR wide-open. Probabile stabilizzazione del gain override prima
-	 * di modificare mode/RF-sequence. Senza questa attesa i run_rfseq_cmd
-	 * successivi partono su HW in transizione (osservato: hang post-TBL 0x20).
-	 */
+	/* Vendor down-to-bss-up #53399: DELAY usec=5848 dopo la WR wide-open. */
 	udelay(5850);
 
 	b43_phy_maskset(dev, 0x0160, (u16)~0x0007, coremask);
@@ -1898,7 +1906,7 @@ static void b43_phy_ac_coeff_bank_init_bw20_5g(struct b43_wldev *dev)
  * (vedi b43_phy_ac_op_recalc_txpower) — quella revisione non è qui.
  */
 /* 4360 agcombo: 310-320 e 4266-4279 ; d6220 ch36 @#32803,#33099 (fp 10/14, 2 chiamate) */
-static void b43_phy_ac_set_pdet_on_reset(struct b43_wldev *dev)
+static void b43_phy_ac_set_pdet_on_reset(struct b43_wldev *dev, bool full)
 {
 	b43_phy_write(dev, 0x0550, 0x0ffd);
 	b43_phy_maskset(dev, 0x0551, (u16)~0x000f, 0x000f);
@@ -1911,6 +1919,8 @@ static void b43_phy_ac_set_pdet_on_reset(struct b43_wldev *dev)
 	b43_phy_write(dev, 0x0557, 0x01f4);
 	b43_phy_write(dev, 0x0558, 0xb8d8);
 	b43_phy_write(dev, 0x0559, 0x0005);
+	if (!full)
+		return;
 	b43_phy_write(dev, 0x0358, 0xc07f);
 	b43_phy_write(dev, 0x0359, 0x0064);
 	b43_phy_write(dev, 0x035a, 0x0064);
@@ -1928,7 +1938,7 @@ static void b43_phy_ac_analog_on_reset(struct b43_wldev *dev, u16 *saved_outer_o
 	 * sconosciuta, valore necessario (non difensivo). */
 	b43_phy_read_log(dev, 0x0550);
 
-	b43_phy_ac_set_pdet_on_reset(dev);
+	b43_phy_ac_set_pdet_on_reset(dev, true);
 
 	/*
 	 * Outer table-write gate: acquisito qui (ch36 #33113-#33114),
@@ -2186,7 +2196,7 @@ static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
 	B43_PHY_AC_REQUIRE(dev,
 			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
 			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
-			   B43_PHY_AC_STATE_CCA_RESET);
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_AFE_ON);
 
 	if (!e) {
 		b43err(dev->wl, "AC-PHY: no channel table entry, skipping setup\n");
@@ -2522,7 +2532,7 @@ static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
 	 * farrow_setup (resampler config): 4 write core 0 (0x019a-0x0199),
 	 * 4 write core 1 (0x01a1-0x01a0), 4 deltaphase (0x1602/3/6/7),
 	 * peek 0x0601, farrow global cfg 0x1601. d6220 ch36 #35007-#35020
-	 * (14 op). Il body è in farrow_phy_ac.c.
+	 * (14 op). Il body è in b43_phy_ac_farrow_setup().
 	 */
 	b43_phy_ac_farrow_setup(dev, new_channel);
 
@@ -3794,6 +3804,38 @@ static void b43_phy_ac_probe_cores(struct b43_wldev *dev)
  * the num_cores read (4360 #5); the trailing PMU regctl/GPIO
  * pair is 4360 #335-336.
  */
+/*
+ * Pre-op_init analog frontend (vendor down-to-bss-up #51679-#51705): runs
+ * after the radio bring-up (op_software_rfkill) and before op_init proper.
+ * The vendor programs pdet + per-core RF-frontend gates here so that
+ * init_regs and the first channel_setup see a settled analog state; the
+ * driver previously only ran the equivalent inside channel_setup (i.e. after
+ * op_init), which is the second occurrence the vendor also does (#33099).
+ *
+ * pdet is the 11-write short form (no 0x0358 trio, which is set_channel-only).
+ * Per core: PHY 0x0X29/0x0X21 bit 12, RAD 0x0X33 nibble -> 0x4000. Closes
+ * with PHY 0x01b0 bit 15.
+ */
+static void b43_phy_ac_pre_init_frontend(struct b43_wldev *dev)
+{
+	unsigned int core, num_cores = dev->phy.ac->num_cores;
+
+	b43_phy_ac_set_pdet_on_reset(dev, false);
+
+	for (core = 0; core < num_cores; core++) {
+		u16 stride = (u16)(core * 0x200);
+
+		b43_phy_maskset(dev, 0x0729 + stride, (u16)~0x1000, 0x1000);
+		b43_phy_maskset(dev, 0x0721 + stride, (u16)~0x1000, 0x1000);
+		b43_radio_maskset(dev, 0x0033 + stride, (u16)~0xf000, 0x4000);
+	}
+
+	b43_phy_maskset(dev, 0x01b0, (u16)~0x8000, 0x8000);
+
+	/* Vendor reads PHY 0x0000 here (#51706) before the PMU regctl. */
+	b43_phy_read_log(dev, 0x0000);
+}
+
 static int b43_phy_ac_op_init(struct b43_wldev *dev)
 {
 	if (dev->dev->bus_type != B43_BUS_BCMA) {
@@ -3810,6 +3852,12 @@ static int b43_phy_ac_op_init(struct b43_wldev *dev)
 	}
 
 	b43_phy_ac_probe_cores(dev);
+
+	/*
+	 * Analog frontend that the vendor runs between radio bring-up and
+	 * op_init proper (#51679-#51705), before the PMU regctl strobe.
+	 */
+	b43_phy_ac_pre_init_frontend(dev);
 
 	/*
 	 * PMU regctl chip-dependent field [24:20] (0x1 on 4352, 0x2 on 4360) +
@@ -3878,7 +3926,44 @@ static int b43_phy_ac_op_init(struct b43_wldev *dev)
 	return 0;
 }
 
-/* enable path: down-to-bss-up #86587-86616 ; 4360 agcombo: 16-354 ; d6220 ch36: n/l come funzione (le sub-chiamate radio/init/channel_setup sono localizzate singolarmente) */
+enum b43_phy_ac_afe_mode {
+	B43_PHY_AC_AFE_DOWN,	/* front-end parked (RF blocked / pre-init) */
+	B43_PHY_AC_AFE_ON,	/* front-end armed for RX/TX (bss-up) */
+};
+
+/*
+ * Program the PHY analog front-end bank (the AFE_C1 registers at +0x1000
+ * stride, 0x1720-0x173e) to the requested mode. B43_PHY_AC_AFE_ON is the
+ * final RX/TX arm the OEM emits at bss-up (down-to-bss-up #86603-86610);
+ * B43_PHY_AC_AFE_DOWN parks the front-end. Kept as one named operation so
+ * the enable point is explicit and callers pick a mode rather than
+ * open-coding register writes.
+ */
+static void b43_phy_ac_enable_afe(struct b43_wldev *dev,
+				  enum b43_phy_ac_afe_mode mode)
+{
+	switch (mode) {
+	case B43_PHY_AC_AFE_ON:
+		b43_phy_write(dev, 0x173e, 0x0000);
+		b43_phy_write(dev, 0x1739, 0x0000);
+		b43_phy_write(dev, 0x173a, 0x0000);
+		b43_phy_write(dev, 0x1725, 0x1fff);
+		b43_phy_write(dev, 0x1729, 0x0000);
+		b43_phy_write(dev, 0x1721, 0xffff);
+		b43_phy_write(dev, 0x1728, 0x0000);
+		b43_phy_write(dev, 0x1720, 0x03ff);
+		dev->phy.ac->status_mask |= B43_PHY_AC_STATE_AFE_ON;
+		break;
+	case B43_PHY_AC_AFE_DOWN:
+		b43_phy_write(dev, 0x1728, 0x0080);
+		b43_phy_write(dev, 0x1720, 0x0180);
+		b43_phy_write(dev, 0x1729, 0x0000);
+		b43_phy_write(dev, 0x1721, 0x5000);
+		dev->phy.ac->status_mask &= ~B43_PHY_AC_STATE_AFE_ON;
+		break;
+	}
+}
+
 static void b43_phy_ac_op_software_rfkill(struct b43_wldev *dev, bool blocked)
 {
 	if (dev->dev->chip_id != 0x4352 && dev->dev->chip_id != 0x4360) {
@@ -3893,18 +3978,8 @@ static void b43_phy_ac_op_software_rfkill(struct b43_wldev *dev, bool blocked)
 	}
 
 	if (blocked) {
-		/*
-		 * Radio OFF. Return the 0x17xx front-end to the down state the
-		 * OEM leaves it in while going down, the tail of
-		 * the same block b43_phy_ac_mode_init applies at init. NOTE:
-		 * reuses that down-state tail, not a dedicated runtime rfkill-block
-		 * capture; the power-on enable sequence is in the unblocked branch
-		 * (see below).
-		 */
-		b43_phy_write(dev, 0x1728, 0x0080);
-		b43_phy_write(dev, 0x1720, 0x0180);
-		b43_phy_write(dev, 0x1729, 0x0000);
-		b43_phy_write(dev, 0x1721, 0x5000);
+		/* RF blocked: park the front-end. */
+		b43_phy_ac_enable_afe(dev, B43_PHY_AC_AFE_DOWN);
 		return;
 	}
 
@@ -3931,52 +4006,13 @@ static void b43_phy_ac_op_software_rfkill(struct b43_wldev *dev, bool blocked)
 	 */
 	b43_radio_2069_afe_lpf_stage(dev, 0x0800);
 
-	/* GPIO frontend a due fasi in entrambe le catture: bring-up pin2 alto/pin10
-	 * basso (ch36 #52545-46), a regime col blocco PA l'inverso (#55139-40 /
-	 * #86593-94). Semantica pin non confermata; OE non in trace d6220. */
-	bcma_chipco_gpio_outen(&dev->dev->bdev->bus->drv_cc, 0x0404, 0x0404);		/* not in d6220 trace */
-	bcma_chipco_gpio_out(&dev->dev->bdev->bus->drv_cc, 0x0404, 0x0004);		/* fase 1: #52545-46 */
-
-	/* PA bias/tx-gain per-core: operating-point RICALCOLATI per-run (ch36
-	 * #55111-16 ha valori leggermente diversi da questi, presi da dtbu
-	 * #86566-92); hardcode = snapshot. Core diversi, non specchiare. */
-	b43_radio_write(dev, 0x0002, 0x0078);		/* #86566 */
-	b43_radio_write(dev, 0x0003, 0x0078);		/* #86567 */
-	b43_radio_write(dev, 0x0004, 0x0069);		/* #86568 */
-	b43_radio_write(dev, 0x0005, 0x0078);		/* #86569 */
-	b43_phy_write(dev, 0x06a0, 0x03f2);		/* #86570 */
-	b43_phy_write(dev, 0x06a1, 0x0054);		/* #86571 */
-
-	b43_radio_write(dev, 0x0202, 0x0088);		/* #86587 */
-	b43_radio_write(dev, 0x0203, 0x0087);		/* #86588 */
-	b43_radio_write(dev, 0x0204, 0x0088);		/* #86589 */
-	b43_radio_write(dev, 0x0205, 0x0078);		/* #86590 */
-	b43_phy_write(dev, 0x08a0, 0x03da);		/* #86591 */
-	b43_phy_write(dev, 0x08a1, 0x003c);		/* #86592 */
-	bcma_chipco_gpio_out(&dev->dev->bdev->bus->drv_cc, 0x0404, 0x0400);		/* fase 2: #55139-40 / #86593-94 */
-
 	/*
-	 * Radio ON: arm the RF front-end switch. This is the final step of the
-	 * bss-up bring-up in the OEM trace (#86603-86616, D6220/BCM4352).
-     * Sull'agcombo lo stesso blocco gira anche a inizio attach (#16-28) con in
-	 * piu' 0x2e4->0x0f00 / 0x1ec=0x0002; witness 4352 (#86603-16) senza, e
-	 * nessuna cattura d6220 copre l'inizio attach.
+	 * software_rfkill's scope ends at the radio front-end being up. The
+	 * two-phase GPIO frontend, per-core PA bias and the final PMU regctl
+	 * enable that the vendor emits only at steady state (#52545,
+	 * #86566-#86616) are driven from the rxiqcal / TX-enable path, not
+	 * from the radio bring-up.
 	 */
-	b43_phy_write(dev, 0x173e, 0x0000);
-	b43_phy_write(dev, 0x1739, 0x0000);
-	b43_phy_write(dev, 0x173a, 0x0000);
-	b43_phy_write(dev, 0x1725, 0x1fff);
-	b43_phy_write(dev, 0x1729, 0x0000);
-	b43_phy_write(dev, 0x1721, 0xffff);
-	b43_phy_write(dev, 0x1728, 0x0000);
-	b43_phy_write(dev, 0x1720, 0x03ff);
-	b43_phy_mask(dev, 0x0408, (u16)~0x0002);	/* #86611: clear bit, not full 0 */
-	b43_phy_write(dev, 0x0417, 0x0000);
-	b43_phy_write(dev, 0x0416, 0x0001);
-
-	/* #86616: final PMU regcontrol enable (reg0 |= 0x2). */
-	bcma_chipco_regctl_maskset(&dev->dev->bdev->bus->drv_cc, 0,
-				   ~0x00000002u, 0x00000002u);
 }
 
 /*
@@ -7166,8 +7202,17 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 	b43_phy_maskset(dev, 0x0071, (u16)~0x0700, 0x0400);
 	b43_phy_maskset(dev, 0x0070, (u16)~0x0800, 0);
 	b43_phy_maskset(dev, 0x0070, (u16)~0x0400, 0x0400);
-	b43_phy_maskset(dev, 0x0846, (u16)~0x00ff, 0x0042);
-	b43_phy_maskset(dev, 0x0646, (u16)~0x00ff, 0x0042);
+	{
+		/* Same max-index derivation as txpwrctrl_setup; grp cached there.
+		 * Emitted high core -> low core to match the vendor order. */
+		const struct ssb_sprom *sprom = dev->dev->bus_sprom;
+		unsigned int grp = dev->phy.ac->pa5g_grp;
+
+		b43_phy_maskset(dev, 0x0846, (u16)~0x00ff,
+				(u16)((sprom->core_pwr_info[1].maxp5ga[grp] - 6) & 0x00ff));
+		b43_phy_maskset(dev, 0x0646, (u16)~0x00ff,
+				(u16)((sprom->core_pwr_info[0].maxp5ga[grp] - 6) & 0x00ff));
+	}
 
 	/*
 	 * Bulk TBL id=0x0040 + id=0x0060 (vendor #54767-#55030, 260 op).
@@ -7333,19 +7378,8 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 	b43_mac_suspend(dev);
 	b43_maccontrol_set(dev, 0, 0x04000400);   /* mask=~0=0xffffffff */
 
-	/*
-	 * PHY.WR 0x17XX (8 op): stride 0x1000 sui gain regs 0x1720-0x173e.
-	 * Bank di gain regs "shadow" (o core 3 non popolato); riprogramma
-	 * default per lo stato di RX finale.
-	 */
-	b43_phy_write(dev, 0x173e, 0x0000);
-	b43_phy_write(dev, 0x1739, 0x0000);
-	b43_phy_write(dev, 0x173a, 0x0000);
-	b43_phy_write(dev, 0x1725, 0x1fff);
-	b43_phy_write(dev, 0x1729, 0x0000);
-	b43_phy_write(dev, 0x1721, 0xffff);
-	b43_phy_write(dev, 0x1728, 0x0000);
-	b43_phy_write(dev, 0x1720, 0x03ff);
+	/* Arm the analog front-end for RX/TX: the bss-up radio-ON step. */
+	b43_phy_ac_enable_afe(dev, B43_PHY_AC_AFE_ON);
 
 	/* Chan-select final + PMU release. */
 	b43_phy_maskset(dev, 0x0408, (u16)~0x0002, 0);
@@ -7377,11 +7411,16 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	 * fine op_init — b43_mac_suspend gestisce il refcount idempotente.
 	 */
 	b43_mac_suspend(dev);
+	/* Mirror MAC.MCTRL bit0: the cal body runs MAC-suspended, the state the
+	 * REQUIRE(forbid MAC_EN) gates want; re-set below so a repeat switch
+	 * clears it again rather than faulting on a stale bit. */
+	dev->phy.ac->status_mask &= ~B43_PHY_AC_STATE_MAC_EN;
 
 	/* 5 GHz: the channel table is the filter (unknown channels -ESRCH). */
 	ret = b43_phy_ac_set_channel(dev, channel, channel_type);
 
 	b43_mac_enable(dev);
+	dev->phy.ac->status_mask |= B43_PHY_AC_STATE_MAC_EN;
 
 	/*
 	 * Calibrazioni post-channel: il vendor le emette DOPO MAC.MCTRL
@@ -7435,7 +7474,7 @@ const struct b43_phy_operations b43_phyops_ac = {
 };
 
 /* ==========================================================================
- * Farrow resampler setup (ex farrow_phy_ac.c + .h + .inc)
+ * Farrow resampler setup
  * ==========================================================================
  */
 

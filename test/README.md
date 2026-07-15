@@ -74,6 +74,23 @@ make                # compila rxiq_trace
 ./rxiq_trace rxiq_est_debug agcombo > trace.agcombo.out
 ```
 
+Flow disponibili (`argv[1]`): `rxiq_est_debug` (default), `rxiqcal`,
+`op_init`, `set_channel`. Board (`argv[2]`): `d6220` (default), `agcombo`.
+
+`set_channel` è il flow più ampio: guida l'intera pipeline
+`b43_phy_ac_op_switch_channel`. Su D6220 ch36 emette ~22k operazioni e
+consuma per intero ogni read plan registrato in `main.c`:
+
+```sh
+./rxiq_trace set_channel d6220 > trace.switch.d6220.out
+# a fine run, su stderr, la plan-consumption deve mostrare iter=N/N per
+# ogni indirizzo: nessun underrun (flow terminato in anticipo) né overrun.
+```
+
+Nota: il nome del flow da passare sulla riga di comando è `set_channel`;
+`b43_phy_ac_op_switch_channel` è il nome della op kernel che il flow
+invoca, non la stringa da passare a `argv[1]`.
+
 Il binario stampa la trace su stdout, i log del driver (`b43dbg`,
 `b43err`) su stderr. Il mirror di memoria simula la chiusura del bit
 START di 0x0270 al primo read post-scrittura, così il poll del
@@ -81,18 +98,59 @@ correlatore non va in timeout.
 
 ## Confrontare con la vendor trace
 
+### Flow `set_channel` completo (MATCH esatto contro ch36)
+
+La validazione canonica dell'intero flow confronta la trace grezza di
+`set_channel d6220` contro la cattura vendor **ch36 grezza**
+`router-data/d6220/wl-diag-wl1-attach-to-bss-ch36.txt` (NON i derivati
+collassati sotto `reverse-output/ch36-*`, NON la `down→bss-up` intera):
+
+```sh
+./rxiq_trace set_channel d6220 > trace.switch.d6220.out
+python3 compare.py \
+    ../router-data/d6220/wl-diag-wl1-attach-to-bss-ch36.txt \
+    trace.switch.d6220.out \
+    --range 32887:55154 --auto-align
+```
+
+Output atteso:
+
+```
+aligning test at offset 2 (auto: 'PHY.RD   addr=0x019e val=UNDEFINED')
+vendor: 22268 ops
+test:   22268 ops
+MATCH
+```
+
+- `--range 32887:55154`: l'estremo basso è l'episodio della prima
+  `PHY.RD 0x019e` del blocco di channel-programming; salta le ~489 op di
+  preambolo attach del vendor (MAC/PMU/setup, ep 32398..32886). L'estremo
+  alto è l'ultimo episodio della cattura.
+- `--auto-align`: salta le 2 op di prologo dell'harness (il `MAC.MCTRL`
+  di disable e la `PMU.RC`), agganciando `test[2]` a `vendor[489]`.
+- **Niente `--squash-poll`**: i read plan in `main.c` sono tarati sui
+  poll-count esatti di questa cattura, quindi il match è contiguo
+  op-per-op senza collassare i poll. Aggiungere `--squash-poll` qui
+  romperebbe l'uguaglianza delle lunghezze.
+
+### Sotto-finestra: solo il blocco RXIQ
+
+Per isolare un singolo blocco (es. la calibrazione RX-IQ) si estrae la
+finestra corrispondente dalla `down→bss-up` annotata:
+
 ```sh
 python3 compare.py \
-    ../../../reverse-output/d6220-trace2-annotated.txt \
+    ../reverse-output/d6220-trace2-annotated.txt \
     trace.d6220.out \
     --range 82499:83540 --auto-align --squash-poll
 ```
 
-- `--range LO:HI` estrae la finestra del blocco RXIQ dal file vendor.
+- `--range LO:HI` estrae la finestra del blocco d'interesse dal file
+  vendor.
 - `--auto-align` cerca in `test` la prima op che matcha `vendor[0]` e
   usa quell'indice come inizio del confronto. Utile quando il flow di
   test fa un prologo (save-gain, save-tone, ...) che il vendor non
-  emette. In alternativa `--align-on OP` pin allineamento su un op
+  emette. In alternativa `--align-on OP` pinna l'allineamento su un op
   specifico.
 - `--squash-poll` collassa i run di `PHY.RD 0x0270 UNDEFINED` in un
   singolo evento marker: nel vendor l'HW polla ~45x prima di
@@ -133,59 +191,61 @@ scopo.
 
 ## Estendere il set di flow
 
-Oggi `main.c` cabla due flow:
+Oggi `main.c` cabla quattro flow:
 
 - `rxiq_est_debug` — Phase 1 sweep only (rxiqcal_phy_ac.c).
 - `rxiqcal` — Phase 1+2+3, ma resta gated da
   `B43_PHY_AC_RXIQCAL_REGMAP_FILLED == 0` dentro rxiqcal_phy_ac.c e
-  ritorna `-EOPNOTSUPP` senza toccare l'HW. Per attivarlo servirebbe
-  cambiare quel define nel sorgente scratch: fuori dallo scope di
-  questo harness (che non modifica lo scratch).
+  ritorna presto senza toccare l'HW. Per attivarlo servirebbe cambiare
+  quel define nel sorgente scratch: fuori dallo scope di questo harness
+  (che non modifica lo scratch).
+- `op_init` — `b43_phyops_ac.init` in isolamento.
+- `set_channel` — l'intera pipeline `b43_phy_ac_op_switch_channel`
+  (channel prep, table-7 program, radio 2069 channel setup, RX-IQ cal,
+  finalize). È il flow con la copertura più larga: su D6220 ch36 emette
+  ~22k operazioni.
 
-Per aggiungere un flow nuovo (es. `switch_channel`, che coprirebbe
-l'intera pipeline `set_channel` + i side-effect):
+Il full driver è già in `SCRATCH_SRCS_FULL` (`rxiqcal_phy_ac.c`,
+`tables_phy_ac.c`, `phy_ac.c`, `radio_2069.c`) e la `SRCS` di default
+lo usa: `make` compila e linka senza toccare i sorgenti scratch.
 
-1. In `Makefile`, aggiungi `phy_ac.c`, `radio_2069.c`,
-   `farrow_phy_ac.c`, `rxgain_phy_ac.c` alla lista `SCRATCH_SRCS_MIN`
-   (o passa alla lista `SCRATCH_SRCS_FULL` già preparata).
-2. Compila; i primi errori saranno "field X of struct Y not declared" —
-   aggiungi il campo a `stubs/b43.h`.
-3. Errori "undefined reference to `<sym>`" al link: se `<sym>` è un
-   HW accessor che vuoi tracciare, aggiungilo a `WRAP_SYMS` e
-   scrivi un `__wrap_<sym>` in `wrap.c`. Se è invece un helper
-   sconosciuto (es. `b43_nphy_tx_power_ctl_setup`), fornisci un
-   no-op stub in `wrap.c` (senza `__wrap_`).
-4. Aggiungi il case in `main.c` sotto `argv[1]`.
+Per aggiungere un flow nuovo:
 
-Per `todo_leftovers.c`: la compilazione tira dentro `bcma_chipco_*` e
-`b43_r2069_rccal_*` che sono definiti altrove (`bcma_*` fuori b43,
-`b43_r2069_rccal_*` in `radio_2069.c`). Da wrappare come no-op logger
-in `wrap.c` — extension diretta ma non tentata in questo primo giro.
+1. Se serve un altro .c dello scratch non ancora compilato, aggiungilo a
+   `SCRATCH_SRCS_FULL` nel `Makefile`.
+2. Compila; eventuali errori "field X of struct Y not declared" si
+   risolvono aggiungendo il campo a `stubs/b43.h`.
+3. Errori "undefined reference to `<sym>`" al link: se `<sym>` è un HW
+   accessor che vuoi tracciare, aggiungilo a `WRAP_SYMS` e scrivi un
+   `__wrap_<sym>` in `wrap.c`. Se è un helper che non vuoi tracciare,
+   forniscine uno stub no-op in `wrap.c` (senza `__wrap_`).
+4. Aggiungi il case in `main.c` sotto `argv[1]`, con gli eventuali read
+   plan/pre-seed del mirror che il flow richiede.
 
 ## Stato oggi
 
-Compile status di ogni .c dello scratch con gli stub attuali (senza
-tocchi ai sorgenti):
+Con gli stub attuali (senza tocchi ai sorgenti scratch) tutti i .c in
+`SCRATCH_SRCS_FULL` compilano e linkano: `make` produce `rxiq_trace`
+pulito.
 
 | File scratch          | Compile | Note                                    |
 |-----------------------|---------|-----------------------------------------|
 | `rxiqcal_phy_ac.c`    | ✓       | build+run+trace ok con rxiq_est_debug   |
 | `tables_phy_ac.c`     | ✓       |                                         |
 | `radio_2069.c`        | ✓       | compila senza toccare gli stub          |
-| `farrow_phy_ac.c`     | ✓       | compila senza toccare gli stub          |
-| `rxgain_phy_ac.c`     | 4 err   | manca `struct ssb_sprom_rxgains`, campo `rxgains_5gl` / `revision` in ssb_sprom |
-| `phy_ac.c`            | 12 err  | manca enum `b43_txpwr_result`, campo `subband5gver`/`core_pwr_info` in ssb_sprom, `ESRCH`, `switch_analog` in `b43_phy_operations` |
-| `todo_leftovers.c`    | non provato | dipende da `bcma_chipco_*` e chain `dev->dev->bdev->bus->drv_cc` — da wrappare come no-op logger |
+| `phy_ac.c`            | ✓       | compila e linka; abilita il flow `set_channel` |
 
-I gap in `stubs/b43.h` sono meccanici: ogni "field X of struct Y" si
-risolve aggiungendo il field allo stub, ogni `undeclared` un enum o un
-#define aggiuntivi. Nessuna richiede modifica ai .c dello scratch. Un
-primo giro di estensione dovrebbe portare `rxgain_phy_ac.c` e
-`phy_ac.c` a compilare in ~30-60 minuti di lavoro.
+Il flow `set_channel` gira end-to-end: su D6220 ch36 emette 22276 righe
+di trace, ritorna 0, e la plan-consumption mostra `iter=N/N` per ogni
+read plan (nessun underrun/overrun). La op kernel invocata è
+`b43_phy_ac_op_switch_channel`.
 
-Il flow `switch_channel` (che dà una trace confrontabile con l'intera
-`down→bss-up` del vendor) diventa disponibile appena `phy_ac.c` linka:
-`b43_phy_ac_op_switch_channel` è già puntata da `main.c` come TODO.
+Copertura rispetto al vendor: `set_channel` copre la porzione di
+channel-switch della sequenza `down→bss-up`, non l'intera cattura. Il
+vendor `d6220-trace2` include un preambolo (GPIO, PMU-PLL, init radio)
+che questo flow non riproduce, quindi un `compare.py` senza `--range`
+diffa liste di lunghezza diversa. Per confronti mirati usare `--range`
+sulla finestra del blocco d'interesse, come nell'esempio RXIQ sopra.
 
 ## Cosa il framework NON simula
 

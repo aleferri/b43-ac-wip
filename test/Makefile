@@ -53,9 +53,8 @@ SCRATCH_SRCS_MIN := \
     $(SCRATCH)/rxiqcal_phy_ac.c \
     $(SCRATCH)/tables_phy_ac.c
 
-# Full driver (needs phy_ac.c, radio_2069.c) — enable once the corresponding
-# stubs & wraps are in place. todo_leftovers.c pulls in bcma_* which need
-# extra wraps.
+# Full driver: the scratch phy_ac.c + radio_2069.c on top of the minimal set.
+# This is the set actually built (see SRCS below).
 SCRATCH_SRCS_FULL := \
     $(SCRATCH_SRCS_MIN) \
     $(SCRATCH)/phy_ac.c \

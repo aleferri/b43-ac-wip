@@ -31,12 +31,22 @@
  * memoria modulo RWX + flush_icache_range esplicito. Da confermare sul device.
  *
  * Target: kernel 3.4.x, MIPS32 big-endian, o32, SMP=2, PREEMPT.
+ *
+ * VARIANTE 2.6.30 (DSL-3580L, SoC BCM6362, SMP=2 PREEMPT, gcc 4.4.2 buildroot):
+ * stesso meccanismo (detour d'ingresso + trampolino 'ra') e STESSI record/
+ * op-code della versione 3.4, cosi' decode-wl-diag.py decodifica le tracce di
+ * tutti i router e si possono cross-correlare (anche con versioni di driver wl
+ * diverse: cambia il contenuto della trace, non il formato). Adattato solo il
+ * collante kernel pre-2.6.33: coda a ring manuale al posto del kfifo tipizzato,
+ * spinlock_t al posto di raw_spinlock, e risoluzione simboli con fallback via
+ * parametro 'syms=nome:hexaddr,...' se kallsyms_lookup_name non e' esportato ai
+ * moduli su questo build (compila con -DWLDIAG_NO_KALLSYMS in quel caso).
  */
 
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/version.h>
 #include <linux/kallsyms.h>
-#include <linux/kfifo.h>
 #include <linux/miscdevice.h>
 #include <linux/fs.h>
 #include <linux/uaccess.h>
@@ -57,6 +67,52 @@ MODULE_PARM_DESC(arm, "0=dry-run (solo log del piano), 1=applica le patch");
 static int delay;
 module_param(delay, int, 0444);
 MODULE_PARM_DESC(delay, "0=non agganciare osl_delay (default), 1=aggancia");
+
+/* Fallback per kernel dove kallsyms_lookup_name non e' esportato ai moduli:
+ * l'utente passa gli indirizzi (da /proc/kallsyms) come
+ *   syms="phy_reg_read:80abc123,si_corereg:80abcdef,..."
+ * Ha priorita' su kallsyms. Con -DWLDIAG_NO_KALLSYMS diventa l'UNICA fonte. */
+static char *syms;
+module_param(syms, charp, 0444);
+MODULE_PARM_DESC(syms, "override indirizzi: 'nome:hexaddr,nome:hexaddr,...'");
+
+/* Cerca 'name' nella lista 'syms' (nome:hexaddr,...). 0 se assente. */
+static unsigned long sym_override(const char *name)
+{
+	const char *p = syms;
+	size_t nlen = strlen(name);
+
+	while (p && *p) {
+		const char *colon = strchr(p, ':');
+		const char *comma;
+		unsigned long a;
+
+		if (!colon)
+			break;
+		comma = strchr(colon + 1, ',');
+		if ((size_t)(colon - p) == nlen && !strncmp(p, name, nlen)) {
+			a = simple_strtoul(colon + 1, NULL, 16);
+			return a;
+		}
+		if (!comma)
+			break;
+		p = comma + 1;
+	}
+	return 0;
+}
+
+/* Risoluzione simbolo: prima l'override 'syms', poi kallsyms (se disponibile). */
+static unsigned long resolve_sym(const char *name)
+{
+	unsigned long a = sym_override(name);
+
+	if (a)
+		return a;
+#ifndef WLDIAG_NO_KALLSYMS
+	a = kallsyms_lookup_name(name);
+#endif
+	return a;
+}
 
 /* flush_icache_range non e' esportato ai moduli, e su questo kernel (KALLSYMS
  * senza KALLSYMS_ALL) la variabile-puntatore non e' nemmeno visibile a
@@ -89,9 +145,10 @@ struct wldiag_rec {
 	u8 op; u8 cpu; u16 _pad;
 } __packed;
 
-#define FIFO_RECS 32768
-static DEFINE_KFIFO(fifo, struct wldiag_rec, FIFO_RECS);
-static DEFINE_RAW_SPINLOCK(fifo_lock);
+#define FIFO_RECS 32768			/* potenza di 2 -> maschera valida */
+static struct wldiag_rec ring[FIFO_RECS];
+static u32 ring_head, ring_tail;	/* count = (u32)(head - tail); vuoto se uguali */
+static DEFINE_SPINLOCK(fifo_lock);	/* non-RT: spin_* equivale a raw_spin_* */
 static DECLARE_WAIT_QUEUE_HEAD(rq);
 static atomic_t seq = ATOMIC_INIT(0);
 static atomic_t drops = ATOMIC_INIT(0);
@@ -106,12 +163,14 @@ static u32 emit(u8 op, u32 addr, u32 val, u32 aux)
 	r.addr = addr; r.val = val; r.aux = aux;
 	r.op = op; r.cpu = (u8)raw_smp_processor_id(); r._pad = 0;
 
-	raw_spin_lock_irqsave(&fifo_lock, flags);
-	if (kfifo_avail(&fifo) >= sizeof(r))
-		kfifo_in(&fifo, &r, 1);
-	else
+	spin_lock_irqsave(&fifo_lock, flags);
+	if ((u32)(ring_head - ring_tail) < FIFO_RECS) {
+		ring[ring_head & (FIFO_RECS - 1)] = r;
+		ring_head++;
+	} else {
 		atomic_inc(&drops);
-	raw_spin_unlock_irqrestore(&fifo_lock, flags);
+	}
+	spin_unlock_irqrestore(&fifo_lock, flags);
 	wake_up_interruptible(&rq);
 	return r.seq;
 }
@@ -216,7 +275,7 @@ struct ret_inst {
 };
 #define RET_POOL 64
 static struct ret_inst ret_pool[RET_POOL];
-static DEFINE_RAW_SPINLOCK(ret_lock);
+static DEFINE_SPINLOCK(ret_lock);
 static u32 ret_order;
 static unsigned long ret_trampoline;	/* indirizzo dello stub di ritorno condiviso */
 
@@ -230,18 +289,18 @@ wl_diag_enter_ret(unsigned long orig_ra, u32 seq)
 
 	if (!ret_trampoline)
 		return orig_ra;
-	raw_spin_lock_irqsave(&ret_lock, f);
+	spin_lock_irqsave(&ret_lock, f);
 	for (i = 0; i < RET_POOL; i++) {
 		if (!ret_pool[i].task) {
 			ret_pool[i].task = current;
 			ret_pool[i].orig_ra = orig_ra;
 			ret_pool[i].seq = seq;
 			ret_pool[i].order = ++ret_order;
-			raw_spin_unlock_irqrestore(&ret_lock, f);
+			spin_unlock_irqrestore(&ret_lock, f);
 			return ret_trampoline;
 		}
 	}
-	raw_spin_unlock_irqrestore(&ret_lock, f);
+	spin_unlock_irqrestore(&ret_lock, f);
 	return orig_ra;
 }
 
@@ -255,7 +314,7 @@ wl_diag_exit_ret(u32 retval)
 	int i, best = -1;
 	u32 bestord = 0, seq = 0;
 
-	raw_spin_lock_irqsave(&ret_lock, f);
+	spin_lock_irqsave(&ret_lock, f);
 	for (i = 0; i < RET_POOL; i++)
 		if (ret_pool[i].task == current && ret_pool[i].order >= bestord) {
 			bestord = ret_pool[i].order;
@@ -266,7 +325,7 @@ wl_diag_exit_ret(u32 retval)
 		seq = ret_pool[best].seq;
 		ret_pool[best].task = NULL;
 	}
-	raw_spin_unlock_irqrestore(&ret_lock, f);
+	spin_unlock_irqrestore(&ret_lock, f);
 	if (best >= 0)
 		emit(OP_RETVAL, seq, retval, 0);
 	return ra;
@@ -468,15 +527,21 @@ static ssize_t wd_read(struct file *f, char __user *ubuf, size_t len, loff_t *of
 	}
 
 	for (;;) {
-		raw_spin_lock_irqsave(&fifo_lock, flags);
-		ret = kfifo_out(&fifo, &r, 1);
-		raw_spin_unlock_irqrestore(&fifo_lock, flags);
+		spin_lock_irqsave(&fifo_lock, flags);
+		if (ring_head != ring_tail) {
+			r = ring[ring_tail & (FIFO_RECS - 1)];
+			ring_tail++;
+			ret = 1;
+		} else {
+			ret = 0;
+		}
+		spin_unlock_irqrestore(&fifo_lock, flags);
 		if (ret)
 			break;
 		if (f->f_flags & O_NONBLOCK)
 			return -EAGAIN;
 		if (wait_event_interruptible(rq,
-				!kfifo_is_empty(&fifo) || atomic_read(&drops)))
+				(ring_head != ring_tail) || atomic_read(&drops)))
 			return -ERESTARTSYS;
 		if (atomic_read(&drops))
 			return 0;
@@ -489,7 +554,7 @@ static ssize_t wd_read(struct file *f, char __user *ubuf, size_t len, loff_t *of
 static unsigned int wd_poll(struct file *f, poll_table *wait)
 {
 	poll_wait(f, &rq, wait);
-	if (!kfifo_is_empty(&fifo) || atomic_read(&drops))
+	if ((ring_head != ring_tail) || atomic_read(&drops))
 		return POLLIN | POLLRDNORM;
 	return 0;
 }
@@ -526,7 +591,7 @@ static int __init wd_init(void)
 			continue;
 		}
 
-		a = kallsyms_lookup_name(hooks[i].name);
+		a = resolve_sym(hooks[i].name);
 		if (!a) {
 			pr_warn("wl_diag: '%s' non trovato (wl caricato?)\n",
 				hooks[i].name);
@@ -584,7 +649,7 @@ static int __init wd_init(void)
 		int k;
 
 		for (k = 0; k < ARRAY_SIZE(cand); k++) {
-			unsigned long a = kallsyms_lookup_name(cand[k]);
+			unsigned long a = resolve_sym(cand[k]);
 
 			if (a) {
 				p_flush_icache = (flush_fn_t)a;
