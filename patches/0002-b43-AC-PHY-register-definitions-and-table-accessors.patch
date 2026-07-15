@@ -13,15 +13,15 @@ New files: tables_phy_ac.c, tables_phy_ac.h.
 Signed-off-by: Alessio Ferri <alessio.ferri@mythread.it>
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |   1 +
- drivers/net/wireless/broadcom/b43/phy_ac.h    | 159 +++++
+ drivers/net/wireless/broadcom/b43/phy_ac.h    | 160 +++++
  .../net/wireless/broadcom/b43/tables_phy_ac.c | 607 ++++++++++++++++++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |  55 ++
- 4 files changed, 822 insertions(+)
+ 4 files changed, 823 insertions(+)
  create mode 100644 drivers/net/wireless/broadcom/b43/tables_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/tables_phy_ac.h
 
 diff --git a/drivers/net/wireless/broadcom/b43/Makefile b/drivers/net/wireless/broadcom/b43/Makefile
-index 54f92ce49..bf3788040 100644
+index 54f92ce..bf37880 100644
 --- a/drivers/net/wireless/broadcom/b43/Makefile
 +++ b/drivers/net/wireless/broadcom/b43/Makefile
 @@ -15,6 +15,7 @@ b43-$(CONFIG_B43_PHY_HT)	+= tables_phy_ht.o
@@ -33,7 +33,7 @@ index 54f92ce49..bf3788040 100644
  b43-y				+= xmit.o
  b43-y				+= dma.o
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.h b/drivers/net/wireless/broadcom/b43/phy_ac.h
-index 02eb6c086..35705a113 100644
+index 02eb6c0..82b9679 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.h
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.h
 @@ -4,6 +4,11 @@
@@ -94,7 +94,7 @@ index 02eb6c086..35705a113 100644
  #define B43_PHY_AC_C1_CLIP			0x6d4
  #define  B43_PHY_AC_C1_CLIP_DIS			0x4000
  #define B43_PHY_AC_C2_CLIP			0x8d4
-@@ -31,9 +64,135 @@
+@@ -31,9 +64,136 @@
  #define B43_PHY_AC_C3_CLIP			0xad4
  #define  B43_PHY_AC_C3_CLIP_DIS			0x4000
  
@@ -131,6 +131,7 @@ index 02eb6c086..35705a113 100644
 +					 B43_PHY_AC_STATE_CLIP_C2_DIS)
 +#define B43_PHY_AC_STATE_PHY_RUN	0x0080	/* BBCFG bit 0x8000: 1=running, 0=quiesced */
 +#define B43_PHY_AC_STATE_CCA_RESET	0x0100	/* BBCFG bit 0x4000 (RSTCCA active) */
++#define B43_PHY_AC_STATE_AFE_ON		0x0200	/* RF front-end armed (enable_afe ON) */
 +#define B43_PHY_AC_STATE_FAULTED	0x8000	/* sticky: a precondition failed */
 +
 +/* Per-device PHY state. */
@@ -232,7 +233,7 @@ index 02eb6c086..35705a113 100644
  #endif /* B43_PHY_AC_H_ */
 diff --git a/drivers/net/wireless/broadcom/b43/tables_phy_ac.c b/drivers/net/wireless/broadcom/b43/tables_phy_ac.c
 new file mode 100644
-index 000000000..0238e12c1
+index 0000000..0238e12
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/tables_phy_ac.c
 @@ -0,0 +1,607 @@
@@ -845,7 +846,7 @@ index 000000000..0238e12c1
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/tables_phy_ac.h b/drivers/net/wireless/broadcom/b43/tables_phy_ac.h
 new file mode 100644
-index 000000000..54b2a622a
+index 0000000..54b2a62
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/tables_phy_ac.h
 @@ -0,0 +1,55 @@

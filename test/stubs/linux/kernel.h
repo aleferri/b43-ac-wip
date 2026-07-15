@@ -43,6 +43,18 @@
 static inline int __ffs(unsigned long x)  { return __builtin_ctzl(x); }
 static inline int fls(int x)              { return x ? 32 - __builtin_clz((unsigned)x) : 0; }
 static inline int hweight32(u32 x)        { return __builtin_popcount(x); }
+static inline s32 sign_extend32(u32 value, int index)
+{
+	u8 shift = 31 - index;
+	return (s32)(value << shift) >> shift;
+}
+
+/*
+ * linux/math64.h division helpers. On a 64-bit userspace host the native
+ * division has identical semantics (C truncation toward zero).
+ */
+static inline s64 div64_s64(s64 dividend, s64 divisor) { return dividend / divisor; }
+static inline u64 div64_u64(u64 dividend, u64 divisor) { return dividend / divisor; }
 
 /*
  * lib/int_sqrt.c bit-by-bit integer square root. Kernel version handles
@@ -65,6 +77,24 @@ static inline unsigned long int_sqrt(unsigned long x)
 		m >>= 2;
 	}
 	return y;
+}
+
+static inline u32 int_sqrt64(u64 x)
+{
+	u64 b, m, y = 0;
+	if (x <= 1)
+		return (u32)x;
+	m = 1ULL << ((63 - __builtin_clzll(x)) & ~1ULL);
+	while (m) {
+		b = y + m;
+		y >>= 1;
+		if (x >= b) {
+			x -= b;
+			y += m;
+		}
+		m >>= 2;
+	}
+	return (u32)y;
 }
 
 /* Console I/O routed to stderr so it doesn't pollute the trace on stdout. */

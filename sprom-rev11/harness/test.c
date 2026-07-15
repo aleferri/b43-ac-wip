@@ -225,8 +225,8 @@ int main(int argc, char **argv)
 		synth_mode = 1;
 		nvram_path = argc > 2 ? argv[2] : "vectors/bcm4360usb.nvram";
 	} else {
-		srom_path  = argc > 1 ? argv[1] : "../../../router-data/dsl3580l/wl1_srom_raw.txt";
-		nvram_path = argc > 2 ? argv[2] : "../../../router-data/dsl3580l/wl1_nvram.txt";
+		srom_path  = argc > 1 ? argv[1] : "../../router-data/dsl3580l/wl1_srom_raw.txt";
+		nvram_path = argc > 2 ? argv[2] : "../../router-data/dsl3580l/wl1_nvram.txt";
 	}
 
 	printf("=== bcma_sprom_extract_r11 offline harness ===\n");

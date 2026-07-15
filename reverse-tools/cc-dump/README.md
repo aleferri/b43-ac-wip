@@ -23,6 +23,19 @@ Same as wl-diag — out-of-tree against the device's kernel-3.4-rt tree:
     dmesg | tail -20
     rmmod cc_dump          # re-insmod to re-dump
 
+## Run (on the DSL-3580L, 2.6.30)
+
+Build with `KDIR` pointing at the 2.6.30 tree; the `pr_warn` shim compiles in
+automatically. Here the radio is the PCIe device `0000:02:00.0`, whose BAR0 is
+`0xa0000000` per the device's `/proc/iomem` (`a0000000-a01fffff : 0000:02:00.0`),
+and the host is big-endian:
+
+    insmod cc_dump.ko base=0xa0000000 bswap=1
+    dmesg | tail -20
+
+Confirm `chipid` reads back as `0x4352xxxx`; if garbled, drop `bswap` or adjust
+`base` (ChipCommon may sit behind the backplane window rather than at BAR0+0).
+
 ### Finding `base`
 
 `base` must be the physical address where the **AC radio's** ChipCommon core is

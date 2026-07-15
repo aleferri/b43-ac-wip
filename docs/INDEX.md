@@ -15,6 +15,7 @@
 | [`channel-generalization.md`](channel-generalization.md) | Analisi di quanto del driver è già chan/BW-invariant. Diff a 3 vie tra ch36/ch44/ch36-bw40. Quali blocchi vanno generalizzati, con piano operativo in 4 fasi. |
 | [`rxiq-cal-analysis.md`](rxiq-cal-analysis.md) | Analisi del blocco di calibrazione RX-IQ: struttura 4-step del sweep vendor, mapping tra i registri toccati e le fasi (RX AFE reconfig, radio 2069 IQ-cal, poll blocks, cleanup). |
 | [`txlpf-formula.md`](txlpf-formula.md) | Reverse engineering della formula per le celle table 7 TX-LPF. Formula candidata, pre-state per stage, mapping bit-per-bit tra canale/BW/chip e valori scritti. Punto aperto principale del porting. |
+| [`nvram-reference.md`](nvram-reference.md) | Significato di ogni variabile NVRAM/SROM rev 11 e sua destinazione nel programming PHY/radio, con livelli di confidenza (verificato / standard / SALAME / TODO). Include la sintesi delle correlazioni confermate (pa5ga→est_pwr, rxgains→rxgain_init, maxp5ga→max index, tssifloor→0x0724). |
 
 ## Come navigare
 
@@ -24,6 +25,8 @@
   `channel-generalization.md`.
 - Per capire **la struttura del set_channel**: `rxiq-cal-analysis.md` (fase
   di calibrazione, che è la parte più grossa).
+- Per capire **cosa significa una variabile NVRAM** e dove finisce nel
+  programming: `nvram-reference.md`.
 - Per pianificare **nuove capture wl-diag** dal vendor: `retrace-todo.md`
   e `porting-plan.md`.
 

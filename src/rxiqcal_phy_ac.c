@@ -2,39 +2,50 @@
 /*
  * Broadcom B43 AC-PHY -- RX I/Q calibration SKELETON.
  *
- * PROVENANCE / METODO. Struttura e algoritmo generico portati da brcmsmac
+ * Struttura e algoritmo generico dalla cal N-PHY di brcmsmac
  * (drivers/net/wireless/broadcom/brcm80211/brcmsmac/phy/phy_n.c), funzioni
  * wlc_phy_cal_rxiq_nphy_rev3 / wlc_phy_calc_rx_iq_comp_nphy /
- * wlc_phy_rx_iq_est_nphy. brcmsmac NON ha AC-PHY: quella e' cal N-PHY su radio
- * 2056. Qui se ne prende SOLO la forma -- l'ossatura setup->gainctrl->misura->
- * solve->applica->cleanup e la matematica del solve IQ-imbalance, che e'
- * PHY-independent -- e la si adatta ad AC-PHY rev 1 / radio 2069.
+ * wlc_phy_rx_iq_est_nphy: l'ossatura setup->gainctrl->misura->solve->
+ * applica->cleanup e la matematica del solve IQ-imbalance, che e'
+ * PHY-independent, adattate ad AC-PHY rev 1 / radio 2069.
  *
  * COSA E' GENERICO (portato, rivedibile ora):
  *   - l'ordine delle fasi in b43_phy_ac_rxiqcal (== rev3 N-PHY);
- *   - il solve fixed-point in b43_phy_ac_calc_rx_iq_comp (verbatim N-PHY).
+ *   - il solve in b43_phy_ac_rx_iq_comp_update (forma N-PHY).
  *
- * STATO FILL (dalla trace down-to-bss-up):
- *   - b43_phy_ac_rxiq_est: RIEMPITO e confermato (#82533-82556).
+ * STATO FILL:
+ *   - b43_phy_ac_rxiq_est: RIEMPITO e confermato (d6220 #82533-82556;
+ *     agcombo rescan con retval, 10 run). Mapping accumulatori CONFERMATO
+ *     dai retval: +3/+2 = i_pwr, +5/+4 = q_pwr, +1/+0 = iq_prod (i/q
+ *     grandi e simili, iq piccolo e signed, e il solve sotto riproduce i
+ *     coeff vendor solo con questo mapping).
+ *   - b43_phy_ac_rxiq_coeffs: RIEMPITO e confermato (agcombo #32043-48):
+ *     a/b in 0x?a0/0x?a1 per-core, s10.
+ *   - b43_phy_ac_rx_iq_comp_update: matematica CONFERMATA bit-exact contro
+ *     3 vettori misura->coeff (vedi docs/rxiq-cal-analysis.md, sezione
+ *     agcombo): somma di 2 round da 0x4000 campioni + solve con
+ *     arrotondamento al piu' vicino.
  *   - b43_phy_ac_rxcal_apply_gain / tx_tone / stopplayback: RIEMPITI
- *     verbatim dagli episodi (gain #82514-82531, tono #82499-82512, teardown
- *     #82558-82559). Le op and/or con mask=0 sono euristica (il tracer non
- *     distingue and da or).
- *   - b43_phy_ac_rxcal_gainctrl: struttura hill-climb N-PHY, MA vedi FINDING 3.
- *   - rxcal_phy_setup/radio_setup/cleanup: NON riempiti -- bulk (~300 op RMW,
- *     #82151-82478), da fare a pezzi verificati col correlatore, non a occhio.
- *   - b43_phy_ac_rxiq_coeffs: NON corroborato qui -- vedi FINDING 2.
+ *     verbatim dagli episodi (gain #82514-82531, tono #82499-82512,
+ *     teardown #82558-82559).
+ *   - b43_phy_ac_rxcal_gainctrl: 4 step {bit1,bit2} confermati come
+ *     schedule FISSO (vedi FINDING 3).
+ *   - rxcal_phy_setup/radio_setup/cleanup: NON riempiti -- bulk (~300 op
+ *     RMW, #82151-82478), da fare a pezzi verificati col correlatore.
  *
- * FINDING 1. La cal a bss-up (ch36) e' gain-cal (WI-5): stime -> tabella gain
- * (id 0xc), non coeff a/b.
- * FINDING 2.
- * FINDING 2. il comp AC e' reale, solo
- * non esercitato in questo bss-up. calc_rx_iq_comp resta TEMPLATE.
- * FINDING 3. Il gain di misura e' quasi FISSO tra le iterazioni (setting
- * principale ~6x + alt 2x): la trace NON mostra un hill-climb ampio. La
- * struttura gainctrl portata resta come riferimento N-PHY, ma il runtime reale
- * qui e' "misura ripetuta a gain fisso" -- il criterio di scelta/ripetizione
- * dipende dalle misure UNDEFINED e non e' ricavabile dalla trace.
+ * FINDING 1. La cal a bss-up d6220 (ch36) scrive anche la tabella gain
+ * (id 0xc); i valori osservati (0x44 a off 0x63/67/6b/73/77/7b) sono
+ * costanti in tutte le catture disponibili, non derivati dalle misure.
+ * FINDING 2 (RISOLTO, agcombo retval). Il comp AC e' esercitato: la
+ * sequenza completa e' sweep tone-mode {4,2,1,0} a 0x400 campioni, poi
+ * per ogni core 2 round a 0x4000 campioni con gli ALTRI core mutati
+ * (save/RMW/restore di 0x?20/0x?21/0x?28/0x?29), somma dei round, solve,
+ * scrittura coeff in 0x?a0/0x?a1.
+ * FINDING 3 (RISOLTO, agcombo retval). Nessun hill-climb e nessun
+ * criterio dipendente dalle misure: iterazioni e tone-mode sono uno
+ * schedule fisso, e il gain di misura non viene MAI modificato -- i
+ * registri gain (0x?25/0x?39/0x?3a) sono solo salvati e ripristinati
+ * attorno alla misura, il gain resta quello di rxgain_init.
  *
  * Finche' gli stub non sono riempiti, b43_phy_ac_rxiqcal ritorna
  * -EOPNOTSUPP e non tocca il silicio. NON e' wirato in set_channel: e' Fase B,
@@ -56,11 +67,10 @@ struct b43_phy_ac_iq_est {
 	u32 q_pwr;
 };
 
-/* Coefficienti di compensazione RX per-core (== struct nphy_iq_comp). Nomi
- * a0/b0/a1/b1 tenuti per parallelismo con la reference; su AC-PHY 2x2 solo
- * core 0/1 sono usati. */
+/* Coefficienti di compensazione RX per-core (analogo di nphy_iq_comp, esteso
+ * a 3 core: il vendor su agcombo 3x3 programma anche core 2). */
 struct b43_phy_ac_iq_comp {
-	s16 a0, b0, a1, b1;
+	s16 a[3], b[3];
 };
 
 /*
@@ -71,18 +81,7 @@ struct b43_phy_ac_iq_comp {
 #define B43_PHY_AC_MIN_RXIQ_PWR		0x100
 #define B43_PHY_AC_RXIQ_CAL_RETRY	2
 
-/* Gain-cal (percorso (a)): costanti di decisione. Prese da N-PHY
- * gainctrl_rev5 come TEMPLATE -- DA VERIFICARE su AC-PHY. */
-#define B43_PHY_AC_RXCAL_THRESH_PWR	10000	/* soglia di potenza */
-#define B43_PHY_AC_RXCAL_DESIRED_LOG2	13	/* log2 potenza desiderata */
-#define B43_PHY_AC_RXCAL_MAXGAININDEX	7	/* fondo scala ladder */
 #define B43_PHY_AC_RXCAL_NUM_SAMPS	1024	/* == 0x400 nella trace */
-
-enum b43_phy_ac_rxcal_dir {
-	B43_RXCAL_GAIN_INIT,
-	B43_RXCAL_GAIN_UP,
-	B43_RXCAL_GAIN_DOWN,
-};
 
 /* Flip a 1 quando gli stub hardware sotto sono riempiti dalla trace. */
 #define B43_PHY_AC_RXIQCAL_REGMAP_FILLED	0
@@ -102,19 +101,6 @@ enum b43_phy_ac_rxcal_dir {
  * lettura nella trace: +3,+2 / +5,+4 / +1,+0. */
 #define B43_PHY_AC_RXIQ_ACC(core)	(u16)(0x06c0 + (core) * 0x200)
 
-/* Numero di bit significativi di |value| (== wlc_phy_nbits). */
-static int b43_phy_ac_nbits(s32 value)
-{
-	s32 abs = value < 0 ? -value : value;
-	int n = 0;
-
-	while (abs) {
-		n++;
-		abs >>= 1;
-	}
-	return n;
-}
-
 /* ============================ STUB DA RIEMPIRE ============================ */
 
 /*
@@ -125,11 +111,11 @@ static int b43_phy_ac_nbits(s32 value)
  *   MOD 0x0270 clr iqMode ; MOD 0x0270 set start ; poll RD 0x0270 ;
  *   read accumulatori 0x06c0+core*0x200 (+0x200 per core1: 0x08c0).
  *
- * DA VERIFICARE (SALAME): quale delle 3 coppie e' i_pwr / q_pwr / iq_prod e
- * quale meta' e' Hi vs Lo. Qui si tiene l'ordine di lettura della trace
- * (+3,+2 / +5,+4 / +1,+0) e si assegna per analogia N-PHY (i, q, iq). Sul
- * silicio e' falsificabile: i_pwr,q_pwr >= 0 e grandi, iq_prod piu' piccolo/
- * con segno.
+ * Mapping accumulatori CONFERMATO (agcombo rescan con retval): coppia
+ * +3,+2 = i_pwr, +5,+4 = q_pwr, +1,+0 = iq_prod, con la meta' alta prima.
+ * Coerente coi valori misurati (i/q grandi e simili, iq piccolo con segno)
+ * e verificato dal solve: solo con questo mapping rx_iq_comp_update riproduce
+ * i coeff che il vendor scrive.
  */
 static int b43_phy_ac_rxiq_est(struct b43_wldev *dev,
 			       struct b43_phy_ac_iq_est *est,
@@ -170,22 +156,37 @@ static int b43_phy_ac_rxiq_est(struct b43_wldev *dev,
 }
 
 /*
- * Legge (write=0) o scrive (write=1) i 4 coefficienti di comp RX.
- * Reference: wlc_phy_rx_iq_coeffs_nphy (phy reg 0x9a/0x9b/0x9c/0x9d).
+ * Legge (write=0) o scrive (write=1) i coefficienti di comp RX per-core.
+ * Reference N-PHY: wlc_phy_rx_iq_coeffs_nphy (phy reg 0x9a-0x9d).
  *
- * FINDING (trace): NON corroborato. Gli 8 episodi di stima IQ nel trace
- * (#82533..#84330) NON sono seguiti da scritture di coeff di comp a/b: dopo la
- * stima 0x4000 finale il blob scrive valori di TABELLA GAIN (id 0xc off
- * 0x63/0x73/0x67/0x77 = 0x44) + bias PA. Cioe' su questo board l'estimatore IQ
- * alimenta una cal di GAIN (WI-5), non l'applicazione di coeff di comp N-PHY.
- * Quindi questo accessor resta template: i registri dei coeff AC-PHY, se
- * esistono e vengono usati, non compaiono in questa cattura. Da NON riempire
- * a caso.
+ * Regmap AC-PHY CONFERMATO (agcombo rescan-to-bss-ch36 con retval,
+ * #32043-#32048): a in 0x06a0 + core*0x200, b in 0x06a1 + core*0x200,
+ * s10 nel campo [9:0]. I tre vettori misura->coeff della cattura sono
+ * riprodotti bit-exact da rx_iq_comp_update qui sotto.
  */
+#define B43_PHY_AC_RXIQ_COMP_A(core)	(u16)(0x06a0 + (core) * 0x200)
+#define B43_PHY_AC_RXIQ_COMP_B(core)	(u16)(0x06a1 + (core) * 0x200)
+
 static void b43_phy_ac_rxiq_coeffs(struct b43_wldev *dev, u8 write,
 				   struct b43_phy_ac_iq_comp *comp)
 {
-	/* Non corroborato dal trace -- vedi FINDING sopra. */
+	unsigned int core;
+
+	for (core = 0; core < dev->phy.ac->num_cores && core < 3; core++) {
+		if (write) {
+			b43_phy_write(dev, B43_PHY_AC_RXIQ_COMP_A(core),
+				      comp->a[core] & 0x3ff);
+			b43_phy_write(dev, B43_PHY_AC_RXIQ_COMP_B(core),
+				      comp->b[core] & 0x3ff);
+		} else {
+			comp->a[core] = sign_extend32(
+				b43_phy_read(dev,
+					     B43_PHY_AC_RXIQ_COMP_A(core)), 9);
+			comp->b[core] = sign_extend32(
+				b43_phy_read(dev,
+					     B43_PHY_AC_RXIQ_COMP_B(core)), 9);
+		}
+	}
 }
 
 /* phy-side setup del loopback di misura. Ref: wlc_phy_rxcal_physetup_nphy. */
@@ -668,18 +669,20 @@ void b43_phy_ac_rxiq_est_debug(struct b43_wldev *dev)
 /* ===================== ALGORITMO GENERICO (PORTATO) ====================== */
 
 /*
- * Misura col correlatore e risolve i coefficienti di compensazione IQ.
- * Struttura e matematica prese verbatim da wlc_phy_calc_rx_iq_comp_nphy:
+ * Misura col correlatore e risolve i coefficienti di compensazione IQ:
  * dalla stima (ii=I^2, qq=Q^2, iq=I*Q) ricava la coppia (a,b) che azzera lo
- * sbilanciamento di gain/fase. La forma e' PHY-independent; cambiano solo gli
- * accessi (est/coeffs, sopra) e il formato dei coeff.
+ * sbilanciamento di gain/fase. Stessa forma di wlc_phy_calc_rx_iq_comp_nphy;
+ * i dettagli AC (somma di 2 round, arrotondamento al piu' vicino, formato s10
+ * in 0x?a0/0x?a1) sono confermati bit-exact contro i 3 vettori misura->coeff
+ * della cattura agcombo con retval (docs/rxiq-cal-analysis.md).
  *
- * DA VERIFICARE su AC-PHY: (1) mask &0x3ff (10 bit) e ordinamento a/b nei
- * campi -- su N-PHY dipende da phy_rev; (2) la scala di B43_PHY_AC_MIN_RXIQ_PWR.
+ * DA VERIFICARE su AC-PHY: la scala di B43_PHY_AC_MIN_RXIQ_PWR (valore
+ * N-PHY tenuto come segnaposto; nella cattura le potenze sono ordini di
+ * grandezza sopra, il guard non e' mai stato esercitato).
  */
-static int b43_phy_ac_calc_rx_iq_comp(struct b43_wldev *dev, u8 core_mask)
+int b43_phy_ac_rx_iq_comp_update(struct b43_wldev *dev, u8 core_mask)
 {
-	struct b43_phy_ac_iq_est est[3];
+	struct b43_phy_ac_iq_est est[3], est2[3];
 	struct b43_phy_ac_iq_comp old_comp, new_comp;
 	unsigned int core;
 	uint retry = 0;
@@ -689,76 +692,38 @@ static int b43_phy_ac_calc_rx_iq_comp(struct b43_wldev *dev, u8 core_mask)
 		return 0;
 
 	b43_phy_ac_rxiq_coeffs(dev, 0, &old_comp);
-	new_comp.a0 = new_comp.b0 = new_comp.a1 = new_comp.b1 = 0;
+	memset(&new_comp, 0, sizeof(new_comp));
 	b43_phy_ac_rxiq_coeffs(dev, 1, &new_comp);
 
 retry_cal:
+	/*
+	 * Due stime a 0x4000 campioni, sommate. Il vendor misura due round
+	 * per core e risolve sulla SOMMA degli accumulatori, non sulla media
+	 * dei coefficienti: agcombo core 0 da' a=+7 (round 1) e a=-12
+	 * (round 2), il coeff scritto e' -3 = solve(round1+round2).
+	 */
 	err = b43_phy_ac_rxiq_est(dev, est, 0x4000, 32);
+	if (err)
+		return err;
+	err = b43_phy_ac_rxiq_est(dev, est2, 0x4000, 32);
 	if (err)
 		return err;
 
 	new_comp = old_comp;
 
 	for (core = 0; core < dev->phy.ac->num_cores; core++) {
-		s32 iq, a, b, temp;
-		u32 ii, qq;
-		s16 iq_nbits, qq_nbits, brsh, arsh;
-		bool bad = false;
+		s64 iq, num;
+		u64 ii, qq, v;
+		s32 a, b;
 
 		if (!((core_mask >> core) & 1))
 			continue;
 
-		iq = est[core].iq_prod;
-		ii = est[core].i_pwr;
-		qq = est[core].q_pwr;
+		iq = (s64)est[core].iq_prod + est2[core].iq_prod;
+		ii = (u64)est[core].i_pwr + est2[core].i_pwr;
+		qq = (u64)est[core].q_pwr + est2[core].q_pwr;
 
-		if ((ii + qq) < B43_PHY_AC_MIN_RXIQ_PWR) {
-			bad = true;
-			goto check_bad;
-		}
-
-		iq_nbits = b43_phy_ac_nbits(iq);
-		qq_nbits = b43_phy_ac_nbits(qq);
-
-		/* a = -(iq / ii), in Q10 (== N-PHY). */
-		arsh = 10 - (30 - iq_nbits);
-		if (arsh >= 0) {
-			a = -(iq << (30 - iq_nbits)) + (ii >> (1 + arsh));
-			temp = (s32)(ii >> arsh);
-		} else {
-			a = -(iq << (30 - iq_nbits)) + (ii << (-1 - arsh));
-			temp = (s32)(ii << -arsh);
-		}
-		if (temp == 0) {
-			bad = true;
-			goto check_bad;
-		}
-		a /= temp;
-
-		/* b = sqrt(qq/ii - a^2) - 1.0, in Q10. */
-		brsh = qq_nbits - 31 + 20;
-		b = (qq << (31 - qq_nbits));
-		temp = (brsh >= 0) ? (s32)(ii >> brsh) : (s32)(ii << -brsh);
-		if (temp == 0) {
-			bad = true;
-			goto check_bad;
-		}
-		b /= temp;
-		b -= a * a;
-		b = (s32)int_sqrt((unsigned long)b);
-		b -= (1 << 10);
-
-		/* TODO(hw): mask/ordinamento da confermare su AC-PHY. */
-		if (core == 0) {
-			new_comp.a0 = (s16)a & 0x3ff;
-			new_comp.b0 = (s16)b & 0x3ff;
-		} else if (core == 1) {
-			new_comp.a1 = (s16)a & 0x3ff;
-			new_comp.b1 = (s16)b & 0x3ff;
-		}
-
-check_bad:
-		if (bad) {
+		if (ii + qq < B43_PHY_AC_MIN_RXIQ_PWR || ii == 0) {
 			if (retry < B43_PHY_AC_RXIQ_CAL_RETRY) {
 				retry++;
 				goto retry_cal;
@@ -766,6 +731,27 @@ check_bad:
 			new_comp = old_comp;	/* rinuncia: tieni i vecchi */
 			break;
 		}
+
+		/*
+		 * a = -(iq/ii), b = sqrt(qq/ii - a^2) - 1.0, entrambi in Q10.
+		 * Arrotondamento al piu' vicino su a e b: i tre vettori
+		 * agcombo con retval lo distinguono dal floor/troncamento
+		 * N-PHY (core 0: a=-2.61 -> vendor -3, b=109.97 -> vendor
+		 * 110; core 1: b=59.83 -> vendor 60). Il comportamento a
+		 * frazione esattamente 0.5 non e' osservato nelle catture.
+		 */
+		num = -(iq << 10);
+		a = (s32)div64_s64(num + (num < 0 ? -(s64)(ii >> 1)
+					          : (s64)(ii >> 1)), ii);
+
+		v = div64_u64((qq << 20) + (ii >> 1), ii) - (u64)(a * a);
+		b = (s32)int_sqrt64(v);
+		if (v - (u64)b * b > (u64)b)
+			b++;		/* sqrt arrotondata, non floor */
+		b -= 1 << 10;
+
+		new_comp.a[core] = (s16)a;
+		new_comp.b[core] = (s16)b;
 	}
 
 	b43_phy_ac_rxiq_coeffs(dev, 1, &new_comp);
@@ -811,7 +797,7 @@ int b43_phy_ac_rxiqcal(struct b43_wldev *dev, u8 cal_type)
 			b43_phy_ac_rxcal_gainctrl(dev, rx_core);
 			b43_phy_ac_tx_tone(dev, 4000000 /* TODO freq */,
 					   0 /* TODO amp */);
-			b43_phy_ac_calc_rx_iq_comp(dev, (u8)(1 << rx_core));
+			b43_phy_ac_rx_iq_comp_update(dev, (u8)(1 << rx_core));
 			b43_phy_ac_stopplayback(dev);
 		}
 

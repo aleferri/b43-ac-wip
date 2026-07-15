@@ -13,6 +13,14 @@ struct b43_wldev;
 int b43_phy_ac_rxiqcal(struct b43_wldev *dev, u8 cal_type);
 
 /*
+ * Misura (2 round da 0x4000 campioni, sommati) e programma i coefficienti di
+ * compensazione RX-IQ per i core in core_mask. Matematica e regmap confermati
+ * bit-exact contro la cattura agcombo con retval (docs/rxiq-cal-analysis.md).
+ * Presuppone tone attivo e path di misura gia' configurati dal chiamante.
+ */
+int b43_phy_ac_rx_iq_comp_update(struct b43_wldev *dev, u8 core_mask);
+
+/*
  * Debug: run the 4-tone-mode RX-IQ measurement sequence and log the raw
  * accumulator values (i_pwr, q_pwr, iq_prod) per core.
  * Call after txpwr_by_index in set_channel.
