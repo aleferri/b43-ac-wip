@@ -19,6 +19,12 @@
 #include <linux/version.h>
 #include <linux/swab.h>
 
+/* pr_warn è un alias di pr_warning aggiunto in 2.6.35; il DSL-3580L (2.6.30)
+ * ha solo pr_warning. #ifndef così un backport che lo definisce già vince. */
+#ifndef pr_warn
+#define pr_warn pr_warning
+#endif
+
 /* ChipCommon register offsets (include/linux/bcma/bcma_driver_chipcommon.h) */
 #define CC_CHIPID		0x0000
 #define CC_CHIPSTATUS		0x002C

@@ -92,6 +92,12 @@ un interruttore.
 
 ## 4. Coefficienti di compensazione: write-back e formato
 
+**SUPERATO — vedi §9.** La cattura agcombo con retval mostra che questi 4
+registri non sono coefficienti: sono lo stato save/restore del mute dei
+core non misurati. I coefficienti veri sono 2 per core in 0x?a0/0x?a1,
+formato s10 come N-PHY. Il testo sotto è conservato come storia
+dell'ipotesi.
+
 Dopo la call #5 (prima misura a 16384 campioni) il blob scrive 4 registri
 per core:
 
@@ -135,6 +141,10 @@ invece di 2).
 
 
 ## 6. Ipotesi dell'algoritmo completo
+
+**SUPERATO — vedi §9** per l'algoritmo confermato dai retval: compute()
+consuma solo le misure di precisione per-core (con gli altri core mutati),
+non lo sweep, e produce 2 coefficienti s10 per core in 0x?a0/0x?a1.
 
 Dalla struttura della trace si ricostruisce:
 
@@ -225,10 +235,97 @@ coerente con channel-dependence, ma non conclusivo senza valori.
 
 ## 8. Prossimi passi
 
-1. Applicare la patch `rxiq-est-debug.patch` e raccogliere i log su
-   hardware reale per validare P1–P3.
-2. Se P1–P3 passano, implementare `compute()` con l'algebra N-PHY
-   (a = –iq/i², b = √(q²/i² – a²) – 1) come primo tentativo, usando
-   la misura a tone_mode=4 come input. Se i coefficienti risultanti
-   non matchano 0x0182/0x7761, estendere il solve alle 4 misure.
-3. Se P2 fallisce, swappare le coppie di accumulatori e ripetere.
+**AGGIORNATO dopo §9.** Restano aperti:
+
+1. Riempire rxcal_phy_setup/radio_setup/cleanup (bulk ~300 op RMW,
+   #82151-82478 su d6220) a pezzi verificati col correlatore.
+2. Determinare lo scopo dello sweep tone-mode {4,2,1,0}: i coefficienti
+   non ne dipendono numericamente (riprodotti dalle sole misure di
+   precisione), ma il blob lo esegue sempre. Ipotesi: sanity/linearity
+   check software o warm-up; servono catture con retval di un caso di
+   fallimento per discriminare.
+3. Confermare la scala di B43_PHY_AC_MIN_RXIQ_PWR (mai esercitata:
+   nelle catture le potenze sono ordini di grandezza sopra).
+4. Osservare il comportamento di arrotondamento a frazione esattamente
+   0.5 (non presente nei 3 vettori disponibili).
+
+
+## 9. Verifica con la cattura agcombo a return value
+
+Cattura: `router-data/agcombo/agcombo-wl1-4360-rescan-to-bss-ch36.txt`
+(wl-diag "capture ret val", 6453 RETVAL), mergiata con
+`reverse-tools/merge_retvals.py`. Finestra cal: #29788–#32120.
+Board agcombo = BCM4360 3x3: terza catena (registri 0x0aXX/0x0bXX)
+attiva, a differenza di DSL-3580L/D6220.
+
+### 9.1 Struttura confermata
+
+10 run dell'estimator (start su 0x0270), in tre fasi:
+
+1. **Azzeramento coeff** (#28801-28806, prima della finestra): WR
+   0x?a0/0x?a1 = 0 per i 3 core.
+2. **Sweep** (it0–it3): 4 misure a 0x0400 campioni, tutti i core insieme,
+   tone_mode 0x?34 = {4, 2, 1, 0}. Unica variabile tra le iterazioni:
+   tone_mode (diff strutturale: 6 op su 322). Le potenze scendono
+   monotonicamente (~0x91 → 0x2b ·10⁴ su core 0) ma nessun valore
+   derivato da queste misure viene scritto.
+3. **Precisione per-core** (it4–it9): 2 round × 3 core a 0x4000 campioni.
+   Per ogni misura, i registri 0x?20/0x?21/0x?28/0x?29 degli ALTRI due
+   core vengono letti (retval: 0x0182/0x7761/0x0080/0x0321 — i "4
+   coefficienti" della vecchia ipotesi §4), modificati per mutare il
+   core, e ripristinati dopo la misura. Il gain (0x?25/0x?39/0x?3a)
+   viene solo salvato e ripristinato: mai modificato.
+4. **Solve + write-back** (#32043-32048): 2 coefficienti per core in
+   0x?a0 (a) / 0x?a1 (b), s10.
+
+### 9.2 Vettori misura → coefficienti
+
+Somma dei due round per core (hi<<16|lo dagli accumulatori):
+
+| Core | ii (Σ i²) | qq (Σ q²) | iq (Σ i·q) | a scritto | b scritto |
+|------|-----------|-----------|------------|-----------|-----------|
+| 0 | 0x05af2b1e | 0x06f83860 | +243638 | 0x3fd (−3) | 0x06e (110) |
+| 1 | 0x05e53106 | 0x06a37eb1 | −7911361 | 0x052 (82) | 0x03c (60) |
+| 2 | 0x043ccde7 | 0x051ec43f | −10145289 | 0x092 (146) | 0x05c (92) |
+
+Solve confermato bit-exact su tutti e sei i valori:
+
+```
+a = round(−iq · 2¹⁰ / ii)
+b = round(√(qq/ii · 2²⁰ − a²)) − 2¹⁰
+```
+
+Dettagli discriminati dai vettori:
+
+- **Somma dei round, non media dei coefficienti**: core 0 dà a=+7
+  (round 1) e a=−12 (round 2); il vendor scrive −3 = solve(Σ round).
+- **Arrotondamento al più vicino, non floor/troncamento N-PHY**:
+  core 0 a=−2.61→−3 (trunc darebbe −2), core 0 b=109.97→110 e core 1
+  b=59.83→60 (floor darebbe 109 e 59). Il fixed-point brcmsmac
+  produce ±1 su 3 valori su 6.
+- **Mapping accumulatori** (chiude il DA VERIFICARE storico): +3,+2 =
+  i², +5,+4 = q², +1,+0 = i·q, hi prima di lo. Con qualunque swap il
+  solve non riproduce i coefficienti vendor.
+
+### 9.3 Risoluzione delle predizioni (§7)
+
+- **P1 falsificata**: a tone_mode=0 le potenze sono ~3.4× sotto
+  tone_mode=4, non ordini di grandezza: tutte e 4 le misure vedono
+  segnale; tone_mode è un selettore di ampiezza/configurazione, non un
+  interruttore. La misura di precisione avviene con tone_mode=0.
+- **P2 confermata**: a tone_mode=4, i²≈q² entro il 2-6% su tutti i core.
+- **P3 confermata**: |iq| < 0.07·i² ovunque, con segno (core 0 lo
+  inverte tra i round).
+- **P4 riformulata**: i registri 0x0720-0x0729 sono identici tra board
+  perché NON sono coefficienti (sono config preesistente, save/restore).
+  I coefficienti veri (0x?a0/0x?a1) sono diversi per core e quindi
+  per istanza di silicio, come atteso da una calibrazione reale.
+- **P5 non indirizzata** da questa cattura (singolo canale).
+
+### 9.4 Riscontro nel driver
+
+`b43_phy_ac_rx_iq_comp_update` (src/rxiqcal_phy_ac.c) implementa il
+solve confermato; il flow `rxiq_comp` del test harness
+(`./rxiq_trace rxiq_comp agcombo`) inietta i 36 valori raw degli
+accumulatori come read plan e verifica che il codice emetta esattamente
+le sei scritture vendor, azzeramento iniziale compreso.

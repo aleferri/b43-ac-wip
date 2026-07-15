@@ -36,8 +36,8 @@ check-bcm4360usb: test
 # and asymmetric maxp5ga0. Hardware-real srdump+nvram_dump pair, not
 # synthetic.
 check-d6220: test
-	./test ../../../router-data/d6220/wl1_srom_raw.txt \
-	       ../../../router-data/d6220/wl1_nvram.txt
+	./test ../../router-data/d6220/wl1_srom_raw.txt \
+	       ../../router-data/d6220/wl1_nvram.txt
 
 # Fourth test vector: agcombo (BCM4360 reference, 3x3, dual-band).
 # srdump returns zero on this blob (OEM omits the raw path), so the
@@ -45,7 +45,7 @@ check-d6220: test
 # fields the BCM43b3 boards leave dormant: 2.4 GHz PA chain, aa2g=7,
 # chain 2 rxgains.
 check-agcombo: test
-	./test --synth ../../../router-data/agcombo/agcombo_nvram.txt
+	./test --synth ../../router-data/agcombo/agcombo_nvram.txt
 
 clean:
 	rm -f $(OBJS) test

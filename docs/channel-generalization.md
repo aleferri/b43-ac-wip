@@ -116,7 +116,7 @@ Rispetto a ch36 vs ch44 (960 diff), ch36 vs bw40 ha 1438 diff, cioè +478
 op imputabili al cambio BW20→BW40. Aree:
 
 1. **Farrow / sample rate config**: BW40 usa una tabella farrow diversa
-   (stub in `farrow_phy_ac.c`).
+   (`b43_phy_ac_farrow_setup` in `phy_ac.c`).
 2. **Filter chain**: registri `0x04XX` (filter regs) hanno valori diversi.
 3. **Chanspec register**: il bit BW nel chanspec (reg `0x0417`/`0x0416`)
    codifica BW20 vs BW40.

@@ -17,14 +17,14 @@ DSL-3580L, leading to the introduction of the
 
 ```
 $ make                     # builds ./test
-$ make check               # runs against ../../../router-data/dsl3580l/wl1_*.txt
-$ make check-d6220         # runs against ../../../router-data/d6220/wl1_*.txt
+$ make check               # runs against ../../router-data/dsl3580l/wl1_*.txt
+$ make check-d6220         # runs against ../../router-data/d6220/wl1_*.txt
                            # (second hardware-real board, same chip family)
 $ make check-bcm4360usb    # runs the synth-mode round-trip on the
                            # bcm4360usb reference NVRAM (see below)
 $ make check-agcombo       # runs the synth-mode round-trip on the
                            # agcombo NVRAM (BCM4360 reference 3x3,
-                           # dual-band, ../../../router-data/agcombo/)
+                           # dual-band, ../../router-data/agcombo/)
 ```
 
 To run against another vector:
@@ -150,9 +150,9 @@ particularly useful — see `../README.md` for the full priority list:
 - `test.c` — table of field checks plus the diff/summary driver.
   Supports both `srom+nvram` mode (default) and `--synth nvram` mode.
 - `Makefile` — `make` builds, `make check` runs against the committed
-  DSL-3580L vector at `../../../router-data/dsl3580l/`,
+  DSL-3580L vector at `../../router-data/dsl3580l/`,
   `make check-d6220` runs against the committed D6220 vector at
-  `../../../router-data/d6220/`, `make check-bcm4360usb` runs the
+  `../../router-data/d6220/`, `make check-bcm4360usb` runs the
   bcm4360usb synth-mode round-trip, `make check-agcombo` runs the
   agcombo synth-mode round-trip against
-  `../../../router-data/agcombo/agcombo_nvram.txt`.
+  `../../router-data/agcombo/agcombo_nvram.txt`.

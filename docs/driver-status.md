@@ -24,43 +24,34 @@ sono un artefatto rigenerato.
 | File sorgente | Patch |
 |---|---|
 | — (ssb/bcma SPROM) | 0001 |
-| `phy_ac.h`, `tables_phy_ac.{c,h}`, `Makefile` (primi add) | 0002 |
+| `phy_ac.h`, `tables_phy_ac.{c,h}`, `Makefile` (tables add) | 0002 |
 | — (registrazione canali 5 GHz, `main.c`) | 0003 |
 | — (DMA 64 KB alignment) | 0004 |
 | `radio_2069.{c,h}`, `Makefile` (radio add) | 0005 |
-| `phy_ac.c`, `phy_ac.h` (update), `farrow_phy_ac.{c,h,inc}`, `rxgain_phy_ac.{c,h}`, `rxiqcal_phy_ac.{c,h}`, `Makefile` | 0006 |
+| `phy_ac.c`, `phy_ac.h` (update), `helpers_phy_ac.c`, `rxiqcal_phy_ac.{c,h}`, `Makefile` (rxiqcal+helpers add), Kconfig | 0006 |
 | — (bcma PMU init) | 0007 |
 | — (core TX/RX wiring, `xmit.c`/`main.c`) | 0008 |
 | — (bcma PCI bridge ID) | 0009 |
 
+Farrow e rxgain non hanno file dedicati: `b43_phy_ac_farrow_setup` e il
+blocco rxgain vivono come sezioni di `phy_ac.c` (patch 0006).
+
 Le patch "—" toccano file fuori da `drivers/net/wireless/broadcom/b43/` e
 non hanno corrispondente in `src/`: vanno mantenute editando la patch.
 
-## Rigenerazione patch 0006
-
-Non esiste ancora uno script automatico. Procedura manuale:
+## Rigenerazione patch 0005/0006
 
 ```sh
-# 1. Sparse checkout del kernel target
-git clone --depth=1 --filter=blob:none --sparse \
-    https://github.com/torvalds/linux.git /tmp/linux
-cd /tmp/linux
-git sparse-checkout set drivers/net/wireless/broadcom/b43
-
-# 2. Applica in sequenza le patch 0001-0005 e committa ognuna
-for p in $B43_REPO/patches/000[1-5]*.patch; do
-    git apply --3way "$p" && git add -A && git commit -m "$(basename $p)"
-done
-
-# 3. Applica 0006 originale e sovrascrivi phy_ac.{c,h} con i sorgenti
-#    di questo repository
-git apply --3way $B43_REPO/patches/0006-*.patch
-cp $B43_REPO/src/phy_ac.c $B43_REPO/src/phy_ac.h drivers/net/wireless/broadcom/b43/
-git add -A && git commit -m "post-0006"
-
-# 4. format-patch tra i due commit → nuova 0006
-git format-patch --start-number=6 -1 --subject-prefix='PATCH 6/9'
+scripts/regen-patches.sh
 ```
+
+Lo script fa sparse checkout del kernel (riusabile via `KDIR=`), applica
+la serie, sovrascrive con i sorgenti di `src/` i file che vi
+corrispondono, e riemette 0005 e 0006 con `git format-patch`. Messaggi
+di commit e author sono presi dalle patch correnti via `git am`: per
+cambiarli si edita la patch e si rilancia. Le righe di Makefile per
+`rxiqcal_phy_ac.o`/`helpers_phy_ac.o` stanno nella 0006 insieme ai
+rispettivi sorgenti, così il tree linka a ogni step della serie.
 
 ## Split upstream previsto per 0006
 
@@ -76,8 +67,8 @@ schema previsto, con `set_channel` stub al passo 1 e riempito via via:
 | d | Analog on reset: femctrl, tx_lpf, rx_lpf, dacbuf, pdet, analog_on_reset | c |
 | e | Channel setup: classifier, clip_det, rxcore_setstate, rx_gate, channel_setup, chanspec_tail, coeff_bank, chan_tables, rx_evm_shaping, adc_reset, rx_enable — riempie `set_channel` | b, c, d |
 | f | op_init + op_software_rfkill: wira il PHY nel framework b43 | e |
-| g | rxgain_phy_ac.c/h | e |
-| h | farrow_phy_ac.c/h/inc | a |
+| g | rxgain: sezione rxgain_init/rxgainctrl di phy_ac.c | e |
+| h | farrow: b43_phy_ac_farrow_setup + tabelle (da phy_ac.c) | a |
 | i | rxiqcal_phy_ac.c/h (skeleton, gated off) | a |
 
 ## Note sulle scelte di implementazione
