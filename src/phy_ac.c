@@ -773,13 +773,10 @@ static void b43_phy_ac_txpwrctrl_setup(struct b43_wldev *dev, u16 freq)
 		/*
 		 * Transfer-function est_pwr: al passo j, num = 512·b0 + 32·b1·j,
 		 * den = 0x8000 + a1·j, v = (den/2 + num)/den, clamp [-8, 0x7f].
-		 * Provenienza (implementazione GPL indipendente, NON dal decompilato):
-		 * b43 mainline, b43_nphy_tx_power_ctl_setup — phy_n.c:4194-4203:
-		 *     num = 8 * (16 * b0 + b1 * i);  den = 32768 + a1 * i;
-		 *     pwr = (4 * num + den / 2) / den, clamp basso -8;
-		 * algebricamente identica (qui in forma incrementale; 128 voci vs 64).
-		 * Secondo testimone: brcmsmac phy_n.c:17743. Coeff. a1/b0/b1 dallo
-		 * SPROM (pa5ga[]), come pa_5g[] in b43 (phy_n.c:4106-4108).
+		 * Stessa formula di b43_nphy_tx_power_ctl_setup (phy_n.c:4194-4203)
+		 * e brcmsmac phy_n.c:17743, qui in forma incrementale e con 128
+		 * voci invece di 64. Coeff. a1/b0/b1 dallo SPROM (pa5ga[]), come
+		 * pa_5g[] in b43 (phy_n.c:4106-4108).
 		 */
 		num = (s32)b0 << 9;
 		den = 0x8000;
@@ -1744,9 +1741,14 @@ static void b43_phy_ac_radio_percore_setup_1(struct b43_wldev *dev)
 
 	for (core = 0; core < num_cores; core++) {
 		u16 stride = (u16)(core * 0x200);
-		u16 byte_shift = (u16)(core * 8);
-		u16 sh_mask = (u16)(0xff00 >> byte_shift);
-		u16 sh_val  = (u16)(0x0100 >> byte_shift);
+		/*
+		 * 0x054b/0x054c sono una coppia shared con un byte per core:
+		 * core 0 = 0x054b high, core 1 = 0x054b low, core 2 = 0x054c
+		 * high (agcombo 3x3, #60574-#60576).
+		 */
+		u16 sh_reg  = (u16)(0x054b + core / 2);
+		u16 sh_mask = (core & 1) ? 0x00ff : 0xff00;
+		u16 sh_val  = (core & 1) ? 0x0001 : 0x0100;
 
 		if (!(mask & (1 << core)))
 			continue;
@@ -1755,8 +1757,7 @@ static void b43_phy_ac_radio_percore_setup_1(struct b43_wldev *dev)
 				  (u16)~0x00f0, 0x0010);
 		b43_radio_maskset(dev, 0x001a + stride,
 				  (u16)~0x0004, 0x0004);
-		/* 0x054b è shared: byte high per core 0, byte low per core 1. */
-		b43_radio_maskset(dev, 0x054b, (u16)~sh_mask, sh_val);
+		b43_radio_maskset(dev, sh_reg, (u16)~sh_mask, sh_val);
 		b43_radio_maskset(dev, 0x001a + stride,
 				  (u16)~0x0300, 0x0000);
 		b43_radio_maskset(dev, 0x0017 + stride,
@@ -2950,8 +2951,13 @@ static void b43_phy_ac_adc_reset(struct b43_wldev *dev)
 		/* Apertura core: peek + relock */
 		saved = b43_phy_ac_tbl_write_lock(dev);
 
-		/* Vendor #38127-#38131: TBL.RD id=0x20 off=0x40 (readback gain-curve). */
-		b43_actab_read_bulk(dev, 0x20, 0x40, 8, 1, &dummy);
+		/*
+		 * Readback gain-curve, offset chip-dependent: 0x40 su 4352
+		 * (d6220 #38127-#38131), 0x0000 su 4360 (agcombo #64021).
+		 */
+		b43_actab_read_bulk(dev, 0x20,
+				    dev->dev->chip_id == 0x4360 ? 0x0000 : 0x40,
+				    8, 1, &dummy);
 
 		b43_actab_write_bulk(dev, 7, 0x100 + c, 16, 1, &z);
 		b43_actab_write_bulk(dev, 7, 0x103 + c, 16, 1, &w0);
@@ -3106,20 +3112,31 @@ static void b43_phy_ac_crs_regs_write(struct b43_wldev *dev, u16 val)
 }
 
 /*
- * Noise floor clear — azzera byte high/low di 0x0910-0x0913 con
- * pattern osservato: 0x0910/0x0912 high-poi-low, 0x0911/0x0913
- * low-poi-high. 8 op totali.
+ * Noise floor program — banco 0x0910-0x0913 con pattern osservato:
+ * 0x0910/0x0912 high-poi-low, 0x0911/0x0913 low-poi-high.
+ *
+ * Chip-dependent (SALAME: unico testimone 4360 è agcombo 7.14, quindi
+ * chip-vs-versione non è discriminabile): 4352 azzera i nibble (d6220
+ * #35064+), 4360 li scrive a 0xf e programma anche il banco core-2
+ * 0x0b10-0x0b13 con lo stesso pattern (agcombo #60952-#60967).
  */
 static void b43_phy_ac_noise_floor_clear(struct b43_wldev *dev)
 {
-	b43_phy_maskset(dev, 0x0910, (u16)~0xff00, 0);
-	b43_phy_maskset(dev, 0x0910, (u16)~0x00ff, 0);
-	b43_phy_maskset(dev, 0x0912, (u16)~0xff00, 0);
-	b43_phy_maskset(dev, 0x0912, (u16)~0x00ff, 0);
-	b43_phy_maskset(dev, 0x0911, (u16)~0x00ff, 0);
-	b43_phy_maskset(dev, 0x0911, (u16)~0xff00, 0);
-	b43_phy_maskset(dev, 0x0913, (u16)~0x00ff, 0);
-	b43_phy_maskset(dev, 0x0913, (u16)~0xff00, 0);
+	bool is4360 = dev->dev->chip_id == 0x4360;
+	u16 hi = is4360 ? 0x0f00 : 0x0000;
+	u16 lo = is4360 ? 0x000f : 0x0000;
+	u16 base;
+
+	for (base = 0x0910; base <= (is4360 ? 0x0b10 : 0x0910); base += 0x200) {
+		b43_phy_maskset(dev, base + 0, (u16)~0xff00, hi);
+		b43_phy_maskset(dev, base + 0, (u16)~0x00ff, lo);
+		b43_phy_maskset(dev, base + 2, (u16)~0xff00, hi);
+		b43_phy_maskset(dev, base + 2, (u16)~0x00ff, lo);
+		b43_phy_maskset(dev, base + 1, (u16)~0x00ff, lo);
+		b43_phy_maskset(dev, base + 1, (u16)~0xff00, hi);
+		b43_phy_maskset(dev, base + 3, (u16)~0x00ff, lo);
+		b43_phy_maskset(dev, base + 3, (u16)~0xff00, hi);
+	}
 }
 
 /*
@@ -3476,9 +3493,16 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
 		b43_phy_read_log(dev, 0x016c);                        /* #37410 peek */
 		b43_phy_maskset(dev, 0x016c, (u16)~0x0040, 0x0040);   /* #37411 set bit 6 */
 
-		/* Nvar per-core (3× TBL.WR id=0x15) — vendor emette PRIMA di 0x0b. */
-		for (core = 0; core < dev->phy.ac->num_cores; core++)
-			b43_actab_write_bulk(dev, 0x15, nvar_off[core], 16, 5, nvar_data);
+		/*
+		 * Nvar per-core (3× TBL.WR id=0x15) — vendor emette PRIMA di 0x0b.
+		 * Solo 4352: il 7.14 su 4360 scrive ta/tb direttamente senza lo
+		 * staging via 0x15 (agcombo: zero op sulla tabella 0x15).
+		 * SALAME: senza un terzo testimone (4352+7.14 o 4360+driver
+		 * nuovo) chip-vs-versione non è discriminabile.
+		 */
+		if (dev->dev->chip_id != 0x4360)
+			for (core = 0; core < dev->phy.ac->num_cores; core++)
+				b43_actab_write_bulk(dev, 0x15, nvar_off[core], 16, 5, nvar_data);
 
 		/* Gain-limit (2× TBL.WR id=0x0b). */
 		b43_actab_write_bulk(dev, 0x0b, 0x0008, 16, 6, glim_a);
@@ -3496,7 +3520,9 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
 			u16 tb = 0x45 + core * 0x20;
 			u16 rd6[6];
 
-			b43_actab_read_bulk(dev, 0x15, nvar_off[core], 16, 6, rd6);
+			if (dev->dev->chip_id != 0x4360)
+				b43_actab_read_bulk(dev, 0x15, nvar_off[core],
+						    16, 6, rd6);
 			b43_actab_write_bulk(dev, ta, 0x0008, 16, 6, nshp_a8);
 			b43_actab_write_bulk(dev, tb, 0x0008, 16, 6, nshp_b8);
 		}

@@ -1,0 +1,42 @@
+# DSL-3580L (SoC BCM6362, radio BCM4352 su PCIe 0000:02:00.0), kernel 2.6.30,
+# wl 6.30.102.7. Lettura dei PMU resource mask della ChipCommon del 4352 via
+# pcicfg (bar0win nel config space) + mempeek (/dev/mem), con wl in down.
+#
+# Il BAR0 del device e' 0xa0200000-0xa0207fff (32 KB, prima finestra da 4 KB
+# sul backplane); 0xa0000000-0xa01fffff (2 MB) e' la finestra grande.
+# La ChipCommon NON e' leggibile a un base fisso: la finestra da 4 KB va
+# puntata sul core scrivendo l'indirizzo di backplane (0x18000000) in bar0win
+# a offset 0x80 del config space PCI. Un ioremap piatto (cc_dump) qui non basta
+# ed entra in conflitto col mapping di wl -> tenerlo fuori, usare pcicfg+mempeek.
+
+# chmod +x pcicfg mempeek
+# wl -i wl1 down
+
+# Tentativi a vuoto prima di puntare la finestra (per memoria):
+#   base 0x18000000 = enum SI del SoC 6362, non del radio -> chipid 0x1000001c
+#   base 0xa0000000 = BAR grande non programmato          -> solo rumore
+
+# Punta la finestra da 4 KB sulla ChipCommon del radio (backplane 0x18000000):
+# ./pcicfg /proc/bus/pci/02/00.0 0x80 0x18000000
+scritto 0x18000000 @ /proc/bus/pci/02/00.0+0x80
+
+# Gate: chipid all'offset 0 della finestra -> 16 bit bassi = 0x4352 (ok, no bswap)
+# ./mempeek 0xa0200000
+0xa0200000: 0x15134352  (bswap 0x52431315)
+
+# PMU resource mask (offset 0x618/0x61c della ChipCommon):
+# ./mempeek 0xa0200618
+0xa0200618: 0x000007fb  (bswap 0xfb070000)   # min_res_mask
+# ./mempeek 0xa020061c
+0xa020061c: 0x000007ff  (bswap 0xff070000)   # max_res_mask
+
+# Risultato:
+#   min_res_mask = 0x7fb
+#   max_res_mask = 0x7ff   (bit 2 e' l'unico non presente in min)
+#
+# max=0x7ff conferma su hardware 4352 il valore gia' programmato dal ramo
+# 4352/4360 di bcma_pmu_resources_init() (patch 0007); coincide con la lettura
+# 4360 sull'agcombo (agcombo_pmu-trace.txt). min=0x7fb e' lo stato a wl caricato;
+# il port lascia min_msk=0 (non scrive), quindi resta da confermare che al
+# bring-up bcma il registro contenga gia' 0x7fb -- lo dice la riga di debug
+# "PMU res mask pre-write:" nel dmesg del port, non questa lettura vendor.

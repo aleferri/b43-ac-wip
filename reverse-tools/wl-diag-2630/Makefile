@@ -11,11 +11,15 @@
 # combaciano e insmod rifiuta il modulo. NB: a differenza della 3.4 NON serve
 # CONFIG_KPROBES (il tracer usa detour inline, non kprobe).
 #
-# Se kallsyms_lookup_name NON e' esportato ai moduli su questo build (link error
-# "Unknown symbol kallsyms_lookup_name"), ricompila con:
-#   make KDIR=... EXTRA_CFLAGS=-DWLDIAG_NO_KALLSYMS ...
-# e passa TUTTI gli indirizzi via parametro syms= (da /proc/kallsyms):
+# Su 2.6.30 kallsyms_lookup_name esiste ma NON e' esportata ai moduli (l'export
+# arriva in 2.6.33), quindi il sorgente disabilita da se' quel ramo sotto 2.6.33:
+# non serve alcun flag per compilare. Per risolvere i simboli, la via comoda e'
+# passare l'indirizzo di kallsyms_lookup_name (una riga di /proc/kallsyms):
+#   insmod wl_diag.ko arm=1 klookup=0x<addr_di_kallsyms_lookup_name>
+# e il modulo trova gli altri da solo. In alternativa, la lista esplicita:
 #   insmod wl_diag.ko arm=1 syms="phy_reg_read:80xxxxxx,si_corereg:80yyyyyy,..."
+# Per forzare lo stesso comportamento su un kernel piu' recente:
+#   make KDIR=... EXTRA_CFLAGS=-DWLDIAG_NO_KALLSYMS ...
 
 obj-m := wl_diag.o
 

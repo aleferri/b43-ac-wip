@@ -1,6 +1,6 @@
-From e7dee7fe8b1f033fa571e6a53f4ffe808a167b89 Mon Sep 17 00:00:00 2001
+From e7a85308dbb89f6a85a562a82f41075e6ec59464 Mon Sep 17 00:00:00 2001
 From: Alessio Ferri <alessio.ferri@mythread.it>
-Date: Tue, 14 Jul 2026 11:42:35 +0000
+Date: Mon, 20 Jul 2026 10:14:12 +0000
 Subject: [PATCH 5/9] b43: add 2069 radio support for AC-PHY
 
 Add the Broadcom BCM4352/BCM4360 radio 2069 rev 4 support: register
@@ -8,33 +8,31 @@ map, radio init, channel setup, AFE calibration, and PLL programming.
 
 Signed-off-by: Alessio Ferri <alessio.ferri@mythread.it>
 ---
- drivers/net/wireless/broadcom/b43/Makefile    |    3 +
- .../net/wireless/broadcom/b43/radio_2069.c    | 1387 +++++++++++++++++
+ drivers/net/wireless/broadcom/b43/Makefile    |    1 +
+ .../net/wireless/broadcom/b43/radio_2069.c    | 1381 +++++++++++++++++
  .../net/wireless/broadcom/b43/radio_2069.h    |   44 +
- 3 files changed, 1434 insertions(+)
+ 3 files changed, 1426 insertions(+)
  create mode 100644 drivers/net/wireless/broadcom/b43/radio_2069.c
  create mode 100644 drivers/net/wireless/broadcom/b43/radio_2069.h
 
 diff --git a/drivers/net/wireless/broadcom/b43/Makefile b/drivers/net/wireless/broadcom/b43/Makefile
-index bf3788040..a923e0520 100644
+index bf37880..647ed15 100644
 --- a/drivers/net/wireless/broadcom/b43/Makefile
 +++ b/drivers/net/wireless/broadcom/b43/Makefile
-@@ -16,6 +16,9 @@ b43-$(CONFIG_B43_PHY_HT)	+= radio_2059.o
+@@ -16,6 +16,7 @@ b43-$(CONFIG_B43_PHY_HT)	+= radio_2059.o
  b43-$(CONFIG_B43_PHY_LCN)	+= phy_lcn.o tables_phy_lcn.o
  b43-$(CONFIG_B43_PHY_AC)	+= phy_ac.o
  b43-$(CONFIG_B43_PHY_AC)	+= tables_phy_ac.o
 +b43-$(CONFIG_B43_PHY_AC)	+= radio_2069.o
-+b43-$(CONFIG_B43_PHY_AC)	+= rxiqcal_phy_ac.o
-+b43-$(CONFIG_B43_PHY_AC)	+= helpers_phy_ac.o
  b43-y				+= sysfs.o
  b43-y				+= xmit.o
  b43-y				+= dma.o
 diff --git a/drivers/net/wireless/broadcom/b43/radio_2069.c b/drivers/net/wireless/broadcom/b43/radio_2069.c
 new file mode 100644
-index 000000000..c9f756e93
+index 0000000..814ba8f
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/radio_2069.c
-@@ -0,0 +1,1387 @@
+@@ -0,0 +1,1381 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +/*
 + * Broadcom B43 wireless driver 2069 radio — per-channel tuning table, lookup,
@@ -1117,8 +1115,8 @@ index 000000000..c9f756e93
 +		return;
 +	}
 +
-+	r2069_mod(dev, R2069_RCCAL_EN1, 0x0080, 0x0080);
-+	r2069_mod(dev, R2069_RCCAL_EN2, 0x0600, 0x0400);
++	/* Cal-block enable (EN1 bit 0x80, EN2 mode) is left armed by
++	 * b43_radio_2069_pwron, which always runs first; do not repeat it. */
 +
 +	/*
 +	 * First two passes
@@ -1140,6 +1138,8 @@ index 000000000..c9f756e93
 +				b43_r2069_rccal_apply_code(dev);
 +			}
 +		}
++		/* Stop: clear start after the result readout (vendor #51478). */
++		r2069_mod(dev, R2069_RCCAL_CFG, 0x0001, 0x0000);
 +	}
 +
 +	/*
@@ -1293,7 +1293,6 @@ index 000000000..c9f756e93
 +void b43_radio_2069_init(struct b43_wldev *dev)
 +{
 +	u16 saved_728;
-+	unsigned int i;
 +
 +	saved_728 = b43_phy_read_log(dev, 0x0728);
 +	b43_phy_read_log(dev, 0x0408);	/* #51263: base letta prima delle write sotto; loggata per HW (write assoluta) */
@@ -1313,15 +1312,8 @@ index 000000000..c9f756e93
 +	b43_phy_write(dev, B43_PHY_AC_RFCTL_CMD, 0x0c00);
 +
 +	b43_phy_write(dev, B43_PHY_AC_RFCTL_CMD, 0x0c01);
-+	/*
-+	 * #51275: hold armed ~1032us while the RF/analog lock completes;
-+	 * poll the done bit (0x0408 bit 1), keep the fixed budget as floor.
-+	 */
-+	for (i = 0; i < 15; i++) {
-+		udelay(100);
-+		if (i >= 11 && (b43_phy_read(dev, B43_PHY_AC_RFCTL_CMD) & 0x0002))
-+			break;
-+	}
++	/* #51275: hold armed 1032us for the RF/analog lock to complete. */
++	udelay(1032);
 +	b43_phy_write(dev, B43_PHY_AC_RFCTL_CMD, 0x0c00);
 +
 +	if (dev->phy.radio_rev == 4)
@@ -1424,7 +1416,7 @@ index 000000000..c9f756e93
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/radio_2069.h b/drivers/net/wireless/broadcom/b43/radio_2069.h
 new file mode 100644
-index 000000000..58a692b1a
+index 0000000..58a692b
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/radio_2069.h
 @@ -0,0 +1,44 @@

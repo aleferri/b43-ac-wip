@@ -169,6 +169,53 @@ Formato ops (allineato al vendor):
 `compare.py` normalizza le varianti `PHY.OR`/`PHY.AND` del vendor allo
 stesso formato `PHY.MOD` singolo.
 
+### Cross-driver: agcombo (OEM 7.14) contro l'ordine D6220
+
+La cattura agcombo viene da un driver OEM piu' vecchio (7.14.43) di
+quello che ha prodotto l'ordine replicato dal port. La semantica del
+riordino distingue due livelli: il MACRO ordine (fasi intere in punti
+diversi del flow) e' una scelta architetturale lecita della versione e
+viene normalizzato; il MICRO ordine dentro le fasi e' probabile bug o
+differenza 4352/4360 e viene PRESERVATO, cosi' compare.py a valle lo
+mostra come cluster di mismatch localizzato accanto ai mismatch di
+valore:
+
+```sh
+./rxiq_trace set_channel agcombo > trace.agcombo.out
+python3 ../reverse-tools/collapse_trace.py \
+    ../router-data/agcombo/agcombo-wl1-4360-down-to-bss-ch36.txt v.col
+python3 ../reverse-tools/collapse_trace.py trace.agcombo.out h.col
+python3 ../reverse-tools/reorder_trace.py h.col v.col \
+    --out-vendor v.reord --out-ref h.match \
+    --res-vendor v.only --res-ref h.only --replicate
+python3 compare.py v.reord h.match
+```
+
+Numeri attesi (oggi): 7573 op accoppiate (87.5% del riferimento) di cui
+7382 dallo scheletro monotono e 191 da blocchi macro spostati (168
+replicate: blocchi che il 7.14 esegue una volta dove il driver nuovo li
+ripete, es. i readback rxgain 0x09aX); 80 blocchi macro; 351 mismatch.
+Le fasi da channel_switch_prep a rxcal compreso sono a 0 mismatch di
+valore fino a idle_tssi escluso: il residuo di valore vive in
+idle_tssi/rxcal (tone_mode 0x?34 dello sweep, radio core-2 0x0445,
+bassi di 0x?45) e nella coda est (54% di copertura). Il resto dei
+mismatch e' micro-ordine preservato: il 7.14 legge i registri mute
+core-N prima di pulire iqMode su 0x0270 (il port dopo), e piazza i
+toggle MAC.MCTRL prima dei readback rxgain invece che dopo -- da
+vagliare uno a uno come bug o differenza 4352/4360. La fase
+phy_channel_setup resta al 93% di copertura per il blocco RF-seq, che
+esiste 1:1 su entrambi i lati ma con micro-ordine 7.14 (arming
+per-core: 0x0160/0x0401 core-select a 0x0001 invece del coremask) che
+il matcher non riesce ad accoppiare: e' segnale di versione, non un
+buco del port. I residui non sono rumore: `v.only` e' il lavoro che
+solo il 7.14 fa (gain-cal core-2 su tabella 0xc off 0x6b/0x7b, blocco
+rxiq a fine cattura), `h.only` quello che solo il driver nuovo fa (RAD
+0x020e/0x036e).
+
+Limite noto: --replicate attinge dalla stessa cattura. Se il blocco non
+c'e' affatto (es. le catture rescan non passano mai da init), serve una
+seconda cattura come donatrice -- estensione futura.
+
 ## Interpretazione del diff
 
 Con format e align a posto, un diff non-vuoto evidenzia una di tre

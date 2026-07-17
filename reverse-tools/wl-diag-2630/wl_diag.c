@@ -40,7 +40,14 @@
  * collante kernel pre-2.6.33: coda a ring manuale al posto del kfifo tipizzato,
  * spinlock_t al posto di raw_spinlock, e risoluzione simboli con fallback via
  * parametro 'syms=nome:hexaddr,...' se kallsyms_lookup_name non e' esportato ai
- * moduli su questo build (compila con -DWLDIAG_NO_KALLSYMS in quel caso).
+ * moduli su questo build (automatico sotto 2.6.33, dove non lo e'; forzabile
+ * con -DWLDIAG_NO_KALLSYMS). Piu' comodo: passare 'klookup=<addr di
+ * kallsyms_lookup_name da /proc/kallsyms>' e lasciare che il modulo risolva
+ * tutto il resto da se' chiamandola per indirizzo -- un solo numero invece
+ * della lista.
+ * pr_warn (alias di pr_warning dal 2.6.35) e' rifornito da uno shim; gli
+ * indirizzi si stampano con %p, che su 2.6.30 non e' hashed e da' l'indirizzo
+ * reale (%px, usato dalla variante 3.4+, e' del 4.15 e qui non esiste).
  */
 
 #include <linux/module.h>
@@ -55,6 +62,35 @@
 #include <linux/spinlock.h>
 #include <linux/poll.h>
 #include <asm/cacheflush.h>
+
+/*
+ * pr_warn è un alias di pr_warning aggiunto in 2.6.35; il kernel 2.6.30
+ * della DSL-3580L ha solo pr_warning. #ifndef così un eventuale backport
+ * che lo definisce già vince.
+ */
+#ifndef pr_warn
+#define pr_warn pr_warning
+#endif
+
+/*
+ * kallsyms_lookup_name esiste da sempre ma l'EXPORT_SYMBOL ai moduli e'
+ * arrivato in 2.6.33: sotto quella soglia il link fallisce con "Unknown
+ * symbol kallsyms_lookup_name", quindi disabiliamo quel ramo e restiamo
+ * sull'override 'syms='. Forzabile a mano con -DWLDIAG_NO_KALLSYMS.
+ */
+#if !defined(WLDIAG_NO_KALLSYMS) && LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 33)
+#define WLDIAG_NO_KALLSYMS
+#endif
+
+/*
+ * sched_clock() non e' esportata ai moduli prima del 3.4; cpu_clock(cpu) e'
+ * il wrapper per-cpu con lo stesso valore in ns ed e' EXPORT_SYMBOL_GPL sia
+ * su 2.6.30 sia su 3.4, quindi lo usiamo su entrambi.
+ */
+static inline u64 wldiag_now_ns(void)
+{
+	return cpu_clock(raw_smp_processor_id());
+}
 
 static int arm;
 module_param(arm, int, 0444);
@@ -75,6 +111,17 @@ MODULE_PARM_DESC(delay, "0=non agganciare osl_delay (default), 1=aggancia");
 static char *syms;
 module_param(syms, charp, 0444);
 MODULE_PARM_DESC(syms, "override indirizzi: 'nome:hexaddr,nome:hexaddr,...'");
+
+/* Indirizzo di kallsyms_lookup_name (da /proc/kallsyms). Quando la funzione
+ * esiste ma non e' esportata ai moduli (2.6.30..2.6.32), non e' linkabile per
+ * nome ma e' comunque chiamabile per indirizzo: passando solo questo, il
+ * modulo risolve da se' tutti gli altri simboli, senza lista syms=. */
+static ulong klookup;
+module_param(klookup, ulong, 0444);
+MODULE_PARM_DESC(klookup,
+	"indirizzo di kallsyms_lookup_name (da /proc/kallsyms); risolve gli altri simboli da solo");
+
+typedef unsigned long (*kln_fn_t)(const char *name);
 
 /* Cerca 'name' nella lista 'syms' (nome:hexaddr,...). 0 se assente. */
 static unsigned long sym_override(const char *name)
@@ -101,13 +148,17 @@ static unsigned long sym_override(const char *name)
 	return 0;
 }
 
-/* Risoluzione simbolo: prima l'override 'syms', poi kallsyms (se disponibile). */
+/* Risoluzione simbolo: prima l'override 'syms', poi kallsyms_lookup_name --
+ * chiamata per indirizzo se e' stato passato 'klookup', altrimenti per nome
+ * dove il simbolo e' linkabile (kernel con l'export). */
 static unsigned long resolve_sym(const char *name)
 {
 	unsigned long a = sym_override(name);
 
 	if (a)
 		return a;
+	if (klookup)
+		return ((kln_fn_t)klookup)(name);
 #ifndef WLDIAG_NO_KALLSYMS
 	a = kallsyms_lookup_name(name);
 #endif
@@ -158,7 +209,7 @@ static u32 emit(u8 op, u32 addr, u32 val, u32 aux)
 	struct wldiag_rec r;
 	unsigned long flags;
 
-	r.ts_ns = sched_clock();
+	r.ts_ns = wldiag_now_ns();
 	r.seq = (u32)atomic_inc_return(&seq);
 	r.addr = addr; r.val = val; r.aux = aux;
 	r.op = op; r.cpu = (u8)raw_smp_processor_id(); r._pad = 0;
@@ -518,7 +569,7 @@ static ssize_t wd_read(struct file *f, char __user *ubuf, size_t len, loff_t *of
 	d = atomic_xchg(&drops, 0);
 	if (d) {
 		memset(&r, 0, sizeof(r));
-		r.ts_ns = sched_clock();
+		r.ts_ns = wldiag_now_ns();
 		r.op = OP_DROP;
 		r.aux = d;
 		if (copy_to_user(ubuf, &r, sizeof(r)))
@@ -617,7 +668,7 @@ static int __init wd_init(void)
 			continue;
 		}
 		eligible[n_elig++] = i;
-		pr_info("wl_diag: piano hook '%s' @%px%s\n", hooks[i].name, o,
+		pr_info("wl_diag: piano hook '%s' @%p%s\n", hooks[i].name, o,
 			hooks[i].shortj ? " [short-j]" : "");
 	}
 
@@ -653,7 +704,7 @@ static int __init wd_init(void)
 
 			if (a) {
 				p_flush_icache = (flush_fn_t)a;
-				pr_info("wl_diag: flush via '%s' @%px\n", cand[k], (void *)a);
+				pr_info("wl_diag: flush via '%s' @%p\n", cand[k], (void *)a);
 				break;
 			}
 		}
@@ -678,7 +729,7 @@ static int __init wd_init(void)
 			flush_i((unsigned long)ret_tramp,
 				(unsigned long)ret_tramp + sizeof(ret_tramp));
 			ret_trampoline = (unsigned long)ret_tramp;
-			pr_info("wl_diag: trampolino ritorno @%px\n",
+			pr_info("wl_diag: trampolino ritorno @%p\n",
 				(void *)ret_trampoline);
 		}
 	}

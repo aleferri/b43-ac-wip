@@ -259,6 +259,12 @@ static void register_board_read_plans(const struct board_profile *p)
 		/* Radio 0x0433 (core-2 0x0033 shadow): agcombo reads 0x0161 like
 		 * cores 0/1, not the d6220 core-2 default 0x0160 seeded in main(). */
 		b43_test_mirror_radio_set(0x0433, 0x0161);
+		/* Core-2 shadows of seeds already present for cores 0/1 in
+		 * main(): 0x041a pre-state bit 0x0004 (agcombo #60570 folds it
+		 * into WR 0x0014) and 0x0521 AFE_CAL_CLK bit 0x2000 (agcombo
+		 * #63946 RMW yields 0x2000/0x3000). */
+		b43_test_mirror_radio_set(0x041a, 0x0004);
+		b43_test_mirror_radio_set(0x0521, 0x2000);
 	}
 }
 
@@ -371,6 +377,58 @@ int main(int argc, char **argv)
 	if (!strcmp(flow, "rxiq_est_debug")) {
 		register_rxiq_read_plans();
 		b43_phy_ac_rxiq_est_debug(&g_wldev);
+	} else if (!strcmp(flow, "rxiq_comp")) {
+		/*
+		 * Vettori misura->coeff dalla cattura agcombo
+		 * rescan-to-bss-ch36 (retval): per core, round 1 e round 2
+		 * degli accumulatori (it4-it9 della finestra #29845-#31965).
+		 * Output atteso (vendor #32043-#32048):
+		 *   0x06a0=0x03fd 0x06a1=0x006e
+		 *   0x08a0=0x0052 0x08a1=0x003c
+		 *   0x0aa0=0x0092 0x0aa1=0x005c
+		 */
+		static const u16 acc_06c0[] = { 0x2b25, 0x8c91 };
+		static const u16 acc_06c1[] = { 0xfffb, 0x0008 };
+		static const u16 acc_06c2[] = { 0x0df4, 0x1d2a };
+		static const u16 acc_06c3[] = { 0x02d7, 0x02d8 };
+		static const u16 acc_06c4[] = { 0xceef, 0x6971 };
+		static const u16 acc_06c5[] = { 0x037a, 0x037d };
+		static const u16 acc_08c0[] = { 0x089d, 0x3fa2 };
+		static const u16 acc_08c1[] = { 0xffc1, 0xffc6 };
+		static const u16 acc_08c2[] = { 0xbee8, 0x721e };
+		static const u16 acc_08c3[] = { 0x02f3, 0x02f1 };
+		static const u16 acc_08c4[] = { 0xc11c, 0xbd95 };
+		static const u16 acc_08c5[] = { 0x0352, 0x0350 };
+		static const u16 acc_0ac0[] = { 0x3b1d, 0xf6da };
+		static const u16 acc_0ac1[] = { 0xffb0, 0xffb4 };
+		static const u16 acc_0ac2[] = { 0x3f95, 0x8e52 };
+		static const u16 acc_0ac3[] = { 0x021e, 0x021e };
+		static const u16 acc_0ac4[] = { 0x453a, 0x7f05 };
+		static const u16 acc_0ac5[] = { 0x0290, 0x028e };
+		static const u16 poll_done[] = { 0x0000, 0x0000 };
+
+		b43_test_plan_phy_reads(0x0270, poll_done, 2);
+		b43_test_plan_phy_reads(0x06c0, acc_06c0, 2);
+		b43_test_plan_phy_reads(0x06c1, acc_06c1, 2);
+		b43_test_plan_phy_reads(0x06c2, acc_06c2, 2);
+		b43_test_plan_phy_reads(0x06c3, acc_06c3, 2);
+		b43_test_plan_phy_reads(0x06c4, acc_06c4, 2);
+		b43_test_plan_phy_reads(0x06c5, acc_06c5, 2);
+		b43_test_plan_phy_reads(0x08c0, acc_08c0, 2);
+		b43_test_plan_phy_reads(0x08c1, acc_08c1, 2);
+		b43_test_plan_phy_reads(0x08c2, acc_08c2, 2);
+		b43_test_plan_phy_reads(0x08c3, acc_08c3, 2);
+		b43_test_plan_phy_reads(0x08c4, acc_08c4, 2);
+		b43_test_plan_phy_reads(0x08c5, acc_08c5, 2);
+		b43_test_plan_phy_reads(0x0ac0, acc_0ac0, 2);
+		b43_test_plan_phy_reads(0x0ac1, acc_0ac1, 2);
+		b43_test_plan_phy_reads(0x0ac2, acc_0ac2, 2);
+		b43_test_plan_phy_reads(0x0ac3, acc_0ac3, 2);
+		b43_test_plan_phy_reads(0x0ac4, acc_0ac4, 2);
+		b43_test_plan_phy_reads(0x0ac5, acc_0ac5, 2);
+
+		int r = b43_phy_ac_rx_iq_comp_update(&g_wldev, 0x07);
+		fprintf(stderr, "test: rx_iq_comp_update returned %d\n", r);
 	} else if (!strcmp(flow, "rxiqcal")) {
 		register_rxiq_read_plans();
 		int r = b43_phy_ac_rxiqcal(&g_wldev, 0);
