@@ -81,7 +81,7 @@ for l in open(TRACE,errors="ignore"):
     if len(p)<5: continue
     op=p[3]
     if op not in ("PHY.WR","RAD.WR","PHY.MOD","RAD.MOD"): continue
-    fam,cls=op.split("src")
+    fam,cls=op.split(".")
     d=dict(kv.split("=",1) for kv in p[4:] if "=" in kv)
     try:
         seq=int(p[1].lstrip("#")); a=int(d["addr"],16)

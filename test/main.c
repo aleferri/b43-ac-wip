@@ -52,6 +52,13 @@ struct board_profile {
 	 * e gainctx = ((triso+4)<<1)+2 nel body Phase 3 di noise-shaping. */
 	u8 rxgains_5gl_elnagain[3];
 	u8 rxgains_5gl_triso[3];
+	/* R2069_RCCAL_E/F (radio 0x0414/0x0415) read by rccal in op_init to
+	 * derive lpf_cap = ((F-E)*193)>>8. Per-board because it is an analog
+	 * measurement, not a constant. */
+	u16 rccal_e, rccal_f;
+	/* R2069_RCCAL_G (radio 0x0416), read post-apply: dacbuf_cap =
+	 * (rccal_g & 0x03e0) >> 5. Per-board analog measurement. */
+	u16 rccal_g;
 };
 
 /*
@@ -78,6 +85,13 @@ static const struct board_profile PROFILE_D6220 = {
 	/* rxgains5gelnagaina{0,1,2}=3, rxgains5gtrisoa{0,1,2}=6 (NVRAM d6220). */
 	.rxgains_5gl_elnagain = { 3, 3, 3 },
 	.rxgains_5gl_triso    = { 6, 6, 6 },
+	/* No RETVAL in the d6220 capture (older tracer): the observed TXLPF
+	 * write lo=0x50db fixes cap=0xa8, hence F-E=0xdf. Absolute E is taken
+	 * as comparator-A 0x0ac7; only the difference feeds the cap. */
+	.rccal_e = 0x0ac7, .rccal_f = 0x0ba6,
+	/* No RETVAL on d6220: dacbuf_cap 0xe deduced from the observed
+	 * 0x0b2e; rccal_g chosen so (g & 0x3e0)>>5 = 0xe. */
+	.rccal_g = 0x01c0,
 	/* maxp5ga{0,1,2} (NVRAM d6220). */
 	.maxp5ga = {
 		{ 72, 70, 86, 0 },
@@ -93,11 +107,46 @@ static const struct board_profile PROFILE_AGCOMBO = {
 	/* Same 5gl values as d6220 (NVRAM agcombo). */
 	.rxgains_5gl_elnagain = { 3, 3, 3 },
 	.rxgains_5gl_triso    = { 6, 6, 6 },
+	/* Real E/F from the agcombo rescan RETVALs -> cap=0xae. */
+	.rccal_e = 0x0adc, .rccal_f = 0x0bc4,
+	.rccal_g = 0x01a8,  /* -> dacbuf_cap 0xd */
 	/* maxp5ga{0,1,2} (NVRAM agcombo). */
 	.maxp5ga = {
 		{ 74, 74, 82, 82 },
 		{ 74, 74, 82, 82 },
 		{ 74, 74, 82, 82 },
+	},
+};
+
+/*
+ * DSL-3580L: BCM4352 radio (like the D6220) on a BCM6362 SoC, wl 6.30.102.7.
+ * NVRAM from router-data/dsl3580l/wl1_nvram.txt: aa5g/txchain/rxchain=3
+ * (coremask 0x3, two active cores like the D6220), subband5gver=0x4,
+ * maxp5ga{0,1,2}=76,76,76,76, rxgains 5gl elnagain=3/triso=6, pa5ga per-core
+ * below. Same chip as the D6220 but older wl, so it is the version witness.
+ */
+static const struct board_profile PROFILE_DSL = {
+	.name = "dsl", .chip_id = 0x4352, .radio_rev = 4,
+	.radio_ver = 0x2069, .phy_rev = 1,
+	.num_cores = 3, .coremask = 0x3, .rxchain = 3,
+	.subband5gver = 0x4,
+	.pa5ga = {
+		{ 0xff4d, 0x1690, 0xfd24, 0xff59, 0x1710, 0xfd28,
+		  0xff52, 0x16fd, 0xfd27, 0xff55, 0x1711, 0xfd20 },
+		{ 0xff3f, 0x1607, 0xfd1f, 0xff42, 0x1690, 0xfd21,
+		  0xff55, 0x1772, 0xfd1e, 0xff5d, 0x178d, 0xfd1e },
+		{ 0xff5a, 0x1729, 0xfd25, 0xff62, 0x175c, 0xfd30,
+		  0xff48, 0x1720, 0xfd15, 0xff54, 0x1741, 0xfd21 },
+	},
+	.rxgains_5gl_elnagain = { 3, 3, 3 },
+	.rxgains_5gl_triso    = { 6, 6, 6 },
+	/* Real E/F from the DSL down-to-bss RETVALs -> cap=0xb6 (lo=0x6cdb). */
+	.rccal_e = 0x0b39, .rccal_f = 0x0c2b,
+	.rccal_g = 0x0186,  /* -> dacbuf_cap 0xc */
+	.maxp5ga = {
+		{ 76, 76, 76, 76 },
+		{ 76, 76, 76, 76 },
+		{ 76, 76, 76, 76 },
 	},
 };
 
@@ -121,24 +170,23 @@ static void mount_board(const struct board_profile *p)
 	 * dacbuf_cap: chip vero d6220 ha RCCAL_G=0x0009 → dacbuf_cap=0.
 	 * Vedi commento in analog_on_reset dacbuf loop.
 	 */
-	g_ac.dacbuf_cap = 0x00;
 	/*
-	 * lpf_cap0/1: valore prodotto da b43_r2069_rccal_lpf sul chip vero.
-	 * Formula: cap = (u8)(((f - e) * 193) >> 8) con e/f letti dai
-	 * registri radio R2069_RCCAL_E (0x0414) / R2069_RCCAL_F (0x0415).
-	 *
-	 * Valori reali osservati sul d6220 (dmesg boot):
-	 *   E = 0x0ac7  (R2069_RCCAL_E, comparator A pass 0)
-	 *   F = 0x0baa  (R2069_RCCAL_F, comparator B pass 0)
-	 *   → cap = ((0x0baa - 0x0ac7) * 193) >> 8 = 227 * 193 / 256 = 0xab
-	 *
-	 * Il boot log ha mostrato a volte 0xaa: jitter LSB della misura RCcal.
-	 * Il campo utile iniettato nelle celle table 7 sembra essere il top-5-
-	 * bit (0xa8), ma l'interazione con il pre-state della cella non è ancora
-	 * chiara — servono i log [TXLPFLOG] dal boot per invertire la formula.
+	 * dacbuf_cap: rccal computes it in op_init as (RCCAL_G & 0x03e0)>>5
+	 * from the post-apply read. set_channel does not re-run rccal, so
+	 * replicate it here from the per-board rccal_g with the same formula.
 	 */
-	g_ac.lpf_cap0   = 0xab;
-	g_ac.lpf_cap1   = 0xab;
+	g_ac.dacbuf_cap = (u8)((p->rccal_g & 0x03e0) >> 5);
+	/*
+	 * lpf_cap0/1: in the real driver rccal computes it in op_init as
+	 * cap = ((F-E)*193)>>8 from the R2069_RCCAL_E/F reads. set_channel
+	 * does not re-run rccal, so replicate that precondition here from the
+	 * per-board E/F, using the same formula, instead of forcing a value.
+	 */
+	{
+		u8 cap = (u8)(((p->rccal_f - p->rccal_e) * 193) >> 8);
+		g_ac.lpf_cap0 = cap;
+		g_ac.lpf_cap1 = cap;
+	}
 
 	memset(&g_sprom, 0, sizeof(g_sprom));
 	g_sprom.rxchain = p->rxchain;
@@ -265,6 +313,29 @@ static void register_board_read_plans(const struct board_profile *p)
 		 * #63946 RMW yields 0x2000/0x3000). */
 		b43_test_mirror_radio_set(0x041a, 0x0004);
 		b43_test_mirror_radio_set(0x0521, 0x2000);
+	} else if (!strcmp(p->name, "dsl")) {
+		/*
+		 * DSL-3580L initial register state, read back from the wl6.30
+		 * capture's RETVALs (router-data/dsl3580l). These replace the
+		 * d6220-derived read-plan values so the port is exercised
+		 * against what the DSL hardware really returns, not values
+		 * tuned to make the d6220 trace match.
+		 *
+		 * 0x0140 CLASSCTL: the 4352 here comes up with bit 0x0800 SET
+		 * (real read 0x0df4/0x0df7), unlike the D6220 -- so the "0x4352
+		 * leaves it clear" assumption is a d6220 artifact, not a chip
+		 * rule.
+		 */
+		b43_test_mirror_phy_set(0x0140, 0x0800);
+		/* Radio 0x0033/0233/0433 background: real 0x6061/0x6061/0x6060
+		 * (D6220 path yields the 0x40xx family). */
+		b43_test_mirror_radio_set(0x0033, 0x6061);
+		b43_test_mirror_radio_set(0x0233, 0x6061);
+		b43_test_mirror_radio_set(0x0433, 0x6060);
+		/* Radio 0x0045/0245/0445 background: real 0x703f/0x703f/0x7000. */
+		b43_test_mirror_radio_set(0x0045, 0x703f);
+		b43_test_mirror_radio_set(0x0245, 0x703f);
+		b43_test_mirror_radio_set(0x0445, 0x7000);
 	}
 }
 
@@ -275,6 +346,7 @@ int main(int argc, char **argv)
 
 	const struct board_profile *p = &PROFILE_D6220;
 	if (!strcmp(board, "agcombo")) p = &PROFILE_AGCOMBO;
+	else if (!strcmp(board, "dsl")) p = &PROFILE_DSL;
 
 	fprintf(stderr, "test: board=%s flow=%s\n", p->name, flow);
 	mount_board(p);
@@ -282,14 +354,22 @@ int main(int argc, char **argv)
 	b43_test_trace_to(stdout);
 
 	/*
+	 * PLL state the PMU brings up before the driver runs, per chip:
+	 * PLLCTL2=0x0c31 on both, PLLCTL3=0x00133333 on 4352 / 0x100e on 4360.
+	 * op_init verifies PLLCTL3 on the 4352, so seed it to the real value.
+	 */
+	b43_test_pll_set(2, 0x0c31);
+	b43_test_pll_set(3, p->chip_id == 0x4360 ? 0x100e : 0x00133333);
+
+	/*
 	 * Pre-populate radio-mirror slots set by earlier init flows we don't
 	 * re-execute here. The RCCAL comparators (R2069_RCCAL_E/F) are
 	 * written by the RC-cal engine during b43_radio_2069_init and later
-	 * read by b43_r2069_rccal_lpf to derive dev->phy.ac->lpf_cap0/1.
-	 * Real d6220 boot: E=0x0ac7, F=0x0baa → cap=0xab.
+	 * read by rccal to derive dev->phy.ac->lpf_cap0/1. Per-board values
+	 * (see the profile) so each unit's real measurement is served.
 	 */
-	b43_test_mirror_radio_set(0x0414, 0x0ac7);  /* R2069_RCCAL_E */
-	b43_test_mirror_radio_set(0x0415, 0x0baa);  /* R2069_RCCAL_F */
+	b43_test_mirror_radio_set(0x0414, p->rccal_e);  /* R2069_RCCAL_E */
+	b43_test_mirror_radio_set(0x0415, p->rccal_f);  /* R2069_RCCAL_F */
 
 	/*
 	 * R2069 0x040b (probabilmente un enable/misc control): il vendor

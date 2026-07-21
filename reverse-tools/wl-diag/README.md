@@ -123,6 +123,4 @@ overrun: reader troppo lento o burst troppo denso.
   rende la maschera effettiva (`clr ~val` / `set val`).
 - **Ordine.** Listener su, poi arma a device giu', poi pipe, poi rescan. Armare
   a device gia' su perde l'inizio dell'attach.
-- **Consumatore a valle.** `decode-wl-diag.py` (stream 28 B) e, per la
-  correlazione op->driver, `reverse-tools/correlate_trace_to_driver.py` (che
-  ora riconosce `PHY.AND`/`PHY.OR`).
+- **Consumatore a valle.** `decode-wl-diag.py` (stream 28 B).

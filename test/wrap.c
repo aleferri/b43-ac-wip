@@ -53,6 +53,7 @@
 static u16 mirror_phy[MIRROR_PHY_SZ];
 static u16 mirror_radio[MIRROR_RADIO_SZ];
 static u16 mirror_mmio[MIRROR_MMIO_SZ];
+static u32 pll_vals[8];
 
 /* ============ read plans ============
  *
@@ -127,6 +128,7 @@ void b43_test_plans_reset(void)
 	memset(mirror_phy, 0, sizeof(mirror_phy));
 	memset(mirror_radio, 0, sizeof(mirror_radio));
 	memset(mirror_mmio, 0, sizeof(mirror_mmio));
+	memset(pll_vals, 0, sizeof(pll_vals));
 }
 
 void b43_test_mirror_radio_set(u16 reg, u16 val)
@@ -402,12 +404,87 @@ void __wrap_b43_actab_write_bulk_scoped(struct b43_wldev *dev,
 	__real_b43_actab_write_bulk_scoped(dev, id, offset, width, len, data);
 }
 
+/*
+ * TX/RX-LPF table-7 pre-state. On silicon the {lo,hi} cells that hold the
+ * 25-bit analog LPF word are pre-loaded (by the table init that runs before
+ * set_channel, not re-executed in this harness) with a per-stage base that the
+ * RMW preserves, rewriting only the cap fields. The base is the same across
+ * units -- only the cap (from rccal E/F) varies -- so it is a constant here.
+ * TX: lo {0,1,2,8}=0x00db {3,4,5}=0x0123 {6,7}=0x016b, hi=0x0001, 9 stages at
+ * lo {0x142,0x152,0x162}+stage / hi {0x362,0x372,0x382}+stage.
+ * RX: lo base bit0-5 = 0x00/0x09/0x12 per stage (0x2000/0x2009/0x2012), hi 0,
+ * 3 stages at the sparse offsets below. Returns -1 if not an LPF cell.
+ */
+static int txlpf_prestate(u16 id, u16 offset)
+{
+	static const u16 lo_base[3] = { 0x142, 0x152, 0x162 };
+	static const u16 hi_base[3] = { 0x362, 0x372, 0x382 };
+	static const u16 lo_pre[9] = {
+		0x00db, 0x00db, 0x00db,
+		0x0123, 0x0123, 0x0123,
+		0x016b, 0x016b,
+		0x00db,
+	};
+	static const u16 rx_lo[3][3] = {
+		{ 0x140, 0x150, 0x160 },
+		{ 0x141, 0x151, 0x161 },
+		{ 0x441, 0x443, 0x445 },
+	};
+	static const u16 rx_hi[3][3] = {
+		{ 0x360, 0x370, 0x380 },
+		{ 0x361, 0x371, 0x381 },
+		{ 0x440, 0x442, 0x444 },
+	};
+	static const u16 rx_lo_pre[3] = { 0x2000, 0x2009, 0x2012 };
+	/* DACBUF cells: base[core] + add[stage], add = {b,b,c,c,e,e,f,f,a}.
+	 * Base cell 0x0b20 for stages 0-7 (add b/c/e/f), 0x0020 for stage 8
+	 * (add a); the RMW writes the cap into it. */
+	static const u16 dac_base[3] = { 0x3f0, 0x60, 0xd0 };
+	int core, stage;
+
+	if (id != 7)
+		return -1;
+	for (core = 0; core < 3; core++) {
+		u16 b = dac_base[core];
+		if (offset == b + 0xb || offset == b + 0xc ||
+		    offset == b + 0xe || offset == b + 0xf)
+			return 0x0b20;
+		if (offset == b + 0xa)
+			return 0x0020;
+	}
+	for (core = 0; core < 3; core++) {
+		if (offset >= lo_base[core] && offset < lo_base[core] + 9)
+			return lo_pre[offset - lo_base[core]];
+		if (offset >= hi_base[core] && offset < hi_base[core] + 9)
+			return 0x0001;
+	}
+	for (stage = 0; stage < 3; stage++) {
+		for (core = 0; core < 3; core++) {
+			if (offset == rx_lo[stage][core])
+				return rx_lo_pre[stage];
+			if (offset == rx_hi[stage][core])
+				return 0x0000;
+		}
+	}
+	return -1;
+}
+
 void __wrap_b43_actab_read_bulk(struct b43_wldev *dev,
 				u16 id, u16 offset, u8 width,
 				size_t len, void *data)
 {
+	int pre = txlpf_prestate(id, offset);
+
 	fprintf(trace(), "cpu1 TBL.RD   id=0x%04x off=0x%04x len=%zu\n",
 		id, offset, len);
+	/*
+	 * Seed the data-port with the cell's real pre-state so the driver's
+	 * read-modify-write of the TX-LPF word starts from silicon state, not
+	 * from an empty mirror. Only the txlpf cells are affected; every other
+	 * table read falls through to the real path unchanged.
+	 */
+	if (pre >= 0)
+		mirror_phy[0x000f] = (u16)pre;
 	__real_b43_actab_read_bulk(dev, id, offset, width, len, data);
 }
 
@@ -571,4 +648,22 @@ void bcma_chipco_regctl_maskset(struct bcma_drv_cc *cc, u32 offset,
 	fprintf(trace(),
 		"cpu1 PMU.RC   addr=0x%04x val=0x%08x mask=0x%08x\n",
 		offset, set, ~mask);
+}
+
+/*
+ * PLL readback for the driver's own PLLCTL verification. Not traced: the
+ * reference captures were taken before the tracer logged PLL reads, so
+ * emitting a line here would desync compare.py; the value is what the
+ * check needs, seeded per-profile via b43_test_pll_set().
+ */
+void b43_test_pll_set(u32 offset, u32 val)
+{
+	if (offset < 8)
+		pll_vals[offset] = val;
+}
+
+u32 bcma_chipco_pll_read(struct bcma_drv_cc *cc, u32 offset)
+{
+	(void)cc;
+	return offset < 8 ? pll_vals[offset] : 0;
 }

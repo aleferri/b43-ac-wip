@@ -1491,17 +1491,15 @@ static void b43_phy_ac_set_regtbl_on_femctrl(struct b43_wldev *dev)
  * TODO: that second path (stages 0x100, f0=f6=<bw value>, only the bw fields)
  * is not yet implemented.
  *
- * VALIDATO contro dsl-3580l-read-trace-first-run.txt (letture REALI del
- * driver). NB: le read di wl-diag sono fasulle (0x0000) e fanno sembrare la
- * base pulita; con quelle, e col cap placeholder 0x80, la formula sembra
- * sbagliata. Su silicio vero le celle NON sono zero — pre per gruppo di
- * stage: {0,1,2,8}=0x00db, {3,4,5}=0x0123,
- * {6,7}=0x016b — e l'RMW le preserva scrivendo solo il cap (f9/f17). È QUELLA
- * la variazione per stage. Con cap runtime
- * 0xab e le read reali il replay riproduce ogni post: {0,1,2,8}=0x56db,
- * {3,4,5}=0x5723, {6,7}=0x576b, hi=0x0157. I write del blob d6220 (0x52db/
- * 0x5323/0x536b, hi 0x0153) differiscono per una costante (+0x400 lo, +4 hi)
- * = cap 0xa9 vs 0xab, cioè la sola differenza di misura rccal fra le due unità.
+ * The table-7 {lo,hi} cells are pre-loaded (by the table init before
+ * set_channel) with a per-stage-group base that the RMW preserves, rewriting
+ * only the cap field (f9/f17): lo bases {0,1,2,8}=0x00db, {3,4,5}=0x0123,
+ * {6,7}=0x016b, hi base 0x0001. The cap comes from rccal (op_init):
+ * cap = ((F-E)*193)>>8 with E/F = R2069_RCCAL_E/F, so it is a per-unit analog
+ * measurement, not a constant. Verified against real RETVALs: d6220 cap 0xa8
+ * -> lo 0x50db / hi 0x0151; DSL-3580L E=0x0b39 F=0x0c2b cap 0xb6 -> 0x6cdb /
+ * 0x016d; agcombo E=0x0adc F=0x0bc4 cap 0xae -> 0x5cdb / 0x015d. lo = base |
+ * (cap<<9), hi = base | (cap<<1).
  */
 /* 4360 agcombo: 4403-4535 ; d6220 ch36: n/l */
 static void b43_phy_ac_set_analog_tx_lpf_locked(struct b43_wldev *dev,
@@ -1549,65 +1547,12 @@ static void b43_phy_ac_set_analog_tx_lpf_locked(struct b43_wldev *dev,
 			lo = (u16)v;
 			hi = (u16)(v >> 16) & 0x1ff;
 
-			/*
-			 * TODO(TXLPFLOG): la formula RMW sopra con lpf_cap=0xab
-			 * produce bit 9,10 spuri (vendor scrive lo=0x50db, test
-			 * calcolerebbe 0x56db). L'interazione col pre-state della
-			 * cella table 7 non è ancora chiara — servono log
-			 * [TXLPFLOG] dal boot reale per invertire la formula.
-			 * Nel frattempo hardcode dei valori vendor (d6220 ch36
-			 * attach) per due call-site:
-			 *   - channel_setup principale: stages=0x1ff (tutti gli
-			 *     stage 0-8), f0/f3/f6=-1, f9=f17=lpf_cap.
-			 *   - channel_setup finale: stages=0x100 (solo stage 8),
-			 *     ri-esegue RMW su stage 8 in modo idempotente (il
-			 *     valore scritto coincide con quello già presente).
-			 */
-			if ((stages == 0x1ff || stages == 0x100) &&
-			    f0 < 0 && f3 < 0 && f6 < 0) {
-				static const u16 vendor_lo[9] = {
-					0x50db, 0x50db, 0x50db,
-					0x5123, 0x5123, 0x5123,
-					0x516b, 0x516b,
-					0x50db,
-				};
-				lo = vendor_lo[stage];
-				hi = 0x0151;
-			}
-
 			b43info(dev->wl,
 				"[TXLPFLOG] txlpf core=%u stage=%u off_lo=0x%04x off_hi=0x%04x "
 				"lo_read=0x%04x hi_read=0x%04x lo_write=0x%04x hi_write=0x%04x "
 				"f0=%d f3=%d f6=%d f9=%d f17=%d\n",
 				core, stage, off_lo, off_hi, lo0, hi0, lo, hi,
 				f0, f3, f6, f9, f17);
-
-			{
-				/*
-				 * Formula candidata dal reverse engineering di celle
-				 * table 7 (d6220 + agcombo, letture live via `wl
-				 * phytable`):
-				 *
-				 *   f = 0xa3 + ((cap >> 1) & 0x0f) + delta_ch_bw(chan,bw)
-				 *   lo = pre_lo[stage_group] | (f << 9)
-				 *   hi = pre_hi[stage_group] | (f << 1)
-				 *
-				 * dove f è duplicato in bit 9-16 e bit 17-24 di v.
-				 * Vedi doc/txlpf-formula-analysis.md per dati e ipotesi.
-				 */
-				int f_predicted = (f9 >= 0)
-					? (0xa3 + ((f9 >> 1) & 0x0f))
-					: -1;
-				u32 v_final = ((u32)hi << 16) | lo;
-				int f_actual = (int)((v_final >> 9) & 0xff);
-				int delta = (f_predicted >= 0) ? (f_actual - f_predicted) : 0;
-
-				b43info(dev->wl,
-					"[TXLPFLOG] formula core=%u stage=%u "
-					"f_predicted=0x%02x f_actual=0x%02x delta=%+d\n",
-					core, stage,
-					f_predicted & 0xff, f_actual, delta);
-			}
 
 			b43_actab_write_bulk(dev, 7, off_lo, 16, 1, &lo);
 			b43_actab_write_bulk(dev, 7, off_hi, 16, 1, &hi);
@@ -1961,14 +1906,14 @@ static void b43_phy_ac_analog_on_reset(struct b43_wldev *dev, u16 *saved_outer_o
 				     aphy->lpf_cap0, aphy->lpf_cap1, 0xffffffff);
 
 	/*
-	 * TX AFE dacbuf cap: dacbuf_cap into the 6-bit cap field of all 9 stages
-	 * on every active core; the field sits at bits 0..5 or 6..11 by stage.
-	 * VALIDATO contro il first-run reale: i due "costanti" 0x0b2e/0x0bae
-	 * sono in realtà il contenuto vero della cella (pre 0x0b2c), di cui 
-	 * l'RMW tocca solo il campo cap a 6 bit e preserva il resto (0x0b00). 
-	 * Con dacbuf_cap runtime = 0 (RCCAL_G=0x0009) il replay riproduce 
-	 * ogni post: stage0 (shift 0) 0x0b2c->0x0b20, stage1 (shift 6, stessa cella) 
-	 * 0x0b20->0x0820.
+	 * TX AFE dacbuf cap: dacbuf_cap into the 6-bit cap field of all 9
+	 * stages on every active core; the field sits at bits 0..5 or 6..11 by
+	 * stage. Same shape as TX/RX-LPF: the cell carries a base (0x0b20 for
+	 * stages 0-7, 0x0020 for stage 8) that the RMW preserves, rewriting
+	 * only the cap. dacbuf_cap comes from rccal: (RCCAL_G & 0x03e0) >> 5,
+	 * read post-apply. Verified on real RETVALs: DSL RCCAL_G=0x0186 ->
+	 * cap 0xc -> 0x0b2c, agcombo 0x1a8 -> 0xd -> 0x0b2d, d6220 -> 0xe ->
+	 * 0x0b2e (cap deduced from the observed write; no RETVAL on d6220).
 	 *
 	 * Ordine vendor: femctrl -> tx_lpf -> dacbuf -> rx_lpf -> per-core loop.
 	 */
@@ -1993,22 +1938,6 @@ static void b43_phy_ac_analog_on_reset(struct b43_wldev *dev, u16 *saved_outer_o
 				else
 					out = (u16)(field << 6) | (cur & 0x3f);
 
-				/*
-				 * TODO(TXLPFLOG): stessa storia del TX-LPF —
-				 * formula RMW non riproduce il vendor. Hardcode
-				 * vendor per il call-site (dacbuf_cap=0):
-				 *   stage 0-7 (shift 0/6): 0x0b2e / 0x0bae
-				 *   stage 8 (shift 0):      0x002e
-				 */
-				if (aphy->dacbuf_cap == 0) {
-					if (stage == 8)
-						out = 0x002e;
-					else if (shift[stage] == 0)
-						out = 0x0b2e;
-					else
-						out = 0x0bae;
-				}
-
 				b43info(dev->wl,
 					"[TXLPFLOG] dacbuf core=%u stage=%u off=0x%04x shift=%u "
 					"cur=0x%04x field=0x%04x out=0x%04x dacbuf_cap=0x%04x\n",
@@ -2022,11 +1951,20 @@ static void b43_phy_ac_analog_on_reset(struct b43_wldev *dev, u16 *saved_outer_o
 	}
 
 	/*
-	 * RX-LPF: lpf_cap0/lpf_cap1 into the f6 (bits 6..13) / f17 (bits 17..)
-	 * fields of all 3 stages, on every active core.
+	 * RX-LPF: like the TX-LPF, the table-7 {lo,hi} cells carry a per-stage
+	 * base (lo bit0-5 = 0x00/0x09/0x12 per stage, hi 0x0000) that the RMW
+	 * preserves, rewriting only the cap fields f6 (bits 6..13) and f17
+	 * (bits 17..). f17 is lpf_cap1 directly; f6 is lpf_cap0 scaled by a
+	 * per-section RX/TX capacitance ratio, since the 3 RX-LPF sections have
+	 * different corners: f6 = (lpf_cap0 * rx_k[stage]) >> 8 with rx_k =
+	 * {221, 215, 215}. Verified on d6220 (0xa8 -> 0x91/0x8d/0x8d) and
+	 * agcombo (0xae -> 0x96/0x92/0x92), same coefficients on both chips;
+	 * f17 confirmed by hi (d6220 0x0150, agcombo 0x015c). The DSL (wl6.30)
+	 * applies no scaling (rx_k = 256 on all stages), an older-wl behaviour.
 	 *
-	 * Validated at runtime: rx-lpf cells contains (pre lo = 0x2000/0x2009/0x2012, hi = 0x0000), 
-	 * RMW preserve and review only f6/f17 = lpf_cap0/lpf_cap1.
+	 * TODO: validate on third board -- the coefficients are fit from two
+	 * cap samples (221/222 and 215/216 both match the known values); a
+	 * third distinct lpf_cap0, or other-channel captures, would pin them.
 	 */
 	{
 		static const u16 lo_off[3][3] = {
@@ -2039,6 +1977,10 @@ static void b43_phy_ac_analog_on_reset(struct b43_wldev *dev, u16 *saved_outer_o
 			{ 0x361, 0x371, 0x381 },
 			{ 0x440, 0x442, 0x444 },
 		};
+		/* f6 scale per stage: the 3 RX-LPF sections have different corners,
+		 * so the cap is scaled by a per-section RX/TX ratio ~221/256
+		 * (stage 0) and ~215/256 (stages 1,2). */
+		static const u16 rx_k[3] = { 221, 215, 215 };
 		unsigned int stage;
 
 		for (stage = 0; stage < 3; stage++) {
@@ -2059,23 +2001,11 @@ static void b43_phy_ac_analog_on_reset(struct b43_wldev *dev, u16 *saved_outer_o
 				lo0 = lo;
 				hi0 = hi;
 				v = ((u32)hi << 16) | lo;
-				v = (v & 0x1ffc03f) | ((u32)aphy->lpf_cap0 << 6);
+				v = (v & 0x1ffc03f) |
+				    ((u32)(((u32)aphy->lpf_cap0 * rx_k[stage]) >> 8) << 6);
 				v = (v & 0x1ffff)   | ((u32)aphy->lpf_cap1 << 17);
 				lo = (u16)v;
 				hi = (u16)(v >> 16) & 0x1ff;
-
-				/*
-				 * TODO(TXLPFLOG): hardcode vendor per RX-LPF
-				 * (d6220 ch36 attach): lo dipende dallo stage,
-				 * hi costante 0x0150.
-				 */
-				{
-					static const u16 vendor_lo[3] = {
-						0x2440, 0x2349, 0x2352,
-					};
-					lo = vendor_lo[stage];
-					hi = 0x0150;
-				}
 
 				b43info(dev->wl,
 					"[TXLPFLOG] rxlpf core=%u stage=%u off_lo=0x%04x off_hi=0x%04x "
@@ -3877,6 +3807,25 @@ static int b43_phy_ac_op_init(struct b43_wldev *dev)
 		return -EOPNOTSUPP;
 	}
 
+	/*
+	 * PLLCTL3 is chip-specific and set up before we run: the 4352 comes
+	 * up with 0x00133333 (read back on the DSL-3580L), the 4360 with
+	 * 0x100e (written by bcma_pmu_pll_init). The vendor leaves the 4352
+	 * PLL untouched and only relies on it, so we verify instead of
+	 * writing: if the PMU did not bring it up as expected the chip is not
+	 * in a drivable state, so bail rather than run on a mis-tuned PLL.
+	 */
+	if (dev->dev->chip_id == 0x4352) {
+		u32 pllctl3 = bcma_chipco_pll_read(&dev->dev->bdev->bus->drv_cc,
+						   BCMA_CC_PMU_PLL_CTL3);
+		if (pllctl3 != 0x00133333) {
+			b43err(dev->wl,
+			       "AC-PHY: BCM4352 PLLCTL3 is 0x%08x, expected 0x00133333 (PMU not initialised as expected)\n",
+			       pllctl3);
+			return -ENODEV;
+		}
+	}
+
 	b43_phy_ac_probe_cores(dev);
 
 	/*
@@ -4703,9 +4652,24 @@ void b43_phy_ac_rxcal_afe_iter(struct b43_wldev *dev,
 	b43_phy_write(dev, 0x0383, 0x003d);
 	b43_phy_write(dev, 0x0380, cmd);
 
-	/* HW polling: aspetta che bit 15 (busy) sia clear */
-	while (b43_phy_read(dev, 0x0380) & 0x8000)
-		;
+	/*
+	 * HW polling: aspetta che bit 15 (busy) sia clear. Budget finito: se il
+	 * bit non si libera (hw in stato inatteso su un canale/board non
+	 * testato) non restiamo bloccati nel kernel; il degrado non è fatale.
+	 */
+	{
+		unsigned int tries;
+
+		for (tries = 0; tries < 1000; tries++) {
+			if (!(b43_phy_read(dev, 0x0380) & 0x8000))
+				break;
+			udelay(1);
+		}
+		if (tries == 1000)
+			b43err(dev->wl,
+			       "AC-PHY: RX AFE cal busy timeout (0x0380 stuck, cmd=0x%04x)\n",
+			       cmd);
+	}
 
 	b43_radio_read_log(dev, 0x0144 + core_off);
 	b43_actab_read_bulk(dev, 0x000c, rd_off, 16, rw_len, dummy_rd);

@@ -30,20 +30,18 @@ diff --git a/drivers/bcma/driver_chipcommon_pmu.c b/drivers/bcma/driver_chipcomm
 index 263ef6fa..469f6d9a 100644
 --- a/drivers/bcma/driver_chipcommon_pmu.c
 +++ b/drivers/bcma/driver_chipcommon_pmu.c
-@@ -156,6 +156,20 @@ static void bcma_pmu_pll_init(struct bcma_drv_cc *cc)
+@@ -156,6 +156,18 @@ static void bcma_pmu_pll_init(struct bcma_drv_cc *cc)
  			xtalfreq = 20000;
  		bcma_pmu2_pll_init0(cc, xtalfreq);
  		break;
-+	case BCMA_CHIP_ID_BCM4352:
 +	case BCMA_CHIP_ID_BCM4360:
 +		/*
-+		 * Vendor writes PLLCTL2/PLLCTL3 here unconditionally on this
-+		 * family. Values captured from an MMIO trace of the stock
-+		 * driver's attach sequence on a BCM43b3 (BCM4352-family)
-+		 * device (Netgear D6220), not derived from a per-xtal
-+		 * formula -- only one crystal/board sample available. May
-+		 * need to be split by xtalfreq like the 43142 case above if
-+		 * a board with a different crystal shows different values.
++		 * The 4360 has its PLLCTL2/PLLCTL3 written here; values from
++		 * an MMIO trace of the stock driver (agcombo). The 4352 is
++		 * deliberately absent: its PLL is brought up by the PMU to a
++		 * fixed state (PLLCTL3 = 0x00133333, read back on D6220 and
++		 * DSL-3580L) that the vendor only reads, so op_init in the
++		 * PHY driver verifies it there rather than writing.
 +		 */
 +		bcma_chipco_pll_write(cc, BCMA_CC_PMU_PLL_CTL2, 0x0c31);
 +		bcma_chipco_pll_write(cc, BCMA_CC_PMU_PLL_CTL3, 0x100e);
@@ -51,15 +49,17 @@ index 263ef6fa..469f6d9a 100644
  	}
  }
  
-@@ -188,11 +202,25 @@ static void bcma_pmu_resources_init(struct bcma_drv_cc *cc)
+@@ -188,11 +202,27 @@ static void bcma_pmu_resources_init(struct bcma_drv_cc *cc)
  			  BCMA_RES_4314_WL_CORE_READY;
  		max_msk = 0x3FFFFFFF;
  		break;
 +	case BCMA_CHIP_ID_BCM4352:
 +	case BCMA_CHIP_ID_BCM4360:
 +		/*
-+		 * Read at runtime from the PMU of a live BCM4360; applied
-+		 * as-is. TODO: confirm on BCM4352 (D6220/DSL-3580L).
++		 * Confirmed by reading the live PMU on both a BCM4360
++		 * (agcombo) and a BCM4352 (DSL-3580L): max_res_mask reads
++		 * back 0x7ff on hardware. min_res_mask is left untouched
++		 * (min_msk stays 0) as the ROM value (observed 0x7fb).
 +		 */
 +		max_msk = 0x7ff;
 +		break;
