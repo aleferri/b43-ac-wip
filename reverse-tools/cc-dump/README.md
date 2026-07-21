@@ -3,13 +3,16 @@
 Reads the BCM4352/4360 **ChipCommon PMU** state from a running device and prints
 it to `dmesg`. Purpose: capture the *vendor-initialised* `max_res_mask` /
 `min_res_mask` so they can be compared against what our b43+bcma port writes in
-`bcma_pmu_resources_init()` (patch 0007), which currently forces `max = 0x1ff`.
+`bcma_pmu_resources_init()` (patch 0007), which programs `max = 0x7ff`.
 
 The vendor `si_pmu_res_init()` appears to *preserve* the ROM resource masks
-rather than set a literal, so this tells us whether `0x1ff` merely confirms the
-ROM value or overrides it. See `../wl-diag` for the tracer that produced the
-attach dump; this module is deliberately tiny and uses raw `ioremap` (the stock
-firmware has no bcma).
+rather than set a literal, so this tells us whether `0x7ff` merely confirms the
+ROM value or overrides it. Confirmed on hardware: `max_res_mask` reads back
+`0x7ff` on both a BCM4360 (agcombo) and a BCM4352 (DSL-3580L, see
+`../../router-data/dsl3580l/dsl3580l_pmu-trace.txt`); `min_res_mask` reads
+`0x7fb`. See `../wl-diag` for the tracer that produced the attach dump; this
+module is deliberately tiny and uses raw `ioremap` (the stock firmware has no
+bcma).
 
 ## Build
 
@@ -59,7 +62,7 @@ host.
 - `indirect` (default `0`) — also walk the res-dep / regctl / pllctl indirect
   tables. **This writes the shared `*_ADDR` select ports**, so only enable it
   when the chip is idle (not mid-operation under `wl`). The res-dep table shows
-  which PMU resources exist, i.e. *why* the max mask would be `0x1ff`.
+  which PMU resources exist, i.e. *why* the max mask would be `0x7ff`.
 - `nres` / `nreg` / `npll` — number of indirect entries to walk (16 / 8 / 16).
 
 ## Workflow
@@ -68,8 +71,10 @@ host.
    `max_res_mask` / `min_res_mask` (and, with `indirect=1`, the res-dep table).
 2. Boot our b43+bcma driver → dmesg shows `PMU res mask pre-write: min=… max=…`
    (the prelog from patch 0007) — the value the chip holds before our write.
-3. Compare: if the vendor value differs from `0x1ff`, set the driver's `max_msk`
-   to the vendor value (with a `TODO: check other boards/revs`); if it matches,
-   `0x1ff` is confirmed and the write is redundant.
+3. Compare: the vendor `max_res_mask` reads `0x7ff`, which matches the driver's
+   `max_msk`, so that write is confirmed (not an override). `min_res_mask` reads
+   `0x7fb`; the driver leaves `min_msk = 0` (no write), relying on the ROM value
+   already in the register at bring-up — check the pre-write prelog to confirm
+   it is `0x7fb` there too.
 
 Direct-register reads are side-effect-free; only `indirect=1` writes anything.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Normalize a wl-diag capture and compare it against the trace emitted by
-rxiq_trace. Only op lines are compared (address / value / mask); the
+ac_trace. Only op lines are compared (address / value / mask); the
 episode number, timestamp, and cpuN prefix are stripped from the vendor
 trace before diffing since the test does not simulate scheduling.
 

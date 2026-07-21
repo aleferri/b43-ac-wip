@@ -108,6 +108,50 @@ void b43_actab_write_bulk(struct b43_wldev *dev,
  * emette peek + relock idempotente PRIMA delle WR TABLE_ID/OFFSET/DATA.
  * Nel blob vendor questo è runtime-conditional; qui è una funzione dedicata.
  */
+void b43_actab_zerofill(struct b43_wldev *dev,
+			u16 id, u16 offset, u8 width, size_t len)
+{
+	size_t i;
+	u16 gate;
+
+	/* Same prologue as b43_actab_write_bulk: see the note there on why
+	 * 0x019e is read before every actab access. */
+	gate = b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+	b43info(dev->wl,
+		"[TXLPFLOG] actab_wr id=0x%02x off=0x%04x width=%u len=%zu gate=0x%04x\n",
+		id, offset, width, (size_t)len, gate);
+
+	b43_phy_write(dev, B43_PHY_AC_TABLE_ID, id);
+	b43_phy_write(dev, B43_PHY_AC_TABLE_OFFSET, offset);
+
+	switch (width) {
+	case 8: {
+		u16 data_reg = (id == 0x20)
+			? B43_PHY_AC_TABLE_DATA_2
+			: B43_PHY_AC_TABLE_DATA_LO;
+
+		for (i = 0; i < len; i++)
+			b43_phy_write(dev, data_reg, 0);
+		break;
+	}
+	case 16:
+		for (i = 0; i < len; i++)
+			b43_phy_write(dev, B43_PHY_AC_TABLE_DATA_LO, 0);
+		break;
+	case 32:
+		for (i = 0; i < len; i++) {
+			b43_phy_write(dev, B43_PHY_AC_TABLE_DATA_HI, 0);
+			b43_phy_write(dev, B43_PHY_AC_TABLE_DATA_LO, 0);
+		}
+		break;
+	default:
+		b43warn(dev->wl,
+			"actab_zerofill: unsupported width %u (id=0x%x len=%zu)\n",
+			width, id, len);
+		break;
+	}
+}
+
 void b43_actab_write_bulk_reopen(struct b43_wldev *dev,
 				 u16 id, u16 offset, u8 width,
 				 size_t len, const void *data)
@@ -294,13 +338,25 @@ struct b43_phy_ac_table_desc {
 	u8 width;
 	u8 core;		/* 0..num_cores-1, or TBL_SHARED */
 	size_t len;
-	const void *data;	/* NULL = not yet populated */
+	const void *data;	/* NULL when zero is set */
 	const char *name;	/* for dmesg on skip */
+	bool zero;		/* fill len cells with 0 instead of copying data */
 };
 
 /*
- * The 24 rev-0 tables follow, one static const u{8,16,32} array per descriptor
+ * The rev-0 tables follow, one static const u{8,16,32} array per descriptor
  * entry in b43_phy_ac_tables_rev0[] (declared further down).
+ *
+ * est_pwr and papd_comp_rfpwr share id and offset by design: the vendor writes
+ * est_pwr first and papd_comp_rfpwr over it later in the same init sequence
+ * (agcombo attach #1345 and #2899). Do not "fix" the duplicate.
+ *
+ * sqthreshold (id 0x06) is not here: the vendor never writes it. The only
+ * captures containing the init table load are the two agcombo ones, and in
+ * neither does TABLE_ID take 0x06, nor does the payload appear at any other
+ * id. The blob has a descriptor for it, so it is presumably written under a
+ * condition none of the captures exercise -- 2.4 GHz is the obvious
+ * candidate, and is out of scope here.
  */
 
 static const u8 acphy_tx_evm_tbl_rev0[38] = {
@@ -309,14 +365,6 @@ static const u8 acphy_tx_evm_tbl_rev0[38] = {
 	0x22, 0x24, 0x09, 0x0e, 0x11, 0x14, 0x17, 0x1a,
 	0x1d, 0x20, 0x22, 0x24, 0x09, 0x0e, 0x11, 0x14,
 	0x17, 0x1a, 0x1d, 0x20, 0x22, 0x24,
-};
-
-static const u32 acphy_sqthreshold_tbl_rev0[18] = {
-	0x18161616, 0x28171417, 0x34343434, 0x31323334,
-	0x414e453e, 0x5a444b6b, 0x666b6b6b, 0x66676967,
-	0x64656566, 0xc4646464, 0xd8e3e0e3, 0xd6ced8da,
-	0x0e0e0e0e, 0x0e0e0e0e, 0x00000000, 0x00000000,
-	0xbbb9b5b1, 0xc7c7c2bf,
 };
 
 static const u16 acphy_mcs_tbl_rev0[128] = {
@@ -517,15 +565,34 @@ static const u32 papd_cal_scalars_tbl_core2_rev0[64] = {
 	{ .id = (_id), .offset = (_off), .width = (_w), .core = (_core), \
 	  .len = ARRAY_SIZE(_arr), .data = (_arr), .name = (_name) }
 
-/* acphytbl_info_rev0 entries. */
+#define TBL_ZERO(_id, _off, _w, _core, _len, _name) \
+	{ .id = (_id), .offset = (_off), .width = (_w), .core = (_core), \
+	  .len = (_len), .data = NULL, .name = (_name), .zero = true }
+
+/*
+ * acphytbl_info_rev0 entries, in the order the vendor emits them (agcombo
+ * attach, TABLE_ID sequence at #357..#3939). The zero-fills are interleaved
+ * here rather than run as a separate pass: the vendor puts 0x04/0x03 between
+ * tx_evm and phasetrack, and the per-core ones between est_pwr and
+ * papd_comp_rfpwr. Order matters in this block -- est_pwr and papd_comp_rfpwr
+ * target the same cells -- so keep the sequence, and note that the per-core
+ * groups are id-major, not core-major.
+ */
 static const struct b43_phy_ac_table_desc b43_phy_ac_tables_rev0[] = {
 	TBL_POPULATED(0x01, 0, 16, TBL_SHARED, acphy_mcs_tbl_rev0,                "mcs"),
 	TBL_POPULATED(0x02, 0,  8, TBL_SHARED, acphy_tx_evm_tbl_rev0,             "tx_evm"),
+	TBL_ZERO     (0x04, 0,  8, TBL_SHARED, 256,                               "zero_cal_0x04"),
+	TBL_ZERO     (0x03, 0, 32, TBL_SHARED, 256,                               "zero_cal_0x03"),
 	TBL_POPULATED(0x05, 0, 32, TBL_SHARED, phasetrack_tbl_rev0,               "phasetrack"),
-	TBL_POPULATED(0x06, 0, 32, TBL_SHARED, acphy_sqthreshold_tbl_rev0,        "sqthreshold"),
 	TBL_POPULATED(0x40, 0, 16, 0,          est_pwr_lut_core0_rev0,            "est_pwr_lut_core0"),
 	TBL_POPULATED(0x60, 0, 16, 1,          est_pwr_lut_core1_rev0,            "est_pwr_lut_core1"),
 	TBL_POPULATED(0x80, 0, 16, 2,          est_pwr_lut_core2_rev0,            "est_pwr_lut_core2"),
+	TBL_ZERO     (0x41, 0, 32, 0,          128,                               "zero_cal_core0_0x41"),
+	TBL_ZERO     (0x61, 0, 32, 1,          128,                               "zero_cal_core1_0x61"),
+	TBL_ZERO     (0x81, 0, 32, 2,          128,                               "zero_cal_core2_0x81"),
+	TBL_ZERO     (0x42, 0, 16, 0,          128,                               "zero_cal_core0_0x42"),
+	TBL_ZERO     (0x62, 0, 16, 1,          128,                               "zero_cal_core1_0x62"),
+	TBL_ZERO     (0x82, 0, 16, 2,          128,                               "zero_cal_core2_0x82"),
 	TBL_POPULATED(0x40, 0, 16, 0,          papd_comp_rfpwr_tbl_core0_rev0,    "papd_comp_rfpwr_tbl_core0"),
 	TBL_POPULATED(0x60, 0, 16, 1,          papd_comp_rfpwr_tbl_core1_rev0,    "papd_comp_rfpwr_tbl_core1"),
 	TBL_POPULATED(0x80, 0, 16, 2,          papd_comp_rfpwr_tbl_core2_rev0,    "papd_comp_rfpwr_tbl_core2"),
@@ -538,28 +605,15 @@ static const struct b43_phy_ac_table_desc b43_phy_ac_tables_rev0[] = {
 };
 
 #undef TBL_POPULATED
+#undef TBL_ZERO
 
 /* Init */
 
 /* TODO: calibrate. */
-static void b43_phy_ac_tables_zero_cal(struct b43_wldev *dev)
-{
-	static const u32 zeros[256];
-	u8 c, num_cores = dev->phy.ac->num_cores;
-
-	b43_actab_write_bulk(dev, 0x04, 0,  8, 256, zeros);
-	b43_actab_write_bulk(dev, 0x03, 0, 32, 256, zeros);
-	for (c = 0; c < num_cores; c++) {
-		if (!((dev->phy.ac->coremask >> c) & 1))
-			continue;
-		b43_actab_write_bulk(dev, 0x41 + c * 0x20, 0, 32, 128, zeros);
-		b43_actab_write_bulk(dev, 0x42 + c * 0x20, 0, 16, 128, zeros);
-	}
-}
-
 /* 4360 agcombo: 787-5804 ; d6220 ch36: n/l come funzione (loader op_init table-driven); i singoli TBL.WR sono nel raw e testimoniati in chan_tables/femctrl/rx_evm */
 void b43_phy_ac_tables_init(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	const struct b43_phy_ac_table_desc *t;
 	u16 saved;
 	size_t i;
@@ -570,11 +624,14 @@ void b43_phy_ac_tables_init(struct b43_wldev *dev)
 		if (t->core != TBL_SHARED && !((dev->phy.ac->coremask >> t->core) & 1))
 			continue;
 
-		if (t->data)
-			b43_actab_write_bulk(dev, t->id, t->offset, t->width, t->len, t->data);
+		if (t->zero)
+			b43_actab_zerofill(dev, t->id, t->offset, t->width,
+					   t->len);
+		else if (t->data)
+			b43_actab_write_bulk(dev, t->id, t->offset, t->width,
+					     t->len, t->data);
 	}
-	
-	b43_phy_ac_tables_zero_cal(dev);
+
 	b43_phy_ac_tbl_write_unlock(dev, saved);
 }
 

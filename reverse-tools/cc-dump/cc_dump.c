@@ -106,7 +106,7 @@ static int __init ccd_init(void)
 	pr_info("cc-dump:   res_state     0x%08x\n", rd(CC_PMU_RES_STATE));
 	pr_info("cc-dump:   res_pending   0x%08x\n", rd(CC_PMU_RES_PENDING));
 	pr_info("cc-dump:   min_res_mask  0x%08x\n", rd(CC_PMU_MINRES_MSK));
-	pr_info("cc-dump:   max_res_mask  0x%08x   <-- compare vs driver's 0x1ff\n",
+	pr_info("cc-dump:   max_res_mask  0x%08x   <-- compare vs driver's 0x7ff\n",
 		rd(CC_PMU_MAXRES_MSK));
 
 	if (indirect) {

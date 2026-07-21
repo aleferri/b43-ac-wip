@@ -1,6 +1,6 @@
 # Build artifacts
 build/
-rxiq_trace
+ac_trace
 
 # Generated traces (regenerable via `make trace`)
 trace.*.out

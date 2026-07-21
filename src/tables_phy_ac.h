@@ -14,6 +14,13 @@ void b43_actab_write_bulk(struct b43_wldev *dev,
 			  u16 id, u16 offset, u8 width,
 			  size_t len, const void *data);
 /*
+ * write_bulk con sorgente implicita a zero: emette la stessa sequenza di op
+ * (gate peek, WR TABLE_ID/OFFSET, len celle) senza obbligare il chiamante a
+ * tenersi un buffer di zeri.
+ */
+void b43_actab_zerofill(struct b43_wldev *dev,
+			u16 id, u16 offset, u8 width, size_t len);
+/*
  * Variante di write_bulk usata quando il gate 0x019e è UNLOCKATO all'entrata
  * (per esempio dopo b43_phy_ac_post_noise_shaping_rx_regprog #37944 unlock).
  * Emette peek + relock idempotente + WR TABLE_ID/OFFSET/DATA — cioè +1 op
