@@ -305,3 +305,29 @@ sulla finestra del blocco d'interesse, come nell'esempio RXIQ sopra.
 - **Race con MAC**: le funzioni `b43_mac_*` sono no-op. La finestra di
   quiesce MAC non viene simulata perché nessuna trace del vendor la
   richiede per il confronto.
+
+## Copertura per funzione (marcatori `B43_AC_FN`)
+
+Ogni funzione del driver è marcata con `B43_AC_FN()` (in `phy_ac.h`): no-op nel
+kernel, nell'harness emette `----FN:nome----` all'ingresso e `----/FN:nome----`
+all'uscita (via l'attributo `cleanup` di GCC, così i nesting sono corretti). I
+marcatori escono **solo** con `AC_FN_MARKERS=1`, altrimenti il trace resta
+identico al vendor e `compare.py` non si rompe.
+
+```sh
+# trace annotato per l'analisi di copertura
+AC_FN_MARKERS=1 ./rxiq_trace rfkill d6220 > gen.rfkill.d6220.txt
+
+# copertura per-funzione + gap, contro la cattura GREZZA (non collassata)
+python3 ../reverse-tools/coverage_by_function.py \
+    gen.rfkill.d6220.txt \
+    ../router-data/d6220/wl-diag-wl1-down-to-bss-up.txt
+
+# localizzazione delle funzioni nel trace vendor
+python3 ../reverse-tools/localize_functions.py gen.rfkill.d6220.txt <trace>
+```
+
+Le funzioni che scrivono tabelle (`tables_init`, `tables_zero_cal`) non si
+misurano per sequenza: l'harness le emette come `PHY.WR` sul data-port, il
+vendor le intercala con `TBL.WR/RD` in ordine diverso. Vanno confrontate per
+contenuto delle celle.

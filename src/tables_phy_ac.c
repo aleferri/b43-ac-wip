@@ -544,6 +544,7 @@ static const struct b43_phy_ac_table_desc b43_phy_ac_tables_rev0[] = {
 /* TODO: calibrate. */
 static void b43_phy_ac_tables_zero_cal(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	static const u32 zeros[256];
 	u8 c, num_cores = dev->phy.ac->num_cores;
 
@@ -560,6 +561,7 @@ static void b43_phy_ac_tables_zero_cal(struct b43_wldev *dev)
 /* 4360 agcombo: 787-5804 ; d6220 ch36: n/l come funzione (loader op_init table-driven); i singoli TBL.WR sono nel raw e testimoniati in chan_tables/femctrl/rx_evm */
 void b43_phy_ac_tables_init(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	const struct b43_phy_ac_table_desc *t;
 	u16 saved;
 	size_t i;

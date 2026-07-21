@@ -9,10 +9,24 @@ first bring-up window.  Run: python3 localize_functions.py [repo_root]
 """
 import re, os, sys, glob
 HERE=os.path.dirname(os.path.abspath(__file__))
-ROOT=sys.argv[1] if len(sys.argv)>1 else os.path.dirname(HERE)
+ROOT=os.path.dirname(HERE)
 SRCDIR=os.path.join(ROOT,"src")
-TRACE=os.path.join(HERE,"d6220-trace2-collapsed.txt")
-if not os.path.exists(TRACE): TRACE=os.path.join(ROOT,"reverse-output/d6220-trace2-collapsed.txt")
+# trace to analyse: argv[1] if given (must be collapse_trace.py output),
+# else the default d6220 collapsed. Fingerprints always come from ROOT/src.
+# Two modes:
+#   new:  localize_functions.py <generated_with_FN_markers> <target_trace>
+#         per-function fingerprints come from the harness output (exact
+#         boundaries, real ops -- handles loops and computed addresses).
+#   old:  localize_functions.py [<target_trace>]
+#         fingerprints are guessed from ROOT/src (fallback, less accurate).
+GEN=None
+if len(sys.argv)>2:
+    GEN,TRACE=sys.argv[1],sys.argv[2]
+elif len(sys.argv)>1:
+    TRACE=sys.argv[1]
+else:
+    TRACE=os.path.join(HERE,"d6220-trace2-collapsed.txt")
+    if not os.path.exists(TRACE): TRACE=os.path.join(ROOT,"reverse-output/d6220-trace2-collapsed.txt")
 
 sym={}
 for h in glob.glob(SRCDIR+"/*.h")+glob.glob(SRCDIR+"/*.c"):
@@ -73,21 +87,53 @@ for cf in sorted(glob.glob(SRCDIR+"/*.c")):
         depth+=l.count("{")-l.count("}")
         if depth<0: depth=0
 
-# trace ops (WR + MOD) in order
-tr=[]
-for l in open(TRACE,errors="ignore"):
-    if l.startswith("#"): continue
-    p=l.split()
-    if len(p)<5: continue
-    op=p[3]
-    if op not in ("PHY.WR","RAD.WR","PHY.MOD","RAD.MOD"): continue
-    fam,cls=op.split(".")
-    d=dict(kv.split("=",1) for kv in p[4:] if "=" in kv)
+# op parsing shared by the target trace and the FN-marker segmentation.
+# Robust to both formats: the vendor collapsed trace (has a #seq token) and
+# the harness output (starts with "cpu1", no seq). Only WR/MOD carry a literal
+# value/mask usable as a fingerprint element; RD (val=UNDEFINED) is skipped.
+OPRE=re.compile(r'\b(PHY|RAD)\.(WR|MOD)\b')
+def op_key(line):
+    m=OPRE.search(line)
+    if not m: return None
+    fam,cls=m.group(1),m.group(2)
+    d=dict(kv.split("=",1) for kv in line.split() if kv.count("=")==1)
     try:
-        seq=int(p[1].lstrip("#")); a=int(d["addr"],16)
-        if cls=="WR": tr.append((seq,('WR',fam,a,int(d["val"],16))))
-        else:         tr.append((seq,('MOD',fam,a,int(d.get("mask","0x0"),16))))
-    except: pass
+        a=int(d["addr"],16)
+        key=('WR',fam,a,int(d["val"],16)) if cls=="WR" \
+            else ('MOD',fam,a,int(d.get("mask","0x0"),16))
+    except Exception:
+        return None
+    sm=re.search(r'#(\d+)',line)
+    return (int(sm.group(1)) if sm else None, key)
+
+def parse_ops(path):
+    out=[]
+    for l in open(path,errors="ignore"):
+        k=op_key(l)
+        if k: out.append(k)
+    return out
+
+# fingerprints straight from the harness FN markers: exact per-function op
+# sequences, no source guessing. enter/leave nest, so each op is attributed to
+# the innermost active function (a function's own ops, not its callees').
+def fp_from_markers(path):
+    fp={}; stack=[]
+    for l in open(path,errors="ignore"):
+        m=re.match(r'----FN:(\w+)----',l)
+        if m:
+            stack.append(m.group(1)); fp.setdefault(m.group(1),[]); continue
+        m=re.match(r'----/FN:(\w+)----',l)
+        if m:
+            if stack and stack[-1]==m.group(1): stack.pop()
+            continue
+        if not stack: continue
+        k=op_key(l)
+        if k: fp[stack[-1]].append(k[1])
+    return fp
+
+tr=parse_ops(TRACE)
+if GEN is not None:
+    func_fp=fp_from_markers(GEN)
 from collections import defaultdict
 idx=defaultdict(list)
 for i,(s,key) in enumerate(tr): idx[key].append(i)
@@ -121,11 +167,9 @@ for s0,s1,fn,u,t in res:
     print("#%-6d #%-6d %-38s %d/%d"%(s0,s1,fn,u,t))
 
 # full segmentation of first bring-up window: [start, next_start)
-print("\nSEGMENTATION of first bring-up (#51200-#52050):")
-w=[r for r in res if 51200<=r[0]<=52050]
-for i,(s0,s1,fn,u,t) in enumerate(w):
-    nxt=w[i+1][0] if i+1<len(w) else 52050
-    # count trace ops (any) in [s0,nxt)
+print("\nSEGMENTATION (each match to the next):")
+for i,(s0,s1,fn,u,t) in enumerate(res):
+    nxt=res[i+1][0] if i+1<len(res) else s1
     print("  #%-6d .. #%-6d  %-36s"%(s0,nxt,fn))
 print("\nUn-fingerprintable (<3 literal ops):")
 print("  "+", ".join(sorted(fn for fn,fp in func_fp.items() if len(fp)<3)))

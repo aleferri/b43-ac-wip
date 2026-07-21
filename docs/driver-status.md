@@ -91,16 +91,33 @@ la scelta del budget è ingegneristica arbitraria.
   residue nel freeze RX, semantica identica.
 - Bit [10:4] di 0x0140 non ancora reverse-ingegnerizzati.
 
-## TODO — set_analog_tx_lpf (celle table 7)
+## Famiglia LPF analogica — risolta
 
-La formula RMW attuale in `b43_phy_ac_set_analog_tx_lpf` non riproduce
-i valori che il vendor scrive nelle celle table 7 TX-LPF. Attualmente
-skippata con hardcoded per il call-site `channel_setup` (`stages=0x1ff`,
-`f0/f3/f6=-1`), targetizzato solo su d6220 ch36 BW20 attach.
+TX-LPF, RX-LPF e DACBUF non sono più hardcoded: il cap viene derivato da
+rccal e la RMW preserva il pre-state della cella. Formule (dettaglio e
+verifica in `txlpf-formula.md`):
 
-Analisi bit-per-bit e piano di reverse engineering in `txlpf-formula.md`.
-Skip temporaneo: valori hardcoded dal capture vendor d6220 ch36. I log
-`[TXLPFLOG]` restano attivi in `tbl_write_lock`/`unlock`,
-`actab_read`/`write_bulk`, `txlpf` loop, `dacbuf` loop, `rxlpf` loop —
-da raccogliere via `dmesg | grep '\[TXLPFLOG\]'` su chip reale, poi
-invertire la formula e rimuovere il hardcoded.
+- TX-LPF: `cap = ((RCCAL_F - RCCAL_E) * 193) >> 8`.
+- RX-LPF: `f17 = lpf_cap1` diretto; `f6 = (lpf_cap0 * k[stage]) >> 8` con
+  `k = {221, 215, 215}` per le tre sezioni (le wl recenti scalano; la wl 6.30
+  del DSL no — differenza di versione).
+- DACBUF: `dacbuf_cap = (RCCAL_G & 0x03e0) >> 5`, dal readback post-apply.
+
+Verificate sui tre board (d6220/DSL/agcombo). I log `[TXLPFLOG]` sono stati
+rimossi.
+
+## Poll senza budget — corretto
+
+`b43_phy_ac_rxcal_afe_iter` aveva un `while (phy_read(0x0380) & 0x8000)` senza
+uscita: hang del kernel se il bit busy non si libera. Ora ha un budget finito
+(1000×udelay(1)) con `b43err` non fatale, come `force_rf_sequence`. Era l'unico
+poll non limitato del driver.
+
+## Copertura del bring-up (rfkill + op_init)
+
+L'harness marca ogni funzione con `B43_AC_FN()` (attivo con `AC_FN_MARKERS=1`,
+altrimenti il trace resta pulito per `compare.py`); `coverage_by_function.py`
+misura la copertura per-sequenza contro la cattura grezza. Risultato: bring-up
+radio coperto al 100% su d6220 e agcombo. Le divergenze note (tutte sul DSL
+wl 6.30: prefregs −2 scritture, afe_lpf_stage, rccal ~84%) sono in
+`retrace-todo.md`.

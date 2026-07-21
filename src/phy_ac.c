@@ -115,6 +115,7 @@ static void b43_phy_ac_op_prepare_structs(struct b43_wldev *dev)
  * bring-up radio/rfkill), taggati per-seq. 4360 agcombo: 16-354 ; d6220 ch36 @#32833 (fp 10/14) */
 static void b43_phy_ac_mode_init(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	b43_phy_write(dev, 0x0410, 0x0077);
 
 	/* 0x17xx-page clears */
@@ -150,6 +151,7 @@ static void b43_phy_ac_mode_init(struct b43_wldev *dev)
  */
 static void b43_phy_ac_init_regs(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	static const u16 hi_regs[8] = { 0x033a, 0x033b, 0x033e, 0x033f,
 					0x0342, 0x0343, 0x0346, 0x0347 };
 	static const u16 lo_regs[8] = { 0x033c, 0x033d, 0x0340, 0x0341,
@@ -236,6 +238,7 @@ static void b43_phy_ac_farrow_setup(struct b43_wldev *dev,
  */
 static void b43_phy_ac_adc_hold(struct b43_wldev *dev, bool hold)
 {
+	B43_AC_FN();
 	u16 set = hold ? 0x0010 : 0x0000;
 
 	b43_phy_maskset(dev, 0x02ed, (u16)~0x0010, set);
@@ -250,6 +253,7 @@ static void b43_phy_ac_adc_hold(struct b43_wldev *dev, bool hold)
  */
 static void b43_phy_ac_classctl_write(struct b43_wldev *dev, bool arm)
 {
+	B43_AC_FN();
 	struct b43_phy_ac *phy_ac = dev->phy.ac;
 
 	b43_phy_write(dev, 0x0140, arm ? 0x0df4 : 0x0df6);
@@ -287,6 +291,7 @@ static void b43_phy_ac_rx_gate_with_adc_hold(struct b43_wldev *dev, bool arm)
 static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev,
 				      const u16 *base_indices)
 {
+	B43_AC_FN();
 	/*
 	 * The per-core base index (parametro base_indices) è un valore
 	 * *misurato* dal firmware: 0x206 in attach iter1, 0x207 in attach iter2,
@@ -641,6 +646,7 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev,
 /* 4360 agcombo: 10004-10013 ; d6220 ch36 @#38852,#39209,#54753 (fp 10/10, 3 chiamate) */
 static void b43_phy_ac_txpwrctrl_setup(struct b43_wldev *dev, u16 freq)
 {
+	B43_AC_FN();
 	static const struct { s16 a1, b0, b1; } pwrdet_def[3] = {
 		{ (s16)0xff49, (s16)0x12d9, (s16)0xfd99 },
 		{ (s16)0xff54, (s16)0x1212, (s16)0xfd89 },
@@ -969,6 +975,7 @@ static const u16 b43_acphy_txgain_epa_5g_2069rev4[128][3] = {
  * Unico knob dell'indice operativo, gira per ultimo: NON hand-editare le costanti di adc_reset. */
 void b43_phy_ac_txpwr_by_index(struct b43_wldev *dev, u8 idx)
 {
+	B43_AC_FN();
 	struct b43_phy_ac *ac = dev->phy.ac;
 	static const u16 bbmult_lo[3] = { 0x0063, 0x0067, 0x006b };
 	static const u16 bbmult_hi[3] = { 0x0073, 0x0077, 0x007b };
@@ -1067,6 +1074,7 @@ void b43_phy_ac_txpwr_by_index(struct b43_wldev *dev, u8 idx)
 bool
 b43_phy_ac_force_rf_sequence(struct b43_wldev *dev, u16 rf_seq, u16 gate)
 {
+	B43_AC_FN();
 	u16 saved_rfctl1, saved_gate;
 	bool timed_out = true;
 	unsigned int i;
@@ -1110,6 +1118,7 @@ b43_phy_ac_force_rf_sequence(struct b43_wldev *dev, u16 rf_seq, u16 gate)
  */
 static void b43_phy_ac_cca_pulse(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	struct b43_phy_ac *phy_ac = dev->phy.ac;
 
 	b43_phy_maskset(dev, B43_PHY_AC_BBCFG,
@@ -1129,6 +1138,7 @@ static void b43_phy_ac_cca_pulse(struct b43_wldev *dev)
 void
 b43_phy_ac_reset_cca(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	struct b43_phy_ac *phy_ac = dev->phy.ac;
 
 	b43_phy_force_clock(dev, true);
@@ -1163,6 +1173,7 @@ b43_phy_ac_reset_cca(struct b43_wldev *dev)
 /* 4360 agcombo: 4091 e 9987 (disable/enable agli estremi di channel_setup) ; d6220 ch36: n/l */
 u16 b43_phy_ac_classifier(struct b43_wldev *dev, u16 mask, u16 val)
 {
+	B43_AC_FN();
 	struct b43_phy_ac *phy_ac = dev->phy.ac;
 	u16 tmp;
 	u16 allowed = B43_PHY_AC_CLASSCTL_CCKEN |
@@ -1191,6 +1202,7 @@ u16 b43_phy_ac_classifier(struct b43_wldev *dev, u16 mask, u16 val)
 /* 4360 agcombo: 4096-4098 e 9992-9994 ; d6220 ch36: n/l */
 static void b43_phy_ac_clip_det(struct b43_wldev *dev, bool enable)
 {
+	B43_AC_FN();
 	struct b43_phy_ac *phy_ac = dev->phy.ac;
 	unsigned int core;
 
@@ -1243,6 +1255,7 @@ static void b43_phy_ac_clip_det(struct b43_wldev *dev, bool enable)
  */
 static void b43_phy_ac_channel_switch_prep(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	/* A: gate override + bandctl. Il vendor emette una peek visibile su
 	 * 0x019e (#32887) prima del maskset (#32888); riprodurla è necessario
 	 * per far combaciare il wire ordering, il valore letto è scartato. */
@@ -1305,6 +1318,7 @@ static void b43_phy_ac_run_rfseq_cmd(struct b43_wldev *dev, u16 cmd_bit);
 
 static void b43_phy_ac_rxcore_setstate(struct b43_wldev *dev, u8 coremask)
 {
+	B43_AC_FN();
 	u16 saved_401, saved_400;
 
 	saved_401 = b43_phy_read_log(dev, B43_PHY_AC_RF_SEQ_MODE);
@@ -1453,6 +1467,7 @@ static const u32 b43_acphy_txv_for_spexp[243] = {
  * 4360 agcombo: 4287-4388 ; d6220 ch36 TBL.WR id=0xa off 0/0x20/0x40 @#33117-#33189 */
 static void b43_phy_ac_set_regtbl_on_femctrl(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	static const u8 fem6_tbl[32] = {
 		0x00, 0x00, 0x06, 0x02,  0x00, 0x00, 0x06, 0x02,
 		0x00, 0x01, 0x00, 0x00,  0x00, 0x00, 0x00, 0x00,
@@ -1508,6 +1523,7 @@ static void b43_phy_ac_set_analog_tx_lpf_locked(struct b43_wldev *dev,
 						int f9, int f17,
 						u32 only_core)
 {
+	B43_AC_FN();
 	static const u16 lo_off[3] = { 0x142, 0x152, 0x162 };
 	static const u16 hi_off[3] = { 0x362, 0x372, 0x382 };
 	u8 mask = dev->phy.ac->coremask;
@@ -1592,6 +1608,7 @@ static void b43_phy_ac_set_analog_tx_lpf(struct b43_wldev *dev, u16 stages,
  */
 static void b43_phy_ac_run_rfseq_cmd(struct b43_wldev *dev, u16 cmd_bit)
 {
+	B43_AC_FN();
 	unsigned int i;
 
 	b43_phy_read_log(dev, 0x0400);
@@ -1638,6 +1655,7 @@ static void b43_phy_ac_chanspec_tail(struct b43_wldev *dev);
  */
 static void b43_phy_ac_post_rfseq_misc_setup(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	/* Peek diagnostica pre-setup (vendor #34526). */
 	b43_phy_read_log(dev, 0x000b);
 
@@ -1672,6 +1690,7 @@ static void b43_phy_ac_post_rfseq_misc_setup(struct b43_wldev *dev)
  */
 static void b43_phy_ac_radio_percore_setup_1(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	unsigned int core;
 	unsigned int num_cores = dev->phy.ac->num_cores;
 	u8 mask = dev->phy.ac->coremask;
@@ -1738,6 +1757,7 @@ static void b43_phy_ac_radio_percore_setup_1(struct b43_wldev *dev)
  */
 static void b43_phy_ac_coeff_bank_init_bw20_5g(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	static const u16 lut_0x0180[21] = {
 		/* 0x0180 */ 0x0015,  /* mask=0x001f (5-bit); resto mask=0x07ff */
 		/* 0x0181 */ 0x0146,
@@ -1854,6 +1874,7 @@ static void b43_phy_ac_coeff_bank_init_bw20_5g(struct b43_wldev *dev)
 /* 4360 agcombo: 310-320 e 4266-4279 ; d6220 ch36 @#32803,#33099 (fp 10/14, 2 chiamate) */
 static void b43_phy_ac_set_pdet_on_reset(struct b43_wldev *dev, bool full)
 {
+	B43_AC_FN();
 	b43_phy_write(dev, 0x0550, 0x0ffd);
 	b43_phy_maskset(dev, 0x0551, (u16)~0x000f, 0x000f);
 	b43_phy_maskset(dev, 0x0551, (u16)~0x00f0, 0x00f0);
@@ -1875,6 +1896,7 @@ static void b43_phy_ac_set_pdet_on_reset(struct b43_wldev *dev, bool full)
 /* 4360 agcombo: 4287-5163 ; d6220 ch36: composita, figlie localizzate (set_pdet @#32803/#33099 + femctrl @#33117) */
 static void b43_phy_ac_analog_on_reset(struct b43_wldev *dev, u16 *saved_outer_out)
 {
+	B43_AC_FN();
 	struct b43_phy_ac *aphy = dev->phy.ac;
 	u8 mask = dev->phy.ac->coremask;
 	u8 core, num_cores = dev->phy.ac->num_cores;
@@ -2025,6 +2047,7 @@ static void b43_phy_ac_analog_on_reset(struct b43_wldev *dev, u16 *saved_outer_o
 /* 4360 agcombo: 5321-5805 ; d6220 ch36: n/l */
 static void b43_phy_ac_rfseq_tbl_init(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	static const u16 spexp_pad = 0x0020;
 	static const u16 spexp_off[] = { 0x3c6, 0x3c7, 0x3d6, 0x3d7, 0x3e6, 0x3e7 };
 	size_t i;
@@ -2058,6 +2081,7 @@ static void b43_phy_ac_rfseq_tbl_init(struct b43_wldev *dev)
 /* 4360 agcombo: 4186-4205 (le periodiche successive sono un recalc, altro caller) ; d6220 ch36 @#32998 (0x01f2=0x00c8) */
 static void b43_phy_ac_set_reg_on_reset(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	u8 c, num_cores = dev->phy.ac->num_cores;
 
 	/* clear the RF-seq override gate before the reset block. Per matchare
@@ -2122,6 +2146,7 @@ static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
 				     const struct b43_phy_ac_channeltab_e_radio2069 *e,
 				     struct ieee80211_channel *new_channel)
 {
+	B43_AC_FN();
 	unsigned int i;
 
 	B43_PHY_AC_REQUIRE(dev,
@@ -2586,6 +2611,7 @@ static const u16 b43_acphy_tbl11[464] = {
  * 4360 agcombo: TODO ; d6220 ch36 TBL.WR id=0x11(464w)/0x0b/0x15/0x44/0x45 @#35087+ */
 static void b43_phy_ac_chan_tables(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	B43_PHY_AC_REQUIRE(dev,
 			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
 			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
@@ -2616,6 +2642,7 @@ static void b43_phy_ac_chan_tables(struct b43_wldev *dev)
  */
 static void b43_phy_ac_rx_evm_shaping_override(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	static const u16 blk_lo[3] = { 0x0008, 0x0006, 0x0004 };
 	static const u16 blk_hi[3] = { 0x0004, 0x0006, 0x0008 };
 
@@ -2642,6 +2669,7 @@ static void
 b43_phy_ac_post_noise_shaping_rx_regprog_core(struct b43_wldev *dev,
 					      unsigned int core)
 {
+	B43_AC_FN();
 	u16 stride = (u16)(core * 0x200);
 	u16 tbl_off = (u16)(0x00f9 + core);
 	static const u16 tbl_val = 0xc0b5;
@@ -2698,6 +2726,7 @@ static void
 b43_phy_ac_post_noise_shaping_core_transition(struct b43_wldev *dev,
 					      unsigned int core)
 {
+	B43_AC_FN();
 	u16 stride = (u16)(core * 0x200);
 
 	b43_radio_maskset(dev, 0x0045 + stride, (u16)~0x0300, 0x0300);
@@ -2720,6 +2749,7 @@ b43_phy_ac_post_noise_shaping_core_transition(struct b43_wldev *dev,
  */
 static void b43_phy_ac_post_noise_shaping_rx_regprog(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	unsigned int core;
 	u8 num_cores = dev->phy.ac->num_cores;
 
@@ -2749,6 +2779,7 @@ static void b43_phy_ac_post_noise_shaping_rx_regprog(struct b43_wldev *dev)
  */
 static void b43_phy_ac_rxgainctrl_regs(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	u8 c, num_cores = dev->phy.ac->num_cores;
 	u8 mask = dev->phy.ac->coremask;
 	/*
@@ -2835,6 +2866,7 @@ static void b43_phy_ac_rxgainctrl_regs(struct b43_wldev *dev)
 /* 4360 agcombo: 8831-8969 (l'arm RX  e' di afecal, non di qui) ; d6220 ch36 @#38199 (0x1641=0x7f18) */
 static void b43_phy_ac_adc_reset(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	static const u16 adc_hi[8] = { 0x33a, 0x33b, 0x33e, 0x33f,
 				       0x342, 0x343, 0x346, 0x347 }; /* = 0x03ac */
 	static const u16 adc_lo[8] = { 0x33c, 0x33d, 0x340, 0x341,
@@ -3034,6 +3066,7 @@ static const u16 b43_phy_ac_crs_regs[8] = {
 
 static void b43_phy_ac_crs_regs_write(struct b43_wldev *dev, u16 val)
 {
+	B43_AC_FN();
 	unsigned int i;
 
 	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_crs_regs); i++)
@@ -3052,6 +3085,7 @@ static void b43_phy_ac_crs_regs_write(struct b43_wldev *dev, u16 val)
  */
 static void b43_phy_ac_noise_floor_clear(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	bool is4360 = dev->dev->chip_id == 0x4360;
 	u16 hi = is4360 ? 0x0f00 : 0x0000;
 	u16 lo = is4360 ? 0x000f : 0x0000;
@@ -3078,6 +3112,7 @@ static void b43_phy_ac_noise_floor_clear(struct b43_wldev *dev)
  */
 static void b43_phy_ac_afe_gain_regs_reemit(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	b43_phy_maskset(dev, 0x0070, (u16)~0xe000, 0xe000);
 	b43_phy_maskset(dev, 0x0644, (u16)~0x007f, 0x0014);
 	b43_phy_maskset(dev, 0x0844, (u16)~0x007f, 0x0014);
@@ -3092,6 +3127,7 @@ static void b43_phy_ac_afe_gain_regs_reemit(struct b43_wldev *dev)
  */
 static void b43_phy_ac_arm_tone_gen(struct b43_wldev *dev, u16 arm_val)
 {
+	B43_AC_FN();
 	b43_phy_read_log(dev, 0x0393);
 	b43_phy_write(dev,    0x0394, arm_val);
 	b43_phy_write(dev,    0x0393, 0x8000);
@@ -3116,6 +3152,7 @@ static void b43_phy_ac_arm_tone_gen(struct b43_wldev *dev, u16 arm_val)
  */
 static void b43_phy_ac_chanspec_tail(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	static const struct { u16 reg; u16 val; } post_bw1f_raw[10] = {
 		{ 0x00ec, 0x0b54 }, { 0x00ed, 0x0290 }, { 0x00ee, 0x0004 },
 		{ 0x00ef, 0x0a40 }, { 0x00f0, 0x0290 }, { 0x00f1, 0x0005 },
@@ -3190,6 +3227,7 @@ static void b43_phy_ac_chanspec_tail(struct b43_wldev *dev)
  */
 static void b43_phy_ac_rxgain_init(struct b43_wldev *dev, unsigned int core)
 {
+	B43_AC_FN();
 	static const u16 fill_07[10] = { 7, 7, 7, 7, 7, 7, 7, 7, 7, 7 };
 	static const u16 fill_02[10] = { 2, 2, 2, 2, 2, 2, 2, 2, 2, 2 };
 	const struct ssb_sprom *sprom = dev->dev->bus_sprom;
@@ -3328,6 +3366,7 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
 				  struct ieee80211_channel *channel,
 				  enum nl80211_channel_type channel_type)
 {
+	B43_AC_FN();
 	struct b43_phy *phy = &dev->phy;
 	const struct b43_phy_ac_channeltab_e_radio2069 *e2069;
 
@@ -3739,6 +3778,7 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
  */
 static void b43_phy_ac_probe_cores(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	struct b43_phy_ac *ac = dev->phy.ac;
 
 	if (ac->num_cores)
@@ -3774,6 +3814,7 @@ static void b43_phy_ac_probe_cores(struct b43_wldev *dev)
  */
 static void b43_phy_ac_pre_init_frontend(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	unsigned int core, num_cores = dev->phy.ac->num_cores;
 
 	b43_phy_ac_set_pdet_on_reset(dev, false);
@@ -3794,6 +3835,7 @@ static void b43_phy_ac_pre_init_frontend(struct b43_wldev *dev)
 
 static int b43_phy_ac_op_init(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	if (dev->dev->bus_type != B43_BUS_BCMA) {
 		b43err(dev->wl, "AC-PHY is supported only on BCMA bus!\n");
 		return -EOPNOTSUPP;
@@ -3917,6 +3959,7 @@ enum b43_phy_ac_afe_mode {
 static void b43_phy_ac_enable_afe(struct b43_wldev *dev,
 				  enum b43_phy_ac_afe_mode mode)
 {
+	B43_AC_FN();
 	switch (mode) {
 	case B43_PHY_AC_AFE_ON:
 		b43_phy_write(dev, 0x173e, 0x0000);
@@ -3941,6 +3984,7 @@ static void b43_phy_ac_enable_afe(struct b43_wldev *dev,
 
 static void b43_phy_ac_op_software_rfkill(struct b43_wldev *dev, bool blocked)
 {
+	B43_AC_FN();
 	if (dev->dev->chip_id != 0x4352 && dev->dev->chip_id != 0x4360) {
 		b43err(dev->wl,	"AC-PHY: chip 0x%04x not in the implemented {0x4352,0x4360}\n",
 			dev->dev->chip_id);
@@ -4003,6 +4047,7 @@ static void b43_phy_ac_op_software_rfkill(struct b43_wldev *dev, bool blocked)
  */
 static void b43_phy_ac_rxcal_a1_restore(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	b43_phy_ac_classctl_write_peeked(dev, true);
 	b43_phy_ac_adc_hold(dev, false);
 	b43_phy_ac_clip_det(dev, false);
@@ -4050,6 +4095,7 @@ void b43_phy_ac_post_cal_finalize(struct b43_wldev *dev)
  */
 void b43_phy_ac_post_cal_finalize_iter3(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	/*
 	 * Stato entrante osservato: MAC UP, mode WAITED+OFDM (post-set_channel body prima di post_cal_finalize).
 	 */
@@ -4180,6 +4226,7 @@ static const struct b43_ac_b2j_op b43_phy_ac_b2j_ops[] = {
 static void b43_phy_ac_rxiqcal_apply_body_core(struct b43_wldev *dev,
 					       u16 core_off)
 {
+	B43_AC_FN();
 	unsigned int i;
 
 	/* B2h: 0x073e config (8 op) — clr bit 4-7, set bit 10/12 */
@@ -4246,6 +4293,7 @@ static void b43_phy_ac_rxiqcal_apply_body_core(struct b43_wldev *dev,
  */
 void b43_phy_ac_rxiqcal_apply(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	/*
 	 * Stato entrante osservato: MAC sospeso (da post_cal_finalize_iter3), mode WAITED+OFDM, CLIP ancora attivo.
 	 */
@@ -4464,6 +4512,7 @@ void b43_phy_ac_rxiqcal_apply(struct b43_wldev *dev)
  */
 void b43_phy_ac_post_rxiqcal_stage2(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	/*
 	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
 	 */
@@ -4633,6 +4682,7 @@ void b43_phy_ac_rxcal_afe_iter(struct b43_wldev *dev,
 			       u16 rd_off, u8 rw_len,
 			       u16 wr_off, const u16 *wr_data)
 {
+	B43_AC_FN();
 	/*
 	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
 	 */
@@ -4689,6 +4739,7 @@ static void b43_phy_ac_rxcal_afe_commit_batch(struct b43_wldev *dev,
 					      const u16 *c1_vals,
 					      u8 n)
 {
+	B43_AC_FN();
 	u8 i;
 
 	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
@@ -4706,6 +4757,7 @@ static void b43_phy_ac_rxcal_afe_commit_batch(struct b43_wldev *dev,
 
 void b43_phy_ac_rxcal_afe_calibrate(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	/*
 	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
 	 */
@@ -4958,6 +5010,7 @@ void b43_phy_ac_rxcal_afe_calibrate(struct b43_wldev *dev)
  */
 void b43_phy_ac_rxcal_afe_finalize_gain_luts(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	/*
 	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
 	 */
@@ -5005,6 +5058,7 @@ void b43_phy_ac_rxcal_afe_finalize_gain_luts(struct b43_wldev *dev)
  */
 void b43_phy_ac_rxgain_defaults_pulse(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	/*
 	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
 	 */
@@ -5073,6 +5127,7 @@ void b43_phy_ac_rxgain_defaults_pulse(struct b43_wldev *dev)
  */
 void b43_phy_ac_radio_chain_range_setup(struct b43_wldev *dev, bool with_tune)
 {
+	B43_AC_FN();
 	/*
 	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
 	 */
@@ -5215,6 +5270,7 @@ void b43_phy_ac_radio_chain_range_setup(struct b43_wldev *dev, bool with_tune)
  */
 static void b43_phy_ac_rxgain_perchan_tail(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	unsigned int num_cores = dev->phy.ac->num_cores;
 	u8 coremask = dev->phy.ac->coremask;
 	unsigned int c;
@@ -5249,6 +5305,7 @@ static void b43_phy_ac_rxgain_perchan_tail(struct b43_wldev *dev)
 
 void b43_phy_ac_rxgain_perchan_config(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	/*
 	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
 	 */
@@ -5391,6 +5448,7 @@ void b43_phy_ac_rxgain_perchan_config(struct b43_wldev *dev)
  */
 void b43_phy_ac_rxiqcal_apply_tx_gain_bbmult(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	/*
 	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
 	 */
@@ -5467,6 +5525,7 @@ void b43_phy_ac_rxiqcal_apply_tx_gain_bbmult(struct b43_wldev *dev)
  */
 void b43_phy_ac_rxiqcal_dds_seed(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	/*
 	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
 	 */
@@ -5509,6 +5568,7 @@ void b43_phy_ac_rxiqcal_dds_seed(struct b43_wldev *dev)
  */
 void b43_phy_ac_rxiqcal_prep_second_iter(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	/*
 	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
 	 */
@@ -5593,6 +5653,7 @@ void b43_phy_ac_rxiqcal_prep_second_iter(struct b43_wldev *dev)
  */
 void b43_phy_ac_rxiqcal_run_meas_iters(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	/*
 	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
 	 */
@@ -5674,6 +5735,7 @@ void b43_phy_ac_rxiqcal_run_meas_iters(struct b43_wldev *dev)
  */
 void b43_phy_ac_rxiqcal_apply_tx_bbmult_kick(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	/*
 	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
 	 */
@@ -5722,6 +5784,7 @@ void b43_phy_ac_rxiqcal_apply_tx_bbmult_kick(struct b43_wldev *dev)
  */
 void b43_phy_ac_iqcal_coeff_tables_reset(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	/*
 	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
 	 */
@@ -5748,6 +5811,7 @@ void b43_phy_ac_iqcal_coeff_tables_reset(struct b43_wldev *dev)
  */
 void b43_phy_ac_iqcal_apply_second_stage(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	/*
 	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
 	 */
@@ -5809,6 +5873,7 @@ void b43_phy_ac_iqcal_apply_second_stage(struct b43_wldev *dev)
  */
 void b43_phy_ac_rxgain_config_readback(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	/*
 	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
 	 */
@@ -5866,6 +5931,7 @@ void b43_phy_ac_rxgain_config_readback(struct b43_wldev *dev)
  */
 void b43_phy_ac_rxgain_config_apply(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	/*
 	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
 	 */
@@ -5961,6 +6027,7 @@ void b43_phy_ac_rxgain_config_apply(struct b43_wldev *dev)
  */
 void b43_phy_ac_radio_iqcal_config(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	/*
 	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
 	 */
@@ -6021,6 +6088,7 @@ void b43_phy_ac_gainctrl_final_apply(struct b43_wldev *dev,
 				     const u16 *r734_vals,
 				     unsigned int num_cores)
 {
+	B43_AC_FN();
 	/*
 	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
 	 */
@@ -6103,6 +6171,7 @@ void b43_phy_ac_gainctrl_final_apply(struct b43_wldev *dev,
  */
 void b43_phy_ac_rxiqcal_dds_seed_second_tone(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	/*
 	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
 	 */
@@ -6135,6 +6204,7 @@ void b43_phy_ac_rxiqcal_dds_seed_second_tone(struct b43_wldev *dev)
  */
 void b43_phy_ac_rxiqcal_dds_seed_third_tone(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	/*
 	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
 	 */
@@ -6210,6 +6280,7 @@ static void iqcal_meas_readback_kick_tail(struct b43_wldev *dev)
 void b43_phy_ac_iqcal_meas_post_dds_apply(struct b43_wldev *dev,
 					  unsigned int n_peek270)
 {
+	B43_AC_FN();
 	/*
 	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
 	 */
@@ -6327,6 +6398,7 @@ void b43_phy_ac_iqcal_meas_post_dds_apply_v2(struct b43_wldev *dev,
 					     unsigned int n_poll_c1,
 					     unsigned int n_poll_c0)
 {
+	B43_AC_FN();
 	/*
 	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
 	 */
@@ -6380,6 +6452,7 @@ void b43_phy_ac_iqcal_meas_post_dds_apply_v2(struct b43_wldev *dev,
  */
 void b43_phy_ac_rxiq_apply_coefficients(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	/*
 	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
 	 */
@@ -6409,6 +6482,7 @@ void b43_phy_ac_rxiq_apply_coefficients(struct b43_wldev *dev)
  */
 void b43_phy_ac_radio_iqcal_teardown(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	/*
 	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
 	 */
@@ -6438,6 +6512,7 @@ void b43_phy_ac_radio_iqcal_teardown(struct b43_wldev *dev)
  */
 void b43_phy_ac_rxiq_teardown_apply_defaults(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	/*
 	 * Stato entrante osservato: Fase calibrazione lunga: MAC sospeso, mode WAITED, CLIP_ALL_DIS.
 	 */
@@ -6603,6 +6678,7 @@ static const u16 b43_phy_ac_probe_mode_vals_10[10] = {
 static void b43_phy_ac_probe_cycle(struct b43_wldev *dev,
 				   const u16 *mode_vals, unsigned int n_iter)
 {
+	B43_AC_FN();
 	unsigned int iter, k;
 
 	/*
@@ -6655,6 +6731,7 @@ static void b43_phy_ac_probe_cycle(struct b43_wldev *dev,
  */
 static void b43_phy_ac_rxiqcal_measure_block(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	/*
 	 * Chiamato solo da rxiqcal_finalize dopo un probe_cycle. Stato entrante:
 	 * PHY in release (RX_WAITED|RX_OFDM, clip enabled) — stesso stato con
@@ -6966,6 +7043,7 @@ static void b43_phy_ac_rxiqcal_measure_block(struct b43_wldev *dev)
  */
 void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	/*
 	 * Chiamata a MAC sospeso da set_channel_calibrations dopo
 	 * rxiq_teardown_apply_defaults. Classifier in RX_WAITED,
@@ -7541,6 +7619,7 @@ b43_phy_ac_farrow_bw_override[] __maybe_unused = {
 static void b43_phy_ac_farrow_setup(struct b43_wldev *dev,
 				    struct ieee80211_channel *channel)
 {
+	B43_AC_FN();
 	u16 chipid = dev->dev->chip_id;
 	unsigned int i;
 

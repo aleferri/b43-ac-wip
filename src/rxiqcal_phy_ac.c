@@ -121,6 +121,7 @@ static int b43_phy_ac_rxiq_est(struct b43_wldev *dev,
 			       struct b43_phy_ac_iq_est *est,
 			       u16 num_samps, u8 wait_time)
 {
+	B43_AC_FN();
 	unsigned int core, i;
 	bool timed_out = true;
 
@@ -170,6 +171,7 @@ static int b43_phy_ac_rxiq_est(struct b43_wldev *dev,
 static void b43_phy_ac_rxiq_coeffs(struct b43_wldev *dev, u8 write,
 				   struct b43_phy_ac_iq_comp *comp)
 {
+	B43_AC_FN();
 	unsigned int core;
 
 	for (core = 0; core < dev->phy.ac->num_cores && core < 3; core++) {
@@ -212,6 +214,7 @@ static void b43_phy_ac_rxcal_phy_setup(struct b43_wldev *dev, u8 rx_core)
  */
 void b43_phy_ac_rxcal_tone_setup(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	static const u16 reg_off[3] = { 0x0039, 0x003a, 0x0025 }; /* rel a 0x0700 */
 	static const u16 pass1_vals[3] = { 0x00fa, 0x01d3, 0x07e6 };
 	static const u16 pass2_vals[3] = { 0x007a, 0x01d3, 0x07e2 };
@@ -258,6 +261,7 @@ void b43_phy_ac_rxcal_tone_setup(struct b43_wldev *dev)
  */
 void b43_phy_ac_rxcal_tone_arm(struct b43_wldev *dev, u8 rx_core)
 {
+	B43_AC_FN();
 	b43_phy_read_log(dev, 0x0393);
 	b43_phy_write(dev,    0x0394, (u16)(0x0110 | rx_core));
 	b43_phy_write(dev,    0x0393, 0x8000);
@@ -308,6 +312,7 @@ static void rxcal_gainctrl_step(struct b43_wldev *dev, u8 rx_core,
  * Totale 34 op = 7 + 9×3. */
 void b43_phy_ac_rxcal_radio_setup(struct b43_wldev *dev, u8 rx_core)
 {
+	B43_AC_FN();
 	u16 s = (u16)(rx_core * 0x200);
 
 	/* 7 peek saved values (#39641-#39647 per core 0) */
@@ -393,6 +398,7 @@ void b43_phy_ac_rxcal_gainctrl(struct b43_wldev *dev, u8 rx_core)
  */
 static void b43_phy_ac_tx_tone(struct b43_wldev *dev, u32 freq_hz, u16 amp)
 {
+	B43_AC_FN();
 	b43_phy_mask(dev, 0x0471, (u16)~0x0001);	/* #82499 and 0xfffe */
 	b43_phy_write(dev, 0x0463, 0x0027);		/* #82500 */
 	b43_phy_write(dev, 0x0461, 0xffff);		/* #82501 */
@@ -412,6 +418,7 @@ static void b43_phy_ac_tx_tone(struct b43_wldev *dev, u32 freq_hz, u16 amp)
  * euristico come sopra. */
 static void b43_phy_ac_stopplayback(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	b43_phy_set(dev, 0x0460, 0x0002);		/* #82558 or */
 	b43_phy_mask(dev, 0x0460, (u16)~0x0004);	/* #82559 and 0xfffb */
 }
@@ -425,6 +432,7 @@ static void b43_phy_ac_stopplayback(struct b43_wldev *dev)
  */
 void b43_phy_ac_rxcal_cleanup(struct b43_wldev *dev, u8 rx_core)
 {
+	B43_AC_FN();
 	static const struct { u16 off; u16 val; } wr[14] = {
 		{ 0x073e, 0x0000 }, { 0x0727, 0x0004 }, { 0x073c, 0x0000 },
 		{ 0x0721, 0x5000 }, { 0x0729, 0x1000 }, { 0x0720, 0x0180 },
@@ -446,6 +454,7 @@ void b43_phy_ac_rxcal_cleanup(struct b43_wldev *dev, u8 rx_core)
  */
 void b43_phy_ac_rxcal_radio_cleanup(struct b43_wldev *dev, u8 rx_core)
 {
+	B43_AC_FN();
 	static const struct { u16 off; u16 val; } wr[7] = {
 		{ 0x016e, 0x0000 }, { 0x000e, 0x0001 }, { 0x0161, 0x0100 },
 		{ 0x0017, 0x0011 }, { 0x015f, 0x0000 }, { 0x0024, 0x0003 },
@@ -478,6 +487,7 @@ static const u8 rxiq_tone_modes_c2[]  = { 4, 1, 0, 0 };
 static void b43_phy_ac_rxiq_set_tone(struct b43_wldev *dev, u8 core,
 				     u16 freq, u16 fmax, u8 tone_mode)
 {
+	B43_AC_FN();
 	u16 s = (u16)(core * 0x200);
 
 	b43_phy_write(dev, 0x0730 + s, freq);
@@ -497,6 +507,7 @@ static void b43_phy_ac_rxiq_set_tone(struct b43_wldev *dev, u8 core,
  */
 static void b43_phy_ac_rxiq_apply_gain(struct b43_wldev *dev, u8 core)
 {
+	B43_AC_FN();
 	u16 s = (u16)(core * 0x200);
 
 	b43_phy_write(dev, 0x0739 + s, 0x00fa);
@@ -521,6 +532,7 @@ static void b43_phy_ac_rxiq_apply_gain(struct b43_wldev *dev, u8 core)
  */
 void b43_phy_ac_rxiq_est_debug(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	struct b43_phy_ac_iq_est est[3];
 	u16 save_gain[6]; /* 0x0739, 0x073a, 0x0725 × 2 cores */
 	u16 save_tone[9]; /* 0x0730, 0x0731, 0x0734 × 3 cores */
@@ -768,6 +780,7 @@ retry_cal:
  */
 int b43_phy_ac_rxiqcal(struct b43_wldev *dev, u8 cal_type)
 {
+	B43_AC_FN();
 	u16 orig_bbcfg;
 	u16 gain_save[3];
 	unsigned int rx_core;

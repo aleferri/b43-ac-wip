@@ -20,6 +20,7 @@ STUBS   := stubs
 CFLAGS  := -O0 -g -Wall -Wno-unused-parameter -Wno-unused-function \
            -Wno-unused-variable -Wno-unused-but-set-variable \
            -Wno-pointer-sign -Wno-sign-compare \
+           -DB43_AC_FN_TRACE \
            -I$(STUBS) -I$(SCRATCH) \
            -include stubs/linux/types.h \
            -include stubs/linux/errno.h \
@@ -73,10 +74,12 @@ build:
 	mkdir -p build
 
 build/%.o: %.c | build
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(BIN): $(OBJS)
 	$(CC) $(LDFLAGS) $^ -o $@
+
+-include $(OBJS:.o=.d)
 
 trace: $(BIN)
 	./$(BIN) rxiq_est_debug d6220 > trace.d6220.out

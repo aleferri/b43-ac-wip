@@ -844,4 +844,25 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev);
 void b43_phy_ac_mhf_maskset(struct b43_wldev *dev, u16 slot, u16 mask, u16 val);
 void b43_maccontrol_set(struct b43_wldev *dev, u32 mask, u32 set);
 
+/*
+ * Function-boundary markers for the userspace test harness. B43_AC_FN() at the
+ * top of a function makes the harness bracket the ops that follow with the
+ * function name, so localize_functions.py can segment the generated trace by
+ * exact boundaries instead of guessing fingerprints from source. The exit
+ * marker is emitted automatically on scope exit (any return) via GCC's
+ * cleanup attribute, so nested calls nest correctly. No-op in the kernel
+ * build; the harness defines B43_AC_FN_TRACE and provides the hooks, which
+ * emit only when enabled at runtime, so the compare.py trace stays clean.
+ */
+#ifdef B43_AC_FN_TRACE
+void b43_ac_fn_enter(const char *fn);
+void b43_ac_fn_leave(const char *fn);
+static inline void b43_ac_fn_cleanup(const char *const *fn) { b43_ac_fn_leave(*fn); }
+#define B43_AC_FN() \
+	const char *const __b43_fn __attribute__((cleanup(b43_ac_fn_cleanup))) = __func__; \
+	b43_ac_fn_enter(__func__)
+#else
+#define B43_AC_FN() do { } while (0)
+#endif
+
 #endif /* B43_PHY_AC_H_ */

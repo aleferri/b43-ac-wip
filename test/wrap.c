@@ -167,6 +167,34 @@ static FILE *trace(void)
 	return trace_stream;
 }
 
+/*
+ * Function-boundary markers (see B43_AC_FN in phy_ac.h). Emit into the same
+ * trace stream, in order, only when AC_FN_MARKERS is set in the environment;
+ * otherwise silent, so the default trace matches the vendor capture for
+ * compare.py. Enter/leave nest, so localize_functions.py can attribute each op
+ * to the innermost active function.
+ */
+static int b43_ac_fn_enabled(void)
+{
+	static int enabled = -1;
+
+	if (enabled < 0)
+		enabled = getenv("AC_FN_MARKERS") ? 1 : 0;
+	return enabled;
+}
+
+void b43_ac_fn_enter(const char *fn)
+{
+	if (b43_ac_fn_enabled())
+		fprintf(trace(), "----FN:%s----\n", fn);
+}
+
+void b43_ac_fn_leave(const char *fn)
+{
+	if (b43_ac_fn_enabled())
+		fprintf(trace(), "----/FN:%s----\n", fn);
+}
+
 void b43_test_trace_to(FILE *f) { trace_stream = f; }
 
 /* ============ PHY register accessors ============ */
