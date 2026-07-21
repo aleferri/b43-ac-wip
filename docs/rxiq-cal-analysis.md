@@ -326,6 +326,6 @@ Dettagli discriminati dai vettori:
 
 `b43_phy_ac_rx_iq_comp_update` (src/rxiqcal_phy_ac.c) implementa il
 solve confermato; il flow `rxiq_comp` del test harness
-(`./rxiq_trace rxiq_comp agcombo`) inietta i 36 valori raw degli
+(`./ac_trace rxiq_comp agcombo`) inietta i 36 valori raw degli
 accumulatori come read plan e verifica che il codice emetta esattamente
 le sei scritture vendor, azzeramento iniziale compreso.

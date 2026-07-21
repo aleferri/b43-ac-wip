@@ -1,6 +1,25 @@
-# Analisi reverse-engineering formula TX-LPF (celle table 7)
+# Analisi reverse-engineering formula LPF (celle table 7) — RISOLTA
 
-## Contesto
+## Stato
+
+La famiglia LPF analogica (TX-LPF, RX-LPF, DACBUF) è **risolta**: il cap è
+derivato da rccal e la RMW preserva il pre-state della cella. Verificata sui
+tre board (d6220, DSL, agcombo). Formule finali:
+
+- **TX-LPF**: `cap = ((RCCAL_F - RCCAL_E) * 193) >> 8` (RCCAL_E=0x414,
+  RCCAL_F=0x415). `lo = pre_lo | (cap<<9)`, `hi = pre_hi | (cap<<1)`.
+- **RX-LPF**: `f17 = lpf_cap1` diretto; `f6 = (lpf_cap0 * k[stage]) >> 8`,
+  `k = {221, 215, 215}` per le tre sezioni. Le wl recenti scalano; la wl 6.30
+  del DSL usa `k = 256` (nessuno scaling) — differenza di versione. Il
+  coefficiente 221 vs 222 / 215 vs 216 è ambiguo su due campioni: TODO validare
+  con un terzo `lpf_cap0` (altro canale).
+- **DACBUF**: `dacbuf_cap = (RCCAL_G & 0x03e0) >> 5` (RCCAL_G=0x416), dal
+  readback **post-apply** (il primo readback è pre-apply e dà cap 0).
+
+L'analisi storica che ha portato alla formula è conservata sotto per
+riferimento.
+
+## Contesto (storico)
 
 Il blob Broadcom `wl.ko` scrive celle della tabella PHY 7 durante `set_analog_tx_lpf` (parte di `analog_on_reset` nel channel_setup). Il pattern è RMW su ogni cella (`TBL.RD → PHY.RD 0x000f → RMW → TBL.WR → PHY.WR 0x000f`).
 

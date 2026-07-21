@@ -1,12 +1,9 @@
 # Piano di porting — percorso `down → bss-up`
 
 Trace di riferimento: `wl-diag-d6220-4352-wl1-down-to-bss-up.txt` (d6220,
-BCM4352, ACPHY/2069). Copertura verificabile con:
-
-```
-python3 reverse-tools/correlate_trace_to_driver.py .   # -> correlation.csv
-python3 reverse-tools/port_inventory.py .              # -> inventario mancanti
-```
+BCM4352, ACPHY/2069). La correttezza del port si verifica col **match per
+sequenza** dell'harness (`test/compare.py` contro la cattura vendor, es.
+`set_channel` nel range validato); non con metriche di copertura aggregate.
 
 ## Copertura
 

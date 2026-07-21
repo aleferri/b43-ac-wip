@@ -1,75 +1,173 @@
 # b43 AC-PHY / radio 2069 — BCM4352-family bring-up
 
-Porting `b43` per AC-PHY rev 1 / radio 2069 rev 4.
-Target principale: D-Link DSL-3580L (`0x14e4:0x43b3`, BCM4352-family,
-2×2, 5 GHz only). Secondo hardware: Netgear D6220 (stesso chip family) e
-agcombo (BCM4360, 3×3 dual-band). Reverse dal binario `wl` OEM; le
-code-path sono rifatte con dispatch chip-aware `{4352, 4360, default}`.
+Porting `b43` per AC-PHY rev 1 / radio 2069 rev 4, reverse dal binario `wl`
+OEM. Le code-path sono rifatte con dispatch chip-aware
+`{4352, 4360, default}`. Tre board testimoni, con ruoli distinti:
+
+- **Netgear D6220** (BCM4352, 2×2) — cattura di riferimento: è contro la sua
+  trace che il flow è validato op-per-op, ed è il target del primo bring-up.
+- **D-Link DSL-3580L** (BCM4352, 2×2, 5 GHz only) — è la board su cui il
+  driver portato gira davvero. Monta una `wl` più vecchia (6.30), quindi
+  alcune fasi divergono dalla cattura di riferimento.
+- **agcombo** (BCM4360, 3×3 dual-band) — terzo testimone, serve a separare
+  le differenze di chip da quelle di versione del blob.
 
 ## Chip target
 
 | Campo | Valore |
 |---|---|
 | PCI ID | `0x14e4:0x43b3` |
-| chip / rev / corerev | `0x4352 / 0x3 / 0x2a` |
+| chip / corerev | `0x4352 / 42 (0x2a)` |
 | radio | 2069 rev 4, PHY AC rev 1 |
-| antenne | `aa5g=3` (2×2 attive), `aa2g=0` → 5 GHz only su DSL-3580L |
-| SROM | rev 11, board `0x668`, `femctrl=6` |
+| SROM | rev 11, `boardtype=0x668`, `femctrl=6`, `subband5gver=0x4` |
+| antenne (DSL-3580L) | `aa5g=3`, `aa2g=0` → 5 GHz only; `txchain=rxchain=3` |
 
 ## Obiettivo MVP
 
 Probe + `ifconfig wlan1 up` + scan passivo + associate su AP 5 GHz ch 36
-+ 6 Mbit OFDM 1×1. Out of scope MVP: HT/VHT, MIMO, 40/80 MHz, UNII-2/3.
++ 6 Mbit OFDM 1×1. Out of scope MVP: HT/VHT, MIMO, 40/80 MHz, 2.4 GHz.
 
 ## Stato corrente
 
-Il **percorso deterministico** (init → radio enable → channel setup) è
-completamente portato. DMA verificato funzionante su hardware. Probe e
-init stabili, nessun crash. RX/associate non ancora confermati — retest
-con gli ultimi fix (rxgain analogico, txpwrctrl riordinato, indice/tabella
-7.x, RST2RX morto rimosso) in corso.
+Due risultati sono riproducibili in questo repo (vedi
+[Verifica](#verifica-riproducibile)):
 
-### Cosa funziona
+- `set_channel` su D6220 ch36 combacia **op-per-op** con la cattura vendor:
+  22268/22268 operazioni, zero divergenze.
+- L'estrattore SROM rev 11 passa l'harness userspace su tutti i vettori:
+  77/0 (DSL), 74/0 (D6220), 75/0 (agcombo).
 
-- **SROM rev 11**: estrattore completo, validato dall'harness userspace
-  (77 PASS / 0 FAIL su DSL, 74/0 su D6220, 75/0 su agcombo).
-  Patch draft in `sprom-rev11/`, vedi il README lì.
-- **op_init**: chip id, num_cores/coremask, mode_init, PMU regctl, GPIO,
-  24 tabelle PHY init, init_regs.
-- **op_software_rfkill**: radio_2069_init, pwron, rccal (3 passate),
-  afe_lpf_stage, GPIO frontend, PA bias, RF front-end arm, PMU enable.
-- **set_channel** completo: classifier/clip freeze → radio_2069_channel_setup
-  → channel_setup (reset-time, afe_lpf, rfseq, rxcore_setstate) → farrow →
-  chanspec_tail → coeff_bank → rx_evm_shaping → chan_tables (tbl 0x11/0x0b/
-  0x15/0x44/0x45) → rxgain_init (SROM-driven) → afecal → adc_reset →
-  idle_tssi → txpwrctrl_setup (est_pwr LUT da pa5ga SROM) → txpwr_by_index →
-  rxgainctrl_regs → rx_enable (RST2RX kick) → MAC enable.
-- **TX/RX core wiring** (patch 0009): txhdr/phy_ctl1, RX signal/band/freq,
-  rate_memory, dummy_transmission.
-- **DMA 64 KB alignment**, **PCI bridge ID**, **bcma PMU init** (PLL + resources).
+Cosa il match copre e cosa no: le op di tabella sono tracciate come marker
+`TBL.WR id/off/len` **seguito dalle write dei singoli word** sul data port
+(`PHY.WR addr=0x000f`), quindi anche il payload dei bulk è confrontato
+word-per-word. Resta fuori solo ciò che il flow non esegue: il load delle
+tabelle init di `op_init`, che ha un flow separato e per cui non esiste
+oracolo (vedi i bug aperti).
 
-### Cosa manca
+Su hardware il driver **non completa ancora `ifconfig up`**. L'unico run
+in repo ([`bring-up-logs/`](bring-up-logs/)) è sul DSL-3580L: probe, load
+firmware 784.2, `op_init` e il load delle tabelle passano; `set_channel` parte,
+arriva alla scrittura della tabella txgain `id=0x20` e si ferma lì.
+Diagnosi corrente: mancano dei delay prima di quella scrittura. Attenzione,
+quel log precede la risoluzione della famiglia LPF — emette una diagnostica
+`f_predicted/f_actual` che nei sorgenti non esiste più — quindi non
+fotografa il codice attuale. Serve un run nuovo.
 
-| Blocco | Tipo | Impatto |
+Copertura per-funzione del bring-up radio (`rfkill`), misurata con
+`coverage_by_function.py`: d6220 e agcombo 100% con zero gap; DSL con le
+divergenze note (`prefregs` 91.7%, `rccal` 84.2%, `afe_lpf_stage` 4.2%).
+
+`op_init` ha il suo gate contro `router-data/agcombo/wl-diag-wl1-attach.txt`,
+la sola cattura in repo che contenga il load tabelle: `set_pdet_on_reset`,
+`pre_init_frontend` e `mode_init` al 100%, `tables_init` **3714/3714** su una
+span continua (`#356..#4069`), zero op vendor non attribuite. `init_regs` va
+misurata sulle catture `down→bss` (17/17 su d6220, 33/33 su agcombo) perché
+la attach parte dopo la sua finestra.
+
+Il match op-per-op vale per D6220/ch36/BW20. Cosa questo implica sugli
+altri board, canali e bandwidth è in
+[`docs/driver-status.md`](docs/driver-status.md); le divergenze note del
+bring-up radio (tutte sul DSL, wl 6.30) sono in
+[`docs/retrace-todo.md`](docs/retrace-todo.md).
+
+## Cosa è portato
+
+- **SROM rev 11**: estrattore + harness userspace in
+  [`sprom-rev11/`](sprom-rev11/). La patch della serie è `patches/0001`;
+  `sprom-rev11/0001-*.patch` è un draft più ampio per l'upstream, non un
+  prerequisito di build (vedi il README lì).
+- **`op_init`**: chip/PLL check, probe dei core, frontend pre-init, PMU
+  regctl, GPIO, `mode_init`, il load tabelle (15 popolate + 8
+  azzeramenti, una sola lista in ordine vendor),
+  `init_regs`, config MHF, `mac_suspend`.
+- **`op_software_rfkill`**: `radio_2069_init`, `pwron`, `rccal` (3 passate,
+  cap LPF e DACBUF derivati dalle misure), `afe_lpf_stage`. GPIO frontend,
+  PA bias e PMU enable finale sono *fuori* dallo scope di rfkill e non sono
+  ancora implementati.
+- **`set_channel`** (BW20, 5 GHz): freeze RX → `radio_2069_channel_setup`
+  → `channel_setup` (reset-time, AFE/LPF, RF sequencer, `rxcore_setstate`,
+  farrow, chanspec tail, coeff bank) → `chan_tables` → noise shaping
+  (tbl 0x15/0x0b/0x44/0x45 + `rxgain_init` per-core) → BW select →
+  `reset_cca` → `afecal` → `adc_reset` → idle-TSSI → 2× `txpwrctrl_setup`
+  (LUT est_pwr da `pa5ga` SROM) → `rxgainctrl_regs` → setup radio/tone e
+  sweep `gainctrl` per-core → cleanup.
+- **Calibrazioni post-channel**, invocate da `op_switch_channel` dopo
+  `mac_enable`: `post_cal_finalize` iter 2/3, RXIQ apply + stage 2, cal AFE
+  RX, i due round `txpwr`/`rxgain` con misura RXIQ, il loop
+  `gainctrl_final_apply`, teardown RXIQ.
+- **Core b43**: TX/RX wiring (`patches/0008`), allineamento DMA a 64 KB
+  (0004), channel set 5 GHz dedicato (0003), PCI bridge ID (0009), bcma PMU
+  init PLL + resources (0007).
+
+Mappa file sorgente → patch: [`docs/driver-status.md`](docs/driver-status.md).
+
+## Cosa manca
+
+| Blocco | Stato | Impatto |
 |---|---|---|
-| **RX gain cal sweep** (WI-5, ~3000 ops) | CAL — serve algoritmo brcmsmac | Sospettato #1 per assenza RX: popola i gain table finali |
-| **Poll-cal 0x0380** (WI-6, ~1100 ops) | CAL | TX power closed-loop |
-| **Poll-cal 0x0270** (WI-7, ~350 ops) | CAL | Feed-forward gain table |
-| **Radio-cal burst** (WI-8, ~70 ops) | quasi-DET | Piccolo, da confermare non-branching |
-| **Helper WI-2/3/4** (~2200 ops) | DET — trascrivibili ora | Inner loop delle cal: gain-program, radio-gain bank, AFE override |
-| **recalc_txpower / adjust_txpower** | stub vuoti | Watchdog periodico: CRS min-pwr recalc, gain cycling |
-| **RXIQ calibration** | skeleton, gated off | Degrada EVM, non blocca RX base |
-| PA bias in rfkill | hardcoded da cattura d6220 | TX power sbagliata su board diversi |
-| idle-TSSI base index | seed catturato, non derivato | Errore non dominante |
-| pdet LUT 960 byte | TODO | Solo TX closed-loop |
+| Calibrazione periodica (`recalc_txpower`, `adjust_txpower`) | stub vuoti | Nessun ricalcolo CRS min-power né il ciclo ~10 s su `0x0725/0x0925`: sessioni lunghe driftano |
+| `ppr[24]` (power reduction per-rate) | hardcoded dalla cattura D6220 ch36 | Derivazione da `mcsbw*po` SROM assente: TX power sbagliata su altri canali/board |
+| Base index idle-TSSI | seed catturato, il readback viene scartato | Errore non dominante, ma non è board-independent |
+| GPIO frontend 2-fase, PA bias per-core, PMU regctl enable finale | non implementati | Sono le op che il vendor emette solo a steady state |
+| BW40 / BW80 | `set_channel` ritorna `-EOPNOTSUPP` | — |
+| 2.4 GHz | `op_switch_channel` ritorna `-EOPNOTSUPP` | Mappa radio 2G non validata |
+| Canali ≠ 36 | 50 voci in channeltab (5170–5825 MHz), solo ch36 validato | Piano in [`docs/channel-generalization.md`](docs/channel-generalization.md) |
+| `b43_phy_ac_rxiqcal()` (solver generico da brcmsmac) | gated da `REGMAP_FILLED == 0`, nessun chiamante nel driver | Il path RXIQ effettivo è quello trascritto dalla trace, già wirato |
 
-Dettagli e piano di lavoro per i WI: [`docs/porting-plan.md`](docs/porting-plan.md).
+### Bug aperti
 
-## Build e test
+- **Log `[TXLPFLOG]` a `b43info`**: sette call site, di cui due dentro
+  `b43_actab_write_bulk`/`read_bulk`, cioè una riga di dmesg non
+  condizionata per ogni bulk di tabella. Erano la strumentazione con cui è
+  stata risolta la famiglia LPF; ora che le formule sono chiuse vanno via.
 
-Prerequisiti: kernel locale con `B43_PHY_AC=y` (togliere `BROKEN`) +
-patch `sprom-rev11/0001-*.patch` applicata (`git am`), firmware in
-`/lib/firmware/b43/`, DSL-3580L, AP target 5 GHz ch 36, seriale TTY.
+Nota per chi legge il descrittore: `est_pwr_lut_core*` e
+`papd_comp_rfpwr_tbl_core*` condividono id e offset **per costruzione**. Il
+vendor scrive est_pwr e poi papd_comp_rfpwr sulle stesse celle nella stessa
+sequenza di init (agcombo attach `#1345` e `#2899`). Non è un bug e non va
+"corretto": rimuovere una delle due divergerebbe dal vendor.
+
+## Verifica riproducibile
+
+Match op-per-op del flow `set_channel` contro la cattura vendor:
+
+```sh
+cd test && make
+./ac_trace set_channel d6220 > trace.switch.d6220.out
+python3 compare.py \
+    ../router-data/d6220/wl-diag-wl1-attach-to-bss-ch36.txt \
+    trace.switch.d6220.out --range 32887:55154 --auto-align
+# vendor: 22268 ops / test: 22268 ops / MATCH
+```
+
+Sequenza del load tabelle di `op_init` contro la cattura vendor:
+
+```sh
+AC_FN_MARKERS=1 ./ac_trace op_init agcombo > gen.op_init.agcombo.txt
+python3 ../reverse-tools/coverage_by_function.py \
+    gen.op_init.agcombo.txt \
+    ../router-data/agcombo/wl-diag-wl1-attach.txt
+# tables_init 3714/3714 100.0%  #356..#4069 / 0 op nei gap
+```
+
+Estrattore SROM rev 11 sui tre board:
+
+```sh
+cd sprom-rev11/harness && make
+make check            # DSL-3580L  → 77 PASS / 0 FAIL
+make check-d6220      # D6220      → 74 PASS / 0 FAIL
+make check-agcombo    # agcombo    → 75 PASS / 0 FAIL
+```
+
+Dettagli su range, allineamento, read plan e copertura per funzione:
+[`test/README.md`](test/README.md).
+
+## Build e test su hardware
+
+Prerequisiti: kernel locale con la serie `patches/` applicata (`git am`,
+include l'estrazione SROM rev 11 e togliere `BROKEN` da `B43_PHY_AC` nel
+Kconfig), `CONFIG_B43_PHY_AC=y`, firmware in `/lib/firmware/b43/`, AP target
+5 GHz ch 36, seriale o netconsole.
 
 ```
 modprobe b43                          # smoke: dmesg deve dire 0x4352/0x43b3, sromrev=11
@@ -77,7 +175,7 @@ ifconfig wlan1 up                     # op_init + rfkill(unblocked) + set_channe
 iw wlan1 scan freq 5180               # scan passivo UNII-1
 ```
 
-Compilare con `B43_DEBUG=y` per log dettagliati (`b43dbg` su ogni fase).
+Compilare con `B43_DEBUG=y` per i log `b43dbg` di ogni fase.
 
 ## Struttura del repo
 
@@ -98,16 +196,14 @@ Per navigare la documentazione tecnica: [`docs/INDEX.md`](docs/INDEX.md).
 
 ## Post-MVP
 
-- **Split 0006 per upstream**: la patch 0006 attuale (~7300 righe) va
-  spezzata in ~9 commit da 300-500 righe prima della submission a
-  `linux-wireless`. Schema in [`docs/driver-status.md`](docs/driver-status.md).
-- **RX gain cal**: portare `rxgaincal`/`gainctrl` da brcmsmac — singolo
-  pezzo che più probabilmente sblocca l'RX.
-- **TX power reale**: txpwrctrl_setup già calcola la LUT da pa5ga SROM;
-  manca il readback idle-TSSI → base index e il closed-loop runtime.
-- **HT/VHT**: le 24 init tables coprono già OFDM; auditare late PHY writes.
-- **Sub-band UNII-2/3**: channeltab copre 5170–5825 MHz, selezione pa5ga
-  per sub-band già implementata (`pa5g_group()`).
-- **Submission upstream sprom-rev11/**: pre-condizioni in `sprom-rev11/README.md`.
-- **Co-load con wl0 N-PHY integrato**: i MAC sono differenziati, testabile
-  solo a bring-up reale.
+- **Split della patch 0006** prima della submission a `linux-wireless`:
+  schema in [`docs/driver-status.md`](docs/driver-status.md).
+- **TX power reale**: derivazione di `ppr[]` dallo SROM, base index
+  idle-TSSI dal readback, closed-loop runtime.
+- **HT/VHT**: le init tables coprono già OFDM; auditare le late PHY writes.
+- **Generalizzazione canale/BW**: piano in
+  [`docs/channel-generalization.md`](docs/channel-generalization.md).
+- **Submission `sprom-rev11/`**: pre-condizioni in `sprom-rev11/README.md`.
+- **Co-load con wl0 N-PHY integrato**: probe di entrambi i PHY già
+  osservato nei log di bring-up (`b43-phy2` N, `b43-phy3` AC); il resto è
+  testabile solo a bring-up completo.

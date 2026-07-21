@@ -68,21 +68,22 @@ da incollare in `main.c`.
 ## Build e run
 
 ```sh
-make                # compila rxiq_trace
-./rxiq_trace                         # default: rxiq_est_debug su D6220
-./rxiq_trace rxiq_est_debug d6220 > trace.d6220.out
-./rxiq_trace rxiq_est_debug agcombo > trace.agcombo.out
+make                # compila ac_trace
+./ac_trace                         # default: rxiq_est_debug su D6220
+./ac_trace rxiq_est_debug d6220 > trace.d6220.out
+./ac_trace rxiq_est_debug agcombo > trace.agcombo.out
 ```
 
-Flow disponibili (`argv[1]`): `rxiq_est_debug` (default), `rxiqcal`,
-`op_init`, `set_channel`. Board (`argv[2]`): `d6220` (default), `agcombo`.
+Flow disponibili (`argv[1]`): `rxiq_est_debug` (default), `rxiq_comp`,
+`rxiqcal`, `op_init`, `rfkill`, `set_channel`. Board (`argv[2]`): `d6220`
+(default), `agcombo`, `dsl`.
 
 `set_channel` è il flow più ampio: guida l'intera pipeline
 `b43_phy_ac_op_switch_channel`. Su D6220 ch36 emette ~22k operazioni e
 consuma per intero ogni read plan registrato in `main.c`:
 
 ```sh
-./rxiq_trace set_channel d6220 > trace.switch.d6220.out
+./ac_trace set_channel d6220 > trace.switch.d6220.out
 # a fine run, su stderr, la plan-consumption deve mostrare iter=N/N per
 # ogni indirizzo: nessun underrun (flow terminato in anticipo) né overrun.
 ```
@@ -106,7 +107,7 @@ La validazione canonica dell'intero flow confronta la trace grezza di
 collassati sotto `reverse-output/ch36-*`, NON la `down→bss-up` intera):
 
 ```sh
-./rxiq_trace set_channel d6220 > trace.switch.d6220.out
+./ac_trace set_channel d6220 > trace.switch.d6220.out
 python3 compare.py \
     ../router-data/d6220/wl-diag-wl1-attach-to-bss-ch36.txt \
     trace.switch.d6220.out \
@@ -181,7 +182,7 @@ mostra come cluster di mismatch localizzato accanto ai mismatch di
 valore:
 
 ```sh
-./rxiq_trace set_channel agcombo > trace.agcombo.out
+./ac_trace set_channel agcombo > trace.agcombo.out
 python3 ../reverse-tools/collapse_trace.py \
     ../router-data/agcombo/agcombo-wl1-4360-down-to-bss-ch36.txt v.col
 python3 ../reverse-tools/collapse_trace.py trace.agcombo.out h.col
@@ -238,15 +239,17 @@ scopo.
 
 ## Estendere il set di flow
 
-Oggi `main.c` cabla quattro flow:
+Oggi `main.c` cabla sei flow:
 
 - `rxiq_est_debug` — Phase 1 sweep only (rxiqcal_phy_ac.c).
+- `rxiq_comp` — solo `b43_phy_ac_rx_iq_comp_update` sui tre core.
 - `rxiqcal` — Phase 1+2+3, ma resta gated da
   `B43_PHY_AC_RXIQCAL_REGMAP_FILLED == 0` dentro rxiqcal_phy_ac.c e
   ritorna presto senza toccare l'HW. Per attivarlo servirebbe cambiare
   quel define nel sorgente scratch: fuori dallo scope di questo harness
   (che non modifica lo scratch).
 - `op_init` — `b43_phyops_ac.init` in isolamento.
+- `rfkill` — `b43_phy_ac_op_software_rfkill` (bring-up radio 2069).
 - `set_channel` — l'intera pipeline `b43_phy_ac_op_switch_channel`
   (channel prep, table-7 program, radio 2069 channel setup, RX-IQ cal,
   finalize). È il flow con la copertura più larga: su D6220 ch36 emette
@@ -272,7 +275,7 @@ Per aggiungere un flow nuovo:
 ## Stato oggi
 
 Con gli stub attuali (senza tocchi ai sorgenti scratch) tutti i .c in
-`SCRATCH_SRCS_FULL` compilano e linkano: `make` produce `rxiq_trace`
+`SCRATCH_SRCS_FULL` compilano e linkano: `make` produce `ac_trace`
 pulito.
 
 | File scratch          | Compile | Note                                    |
@@ -305,3 +308,29 @@ sulla finestra del blocco d'interesse, come nell'esempio RXIQ sopra.
 - **Race con MAC**: le funzioni `b43_mac_*` sono no-op. La finestra di
   quiesce MAC non viene simulata perché nessuna trace del vendor la
   richiede per il confronto.
+
+## Copertura per funzione (marcatori `B43_AC_FN`)
+
+Ogni funzione del driver è marcata con `B43_AC_FN()` (in `phy_ac.h`): no-op nel
+kernel, nell'harness emette `----FN:nome----` all'ingresso e `----/FN:nome----`
+all'uscita (via l'attributo `cleanup` di GCC, così i nesting sono corretti). I
+marcatori escono **solo** con `AC_FN_MARKERS=1`, altrimenti il trace resta
+identico al vendor e `compare.py` non si rompe.
+
+```sh
+# trace annotato per l'analisi di copertura
+AC_FN_MARKERS=1 ./ac_trace rfkill d6220 > gen.rfkill.d6220.txt
+
+# copertura per-funzione + gap, contro la cattura GREZZA (non collassata)
+python3 ../reverse-tools/coverage_by_function.py \
+    gen.rfkill.d6220.txt \
+    ../router-data/d6220/wl-diag-wl1-down-to-bss-up.txt
+
+# localizzazione delle funzioni nel trace vendor
+python3 ../reverse-tools/localize_functions.py gen.rfkill.d6220.txt <trace>
+```
+
+Le funzioni che scrivono tabelle (`tables_init`, `tables_zero_cal`) non si
+misurano per sequenza: l'harness le emette come `PHY.WR` sul data-port, il
+vendor le intercala con `TBL.WR/RD` in ordine diverso. Vanno confrontate per
+contenuto delle celle.

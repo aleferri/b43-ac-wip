@@ -11,6 +11,9 @@
 #ifndef EOPNOTSUPP
 #define EOPNOTSUPP 95
 #endif
+#ifndef ENODEV
+#define ENODEV 19
+#endif
 #ifndef ETIMEDOUT
 #define ETIMEDOUT 110
 #endif

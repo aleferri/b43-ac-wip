@@ -847,6 +847,7 @@ static u16 r2069_pick_value(const struct b43_phy_ac_channeltab_e_radio2069 *e,
  */
 void b43_radio_2069_afe_lpf_stage(struct b43_wldev *dev, u16 afe_728)
 {
+	B43_AC_FN();
 	static const u16 clr49[] = {
 		0xe000, 0x1800, 0x0400, 0x0300, 0x0040, 0x0080,
 	};
@@ -872,6 +873,7 @@ void b43_radio_2069_afe_lpf_stage(struct b43_wldev *dev, u16 afe_728)
 void b43_radio_2069_channel_setup(struct b43_wldev *dev,
 	const struct b43_phy_ac_channeltab_e_radio2069 *e)
 {
+	B43_AC_FN();
 	const struct r2069_chan_write *writes = r2069_chan_writes;
 	unsigned int n = ARRAY_SIZE(r2069_chan_writes);
 	unsigned int i;
@@ -983,6 +985,7 @@ static const u8  b43_r2069_rccal_nloop[3] = { 0x1c, 0x70, 0x40 };
 /* Pass 0/1 common preamble: program the engine for this pass. */
 static void b43_r2069_rccal_setup(struct b43_wldev *dev, unsigned int pass)
 {
+	B43_AC_FN();
 	r2069_mod(dev, R2069_RCCAL_CFG, 0x1000,
 		  (u16)(b43_r2069_rccal_init[pass] << 12));
 	r2069_mod(dev, R2069_RCCAL_CFG, 0x0018,
@@ -996,6 +999,7 @@ static void b43_r2069_rccal_setup(struct b43_wldev *dev, unsigned int pass)
 /* Kick the engine and poll the done bit. */
 static bool b43_r2069_rccal_run(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	unsigned int i;
 
 	r2069_mod(dev, R2069_RCCAL_CFG, 0x0001, 0x0000);
@@ -1070,6 +1074,7 @@ static void b43_r2069_rccal_disarm_p2b(struct b43_wldev *dev)
 /* 4360 agcombo: 174-258 ; d6220 ch36 #32586-32732 (EN1 enable -> 3 pass -> EN1 disable) */
 void b43_radio_2069_rccal(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	unsigned int pass;
 
 	u16 chipnum = dev->dev->chip_id;
@@ -1136,6 +1141,7 @@ void b43_radio_2069_rccal(struct b43_wldev *dev)
 /* 4360 agcombo: 8784-8829 ; down-to-bss-up #56954-57000 ; d6220 ch36: n/l */
 void b43_radio_2069_afecal(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	struct b43_phy_ac *ac = dev->phy.ac;
 	unsigned int core;
 
@@ -1240,6 +1246,7 @@ static const u16 b43_r2069_prefregs_rev4[][2] = {
 
 static void b43_r2069_prefregs_init(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	unsigned int i;
 
 	for (i = 0; i < ARRAY_SIZE(b43_r2069_prefregs_rev4); i++)
@@ -1257,6 +1264,7 @@ static void b43_r2069_prefregs_init(struct b43_wldev *dev)
 /* 4360 agcombo: 86-97 ; d6220 ch36 @#32421 (fp 10/24) */
 void b43_radio_2069_init(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	u16 saved_728;
 
 	saved_728 = b43_phy_read_log(dev, 0x0728);
@@ -1340,6 +1348,7 @@ void b43_radio_2069_init(struct b43_wldev *dev)
 /* 4360 agcombo: 148-172 ; d6220 ch36 @#32547 (fp 10/17) */
 void b43_radio_2069_pwron(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	u16 pon0, pon1;
 
 	b43_radio_set(dev,   0x08ea, 0x0040);

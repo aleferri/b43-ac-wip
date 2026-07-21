@@ -247,6 +247,11 @@ cfg80211_get_chandef_type(const struct cfg80211_chan_def *c)
 u32 bcma_chipco_gpio_out(struct bcma_drv_cc *cc, u32 mask, u32 value);
 u32 bcma_chipco_gpio_outen(struct bcma_drv_cc *cc, u32 mask, u32 value);
 u32 bcma_chipco_gpio_control(struct bcma_drv_cc *cc, u32 mask, u32 value);
+#ifndef BCMA_CC_PMU_PLL_CTL3
+#define BCMA_CC_PMU_PLL_CTL3 3
+#endif
+u32 bcma_chipco_pll_read(struct bcma_drv_cc *cc, u32 offset);
+void b43_test_pll_set(u32 offset, u32 val);
 void bcma_chipco_regctl_maskset(struct bcma_drv_cc *cc, u32 offset,
 				u32 mask, u32 set);
 
