@@ -146,8 +146,12 @@ static void b43_phy_ac_mode_init(struct b43_wldev *dev)
 }
 
 /*
- * Init ADC gain words, PER-CHIP (4360 #4070-86 = 0x097a/0x08fa; 4352 ch36
- * #32854-86 = 0x03bf/0x0340, 2 passate). adc_reset poi riscrive 0x03ac/0x032c.
+ * Init ADC gain words. Per *fase*, non per chip: la coppia 0x097a/0x08fa e'
+ * l'attach da freddo e la 0x03bf/0x0340 il down->up, su entrambi i chip. La
+ * lettura "per-chip" precedente nasceva dal confronto fra agcombo #4070
+ * (attach) e 4352 #32854 (attach-to-bss): fasi diverse su chip diversi. La
+ * cattura d6220 attach-to-bss-up scioglie l'ambiguita' mostrando entrambe le
+ * coppie sullo stesso chip. adc_reset poi riscrive 0x03ac/0x032c.
  */
 static void b43_phy_ac_init_regs(struct b43_wldev *dev)
 {
@@ -156,19 +160,22 @@ static void b43_phy_ac_init_regs(struct b43_wldev *dev)
 					0x0342, 0x0343, 0x0346, 0x0347 };
 	static const u16 lo_regs[8] = { 0x033c, 0x033d, 0x0340, 0x0341,
 					0x0344, 0x0345, 0x0348, 0x0349 };
-	/* The 4360 cold-inits these regs over two passes (agcombo down-to-bss
-	 * #58369-58400); both 4352 witnesses emit a single pass (d6220 #51731,
-	 * DSL #122785). The 0x097a/0x08fa values belong to a different
-	 * acphychipid.
+	/* ADC gain cold-init. The (hi, lo) pair is selected by bring-up phase,
+	 * not by chip: both 4352 and 4360 write 0x097a/0x08fa on the first
+	 * bring-up (d6220 attach-to-bss-up #4479, agcombo attach #4071) and
+	 * 0x03bf/0x0340 on a later one (d6220 #51731, agcombo #58369).
+	 * adc_reset rewrites the pair to 0x03ac/0x032c further along.
 	 *
-	 * TODO: the DSL (wl 6.30) writes 0x0395 here, not 0x03bf — version
-	 * difference, not yet pinned.
+	 * The 4360 emits two passes over the block, both 4352 witnesses one
+	 * (d6220 #51731, DSL #122785).
+	 *
+	 * TODO: the DSL (wl 6.30) writes 0x0395/0x0315 here and no 0x1645 --
+	 * version difference, not yet pinned.
 	 */
+	bool first = dev->phy.do_full_init;
 	bool two_pass = (dev->dev->chip_id == 0x4360);
-	bool known_chip = (dev->dev->chip_id == 0x4352 ||
-			   dev->dev->chip_id == 0x4360);
-	u16 hi = known_chip ? 0x03bf : 0x097a;
-	u16 lo = known_chip ? 0x0340 : 0x08fa;
+	u16 hi = first ? 0x097a : 0x03bf;
+	u16 lo = first ? 0x08fa : 0x0340;
 	unsigned int pass, passes = two_pass ? 2 : 1;
 	unsigned int i;
 
@@ -228,6 +235,7 @@ static unsigned int b43_phy_ac_pa5g_group(struct b43_wldev *dev, u16 freq)
 static void b43_phy_ac_clip_det(struct b43_wldev *dev, bool enable);
 static void b43_phy_ac_cca_pulse(struct b43_wldev *dev);
 static void b43_phy_ac_rxgain_perchan_tail(struct b43_wldev *dev);
+static void b43_phy_ac_pmu_req(struct b43_wldev *dev, bool on);
 static void b43_phy_ac_probe_cycle(struct b43_wldev *dev,
 				   const u16 *mode_vals, unsigned int n_iter);
 static void b43_phy_ac_rxiqcal_measure_block(struct b43_wldev *dev);
@@ -291,6 +299,21 @@ static void b43_phy_ac_rx_gate_with_adc_hold(struct b43_wldev *dev, bool arm)
 	b43_phy_ac_classctl_write_peeked(dev, arm);
 	b43_phy_ac_adc_hold(dev, !arm);
 	b43_phy_ac_clip_det(dev, !arm);
+}
+
+/*
+ * Base index idle-TSSI del core 0, catturato e dipendente dalla fase: al primo
+ * bring-up 0x205 / 0x203 / 0x205 per iter 1/2/3 (attach-to-bss-up #11337,
+ * #13368, #14137), su un channel setup successivo 0x206 / 0x207 / 0x206 (ch36
+ * #38582, #40273, #40870). Il core 1 e' 0x200 in entrambe le fasi.
+ *
+ * Resta un seed catturato: la derivazione dal readback e' fra le cose da fare.
+ */
+static u16 b43_phy_ac_idle_tssi_base0(struct b43_wldev *dev,
+				      u16 first, u16 later)
+{
+	return (dev->phy.ac->status_mask & B43_PHY_AC_STATE_FIRST_BRINGUP)
+		? first : later;
 }
 
 static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev,
@@ -364,7 +387,7 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev,
 
 	for (core = 0; core < dev->phy.ac->num_cores; core++) {
 		u16 p = (u16)(core * 0x0200);
-		u16 captured_base_index = base_indices[core];
+		u16 base_index;
 
 		if (!((dev->phy.ac->coremask >> core) & 1))
 			continue;
@@ -522,8 +545,24 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev,
 		b43_phy_mask(dev, 0x0460, (u16)~0x0001);	/* trace: AND clr bit0 (era OR) */
 		b43_phy_mask(dev, 0x0382, (u16)~0xc000);	/* trace: AND clr bit14-15 (era OR) */
 		b43_phy_set(dev, 0x0460, 0x0001);
-		b43_phy_read(dev, 0x0403);
-		b43_phy_read(dev, 0x0403);
+		/*
+		 * Attesa del completamento, stessa condizione di run_rfseq_cmd: si
+		 * legge finche' il bit 0 e' alto. Il numero di letture non e' fisso
+		 * e non dipende dalla fase -- lo determinano i valori: sull'attach
+		 * le 16 invocazioni danno [2,1,2,2,...], sul channel setup
+		 * successivo tutte 2. Le due letture hardcoded che c'erano prima
+		 * riproducevano solo il caso a 2.
+		 */
+		{
+			unsigned int k;
+
+			for (k = 0; k < 10; k++) {
+				u16 v = b43_phy_read(dev, 0x0403);
+
+				if (!(v & 0x0001))
+					break;
+			}
+		}
 		b43_phy_write(dev, 0x0400, 0x0000);
 		b43_phy_read(dev, 0x0739);
 		b43_phy_write(dev, 0x0739, 0x0080);
@@ -629,13 +668,23 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev,
 		 *   #38582 val=0xfe06 (core 0 iter 1), #38836 val=0xfe00 (core 1),
 		 *   #40273 val=0xfe07 (core 0 iter 2), #40870 val=0xfe06 (iter 3).
 		 */
+		/*
+		 * Il base index e' la misura idle-TSSI divisa per 4, non un seed:
+		 * base = read(0x0012) >> 2. Verificato su tutti i valori distinti
+		 * di due board -- d6220 0x814->0x205, 0x800->0x200, 0x80c->0x203;
+		 * DSL-3580L 0x944->0x251 -- che e' anche il motivo per cui le
+		 * costanti catturate differivano fra board e fra fasi.
+		 *
+		 * I bit 10-15 (0xfc00) restano config statici OR-ati dal blob.
+		 */
+		base_index = (u16)(r012 >> 2) & 0x03ff;
 		b43_phy_maskset(dev, 0x0645 + p, (u16)~0x03ff,
-				captured_base_index | 0xfc00);
+				base_index | 0xfc00);
 
 		b43dbg(dev->wl,
 		       "phy-ac: idle-tssi c%u meas: 0x013=0x%04x 0x012=0x%04x 0x464=0x%04x radio 0x4e=0x%04x 0x166=0x%04x 0x24e=0x%04x 0x366=0x%04x prog=0x%04x\n",
 		       core, r013, r012, r464,
-		       rr_4e, rr_66, rr_24e, rr_366, captured_base_index);
+		       rr_4e, rr_66, rr_24e, rr_366, base_index);
 	}
 
 	/*
@@ -748,9 +797,22 @@ static void b43_phy_ac_txpwrctrl_setup(struct b43_wldev *dev, u16 freq)
 
 			if (!((dev->phy.ac->coremask >> cr) & 1))
 				continue;
+			/*
+			 * Al primo bring-up il max index e' la costante 0x38,
+			 * indipendente dallo SROM: d6220 (#11694), agcombo e DSL
+			 * scrivono tutte 0x38 sull'attach. Su un channel setup
+			 * successivo e' maxp5ga[grp] - 6, che da' 0x42 sul d6220
+			 * (maxp5ga0=72) e 0x44 su agcombo (74).
+			 *
+			 * Il DSL emette 0x38 anche sul down->up: divergenza di
+			 * versione, in retrace-todo.md.
+			 */
 			maxp = sprom->core_pwr_info[cr].maxp5ga[grp];
-			b43_phy_maskset(dev, 0x0646 + cr * 0x0200,
-					(u16)~0x00ff, (u16)((maxp - 6) & 0x00ff));
+			b43_phy_maskset(dev, 0x0646 + cr * 0x0200, (u16)~0x00ff,
+					(dev->phy.ac->status_mask &
+					 B43_PHY_AC_STATE_FIRST_BRINGUP)
+					? 0x0038
+					: (u16)((maxp - 6) & 0x00ff));
 		}
 	}
 
@@ -1355,8 +1417,14 @@ static void b43_phy_ac_rxcore_setstate(struct b43_wldev *dev, u8 coremask)
 
 	/* Restore. Ordine vendor #34553-#34555: prima MOD ~0x0007, poi MOD
 	 * ~0x7000, poi WR 0x0400. */
-	b43_phy_maskset(dev, B43_PHY_AC_RF_SEQ_MODE, (u16)~0x0007,
-			saved_401 & 0x0007);
+	/*
+	 * Il campo basso torna al coremask, non al valore salvato: su d6220
+	 * saved_401 vale 0x7777 e il driver stock riscrive 0x3 (attach-to-bss-up
+	 * #6395 legge 0x7777, #6431 scrive 0x0003 con maschera 0x0007). Su agcombo
+	 * coremask e' 7 e le due letture coincidono, che e' il motivo per cui la
+	 * versione precedente -- saved_401 & 0x0007 -- passava inosservata.
+	 */
+	b43_phy_maskset(dev, B43_PHY_AC_RF_SEQ_MODE, (u16)~0x0007, coremask);
 	b43_phy_maskset(dev, B43_PHY_AC_RF_SEQ_MODE, (u16)~0x7000,
 			saved_401 & 0x7000);
 	b43_phy_write(dev, B43_PHY_AC_RFCTL1, saved_400);
@@ -1629,7 +1697,7 @@ static void b43_phy_ac_run_rfseq_cmd(struct b43_wldev *dev, u16 cmd_bit)
 	for (i = 0; i < 10; i++) {
 		u16 v = b43_phy_read_log(dev, 0x0403);
 		udelay(200);
-		if (v & 0x0001)
+		if (!(v & 0x0001))
 			break;
 	}
 
@@ -1880,6 +1948,13 @@ static void b43_phy_ac_coeff_bank_init_bw20_5g(struct b43_wldev *dev)
 static void b43_phy_ac_set_pdet_on_reset(struct b43_wldev *dev, bool full)
 {
 	B43_AC_FN();
+	/*
+	 * Il driver stock legge 0x0550 prima di sovrascriverlo, a entrambi i
+	 * call site (#698 nella fase op_init, #32802 in quella di set_channel).
+	 * Destinazione del valore sconosciuta: la lettura e' necessaria, non
+	 * difensiva.
+	 */
+	b43_phy_read_log(dev, 0x0550);
 	b43_phy_write(dev, 0x0550, 0x0ffd);
 	b43_phy_maskset(dev, 0x0551, (u16)~0x000f, 0x000f);
 	b43_phy_maskset(dev, 0x0551, (u16)~0x00f0, 0x00f0);
@@ -1906,10 +1981,6 @@ static void b43_phy_ac_analog_on_reset(struct b43_wldev *dev, u16 *saved_outer_o
 	u8 mask = dev->phy.ac->coremask;
 	u8 core, num_cores = dev->phy.ac->num_cores;
 	u16 saved;
-
-	/* ch36 #32802: read 0x0550 before pdet overwrites it; destination
-	 * sconosciuta, valore necessario (non difensivo). */
-	b43_phy_read_log(dev, 0x0550);
 
 	b43_phy_ac_set_pdet_on_reset(dev, true);
 
@@ -2962,10 +3033,27 @@ static void b43_phy_ac_adc_reset(struct b43_wldev *dev)
 	b43_phy_write(dev, 0x1641, 0x7f18);
 	b43_phy_maskset(dev, 0x0070, (u16)~0xe000, 0xe000);
 
-	for (c = 0; c < num_cores; c++) {
-		if (!((mask >> c) & 1))
-			continue;
-		b43_phy_maskset(dev, 0x0644 + c * 0x200, (u16)~0x007f, 0x0014);
+	/*
+	 * La coppia gain word 0x0644/0x0844 non c'e' al primo bring-up: sull'attach
+	 * questo blocco e' a 3 op (#10878: 0x0070, poi 0x0678/0x0878), mentre in un
+	 * channel setup successivo e' a 5 (ch36 #38200 con 0x0644/0x0844 in mezzo).
+	 *
+	 * Il gate descrive il d6220, non spiega la causa. Tentata la derivazione,
+	 * senza esito: il valore 0x14 e' identico su d6220 e agcombo mentre il DSL
+	 * scrive 0x1b, e tutti i campi rxgains5g* dello SROM sono uguali fra le
+	 * board. L'unico campo che partiziona le board come il valore e' aga0
+	 * (133 su d6220 e agcombo, 71 sul DSL), ma con due soli valori distinti la
+	 * correlazione non e' falsificabile -- e il DSL ha comunque un blob di
+	 * un'altra versione. Non e' nemmeno la derivazione tipo idle-TSSI: qui il
+	 * valore non dipende da una lettura vicina.
+	 */
+	if (!(dev->phy.ac->status_mask & B43_PHY_AC_STATE_FIRST_BRINGUP)) {
+		for (c = 0; c < num_cores; c++) {
+			if (!((mask >> c) & 1))
+				continue;
+			b43_phy_maskset(dev, 0x0644 + c * 0x200,
+					(u16)~0x007f, 0x0014);
+		}
 	}
 
 	for (c = 0; c < num_cores; c++) {
@@ -3031,10 +3119,18 @@ static void b43_phy_ac_adc_reset(struct b43_wldev *dev)
 		b43_phy_write(dev, adc_hi[i], 0x03ac);
 	for (i = 0; i < 8; i++)
 		b43_phy_write(dev, adc_lo[i], 0x032c);
-	for (i = 0; i < 8; i++)
-		b43_phy_write(dev, adc_hi[i], 0x03bf);
-	for (i = 0; i < 8; i++)
-		b43_phy_write(dev, adc_lo[i], 0x0340);
+	/*
+	 * Secondo round solo dal bring-up successivo: sull'attach il driver stock
+	 * programma la coppia una volta con 0x03ac/0x032c (#10897) e passa a
+	 * 0x016e, mentre in un channel setup successivo ripete con 0x03bf/0x0340
+	 * (ch36 #38219 poi #38235).
+	 */
+	if (!(dev->phy.ac->status_mask & B43_PHY_AC_STATE_FIRST_BRINGUP)) {
+		for (i = 0; i < 8; i++)
+			b43_phy_write(dev, adc_hi[i], 0x03bf);
+		for (i = 0; i < 8; i++)
+			b43_phy_write(dev, adc_lo[i], 0x0340);
+	}
 
 	b43_phy_maskset(dev, 0x016e, (u16)~0x0002, 0x0002);
 	b43_phy_maskset(dev, 0x016e, (u16)~0x0001, 0x0001);
@@ -3173,6 +3269,12 @@ static void b43_phy_ac_chanspec_tail(struct b43_wldev *dev)
 
 	if (dev->wl->hw->conf.chandef.width != NL80211_CHAN_WIDTH_20)
 		crs = 0x0036;
+	else if (dev->phy.ac->status_mask & B43_PHY_AC_STATE_FIRST_BRINGUP)
+		/*
+		 * Soglia CRS del primo bring-up: 0x3a (attach-to-bss-up #6989)
+		 * contro 0x31 di un channel setup successivo (ch36 #35056).
+		 */
+		crs = 0x003a;
 
 	b43_phy_maskset(dev, 0x0164, (u16)~0x0010, 0x0000);
 	b43_phy_maskset(dev, 0x030f, (u16)~0xc000, 0x0000);
@@ -3413,9 +3515,13 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
 			       B43_PHY_AC_STATE_MAC_EN | B43_PHY_AC_STATE_CCA_RESET,
 			       -EINVAL);
 
-	/* PMU regctl 0: clear bit 1 before channel reconfigure. ch36 #32404. */
-	bcma_chipco_regctl_maskset(&dev->dev->bdev->bus->drv_cc,
-				   0, ~0x00000002, 0x00000000);
+	/*
+	 * Abbassa la richiesta PMU prima di riconfigurare il canale (ch36
+	 * #32404), ma solo se e' alzata: sul percorso di attach il preambolo l'ha
+	 * gia' abbassata a #141 e un secondo clear sarebbe un'op in piu'.
+	 */
+	if (dev->phy.ac->status_mask & B43_PHY_AC_STATE_PMU_REQ)
+		b43_phy_ac_pmu_req(dev, false);
 
 	/*
 	 * Freeze RX path before channel reconfigure: classifier WAITED-only,
@@ -3601,7 +3707,8 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
 	 * diversi.
 	 */
 	{
-		static const u16 iter1_base_indices[3] = { 0x0206, 0x0200, 0x0000 };
+		const u16 iter1_base_indices[3] = {
+			b43_phy_ac_idle_tssi_base0(dev, 0x0205, 0x0206), 0x0200, 0x0000 };
 		B43_PHY_AC_REQUIRE_RET(dev,
 				       B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
 				       B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
@@ -3642,16 +3749,37 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
 	 */
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);           /* #39182 unlock */
 	b43_phy_maskset(dev, 0x0070, (u16)~0xe000, 0xe000);      /* #39183 TX power ctrl enable */
-	b43_phy_maskset(dev, 0x0644, (u16)~0x007f, 0x0014);      /* #39184 current index c0 */
-	b43_phy_maskset(dev, 0x0844, (u16)~0x007f, 0x0014);      /* #39185 current index c1 */
+	/*
+	 * La coppia gain word solo dal secondo bring-up: al primo il driver stock
+	 * emette 0x0070 e poi direttamente 0x0678/0x0878 (attach-to-bss-up #12016 e
+	 * #12375), mentre su un channel setup successivo la coppia c'e' (ch36
+	 * #39184, #39541). Vale per questo sito e per adc_reset, non per la coda di
+	 * rxiqcal_finalize, che la emette sempre.
+	 */
+	if (!(dev->phy.ac->status_mask & B43_PHY_AC_STATE_FIRST_BRINGUP)) {
+		b43_phy_maskset(dev, 0x0644, (u16)~0x007f, 0x0014); /* #39184 c0 */
+		b43_phy_maskset(dev, 0x0844, (u16)~0x007f, 0x0014); /* #39185 c1 */
+	}
 	b43_phy_maskset(dev, 0x0678, (u16)~0x0004, 0);           /* #39186 clr bit 2 c0 */
 	b43_phy_maskset(dev, 0x0878, (u16)~0x0004, 0);           /* #39187 clr bit 2 c1 */
 	b43_phy_ac_mhf_maskset(dev, 3, (u16)~0x0040, 0x0040);    /* #39188 MHF3 set bit 6 */
 	b43_maccontrol_set(dev, ~0x00100000u, 0);                /* #39189 clr bit 20 */
 	b43_maccontrol_set(dev, ~0x01c00000u, 0);                /* #39190 clr bits 22-24 */
 	b43_mac_enable(dev);                                     /* #39191 */
-	b43_phy_ac_mhf_maskset(dev, 4, (u16)~0x8000, 0);         /* #39192 MHF4 clr bit 15 */
-	b43_phy_ac_mhf_maskset(dev, 1, (u16)~0x0001, 0x0001);    /* #39193 MHF1 set bit 0 */
+	/*
+	 * MHF4 bit 15: alzato al primo bring-up (attach-to-bss-up #12023),
+	 * abbassato su un channel setup successivo (ch36 #39192).
+	 */
+	b43_phy_ac_mhf_maskset(dev, 4, (u16)~0x8000,
+			       (dev->phy.ac->status_mask &
+				B43_PHY_AC_STATE_FIRST_BRINGUP) ? 0x8000 : 0);
+	/*
+	 * MHF1 bit 0: abbassato al primo bring-up (#12024), alzato su un channel
+	 * setup successivo (ch36 #39193) -- polarita' opposta a MHF4 bit 15 sopra.
+	 */
+	b43_phy_ac_mhf_maskset(dev, 1, (u16)~0x0001,
+			       (dev->phy.ac->status_mask &
+				B43_PHY_AC_STATE_FIRST_BRINGUP) ? 0 : 0x0001);
 	b43_mac_suspend(dev);                                    /* #39194 */
 	b43_phy_ac_mhf_maskset(dev, 3, (u16)~0x0020, 0x0020);    /* #39195 MHF3 set bit 5 */
 	b43_mac_enable(dev);                                     /* #39196 */
@@ -3681,8 +3809,11 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
 	 */
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);          /* #39539 unlock */
 	b43_phy_maskset(dev, 0x0070, (u16)~0xe000, 0xe000);     /* #39540 */
-	b43_phy_maskset(dev, 0x0644, (u16)~0x007f, 0x0014);     /* #39541 */
-	b43_phy_maskset(dev, 0x0844, (u16)~0x007f, 0x0014);     /* #39542 */
+	/* Come sopra: coppia gain word assente al primo bring-up (#12375). */
+	if (!(dev->phy.ac->status_mask & B43_PHY_AC_STATE_FIRST_BRINGUP)) {
+		b43_phy_maskset(dev, 0x0644, (u16)~0x007f, 0x0014); /* #39541 */
+		b43_phy_maskset(dev, 0x0844, (u16)~0x007f, 0x0014); /* #39542 */
+	}
 	b43_phy_maskset(dev, 0x0678, (u16)~0x0004, 0);          /* #39543 */
 	b43_phy_maskset(dev, 0x0878, (u16)~0x0004, 0);          /* #39544 */
 	/* 5 pulses mac wake/suspend (#39545-#39554) */
@@ -3838,6 +3969,38 @@ static void b43_phy_ac_pre_init_frontend(struct b43_wldev *dev)
 	b43_phy_read_log(dev, 0x0000);
 }
 
+/*
+ * I sette clear MHF che il vendor emette due volte durante un attach da freddo:
+ * nel preambolo analog-on (d6220 attach-to-bss-up #82-#88) e di nuovo dopo i due
+ * set MHF piu' avanti (#136 e #139, poi #150-#156). Sequenza identica le due
+ * volte, quindi sta qui una volta sola.
+ *
+ * SALAME: la semantica dei singoli bit resta ignota (vedi il commento in
+ * op_init); questa e' fedelta' al blob, non comprensione.
+ */
+static void b43_phy_ac_mhf_bringup_clears(struct b43_wldev *dev)
+{
+	b43_phy_ac_mhf_maskset(dev, 0, (u16)~0x0010, 0);
+	b43_phy_ac_mhf_maskset(dev, 1, (u16)~0x0100, 0);
+	b43_phy_ac_mhf_maskset(dev, 2, (u16)~0x2000, 0);
+	b43_phy_ac_mhf_maskset(dev, 1, (u16)~0x0200, 0);
+	b43_phy_ac_mhf_maskset(dev, 2, (u16)~0x1504, 0);
+	b43_phy_ac_mhf_maskset(dev, 2, (u16)~0x1000, 0);
+	b43_phy_ac_mhf_maskset(dev, 4, (u16)~0x0006, 0);
+}
+
+/*
+ * Config MHF del bring-up: due set e i sette clear, nell'ordine del driver
+ * stock (#136, #139, poi #150-#156). Non e' channel-dependent -- identica su
+ * ch36, ch44 e ch36-bw40.
+ */
+static void b43_phy_ac_mhf_config(struct b43_wldev *dev)
+{
+	b43_phy_ac_mhf_maskset(dev, 4, (u16)~0x0080, 0x0080);
+	b43_phy_ac_mhf_maskset(dev, 0, (u16)~0x0100, 0x0100);
+	b43_phy_ac_mhf_bringup_clears(dev);
+}
+
 static int b43_phy_ac_op_init(struct b43_wldev *dev)
 {
 	B43_AC_FN();
@@ -3933,18 +4096,29 @@ static int b43_phy_ac_op_init(struct b43_wldev *dev)
 	 * TODO: portare anche i MACCTL/GPIO/PMU.PLL non-MHF quando la
 	 * semantica sarà nota.
 	 */
-	b43_phy_ac_mhf_maskset(dev, 4, (u16)~0x0080, 0x0080);
-	b43_phy_ac_mhf_maskset(dev, 0, (u16)~0x0100, 0x0100);
-	b43_phy_ac_mhf_maskset(dev, 0, (u16)~0x0010, 0);
-	b43_phy_ac_mhf_maskset(dev, 1, (u16)~0x0100, 0);
-	b43_phy_ac_mhf_maskset(dev, 2, (u16)~0x2000, 0);
-	b43_phy_ac_mhf_maskset(dev, 1, (u16)~0x0200, 0);
-	b43_phy_ac_mhf_maskset(dev, 2, (u16)~0x1504, 0);
-	b43_phy_ac_mhf_maskset(dev, 2, (u16)~0x1000, 0);
-	b43_phy_ac_mhf_maskset(dev, 4, (u16)~0x0006, 0);
+	/*
+	 * Su attach da freddo questa config la emette gia' il preambolo, che il
+	 * driver stock esegue prima del corpo radio (#136-#156); qui resta per
+	 * il bring-up successivo, dove nessuna cattura copre le MHF e quindi non
+	 * sappiamo se e dove venga rifatta.
+	 */
+	if (!dev->phy.do_full_init)
+		b43_phy_ac_mhf_config(dev);
 
-	b43_mac_suspend(dev);
+	/* Latch della fase: vedi B43_PHY_AC_STATE_FIRST_BRINGUP. */
+	if (dev->phy.do_full_init)
+		dev->phy.ac->status_mask |= B43_PHY_AC_STATE_FIRST_BRINGUP;
+	else
+		dev->phy.ac->status_mask &= ~B43_PHY_AC_STATE_FIRST_BRINGUP;
 
+	/*
+	 * Nessun mac_suspend in coda. b43 arriva a ops->init con il MAC
+	 * disabilitato, quindi qui il suspend non tocca l'hardware: alza solo il
+	 * refcount, e switch_channel -- chiamata subito dopo da b43_phy_init --
+	 * lo trova a 1 invece di 0, con la conseguenza che le sue 90 coppie
+	 * suspend/enable diventano no-op e il MAC non viene mai togglato durante
+	 * la calibrazione.
+	 */
 	return 0;
 }
 
@@ -3985,6 +4159,167 @@ static void b43_phy_ac_enable_afe(struct b43_wldev *dev,
 		dev->phy.ac->status_mask &= ~B43_PHY_AC_STATE_AFE_ON;
 		break;
 	}
+}
+
+/*
+ * Frontend GPIO del bring-up a freddo, con la richiesta di risorsa PMU che lo
+ * bracchetta. Il vendor lo emette fra il preambolo analogico e il corpo radio
+ * (d6220 attach-to-bss-up #100-#141): regctl bit 1 alto, un giro di MHF/MACCTL,
+ * i tre registri GPIO, e regctl bit 1 basso.
+ *
+ * La collocazione segue la cattura, non l'affinita' di sottosistema: qui dentro
+ * ci sono MAC e GPIO, non analogico. In b43 non esiste un hook fra
+ * switch_analog e software_rfkill, e questa e' la fase in cui il vendor lo fa.
+ *
+ * Non e' il blocco di bss-up che op_switch_channel emette: quello ha solo due
+ * gpio_out e il regctl alto, senza gpio_control ne' gpio_outen e senza il
+ * clear finale. Sequenze distinte, non fattorizzabili.
+ *
+ * Non riprodotto qui: la write a BCMA_CC_PMU_CTL (#112) e il poll di
+ * BCMA_CLKCTLST (#115/#118). La prima appartiene alla bcma PMU init (patch
+ * 0007), la seconda la esegue gia' b43_bcma_wireless_core_reset.
+ */
+/*
+ * regctl 0 bit 1: richiesta di risorsa PMU. Il driver stock la usa come bracket
+ * attorno al lavoro di canale -- alta nel preambolo di attach (#100), bassa alla
+ * sua fine (#141), e sul bring-up successivo bassa all'ingresso di set_channel
+ * (ch36 #32404) e alta all'uscita (#55154). Tracciamo lo stato perche' il bit
+ * non e' rileggibile: senza, sull'attach si abbassava due volte.
+ */
+static void b43_phy_ac_pmu_req(struct b43_wldev *dev, bool on)
+{
+	struct bcma_drv_cc *cc = &dev->dev->bdev->bus->drv_cc;
+
+	bcma_chipco_regctl_maskset(cc, 0x0000, ~0x00000002u,
+				   on ? 0x00000002u : 0x00000000u);
+	if (on)
+		dev->phy.ac->status_mask |= B43_PHY_AC_STATE_PMU_REQ;
+	else
+		dev->phy.ac->status_mask &= ~B43_PHY_AC_STATE_PMU_REQ;
+}
+
+static void b43_phy_ac_frontend_gpio_setup(struct b43_wldev *dev)
+{
+	struct bcma_drv_cc *cc = &dev->dev->bdev->bus->drv_cc;
+
+	B43_AC_FN();
+
+	b43_phy_ac_pmu_req(dev, true);
+
+	b43_phy_ac_mhf_maskset(dev, 2, (u16)~0x0040, 0);
+	b43_phy_ac_mhf_maskset(dev, 3, (u16)~0x0040, 0x0040);
+	b43_phy_ac_mhf_maskset(dev, 3, (u16)~0x0040, 0x0040);
+	b43_maccontrol_set(dev, 0, 0x04000400);
+
+	bcma_chipco_gpio_control(cc, 0x00000407, 0x00000000);
+	bcma_chipco_gpio_out(cc, 0x00000407, 0x00000400);
+	bcma_chipco_gpio_outen(cc, 0x00000407, 0x00000407);
+
+	b43_phy_ac_mhf_maskset(dev, 4, (u16)~0x0080, 0x0080);
+	b43_maccontrol_set(dev, 0, 0x04000400);
+	b43_maccontrol_set(dev, 0, 0x04000400);
+	b43_phy_ac_mhf_maskset(dev, 0, (u16)~0x0100, 0x0100);
+	b43_maccontrol_set(dev, 0, 0x04000400);
+
+	b43_phy_ac_pmu_req(dev, false);
+
+	b43_maccontrol_set(dev, 0, 0x04000404);
+	b43_phy_ac_mhf_bringup_clears(dev);
+
+	/*
+	 * Coda del preambolo, prima del corpo radio (#157-#163). La GPIO.CTL con
+	 * maschera nulla non modifica niente: il driver stock la emette
+	 * comunque, e la teniamo per non introdurre un buco nella sequenza.
+	 */
+	b43_maccontrol_set(dev, 0, 0x04020402);
+	b43_maccontrol_set(dev, (u32)~0x0000c000u, 0);
+	bcma_chipco_gpio_control(cc, 0x00000000, 0x00000000);
+	b43_maccontrol_set(dev, (u32)~0x40060000u, 0x40020000);
+}
+
+static void b43_phy_ac_op_switch_analog(struct b43_wldev *dev, bool on)
+{
+	B43_AC_FN();
+	u16 saved_417, saved_416;
+
+	/*
+	 * The generic b43_phyop_switch_analog_generic writes B43_MMIO_PHY0
+	 * (0x3e6); the OEM never touches that offset (no SI.COREREG off=0x03e6
+	 * in any capture). Like every modern PHY in-tree (N, HT, LCN) the AC
+	 * drives its own analog front-end instead.
+	 *
+	 * The unit is save -> AFE bank -> restore, as emitted at the top of a
+	 * cold attach (d6220 attach-to-bss-up #50-#99, twice back to back): ten
+	 * reads, the AFE_ON block on the override page, then chan-select bit 1
+	 * cleared and 0x0417/0x0416 put back to what they held. The first five
+	 * reads cover exactly the registers the AFE bank then masks through the
+	 * 0x17xx override page (0x1739/0x173a/0x1725/0x1729/0x1721), so the save
+	 * is of what is about to be hidden. The
+	 * captured values there are 0x0000 and 0x0001, which is why the bss-up
+	 * copy of this unit in op_switch_channel can hardcode them; here they
+	 * are restored, so the sequence is board-independent.
+	 *
+	 * Only 0x0417 and 0x0416 are put back here; the other eight are read and
+	 * not consumed. Whether the OEM keeps those values for a later stage is
+	 * not established -- they are read because the capture reads them.
+	 */
+	b43_phy_read_log(dev, 0x0739);
+	b43_phy_read_log(dev, 0x073a);
+	b43_phy_read_log(dev, 0x0725);
+	b43_phy_read_log(dev, 0x0729);
+	b43_phy_read_log(dev, 0x0721);
+	b43_phy_read_log(dev, 0x0728);
+	b43_phy_read_log(dev, 0x0720);
+	b43_phy_read_log(dev, 0x0408);
+	saved_417 = b43_phy_read_log(dev, 0x0417);
+	saved_416 = b43_phy_read_log(dev, 0x0416);
+
+	b43_phy_ac_enable_afe(dev, on ? B43_PHY_AC_AFE_ON
+				     : B43_PHY_AC_AFE_DOWN);
+
+	b43_phy_maskset(dev, 0x0408, (u16)~0x0002, 0);
+	b43_phy_write(dev, 0x0417, saved_417);
+	b43_phy_write(dev, 0x0416, saved_416);
+
+	/*
+	 * Cold attach only: a 6-bit field in 0x02e4 is set right after the unit
+	 * above, before the MHF block and a second copy of the unit (d6220
+	 * attach-to-bss-up #81, agcombo attach #27 -- same value on both chips,
+	 * so it is the phase that selects it, not the chip).
+	 *
+	 * On a later bring-up the d6220 does not touch 0x02e4 at all, hence the
+	 * do_full_init gate. The DSL (wl 6.30) writes 0x0800 there on its
+	 * down->up instead: a version divergence, tracked in retrace-todo.md,
+	 * not reproduced here.
+	 *
+	 * Unrelated to the 0x0800 that set_channel writes on the 4360 -- that
+	 * one lands after init_regs and no 4352 witness emits it.
+	 */
+	if (!on || !dev->phy.do_full_init)
+		return;
+
+	b43_phy_maskset(dev, 0x02e4, (u16)~0x3f00, 0x0f00);
+
+	/*
+	 * Coda del preambolo: i sette clear MHF, poi una seconda copia del banco
+	 * AFE e del trittico (#89-#99). La seconda copia non ripete le cinque
+	 * letture: il save e' dell'entrata, non dell'unita', quindi i valori
+	 * salvati sopra vengono riusati.
+	 *
+	 * Il gate e' lo stesso della write 0x02e4 sopra. Per la 0x02e4 e'
+	 * sostenuto dal fatto che il down->up del d6220 non la emette; per i
+	 * clear MHF no, perche' le catture down->up non contengono nessuna
+	 * MAC.MHF -- cominciano dopo questa fase. Sta qui per analogia, non per
+	 * evidenza diretta.
+	 */
+	b43_phy_ac_mhf_bringup_clears(dev);
+
+	b43_phy_ac_enable_afe(dev, B43_PHY_AC_AFE_ON);
+	b43_phy_maskset(dev, 0x0408, (u16)~0x0002, 0);
+	b43_phy_write(dev, 0x0417, saved_417);
+	b43_phy_write(dev, 0x0416, saved_416);
+
+	b43_phy_ac_frontend_gpio_setup(dev);
 }
 
 static void b43_phy_ac_op_software_rfkill(struct b43_wldev *dev, bool blocked)
@@ -4080,7 +4415,8 @@ void b43_phy_ac_post_cal_finalize(struct b43_wldev *dev)
 			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_CCA_RESET |
 			   B43_PHY_AC_STATE_CLIP_ALL_DIS);
 
-	static const u16 iter2_base_indices[3] = { 0x0207, 0x0200, 0x0000 };
+	const u16 iter2_base_indices[3] = {
+		b43_phy_ac_idle_tssi_base0(dev, 0x0203, 0x0207), 0x0200, 0x0000 };
 
 	b43_phy_ac_rxcal_a1_restore(dev);
 	b43_phy_ac_idle_tssi_meas(dev, iter2_base_indices);
@@ -4110,7 +4446,8 @@ void b43_phy_ac_post_cal_finalize_iter3(struct b43_wldev *dev)
 			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_CCA_RESET |
 			   B43_PHY_AC_STATE_CLIP_ALL_DIS);
 
-	static const u16 iter3_base_indices[3] = { 0x0206, 0x0200, 0x0000 };
+	const u16 iter3_base_indices[3] = {
+		b43_phy_ac_idle_tssi_base0(dev, 0x0205, 0x0206), 0x0200, 0x0000 };
 
 	/*
 	 * Transizione iter 2 → iter 3 (vendor #40538): RX suspend prima del
@@ -4121,7 +4458,17 @@ void b43_phy_ac_post_cal_finalize_iter3(struct b43_wldev *dev)
 	 */
 	b43_phy_write(dev, 0x0339, 0x0fff);
 
-	b43_mac_suspend(dev);
+	/*
+	 * Garantisce il MAC sospeso senza annidare. La write che il driver stock
+	 * emette qui (#40539) e' gia' prodotta dal sito precedente in
+	 * set_channel; un suspend incondizionato non scriverebbe nulla ma
+	 * lascerebbe il refcount a 2, e da li' in poi le coppie
+	 * enable/suspend di rxiqcal_finalize e probe_cycle lavorerebbero fra 2 e
+	 * 1 senza toccare l'hardware. Questa funzione non ha un enable di
+	 * chiusura: il chiamante si aspetta il MAC sospeso al ritorno.
+	 */
+	if (!dev->mac_suspended)
+		b43_mac_suspend(dev);
 
 	/* Preambulo diagnostico (4 op nuove vs iter 2). */
 	b43_phy_read_log(dev, 0x0070);
@@ -7458,14 +7805,14 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 	b43_phy_maskset(dev, 0x0408, (u16)~0x0002, 0);
 	b43_phy_write(dev, 0x0417, 0x0000);
 	b43_phy_write(dev, 0x0416, 0x0001);
-	bcma_chipco_regctl_maskset(&dev->dev->bdev->bus->drv_cc,
-				   0x0000, ~0x00000002u, 0x00000002);
+	b43_phy_ac_pmu_req(dev, true);
 }
 
 static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_channel)
 {
 	struct ieee80211_channel *channel = dev->wl->hw->conf.chandef.chan;
 	enum nl80211_channel_type channel_type = cfg80211_get_chandef_type(&dev->wl->hw->conf.chandef);
+	int entry_suspended;
 	int ret;
 
 	if (b43_current_band(dev->wl) == NL80211_BAND_2GHZ) {
@@ -7479,21 +7826,48 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	 * A differenza di wl (Broadcom), che richiede un down+up completo
 	 * per cambiare canale a runtime, b43 mantiene il MAC attivo tra i
 	 * channel switch. set_channel opera con MAC sospeso (calibrazioni
-	 * PHY che non tollerano attività MAC concorrente): sospendiamo qui
-	 * e ripristiniamo dopo. Nel primo attach il MAC è già sospeso da
-	 * fine op_init — b43_mac_suspend gestisce il refcount idempotente.
+	 * PHY che non tollerano attività MAC concorrente).
+	 *
+	 * Sul percorso di attach il MAC e' gia' spento: il preambolo lo scrive
+	 * direttamente (MAC.MCTRL 0x04000400, ENABLED basso), quindi un
+	 * b43_mac_suspend qui emetteva una write che il driver stock non fa in
+	 * quel punto. Dal secondo bring-up in avanti il MAC arriva acceso e la
+	 * sospensione serve.
+	 *
+	 * NOTA: il preambolo usa b43_maccontrol_set, che non passa dal refcount,
+	 * mentre qui si usa l'API con refcount -- due strade sullo stesso bit. E'
+	 * la ragione dello sfasamento, e va unificato.
 	 */
-	b43_mac_suspend(dev);
-	/* Mirror MAC.MCTRL bit0: the cal body runs MAC-suspended, the state the
-	 * REQUIRE(forbid MAC_EN) gates want; re-set below so a repeat switch
-	 * clears it again rather than faulting on a stale bit. */
-	dev->phy.ac->status_mask &= ~B43_PHY_AC_STATE_MAC_EN;
+	/*
+	 * Sospendi solo se non lo e' gia'. Sul bring-up b43 arriva qui con il MAC
+	 * disabilitato dalla core init, e un suspend in piu' alzerebbe il refcount
+	 * senza scrivere: le coppie enable/suspend della calibrazione lavorerebbero
+	 * fra 1 e 2 invece che fra 0 e 1, e non toccherebbero l'hardware. Sul
+	 * cambio di canale a runtime il MAC e' attivo e va sospeso.
+	 *
+	 * entry_suspended serve perche' a fine funzione lo stato non distingue piu'
+	 * "l'ho sospeso io" da "era gia' sospeso".
+	 */
+	entry_suspended = dev->mac_suspended;
+	if (!entry_suspended)
+		b43_mac_suspend(dev);
+	/*
+	 * Il mirror di MAC_EN lo mantiene b43_mac_suspend/enable: toccarlo qui a
+	 * mano lo sfasava dal refcount quando la sospensione e' condizionale --
+	 * su bring-up il MAC non veniva riabilitato ma MAC_EN veniva alzato
+	 * comunque, e rxiqcal_apply falliva la precondizione che lo vieta.
+	 */
 
 	/* 5 GHz: the channel table is the filter (unknown channels -ESRCH). */
 	ret = b43_phy_ac_set_channel(dev, channel, channel_type);
 
+	/*
+	 * Enable incondizionato: non e' il rilascio di cio' che ho acquisito, e'
+	 * un requisito delle calibrazioni post-channel, che girano a MAC attivo e
+	 * lo pretendono nelle loro precondizioni. Il driver stock lo abilita qui
+	 * (#39946) indipendentemente da come ci e' arrivato.
+	 */
 	b43_mac_enable(dev);
-	dev->phy.ac->status_mask |= B43_PHY_AC_STATE_MAC_EN;
 
 	/*
 	 * Calibrazioni post-channel: il vendor le emette DOPO MAC.MCTRL
@@ -7539,7 +7913,7 @@ const struct b43_phy_operations b43_phyops_ac = {
 	.radio_read		= b43_phy_ac_op_radio_read,
 	.radio_write		= b43_phy_ac_op_radio_write,
 	.software_rfkill	= b43_phy_ac_op_software_rfkill,
-	.switch_analog		= b43_phyop_switch_analog_generic,
+	.switch_analog		= b43_phy_ac_op_switch_analog,
 	.switch_channel		= b43_phy_ac_op_switch_channel,
 	.get_default_chan	= b43_phy_ac_op_get_default_chan,
 	.recalc_txpower		= b43_phy_ac_op_recalc_txpower,

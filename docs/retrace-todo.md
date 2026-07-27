@@ -32,15 +32,44 @@ sono tutte sul DSL (wl 6.30) e sono i punti aperti sotto.
   fase AFE-LPF diversamente. Da isolare dove il DSL imposta l'AFE dopo rccal.
 - **rccal 84% su DSL e agcombo.** ~6 op su 38 divergono; probabile misura
   analogica per-board (E/F/G) o dettaglio di versione. Da confermare.
-- **init_regs sul DSL — costanti di versione.** Lista di registri e ordine
-  identici al d6220 (8× hi `0x033a/033b/033e/033f/0342/0343/0346/0347`, poi 8×
-  lo `0x033c/033d/0340/0341/0344/0345/0348/0349`), ma i valori no: la wl 6.30
-  del DSL scrive `(hi, lo) = (0x0395, 0x0315)` contro `(0x03bf, 0x0340)` della
-  7.14 (`#122785` contro `#51731`), e non emette affatto `PHY 0x1645 = 0x025c`.
-  Entrambe le board sono 4352, quindi è una differenza di **versione del blob**,
-  non di chip: il dispatch `{4352, 4360, default}` su `chip_id` non la può
-  esprimere. Il port scrive i valori 7.14, quindi su DSL `init_regs` misura
-  0/17. Da decidere quale coppia vuole il silicio prima del prossimo run.
+- **init_regs sul DSL — costanti di versione.** La coppia `(hi, lo)` dei
+  registri di gain ADC è selezionata dalla **fase**, non dal chip: attach da
+  freddo `0x097a/0x08fa`, down→up `0x03bf/0x0340`, e `adc_reset` riscrive poi
+  `0x03ac/0x032c`. Vale su entrambi i chip (d6220 `#4479` e agcombo `#4071`
+  per la prima, d6220 `#51731` e agcombo `#58369` per la seconda). Il DSL con
+  wl 6.30 scrive invece `0x0395/0x0315` sul down→up e non emette `0x1645`:
+  quella resta una differenza di versione, e su DSL `init_regs` misura 0/17.
+  Il conteggio delle passate è invece per chip: due sul 4360, una su entrambi
+  i testimoni 4352.
+- **0x02e4 sul DSL — costante di versione.** Il campo a 6 bit di `0x02e4`
+  (`mask=0x3f00`) viene scritto nella fase iniziale su tutte e tre le board, ma
+  con valore diverso: `0x0f00` sull'attach da freddo di agcombo (`#27`) e d6220
+  (`#81`), `0x0800` sul down→up del DSL (`#120986`). Sul down→up del d6220 non
+  viene scritto affatto. Il port emette `0x0f00` gatato su `do_full_init`; la
+  variante 6.30 non e' riprodotta. Da non confondere con lo `0x0800` che
+  `set_channel` scrive sul 4360 (`agcombo #5810`, `#60373`): quello cade dopo
+  `init_regs` e nessun testimone 4352 lo emette, quindi il gate
+  `chip_id == 0x4360` in `set_channel` e' corretto.
+- **PLLCTL2/PLLCTL3 sul DSL — funzionalita' assente nel driver stock.** Sul
+  cold attach il d6220 (4352) scrive `PLLCTL2=0x0c31` e `PLLCTL3=0x100e`
+  (`#15`, `#23`) e li rilegge piu' avanti (`#164`, `#172`), identico
+  all'agcombo; sul down→up compaiono solo le read, ed e' da li' che nasceva la
+  tesi "il 4352 non scrive", ora corretta nella 0007. Il DSL, pure 4352 con
+  `chiprev 0x03` e `package 0x01` identici, lascia `PLLCTL3` al valore ROM
+  `0x00133333`: il suo driver stock non ha il supporto vcofreq frazionario
+  (verificato con `strings`), mentre i driver stock piu' recenti impostano
+  vcofreq. Quella board funziona cosi', quindi scriverci i valori nuovi e' non
+  testato, non un fix.
+
+  Metodo riusabile: per le divergenze DSL qui sotto, confrontare la presenza
+  dei simboli fra i due blob con `strings`/`readelf -s` prima di ipotizzare
+  differenze di board — "funzione assente nella versione vecchia" e' un
+  pattern gia' accertato una volta.
+- **Max index TX su 0x0646/0x0846 sul DSL.** Al primo bring-up tutte le board
+  scrivono la costante `0x38`; su un channel setup successivo il valore e'
+  `maxp5ga[grp] - 6`, cioe' `0x42` sul d6220 (maxp5ga0=72) e `0x44` su agcombo
+  (74). Il DSL emette `0x38` anche sul down→up, quindi o non fa la derivazione
+  o la fa da altri campi.
 - **set_pdet_on_reset e pre_init_frontend sul DSL.** `not found` e 2/13. Non
   ancora isolate.
 - **tables_init sul DSL — nessun oracolo.** L'ordine del load tabelle è

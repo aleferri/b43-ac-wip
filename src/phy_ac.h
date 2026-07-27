@@ -67,6 +67,13 @@ struct ieee80211_channel;
 /* PHY-table-write gate. */
 #define B43_PHY_AC_REG_TBL_WRITE_GATE		0x19E
 #define  B43_PHY_AC_TBL_WRITE_GATE_LOCK		0x0002
+/*
+ * Bit 0 dello stesso registro: abilita la sequenza di tuning radio, non e' un
+ * secondo lock. Il driver stock lo alza prima del banco PLL del 2069 e lo
+ * abbassa dopo l'ultima write (d6220 attach-to-bss-up #4497 e #4616); subito
+ * dopo la chiusura reinizializza il registro con 0x01c0 / 0x0200 / 0x003c.
+ */
+#define  B43_PHY_AC_TBL_WRITE_GATE_RADIO_TUNE	0x0001
 #define  B43_PHY_AC_RF_SEQ_OVERRIDE_GATE	0x0001
 
 /*
@@ -98,6 +105,19 @@ struct ieee80211_channel;
 #define B43_PHY_AC_STATE_PHY_RUN	0x0080	/* BBCFG bit 0x8000: 1=running, 0=quiesced */
 #define B43_PHY_AC_STATE_CCA_RESET	0x0100	/* BBCFG bit 0x4000 (RSTCCA active) */
 #define B43_PHY_AC_STATE_AFE_ON		0x0200	/* RF front-end armed (enable_afe ON) */
+/*
+ * Primo bring-up. b43_phy_init azzera phy->do_full_init fra ops->init e
+ * switch_channel, quindi da switch_channel in avanti quel flag e' sempre falso:
+ * op_init lo latcha qui mentre e' ancora valido, per le costanti che il driver
+ * stock sceglie in base alla fase.
+ */
+#define B43_PHY_AC_STATE_FIRST_BRINGUP	0x0800
+/*
+ * Richiesta di risorsa PMU (regctl 0 bit 1) alzata dal driver. Il bit hardware
+ * non e' rileggibile attraverso l'API bcma, quindi lo si traccia qui: serve a
+ * distinguere "va abbassato" da "e' gia' basso", come il refcount fa per il MAC.
+ */
+#define B43_PHY_AC_STATE_PMU_REQ	0x0400
 #define B43_PHY_AC_STATE_FAULTED	0x8000	/* sticky: a precondition failed */
 
 /* Per-device PHY state. */

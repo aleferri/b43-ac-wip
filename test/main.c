@@ -226,6 +226,15 @@ static void mount_board(const struct board_profile *p)
 	g_wldev.phy.dacbuf_cap = g_ac.dacbuf_cap;
 	g_wldev.phy.lpf_cap    = g_ac.lpf_cap0;
 	g_wldev.phy.ac         = &g_ac;
+	/*
+	 * Primo bring-up per default: e' la fase che le catture attach
+	 * testimoniano. AC_FIRST_INIT=0 seleziona il bring-up successivo, da
+	 * confrontare con le catture down->up.
+	 */
+	{
+		const char *e = getenv("AC_FIRST_INIT");
+		g_wldev.phy.do_full_init = !(e && !strcmp(e, "0"));
+	}
 
 	b43_test_band = NL80211_BAND_5GHZ;
 
@@ -340,6 +349,465 @@ static void register_board_read_plans(const struct board_profile *p)
 	}
 }
 
+/*
+ * Segmenti eseguibili. Ognuno registra i propri read plan e poi chiama la sua
+ * op: plan_add azzera il cursore quando un indirizzo viene ri-registrato,
+ * quindi registrare per segmento subito prima di eseguirlo e' anche l'ordine
+ * corretto quando i segmenti sono concatenati.
+ */
+static void run_op_init(void)
+{
+	/*
+	 * On the vendor attach-to-bss trace, num_cores is already
+	 * cached from a prior fresh attach, so probe_cores hits its
+	 * early-return path and emits no PHY.RD 0x000b. We keep the
+	 * mount_board() defaults (num_cores=3, coremask=3) to mirror
+	 * that state; a fresh-attach flow would clear them here to
+	 * exercise probe_cores' PHY read.
+	 */
+	g_ac.status_mask = 0;	/* op_init has no REQUIRE gates */
+	/*
+	 * pre_init_frontend RAD 0x0X33 (#51692/51697/51702): nibble
+	 * 0xf000 -> 0x4000 over HW background 0x0060 gives 0x4060.
+	 */
+	{
+		static const u16 r33[] = { 0x4060 };
+		u16 co;
+		for (co = 0; co <= 0x400; co += 0x200)
+			b43_test_plan_radio_reads(0x0033 + co, r33,
+						  ARRAY_SIZE(r33));
+	}
+	int r = b43_phyops_ac.init(&g_wldev);
+	fprintf(stderr, "test: op_init returned %d\n", r);
+}
+
+static void run_rfkill(void)
+{
+	/*
+	 * software_rfkill(false): radio bring-up (2069 init/pwron/rccal),
+	 * afe_lpf_stage, GPIO frontend, PA bias and the radio-ON front-end
+	 * switch. Runs before op_init in the real driver; here in isolation.
+	 */
+	g_ac.status_mask = 0;
+
+	/*
+	 * rccal done-bit poll (R2069_RCCAL_STAT 0x0413, bit 4). Three
+	 * passes; vendor ch36 polls 2, 6, 6 times before done (ep
+	 * 32611-12, 32640-45, 32708-13). Done value = 0x0010 on the last
+	 * read of each run.
+	 */
+	{
+		static const u16 rccal_stat[] = {
+			0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0010,
+			0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0010,
+			0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0010,
+		};
+		b43_test_plan_radio_reads(0x0413, rccal_stat,
+					  ARRAY_SIZE(rccal_stat));
+	}
+
+	/*
+	 * 0x0407 bit 7 (0x0080) reads back clear after the prefregs write
+	 * of 0x8382, so the set-bit1 RMW writes 0x8302 (vendor #51319-21).
+	 * The write-mirror can't model the self-clear.
+	 */
+	{
+		static const u16 rad_0407[] = { 0x8302 };
+		b43_test_plan_radio_reads(0x0407, rad_0407,
+					  ARRAY_SIZE(rad_0407));
+	}
+	/*
+	 * 0x040c reads back 0x0200 (bit 9 set) at the epilogue bit-4
+	 * toggle (vendor: mask ->0x0200, set ->0x0210); the bit is a HW
+	 * default the write-mirror doesn't hold.
+	 */
+	{
+		static const u16 rad_040c[] = { 0x0200, 0x0201 };
+		b43_test_plan_radio_reads(0x040c, rad_040c,
+					  ARRAY_SIZE(rad_040c));
+	}
+	/*
+	 * EN2 / power-kick / RCCAL cfg+kick registers hold silicon
+	 * background bits that the write-mirror (starting at 0)
+	 * cannot reproduce. Seed each read with the vendor's post-RMW
+	 * value: for a maskset read==WR yields WR, since the vendor WR
+	 * already carries the set bits under the mask. Ordered per
+	 * read; vendor down-to-bss-up #51262-.
+	 */
+	{
+		static const u16 rad_08ed[] = { 0x4124, 0x4124, 0x4524 };
+		static const u16 rad_040b[] = {
+			0x0000, 0x0001,		/* kick clear, set */
+			0x0168, 0x0168,		/* pon0/pon1 readback */
+			0x0168,			/* final mask reads risen reg */
+		};
+		static const u16 rad_0410[] = {
+			0x1f80, 0x1f80, 0x1f80, 0x1f81, 0x1f80,
+			0x0f80, 0x0f90, 0x0f90, 0x0f91, 0x0f90,
+			0x0f90, 0x0f88, 0x0f88, 0x0f89,
+		};
+		static const u16 rad_0411[] = {
+			0x1c54, 0x1c55, 0x1c54, 0x7054, 0x7055,
+			0x7054, 0x4054, 0x4055, 0x4054,
+		};
+		/* measured RC code read by apply_code (pass 1) then the
+		 * dacbuf read (pass 2); low 5 bits = 0x09 (vendor #51517). */
+		static const u16 rad_0416[] = { 0x0009, 0x0009 };
+		b43_test_plan_radio_reads(0x08ed, rad_08ed,
+					  ARRAY_SIZE(rad_08ed));
+		b43_test_plan_radio_reads(0x040b, rad_040b,
+					  ARRAY_SIZE(rad_040b));
+		b43_test_plan_radio_reads(0x0410, rad_0410,
+					  ARRAY_SIZE(rad_0410));
+		b43_test_plan_radio_reads(0x0411, rad_0411,
+					  ARRAY_SIZE(rad_0411));
+		b43_test_plan_radio_reads(0x0416, rad_0416,
+					  ARRAY_SIZE(rad_0416));
+		/*
+		 * afe_lpf_stage per-core (after rccal, #51609-): 0x0045
+		 * set-0x0080 over HW background 0x3000; 0x0049 six clears
+		 * over background 0x0030 (no clr49 touches bits 4:5, so the
+		 * mirror carries it after the first seeded read).
+		 */
+		{
+			static const u16 r45[] = { 0x3080 };
+			static const u16 r49[] = { 0x0030 };
+			u16 co;
+			for (co = 0; co <= 0x400; co += 0x200) {
+				b43_test_plan_radio_reads(0x0045 + co,
+						r45, ARRAY_SIZE(r45));
+				b43_test_plan_radio_reads(0x0049 + co,
+						r49, ARRAY_SIZE(r49));
+			}
+		}
+	}
+
+	b43_phyops_ac.software_rfkill(&g_wldev, false);
+	fprintf(stderr, "test: software_rfkill(false) done\n");
+}
+
+static void run_set_channel(void)
+{
+
+	/*
+	 * Stato entrante a set_channel (post-op_init): MAC sospeso,
+	 * classifier/clip-detector state non toccato (RX_ANY = 0,
+	 * CLIP_ALL_DIS = 0). set_channel imposterà RX_WAITED e
+	 * CLIP_ALL_DIS via classifier()/clip_det() prima delle
+	 * sub-routine che REQUIRE quello stato.
+	 *
+	 * op_init non è re-run qui: il suo trace è validato dal
+	 * flow separato; eseguirlo back-to-back double-conta le
+	 * register writes.
+	 */
+	/*
+	 * Azzera solo i bit che set_channel si aspetta puliti all'ingresso: non
+	 * l'intero status_mask, che in `full` porta gia' il latch di fase messo da
+	 * op_init (B43_PHY_AC_STATE_FIRST_BRINGUP) e lo stato del bracket PMU.
+	 */
+	g_ac.status_mask &= B43_PHY_AC_STATE_FIRST_BRINGUP |
+			    B43_PHY_AC_STATE_PMU_REQ;
+
+	/*
+	 * NB: nessun read plan per 0x019e (table-write gate) in questo
+	 * flow. Il mirror riflette correttamente lo stato del gate:
+	 * tbl_write_lock scrive 0x0002, i sub-lock rileggono 0x0002 e
+	 * al tbl_write_unlock finale il saved contiene lo stato del
+	 * lock precedente (0 al primo lock, 0x0002 ai nested). Un plan
+	 * a valore fisso 0x0000 rompeva questa sequenza.
+	 */
+
+	/*
+	 * rxiq_est_debug is invoked from set_channel's tail; reuse
+	 * the same 0x0270 completion plan as the standalone flow.
+	 */
+	b43_test_plan_phy_reads(0x0270, rxiq_poll_0x0270,
+				(int)(sizeof(rxiq_poll_0x0270) / sizeof(u16)));
+
+	/*
+	 * Table-7 cell pre-state per il RMW di analog_on_reset. I
+	 * b43_actab_read_bulk emettono phy_read(0x000f) dopo aver
+	 * scritto TABLE_ID/TABLE_OFFSET; senza plan il mirror ritorna
+	 * l'ultimo write generico a 0x000f che non ha significato per
+	 * la cella indirizzata.
+	 *
+	 * Approssimazione: come pre-state usiamo il VALORE VENDOR
+	 * SCRITTO (assumendo che il chip faccia RMW identity-like col
+	 * pre-state già impostato dall'init). Se la formula del scratch
+	 * fosse identity con questi input, matcherebbe. In pratica non
+	 * lo è (vedi TODO in README), ma il flow avanza e i log
+	 * [TXLPFLOG] dal chip vero ci daranno lo_read/hi_read/cur reali.
+	 *
+	 * Ordine di consumo del plan (per il call site channel_setup):
+	 *  - TX-LPF: core 0 stage 0..8 (18 read: lo,hi × 9), poi core 1
+	 *    (altre 18) = 36 read totali.
+	 *  - Dacbuf: core 0 stage 0..8 (9 read), core 1 (9) = 18 read.
+	 *  - RX-LPF: core 0 stage 0..2 (6 read: lo,hi × 3), core 1 (6)
+	 *    = 12 read totali.
+	 * Totale: 66 read.
+	 */
+	{
+		static const u16 t7_pre_seed[] = {
+			/* TX-LPF core 0: stage 0..8, (lo, hi) */
+			0x50db, 0x0151,  0x50db, 0x0151,  0x50db, 0x0151,
+			0x5123, 0x0151,  0x5123, 0x0151,  0x5123, 0x0151,
+			0x516b, 0x0151,  0x516b, 0x0151,  0x50db, 0x0151,
+			/* TX-LPF core 1 */
+			0x50db, 0x0151,  0x50db, 0x0151,  0x50db, 0x0151,
+			0x5123, 0x0151,  0x5123, 0x0151,  0x5123, 0x0151,
+			0x516b, 0x0151,  0x516b, 0x0151,  0x50db, 0x0151,
+			/* Dacbuf core 0: stage 0..8 (add={b,b,c,c,e,e,f,f,a}).
+			 * Stage 0-1 leggono/scrivono stessa cella 0x3fb; il
+			 * pre-state esposto qui è quello che il chip ha PRIMA
+			 * del primo RMW di stage. */
+			0x0b2e, 0x0b2e, 0x0b2e, 0x0b2e, 0x0b2e,
+			0x0b2e, 0x0b2e, 0x0b2e, 0x002e,
+			/* Dacbuf core 1 */
+			0x0b2e, 0x0b2e, 0x0b2e, 0x0b2e, 0x0b2e,
+			0x0b2e, 0x0b2e, 0x0b2e, 0x002e,
+			/* RX-LPF, ordine vendor stage-then-core.
+			 * stage 0: core 0 lo/hi, core 1 lo/hi
+			 * stage 1: core 0 lo/hi, core 1 lo/hi
+			 * stage 2: core 0 lo/hi, core 1 lo/hi */
+			0x2440, 0x0150,  0x2440, 0x0150,
+			0x2349, 0x0150,  0x2349, 0x0150,
+			0x2352, 0x0150,  0x2352, 0x0150,
+		};
+		b43_test_plan_phy_reads(0x000f, t7_pre_seed,
+			(int)(sizeof(t7_pre_seed) / sizeof(u16)));
+	}
+
+	/*
+	 * run_rfseq_cmd legge 0x0403 e si ferma quando il bit 0 e' *caduto*: le
+	 * invocazioni sono `0x0101, 0x0000` oppure `0x0000` da sola. Nello slice
+	 * ch36 sono 18, con pattern [2,1,2,2,2,2,2,2,2,2,1,2,2,2,2,2,2,1] -- il
+	 * plan lo riproduce per intero.
+	 *
+	 * Il plan precedente aveva tre valori tarati sulla lettura opposta (attesa
+	 * del bit che si alza); dalla terza invocazione in poi cadeva sul mirror,
+	 * che restituisce 0, e il gate non lo intercettava perche' la cattura ch36
+	 * ha i valori di lettura a UNDEFINED e il confronto li ignora.
+	 */
+	{
+		static const u16 rfseq_done_poll[] = {
+			0x0101, 0x0000, 0x0000, 0x0101, 0x0000, 0x0101,
+			0x0000, 0x0101, 0x0000, 0x0101, 0x0000, 0x0101,
+			0x0000, 0x0101, 0x0000, 0x0101, 0x0000, 0x0101,
+			0x0000, 0x0000, 0x0101, 0x0000, 0x0101, 0x0000,
+			0x0101, 0x0000, 0x0101, 0x0000, 0x0101, 0x0000,
+			0x0101, 0x0000, 0x0000,
+		};
+		b43_test_plan_phy_reads(0x0403, rfseq_done_poll,
+			(int)(sizeof(rfseq_done_poll) / sizeof(u16)));
+	}
+
+	/*
+	 * Misura idle-TSSI: idle_tssi_meas deriva il base index da 0x0012 >> 2, e
+	 * nello slice ch36 i base scritti sono core0 0x206/0x207/0x206 e core1
+	 * 0x200 -- quindi le letture sono base << 2, in ordine core0, core1 per
+	 * ognuna delle tre iterazioni. La cattura ch36 non ha i valori (UNDEFINED),
+	 * ma le write li implicano.
+	 */
+	{
+		static const u16 idle_tssi_meas_vals[] = {
+			0x0818, 0x0800,   /* iter 1: core 0, core 1 */
+			0x081c, 0x0800,   /* iter 2 */
+			0x0818, 0x0800,   /* iter 3 */
+		};
+		b43_test_plan_phy_reads(0x0012, idle_tssi_meas_vals,
+			(int)(sizeof(idle_tssi_meas_vals) / sizeof(u16)));
+	}
+
+	/*
+	 * PHY pre-seed: 0x0401 (RF_SEQ_MODE) al boot ha bit 0-2 = coremask
+	 * e bit 12-14 = coremask<<12. Il vendor legge questi bit come
+	 * saved_401 dentro rxcore_setstate e li ripristina alla fine
+	 * (vendor #34553: MOD val=0x0003 mask=0x0007; #34554: MOD
+	 * val=0x7000 mask=0x7000). Il test framework parte da mirror=0
+	 * quindi il restore fallirebbe con val=0. Pre-seed = 0x7003 per
+	 * D6220 (coremask=0x03).
+	 */
+	b43_test_mirror_phy_set(0x0401, 0x7003);
+
+	/*
+	 * Radio-side pre-existing state per il primo maskset di
+	 * b43_radio_2069_channel_setup. Su tutte le catture vendor
+	 * (d6220 e agcombo) i registri hanno bit già settati prima
+	 * del channel switch:
+	 *   0x0645: bit 7 (0x0080) — bias/enable stabilito da un
+	 *           init precedente (mode_init/pwron).
+	 *   0x08c9: bit 1-2 (0x0006) — configurazione PLL persistente
+	 *           tra i channel switch.
+	 * Il read plan riporta questi valori così il peek del
+	 * radio_maskset produce lo stesso RAD.WR val=... del vendor.
+	 */
+	{
+		static const u16 rad_0645[] = { 0x0080 };
+		static const u16 rad_08c9[] = { 0x0006 };
+		static const u16 rad_090b[] = { 0x0100 };	/* PLL lock immediato */
+		/*
+		 * Radio bias registers per-core (0x0045/0x0245/0x0445)
+		 * hanno bit non azzerati prima del radio_set(0x0080) in
+		 * afe_lpf_stage loop2. Vendor #33037/33058/... scrive
+		 * val=0x70bf → cur = 0x70bf & ~0x0080 = 0x703f. Presente
+		 * in tutte le catture d6220 e agcombo.
+		 *
+		 * Per 0x0445 (core 2 inattivo su d6220 coremask=0x03) la
+		 * seconda lettura (durante post_noise_shaping_core_transition
+		 * a #38058) restituisce 0x7080 nel vendor — bit 0-6 clear a
+		 * eccezione del bit 7 — così il maskset ~0x0300, 0x0300
+		 * produce 0x7380 (invece di 0x73bf per i core attivi). Il
+		 * meccanismo interno del blob che porta il registro a 0x7080
+		 * per il core inattivo non è visibile nel trace (nessuna WR
+		 * intermedia); simuliamo con un secondo valore nel read plan.
+		 */
+		static const u16 rad_0045[] = { 0x703f };
+		static const u16 rad_0245[] = { 0x703f };
+		static const u16 rad_0445[] = { 0x703f, 0x7080 };
+		b43_test_plan_radio_reads(0x0645, rad_0645, 1);
+		b43_test_plan_radio_reads(0x08c9, rad_08c9, 1);
+		b43_test_plan_radio_reads(0x090b, rad_090b, 1);
+		b43_test_plan_radio_reads(0x0045, rad_0045, 1);
+		b43_test_plan_radio_reads(0x0245, rad_0245, 1);
+		b43_test_plan_radio_reads(0x0445, rad_0445, 2);
+
+		/*
+		 * 0x0017 / 0x0217 (radio bit 4 auto-set/clear HW).
+		 *
+		 * Fase set_channel matched (rxcal_radio_setup):
+		 *   [0] #34721/34742: bit 4=0 (WR=0x0000 precedente)
+		 *   [1] #38297/38318: idem
+		 *   [2] #39644/39678: bit 4 auto-SET → 0x0010
+		 *   [3] #39658/39692: idem 0x0010
+		 *   [4] #39661/39695: 0x0011 (dopo set bit 0 al [3])
+		 *
+		 * Fase post_cal_finalize iter 2 A3 (#39988/40009):
+		 *   [5] Post rxcal_radio_cleanup WR=0x0011 a #39930/37, ma HW
+		 *       auto-BOUNCE a 0x0002 tra #39930/37 e #39988/40009
+		 *       (bit 4 clear + bit 1 set: side-effect non tracciato,
+		 *       probabile "cal complete" flag HW).
+		 *
+		 * Iter 3 (#40584+) legge dal mirror stabile a 0 (slot [6] = 0
+		 * come guard; se rimosso, il mirror fornisce comunque 0).
+		 *
+		 * Fase rxiqcal_finalize radio setup (#52737+):
+		 *   [7] Baseline RAD.RD 0x0017/0x0217 nel loop — non usato per
+		 *       calcoli (val letto solo per peek).
+		 *   [8] MOD 0x0017 mask=0x0001 val=0x0001 → RD interno = 0x0010
+		 *       → WR = 0x0011 (HW auto-set bit 4 di nuovo dopo iter 3).
+		 *   [9] MOD 0x0017 mask=0x0002 val=0x0000 → RD interno = 0x0011
+		 *       → WR = 0x0011 (bit 1 già clear).
+		 */
+		static const u16 rad_0017[] = {
+			0, 0, 0x0010, 0x0010, 0x0011, 0x0002, 0,
+			0, 0x0010, 0x0011,
+		};
+		static const u16 rad_0217[] = {
+			0, 0, 0x0010, 0x0010, 0x0011, 0x0002, 0,
+			0, 0x0010, 0x0011,
+		};
+		b43_test_plan_radio_reads(0x0017, rad_0017,
+					  ARRAY_SIZE(rad_0017));
+		b43_test_plan_radio_reads(0x0217, rad_0217,
+					  ARRAY_SIZE(rad_0217));
+
+		/*
+		 * 0x0024 / 0x0224 (radio bit 0-1 HW-sticky).
+		 * Il vendor a #52770/#52803 emette WR val=0x0303 (MOD mask=
+		 * 0x0700 val=0x0300 → RD_val=0x0003). L'ultimo WR sul reg
+		 * era val=0x0000 (#50117), ma il HW mantiene bit 0-1 set.
+		 * Slot 0-3: matcha mirror sequence delle 4 letture pre-setup.
+		 * Slot 4: baseline setup peek (non usato per calcoli).
+		 * Slot 5: MOD interno RD → 0x0003 per WR=0x0303.
+		 */
+		static const u16 rad_0024[] = {
+			0x0003, 0x0003, 0x0003, 0x0000, 0x0000, 0x0003,
+		};
+		static const u16 rad_0224[] = {
+			0x0003, 0x0003, 0x0003, 0x0000, 0x0000, 0x0003,
+		};
+		b43_test_plan_radio_reads(0x0024, rad_0024,
+					  ARRAY_SIZE(rad_0024));
+		b43_test_plan_radio_reads(0x0224, rad_0224,
+					  ARRAY_SIZE(rad_0224));
+	}
+
+	/*
+	 * B5 RX AFE calibration polls (vendor #41909+): registro 0x0380
+	 * viene armato con un comando (bit 15 set) e poi pollato finché
+	 * il bit 15 torna clear. Poll counts per iter 1..24 hardcoded
+	 * dal trace d6220 ch36.
+	 */
+	{
+		#define B(n) 0x8000
+		#define D 0x0000
+		#define B5 B(0),B(0),B(0),B(0),B(0)
+		#define B10 B5,B5
+		#define B20 B10,B10
+		#define B38 B20,B10,B5,B(0),B(0),B(0)
+		#define B41 B38,B(0),B(0),B(0)
+		#define B68 B38,B20,B10
+		static const u16 poll_0x0380[] = {
+			/* Gruppo core 0 (iter 1-6): 39 42 42 69 11 39 */
+			B38, D, B41, D, B41, D, B68, D, B10, D, B38, D,
+			/* Gruppo core 1 (iter 7-12): 41 40 13 47 61 43 */
+			B38, B(0), B(0), D,
+			B38, B(0), D,
+			B10, B(0), B(0), D,
+			B38, B5, B(0), B(0), B(0), D,
+			B38, B20, B(0), B(0), D,
+			B41, B(0), D,
+			/* Gruppo core 2 (iter 13-18): 44 31 5 10 59 42 */
+			B41, B(0), B(0), D,
+			B20, B10, D,
+			B(0), B(0), B(0), B(0), D,
+			B5, B(0), B(0), B(0), B(0), D,
+			B38, B20, D,
+			B41, D,
+			/* Gruppo 4 RXIQ measurement (iter 19-24): 43 60 35 12 8 58 */
+			B38, B(0), B(0), B(0), B(0), D,
+			B38, B20, B(0), D,
+			B20, B10, B(0), B(0), B(0), B(0), D,
+			B10, B(0), D,
+			B5, B(0), B(0), D,
+			B38, B10, B(0), B(0), B(0), B(0),
+			B(0), B(0), B(0), B(0), B(0), D,
+		};
+		#undef B
+		#undef D
+		#undef B5
+		#undef B10
+		#undef B20
+		#undef B38
+		#undef B41
+		#undef B68
+
+		b43_test_plan_phy_reads(0x0380, poll_0x0380,
+			(int)(sizeof(poll_0x0380) / sizeof(u16)));
+	}
+
+	int r = b43_phyops_ac.switch_channel(&g_wldev, 36);
+	fprintf(stderr, "test: switch_channel returned %d\n", r);
+}
+
+/*
+ * Bring-up continuo, nell'ordine di b43_phy_init(): switch_analog(true) ->
+ * software_rfkill(false) -> ops->init -> switch_channel.
+ */
+static void run_full(void)
+{
+	b43_phyops_ac.switch_analog(&g_wldev, true);
+	run_rfkill();
+	run_op_init();
+	/*
+	 * b43_phy_init azzera phy->do_full_init fra ops->init e switch_channel,
+	 * quindi il codice di set_channel non vede mai il flag alzato -- gatare
+	 * la' su do_full_init non ha effetto nel driver vero.
+	 */
+	g_wldev.phy.do_full_init = false;
+	run_set_channel();
+}
+
 int main(int argc, char **argv)
 {
 	const char *flow  = (argc > 1) ? argv[1] : "rxiq_est_debug";
@@ -352,6 +820,7 @@ int main(int argc, char **argv)
 	fprintf(stderr, "test: board=%s flow=%s\n", p->name, flow);
 	mount_board(p);
 	b43_test_plans_reset();
+	g_wldev.mac_suspended = 1;
 	b43_test_trace_to(stdout);
 
 	/*
@@ -515,398 +984,21 @@ int main(int argc, char **argv)
 		int r = b43_phy_ac_rxiqcal(&g_wldev, 0);
 		fprintf(stderr, "test: rxiqcal returned %d\n", r);
 	} else if (!strcmp(flow, "op_init")) {
-		/*
-		 * On the vendor attach-to-bss trace, num_cores is already
-		 * cached from a prior fresh attach, so probe_cores hits its
-		 * early-return path and emits no PHY.RD 0x000b. We keep the
-		 * mount_board() defaults (num_cores=3, coremask=3) to mirror
-		 * that state; a fresh-attach flow would clear them here to
-		 * exercise probe_cores' PHY read.
-		 */
-		g_ac.status_mask = 0;	/* op_init has no REQUIRE gates */
-		/*
-		 * pre_init_frontend RAD 0x0X33 (#51692/51697/51702): nibble
-		 * 0xf000 -> 0x4000 over HW background 0x0060 gives 0x4060.
-		 */
-		{
-			static const u16 r33[] = { 0x4060 };
-			u16 co;
-			for (co = 0; co <= 0x400; co += 0x200)
-				b43_test_plan_radio_reads(0x0033 + co, r33,
-							  ARRAY_SIZE(r33));
-		}
-		int r = b43_phyops_ac.init(&g_wldev);
-		fprintf(stderr, "test: op_init returned %d\n", r);
+		run_op_init();
 	} else if (!strcmp(flow, "rfkill")) {
-		/*
-		 * software_rfkill(false): radio bring-up (2069 init/pwron/rccal),
-		 * afe_lpf_stage, GPIO frontend, PA bias and the radio-ON front-end
-		 * switch. Runs before op_init in the real driver; here in isolation.
-		 */
-		g_ac.status_mask = 0;
-
-		/*
-		 * rccal done-bit poll (R2069_RCCAL_STAT 0x0413, bit 4). Three
-		 * passes; vendor ch36 polls 2, 6, 6 times before done (ep
-		 * 32611-12, 32640-45, 32708-13). Done value = 0x0010 on the last
-		 * read of each run.
-		 */
-		{
-			static const u16 rccal_stat[] = {
-				0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0010,
-				0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0010,
-				0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0010,
-			};
-			b43_test_plan_radio_reads(0x0413, rccal_stat,
-						  ARRAY_SIZE(rccal_stat));
-		}
-
-		/*
-		 * 0x0407 bit 7 (0x0080) reads back clear after the prefregs write
-		 * of 0x8382, so the set-bit1 RMW writes 0x8302 (vendor #51319-21).
-		 * The write-mirror can't model the self-clear.
-		 */
-		{
-			static const u16 rad_0407[] = { 0x8302 };
-			b43_test_plan_radio_reads(0x0407, rad_0407,
-						  ARRAY_SIZE(rad_0407));
-		}
-		/*
-		 * 0x040c reads back 0x0200 (bit 9 set) at the epilogue bit-4
-		 * toggle (vendor: mask ->0x0200, set ->0x0210); the bit is a HW
-		 * default the write-mirror doesn't hold.
-		 */
-		{
-			static const u16 rad_040c[] = { 0x0200, 0x0201 };
-			b43_test_plan_radio_reads(0x040c, rad_040c,
-						  ARRAY_SIZE(rad_040c));
-		}
-		/*
-		 * EN2 / power-kick / RCCAL cfg+kick registers hold silicon
-		 * background bits that the write-mirror (starting at 0)
-		 * cannot reproduce. Seed each read with the vendor's post-RMW
-		 * value: for a maskset read==WR yields WR, since the vendor WR
-		 * already carries the set bits under the mask. Ordered per
-		 * read; vendor down-to-bss-up #51262-.
-		 */
-		{
-			static const u16 rad_08ed[] = { 0x4124, 0x4124, 0x4524 };
-			static const u16 rad_040b[] = {
-				0x0000, 0x0001,		/* kick clear, set */
-				0x0168, 0x0168,		/* pon0/pon1 readback */
-				0x0168,			/* final mask reads risen reg */
-			};
-			static const u16 rad_0410[] = {
-				0x1f80, 0x1f80, 0x1f80, 0x1f81, 0x1f80,
-				0x0f80, 0x0f90, 0x0f90, 0x0f91, 0x0f90,
-				0x0f90, 0x0f88, 0x0f88, 0x0f89,
-			};
-			static const u16 rad_0411[] = {
-				0x1c54, 0x1c55, 0x1c54, 0x7054, 0x7055,
-				0x7054, 0x4054, 0x4055, 0x4054,
-			};
-			/* measured RC code read by apply_code (pass 1) then the
-			 * dacbuf read (pass 2); low 5 bits = 0x09 (vendor #51517). */
-			static const u16 rad_0416[] = { 0x0009, 0x0009 };
-			b43_test_plan_radio_reads(0x08ed, rad_08ed,
-						  ARRAY_SIZE(rad_08ed));
-			b43_test_plan_radio_reads(0x040b, rad_040b,
-						  ARRAY_SIZE(rad_040b));
-			b43_test_plan_radio_reads(0x0410, rad_0410,
-						  ARRAY_SIZE(rad_0410));
-			b43_test_plan_radio_reads(0x0411, rad_0411,
-						  ARRAY_SIZE(rad_0411));
-			b43_test_plan_radio_reads(0x0416, rad_0416,
-						  ARRAY_SIZE(rad_0416));
-			/*
-			 * afe_lpf_stage per-core (after rccal, #51609-): 0x0045
-			 * set-0x0080 over HW background 0x3000; 0x0049 six clears
-			 * over background 0x0030 (no clr49 touches bits 4:5, so the
-			 * mirror carries it after the first seeded read).
-			 */
-			{
-				static const u16 r45[] = { 0x3080 };
-				static const u16 r49[] = { 0x0030 };
-				u16 co;
-				for (co = 0; co <= 0x400; co += 0x200) {
-					b43_test_plan_radio_reads(0x0045 + co,
-							r45, ARRAY_SIZE(r45));
-					b43_test_plan_radio_reads(0x0049 + co,
-							r49, ARRAY_SIZE(r49));
-				}
-			}
-		}
-
-		b43_phyops_ac.software_rfkill(&g_wldev, false);
-		fprintf(stderr, "test: software_rfkill(false) done\n");
+		run_rfkill();
 	} else if (!strcmp(flow, "set_channel")) {
 		/*
-		 * Stato entrante a set_channel (post-op_init): MAC sospeso,
-		 * classifier/clip-detector state non toccato (RX_ANY = 0,
-		 * CLIP_ALL_DIS = 0). set_channel imposterà RX_WAITED e
-		 * CLIP_ALL_DIS via classifier()/clip_det() prima delle
-		 * sub-routine che REQUIRE quello stato.
-		 *
-		 * op_init non è re-run qui: il suo trace è validato dal
-		 * flow separato; eseguirlo back-to-back double-conta le
-		 * register writes.
+		 * Da solo questo flow modella un cambio di canale a runtime, non
+		 * un bring-up: lo slice vendor di riferimento (32887:55154) ha il
+		 * MAC attivo all'ingresso e lo vede sospendere e riabilitare. In
+		 * `full` il valore non va toccato: ci arriva a 1 dal preambolo,
+		 * che spegne il MAC con una write diretta.
 		 */
-		g_ac.status_mask = 0;
-
-		/*
-		 * NB: nessun read plan per 0x019e (table-write gate) in questo
-		 * flow. Il mirror riflette correttamente lo stato del gate:
-		 * tbl_write_lock scrive 0x0002, i sub-lock rileggono 0x0002 e
-		 * al tbl_write_unlock finale il saved contiene lo stato del
-		 * lock precedente (0 al primo lock, 0x0002 ai nested). Un plan
-		 * a valore fisso 0x0000 rompeva questa sequenza.
-		 */
-
-		/*
-		 * rxiq_est_debug is invoked from set_channel's tail; reuse
-		 * the same 0x0270 completion plan as the standalone flow.
-		 */
-		b43_test_plan_phy_reads(0x0270, rxiq_poll_0x0270,
-					(int)(sizeof(rxiq_poll_0x0270) / sizeof(u16)));
-
-		/*
-		 * Table-7 cell pre-state per il RMW di analog_on_reset. I
-		 * b43_actab_read_bulk emettono phy_read(0x000f) dopo aver
-		 * scritto TABLE_ID/TABLE_OFFSET; senza plan il mirror ritorna
-		 * l'ultimo write generico a 0x000f che non ha significato per
-		 * la cella indirizzata.
-		 *
-		 * Approssimazione: come pre-state usiamo il VALORE VENDOR
-		 * SCRITTO (assumendo che il chip faccia RMW identity-like col
-		 * pre-state già impostato dall'init). Se la formula del scratch
-		 * fosse identity con questi input, matcherebbe. In pratica non
-		 * lo è (vedi TODO in README), ma il flow avanza e i log
-		 * [TXLPFLOG] dal chip vero ci daranno lo_read/hi_read/cur reali.
-		 *
-		 * Ordine di consumo del plan (per il call site channel_setup):
-		 *  - TX-LPF: core 0 stage 0..8 (18 read: lo,hi × 9), poi core 1
-		 *    (altre 18) = 36 read totali.
-		 *  - Dacbuf: core 0 stage 0..8 (9 read), core 1 (9) = 18 read.
-		 *  - RX-LPF: core 0 stage 0..2 (6 read: lo,hi × 3), core 1 (6)
-		 *    = 12 read totali.
-		 * Totale: 66 read.
-		 */
-		{
-			static const u16 t7_pre_seed[] = {
-				/* TX-LPF core 0: stage 0..8, (lo, hi) */
-				0x50db, 0x0151,  0x50db, 0x0151,  0x50db, 0x0151,
-				0x5123, 0x0151,  0x5123, 0x0151,  0x5123, 0x0151,
-				0x516b, 0x0151,  0x516b, 0x0151,  0x50db, 0x0151,
-				/* TX-LPF core 1 */
-				0x50db, 0x0151,  0x50db, 0x0151,  0x50db, 0x0151,
-				0x5123, 0x0151,  0x5123, 0x0151,  0x5123, 0x0151,
-				0x516b, 0x0151,  0x516b, 0x0151,  0x50db, 0x0151,
-				/* Dacbuf core 0: stage 0..8 (add={b,b,c,c,e,e,f,f,a}).
-				 * Stage 0-1 leggono/scrivono stessa cella 0x3fb; il
-				 * pre-state esposto qui è quello che il chip ha PRIMA
-				 * del primo RMW di stage. */
-				0x0b2e, 0x0b2e, 0x0b2e, 0x0b2e, 0x0b2e,
-				0x0b2e, 0x0b2e, 0x0b2e, 0x002e,
-				/* Dacbuf core 1 */
-				0x0b2e, 0x0b2e, 0x0b2e, 0x0b2e, 0x0b2e,
-				0x0b2e, 0x0b2e, 0x0b2e, 0x002e,
-				/* RX-LPF, ordine vendor stage-then-core.
-				 * stage 0: core 0 lo/hi, core 1 lo/hi
-				 * stage 1: core 0 lo/hi, core 1 lo/hi
-				 * stage 2: core 0 lo/hi, core 1 lo/hi */
-				0x2440, 0x0150,  0x2440, 0x0150,
-				0x2349, 0x0150,  0x2349, 0x0150,
-				0x2352, 0x0150,  0x2352, 0x0150,
-			};
-			b43_test_plan_phy_reads(0x000f, t7_pre_seed,
-				(int)(sizeof(t7_pre_seed) / sizeof(u16)));
-		}
-
-		/*
-		 * post_rfseq_misc_setup: run_rfseq_cmd fa poll di 0x0403 fino a
-		 * done bit set. Vendor d6220 ch36: prima chiamata 2 peek (0 poi
-		 * 1 = done), seconda chiamata 1 peek (già 1 = done). Plan
-		 * riproduce il pattern.
-		 */
-		{
-			static const u16 rfseq_done_poll[] = {
-				0x0000, 0x0001,  /* prima chiamata: 0, poi done */
-				0x0001,          /* seconda chiamata: done subito */
-			};
-			b43_test_plan_phy_reads(0x0403, rfseq_done_poll,
-				(int)(sizeof(rfseq_done_poll) / sizeof(u16)));
-		}
-
-		/*
-		 * PHY pre-seed: 0x0401 (RF_SEQ_MODE) al boot ha bit 0-2 = coremask
-		 * e bit 12-14 = coremask<<12. Il vendor legge questi bit come
-		 * saved_401 dentro rxcore_setstate e li ripristina alla fine
-		 * (vendor #34553: MOD val=0x0003 mask=0x0007; #34554: MOD
-		 * val=0x7000 mask=0x7000). Il test framework parte da mirror=0
-		 * quindi il restore fallirebbe con val=0. Pre-seed = 0x7003 per
-		 * D6220 (coremask=0x03).
-		 */
-		b43_test_mirror_phy_set(0x0401, 0x7003);
-
-		/*
-		 * Radio-side pre-existing state per il primo maskset di
-		 * b43_radio_2069_channel_setup. Su tutte le catture vendor
-		 * (d6220 e agcombo) i registri hanno bit già settati prima
-		 * del channel switch:
-		 *   0x0645: bit 7 (0x0080) — bias/enable stabilito da un
-		 *           init precedente (mode_init/pwron).
-		 *   0x08c9: bit 1-2 (0x0006) — configurazione PLL persistente
-		 *           tra i channel switch.
-		 * Il read plan riporta questi valori così il peek del
-		 * radio_maskset produce lo stesso RAD.WR val=... del vendor.
-		 */
-		{
-			static const u16 rad_0645[] = { 0x0080 };
-			static const u16 rad_08c9[] = { 0x0006 };
-			static const u16 rad_090b[] = { 0x0100 };	/* PLL lock immediato */
-			/*
-			 * Radio bias registers per-core (0x0045/0x0245/0x0445)
-			 * hanno bit non azzerati prima del radio_set(0x0080) in
-			 * afe_lpf_stage loop2. Vendor #33037/33058/... scrive
-			 * val=0x70bf → cur = 0x70bf & ~0x0080 = 0x703f. Presente
-			 * in tutte le catture d6220 e agcombo.
-			 *
-			 * Per 0x0445 (core 2 inattivo su d6220 coremask=0x03) la
-			 * seconda lettura (durante post_noise_shaping_core_transition
-			 * a #38058) restituisce 0x7080 nel vendor — bit 0-6 clear a
-			 * eccezione del bit 7 — così il maskset ~0x0300, 0x0300
-			 * produce 0x7380 (invece di 0x73bf per i core attivi). Il
-			 * meccanismo interno del blob che porta il registro a 0x7080
-			 * per il core inattivo non è visibile nel trace (nessuna WR
-			 * intermedia); simuliamo con un secondo valore nel read plan.
-			 */
-			static const u16 rad_0045[] = { 0x703f };
-			static const u16 rad_0245[] = { 0x703f };
-			static const u16 rad_0445[] = { 0x703f, 0x7080 };
-			b43_test_plan_radio_reads(0x0645, rad_0645, 1);
-			b43_test_plan_radio_reads(0x08c9, rad_08c9, 1);
-			b43_test_plan_radio_reads(0x090b, rad_090b, 1);
-			b43_test_plan_radio_reads(0x0045, rad_0045, 1);
-			b43_test_plan_radio_reads(0x0245, rad_0245, 1);
-			b43_test_plan_radio_reads(0x0445, rad_0445, 2);
-
-			/*
-			 * 0x0017 / 0x0217 (radio bit 4 auto-set/clear HW).
-			 *
-			 * Fase set_channel matched (rxcal_radio_setup):
-			 *   [0] #34721/34742: bit 4=0 (WR=0x0000 precedente)
-			 *   [1] #38297/38318: idem
-			 *   [2] #39644/39678: bit 4 auto-SET → 0x0010
-			 *   [3] #39658/39692: idem 0x0010
-			 *   [4] #39661/39695: 0x0011 (dopo set bit 0 al [3])
-			 *
-			 * Fase post_cal_finalize iter 2 A3 (#39988/40009):
-			 *   [5] Post rxcal_radio_cleanup WR=0x0011 a #39930/37, ma HW
-			 *       auto-BOUNCE a 0x0002 tra #39930/37 e #39988/40009
-			 *       (bit 4 clear + bit 1 set: side-effect non tracciato,
-			 *       probabile "cal complete" flag HW).
-			 *
-			 * Iter 3 (#40584+) legge dal mirror stabile a 0 (slot [6] = 0
-			 * come guard; se rimosso, il mirror fornisce comunque 0).
-			 *
-			 * Fase rxiqcal_finalize radio setup (#52737+):
-			 *   [7] Baseline RAD.RD 0x0017/0x0217 nel loop — non usato per
-			 *       calcoli (val letto solo per peek).
-			 *   [8] MOD 0x0017 mask=0x0001 val=0x0001 → RD interno = 0x0010
-			 *       → WR = 0x0011 (HW auto-set bit 4 di nuovo dopo iter 3).
-			 *   [9] MOD 0x0017 mask=0x0002 val=0x0000 → RD interno = 0x0011
-			 *       → WR = 0x0011 (bit 1 già clear).
-			 */
-			static const u16 rad_0017[] = {
-				0, 0, 0x0010, 0x0010, 0x0011, 0x0002, 0,
-				0, 0x0010, 0x0011,
-			};
-			static const u16 rad_0217[] = {
-				0, 0, 0x0010, 0x0010, 0x0011, 0x0002, 0,
-				0, 0x0010, 0x0011,
-			};
-			b43_test_plan_radio_reads(0x0017, rad_0017,
-						  ARRAY_SIZE(rad_0017));
-			b43_test_plan_radio_reads(0x0217, rad_0217,
-						  ARRAY_SIZE(rad_0217));
-
-			/*
-			 * 0x0024 / 0x0224 (radio bit 0-1 HW-sticky).
-			 * Il vendor a #52770/#52803 emette WR val=0x0303 (MOD mask=
-			 * 0x0700 val=0x0300 → RD_val=0x0003). L'ultimo WR sul reg
-			 * era val=0x0000 (#50117), ma il HW mantiene bit 0-1 set.
-			 * Slot 0-3: matcha mirror sequence delle 4 letture pre-setup.
-			 * Slot 4: baseline setup peek (non usato per calcoli).
-			 * Slot 5: MOD interno RD → 0x0003 per WR=0x0303.
-			 */
-			static const u16 rad_0024[] = {
-				0x0003, 0x0003, 0x0003, 0x0000, 0x0000, 0x0003,
-			};
-			static const u16 rad_0224[] = {
-				0x0003, 0x0003, 0x0003, 0x0000, 0x0000, 0x0003,
-			};
-			b43_test_plan_radio_reads(0x0024, rad_0024,
-						  ARRAY_SIZE(rad_0024));
-			b43_test_plan_radio_reads(0x0224, rad_0224,
-						  ARRAY_SIZE(rad_0224));
-		}
-
-		/*
-		 * B5 RX AFE calibration polls (vendor #41909+): registro 0x0380
-		 * viene armato con un comando (bit 15 set) e poi pollato finché
-		 * il bit 15 torna clear. Poll counts per iter 1..24 hardcoded
-		 * dal trace d6220 ch36.
-		 */
-		{
-			#define B(n) 0x8000
-			#define D 0x0000
-			#define B5 B(0),B(0),B(0),B(0),B(0)
-			#define B10 B5,B5
-			#define B20 B10,B10
-			#define B38 B20,B10,B5,B(0),B(0),B(0)
-			#define B41 B38,B(0),B(0),B(0)
-			#define B68 B38,B20,B10
-			static const u16 poll_0x0380[] = {
-				/* Gruppo core 0 (iter 1-6): 39 42 42 69 11 39 */
-				B38, D, B41, D, B41, D, B68, D, B10, D, B38, D,
-				/* Gruppo core 1 (iter 7-12): 41 40 13 47 61 43 */
-				B38, B(0), B(0), D,
-				B38, B(0), D,
-				B10, B(0), B(0), D,
-				B38, B5, B(0), B(0), B(0), D,
-				B38, B20, B(0), B(0), D,
-				B41, B(0), D,
-				/* Gruppo core 2 (iter 13-18): 44 31 5 10 59 42 */
-				B41, B(0), B(0), D,
-				B20, B10, D,
-				B(0), B(0), B(0), B(0), D,
-				B5, B(0), B(0), B(0), B(0), D,
-				B38, B20, D,
-				B41, D,
-				/* Gruppo 4 RXIQ measurement (iter 19-24): 43 60 35 12 8 58 */
-				B38, B(0), B(0), B(0), B(0), D,
-				B38, B20, B(0), D,
-				B20, B10, B(0), B(0), B(0), B(0), D,
-				B10, B(0), D,
-				B5, B(0), B(0), D,
-				B38, B10, B(0), B(0), B(0), B(0),
-				B(0), B(0), B(0), B(0), B(0), D,
-			};
-			#undef B
-			#undef D
-			#undef B5
-			#undef B10
-			#undef B20
-			#undef B38
-			#undef B41
-			#undef B68
-
-			b43_test_plan_phy_reads(0x0380, poll_0x0380,
-				(int)(sizeof(poll_0x0380) / sizeof(u16)));
-		}
-
-		int r = b43_phyops_ac.switch_channel(&g_wldev, 36);
-		fprintf(stderr, "test: switch_channel returned %d\n", r);
+		g_wldev.mac_suspended = 0;
+		run_set_channel();
+	} else if (!strcmp(flow, "full")) {
+		run_full();
 	} else {
 		fprintf(stderr, "test: unknown flow '%s'\n", flow);
 		return 2;
@@ -914,5 +1006,6 @@ int main(int argc, char **argv)
 
 	fprintf(stderr, "test: plan consumption ---\n");
 	b43_test_plans_report(stderr);
+	b43_test_oracle_report();
 	return 0;
 }
