@@ -30,26 +30,40 @@ diff --git a/drivers/bcma/driver_chipcommon_pmu.c b/drivers/bcma/driver_chipcomm
 index 263ef6fa..469f6d9a 100644
 --- a/drivers/bcma/driver_chipcommon_pmu.c
 +++ b/drivers/bcma/driver_chipcommon_pmu.c
-@@ -156,6 +156,18 @@ static void bcma_pmu_pll_init(struct bcma_drv_cc *cc)
+@@ -156,6 +156,32 @@ static void bcma_pmu_pll_init(struct bcma_drv_cc *cc)
  			xtalfreq = 20000;
  		bcma_pmu2_pll_init0(cc, xtalfreq);
  		break;
++	case BCMA_CHIP_ID_BCM4352:
 +	case BCMA_CHIP_ID_BCM4360:
 +		/*
-+		 * The 4360 has its PLLCTL2/PLLCTL3 written here; values from
-+		 * an MMIO trace of the stock driver (agcombo). The 4352 is
-+		 * deliberately absent: its PLL is brought up by the PMU to a
-+		 * fixed state (PLLCTL3 = 0x00133333, read back on D6220 and
-+		 * DSL-3580L) that the vendor only reads, so op_init in the
-+		 * PHY driver verifies it there rather than writing.
++		 * PLLCTL2/PLLCTL3 on a cold attach, same values on both chips:
++		 * agcombo (4360) and D6220 (4352) both write 0x0c31 and 0x100e
++		 * with a full mask, then read them back later in the same
++		 * sequence (D6220 attach-to-bss-up #15, #23, then #164, #172).
++		 * A down->up capture only shows the reads, which is why these
++		 * writes were once thought to be 4360-only.
++		 *
++		 * The DSL-3580L, also a 4352, is a known exception: its stock
++		 * driver is missing the fractional vcofreq support (checked with
++		 * strings), leaves PLLCTL3 at the ROM value 0x00133333, and
++		 * works that way. Newer stock drivers do set vcofreq. Writing
++		 * these values there is therefore untested, not a fix.
 +		 */
 +		bcma_chipco_pll_write(cc, BCMA_CC_PMU_PLL_CTL2, 0x0c31);
 +		bcma_chipco_pll_write(cc, BCMA_CC_PMU_PLL_CTL3, 0x100e);
++		/*
++		 * Latch them: the PMU only takes the new PLL control values on
++		 * PLL_UPD. The stock driver raises it immediately after these
++		 * two writes. Same flush bcma_pmu2_pll_init0() already does for
++		 * the PMU15 path.
++		 */
++		bcma_pmu_set32(cc, BCMA_CC_PMU_CTL, BCMA_CC_PMU_CTL_PLL_UPD);
 +		break;
  	}
  }
  
-@@ -188,11 +202,27 @@ static void bcma_pmu_resources_init(struct bcma_drv_cc *cc)
+@@ -188,11 +216,27 @@ static void bcma_pmu_resources_init(struct bcma_drv_cc *cc)
  			  BCMA_RES_4314_WL_CORE_READY;
  		max_msk = 0x3FFFFFFF;
  		break;

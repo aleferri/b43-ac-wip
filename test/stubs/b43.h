@@ -144,6 +144,13 @@ struct b43_phy {
 	/* Some scratch code touches phy.dacbuf_cap / phy.lpf_cap directly. */
 	u8 dacbuf_cap;
 	u8 lpf_cap;
+	/*
+	 * Primo bring-up contro bring-up successivo. In-tree lo gestisce
+	 * b43_phy_init(): true fino al primo ops->init riuscito. Qui lo imposta
+	 * il flow, cosi' lo stesso codice si misura contro una cattura attach
+	 * o contro una down->up.
+	 */
+	bool do_full_init;
 };
 
 struct b43_wl {
@@ -152,6 +159,8 @@ struct b43_wl {
 
 struct b43_wldev {
 	struct b43_bus_dev *dev;
+	/* Come in-tree: profondita' di annidamento di b43_mac_suspend. */
+	int mac_suspended;
 	struct b43_wl *wl;
 	struct b43_phy phy;
 };

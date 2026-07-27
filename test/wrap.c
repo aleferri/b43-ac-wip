@@ -197,28 +197,222 @@ void b43_ac_fn_leave(const char *fn)
 
 void b43_test_trace_to(FILE *f) { trace_stream = f; }
 
+/* ============ Read oracle ============
+ *
+ * Invece di read plan scritti a mano, i valori di ritorno possono venire dalla
+ * cattura vendor: la N-esima lettura di un indirizzo restituisce la N-esima
+ * lettura di quello stesso indirizzo nella cattura, in ordine di episodio.
+ * Si attiva con AC_READ_ORACLE=<cattura passata per merge_retvals.py>.
+ *
+ * Attenzione a cosa questo dimostra: le read combaciano per costruzione, non
+ * perche' il driver le indovini. Il guadagno e' sulle *write derivate*, che
+ * dipendono dai valori letti e diventano confrontabili. E l'esaurimento di una
+ * coda (il driver legge un indirizzo piu' volte del vendor) e' un segnale, non
+ * un dettaglio: viene contato e riportato da b43_test_oracle_report().
+ */
+#define ORACLE_ADDRS	0x2000
+
+struct oracle_q {
+	u16 *v;
+	int n, cap, iter;
+};
+
+static struct oracle_q oracle_phy[ORACLE_ADDRS];
+static struct oracle_q oracle_rad[ORACLE_ADDRS];
+static int oracle_on;
+static long oracle_hits, oracle_miss_addr, oracle_miss_exhausted;
+
+static void oracle_push(struct oracle_q *tbl, unsigned addr, unsigned val)
+{
+	struct oracle_q *q;
+
+	if (addr >= ORACLE_ADDRS)
+		return;
+	q = &tbl[addr];
+	if (q->n == q->cap) {
+		int nc = q->cap ? q->cap * 2 : 8;
+		u16 *nv = realloc(q->v, (size_t)nc * sizeof(*nv));
+		if (!nv)
+			return;
+		q->v = nv;
+		q->cap = nc;
+	}
+	q->v[q->n++] = (u16)val;
+}
+
+static void oracle_init(void)
+{
+	static int tried;
+	const char *path;
+	char line[512];
+	FILE *f;
+
+	if (tried)
+		return;
+	tried = 1;
+
+	path = getenv("AC_READ_ORACLE");
+	if (!path || !*path)
+		return;
+	f = fopen(path, "r");
+	if (!f) {
+		fprintf(stderr, "wrap: oracle: cannot open %s\n", path);
+		return;
+	}
+	while (fgets(line, sizeof(line), f)) {
+		unsigned addr, val;
+		char *p;
+
+		if ((p = strstr(line, "PHY.RD")) != NULL) {
+			if (sscanf(p, "PHY.RD %*[^=]=%x %*[^=]=%x",
+				   &addr, &val) == 2)
+				oracle_push(oracle_phy, addr, val);
+		} else if ((p = strstr(line, "RAD.RD")) != NULL) {
+			if (sscanf(p, "RAD.RD %*[^=]=%x %*[^=]=%x",
+				   &addr, &val) == 2)
+				oracle_push(oracle_rad, addr, val);
+		}
+	}
+	fclose(f);
+	oracle_on = 1;
+	fprintf(stderr, "wrap: oracle attivo da %s\n", path);
+}
+
+/* Ritorna 1 e scrive *out se l'oracolo ha un valore per questo indirizzo. */
+static int oracle_take(struct oracle_q *tbl, u16 addr, u16 *out)
+{
+	struct oracle_q *q;
+
+	oracle_init();
+	if (!oracle_on || addr >= ORACLE_ADDRS)
+		return 0;
+	q = &tbl[addr];
+	if (!q->n) {
+		oracle_miss_addr++;
+		return 0;
+	}
+	if (q->iter >= q->n) {
+		oracle_miss_exhausted++;
+		return 0;
+	}
+	*out = q->v[q->iter++];
+	oracle_hits++;
+	return 1;
+}
+
+void b43_test_oracle_report(void)
+{
+	int a, addrs = 0, partial = 0;
+
+	if (!oracle_on)
+		return;
+	for (a = 0; a < ORACLE_ADDRS; a++) {
+		struct oracle_q *q[2] = { &oracle_phy[a], &oracle_rad[a] };
+		int i;
+
+		for (i = 0; i < 2; i++) {
+			if (!q[i]->n)
+				continue;
+			addrs++;
+			if (q[i]->iter != q[i]->n) {
+				partial++;
+				fprintf(stderr,
+					"oracle %s 0x%04x  consumate %d/%d\n",
+					i ? "radio" : "phy", a,
+					q[i]->iter, q[i]->n);
+			}
+		}
+	}
+	fprintf(stderr,
+		"oracle: %ld hit, %ld indirizzi senza voce, %ld code esaurite; "
+		"%d indirizzi noti, %d non consumati del tutto\n",
+		oracle_hits, oracle_miss_addr, oracle_miss_exhausted,
+		addrs, partial);
+}
+
 /* ============ PHY register accessors ============ */
 
 u16 __wrap_b43_phy_read(struct b43_wldev *dev, u16 reg)
 {
-	(void)dev;
-	fprintf(trace(), "cpu1 PHY.RD   addr=0x%04x val=UNDEFINED\n", reg);
+	struct read_plan *p;
+	u16 v;
 
-	struct read_plan *p = plan_lookup(phy_plans, phy_plans_n, reg);
+	(void)dev;
+
+	if (oracle_take(oracle_phy, reg, &v))
+		goto out;
+
+	p = plan_lookup(phy_plans, phy_plans_n, reg);
 	if (p && p->iter < p->cap) {
-		u16 v = p->results[p->iter];
+		v = p->results[p->iter];
 		p->iter++;
-		return v;
+		goto out;
 	}
-	/* plan absent or exhausted: fall through to write-mirror. */
-	return (reg < MIRROR_PHY_SZ) ? mirror_phy[reg] : 0;
+	/* oracolo e plan assenti o esauriti: cadi sul mirror delle write. */
+	v = (reg < MIRROR_PHY_SZ) ? mirror_phy[reg] : 0;
+out:
+	fprintf(trace(), "cpu1 PHY.RD   addr=0x%04x val=0x%04x\n", reg, v);
+	return v;
+}
+
+/*
+ * status_mask derivato dallo stato dei registri, non dalle op emesse. La tabella
+ * e' la stessa di reverse-tools/annotate_enables.py, cosi' lo stato che le
+ * REQUIRE dello scratch vedono e' lo stesso che l'annotatore ricava dalla
+ * cattura vendor. Prima era popolato solo MAC_EN: gli altri bit restavano a zero
+ * e le precondizioni che li leggono passavano a vuoto.
+ */
+static void phy_state_track(struct b43_wldev *dev, u16 reg, u16 val)
+{
+	struct b43_phy_ac *ac = dev->phy.ac;
+
+	if (!ac)
+		return;
+
+	switch (reg) {
+	case 0x0140:				/* CLASSCTL */
+		ac->status_mask &= ~B43_PHY_AC_STATE_RX_ANY;
+		if (val & 0x1)
+			ac->status_mask |= B43_PHY_AC_STATE_RX_CCK;
+		if (val & 0x2)
+			ac->status_mask |= B43_PHY_AC_STATE_RX_OFDM;
+		if (val & 0x4)
+			ac->status_mask |= B43_PHY_AC_STATE_RX_WAITED;
+		break;
+	case 0x0001:				/* BBCFG: RSTCCA */
+		if (val & 0x4000)
+			ac->status_mask |= B43_PHY_AC_STATE_CCA_RESET;
+		else
+			ac->status_mask &= ~B43_PHY_AC_STATE_CCA_RESET;
+		break;
+	case 0x06d4:
+	case 0x08d4:
+	case 0x0ad4: {
+		u16 bit = (reg == 0x06d4) ? B43_PHY_AC_STATE_CLIP_C0_DIS :
+			  (reg == 0x08d4) ? B43_PHY_AC_STATE_CLIP_C1_DIS :
+					    B43_PHY_AC_STATE_CLIP_C2_DIS;
+		if (val & 0x4000)
+			ac->status_mask |= bit;
+		else
+			ac->status_mask &= ~bit;
+		break;
+	}
+	case 0x1720:				/* front-end armed vs parked */
+		if (val & 0x0200)
+			ac->status_mask |= B43_PHY_AC_STATE_AFE_ON;
+		else
+			ac->status_mask &= ~B43_PHY_AC_STATE_AFE_ON;
+		break;
+	default:
+		break;
+	}
 }
 
 void __wrap_b43_phy_write(struct b43_wldev *dev, u16 reg, u16 val)
 {
-	(void)dev;
 	fprintf(trace(), "cpu1 PHY.WR   addr=0x%04x val=0x%04x\n", reg, val);
 	if (reg < MIRROR_PHY_SZ) mirror_phy[reg] = val;
+	phy_state_track(dev, reg, val);
 }
 
 void __wrap_b43_phy_mask(struct b43_wldev *dev, u16 reg, u16 mask)
@@ -263,11 +457,12 @@ void __wrap_b43_phy_set(struct b43_wldev *dev, u16 reg, u16 val)
  */
 void __wrap_b43_phy_maskset(struct b43_wldev *dev, u16 reg, u16 mask, u16 set)
 {
-	(void)dev;
 	fprintf(trace(), "cpu1 PHY.MOD  addr=0x%04x val=0x%04x mask=0x%04x\n",
 		reg, set, (u16)~mask);
-	if (reg < MIRROR_PHY_SZ)
+	if (reg < MIRROR_PHY_SZ) {
 		mirror_phy[reg] = (mirror_phy[reg] & mask) | set;
+		phy_state_track(dev, reg, mirror_phy[reg]);
+	}
 }
 
 void __wrap_b43_phy_force_clock(struct b43_wldev *dev, bool force)
@@ -280,16 +475,24 @@ void __wrap_b43_phy_force_clock(struct b43_wldev *dev, bool force)
 
 u16 __wrap_b43_radio_read(struct b43_wldev *dev, u16 reg)
 {
-	(void)dev;
-	fprintf(trace(), "cpu1 RAD.RD   addr=0x%04x val=UNDEFINED\n", reg);
+	struct read_plan *p;
+	u16 v;
 
-	struct read_plan *p = plan_lookup(rad_plans, rad_plans_n, reg);
+	(void)dev;
+
+	if (oracle_take(oracle_rad, reg, &v))
+		goto out;
+
+	p = plan_lookup(rad_plans, rad_plans_n, reg);
 	if (p && p->iter < p->cap) {
-		u16 v = p->results[p->iter];
+		v = p->results[p->iter];
 		p->iter++;
-		return v;
+		goto out;
 	}
-	return (reg < MIRROR_RADIO_SZ) ? mirror_radio[reg] : 0;
+	v = (reg < MIRROR_RADIO_SZ) ? mirror_radio[reg] : 0;
+out:
+	fprintf(trace(), "cpu1 RAD.RD   addr=0x%04x val=0x%04x\n", reg, v);
+	return v;
 }
 
 void __wrap_b43_radio_write(struct b43_wldev *dev, u16 reg, u16 val)
@@ -347,15 +550,17 @@ void __wrap_b43_radio_maskset(struct b43_wldev *dev, u16 reg, u16 mask, u16 set)
 u16 __wrap_b43_read16(struct b43_wldev *dev, u16 off)
 {
 	(void)dev;
-	fprintf(trace(), "cpu1 MMIO.RD  off=0x%04x  val=UNDEFINED\n", off);
-
 	struct read_plan *p = plan_lookup(mmio_plans, mmio_plans_n, off);
+	u16 v;
+
 	if (p && p->iter < p->cap) {
-		u16 v = p->results[p->iter];
+		v = p->results[p->iter];
 		p->iter++;
-		return v;
+	} else {
+		v = (off < MIRROR_MMIO_SZ) ? mirror_mmio[off] : 0;
 	}
-	return (off < MIRROR_MMIO_SZ) ? mirror_mmio[off] : 0;
+	fprintf(trace(), "cpu1 MMIO.RD  off=0x%04x  val=0x%04x\n", off, v);
+	return v;
 }
 
 void __wrap_b43_write16(struct b43_wldev *dev, u16 off, u16 val)
@@ -387,6 +592,11 @@ void __real_b43_actab_read_bulk(struct b43_wldev *dev,
 				size_t len, void *data);
 void __real_b43_actab_zerofill(struct b43_wldev *dev,
 			       u16 id, u16 offset, u8 width, size_t len);
+void __real_b43_actab_write_bulk_locked(struct b43_wldev *dev,
+					u16 id, u16 offset, u8 width,
+					size_t len, const void *data);
+void __real_b43_actab_zerofill_locked(struct b43_wldev *dev,
+				      u16 id, u16 offset, u8 width, size_t len);
 
 void __wrap_b43_actab_write_bulk(struct b43_wldev *dev,
 				 u16 id, u16 offset, u8 width,
@@ -403,6 +613,23 @@ void __wrap_b43_actab_zerofill(struct b43_wldev *dev,
 	fprintf(trace(), "cpu1 TBL.WR   id=0x%04x off=0x%04x len=%zu\n",
 		id, offset, len);
 	__real_b43_actab_zerofill(dev, id, offset, width, len);
+}
+
+void __wrap_b43_actab_write_bulk_locked(struct b43_wldev *dev,
+					u16 id, u16 offset, u8 width,
+					size_t len, const void *data)
+{
+	fprintf(trace(), "cpu1 TBL.WR   id=0x%04x off=0x%04x len=%zu\n",
+		id, offset, len);
+	__real_b43_actab_write_bulk_locked(dev, id, offset, width, len, data);
+}
+
+void __wrap_b43_actab_zerofill_locked(struct b43_wldev *dev,
+				      u16 id, u16 offset, u8 width, size_t len)
+{
+	fprintf(trace(), "cpu1 TBL.WR   id=0x%04x off=0x%04x len=%zu\n",
+		id, offset, len);
+	__real_b43_actab_zerofill_locked(dev, id, offset, width, len);
 }
 
 /*
@@ -583,14 +810,90 @@ void __wrap_b43_maccontrol_set(struct b43_wldev *dev, u32 mask, u32 set)
 	}
 }
 
+/*
+ * b43_mac_suspend/enable in-tree sono annidabili: tengono dev->mac_suspended e
+ * toccano MACCTL solo sulle transizioni 0->1 e 1->0. Il modello fedele e'
+ * quello con il contatore, e si attiva con AC_MAC_REFCOUNT=1.
+ *
+ * Il default resta senza contatore, cioe' una MAC.MCTRL per chiamata, perche' e'
+ * l'assunzione su cui i call site dello scratch sono stati trascritti: con il
+ * contatore attivo il MATCH di set_channel cade, e la differenza misura quanto
+ * di quelle op era artefatto del doppio conteggio. Non lasciare il default cosi'
+ * a rework finito.
+ *
+ * I flow entrano con il MAC sospeso, come ops->init e switch_channel nel driver
+ * vero; b43_test_mac_reset() riporta il contatore a quello stato.
+ */
+static int mac_refcount = -1;
+/* AC_MAC_TRACE=1 per il log delle transizioni. */
+static int mac_trace = -1;
+
+/*
+ * Lo stato d'ingresso dei flow e' MAC *acceso*: switch_channel viene chiamata da
+ * b43_phy_init dopo ops->init, e le sue coppie suspend/enable producono le write
+ * che il driver stock emette solo partendo da contatore 0. Verificato: con
+ * AC_MAC_REFCOUNT=1 e questo stato, set_channel combacia con 192 MAC.MCTRL,
+ * zero annidamenti e zero enable fuori posto.
+ *
+ * Lo stato logico del MAC segue il contatore, non le write emesse. Con il
+ * refcount attivo le transizioni che non scrivono MACCTL lasciavano status_mask
+ * indietro, e le REQUIRE dello scratch fallivano saltando blocchi interi: il
+ * flow si troncava invece di divergere.
+ */
+static void mac_state_sync(struct b43_wldev *dev)
+{
+	if (!dev->phy.ac)
+		return;
+	if (dev->mac_suspended > 0)
+		dev->phy.ac->status_mask &= ~B43_PHY_AC_STATE_MAC_EN;
+	else
+		dev->phy.ac->status_mask |= B43_PHY_AC_STATE_MAC_EN;
+}
+
+static int mac_rc(void)
+{
+	if (mac_refcount < 0) {
+		const char *e = getenv("AC_MAC_REFCOUNT");
+		mac_refcount = (e && *e == '1');
+		e = getenv("AC_MAC_TRACE");
+		mac_trace = (e && *e == '1');
+	}
+	return mac_refcount;
+}
+
+void b43_test_mac_reset(void) { }
+
 void __wrap_b43_mac_enable(struct b43_wldev *dev)
 {
-	b43_maccontrol_set(dev, ~B43_MACCTL_ENABLED, B43_MACCTL_ENABLED);
+	if (!mac_rc()) {
+		b43_maccontrol_set(dev, ~B43_MACCTL_ENABLED,
+				   B43_MACCTL_ENABLED);
+		return;
+	}
+	if (mac_trace)
+		fprintf(stderr, "mac: ENA %d -> %d\n",
+			dev->mac_suspended, dev->mac_suspended - 1);
+	if (--dev->mac_suspended == 0)
+		b43_maccontrol_set(dev, ~B43_MACCTL_ENABLED,
+				   B43_MACCTL_ENABLED);
+	if (dev->mac_suspended < 0)
+		fprintf(stderr, "wrap: mac_suspended = %d (enable senza suspend)\n",
+			dev->mac_suspended);
+	mac_state_sync(dev);
 }
 
 void __wrap_b43_mac_suspend(struct b43_wldev *dev)
 {
-	b43_maccontrol_set(dev, ~B43_MACCTL_ENABLED, 0);
+	if (!mac_rc()) {
+		b43_maccontrol_set(dev, ~B43_MACCTL_ENABLED, 0);
+		return;
+	}
+	if (mac_trace)
+		fprintf(stderr, "mac: SUS %d -> %d\n",
+			dev->mac_suspended, dev->mac_suspended + 1);
+	if (dev->mac_suspended++ == 0)
+		b43_maccontrol_set(dev, ~B43_MACCTL_ENABLED, 0);
+	mac_state_sync(dev);
 }
 
 void __wrap_b43_mac_suspend_enable(struct b43_wldev *dev) { (void)dev; }

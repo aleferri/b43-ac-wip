@@ -5,7 +5,7 @@
 | Doc | Cosa contiene |
 |---|---|
 | [`driver-status.md`](driver-status.md) | Stato attuale del bring-up: board/canale/BW supportati, mappa file→patch, procedura di rigenerazione, split upstream previsto della patch 0006, SALAME notevoli. |
-| [`porting-plan.md`](porting-plan.md) | Piano di porting del percorso `down → bss-up`. Struttura del flow vendor osservato nella trace `d6220-wl1-down-to-bss-up`, ordine di implementazione. |
+| [`porting-plan.md`](porting-plan.md) | Criterio di correttezza, gate attivi, cosa resta diviso per natura (trascrizione, derivazione, proprietà altrui), distinzione fra le fasi di bring-up. |
 | [`retrace-todo.md`](retrace-todo.md) | Stato copertura del bring-up per funzione (via i marcatori `B43_AC_FN`) e divergenze note ancora aperte (DSL: prefregs −2 scritture, afe_lpf_stage, rccal ~84%; tables per-contenuto; accessor vendor da verificare col kallsyms). |
 
 ## Analisi tecniche

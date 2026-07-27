@@ -32,4 +32,13 @@ void b43_test_mirror_radio_set(u16 reg, u16 val);
 void b43_test_mirror_phy_set(u16 reg, u16 val);
 void b43_test_trace_to(FILE *f);
 
+/*
+ * Riepilogo del read oracle (AC_READ_ORACLE): quante letture sono state
+ * servite dalla cattura e quali code non sono state consumate del tutto.
+ */
+void b43_test_oracle_report(void);
+
+/* Riporta il contatore MAC allo stato d'ingresso dei flow: MAC sospeso. */
+void b43_test_mac_reset(void);
+
 #endif

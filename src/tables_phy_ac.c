@@ -39,22 +39,25 @@ void b43_phy_ac_tbl_write_unlock(struct b43_wldev *dev, u16 saved)
  * b43_actab_write_bulk - write a contiguous run of values into one of the AC-
  * PHY's internal tables.
  */
-void b43_actab_write_bulk(struct b43_wldev *dev,
-			  u16 id, u16 offset, u8 width,
-			  size_t len, const void *data)
+/*
+ * Corpo comune dei bulk write. `peek` decide se rileggere il gate 0x019e prima
+ * della sequenza TABLE_ID/OFFSET/DATA.
+ *
+ * Il driver stock lo rilegge a ogni bulk emesso a gate sbloccato -- il valore
+ * finisce nel saved che verra' ripristinato piu' avanti -- ma non quando il
+ * chiamante tiene il gate bloccato per una serie di bulk: nel load tabelle di
+ * op_init la peek compare una volta al lock e non prima dei 23 bulk
+ * (attach-to-bss-up: TABLE_ID=1 senza PHY.RD 0x019e che lo precede).
+ */
+static void actab_write_bulk_common(struct b43_wldev *dev,
+				    u16 id, u16 offset, u8 width,
+				    size_t len, const void *data, bool peek)
 {
 	size_t i;
-	u16 gate;
+	u16 gate = 0;
 
-	/*
-	 * PHY.RD 0x019e prima di ogni actab: NON è una peek difensiva sul
-	 * lock. È il valore che verrà ripristinato al termine di tx_lpf
-	 * (l'ultimo salvataggio del gate 0x019e prima del restore finale).
-	 * Il blob ricalcola questo saved ad ogni bulk; il tracer wl-diag
-	 * lo registra come PHY.RD 0x019e prima della sequenza WR TABLE_ID/
-	 * OFFSET/DATA.
-	 */
-	gate = b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+	if (peek)
+		gate = b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
 	b43info(dev->wl,
 		"[TXLPFLOG] actab_wr id=0x%02x off=0x%04x width=%u len=%zu gate=0x%04x\n",
 		id, offset, width, (size_t)len, gate);
@@ -108,15 +111,29 @@ void b43_actab_write_bulk(struct b43_wldev *dev,
  * emette peek + relock idempotente PRIMA delle WR TABLE_ID/OFFSET/DATA.
  * Nel blob vendor questo è runtime-conditional; qui è una funzione dedicata.
  */
-void b43_actab_zerofill(struct b43_wldev *dev,
-			u16 id, u16 offset, u8 width, size_t len)
+void b43_actab_write_bulk(struct b43_wldev *dev,
+			  u16 id, u16 offset, u8 width,
+			  size_t len, const void *data)
+{
+	actab_write_bulk_common(dev, id, offset, width, len, data, true);
+}
+
+void b43_actab_write_bulk_locked(struct b43_wldev *dev,
+				 u16 id, u16 offset, u8 width,
+				 size_t len, const void *data)
+{
+	actab_write_bulk_common(dev, id, offset, width, len, data, false);
+}
+
+static void actab_zerofill_common(struct b43_wldev *dev, u16 id, u16 offset,
+				  u8 width, size_t len, bool peek)
 {
 	size_t i;
-	u16 gate;
+	u16 gate = 0;
 
-	/* Same prologue as b43_actab_write_bulk: see the note there on why
-	 * 0x019e is read before every actab access. */
-	gate = b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+	/* Stesso prologo di actab_write_bulk_common: vedi la nota su `peek`. */
+	if (peek)
+		gate = b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
 	b43info(dev->wl,
 		"[TXLPFLOG] actab_wr id=0x%02x off=0x%04x width=%u len=%zu gate=0x%04x\n",
 		id, offset, width, (size_t)len, gate);
@@ -150,6 +167,18 @@ void b43_actab_zerofill(struct b43_wldev *dev,
 			width, id, len);
 		break;
 	}
+}
+
+void b43_actab_zerofill(struct b43_wldev *dev,
+			u16 id, u16 offset, u8 width, size_t len)
+{
+	actab_zerofill_common(dev, id, offset, width, len, true);
+}
+
+void b43_actab_zerofill_locked(struct b43_wldev *dev,
+			       u16 id, u16 offset, u8 width, size_t len)
+{
+	actab_zerofill_common(dev, id, offset, width, len, false);
 }
 
 void b43_actab_write_bulk_reopen(struct b43_wldev *dev,
@@ -577,6 +606,12 @@ static const u32 papd_cal_scalars_tbl_core2_rev0[64] = {
  * papd_comp_rfpwr. Order matters in this block -- est_pwr and papd_comp_rfpwr
  * target the same cells -- so keep the sequence, and note that the per-core
  * groups are id-major, not core-major.
+ *
+ * The per-core entries are gated on num_cores, NOT on coremask: the d6220 is a
+ * 2x2 board (rxchain=3) and its vendor still loads the core-2 instances
+ * (0x80/0x81/0x82/0x87/0x88, attach-to-bss-up capture). Same rule as the noise
+ * shaping loop in phy_ac.c -- the tables are per channel PHY, not per active
+ * chain.
  */
 static const struct b43_phy_ac_table_desc b43_phy_ac_tables_rev0[] = {
 	TBL_POPULATED(0x01, 0, 16, TBL_SHARED, acphy_mcs_tbl_rev0,                "mcs"),
@@ -621,15 +656,19 @@ void b43_phy_ac_tables_init(struct b43_wldev *dev)
 	saved = b43_phy_ac_tbl_write_lock(dev);
 	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_tables_rev0); i++) {
 		t = &b43_phy_ac_tables_rev0[i];
-		if (t->core != TBL_SHARED && !((dev->phy.ac->coremask >> t->core) & 1))
+		if (t->core != TBL_SHARED && t->core >= dev->phy.ac->num_cores)
 			continue;
 
+		/*
+		 * Varianti _locked: il gate resta bloccato per tutto il loop,
+		 * quindi i singoli bulk non lo rileggono.
+		 */
 		if (t->zero)
-			b43_actab_zerofill(dev, t->id, t->offset, t->width,
-					   t->len);
+			b43_actab_zerofill_locked(dev, t->id, t->offset,
+						  t->width, t->len);
 		else if (t->data)
-			b43_actab_write_bulk(dev, t->id, t->offset, t->width,
-					     t->len, t->data);
+			b43_actab_write_bulk_locked(dev, t->id, t->offset,
+						    t->width, t->len, t->data);
 	}
 
 	b43_phy_ac_tbl_write_unlock(dev, saved);
