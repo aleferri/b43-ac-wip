@@ -73,6 +73,29 @@ Test set utile per il post-MVP §"TX power control reale".
 funzionerà identicamente sui due board. Se solo uno dei due funziona dopo
 il porting, è bug nel singolo banco, non nel driver.
 
+## Catture wl-diag: quale usare per cosa
+
+| file | valori letti | inizio | fase | uso |
+|---|---|---|---|---|
+| `attach-to-bss-up-ch36-bw20` | **5074** | `#1` | primo bring-up | oracolo e gate del flow `full` |
+| `down-to-bss-ch36-bw20` | **5152** | `#1` | bring-up successivo | oracolo e gate del flow `switch_channel` con `AC_FIRST_INIT=0` |
+| `attach-to-bss-ch44` | 0 | `#78829` | primo bring-up, ch44 | solo diff per canale |
+| `attach-to-bss-ch36-bw40` | 0 | `#55155` | primo bring-up, BW40 | solo diff per bandwidth |
+| `down-to-bss-up_delay_only` | 0 | `#50388` | bring-up successivo | **solo i record DELAY**: sottoconta le op, vedi `docs/retrace-todo.md` |
+
+Le prime due sono le sole complete e con i valori letti, e sono quelle da usare
+per qualunque confronto op-per-op. Le altre partono da un episodio arbitrario --
+sono finestre, non tracce complete -- e senza i valori letti un confronto
+verifica indirizzi e classi ma non cio' che il driver *calcola*.
+
+Il flow e la fase devono corrispondere: `full` e' un primo bring-up,
+`switch_channel` con `AC_FIRST_INIT=0` un bring-up successivo. Confrontare un flow
+con la cattura dell'altra fase produce divergenze che non sono bug -- per
+esempio il cap del TX-LPF, che viene dall'rccal di `op_init`.
+
+La `down-to-bss-up_delay_only` contiene record `DELAY usec=`: e' la sola fonte
+in repo sulla temporizzazione, ed e' inutilizzabile per i conteggi di op.
+
 ## Diff sintetico SROM raw vs DSL-3580L
 
 Identici word-per-word su `srom[8..15]` (chip identity), `srom[48]`

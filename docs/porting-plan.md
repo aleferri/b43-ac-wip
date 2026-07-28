@@ -18,15 +18,38 @@ bring-up successivo, che è una fase distinta — vedi *Fasi* sotto.
 
 Da tenere verdi a ogni modifica. Comandi in `README.md` e `test/README.md`.
 
+Ogni flow va confrontato con la cattura della **sua** fase. Il flow `full`
+esegue un primo bring-up, `switch_channel` con `AC_FIRST_INIT=0` un bring-up
+successivo: scambiarli produce divergenze che non sono bug del driver.
+
 | gate | oracolo | atteso |
 |---|---|---|
-| `set_channel` d6220 ch36 BW20 | `attach-to-bss-ch36`, range `32887:55154` | MATCH (22268/22268) |
+| flow `full` (primo bring-up) | `attach-to-bss-up-ch36-bw20` + oracolo, range `50:30172` | prima divergenza @22478 su 25013 |
+| flow `switch_channel` con `AC_FIRST_INIT=0` (bring-up successivo) | `down-to-bss-ch36-bw20` + oracolo da `#653`, range `653:26671` | prima divergenza @2177 su 21007 |
 | `tables_init` | `attach-to-bss-up`, primo bring-up | 3714/3714, zero gap |
 | `rfkill` d6220 e agcombo | `down-to-bss` | 100% per funzione, zero gap |
 | `init_regs` primo bring-up | `attach-to-bss-up` | 17/17 |
-| `init_regs` bring-up successivo | `down-to-bss` | 17/17 d6220, 33/33 agcombo |
+| `init_regs` bring-up successivo | `d6220/down-to-bss-ch36-bw20`, `agcombo/down-to-bss-ch36` | 33/33 su entrambe |
 | SROM rev 11 | `sprom-rev11/harness` | 77/74/75 PASS, 0 FAIL |
 | build | `-O2 -Wall -Wextra` | zero warning |
+
+**Usare l'oracolo, non i read plan a mano.** I plan sono valori scritti a mano
+per far girare un flow senza valori letti veri, e hanno un difetto strutturale:
+il gate `switch_channel` confronta indirizzi e classi ma non i valori letti (la
+cattura di riferimento li ha a `UNDEFINED`), quindi un plan sbagliato non viene
+intercettato. E' andata cosi' per `0x0403`, dove il plan riproduceva un ciclo con
+la condizione invertita, e per i sette plan radio con i bit alti a zero.
+
+Da quando i coefficienti RXIQ si calcolano invece di essere costanti, l'oracolo
+non e' piu' un'alternativa: senza valori letti veri il solve restituisce zero.
+Per i flow nuovi usare `AC_READ_ORACLE` e non aggiungere plan.
+
+Con `AC_READ_ORACLE` i valori letti vengono dalla cattura invece che dai read
+plan a mano. Le code sono per indirizzo e in ordine, quindi per un flow che
+esegue una fetta della cattura serve `AC_READ_ORACLE_FROM=<episodio>`: senza,
+il flow consuma i valori delle letture che precedono la fetta. Per
+`switch_channel` sul d6220 la fase parte a `#653` della
+`down-to-bss-ch36-bw20`.
 
 Il flow `full` (`./ac_trace full d6220`) esegue la catena continua nell'ordine
 di `b43_phy_init` — `switch_analog` → `software_rfkill` → `ops->init` →

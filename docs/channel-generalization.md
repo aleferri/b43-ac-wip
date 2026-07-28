@@ -2,8 +2,8 @@
 
 ## Contesto
 
-Il draft 1 di `set_channel` è validato op-per-op contro il trace vendor
-`d6220/attach-to-bss-ch36` (22268/22268 op). Molti commenti nel codice segnano
+Il draft 1 di `switch_channel` è validato op-per-op contro il trace vendor
+`d6220/attach-to-bss-up-ch36-bw20`. Molti commenti nel codice segnano
 alcuni blocchi come `SALAME: valido solo per D6220 ch36` (bulk LUT hardcoded,
 sequenze radio chain, coefficienti RXIQ). La domanda: quanto di quello che
 sembra channel-specific lo è davvero, e quanto è già invariant?
@@ -11,7 +11,7 @@ sembra channel-specific lo è davvero, e quanto è già invariant?
 ## Metodo
 
 Diff a 3 vie tra i 3 trace vendor disponibili in `router-data/d6220/`:
-- `attach-to-bss-ch36.txt`      — canale 36, BW20
+- `attach-to-bss-up-ch36-bw20.txt` — canale 36, BW20 (con valori letti)
 - `attach-to-bss-ch44.txt`      — canale 44, BW20
 - `attach-to-bss-ch36-bw40.txt` — canale 36, BW40
 
@@ -40,7 +40,7 @@ Cross-trace identical (nessuna formula necessaria):
    identici sui 3 trace.
 3. **`lut_0060[128]`** — LUT secondaria idem.
 4. **`lut_0021[24]`** — u32 flag table idem.
-5. **Prime 214 op consecutive** del set_channel body (radio init pre-tuning).
+5. **Prime 214 op consecutive** del switch_channel body (radio init pre-tuning).
 6. Tutta la sequenza calibrazione lunga (`set_channel_calibrations`,
    ~15'000 op: post_cal_finalize + rxiqcal loop + rxcal_afe + gainctrl_final).
 
@@ -124,7 +124,7 @@ op imputabili al cambio BW20→BW40. Aree:
    bw-derived.
 
 Prima del bring-up conviene rifiutare esplicitamente BW40 con
-`-EOPNOTSUPP` in `set_channel`, aggiungendo BW40 solo dopo che BW20
+`-EOPNOTSUPP` in `switch_channel`, aggiungendo BW40 solo dopo che BW20
 funziona in modo stabile.
 
 ## Cosa è runtime-measured (non chan-dependent nel senso "serve tabella")
@@ -154,7 +154,7 @@ Sicurezze:
 
 1. Rimuovere i commenti `SALAME: valido solo per D6220 ch36` dai bulk LUT
    `lut_0040`, `lut_0060`, `lut_0021` (verificato: chan/BW-invariant).
-2. Aggiungere `EOPNOTSUPP` esplicito su BW40 in `set_channel`.
+2. Aggiungere `EOPNOTSUPP` esplicito su BW40 in `switch_channel`.
 3. Restringere la lista di canali supportati al set testabile e
    documentare che ch36 è validato op-per-op, ch44 dovrebbe funzionare
    (95%+ op identici), altri canali sono untested.

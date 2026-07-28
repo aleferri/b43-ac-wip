@@ -9,7 +9,6 @@ Usage:
     compare.py <vendor.txt> <test.out> [OPTIONS]
 
 --range LO:HI     keep only vendor lines whose episode # is within [LO,HI]
---squash-poll     collapse runs of identical PHY.RD 0x0270 into one line
 --auto-align     find the offset in <test> that best matches <vendor>[0]
                   by scanning for the first common op; useful when the
                   test flow does a prologue (save-gain, save-tone, ...)
@@ -187,20 +186,6 @@ def load_test(path):
             out.append(normalize_op(m.group(1)))
     return out
 
-def squash_poll(ops, poll_re=re.compile(r'^PHY\.RD\s+addr=0x0270\s')):
-    out = []
-    prev = None
-    for op in ops:
-        if poll_re.match(op) and prev == 'poll':
-            continue
-        if poll_re.match(op):
-            out.append(canon_values('PHY.RD  addr=0x0270 val=UNDEFINED  [poll]'))
-            prev = 'poll'
-        else:
-            out.append(op)
-            prev = op
-    return out
-
 def find_offset(test, target_op):
     """Return the index of `target_op` in test, or -1.
 
@@ -217,7 +202,6 @@ def main():
     ap.add_argument('vendor')
     ap.add_argument('test')
     ap.add_argument('--range', help='LO:HI vendor episode range')
-    ap.add_argument('--squash-poll', action='store_true')
     ap.add_argument('--auto-align', action='store_true',
                     help='skip test prologue by aligning on vendor[0]')
     ap.add_argument('--align-on', help='align test on this exact op string')
@@ -245,10 +229,6 @@ def main():
         else:
             print(f"aligning test at offset {off} (auto: '{vendor[0]}')")
             test = test[off:]
-
-    if args.squash_poll:
-        vendor = squash_poll(vendor)
-        test = squash_poll(test)
 
     print(f"vendor: {len(vendor)} ops")
     print(f"test:   {len(test)} ops")

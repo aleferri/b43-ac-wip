@@ -88,7 +88,7 @@ Dettagli e note di derivazione: est_pwr e max index in
 - `aga0..2` — guadagno antenna 5 GHz per antenna (quarti di dB). ~
 
 ### Front-end / configurazione del path
-- `femctrl` — tipo/pilotaggio front-end module; nel driver è assunto `==6` (tabella FEM applicata incondizionatamente), **non** letto da NVRAM. ~
+- `femctrl` — tipo/pilotaggio front-end module. **Ora è letto**: `set_regtbl_on_femctrl` porta la tabella di controllo FEM di femctrl 6 (la sola osservata, condivisa dalle tre board) e si ferma con un warning se il valore non corrisponde, invece di applicarla incondizionatamente. Vale 6 su d6220, DSL-3580L e agcombo. Il campo è in `struct ssb_sprom` come `u8 femctrl`, letto per nome dal filler NVRAM — vedi la nota sul prerequisito di build in `retrace-todo.md`. ~
 - `epagain{2g,5g}` — guadagno PA esterno. ~
 - `pdgain{2g,5g}` — guadagno power-detector. ~
 - `papdcap{2g,5g}` — capacità pre-distorsione PAPD. ~

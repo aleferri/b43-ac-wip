@@ -22,7 +22,7 @@ Ordine tipico: decodifica → fold RETVAL → collapse → (reorder) → confron
   allineare due catture.
 - **compare.py** (in `test/`) — **il confronto canonico**: match posizionale per
   sequenza tra l'output dell'harness e la cattura vendor grezza. È la misura di
-  correttezza del port (gate di regressione: `set_channel d6220` = 22268/22268).
+  correttezza del port (gate di regressione: `switch_channel d6220` = 22268/22268).
 
 ## Analisi
 

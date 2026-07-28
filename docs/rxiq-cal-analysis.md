@@ -76,13 +76,16 @@ diverso al segnale ricevuto (es. accoppiamento da una catena specifica),
 permettendo all'algoritmo di decomporre lo squilibrio IQ in componenti
 ortogonali.
 
-Evidenza a supporto: la misura con tone_mode=0 (call #4) è seguita
-immediatamente dalla fase di precisione senza cambio di gain. Se
-tone_mode=0 fosse "tono spento", la call #4 sarebbe una misura di noise
-floor di riferimento, e le call #1–#3 isolerebbero ognuna una componente
-del segnale di loopback. Questa struttura ha un diretto parallelo col
-metodo rt2800, dove `g_imb` (guadagno) e `ph_rx` (fase) vengono
-decomposti da misure separate di `sigma_i`, `sigma_q` e `r_iq`.
+Osservazione: la misura con tone_mode=0 (call #4) è seguita immediatamente
+dalla fase di precisione senza cambio di gain.
+
+L'ipotesi che tone_mode=0 fosse "tono spento" — e quindi la call #4 una misura
+di riferimento del rumore, con le #1–#3 a isolare le componenti del loopback —
+è stata **falsificata** dai valori misurati (vedi P1 in §7): a tone_mode=0 gli
+accumulatori sono cinque volte più grandi, non più piccoli. Il parallelo col
+metodo rt2800, dove `g_imb` e `ph_rx` si decompongono da misure separate di
+`sigma_i`, `sigma_q` e `r_iq`, resta una analogia possibile per la struttura a
+quattro misure, ma non poggia più su quella lettura di tone_mode.
 
 **Evidenza contraria da escludere**: se tone_mode fosse un semplice
 on/off, basterebbero 2 call (tono acceso + tono spento), non 4 con valori
@@ -131,13 +134,20 @@ Osservazioni:
 | Campioni per misura | 0x4000 (fisso) | 0x0400 (sweep) → 0x4000 (precisione) |
 | Registri accumulatore | 0x12b/0x12a/0x129 (cmd) | 0x0272/0x0271/0x0270 (cmd) |
 | Layout risultati | 3 × 32b per core (i²,q²,iq) a 0x06c0+core×0x200 | idem, confermato |
-| Coefficienti | 2 per core (a, b) 10-bit, 0x9a-0x9d | 4 per core, 16-bit, 0x0720-0x0729 |
-| Formato coeff | gain+fase fusi in a/b | gain e fase presumibilmente separati |
+| Coefficienti | 2 per core (a, b) 10-bit, 0x9a-0x9d | **2 per core (a, b) 10-bit, 0x06a0/0x06a1 + core×0x200** |
+| Formato coeff | gain+fase fusi in a/b | idem, confermato |
 
 L'estimator HW (§readback 0x06c0) usa lo stesso layout dell'N-PHY — la
 trace mostra lo stesso ordine di lettura hi-before-lo per le 3 coppie. La
-differenza è a monte (sweep a 4 configurazioni) e a valle (4 registri
-invece di 2).
+differenza è a monte: sweep a 4 configurazioni invece di una misura sola.
+A valle no: i coefficienti sono due per core come sull'N-PHY, e il solve in
+`b43_phy_ac_rx_iq_comp_update` li riproduce bit-exact contro l'agcombo.
+
+La riga precedente diceva "4 per core, 16-bit, 0x0720-0x0729". È sbagliata:
+`0x0720-0x0729` è la pagina AFE — sono i registri che `switch_analog` salva nel
+preambolo di bring-up — e nelle catture compare 50-60 volte per quel motivo,
+non come coefficienti. I coefficienti sono a `0x06a0`/`0x06a1` (+`core×0x200`),
+scritti 4-5 volte per cattura, una per aggiornamento.
 
 
 ## 6. Ipotesi dell'algoritmo completo
@@ -184,24 +194,36 @@ Il debug helper (`b43_phy_ac_rxiq_est_debug`) logga i 3 accumulatori per
 core a ogni tone_mode. Le seguenti predizioni discriminano tra questa
 ipotesi e le alternative.
 
-### P1: tone_mode=0 è noise floor
+### P1: tone_mode=0 è noise floor — **FALSIFICATA**
 
-Se tone_mode=0 spegne il tono, allora `i_pwr` e `q_pwr` alla call #4
-devono essere ordini di grandezza più piccoli che alle call #1–#3, e
-`iq_prod ≈ 0`.
+Gli accumulatori del core 0 nella cattura agcombo rescan (che ha i retval):
 
-Se falsificata (valori comparabili): tone_mode non è un interruttore
-ma un selettore di fase, e tutte e 4 le misure vedono segnale.
+| tone_mode | i_pwr | q_pwr | iq_prod |
+|---|---|---|---|
+| 0x4 | 9 499 843 | 9 691 680 | 20 787 |
+| 0x2 | 8 878 062 | 9 150 008 | −142 124 |
+| 0x1 | 5 726 503 | 7 049 264 | −49 295 |
+| 0x0 | **47 717 674** | **58 550 641** | 560 273 |
 
-### P2: i_pwr e q_pwr sono dello stesso ordine a tone_mode=4
+A tone_mode=0 la misura e' **cinque volte piu' grande**, non ordini di
+grandezza piu' piccola. Il tono non e' spento: quella e' la configurazione con
+il segnale piu' forte delle quattro. Nessuna delle quattro misure e' un noise
+floor.
 
-Se il register-map è corretto (coppie hi/lo → i², q², iq come nell'N-PHY),
-a tone_mode=4 (tono a piena potenza, entrambi i path) ci si aspetta
-`i_pwr ≈ q_pwr` con differenza < 20% (lo squilibrio tipico di un chip è
-pochi percento).
+Nota anche che le quattro modalita' non sono una scala monotona di ampiezza
+(9.5M, 8.9M, 5.7M, 47.7M per 4/2/1/0), quindi `tone_mode` non e' un codice di
+attenuazione. Cosa selezioni resta da stabilire.
 
-Se falsificata (uno dei due ~0): le coppie hi/lo sono assegnate in modo
-sbagliato (swap i²↔iq o i²↔q²).
+### P2: i_pwr e q_pwr sono dello stesso ordine a tone_mode=4 — **CONFERMATA**
+
+A tone_mode=4: `i_pwr` = 9 499 843, `q_pwr` = 9 691 680, differenza **2%**,
+dentro il <20% previsto. E `iq_prod` e' tre ordini di grandezza piu' piccolo in
+tutte e quattro le modalita', come si aspetta da un prodotto incrociato su un
+chip poco squilibrato.
+
+Il mapping delle coppie hi/lo e' quindi corretto, coerentemente con quanto dice
+`b43_phy_ac_rx_iq_comp_update`, il cui solve riproduce bit-exact i coefficienti
+che il driver stock scrive.
 
 ### P3: iq_prod è signed e piccolo rispetto a i_pwr
 
@@ -329,3 +351,136 @@ solve confermato; il flow `rxiq_comp` del test harness
 (`./ac_trace rxiq_comp agcombo`) inietta i 36 valori raw degli
 accumulatori come read plan e verifica che il codice emetta esattamente
 le sei scritture vendor, azzeramento iniziale compreso.
+
+## 8. Banco 0x0910 / 0x0b10
+
+Il banco viene scritto durante questa fase, ma non c'e' evidenza che consumi il
+risultato della misura -- vedi "Cosa non e' il valore" sotto. Sta qui per
+vicinanza nel flusso, non per dipendenza dimostrata.
+
+Struttura accertata: N-1 banchi per N core, uno per coppia adiacente, collocati
+nella pagina del core di indice piu' alto -- `0x0910` per la coppia (0,1),
+`0x0b10` per la (1,2). `0x0710` non esiste su nessuna board, quindi non e' una
+grandezza per-core. Quattro registri per banco, lo stesso scalare in entrambi i
+byte, ordine pari hi-poi-lo e dispari lo-poi-hi. Write-only: il driver stock non
+lo rilegge mai.
+
+### Cosa non e' il valore
+
+Ipotesi **respinta**: `b // 10`, dove `b` e' il coefficiente RXIQ comp del core
+alto della coppia. Correlava su 10 punti di 13, ma i tre controesempi la
+smentiscono da entrambi i lati:
+
+    ch36    #52556   banco = 0   con b del core 1 = 55, scritto a #52255
+    DSL     #155080  banco = 0   con b del core 1 = 48, scritto a #154855
+    d2u     #3155    banco = 3   con tutti i coefficienti a zero
+
+Non e' ordine di esecuzione: nella ch36 e nel DSL il coefficiente e' scritto
+centinaia di episodi prima del banco. La correlazione era temporale -- banco e
+coefficienti partono da zero e crescono insieme.
+
+Altri candidati esclusi provando contro le catture:
+
+- il base index idle-TSSI (`0x0645 + core*0x200`): sul d6220 darebbe la
+  differenza giusta fra core (5) ma sull'agcombo -10 dove il banco vale 6, e sul
+  DSL -5 dove vale 0;
+- ogni coppia di registri per-core `0x06xx`/`0x08xx` letta o scritta prima del
+  banco, provate tutte automaticamente;
+- i campi SROM per-core (`pdoffset*`, `rxgainerr*`): identici su tutte e tre le
+  board, quindi darebbero lo stesso valore su tutte;
+- `0x073d + core*0x200`, che viene letto per core ma legge **zero in tutte e
+  quattro le catture**.
+
+Il port lo scrive come costante (0 sul 4352, 0xf sul 4360) e riproduce solo la
+prima occorrenza di alcune catture. La funzione si chiamava
+`noise_floor_clear`, nome senza fonte, ora `prog_bank_0910`.
+
+### Cross-interferenza fra core: ipotesi non sostenuta
+
+L'indirizzamento N-1 per coppie adiacenti suggerisce una compensazione fra core,
+ma tre fatti la contraddicono.
+
+Primo: il driver stock scrive **lo stesso scalare in tutti e otto i campi byte**
+del banco. Un coefficiente di accoppiamento e' complesso, con modulo e fase, e
+per direzione: se il banco portasse fasori i campi sarebbero diversi. Uno
+scalare uniforme e' un azzeramento o una soglia.
+
+Secondo: **non esiste una misura di leakage fra core nella cattura**. Gli arm del
+tono (`0x0394` = `0x0110`/`0x0111`/`0x0112`, indice di core) stanno a
+`#11930-#17774`; le letture degli accumulatori a `#29862-#31149`, dodicimila
+episodi dopo, in una fase separata. Non c'e' nessun punto in cui si legge
+l'accumulatore di un core mentre un altro core ha il tono.
+
+Terzo: nessuna espressione geometrica sui coefficienti riproduce i valori.
+Testate su tre punti (`nf` = 6, 9, 5):
+
+    |v_high|                  101.6  172.6   72.0
+    |v_low|                   110.0  101.6   77.7
+    |v_high - v_low|           98.6   71.6   33.8
+    |v_high| - |v_low|         -8.4   71.0   -5.7
+    atan2(a,b) gradi           53.8   57.8  -37.7
+    delta fase gradi           55.4    4.0  -25.8
+    rapporto moduli x10         9.2   17.0    9.3
+    sqrt(|prodotto scalare|)   79.7  132.3   71.0
+
+La piu' vicina, `|v_high| / 17`, da' 6, 10, 4. L'unica che torna esatta resta
+`b_high // 10`, che e' aritmetica e non geometrica -- il che e' evidenza
+**contro** la lettura come accoppiamento, non a favore di una formula.
+
+Nota metodologica: l'ipotesi cross-core e' rimasta a lungo in piedi sul solo
+indirizzamento, e diversi tentativi hanno adattato numeri a quella premessa
+senza verificarla. Prima di ripartire da qui, stabilire cosa sia il banco.
+
+## 9. Stato reale del port: la calibrazione e' un replay
+
+Il solve dei coefficienti esiste e la sua matematica e' verificata bit-exact
+(`b43_phy_ac_rx_iq_comp_update`), ma **non viene mai invocato**: zero marker
+`FN` nel flow completo. L'unico chiamante e' `b43_phy_ac_rxiqcal()`, che ritorna
+subito perche' il suo register-map non e' compilato.
+
+I coefficienti che il port scrive sono costanti:
+
+    src/phy_ac.c  static const u16 coeffs[2][2] = {
+                      { 0x03f2, 0x004c },   core 0
+                      { 0x03db, 0x0037 },   core 1
+                  };
+
+e non combaciano con la cattura di attach del d6220, che scrive `0x03ef`,
+`0x004d`, `0x03d4`, `0x003b`. Sono vicini ma diversi di pochi LSB, coerente con
+l'essere presi da una cattura diversa: i coefficienti sono **misurati**, quindi
+variano di sessione in sessione.
+
+Conseguenze:
+
+- il gate `switch_channel` non verifica la calibrazione, verifica che il port
+  riproduca le op di *una* sessione. Su qualunque altra sessione i coefficienti
+  divergerebbero, e con loro tutto cio' che li consuma;
+- ogni indagine su grandezze *derivate* dai coefficienti (il banco 0x0910 in
+  §8, per esempio) studia valori che il port non calcola;
+- collegare il solve e' la modifica che trasforma questa fase da replay a
+  calibrazione, e **non** rompe il confronto op-per-op: lo rafforza. L'oracolo
+  serve le stesse letture del driver stock, quindi dallo stesso ingresso il
+  solve deve produrre lo stesso coefficiente, e il valore combacerebbe per
+  calcolo invece che per copia.
+
+### Verifica offline del solve sui valori d'attach
+
+Eseguito a mano sui valori che l'oracolo serve nella cattura d6220
+attach-to-bss-up, sommando i **due** round di stima come il codice documenta:
+
+    core 0 (accum 0x06c0-0x06c5)   a = -17   b = 77   ->  0x3ef  0x04d
+    core 1 (accum 0x08c0-0x08c5)   a = -44   b = 59   ->  0x3d4  0x03b
+
+Il driver stock scrive `0x3ef 0x04d` e `0x3d4 0x03b`. **Bit-exact su entrambi i
+core.** Con un solo round di stima il core 0 darebbe `a = -19, b = 76`, quindi
+la somma dei due round e' anche l'aggregazione giusta.
+
+Il che significa che collegare il solve e' una modifica a rischio zero sul
+gate: sostituisce due costanti con un calcolo che, sugli stessi ingressi,
+produce le stesse uscite -- e che a differenza delle costanti funziona anche su
+un'altra sessione.
+
+Il register-map che manca a `b43_phy_ac_rxiqcal()` resta l'unico ostacolo al
+percorso completo, ma non serve per questo passo: gli accumulatori sono gia'
+letti da `iqcal_meas_post_dds_apply_v2` subito prima di
+`rxiq_apply_coefficients`, che e' dove stanno le costanti.

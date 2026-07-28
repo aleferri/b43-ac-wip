@@ -75,20 +75,20 @@ make                # compila ac_trace
 ```
 
 Flow disponibili (`argv[1]`): `rxiq_est_debug` (default), `rxiq_comp`,
-`rxiqcal`, `op_init`, `rfkill`, `set_channel`. Board (`argv[2]`): `d6220`
+`rxiqcal`, `op_init`, `rfkill`, `switch_channel`. Board (`argv[2]`): `d6220`
 (default), `agcombo`, `dsl`.
 
-`set_channel` è il flow più ampio: guida l'intera pipeline
+`switch_channel` è il flow più ampio: guida l'intera pipeline
 `b43_phy_ac_op_switch_channel`. Su D6220 ch36 emette ~22k operazioni e
 consuma per intero ogni read plan registrato in `main.c`:
 
 ```sh
-./ac_trace set_channel d6220 > trace.switch.d6220.out
+./ac_trace switch_channel d6220 > trace.switch.d6220.out
 # a fine run, su stderr, la plan-consumption deve mostrare iter=N/N per
 # ogni indirizzo: nessun underrun (flow terminato in anticipo) né overrun.
 ```
 
-Nota: il nome del flow da passare sulla riga di comando è `set_channel`;
+Nota: il nome del flow da passare sulla riga di comando è `switch_channel`;
 `b43_phy_ac_op_switch_channel` è il nome della op kernel che il flow
 invoca, non la stringa da passare a `argv[1]`.
 
@@ -99,20 +99,47 @@ correlatore non va in timeout.
 
 ## Confrontare con la vendor trace
 
-### Flow `set_channel` completo (MATCH esatto contro ch36)
+### Flow `full` con oracolo (la validazione canonica)
 
-La validazione canonica dell'intero flow confronta la trace grezza di
-`set_channel d6220` contro la cattura vendor **ch36 grezza**
-`router-data/d6220/wl-diag-wl1-attach-to-bss-ch36.txt` (NON i derivati
-collassati sotto `reverse-output/ch36-*`, NON la `down→bss-up` intera):
+Confronta la trace di `full d6220` contro
+`router-data/d6220/wl-diag-wl1-attach-to-bss-up-ch36-bw20.txt`, la sola cattura
+ch36 completa e con i valori letti. `AC_READ_ORACLE` serve i valori veri, quindi
+il confronto verifica anche cio' che il driver *calcola* e non solo la sequenza.
 
 ```sh
-./ac_trace set_channel d6220 > trace.switch.d6220.out
-python3 compare.py \
-    ../router-data/d6220/wl-diag-wl1-attach-to-bss-ch36.txt \
-    trace.switch.d6220.out \
-    --range 32887:55154 --auto-align
+python3 ../reverse-tools/merge_retvals.py \
+    ../router-data/d6220/wl-diag-wl1-attach-to-bss-up-ch36-bw20.txt /tmp/att.merged.txt
+AC_MAC_REFCOUNT=1 AC_READ_ORACLE=/tmp/att.merged.txt \
+    ./ac_trace full d6220 > trace.full.d6220.out
+python3 compare.py /tmp/att.merged.txt trace.full.d6220.out --range 50:30172
 ```
+
+### Flow `switch_channel`: e' il bring-up **successivo**
+
+Il nome inganna -- l'op del driver e' `op_switch_channel` e quello che esegue e'
+un bring-up successivo, non l'impostazione di un canale su un PHY gia' su.
+Va quindi confrontato con `down-to-bss-ch36-bw20`, non con l'attach, e con
+`AC_FIRST_INIT=0`:
+
+```sh
+python3 ../reverse-tools/merge_retvals.py \
+    ../router-data/d6220/wl-diag-wl1-down-to-bss-ch36-bw20.txt /tmp/d2u.merged.txt
+AC_FIRST_INIT=0 AC_MAC_REFCOUNT=1 \
+    AC_READ_ORACLE=/tmp/d2u.merged.txt AC_READ_ORACLE_FROM=653 \
+    ./ac_trace switch_channel d6220 > trace.switch.d6220.out
+python3 compare.py /tmp/d2u.merged.txt trace.switch.d6220.out \
+    --range 653:26671 --auto-align
+# prima divergenza @2177 (banco 0x0910, vedi docs/retrace-todo.md)
+```
+
+`AC_READ_ORACLE_FROM` e' necessario: le code dell'oracolo sono per indirizzo e
+in ordine, quindi caricare la cattura dall'inizio per un flow che ne esegue una
+fetta fa consumare i valori delle letture precedenti.
+
+Senza `AC_FIRST_INIT=0`, o confrontato con la cattura di attach, il flow diverge
+su tutto cio' che dipende dalla fase -- il cap del TX-LPF viene dall'rccal di
+`op_init` e produce `0x50db` dove il driver stock scrive `0x52db`. Non e' un bug
+del driver, e' il gate sbagliato.
 
 Output atteso:
 
@@ -129,10 +156,36 @@ MATCH
   alto è l'ultimo episodio della cattura.
 - `--auto-align`: salta le 2 op di prologo dell'harness (il `MAC.MCTRL`
   di disable e la `PMU.RC`), agganciando `test[2]` a `vendor[489]`.
-- **Niente `--squash-poll`**: i read plan in `main.c` sono tarati sui
-  poll-count esatti di questa cattura, quindi il match è contiguo
-  op-per-op senza collassare i poll. Aggiungere `--squash-poll` qui
-  romperebbe l'uguaglianza delle lunghezze.
+- **Il poll di `0x0270` e i read plan.** Il numero di letture di `0x0270` non
+  e' un parametro del driver: il bit 0 e' il flag di start della misura RX-IQ,
+  l'hardware lo azzera e il driver rilegge finche' resta alto. Il valore letto
+  governa quindi quante op vengono emesse, e deve arrivare da una cattura. Con
+  `AC_READ_ORACLE` arriva da li'; senza oracolo arriva da
+  `readplan_0270.h`, generato dalle catture con i RETVAL:
+
+  ```sh
+  python3 ../reverse-tools/gen_readplan.py 0x0270 \
+      d6220_first=../router-data/d6220/wl-diag-wl1-attach-to-bss-up-ch36-bw20.txt \
+      d6220_next=../router-data/d6220/wl-diag-wl1-down-to-bss-ch36-bw20.txt \
+      agcombo=../router-data/agcombo/agcombo-wl1-4360-rescan-to-bss-ch36.txt \
+      dsl=../router-data/dsl3580l/wl-diag-wl1-down-to-bss-ch36-bw20.txt \
+      > readplan_0270.h
+  ```
+
+  La scelta del plan e' su board e fase (`AC_FIRST_INIT`), gli stessi assi da
+  cui dipendono i conteggi. Verificato: con il plan la struttura dei poll
+  coincide con la cattura sia su d6220 (12 run, `[5,5,5,5,29,1,27,1,22,1,41,1]`
+  sul down->up e `[5,5,5,5,44,1,14,1,42,1,43,1]` sull'attach) sia con
+  l'oracolo attivo. Per agcombo esiste una sola cattura con i RETVAL (un
+  rescan, fase successiva) e per il DSL solo dei down->up: la stessa serve
+  entrambe le fasi, ed e' un'approssimazione dichiarata.
+
+- **I poll non si collassano.** Il numero di letture di `0x0270` non è un
+  parametro del driver: è l'osservabile di un'attesa, e il driver esce quando
+  il bit 0 si azzera. Con un oracolo che serve i valori reali il conteggio
+  segue la cattura da sé, quindi il confronto resta op-per-op e la lunghezza
+  è confrontabile. Un conteggio che non torna è un difetto da guardare, non
+  rumore da nascondere.
 
 ### Sotto-finestra: solo il blocco RXIQ
 
@@ -143,7 +196,7 @@ finestra corrispondente dalla `down→bss-up` annotata:
 python3 compare.py \
     ../reverse-output/d6220-trace2-annotated.txt \
     trace.d6220.out \
-    --range 82499:83540 --auto-align --squash-poll
+    --range 82499:83540 --auto-align
 ```
 
 - `--range LO:HI` estrae la finestra del blocco d'interesse dal file
@@ -153,9 +206,6 @@ python3 compare.py \
   test fa un prologo (save-gain, save-tone, ...) che il vendor non
   emette. In alternativa `--align-on OP` pinna l'allineamento su un op
   specifico.
-- `--squash-poll` collassa i run di `PHY.RD 0x0270 UNDEFINED` in un
-  singolo evento marker: nel vendor l'HW polla ~45x prima di
-  completare, nel test il read plan scriptato lo simula in 4 iter.
 
 Formato ops (allineato al vendor):
 
@@ -182,7 +232,7 @@ mostra come cluster di mismatch localizzato accanto ai mismatch di
 valore:
 
 ```sh
-./ac_trace set_channel agcombo > trace.agcombo.out
+./ac_trace switch_channel agcombo > trace.agcombo.out
 python3 ../reverse-tools/collapse_trace.py \
     ../router-data/agcombo/agcombo-wl1-4360-down-to-bss-ch36.txt v.col
 python3 ../reverse-tools/collapse_trace.py trace.agcombo.out h.col
@@ -250,7 +300,7 @@ Oggi `main.c` cabla sei flow:
   (che non modifica lo scratch).
 - `op_init` — `b43_phyops_ac.init` in isolamento.
 - `rfkill` — `b43_phy_ac_op_software_rfkill` (bring-up radio 2069).
-- `set_channel` — l'intera pipeline `b43_phy_ac_op_switch_channel`
+- `switch_channel` — l'intera pipeline `b43_phy_ac_op_switch_channel`
   (channel prep, table-7 program, radio 2069 channel setup, RX-IQ cal,
   finalize). È il flow con la copertura più larga: su D6220 ch36 emette
   ~22k operazioni.
@@ -283,14 +333,14 @@ pulito.
 | `rxiqcal_phy_ac.c`    | ✓       | build+run+trace ok con rxiq_est_debug   |
 | `tables_phy_ac.c`     | ✓       |                                         |
 | `radio_2069.c`        | ✓       | compila senza toccare gli stub          |
-| `phy_ac.c`            | ✓       | compila e linka; abilita il flow `set_channel` |
+| `phy_ac.c`            | ✓       | compila e linka; abilita il flow `switch_channel` |
 
-Il flow `set_channel` gira end-to-end: su D6220 ch36 emette 22276 righe
+Il flow `switch_channel` gira end-to-end: su D6220 ch36 emette 22276 righe
 di trace, ritorna 0, e la plan-consumption mostra `iter=N/N` per ogni
 read plan (nessun underrun/overrun). La op kernel invocata è
 `b43_phy_ac_op_switch_channel`.
 
-Copertura rispetto al vendor: `set_channel` copre la porzione di
+Copertura rispetto al vendor: `switch_channel` copre la porzione di
 channel-switch della sequenza `down→bss-up`, non l'intera cattura. Il
 vendor `d6220-trace2` include un preambolo (GPIO, PMU-PLL, init radio)
 che questo flow non riproduce, quindi un `compare.py` senza `--range`
@@ -324,7 +374,7 @@ AC_FN_MARKERS=1 ./ac_trace rfkill d6220 > gen.rfkill.d6220.txt
 # copertura per-funzione + gap, contro la cattura GREZZA (non collassata)
 python3 ../reverse-tools/coverage_by_function.py \
     gen.rfkill.d6220.txt \
-    ../router-data/d6220/wl-diag-wl1-down-to-bss-up.txt
+    ../router-data/d6220/wl-diag-wl1-down-to-bss-up_delay_only.txt
 
 # localizzazione delle funzioni nel trace vendor
 python3 ../reverse-tools/localize_functions.py gen.rfkill.d6220.txt <trace>

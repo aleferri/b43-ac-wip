@@ -1,1 +1,34 @@
-Probable missing critical delays before table write with id 0x20
+Run del port su DSL-3580L, esito: il driver si interrompe a metà del load
+tabelle. Ultima riga del log: actab_wr id=0x20 off=0x0000 width=8 len=128.
+Nessun messaggio d'errore, nessuna sequenza successiva.
+
+Causa: non determinabile da questo log.
+
+Il run precede il lavoro di verifica op-per-op, e lo stato del port in quel
+momento divergeva dal driver stock già molto prima del punto di interruzione:
+
+  - num_cores=3 con coremask=0x3, cioè il terzo core programmato su una board 2x2
+  - ordine di caricamento delle tabelle diverso da quello del vendor
+  - init_regs con la coppia di gain ADC della fase sbagliata e una passata
+    invece di due
+  - coefficienti RXIQ costanti invece che calcolati
+  - config MHF emessa nella fase sbagliata
+
+Con la sequenza divergente da migliaia di op prima, il punto in cui il driver
+muore non dice niente sulla causa.
+
+NOTA STORICA: questo file conteneva la riga "Probable missing critical delays
+before table write with id 0x20". Era una congettura formulata guardando dove
+il log si interrompe, ed è stata poi letta come una diagnosi. Non lo è: il
+punto di interruzione non dice nulla sulla causa quando la sequenza divergeva
+già a monte.
+
+L'ipotesi resta comunque verificabile, e non serve hardware per cominciare:
+`router-data/d6220/wl-diag-wl1-down-to-bss-up_delay_only.txt` contiene record
+`DELAY usec=` del driver stock. L'harness non modella i delay, ma i valori
+attesi si leggono da lì.
+
+PROSSIMO PASSO: rifare la prova su hardware ora che le fasi verificate
+esistono (preambolo analogico, tables_init 3714/3714, init_regs per fase,
+rfkill, coefficienti RXIQ calcolati). Solo se quella fallisce ha senso
+ragionare sulle cause, e solo con un log che arrivi più in fondo.

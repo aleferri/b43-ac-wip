@@ -11,7 +11,7 @@ Both inputs are wl-diag-style traces in the same format
 ("... FAM.OP addr=0x.... val=0x...."):
   vendor  : a real capture (collapsed/merged is fine)
   harness : the port's output for the matching flow, e.g.
-            `./ac_trace set_channel d6220`
+            `./ac_trace switch_channel d6220`
 
 Usage:
   find_readback_hardcodes.py <vendor_trace> <harness_output> [rmw_window]

@@ -29,7 +29,7 @@ diff --git a/drivers/bcma/sprom.c b/drivers/bcma/sprom.c
 index e668ad796..514c8149d 100644
 --- a/drivers/bcma/sprom.c
 +++ b/drivers/bcma/sprom.c
-@@ -474,6 +474,101 @@ static void bcma_sprom_extract_r8(struct bcma_bus *bus, const u16 *sprom)
+@@ -474,6 +474,134 @@ static void bcma_sprom_extract_r8(struct bcma_bus *bus, const u16 *sprom)
  	     SSB_SPROM8_TEMPDELTA_HYSTERESIS_SHIFT);
  }
  
@@ -75,6 +75,39 @@ index e668ad796..514c8149d 100644
 +	SPEX(antswitch, SSB_SPROM11_TXRXC, SSB_SPROM8_TXRXC_SWITCH,
 +	     SSB_SPROM8_TXRXC_SWITCH_SHIFT);
 +	SPEX(subband5gver, SSB_SPROM11_SUBBAND5GVER, 0x00ff, 0);
++
++	/* FEM / PA control block. */
++	SPEX(tssiposslope2g, SSB_SPROM11_FEM_CFG1,
++	     SSB_SPROM11_FEM_TSSIPOSSLOPE, 0);
++	SPEX(epagain2g, SSB_SPROM11_FEM_CFG1, SSB_SPROM11_FEM_EPAGAIN,
++	     SSB_SPROM11_FEM_EPAGAIN_SHIFT);
++	SPEX(pdgain2g, SSB_SPROM11_FEM_CFG1, SSB_SPROM11_FEM_PDGAIN,
++	     SSB_SPROM11_FEM_PDGAIN_SHIFT);
++	SPEX(tworangetssi2g, SSB_SPROM11_FEM_CFG1,
++	     SSB_SPROM11_FEM_TWORANGETSSI, SSB_SPROM11_FEM_TWORANGETSSI_SHIFT);
++	SPEX(papdcap2g, SSB_SPROM11_FEM_CFG1, SSB_SPROM11_FEM_PAPDCAP,
++	     SSB_SPROM11_FEM_PAPDCAP_SHIFT);
++	SPEX(femctrl, SSB_SPROM11_FEM_CFG1, SSB_SPROM11_FEM_CTRL,
++	     SSB_SPROM11_FEM_CTRL_SHIFT);
++	SPEX(tssiposslope5g, SSB_SPROM11_FEM_CFG2,
++	     SSB_SPROM11_FEM_TSSIPOSSLOPE, 0);
++	SPEX(epagain5g, SSB_SPROM11_FEM_CFG2, SSB_SPROM11_FEM_EPAGAIN,
++	     SSB_SPROM11_FEM_EPAGAIN_SHIFT);
++	SPEX(pdgain5g, SSB_SPROM11_FEM_CFG2, SSB_SPROM11_FEM_PDGAIN,
++	     SSB_SPROM11_FEM_PDGAIN_SHIFT);
++	SPEX(tworangetssi5g, SSB_SPROM11_FEM_CFG2,
++	     SSB_SPROM11_FEM_TWORANGETSSI, SSB_SPROM11_FEM_TWORANGETSSI_SHIFT);
++	SPEX(papdcap5g, SSB_SPROM11_FEM_CFG2, SSB_SPROM11_FEM_PAPDCAP,
++	     SSB_SPROM11_FEM_PAPDCAP_SHIFT);
++	SPEX(gainctrlsph, SSB_SPROM11_FEM_CFG2,
++	     SSB_SPROM11_FEM_GAINCTRLSPH, SSB_SPROM11_FEM_GAINCTRLSPH_SHIFT);
++
++	/* TSSI floor. */
++	SPEX(tssifloor2g, SSB_SPROM11_TSSIFLOOR_2G,
++	     SSB_SPROM11_TSSIFLOOR_MASK, 0);
++	for (i = 0; i < 4; i++)
++		SPEX(tssifloor5g[i], SSB_SPROM11_TSSIFLOOR_5GL + i * 2,
++		     SSB_SPROM11_TSSIFLOOR_MASK, 0);
 +
 +	/* Per-chain power info. */
 +	for (i = 0; i < ARRAY_SIZE(pwr_info_offset); i++) {
@@ -167,7 +200,7 @@ index 7fee9afa9..05d738534 100644
  };
  
  struct ssb_sprom {
-@@ -192,6 +205,24 @@ struct ssb_sprom {
+@@ -192,6 +205,43 @@ struct ssb_sprom {
  	u16 legofdm40duppo;
  	u8 sar2g;
  	u8 sar5g;
@@ -189,6 +222,25 @@ index 7fee9afa9..05d738534 100644
 +	u32 mcsbw1605gmpo;
 +	u32 mcsbw1605ghpo;
 +	u16 pdoffset40ma[3];
++	/* FEM / PA control block (SROM11_FEM_CFG1/2). femctrl seleziona lo
++	 * schema di controllo del front-end module: un driver che programma
++	 * la tabella di controllo FEM deve verificarlo, non assumerlo.
++	 */
++	u8 tssiposslope2g;
++	u8 epagain2g;
++	u8 pdgain2g;
++	u8 tworangetssi2g;
++	u8 papdcap2g;
++	u8 femctrl;
++	u8 tssiposslope5g;
++	u8 epagain5g;
++	u8 pdgain5g;
++	u8 tworangetssi5g;
++	u8 papdcap5g;
++	u8 gainctrlsph;
++	/* TSSI floor: 0x3ff quando il campo non e' programmato. */
++	u16 tssifloor2g;
++	u16 tssifloor5g[4];
  };
  
  /* Information about the PCB the circuitry is soldered on. */
@@ -196,7 +248,7 @@ diff --git a/include/linux/ssb/ssb_regs.h b/include/linux/ssb/ssb_regs.h
 index 210f46494..9fedf5dcd 100644
 --- a/include/linux/ssb/ssb_regs.h
 +++ b/include/linux/ssb/ssb_regs.h
-@@ -606,6 +606,50 @@
+@@ -606,6 +606,76 @@
  #define SSB_SPROM8_BW40PO		0x0196
  #define SSB_SPROM8_BWDUPPO		0x0198
  
@@ -207,6 +259,32 @@ index 210f46494..9fedf5dcd 100644
 +#define SSB_SPROM11_CCODE		0x0096	/* 2 byte country code */
 +#define SSB_SPROM11_ANTAVAIL		0x00A0
 +#define SSB_SPROM11_TXRXC		0x00A8
++/* FEM / PA control block. Layout canonico da bcmsrom_tbl.h (SROM11_FEM_CFG1/2);
++ * offset verificato sui dump raw di DSL-3580L e D6220, dove le due word
++ * decodificano tutti e sei i campi di ciascuna: 0x30A1 e 0x00A1.
++ */
++#define SSB_SPROM11_FEM_CFG1		0x00AA
++#define SSB_SPROM11_FEM_CFG2		0x00AC
++#define SSB_SPROM11_FEM_TSSIPOSSLOPE	0x0001
++#define SSB_SPROM11_FEM_EPAGAIN		0x000E
++#define SSB_SPROM11_FEM_EPAGAIN_SHIFT	1
++#define SSB_SPROM11_FEM_PDGAIN		0x01F0
++#define SSB_SPROM11_FEM_PDGAIN_SHIFT	4
++#define SSB_SPROM11_FEM_TWORANGETSSI	0x0200
++#define SSB_SPROM11_FEM_TWORANGETSSI_SHIFT	9
++#define SSB_SPROM11_FEM_PAPDCAP		0x0400
++#define SSB_SPROM11_FEM_PAPDCAP_SHIFT	10
++#define SSB_SPROM11_FEM_CTRL		0xF800	/* CFG1: femctrl */
++#define SSB_SPROM11_FEM_CTRL_SHIFT	11
++#define SSB_SPROM11_FEM_GAINCTRLSPH	0xF800	/* CFG2: gainctrlsph */
++#define SSB_SPROM11_FEM_GAINCTRLSPH_SHIFT	11
++/* TSSI floor, mask 0x03ff. 2G single, 5G array of 4 (5GL/5GM/5GH/5GU).
++ * Word indices 95..99 per bcmsrom_fmt.h; verified 0xffff (unprogrammed,
++ * masks to 0x3ff) on DSL-3580L and D6220 raw dumps.
++ */
++#define SSB_SPROM11_TSSIFLOOR_2G	0x00BE
++#define SSB_SPROM11_TSSIFLOOR_5GL	0x00C0
++#define SSB_SPROM11_TSSIFLOOR_MASK	0x03FF
 +#define SSB_SPROM11_PDOFFSET40MA	0x00CA	/* 3 x u16, one per chain */
 +#define SSB_SPROM11_SUBBAND5GVER	0x00D6
 +

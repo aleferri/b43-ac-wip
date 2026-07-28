@@ -17,6 +17,8 @@
 #include "b43.h"
 
 void b43_test_plan_phy_reads(u16 addr, const u16 *results, int cap);
+/* Plan per cella di tabella: indipendente dalla posizione nella coda 0x000f. */
+void b43_test_plan_table_cell(u16 id, u16 off, const u16 *vals, int n);
 void b43_test_plan_radio_reads(u16 addr, const u16 *results, int cap);
 void b43_test_plan_mmio_reads(u16 addr, const u16 *results, int cap);
 void b43_test_plans_reset(void);
@@ -26,7 +28,7 @@ void b43_test_plans_report(FILE *f);
  * Pre-populate the radio mirror with a real hardware value (used when a
  * flow relies on state established by an earlier init pass we don't
  * re-execute — e.g. R2069_RCCAL_E/F filled by radio_2069_init before
- * set_channel runs).
+ * switch_channel runs).
  */
 void b43_test_mirror_radio_set(u16 reg, u16 val);
 void b43_test_mirror_phy_set(u16 reg, u16 val);

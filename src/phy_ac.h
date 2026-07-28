@@ -107,7 +107,7 @@ struct ieee80211_channel;
 #define B43_PHY_AC_STATE_AFE_ON		0x0200	/* RF front-end armed (enable_afe ON) */
 /*
  * Primo bring-up. b43_phy_init azzera phy->do_full_init fra ops->init e
- * switch_channel, quindi da switch_channel in avanti quel flag e' sempre falso:
+ * set_channel, quindi da set_channel in avanti quel flag e' sempre falso:
  * op_init lo latcha qui mentre e' ancora valido, per le costanti che il driver
  * stock sceglie in base alla fase.
  */
@@ -129,6 +129,25 @@ struct ieee80211_channel;
  */
 #define B43_PHY_AC_MAX_CORES		3
 
+/*
+ * Accumulatori RXIQ per core. Il solve somma i **due** round di stima piu'
+ * recenti -- verificato: con un round solo i coefficienti non combaciano. Le
+ * letture di 0x?c0-0x?c5 avvengono nella misura, che gira piu' volte; i valori
+ * si conservano qui perche' il solve sta in un'altra funzione.
+ */
+struct b43_phy_ac_iq_acc {
+	/* Finestra scorrevole degli ultimi due round: [0] e' il piu' recente. */
+	u32 ii[2];
+	u32 qq[2];
+	s32 iq[2];
+	unsigned int rounds;
+	/* Coefficienti risolti, calcolati una volta e riapplicati: il driver stock
+	 * riscrive gli stessi valori alla seconda apply invece di ricalcolare. */
+	s16 a;
+	s16 b;
+	bool solved;
+};
+
 struct b43_phy_ac {
 	/* active RF-chain count (PHY reg 0x0B & 0x07), set at op_init */
 	u8 num_cores;
@@ -140,6 +159,28 @@ struct b43_phy_ac {
 	u8 dacbuf_cap;	/* default 0x0c */
 	/* Software mirror of tracked HW gate bits; see B43_PHY_AC_STATE_*. */
 	u16 status_mask;
+	/*
+	 * Stato del toggle su 0x0520[3:2] usato dai probe cycle di
+	 * rxiqcal_finalize. Il driver stock lo alterna a ogni gruppo di peek per
+	 * tutta la fase, senza ripartire fra un blocco e il successivo, e
+	 * l'origine dipende dalla fase: 0x0000 al primo bring-up, 0x0004 su uno
+	 * switch di canale successivo. Verificato sulle due catture d6220 con i
+	 * RETVAL: alternanza perfetta su 15 e 19 occorrenze rispettivamente.
+	 */
+	u16 probe_mode;
+	/* Accumulatori RXIQ raccolti dalla misura, consumati dal solve. */
+	struct b43_phy_ac_iq_acc iq_acc[B43_PHY_AC_MAX_CORES];
+	/* Salvati da rxcal_radio_setup, riscritti da rxcal_radio_cleanup. */
+	u16 rxcal_radio_saved[B43_PHY_AC_MAX_CORES][7];
+	/*
+	 * Risultati degli iter di commit della cal AFE, indicizzati dall'offset di
+	 * scrittura. La coda di rxcal_afe_calibrate li duplica per antenna.
+	 */
+	struct {
+		u16 off;
+		u16 v[2];
+		u8 n;
+	} afe_res[6];
 	/* pa5ga/maxp5ga sub-band group (0..3) for the current channel, cached
 	 * by txpwrctrl_setup so later cal blocks can derive per-core power. */
 	u8 pa5g_grp;
@@ -486,8 +527,7 @@ void b43_phy_ac_rxiqcal_prep_second_iter(struct b43_wldev *dev);
 void b43_phy_ac_rxcal_afe_iter(struct b43_wldev *dev,
 			       u16 cmd, u16 core_off,
 			       const u16 *pre_clear_offs, u8 n_pre_clear,
-			       u16 rd_off, u8 rw_len,
-			       u16 wr_off, const u16 *wr_data);
+			       u16 rd_off, u8 rw_len, u16 wr_off);
 
 /*
  * RX-IQ measurement iters (vendor #46778-#47296, gruppo 4, 519 op).
@@ -711,21 +751,24 @@ void b43_phy_ac_rxiqcal_dds_seed_third_tone(struct b43_wldev *dev);
  *                  OR 0x0382 set 0x8000 c'è OR 0x0460 set 0x0001
  *   Blocco D (18): tail di rxgain_perchan_config (3 peek+WR paia per-core
  *                  + 6 WR standalone finali con valori rimappati)
- *   Blocco E (variabile): setup 0x0272/0x0271/0x0270 + N peek 0x0270 (poll)
- *                          — 5 peek nel 1° ciclo, 6 nel 2°, ...
+ *   Blocco E (variabile): setup 0x0272/0x0271/0x0270, arm, attesa che il bit
+ *                          di start si azzeri, un peek finale. Il numero di
+ *                          letture dipende dalla latenza della misura: e'
+ *                          costante entro una cattura ma varia con
+ *                          canale/BW/board (5 su d6220 ch36 BW20, 4 su BW40,
+ *                          6 su ch44, 3 su agcombo e DSL).
  *   Blocco F (12): 12 peek gain regs (0x?c0-0x?c5 per 2 core)
  *   Blocco G (29): apply bbmult per-core — variante di
  *                  rxiqcal_apply_tx_bbmult_kick (differenza: OR 0x0460 nel
  *                  header al posto di AND 0x0382; footer senza WR 0x0382=0)
  *   Blocco H (2):  MOD 0x0001 pulse finale
  *
- * Op count total = 94 + n_peek270
+ * Op count total = 93 + numero di letture del poll
  *
  * SALAME: nome speculativo. La sequenza è chiaramente post-second-DDS ma
  * la ratio esatta non è identificata.
  */
-void b43_phy_ac_iqcal_meas_post_dds_apply(struct b43_wldev *dev,
-					  unsigned int n_peek270);
+void b43_phy_ac_iqcal_meas_post_dds_apply(struct b43_wldev *dev);
 
 /*
  * Variante v2 del meas_post_dds_apply (vendor #51814-#51956, 143 op).
@@ -734,25 +777,29 @@ void b43_phy_ac_iqcal_meas_post_dds_apply(struct b43_wldev *dev,
  *   Blocchi A+B+C+D (47) — identici alla versione originale
  *   Blocco E' variante (65 op):
  *     Setup (3): WR 0x0272=0x4000, MOD 0x0271, MOD 0x0270 clr bit 1
- *     Sub-block core 1 (27): 4 peek + 4 MOD + arm + n_poll_c1 peek 0x0270 +
- *                            4 WR + 1 peek extra
+ *     Sub-block core 1: 4 peek + 4 MOD + arm + attesa + 4 WR + 1 peek extra
  *     6 peek core 0 0x?c0-?c5 (6)
- *     Sub-block core 0 (23): 4 peek + 4 MOD + arm + n_poll_c0 peek 0x0270 +
- *                            4 WR + 1 peek extra
+ *     Sub-block core 0: 4 peek + 4 MOD + arm + attesa + 4 WR + 1 peek extra
  *     6 peek core 1 0x?c0-?c5 (6)
  *   Blocco G+H (31) — identico alla versione originale
  *
- * Parametri: n_poll_c1 (13 nel d6220), n_poll_c0 (9 nel d6220).
- * Op count = 47 + 65 + 31 = 143.
+ * Op count = 47 + 31 + 31 + le letture dei due poll. A differenza del blocco E
+ * della v1 queste variano fra catture della stessa board e canale (d6220 ch36
+ * BW20: 44/14 sull'attach, 29/27 sul down->up), quindi qui la latenza della
+ * misura non e' deterministica.
+ *
+ * Il numero di sub-block segue il numero di core: le catture agcombo (3 core)
+ * ne mostrano sei fra le due invocazioni, contro i quattro dei due testimoni
+ * 4352. Il ciclo per-core qui e' ancora fissato a due: da generalizzare
+ * insieme all'ordine di interleaving dei peek, che sull'agcombo non e' stato
+ * verificato.
  *
  * SALAME: la variante fa un "config + arm + poll + commit" per-core dei
  * gain regs 0x?20/0x?21/0x?28/0x?29 con valori WR finali (0x0321, 0x7761,
  * 0x0080, 0x0182). Sembra una fase di sequenziamento hardware post-cal ma
  * la semantica precisa non è identificata.
  */
-void b43_phy_ac_iqcal_meas_post_dds_apply_v2(struct b43_wldev *dev,
-					     unsigned int n_poll_c1,
-					     unsigned int n_poll_c0);
+void b43_phy_ac_iqcal_meas_post_dds_apply_v2(struct b43_wldev *dev);
 
 /*
  * RXIQ correction coefficients per-chan write (vendor #52252-#52255, 4 op).

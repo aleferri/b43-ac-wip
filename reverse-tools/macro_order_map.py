@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mappa dell'ordine MACRO di set_channel: fasi del driver (firme dal sorgente)
+"""Mappa dell'ordine MACRO di switch_channel: fasi del driver (firme dal sorgente)
 localizzate nel riferimento harness e negli episodi agcombo via accoppiamento
 strutturale. Falsificabile: ogni fase e' ancorata a una firma esplicita."""
 import re, bisect, sys

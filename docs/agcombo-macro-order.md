@@ -1,9 +1,9 @@
-# Ordine macro di set_channel: agcombo (wl 7.14) vs D6220 (ordine del port)
+# Ordine macro di switch_channel: agcombo (wl 7.14) vs D6220 (ordine del port)
 
 ## Domanda
 
 L'agcombo (BCM4360, wl 7.14.43) e il D6220 (BCM4352, wl piu' recente, l'ordine
-replicato dal port) producono le stesse fasi di `set_channel`? E se l'ordine
+replicato dal port) producono le stesse fasi di `switch_channel`? E se l'ordine
 locale differisce, e' una scelta architetturale della versione di driver
 (lecita, da normalizzare nel confronto) o un bug/differenza di chip?
 
@@ -12,7 +12,7 @@ locale differisce, e' una scelta architetturale della versione di driver
 Falsificabile, non a occhio. Per ogni fase di `b43_phy_ac_set_channel` si
 estrae una **firma**: la prima write/maskset a costanti nel corpo della
 funzione della fase. La firma si localizza in sequenza nella traccia di
-riferimento (harness `set_channel`, che replica l'ordine D6220); l'intervallo
+riferimento (harness `switch_channel`, che replica l'ordine D6220); l'intervallo
 tra una firma e la successiva e' la fase. Gli **episodi agcombo** di ciascuna
 fase si ottengono accoppiando le op del riferimento con quelle della cattura
 agcombo tramite `reverse-tools/reorder_trace.py` (accoppiamento strutturale per
@@ -76,7 +76,7 @@ coda est/rxiq del 7.14 contiene lavoro che il port non replica ancora.
 
 ## Caveat
 
-Vale per `set_channel`. La ridistribuzione init<->set_channel non e' misurabile
+Vale per `switch_channel`. La ridistribuzione init<->switch_channel non e' misurabile
 finche' l'op_init agcombo del harness resta troncato (91 op collassate). Le
 firme sono euristiche (prima write a costante): se una fase venisse riscritta in
 modo da cambiare la prima costante emessa, la sua ancora andrebbe aggiornata in

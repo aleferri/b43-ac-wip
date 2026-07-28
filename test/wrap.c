@@ -202,7 +202,11 @@ void b43_test_trace_to(FILE *f) { trace_stream = f; }
  * Invece di read plan scritti a mano, i valori di ritorno possono venire dalla
  * cattura vendor: la N-esima lettura di un indirizzo restituisce la N-esima
  * lettura di quello stesso indirizzo nella cattura, in ordine di episodio.
- * Si attiva con AC_READ_ORACLE=<cattura passata per merge_retvals.py>.
+ * Si attiva con AC_READ_ORACLE=<cattura passata per merge_retvals.py>, e
+ * AC_READ_ORACLE_FROM=<episodio> limita il caricamento alla fase che il flow
+ * copre. Serve: le code sono per indirizzo e in ordine, quindi caricare tutta
+ * la cattura per un flow che ne esegue una fetta fa consumare valori di letture
+ * precedenti alla fetta.
  *
  * Attenzione a cosa questo dimostra: le read combaciano per costruzione, non
  * perche' il driver le indovini. Il guadagno e' sulle *write derivate*, che
@@ -220,6 +224,7 @@ struct oracle_q {
 static struct oracle_q oracle_phy[ORACLE_ADDRS];
 static struct oracle_q oracle_rad[ORACLE_ADDRS];
 static int oracle_on;
+static unsigned long oracle_from;
 static long oracle_hits, oracle_miss_addr, oracle_miss_exhausted;
 
 static void oracle_push(struct oracle_q *tbl, unsigned addr, unsigned val)
@@ -254,6 +259,11 @@ static void oracle_init(void)
 	path = getenv("AC_READ_ORACLE");
 	if (!path || !*path)
 		return;
+	{
+		const char *e = getenv("AC_READ_ORACLE_FROM");
+
+		oracle_from = e ? strtoul(e, NULL, 0) : 0;
+	}
 	f = fopen(path, "r");
 	if (!f) {
 		fprintf(stderr, "wrap: oracle: cannot open %s\n", path);
@@ -262,6 +272,14 @@ static void oracle_init(void)
 	while (fgets(line, sizeof(line), f)) {
 		unsigned addr, val;
 		char *p;
+
+		if (oracle_from) {
+			char *h = strchr(line, '#');
+			unsigned long ep = h ? strtoul(h + 1, NULL, 10) : 0;
+
+			if (ep < oracle_from)
+				continue;
+		}
 
 		if ((p = strstr(line, "PHY.RD")) != NULL) {
 			if (sscanf(p, "PHY.RD %*[^=]=%x %*[^=]=%x",
@@ -350,6 +368,15 @@ u16 __wrap_b43_phy_read(struct b43_wldev *dev, u16 reg)
 	}
 	/* oracolo e plan assenti o esauriti: cadi sul mirror delle write. */
 	v = (reg < MIRROR_PHY_SZ) ? mirror_phy[reg] : 0;
+	/*
+	 * Backstop, non un modello: le letture di 0x0270 arrivano dall'oracolo o
+	 * dal plan (readplan_0270.h). Se entrambi si esauriscono, il mirror
+	 * restituirebbe il bit di start ancora alto e il poll girerebbe fino al
+	 * timeout; qui l'attesa termina invece subito, cosi' un plan troppo
+	 * corto si vede come conteggio di op sbagliato e non come stallo.
+	 */
+	if (reg == 0x0270)
+		v &= (u16)~0x0001;
 out:
 	fprintf(trace(), "cpu1 PHY.RD   addr=0x%04x val=0x%04x\n", reg, v);
 	return v;
@@ -672,7 +699,7 @@ void __wrap_b43_actab_write_bulk_scoped(struct b43_wldev *dev,
 /*
  * TX/RX-LPF table-7 pre-state. On silicon the {lo,hi} cells that hold the
  * 25-bit analog LPF word are pre-loaded (by the table init that runs before
- * set_channel, not re-executed in this harness) with a per-stage base that the
+ * switch_channel, not re-executed in this harness) with a per-stage base that the
  * RMW preserves, rewriting only the cap fields. The base is the same across
  * units -- only the cap (from rccal E/F) varies -- so it is a constant here.
  * TX: lo {0,1,2,8}=0x00db {3,4,5}=0x0123 {6,7}=0x016b, hi=0x0001, 9 stages at
@@ -734,11 +761,63 @@ static int txlpf_prestate(u16 id, u16 offset)
 	return -1;
 }
 
+/*
+ * Plan per cella di tabella, chiavato su (id, offset). Le letture di tabella
+ * passano tutte dalla porta 0x000f, quindi un plan su quell'indirizzo dipende
+ * dalla posizione nella coda globale; questo no. I valori vengono spinti nella
+ * coda della porta appena prima della lettura, cosi' l'ordine si arrangia.
+ */
+#define MAX_TBL_PLANS 32
+struct tbl_plan {
+	u16 id, off;
+	const u16 *vals;
+	int n, cur;
+};
+static struct tbl_plan tbl_plans[MAX_TBL_PLANS];
+static int tbl_plans_n;
+
+void b43_test_plan_table_cell(u16 id, u16 off, const u16 *vals, int n)
+{
+	if (tbl_plans_n == MAX_TBL_PLANS) {
+		fprintf(stderr, "wrap: MAX_TBL_PLANS superato (id 0x%04x off 0x%04x)\n",
+			id, off);
+		return;
+	}
+	tbl_plans[tbl_plans_n].id = id;
+	tbl_plans[tbl_plans_n].off = off;
+	tbl_plans[tbl_plans_n].vals = vals;
+	tbl_plans[tbl_plans_n].n = n;
+	tbl_plans[tbl_plans_n].cur = 0;
+	tbl_plans_n++;
+}
+
+/* Consuma `len` valori dal plan della cella, avanzando il cursore. */
+static const u16 *tbl_plan_take(u16 id, u16 off, size_t len)
+{
+	int i;
+
+	for (i = 0; i < tbl_plans_n; i++) {
+		struct tbl_plan *p = &tbl_plans[i];
+
+		if (p->id != id || p->off != off)
+			continue;
+		if (p->cur + (int)len > p->n)
+			return NULL;
+		p->cur += (int)len;
+		return p->vals + p->cur - (int)len;
+	}
+	return NULL;
+}
+
 void __wrap_b43_actab_read_bulk(struct b43_wldev *dev,
 				u16 id, u16 offset, u8 width,
 				size_t len, void *data)
 {
 	int pre = txlpf_prestate(id, offset);
+	const u16 *tv = tbl_plan_take(id, offset, len);
+
+	if (tv)
+		plan_add(phy_plans, &phy_plans_n, 0x000f, tv, (int)len);
 
 	fprintf(trace(), "cpu1 TBL.RD   id=0x%04x off=0x%04x len=%zu\n",
 		id, offset, len);
@@ -817,7 +896,7 @@ void __wrap_b43_maccontrol_set(struct b43_wldev *dev, u32 mask, u32 set)
  *
  * Il default resta senza contatore, cioe' una MAC.MCTRL per chiamata, perche' e'
  * l'assunzione su cui i call site dello scratch sono stati trascritti: con il
- * contatore attivo il MATCH di set_channel cade, e la differenza misura quanto
+ * contatore attivo il MATCH di switch_channel cade, e la differenza misura quanto
  * di quelle op era artefatto del doppio conteggio. Non lasciare il default cosi'
  * a rework finito.
  *
@@ -832,7 +911,7 @@ static int mac_trace = -1;
  * Lo stato d'ingresso dei flow e' MAC *acceso*: switch_channel viene chiamata da
  * b43_phy_init dopo ops->init, e le sue coppie suspend/enable producono le write
  * che il driver stock emette solo partendo da contatore 0. Verificato: con
- * AC_MAC_REFCOUNT=1 e questo stato, set_channel combacia con 192 MAC.MCTRL,
+ * AC_MAC_REFCOUNT=1 e questo stato, switch_channel combacia con 192 MAC.MCTRL,
  * zero annidamenti e zero enable fuori posto.
  *
  * Lo stato logico del MAC segue il contatore, non le write emesse. Con il
@@ -944,7 +1023,7 @@ void usleep_range(unsigned long a, unsigned long b) { (void)a; (void)b; }
 
 /* ============ bcma chipcommon (no wrap: definitions, not wraps) ============
  * These accessors are called directly by phy_ac.c (op_init, rfkill,
- * set_channel). Upstream they touch real MMIO under bcma_drv_cc; here
+ * switch_channel). Upstream they touch real MMIO under bcma_drv_cc; here
  * they emit a line matching the vendor wl-diag format and return 0.
  * The `cc` pointer is opaque to the caller (we don't dereference it),
  * so the mock g_bcma_bus.drv_cc suffices.

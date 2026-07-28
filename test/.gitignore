@@ -7,3 +7,4 @@ trace.*.out
 stderr*.log
 trace.*.head
 stderr.head
+__pycache__/

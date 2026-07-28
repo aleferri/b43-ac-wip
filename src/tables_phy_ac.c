@@ -41,13 +41,9 @@ void b43_phy_ac_tbl_write_unlock(struct b43_wldev *dev, u16 saved)
  */
 /*
  * Corpo comune dei bulk write. `peek` decide se rileggere il gate 0x019e prima
- * della sequenza TABLE_ID/OFFSET/DATA.
- *
- * Il driver stock lo rilegge a ogni bulk emesso a gate sbloccato -- il valore
- * finisce nel saved che verra' ripristinato piu' avanti -- ma non quando il
- * chiamante tiene il gate bloccato per una serie di bulk: nel load tabelle di
- * op_init la peek compare una volta al lock e non prima dei 23 bulk
- * (attach-to-bss-up: TABLE_ID=1 senza PHY.RD 0x019e che lo precede).
+ * della sequenza TABLE_ID/OFFSET/DATA: il driver stock lo rilegge a ogni bulk
+ * emesso a gate sbloccato, non quando il chiamante lo tiene bloccato per una
+ * serie (nel load tabelle la peek e' una sola, al lock).
  */
 static void actab_write_bulk_common(struct b43_wldev *dev,
 				    u16 id, u16 offset, u8 width,

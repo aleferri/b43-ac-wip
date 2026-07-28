@@ -7,10 +7,10 @@
  * Usage:
  *   ./ac_trace [flow] [board]
  *     flow  = rxiq_est_debug (default) | rxiq_comp | rxiqcal | op_init |
- *             rfkill | set_channel
+ *             rfkill | switch_channel
  *     board = d6220 (default) | agcombo | dsl
  *
- * set_channel drives the whole b43_phy_ac_op_switch_channel pipeline and
+ * switch_channel drives the whole b43_phy_ac_op_switch_channel pipeline and
  * is the broadest flow (~22k HW ops on d6220 ch36); the others exercise
  * narrower slices. The full scratch driver (phy_ac.c + radio_2069.c +
  * rxiqcal_phy_ac.c + tables_phy_ac.c) links and runs; see the Makefile
@@ -25,6 +25,7 @@
 #include "phy_ac.h"
 #include "rxiqcal_phy_ac.h"
 #include "test_harness.h"
+#include "readplan_0270.h"
 
 extern enum nl80211_band b43_test_band;
 
@@ -40,6 +41,10 @@ struct board_profile {
 	u8  coremask;
 	u8  rxchain;
 	u8  subband5gver;
+	/* Word raw del blocco FEM/PA, come lette dai dump SROM. */
+	u16 fem_cfg1;
+	u16 fem_cfg2;
+	u16 tssifloor5g[4];
 	/* pa5ga per-core (3 core), 12 u16 = 4 gruppi (5g band) × 3 (a1,b0,b1).
 	 * Dal file NVRAM del router, keys pa5ga0/pa5ga1/pa5ga2. Se tutti 0,
 	 * mount_board lascia pa5ga = 0 (il caller cade sui pwrdet_def).
@@ -75,6 +80,10 @@ static const struct board_profile PROFILE_D6220 = {
 	.radio_ver = 0x2069, .phy_rev = 1,
 	.num_cores = 3, .coremask = 0x3, .rxchain = 3,
 	.subband5gver = 0x4,
+	.fem_cfg1     = 0x30a1,
+	.fem_cfg2     = 0x00a1,
+	/* word 96..99 = 0xffff, mascherate 0x03ff: campo non programmato. */
+	.tssifloor5g  = { 0x3ff, 0x3ff, 0x3ff, 0x3ff },
 	.pa5ga = {
 		{ 0xff33, 0x175b, 0xfd32, 0xff23, 0x1672, 0xfd36,
 		  0xff25, 0x161d, 0xfd4b, 0xff2d, 0x16c3, 0xfd3b },
@@ -103,6 +112,16 @@ static const struct board_profile PROFILE_D6220 = {
 
 static const struct board_profile PROFILE_AGCOMBO = {
 	.name = "agcombo", .chip_id = 0x4360, .radio_rev = 4,
+	/*
+	 * Blocco FEM/PA sintetizzato dalla NVRAM agcombo con le maschere
+	 * canoniche (SROM11_FEM_CFG1/2): femctrl=6 pdgain=10 tssiposslope=1,
+	 * il resto a zero -- gli stessi valori del d6220, quindi stesse word.
+	 * Il dump SROM agcombo in repo e' tutto a zero, quindi la sorgente e'
+	 * la NVRAM. Senza questo il guard su femctrl scattava e la tabella di
+	 * controllo FEM non veniva scritta su questa board.
+	 */
+	.fem_cfg1 = 0x30a1, .fem_cfg2 = 0x00a1,
+	.tssifloor5g = { 0x3ff, 0x3ff, 0x3ff, 0x3ff },
 	.radio_ver = 0x2069, .phy_rev = 1,
 	.num_cores = 3, .coremask = 0x7, .rxchain = 7,
 	/* Same 5gl values as d6220 (NVRAM agcombo). */
@@ -131,6 +150,10 @@ static const struct board_profile PROFILE_DSL = {
 	.radio_ver = 0x2069, .phy_rev = 1,
 	.num_cores = 3, .coremask = 0x3, .rxchain = 3,
 	.subband5gver = 0x4,
+	.fem_cfg1     = 0x30a1,
+	.fem_cfg2     = 0x00a1,
+	/* word 96..99 = 0xffff, mascherate 0x03ff: campo non programmato. */
+	.tssifloor5g  = { 0x3ff, 0x3ff, 0x3ff, 0x3ff },
 	.pa5ga = {
 		{ 0xff4d, 0x1690, 0xfd24, 0xff59, 0x1710, 0xfd28,
 		  0xff52, 0x16fd, 0xfd27, 0xff55, 0x1711, 0xfd20 },
@@ -162,6 +185,41 @@ static struct bcma_device      g_bcma_dev;
 static struct b43_bus_dev      g_bus_dev;
 static struct b43_wldev        g_wldev;
 
+/*
+ * Il bit 0 di PHY 0x0270 e' il flag di start della misura RX-IQ e l'hardware lo
+ * azzera al completamento: il driver rilegge il registro finche' resta alto,
+ * quindi il valore letto governa quante op emette. Senza AC_READ_ORACLE quel
+ * valore deve venire da qualche parte, e viene dalle letture che il tracer
+ * vendor ha registrato sulla board in questione.
+ *
+ * La scelta e' su board e fase, gli stessi due assi da cui dipendono i
+ * conteggi: le catture d6220 mostrano 44/14/42/43 poll nei blocchi v2
+ * dell'attach contro 29/27/22/41 del down->up. Dove esiste una sola cattura
+ * con i RETVAL la stessa serve entrambe le fasi, ed e' un'approssimazione
+ * dichiarata: per agcombo c'e' solo un rescan (fase successiva) e per il DSL
+ * solo dei down->up, l'attach da freddo non e' catturabile.
+ */
+static void plan_rxiq_poll(const char *board, bool first_init)
+{
+	const u16 *plan;
+	int n;
+
+	if (!strcmp(board, "agcombo")) {
+		plan = readplan_0270_agcombo;
+		n = (int)ARRAY_SIZE(readplan_0270_agcombo);
+	} else if (!strcmp(board, "dsl")) {
+		plan = readplan_0270_dsl;
+		n = (int)ARRAY_SIZE(readplan_0270_dsl);
+	} else if (first_init) {
+		plan = readplan_0270_d6220_first;
+		n = (int)ARRAY_SIZE(readplan_0270_d6220_first);
+	} else {
+		plan = readplan_0270_d6220_next;
+		n = (int)ARRAY_SIZE(readplan_0270_d6220_next);
+	}
+	b43_test_plan_phy_reads(0x0270, plan, n);
+}
+
 static void mount_board(const struct board_profile *p)
 {
 	memset(&g_ac, 0, sizeof(g_ac));
@@ -173,13 +231,13 @@ static void mount_board(const struct board_profile *p)
 	 */
 	/*
 	 * dacbuf_cap: rccal computes it in op_init as (RCCAL_G & 0x03e0)>>5
-	 * from the post-apply read. set_channel does not re-run rccal, so
+	 * from the post-apply read. switch_channel does not re-run rccal, so
 	 * replicate it here from the per-board rccal_g with the same formula.
 	 */
 	g_ac.dacbuf_cap = (u8)((p->rccal_g & 0x03e0) >> 5);
 	/*
 	 * lpf_cap0/1: in the real driver rccal computes it in op_init as
-	 * cap = ((F-E)*193)>>8 from the R2069_RCCAL_E/F reads. set_channel
+	 * cap = ((F-E)*193)>>8 from the R2069_RCCAL_E/F reads. switch_channel
 	 * does not re-run rccal, so replicate that precondition here from the
 	 * per-board E/F, using the same formula, instead of forcing a value.
 	 */
@@ -193,6 +251,30 @@ static void mount_board(const struct board_profile *p)
 	g_sprom.rxchain = p->rxchain;
 	g_sprom.subband = 0;
 	g_sprom.subband5gver = p->subband5gver;
+	/*
+	 * Decodifica del blocco FEM/PA dalle word raw, con le stesse maschere
+	 * che bcma_sprom_extract_r11 usa (SROM11_FEM_CFG1/2, offset 0x0AA/0x0AC).
+	 * Prima questo harness portava femctrl come valore cotto a 6: una
+	 * finzione che mascherava il fatto che nessuno lo popolava davvero.
+	 */
+	{
+		u16 c1 = p->fem_cfg1, c2 = p->fem_cfg2;
+
+		g_sprom.tssiposslope2g = c1 & 0x0001;
+		g_sprom.epagain2g      = (c1 & 0x000e) >> 1;
+		g_sprom.pdgain2g       = (c1 & 0x01f0) >> 4;
+		g_sprom.tworangetssi2g = (c1 & 0x0200) >> 9;
+		g_sprom.papdcap2g      = (c1 & 0x0400) >> 10;
+		g_sprom.femctrl        = (c1 & 0xf800) >> 11;
+		g_sprom.tssiposslope5g = c2 & 0x0001;
+		g_sprom.epagain5g      = (c2 & 0x000e) >> 1;
+		g_sprom.pdgain5g       = (c2 & 0x01f0) >> 4;
+		g_sprom.tworangetssi5g = (c2 & 0x0200) >> 9;
+		g_sprom.papdcap5g      = (c2 & 0x0400) >> 10;
+		g_sprom.gainctrlsph    = (c2 & 0xf800) >> 11;
+	}
+	memcpy(g_sprom.tssifloor5g, p->tssifloor5g,
+	       sizeof(g_sprom.tssifloor5g));
 	memcpy(g_sprom.rxgains_5gl.elnagain, p->rxgains_5gl_elnagain,
 	       sizeof(g_sprom.rxgains_5gl.elnagain));
 	memcpy(g_sprom.rxgains_5gl.triso, p->rxgains_5gl_triso,
@@ -244,38 +326,6 @@ static void mount_board(const struct board_profile *p)
 }
 
 /*
- * Read plans specific to the rxiq flow on any board with the r2069-rev4
- * PHY. The correlator command register 0x0270 is polled by
- * b43_phy_ac_rxiq_start after every SET-START: the code loops reading
- * until bit 0 clears. We script three "busy" (bit0=1) reads then a
- * "done" (bit0=0), repeated enough times to cover all estimator
- * invocations in Phase 1 (4 estimators). Phase 2/3 add more estimators;
- * extend the array to (num_estimators * 4) if you enable those flows.
- *
- * The values below reproduce the vendor pattern where an estimator
- * takes ~3 poll iterations to complete on the wl-diag capture. The
- * exact count is not verifiable (val=UNDEFINED in the trace), but the
- * op-order between estimators is: N reads showing bit0=1, one read
- * showing bit0=0, break. As long as the last-read bit is clear the
- * flow proceeds; the diff should tolerate poll-count differences via
- * compare.py's --squash-poll.
- */
-static const u16 rxiq_poll_0x0270[] = {
-	/* est#1 */ 0x0001, 0x0001, 0x0001, 0x0000,
-	/* est#2 */ 0x0001, 0x0001, 0x0001, 0x0000,
-	/* est#3 */ 0x0001, 0x0001, 0x0001, 0x0000,
-	/* est#4 */ 0x0001, 0x0001, 0x0001, 0x0000,
-	/* Phase 2/3 (only used if rxiqcal REGMAP_FILLED is 1) */
-	/* est#5, est#5b, est#5c, est#6, est#6b, est#6c */
-	0x0001, 0x0001, 0x0001, 0x0000,
-	0x0001, 0x0001, 0x0001, 0x0000,
-	0x0001, 0x0001, 0x0001, 0x0000,
-	0x0001, 0x0001, 0x0001, 0x0000,
-	0x0001, 0x0001, 0x0001, 0x0000,
-	0x0001, 0x0001, 0x0001, 0x0000,
-};
-
-/*
  * Table-access lock probe. Every b43_actab_* prologue reads 0x019e to
  * observe the "table write in progress" bit before touching 0x000d..
  * 0x000f. In real HW the bit is momentarily set by the previous access
@@ -290,8 +340,6 @@ static const u16 tblacc_0x019e[] = {
 
 static void register_rxiq_read_plans(void)
 {
-	b43_test_plan_phy_reads(0x0270, rxiq_poll_0x0270,
-				(int)(sizeof(rxiq_poll_0x0270) / sizeof(u16)));
 	b43_test_plan_phy_reads(0x019e, tblacc_0x019e,
 				(int)(sizeof(tblacc_0x019e) / sizeof(u16)));
 }
@@ -486,13 +534,13 @@ static void run_rfkill(void)
 	fprintf(stderr, "test: software_rfkill(false) done\n");
 }
 
-static void run_set_channel(void)
+static void run_switch_channel(void)
 {
 
 	/*
-	 * Stato entrante a set_channel (post-op_init): MAC sospeso,
+	 * Stato entrante a switch_channel (post-op_init): MAC sospeso,
 	 * classifier/clip-detector state non toccato (RX_ANY = 0,
-	 * CLIP_ALL_DIS = 0). set_channel imposterà RX_WAITED e
+	 * CLIP_ALL_DIS = 0). switch_channel imposterà RX_WAITED e
 	 * CLIP_ALL_DIS via classifier()/clip_det() prima delle
 	 * sub-routine che REQUIRE quello stato.
 	 *
@@ -501,7 +549,7 @@ static void run_set_channel(void)
 	 * register writes.
 	 */
 	/*
-	 * Azzera solo i bit che set_channel si aspetta puliti all'ingresso: non
+	 * Azzera solo i bit che switch_channel si aspetta puliti all'ingresso: non
 	 * l'intero status_mask, che in `full` porta gia' il latch di fase messo da
 	 * op_init (B43_PHY_AC_STATE_FIRST_BRINGUP) e lo stato del bracket PMU.
 	 */
@@ -516,13 +564,6 @@ static void run_set_channel(void)
 	 * lock precedente (0 al primo lock, 0x0002 ai nested). Un plan
 	 * a valore fisso 0x0000 rompeva questa sequenza.
 	 */
-
-	/*
-	 * rxiq_est_debug is invoked from set_channel's tail; reuse
-	 * the same 0x0270 completion plan as the standalone flow.
-	 */
-	b43_test_plan_phy_reads(0x0270, rxiq_poll_0x0270,
-				(int)(sizeof(rxiq_poll_0x0270) / sizeof(u16)));
 
 	/*
 	 * Table-7 cell pre-state per il RMW di analog_on_reset. I
@@ -619,6 +660,142 @@ static void run_set_channel(void)
 	}
 
 	/*
+	 * Accumulatori RXIQ. Il solve somma i due round piu' recenti, quindi la
+	 * coppia deve dare i coefficienti che la cattura ch36 scrive: core 0
+	 * `0x03f2/0x004c`, core 1 `0x03db/0x0037`. I valori sono uguali su tutti i
+	 * round, cosi' qualunque coppia produce lo stesso risultato.
+	 *
+	 * Non sono valori misurati -- la ch36 non registra le letture -- ma un
+	 * ingresso *coerente con l'uscita osservata*. Il gate resta significativo:
+	 * i coefficienti sono cio' che verifica, e se il solve regredisse l'uscita
+	 * cambierebbe. Per validare la misura vera serve AC_READ_ORACLE, vedi
+	 * porting-plan.md.
+	 */
+	{
+		static const u16 acc_06c3[6] = {
+			0x0262, 0x0262, 0x0262, 0x0262, 0x0262, 0x0262,
+		};
+		static const u16 acc_06c2[6] = {
+			0x5a00, 0x5a00, 0x5a00, 0x5a00, 0x5a00, 0x5a00,
+		};
+		static const u16 acc_06c5[6] = {
+			0x02c0, 0x02c0, 0x02c0, 0x02c0, 0x02c0, 0x02c0,
+		};
+		static const u16 acc_06c4[6] = {
+			0x5564, 0x5564, 0x5564, 0x5564, 0x5564, 0x5564,
+		};
+		static const u16 acc_06c1[6] = {
+			0x0008, 0x0008, 0x0008, 0x0008, 0x0008, 0x0008,
+		};
+		static const u16 acc_06c0[6] = {
+			0x489b, 0x489b, 0x489b, 0x489b, 0x489b, 0x489b,
+		};
+		static const u16 acc_08c3[6] = {
+			0x0262, 0x0262, 0x0262, 0x0262, 0x0262, 0x0262,
+		};
+		static const u16 acc_08c2[6] = {
+			0x5a00, 0x5a00, 0x5a00, 0x5a00, 0x5a00, 0x5a00,
+		};
+		static const u16 acc_08c5[6] = {
+			0x02a6, 0x02a6, 0x02a6, 0x02a6, 0x02a6, 0x02a6,
+		};
+		static const u16 acc_08c4[6] = {
+			0x60dc, 0x60dc, 0x60dc, 0x60dc, 0x60dc, 0x60dc,
+		};
+		static const u16 acc_08c1[6] = {
+			0x0015, 0x0015, 0x0015, 0x0015, 0x0015, 0x0015,
+		};
+		static const u16 acc_08c0[6] = {
+			0xfe20, 0xfe20, 0xfe20, 0xfe20, 0xfe20, 0xfe20,
+		};
+
+		b43_test_plan_phy_reads(0x06c3, acc_06c3, 6);
+		b43_test_plan_phy_reads(0x06c2, acc_06c2, 6);
+		b43_test_plan_phy_reads(0x06c5, acc_06c5, 6);
+		b43_test_plan_phy_reads(0x06c4, acc_06c4, 6);
+		b43_test_plan_phy_reads(0x06c1, acc_06c1, 6);
+		b43_test_plan_phy_reads(0x06c0, acc_06c0, 6);
+		b43_test_plan_phy_reads(0x08c3, acc_08c3, 6);
+		b43_test_plan_phy_reads(0x08c2, acc_08c2, 6);
+		b43_test_plan_phy_reads(0x08c5, acc_08c5, 6);
+		b43_test_plan_phy_reads(0x08c4, acc_08c4, 6);
+		b43_test_plan_phy_reads(0x08c1, acc_08c1, 6);
+		b43_test_plan_phy_reads(0x08c0, acc_08c0, 6);
+	}
+
+	/*
+	 * Risultati della cal AFE RX: rxcal_afe_iter riscrive il valore che ha
+	 * letto, quindi il plan porta cio' che la cattura ch36 riscrive. Chiavato
+	 * sull'offset di lettura, non sulla posizione nella coda di 0x000f.
+	 */
+	{
+		static const u16 afe_80[] = {
+			0x0060, 0x0000, 0x0064, 0x000e,
+			0x0060, 0x0000, 0x0062, 0xfffd,
+		};
+		static const u16 afe_83[] = {
+			0xff01, 0xfe02,
+		};
+		static const u16 afe_84[] = {
+			0x0102,
+		};
+		static const u16 afe_85[] = {
+			0x0301,
+		};
+		static const u16 afe_87[] = {
+			0x0020, 0x0000, 0x0022, 0x0004,
+			0x0020, 0x0000, 0x0023, 0x0003,
+		};
+		static const u16 afe_8a[] = {
+			0x0100, 0x0100,
+		};
+		static const u16 afe_8b[] = {
+			0x0000,
+		};
+		static const u16 afe_8c[] = {
+			0x0001,
+		};
+		static const u16 afe_8e[] = {
+			0xfee0, 0x0080, 0xfed6, 0x00b6,
+			0x00c0, 0xff40, 0x00dd, 0xff57,
+		};
+		static const u16 afe_91[] = {
+			0x0d6e, 0x0764,
+		};
+		static const u16 afe_92[] = {
+			0x05fe,
+		};
+		static const u16 afe_93[] = {
+			0xfb03,
+		};
+
+		b43_test_plan_table_cell(0x000c, 0x0080, afe_80,
+					 ARRAY_SIZE(afe_80));
+		b43_test_plan_table_cell(0x000c, 0x0083, afe_83,
+					 ARRAY_SIZE(afe_83));
+		b43_test_plan_table_cell(0x000c, 0x0084, afe_84,
+					 ARRAY_SIZE(afe_84));
+		b43_test_plan_table_cell(0x000c, 0x0085, afe_85,
+					 ARRAY_SIZE(afe_85));
+		b43_test_plan_table_cell(0x000c, 0x0087, afe_87,
+					 ARRAY_SIZE(afe_87));
+		b43_test_plan_table_cell(0x000c, 0x008a, afe_8a,
+					 ARRAY_SIZE(afe_8a));
+		b43_test_plan_table_cell(0x000c, 0x008b, afe_8b,
+					 ARRAY_SIZE(afe_8b));
+		b43_test_plan_table_cell(0x000c, 0x008c, afe_8c,
+					 ARRAY_SIZE(afe_8c));
+		b43_test_plan_table_cell(0x000c, 0x008e, afe_8e,
+					 ARRAY_SIZE(afe_8e));
+		b43_test_plan_table_cell(0x000c, 0x0091, afe_91,
+					 ARRAY_SIZE(afe_91));
+		b43_test_plan_table_cell(0x000c, 0x0092, afe_92,
+					 ARRAY_SIZE(afe_92));
+		b43_test_plan_table_cell(0x000c, 0x0093, afe_93,
+					 ARRAY_SIZE(afe_93));
+	}
+
+	/*
 	 * PHY pre-seed: 0x0401 (RF_SEQ_MODE) al boot ha bit 0-2 = coremask
 	 * e bit 12-14 = coremask<<12. Il vendor legge questi bit come
 	 * saved_401 dentro rxcore_setstate e li ripristina alla fine
@@ -674,7 +851,7 @@ static void run_set_channel(void)
 		/*
 		 * 0x0017 / 0x0217 (radio bit 4 auto-set/clear HW).
 		 *
-		 * Fase set_channel matched (rxcal_radio_setup):
+		 * Fase switch_channel matched (rxcal_radio_setup):
 		 *   [0] #34721/34742: bit 4=0 (WR=0x0000 precedente)
 		 *   [1] #38297/38318: idem
 		 *   [2] #39644/39678: bit 4 auto-SET → 0x0010
@@ -698,14 +875,30 @@ static void run_set_channel(void)
 		 *   [9] MOD 0x0017 mask=0x0002 val=0x0000 → RD interno = 0x0011
 		 *       → WR = 0x0011 (bit 1 già clear).
 		 */
+		/*
+		 * La prima voce e' il peek di rxcal_radio_setup, che ora finisce in
+		 * rxcal_radio_saved[] e viene riscritto dal cleanup: la cattura ch36
+		 * ripristina 0x0011, quindi il peek deve leggere quello. Le voci
+		 * successive sono le RD interne dei maskset, invariate.
+		 */
+		/* [2] e' il peek di rxcal_radio_setup: il cleanup ripristina 0x0011. */
 		static const u16 rad_0017[] = {
-			0, 0, 0x0010, 0x0010, 0x0011, 0x0002, 0,
+			0, 0, 0x0011, 0x0010, 0x0011, 0x0002, 0,
 			0, 0x0010, 0x0011,
 		};
 		static const u16 rad_0217[] = {
-			0, 0, 0x0010, 0x0010, 0x0011, 0x0002, 0,
+			0, 0, 0x0011, 0x0010, 0x0011, 0x0002, 0,
 			0, 0x0010, 0x0011,
 		};
+
+		/* Peek di setup: il cleanup ripristina 0x0001. */
+		static const u16 rad_000e[] = { 0x0001 };
+		static const u16 rad_020e[] = { 0x0001 };
+
+		b43_test_plan_radio_reads(0x000e, rad_000e,
+					  ARRAY_SIZE(rad_000e));
+		b43_test_plan_radio_reads(0x020e, rad_020e,
+					  ARRAY_SIZE(rad_020e));
 		b43_test_plan_radio_reads(0x0017, rad_0017,
 					  ARRAY_SIZE(rad_0017));
 		b43_test_plan_radio_reads(0x0217, rad_0217,
@@ -801,11 +994,11 @@ static void run_full(void)
 	run_op_init();
 	/*
 	 * b43_phy_init azzera phy->do_full_init fra ops->init e switch_channel,
-	 * quindi il codice di set_channel non vede mai il flag alzato -- gatare
+	 * quindi il codice di switch_channel non vede mai il flag alzato -- gatare
 	 * la' su do_full_init non ha effetto nel driver vero.
 	 */
 	g_wldev.phy.do_full_init = false;
-	run_set_channel();
+	run_switch_channel();
 }
 
 int main(int argc, char **argv)
@@ -820,6 +1013,7 @@ int main(int argc, char **argv)
 	fprintf(stderr, "test: board=%s flow=%s\n", p->name, flow);
 	mount_board(p);
 	b43_test_plans_reset();
+	plan_rxiq_poll(p->name, g_wldev.phy.do_full_init);
 	g_wldev.mac_suspended = 1;
 	b43_test_trace_to(stdout);
 
@@ -955,9 +1149,6 @@ int main(int argc, char **argv)
 		static const u16 acc_0ac3[] = { 0x021e, 0x021e };
 		static const u16 acc_0ac4[] = { 0x453a, 0x7f05 };
 		static const u16 acc_0ac5[] = { 0x0290, 0x028e };
-		static const u16 poll_done[] = { 0x0000, 0x0000 };
-
-		b43_test_plan_phy_reads(0x0270, poll_done, 2);
 		b43_test_plan_phy_reads(0x06c0, acc_06c0, 2);
 		b43_test_plan_phy_reads(0x06c1, acc_06c1, 2);
 		b43_test_plan_phy_reads(0x06c2, acc_06c2, 2);
@@ -987,7 +1178,7 @@ int main(int argc, char **argv)
 		run_op_init();
 	} else if (!strcmp(flow, "rfkill")) {
 		run_rfkill();
-	} else if (!strcmp(flow, "set_channel")) {
+	} else if (!strcmp(flow, "switch_channel")) {
 		/*
 		 * Da solo questo flow modella un cambio di canale a runtime, non
 		 * un bring-up: lo slice vendor di riferimento (32887:55154) ha il
@@ -996,7 +1187,7 @@ int main(int argc, char **argv)
 		 * che spegne il MAC con una write diretta.
 		 */
 		g_wldev.mac_suspended = 0;
-		run_set_channel();
+		run_switch_channel();
 	} else if (!strcmp(flow, "full")) {
 		run_full();
 	} else {

@@ -32,8 +32,11 @@ Probe + `ifconfig wlan1 up` + scan passivo + associate su AP 5 GHz ch 36
 Due risultati sono riproducibili in questo repo (vedi
 [Verifica](#verifica-riproducibile)):
 
-- `set_channel` su D6220 ch36 combacia **op-per-op** con la cattura vendor:
-  22268/22268 operazioni, zero divergenze.
+- Il bring-up su D6220 ch36 combacia **op-per-op** con la cattura vendor fino
+  a @22478 su 25013 operazioni (flow `full`, primo bring-up). Il bring-up
+  successivo combacia fino a @2177 su 21007 (flow `switch_channel` con
+  `AC_FIRST_INIT=0`), dove si fermano sul banco `0x0910` -- vedi
+  `docs/retrace-todo.md`.
 - L'estrattore SROM rev 11 passa l'harness userspace su tutti i vettori:
   77/0 (DSL), 74/0 (D6220), 75/0 (agcombo).
 
@@ -46,7 +49,7 @@ oracolo (vedi i bug aperti).
 
 Su hardware il driver **non completa ancora `ifconfig up`**. L'unico run
 in repo ([`bring-up-logs/`](bring-up-logs/)) è sul DSL-3580L: probe, load
-firmware 784.2, `op_init` e il load delle tabelle passano; `set_channel` parte,
+firmware 784.2, `op_init` e il load delle tabelle passano; `switch_channel` parte,
 arriva alla scrittura della tabella txgain `id=0x20` e si ferma lì.
 Diagnosi corrente: mancano dei delay prima di quella scrittura. Attenzione,
 quel log precede la risoluzione della famiglia LPF — emette una diagnostica
@@ -60,9 +63,13 @@ divergenze note (`prefregs` 91.7%, `rccal` 84.2%, `afe_lpf_stage` 4.2%).
 `op_init` ha il suo gate contro `router-data/agcombo/wl-diag-wl1-attach.txt`,
 la sola cattura in repo che contenga il load tabelle: `set_pdet_on_reset`,
 `pre_init_frontend` e `mode_init` al 100%, `tables_init` **3714/3714** su una
-span continua (`#356..#4069`), zero op vendor non attribuite. `init_regs` va
-misurata sulle catture `down→bss` (17/17 su d6220, 33/33 su agcombo) perché
-la attach parte dopo la sua finestra.
+span continua (`#356..#4069`), zero op vendor non attribuite.
+
+`init_regs` si misura in due fasi, perché il numero di passate sul blocco gain
+ADC le segue: **17/17** al primo bring-up contro `d6220/attach-to-bss-up`, e
+**33/33** al successivo contro `d6220/down-to-bss-ch36-bw20` e
+`agcombo/down-to-bss-ch36`. La `d6220/down-to-bss-up` non va usata per i
+conteggi: sottoconta, vedi `docs/retrace-todo.md`.
 
 Il match op-per-op vale per D6220/ch36/BW20. Cosa questo implica sugli
 altri board, canali e bandwidth è in
@@ -84,7 +91,7 @@ bring-up radio (tutte sul DSL, wl 6.30) sono in
   cap LPF e DACBUF derivati dalle misure), `afe_lpf_stage`. GPIO frontend,
   PA bias e PMU enable finale sono *fuori* dallo scope di rfkill e non sono
   ancora implementati.
-- **`set_channel`** (BW20, 5 GHz): freeze RX → `radio_2069_channel_setup`
+- **`switch_channel`** (BW20, 5 GHz): freeze RX → `radio_2069_channel_setup`
   → `channel_setup` (reset-time, AFE/LPF, RF sequencer, `rxcore_setstate`,
   farrow, chanspec tail, coeff bank) → `chan_tables` → noise shaping
   (tbl 0x15/0x0b/0x44/0x45 + `rxgain_init` per-core) → BW select →
@@ -109,7 +116,7 @@ Mappa file sorgente → patch: [`docs/driver-status.md`](docs/driver-status.md).
 | `ppr[24]` (power reduction per-rate) | hardcoded dalla cattura D6220 ch36 | Derivazione da `mcsbw*po` SROM assente: TX power sbagliata su altri canali/board |
 | Base index idle-TSSI | seed catturato, il readback viene scartato | Errore non dominante, ma non è board-independent |
 | GPIO frontend 2-fase, PA bias per-core, PMU regctl enable finale | non implementati | Sono le op che il vendor emette solo a steady state |
-| BW40 / BW80 | `set_channel` ritorna `-EOPNOTSUPP` | — |
+| BW40 / BW80 | `switch_channel` ritorna `-EOPNOTSUPP` | — |
 | 2.4 GHz | `op_switch_channel` ritorna `-EOPNOTSUPP` | Mappa radio 2G non validata |
 | Canali ≠ 36 | 50 voci in channeltab (5170–5825 MHz), solo ch36 validato | Piano in [`docs/channel-generalization.md`](docs/channel-generalization.md) |
 | `b43_phy_ac_rxiqcal()` (solver generico da brcmsmac) | gated da `REGMAP_FILLED == 0`, nessun chiamante nel driver | Il path RXIQ effettivo è quello trascritto dalla trace, già wirato |
@@ -129,15 +136,21 @@ sequenza di init (agcombo attach `#1345` e `#2899`). Non è un bug e non va
 
 ## Verifica riproducibile
 
-Match op-per-op del flow `set_channel` contro la cattura vendor:
+Match op-per-op, contro `d6220/attach-to-bss-up-ch36-bw20` — la sola cattura
+ch36 completa e con i valori letti (5074 RETVAL). Il flow da usare e' `full`,
+non `switch_channel` da solo: quest'ultimo non esegue `op_init`, quindi tutto cio'
+che dipende dallo stato che `op_init` calcola divergerebbe senza che sia un bug
+del driver. L'esempio: il cap del TX-LPF viene dall'rccal di `op_init`, e in
+`switch_channel` standalone resta al default.
 
 ```sh
 cd test && make
-./ac_trace set_channel d6220 > trace.switch.d6220.out
-python3 compare.py \
-    ../router-data/d6220/wl-diag-wl1-attach-to-bss-ch36.txt \
-    trace.switch.d6220.out --range 32887:55154 --auto-align
-# vendor: 22268 ops / test: 22268 ops / MATCH
+python3 ../reverse-tools/merge_retvals.py \
+    ../router-data/d6220/wl-diag-wl1-attach-to-bss-up-ch36-bw20.txt /tmp/att.merged.txt
+AC_MAC_REFCOUNT=1 AC_READ_ORACLE=/tmp/att.merged.txt \
+    ./ac_trace full d6220 > trace.full.d6220.out
+python3 compare.py /tmp/att.merged.txt trace.full.d6220.out --range 50:30172
+# prima divergenza: @22478
 ```
 
 Sequenza del load tabelle di `op_init` contro la cattura vendor:
@@ -171,7 +184,7 @@ Kconfig), `CONFIG_B43_PHY_AC=y`, firmware in `/lib/firmware/b43/`, AP target
 
 ```
 modprobe b43                          # smoke: dmesg deve dire 0x4352/0x43b3, sromrev=11
-ifconfig wlan1 up                     # op_init + rfkill(unblocked) + set_channel
+ifconfig wlan1 up                     # op_init + rfkill(unblocked) + switch_channel
 iw wlan1 scan freq 5180               # scan passivo UNII-1
 ```
 

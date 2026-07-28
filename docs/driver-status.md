@@ -1,7 +1,8 @@
 # Stato del bring-up
 
-Il draft 1 di `set_channel` è validato op-per-op contro il trace vendor
-`d6220/attach-to-bss-ch36` (22268/22268 op, 100%). Il primo bring-up HW
+Il draft 1 di `switch_channel` è validato op-per-op contro il trace vendor
+`d6220/attach-to-bss-up-ch36-bw20` (flow `full` con oracolo, prima divergenza
+@22478 su 25013 op). Il primo bring-up HW
 è quindi atteso funzionante su:
 
 - **Board**: NetGear D6220 (o board equivalenti con chip 0x4352, radio
@@ -10,7 +11,7 @@ Il draft 1 di `set_channel` è validato op-per-op contro il trace vendor
   (95.8% delle op sono chan-invariant vs ch36, vedi
   `channel-generalization.md`) ma non è validato.
 - **Bandwidth**: solo BW20. BW40 è rifiutato esplicitamente da
-  `set_channel` con `-EOPNOTSUPP` in attesa di implementazione.
+  `switch_channel` con `-EOPNOTSUPP` in attesa di implementazione.
 
 Altri canali 5 GHz sono untested. La generalizzazione richiede
 estrazione di ~40 registri radio-chain per canale + ~30 chanspec
@@ -57,15 +58,15 @@ rispettivi sorgenti, così il tree linka a ogni step della serie.
 
 La 0006 attuale è un monolite (~8300 righe aggiunte); prima della submission
 a `linux-wireless` va spezzata in commit da ~300-500 righe ciascuno. Lo
-schema previsto, con `set_channel` stub al passo 1 e riempito via via:
+schema previsto, con `switch_channel` stub al passo 1 e riempito via via:
 
 | # | contenuto | dipende da |
 |---|-----------|------------|
-| a | ops scaffold: allocate/free/prepare_structs, mode_init, init_regs, phyop r/w, ops struct con stub `set_channel`/`op_init`/`rfkill` | 0002 |
+| a | ops scaffold: allocate/free/prepare_structs, mode_init, init_regs, phyop r/w, ops struct con stub `switch_channel`/`op_init`/`rfkill` | 0002 |
 | b | TX power: pa5g_group, txpwrctrl_setup, txgain table, txpwr_by_index, idle_tssi_meas | a |
 | c | RF sequencer + reset-time: rfseq tables/tbl_init, set_reg_on_reset, force_rf_sequence, reset_cca | a |
 | d | Analog on reset: femctrl, tx_lpf, rx_lpf, dacbuf, pdet, analog_on_reset | c |
-| e | Channel setup: classifier, clip_det, rxcore_setstate, rx_gate, channel_setup, chanspec_tail, coeff_bank, chan_tables, rx_evm_shaping, adc_reset, rx_enable — riempie `set_channel` | b, c, d |
+| e | Channel setup: classifier, clip_det, rxcore_setstate, rx_gate, channel_setup, chanspec_tail, coeff_bank, chan_tables, rx_evm_shaping, adc_reset, rx_enable — riempie `switch_channel` | b, c, d |
 | f | op_init + op_software_rfkill: wira il PHY nel framework b43 | e |
 | g | rxgain: sezione rxgain_init/rxgainctrl di phy_ac.c | e |
 | h | farrow: b43_phy_ac_farrow_setup + tabelle (da phy_ac.c) | a |
