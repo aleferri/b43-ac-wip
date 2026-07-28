@@ -43,6 +43,7 @@
 static inline int __ffs(unsigned long x)  { return __builtin_ctzl(x); }
 static inline int fls(int x)              { return x ? 32 - __builtin_clz((unsigned)x) : 0; }
 static inline int hweight32(u32 x)        { return __builtin_popcount(x); }
+static inline int hweight8(u8 x)          { return __builtin_popcount(x); }
 static inline s32 sign_extend32(u32 value, int index)
 {
 	u8 shift = 31 - index;

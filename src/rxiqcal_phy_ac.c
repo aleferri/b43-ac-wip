@@ -310,19 +310,28 @@ static void rxcal_gainctrl_step(struct b43_wldev *dev, u8 rx_core,
  *     0x0017, 0x015f, 0x0024, 0x0025 + core stride 0x200)
  *   9 maskset (ognuno espanso in tripletta MOD+RD+WR dal wrap tracer)
  * Totale 34 op = 7 + 9×3. */
+/* Preservati da setup, riscritti da cleanup. Ordine del driver stock. */
+static const u16 b43_phy_ac_rxcal_radio_regs[7] = {
+	0x016e, 0x000e, 0x0161, 0x0017, 0x015f, 0x0024, 0x0025,
+};
+
 void b43_phy_ac_rxcal_radio_setup(struct b43_wldev *dev, u8 rx_core)
 {
 	B43_AC_FN();
 	u16 s = (u16)(rx_core * 0x200);
 
-	/* 7 peek saved values (#39641-#39647 per core 0) */
-	b43_radio_read(dev, 0x016e + s);
-	b43_radio_read(dev, 0x000e + s);
-	b43_radio_read(dev, 0x0161 + s);
-	b43_radio_read(dev, 0x0017 + s);
-	b43_radio_read(dev, 0x015f + s);
-	b43_radio_read(dev, 0x0024 + s);
-	b43_radio_read(dev, 0x0025 + s);
+	/* 7 peek dei valori da preservare (#39641-#39647 per core 0). */
+	{
+		unsigned int i;
+
+		for (i = 0; i < ARRAY_SIZE(b43_phy_ac_rxcal_radio_regs); i++) {
+			u16 v = b43_radio_read(dev,
+					b43_phy_ac_rxcal_radio_regs[i] + s);
+
+			if (rx_core < B43_PHY_AC_MAX_CORES)
+				dev->phy.ac->rxcal_radio_saved[rx_core][i] = v;
+		}
+	}
 
 	/* 9 maskset di programma. Ognuno espanso dal wrap in MOD+RD+WR. */
 	b43_radio_maskset(dev, 0x0161 + s, (u16)~0x4000, 0x4000);
@@ -455,16 +464,15 @@ void b43_phy_ac_rxcal_cleanup(struct b43_wldev *dev, u8 rx_core)
 void b43_phy_ac_rxcal_radio_cleanup(struct b43_wldev *dev, u8 rx_core)
 {
 	B43_AC_FN();
-	static const struct { u16 off; u16 val; } wr[7] = {
-		{ 0x016e, 0x0000 }, { 0x000e, 0x0001 }, { 0x0161, 0x0100 },
-		{ 0x0017, 0x0011 }, { 0x015f, 0x0000 }, { 0x0024, 0x0003 },
-		{ 0x0025, 0x0000 },
-	};
 	u16 s = (u16)(rx_core * 0x200);
 	unsigned int i;
 
-	for (i = 0; i < ARRAY_SIZE(wr); i++)
-		b43_radio_write(dev, wr[i].off + s, wr[i].val);
+	if (rx_core >= B43_PHY_AC_MAX_CORES)
+		return;
+
+	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_rxcal_radio_regs); i++)
+		b43_radio_write(dev, b43_phy_ac_rxcal_radio_regs[i] + s,
+				dev->phy.ac->rxcal_radio_saved[rx_core][i]);
 }
 
 /* ===================== DEBUG: MEASURE-ONLY HELPER ======================== */

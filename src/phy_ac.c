@@ -146,12 +146,8 @@ static void b43_phy_ac_mode_init(struct b43_wldev *dev)
 }
 
 /*
- * Init ADC gain words. Per *fase*, non per chip: la coppia 0x097a/0x08fa e'
- * l'attach da freddo e la 0x03bf/0x0340 il down->up, su entrambi i chip. La
- * lettura "per-chip" precedente nasceva dal confronto fra agcombo #4070
- * (attach) e 4352 #32854 (attach-to-bss): fasi diverse su chip diversi. La
- * cattura d6220 attach-to-bss-up scioglie l'ambiguita' mostrando entrambe le
- * coppie sullo stesso chip. adc_reset poi riscrive 0x03ac/0x032c.
+ * Init ADC gain words. Coppia e numero di passate seguono la fase, non il chip.
+ * adc_reset poi riscrive 0x03ac/0x032c.
  */
 static void b43_phy_ac_init_regs(struct b43_wldev *dev)
 {
@@ -160,20 +156,15 @@ static void b43_phy_ac_init_regs(struct b43_wldev *dev)
 					0x0342, 0x0343, 0x0346, 0x0347 };
 	static const u16 lo_regs[8] = { 0x033c, 0x033d, 0x0340, 0x0341,
 					0x0344, 0x0345, 0x0348, 0x0349 };
-	/* ADC gain cold-init. The (hi, lo) pair is selected by bring-up phase,
-	 * not by chip: both 4352 and 4360 write 0x097a/0x08fa on the first
-	 * bring-up (d6220 attach-to-bss-up #4479, agcombo attach #4071) and
-	 * 0x03bf/0x0340 on a later one (d6220 #51731, agcombo #58369).
-	 * adc_reset rewrites the pair to 0x03ac/0x032c further along.
+	/*
+	 * Primo bring-up: una passata con 0x097a/0x08fa (d6220 #4479, agcombo
+	 * #4071). Dal secondo: due passate con 0x03bf/0x0340 (d6220
+	 * down-to-bss-ch36-bw20 #621 e #637, agcombo #58369 e #58385).
 	 *
-	 * The 4360 emits two passes over the block, both 4352 witnesses one
-	 * (d6220 #51731, DSL #122785).
-	 *
-	 * TODO: the DSL (wl 6.30) writes 0x0395/0x0315 here and no 0x1645 --
-	 * version difference, not yet pinned.
+	 * TODO: il DSL (wl 6.30) scrive 0x0395/0x0315 e nessun 0x1645.
 	 */
 	bool first = dev->phy.do_full_init;
-	bool two_pass = (dev->dev->chip_id == 0x4360);
+	bool two_pass = !first;
 	u16 hi = first ? 0x097a : 0x03bf;
 	u16 lo = first ? 0x08fa : 0x0340;
 	unsigned int pass, passes = two_pass ? 2 : 1;
@@ -235,9 +226,10 @@ static unsigned int b43_phy_ac_pa5g_group(struct b43_wldev *dev, u16 freq)
 static void b43_phy_ac_clip_det(struct b43_wldev *dev, bool enable);
 static void b43_phy_ac_cca_pulse(struct b43_wldev *dev);
 static void b43_phy_ac_rxgain_perchan_tail(struct b43_wldev *dev);
+static void b43_phy_ac_iq_acc_peek(struct b43_wldev *dev, unsigned int core);
 static void b43_phy_ac_pmu_req(struct b43_wldev *dev, bool on);
-static void b43_phy_ac_probe_cycle(struct b43_wldev *dev,
-				   const u16 *mode_vals, unsigned int n_iter);
+static void b43_phy_ac_probe_cycle(struct b43_wldev *dev, unsigned int n_iter,
+				   bool extended_first, bool closes_sequence);
 static void b43_phy_ac_rxiqcal_measure_block(struct b43_wldev *dev);
 static void b43_phy_ac_farrow_setup(struct b43_wldev *dev,
 				    struct ieee80211_channel *channel);
@@ -547,11 +539,8 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev,
 		b43_phy_set(dev, 0x0460, 0x0001);
 		/*
 		 * Attesa del completamento, stessa condizione di run_rfseq_cmd: si
-		 * legge finche' il bit 0 e' alto. Il numero di letture non e' fisso
-		 * e non dipende dalla fase -- lo determinano i valori: sull'attach
-		 * le 16 invocazioni danno [2,1,2,2,...], sul channel setup
-		 * successivo tutte 2. Le due letture hardcoded che c'erano prima
-		 * riproducevano solo il caso a 2.
+		 * legge finche' il bit 0 e' alto. Il conteggio lo determinano i
+		 * valori, non la fase: attach [2,1,2,2,...], successivo tutte 2.
 		 */
 		{
 			unsigned int k;
@@ -1234,7 +1223,7 @@ b43_phy_ac_reset_cca(struct b43_wldev *dev)
  * The classifier picks which preamble types the PHY decodes (CCK, OFDM,
  * "waited").
  *
- * Use this from switch_channel to disable OFDM on Japanese channel 14,
+ * Use this from set_channel to disable OFDM on Japanese channel 14,
  * like b43_phy_ht_classifier does.
  */
 /* 4360 agcombo: 4091 e 9987 (disable/enable agli estremi di channel_setup) ; d6220 ch36: n/l */
@@ -1306,7 +1295,7 @@ static void b43_phy_ac_clip_det(struct b43_wldev *dev, bool enable)
  *              controllo del RF sequencer prima di toccare il radio.
  *   #32889     SET 0x0003 bit 8 — controllo band-related, semantica
  *              del bit non confermata (5GHZ nominale è bit 0). Presente
- *              sia in attach-to-bss-ch36 sia in down-to-bss-up.
+ *              sia in attach-to-bss-up-ch36-bw20 sia in down-to-bss-ch36-bw20.
  *   #32890-91  Classifier via *plain write* 0x0140 = 0x05f4. Il valore
  *              intero contiene WAITEDEN (bit 2) più altri bit [10:4]
  *              del cui significato non è stato ancora fatto RE; la
@@ -1418,11 +1407,9 @@ static void b43_phy_ac_rxcore_setstate(struct b43_wldev *dev, u8 coremask)
 	/* Restore. Ordine vendor #34553-#34555: prima MOD ~0x0007, poi MOD
 	 * ~0x7000, poi WR 0x0400. */
 	/*
-	 * Il campo basso torna al coremask, non al valore salvato: su d6220
-	 * saved_401 vale 0x7777 e il driver stock riscrive 0x3 (attach-to-bss-up
-	 * #6395 legge 0x7777, #6431 scrive 0x0003 con maschera 0x0007). Su agcombo
-	 * coremask e' 7 e le due letture coincidono, che e' il motivo per cui la
-	 * versione precedente -- saved_401 & 0x0007 -- passava inosservata.
+	 * Il campo basso torna al coremask, non al valore salvato: #6395 legge
+	 * 0x7777 e #6431 riscrive 0x0003. Su agcombo coremask e' 7 e i due
+	 * coincidono.
 	 */
 	b43_phy_maskset(dev, B43_PHY_AC_RF_SEQ_MODE, (u16)~0x0007, coremask);
 	b43_phy_maskset(dev, B43_PHY_AC_RF_SEQ_MODE, (u16)~0x7000,
@@ -1536,11 +1523,34 @@ static const u32 b43_acphy_txv_for_spexp[243] = {
  */
 
 /*
- * FEM ctrl table (femctrl==6, letto su tutti i board). Blocco 32B su PHY tbl id 0xa off 0/0x20/0x40 (16 byte ripetuti 2x).
+ * FEM ctrl table. femctrl 6 e' l'unico osservato: le tre board in repo lo
+ * condividono, ed e' verificato in NVRAM su tutte e tre. Blocco 32B su PHY tbl id 0xa off 0/0x20/0x40 (16 byte ripetuti 2x).
  * 4360 agcombo: 4287-4388 ; d6220 ch36 TBL.WR id=0xa off 0/0x20/0x40 @#33117-#33189 */
 static void b43_phy_ac_set_regtbl_on_femctrl(struct b43_wldev *dev)
 {
 	B43_AC_FN();
+	/*
+	 * SCAFFOLD(femctrl6): la tabella qui sotto e' quella di femctrl 6, la
+	 * sola osservata -- le tre board in repo la condividono. Non e' una
+	 * tabella generica: pilota le linee di controllo del FEM, quindi enable
+	 * del PA e stato dello switch T/R. Scrivere la tabella di femctrl 6 su un
+	 * FEM diverso significa pilotare quelle linee secondo uno schema che non
+	 * e' il suo -- per esempio il PA abilitato quando non dovrebbe, o lo
+	 * switch nello stato sbagliato durante il TX.
+	 *
+	 * Prima questa funzione ASSUMEVA femctrl 6 senza leggerlo. Ora lo legge e
+	 * si ferma se non corrisponde: meglio un bring-up che fallisce che un
+	 * front-end pilotato con lo schema di un'altra board.
+	 */
+	if (dev->dev->bus_sprom->femctrl != 6) {
+		b43warn(dev->wl,
+			"AC-PHY: femctrl=%u non supportato: la tabella di controllo FEM "
+			"portata e' quella di femctrl 6. Pilotare un FEM diverso con "
+			"questa tabella puo' danneggiare il front-end.\n",
+			dev->dev->bus_sprom->femctrl);
+		return;
+	}
+
 	static const u8 fem6_tbl[32] = {
 		0x00, 0x00, 0x06, 0x02,  0x00, 0x00, 0x06, 0x02,
 		0x00, 0x01, 0x00, 0x00,  0x00, 0x00, 0x00, 0x00,
@@ -1733,17 +1743,35 @@ static void b43_phy_ac_post_rfseq_misc_setup(struct b43_wldev *dev)
 	b43_phy_read_log(dev, 0x000b);
 
 	/*
-	 * Quiesce silicon RX cores: attiva SOLO i core presenti (coremask),
-	 * spegne il core orfano su chip dove l'HW ha più core di quelli
-	 * usati (BCM4360 3-core con D6220 2-core, ecc.). Vendor emette
-	 * la sequenza a #34527-#34556 con coremask=0x03 per D6220.
+	 * Quiesce silicon RX cores: spegne i core che il silicio ha e la board
+	 * non collega. num_cores viene dalla lettura di 0x000b (& 0x07, vale 3
+	 * sia sul 4352 sia sul 4360), coremask dalla rxchain SROM.
+	 *
+	 * Ha senso solo se i due non tornano. Prima la chiamata era
+	 * incondizionata -- si leggeva il conteggio del silicio e non lo si
+	 * usava -- e su una board che collega tutte le catene emetteva 31 op
+	 * che il driver stock non emette: verificato sull'agcombo, dove
+	 * rxchain=7 copre tutti e tre i core e la cattura non contiene nessuna
+	 * WR 0x16d8, mentre sul d6220 (rxchain=3, un core orfano) la sequenza
+	 * c'e' a #34527-#34556.
 	 */
-	b43_phy_ac_rxcore_setstate(dev, dev->phy.ac->coremask);
+	if (hweight8(dev->phy.ac->coremask) != dev->phy.ac->num_cores)
+		b43_phy_ac_rxcore_setstate(dev, dev->phy.ac->coremask);
 
 	/* Relock outer table-write gate: nel vendor è emesso qui, come read-back
 	 * del gate seguito da un maskset idempotente (val=0x0002 mask=0x0002). */
 	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+
+	/*
+	 * Solo 4360: il campo a 6 bit di 0x02e4 va a 0x0800 QUI, fra il relock
+	 * del gate e la 0x01ec -- non dopo channel_setup, dov'era prima.
+	 * Nella cattura agcombo sta a @6250, subito prima della 0x01ec a @6251
+	 * e della tabella 0x20 a @6252; il port la emetteva a @6893, 643 op piu'
+	 * tardi. Nessun testimone 4352 la emette.
+	 */
+	if (dev->dev->chip_id == 0x4360)
+		b43_phy_maskset(dev, 0x02e4, (u16)~0x3f00, 0x0800);
 
 	b43_phy_write(dev, 0x01ec, 0x9c40);
 }
@@ -1919,32 +1947,22 @@ static void b43_phy_ac_coeff_bank_init_bw20_5g(struct b43_wldev *dev)
 }
 
 /*
- * Analog reset-time sub-setups, run before the table-7 command writes, under
- * the caller's table-write lock. FEM control and the TX-LPF stay as helpers;
- * the single-use RX-LPF and dacbuf-cap setups are inlined here.
+ * Analog reset-time sub-setups, sotto il table-write lock del chiamante. FEM
+ * control e TX-LPF restano helper; RX-LPF e dacbuf-cap, a uso singolo, sono
+ * inline qui.
  */
 /*
- * Power-detector (pdet) reset-time setup.
+ * Setup del power-detector. 14 write one-shot; `full` seleziona la variante
+ * lunga (con 0x0358-0x035a) da quella corta che si ferma a 0x0559.
  *
- * Blocco di 14 scritture, one-shot. Le due occorrenze nella trace
- * la trace NON sono identiche: la prima
- *  si ferma a 0x0559 (11 scritture); la seconda
- *  aggiunge 0x0358/0x0359/0x035a (14 scritture). Qui si
- * riproduce la seconda, che è quella allineata al call-site
- * b43_phy_ac_analog_on_reset (pdet -> femctrl). NON è per-core: cercato lo
- * stride +0x200 tipico
- * (0x0750/0x0950/0x0b50) e non esiste, zero occorrenze in tutta la
- * trace. La "LUT per-core da 960 byte" citata nel README è quindi
- * probabilmente un'altra cosa, scritta più tardi se/quando il TX power
- * closed-loop si attiva — non è in questo blocco.
+ * Non e' per-core: lo stride +0x200 (0x0750/0x0950/0x0b50) non esiste in
+ * nessuna cattura. Valori catturati, non derivati -- due coppie identiche
+ * (1000/1000, 500/500) sembrano finestre di settle piu' che gain code.
+ * 0x0554/0x0555 vengono ritoccati piu' avanti dal watchdog periodico, non
+ * portato (vedi b43_phy_ac_op_recalc_txpower).
  *
- * Valori non derivati da nessuna formula, catturati come sono: due
- * coppie identiche (1000/1000, 500/500) hanno l'aria di finestre di
- * misura/settle più che di un gain code. 0x0554/0x0555 vengono
- * ritoccati più avanti (1000->3000) dal watchdog periodico non portato
- * (vedi b43_phy_ac_op_recalc_txpower) — quella revisione non è qui.
+ * agcombo #310-320 e #4266-4279; d6220 ch36 #32803 e #33099.
  */
-/* 4360 agcombo: 310-320 e 4266-4279 ; d6220 ch36 @#32803,#33099 (fp 10/14, 2 chiamate) */
 static void b43_phy_ac_set_pdet_on_reset(struct b43_wldev *dev, bool full)
 {
 	B43_AC_FN();
@@ -2920,7 +2938,17 @@ static void b43_phy_ac_rxgainctrl_regs(struct b43_wldev *dev)
 		b43_phy_maskset(dev, 0x0720 + s, (u16)~0x0010, 0x0010);
 		b43_phy_maskset(dev, 0x0728 + s, (u16)~0x0010, 0x0010);
 		b43_phy_write(dev,   0x0736 + s, gw_hi);
-		b43_phy_write(dev,   0x0724 + s, 0x03ff);
+		/*
+		 * TSSI floor dall'SROM, non una costante. Sulle board in repo il
+		 * campo non e' programmato e legge 0x3ff (il massimo della
+		 * maschera), che e' esattamente il valore che era cablato qui --
+		 * per questo la trascrizione era invisibile. Su una board che lo
+		 * programma davvero, scrivere 0x3ff crudo ignorerebbe in silenzio
+		 * il floor dichiarato.
+		 */
+		b43_phy_write(dev,   0x0724 + s,
+			      dev->dev->bus_sprom->tssifloor5g[dev->phy.ac->pa5g_grp]
+			      & 0x03ff);
 		b43_phy_maskset(dev, 0x073a + s, (u16)~0x0007, 0x0003);
 		b43_phy_maskset(dev, 0x0725 + s, (u16)~0x0020, 0x0020);
 		b43_phy_maskset(dev, 0x0739 + s, (u16)~0x007e, 0x007a);
@@ -3034,18 +3062,9 @@ static void b43_phy_ac_adc_reset(struct b43_wldev *dev)
 	b43_phy_maskset(dev, 0x0070, (u16)~0xe000, 0xe000);
 
 	/*
-	 * La coppia gain word 0x0644/0x0844 non c'e' al primo bring-up: sull'attach
-	 * questo blocco e' a 3 op (#10878: 0x0070, poi 0x0678/0x0878), mentre in un
-	 * channel setup successivo e' a 5 (ch36 #38200 con 0x0644/0x0844 in mezzo).
-	 *
-	 * Il gate descrive il d6220, non spiega la causa. Tentata la derivazione,
-	 * senza esito: il valore 0x14 e' identico su d6220 e agcombo mentre il DSL
-	 * scrive 0x1b, e tutti i campi rxgains5g* dello SROM sono uguali fra le
-	 * board. L'unico campo che partiziona le board come il valore e' aga0
-	 * (133 su d6220 e agcombo, 71 sul DSL), ma con due soli valori distinti la
-	 * correlazione non e' falsificabile -- e il DSL ha comunque un blob di
-	 * un'altra versione. Non e' nemmeno la derivazione tipo idle-TSSI: qui il
-	 * valore non dipende da una lettura vicina.
+	 * Coppia gain word assente al primo bring-up: sull'attach il blocco e' a
+	 * 3 op (#10878), su un channel setup successivo a 5 (ch36 #38200).
+	 * Il valore 0x14 non e' derivabile dallo SROM -- vedi retrace-todo.md.
 	 */
 	if (!(dev->phy.ac->status_mask & B43_PHY_AC_STATE_FIRST_BRINGUP)) {
 		for (c = 0; c < num_cores; c++) {
@@ -3174,20 +3193,82 @@ static void b43_phy_ac_crs_regs_write(struct b43_wldev *dev, u16 val)
 }
 
 /*
- * Noise floor program — banco 0x0910-0x0913 con pattern osservato:
- * 0x0910/0x0912 high-poi-low, 0x0911/0x0913 low-poi-high.
+ * Banco 0x0910-0x0913, funzione non identificata. Si chiamava
+ * noise_floor_clear, ma quel nome era un'attribuzione senza fonte -- non
+ * compare in brcmsmac ne' in nessun header -- e induceva a cercare una misura
+ * di rumore che non esiste.
  *
- * Chip-dependent (SALAME: unico testimone 4360 è agcombo 7.14, quindi
- * chip-vs-versione non è discriminabile): 4352 azzera i nibble (d6220
- * #35064+), 4360 li scrive a 0xf e programma anche il banco core-2
- * 0x0b10-0x0b13 con lo stesso pattern (agcombo #60952-#60967).
+ * Accertato: write-only (il driver stock non lo rilegge mai), quattro registri
+ * per core con stride 0x200, lo stesso scalare in entrambi i byte, ordine pari
+ * hi-poi-lo e dispari lo-poi-hi. Il valore cresce dentro la sessione (d6220
+ * 0/3/5, agcombo core-2 fino a 25) e le costanti qui sotto riproducono solo la
+ * prima occorrenza di alcune catture. Vedi retrace-todo.md.
  */
-static void b43_phy_ac_noise_floor_clear(struct b43_wldev *dev)
+/*
+ * Il banco 0x0910 porta un offset sulla stessa scala della soglia CRS scritta
+ * immediatamente prima: la quantita' con significato e' la somma `crs + off`,
+ * cioe' una soglia assoluta che il banco raggiunge partendo dal CRS corrente.
+ *
+ * Reperto (12 catture, 21 blocchi): a BW20 le somme non-zero sono esattamente
+ * due per board -- d6220 {52, 57}, agcombo {64, 67} -- e sono le stesse su
+ * sessioni con baseline CRS diverse (58, 52, 49). Quando il CRS ha gia'
+ * raggiunto il target l'offset e' zero, il che spiega tutti gli zeri osservati
+ * (incluse le sei occorrenze del DSL, che parte da 54).
+ *
+ * Il target e' per sito di chiamata (non per fase) e per chip: chanspec_tail e
+ * il blocco E di rxiqcal_finalize hanno soglie diverse, e i due chip stanno su
+ * coppie diverse. La coppia agcombo viene da sei punti su due sessioni con
+ * baseline CRS 58 e 49.
+ *
+ * ATTENZIONE alla direzione causale: questa forma e' invertita rispetto al
+ * meccanismo. Nel driver stock il primario e' una **soglia assoluta** presa da
+ * un ladder discreto, e il CRS ne discende:
+ *
+ *     misura per catena -> indice -> soglia = ladder[indice]
+ *                                    banco  = offset per catena
+ *                                    CRS    = soglia - offset
+ *
+ * Il CRS porta la parte comune agli 8 registri, il banco la correzione per
+ * catena, e l'hardware somma. Verificato 4/4 sul d6220: `CRS + banco` e' sempre
+ * una entry del ladder, incluso il caso `CRS = 49` che nel ladder non c'e'
+ * mentre `49 + 3 = 52` si'.
+ *
+ * Qui invece il CRS e' calcolato da una regola su BW e fase e l'offset ne
+ * discende. Riproduce ch36 BW20 op-per-op perche' **entrambi** i termini sono
+ * fittati su quella configurazione, non perche' descriva il meccanismo. Non la
+ * riscrivo nella forma corretta perche' la regola dell'indice e' ignota: non
+ * guadagnerei un'op e introdurrei una struttura non validabile.
+ *
+ * SCAFFOLD(ch36): soglie trascritte. Non sono un valore del driver, sono
+ * impalcatura per far partire il bring-up. Fuori da ch36 sono soglie CCA
+ * sbagliate; il filtro in set_channel impedisce di arrivarci.
+ *
+ * TODO(formula): serve la regola dell'indice, e la trasformazione che genera
+ * l'offset per catena (sull'agcombo si separa 6/9 fra due catene, cosa che
+ * questa forma non puo' esprimere). Il ladder e' nel blob D6220 a
+ * `.rodata +0x040e84`, tre righe da 15 entry u8 attribuite a
+ * `wlc_phy_crs_min_pwr_cal_acphy`. Derivazione, vincoli di metodo su cosa e'
+ * ammissibile guardare, e ipotesi respinte in docs/bank-0910-analysis.md.
+ */
+enum b43_phy_ac_crs_site {
+	B43_PHY_AC_CRS_SITE_CHANSPEC = 0,
+	B43_PHY_AC_CRS_SITE_FINALIZE = 1,
+};
+
+static void b43_phy_ac_prog_bank_0910(struct b43_wldev *dev, u16 crs,
+				      enum b43_phy_ac_crs_site site)
 {
 	B43_AC_FN();
 	bool is4360 = dev->dev->chip_id == 0x4360;
-	u16 hi = is4360 ? 0x0f00 : 0x0000;
-	u16 lo = is4360 ? 0x000f : 0x0000;
+	/* { chanspec_tail, blocco E }, per chip. */
+	static const u16 targets[2][2] = {
+		{ 52, 57 },	/* 4352: d6220, DSL */
+		{ 64, 67 },	/* 4360: agcombo */
+	};
+	u16 target = targets[is4360][site];
+	u16 off = (target > crs) ? (u16)(target - crs) : 0;
+	u16 hi = (u16)(off << 8);
+	u16 lo = off;
 	u16 base;
 
 	for (base = 0x0910; base <= (is4360 ? 0x0b10 : 0x0910); base += 0x200) {
@@ -3285,7 +3366,7 @@ static void b43_phy_ac_chanspec_tail(struct b43_wldev *dev)
 	b43_phy_write(dev, 0x031f, gain);
 
 	b43_phy_ac_crs_regs_write(dev, crs);
-	b43_phy_ac_noise_floor_clear(dev);
+	b43_phy_ac_prog_bank_0910(dev, crs, B43_PHY_AC_CRS_SITE_CHANSPEC);
 
 	b43_phy_read_log(dev, 0x03a9);
 	b43_phy_maskset(dev, 0x03a9, (u16)~0x007f, 0x0000);
@@ -3434,31 +3515,31 @@ static void b43_phy_ac_set_channel_calibrations(struct b43_wldev *dev)
 		/* 6° txpwr: with peek preamble + 3 core + r734={4,4,4} */
 		b43_phy_ac_gainctrl_final_apply(dev, true, r734_first, 3);
 		b43_phy_ac_rxiqcal_dds_seed_second_tone(dev);
-		b43_phy_ac_iqcal_meas_post_dds_apply(dev, 5);
+		b43_phy_ac_iqcal_meas_post_dds_apply(dev);
 
 		/* 7° txpwr: no preamble + 3 core + r734={2,2,1} */
 		b43_phy_ac_gainctrl_final_apply(dev, false, r734_second, 3);
 		b43_phy_ac_rxiqcal_dds_seed_second_tone(dev);
-		b43_phy_ac_iqcal_meas_post_dds_apply(dev, 6);
+		b43_phy_ac_iqcal_meas_post_dds_apply(dev);
 
 		/* 8° txpwr: no preamble + 3 core + r734={1,1,0} */
 		b43_phy_ac_gainctrl_final_apply(dev, false, r734_third, 3);
 		b43_phy_ac_rxiqcal_dds_seed_second_tone(dev);
-		b43_phy_ac_iqcal_meas_post_dds_apply(dev, 3);
+		b43_phy_ac_iqcal_meas_post_dds_apply(dev);
 
 		/* 9° txpwr: no preamble + 2 core + r734={0,0} */
 		b43_phy_ac_gainctrl_final_apply(dev, false, r734_fourth, 2);
 		b43_phy_ac_rxiqcal_dds_seed_second_tone(dev);
-		b43_phy_ac_iqcal_meas_post_dds_apply(dev, 6);
+		b43_phy_ac_iqcal_meas_post_dds_apply(dev);
 	}
 
 	/* 5° dds_seed + meas_apply variante v2 */
 	b43_phy_ac_rxiqcal_dds_seed_second_tone(dev);
-	b43_phy_ac_iqcal_meas_post_dds_apply_v2(dev, 13, 9);
+	b43_phy_ac_iqcal_meas_post_dds_apply_v2(dev);
 
 	/* 6° dds_seed (third_tone: 2° reversed) + meas_apply v2 (37, 51) */
 	b43_phy_ac_rxiqcal_dds_seed_third_tone(dev);
-	b43_phy_ac_iqcal_meas_post_dds_apply_v2(dev, 37, 51);
+	b43_phy_ac_iqcal_meas_post_dds_apply_v2(dev);
 
 	/* Teardown finale RXIQ. */
 	b43_phy_ac_rxiq_apply_coefficients(dev);
@@ -3499,6 +3580,45 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
 		return -ESRCH;
 
 	/*
+	 * Limite di IMPALCATURA, non di capacita'.
+	 *
+	 * Una parte del programming di questo driver non e' derivata: sono valori
+	 * trascritti dalle catture, e servono soltanto a far partire il
+	 * bring-up. Non sono dati del driver. Fra questi ci sono gain, indici
+	 * di potenza TX, default delle LUT di gain, ampiezze del generatore di
+	 * tono e soglie -- roba che su una catena RF diversa da quella da cui
+	 * e' stata letta non e' "un po' sbagliata": puo' sovrapilotare il PA.
+	 *
+	 * La tabella dei canali accetta tutto il 5 GHz, quindi da sola non
+	 * protegge: senza questo filtro sintonizzare ch100 farebbe scrivere le
+	 * costanti di ch36. Finche' quei valori non sono derivati si programma
+	 * solo la configurazione da cui provengono.
+	 *
+	 * Coperto op-per-op da entrambi i gate: ch36 BW20 su 4352 e 4360.
+	 * ch44 e BW40 sono osservati ma NON coperti, e si sa che almeno due
+	 * costanti differiscono (l'ampiezza del tono vale 0x0154 su ch36 e
+	 * 0x0152 su ch44, e le soglie crs_min_pwr cambiano indice).
+	 *
+	 * Ogni voce che si aggiunge qui va giustificata con una cattura, non
+	 * con "probabilmente va bene".
+	 */
+	if (channel->hw_value != 36) {
+		b43warn(dev->wl,
+			"AC-PHY: ch%u rifiutato: il programming e' validato solo su ch36 BW20. "
+			"Diversi valori sono trascritti da cattura e scriverli fuori da quella "
+			"configurazione puo' danneggiare il front-end RF.\n",
+			channel->hw_value);
+		return -EOPNOTSUPP;
+	}
+	if (dev->dev->chip_id != 0x4352 && dev->dev->chip_id != 0x4360) {
+		b43warn(dev->wl,
+			"AC-PHY: chip 0x%04x non validato: nessuna cattura di riferimento, "
+			"e i valori trascritti valgono per 4352/4360.\n",
+			dev->dev->chip_id);
+		return -EOPNOTSUPP;
+	}
+
+	/*
 	 * MAC è già sospeso da fine op_init (b43_mac_suspend nella coda di
 	 * op_init lascia bit 0 = 0). Nessuna op mac_suspend qui — il vendor
 	 * emette la sequenza MAC preparation in op_init (vendor #32398-#32418,
@@ -3534,9 +3654,6 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
 
 	b43_radio_2069_channel_setup(dev, e2069);
 	b43_phy_ac_channel_setup(dev, e2069, channel);
-
-	if (dev->dev->chip_id == 0x4360)
-		b43_phy_maskset(dev, 0x02e4, (u16)~0x3f00, 0x0800);
 
 	b43_phy_ac_chan_tables(dev);
 
@@ -4018,22 +4135,30 @@ static int b43_phy_ac_op_init(struct b43_wldev *dev)
 	}
 
 	/*
-	 * PLLCTL3 is chip-specific and set up before we run: the 4352 comes
-	 * up with 0x00133333 (read back on the DSL-3580L), the 4360 with
-	 * 0x100e (written by bcma_pmu_pll_init). The vendor leaves the 4352
-	 * PLL untouched and only relies on it, so we verify instead of
-	 * writing: if the PMU did not bring it up as expected the chip is not
-	 * in a drivable state, so bail rather than run on a mis-tuned PLL.
+	 * PLLCTL3 e' impostato prima di noi, e cosa ci sia dipende dalla board
+	 * piu' che dal chip. Osservato:
+	 *
+	 *   DSL-3580L (4352)  le sue catture contengono solo LETTURE del PLL
+	 *                     (mask=0), nessuna scrittura -- da cui il vecchio
+	 *                     "il 4352 arriva con 0x00133333 e non lo si tocca".
+	 *   D6220 (4352)      scrive 0xc31/0x100e a #15/#23, come il 4360.
+	 *   agcombo (4360)    scrive 0xc31/0x100e a #15/#23 e li RISCRIVE
+	 *                     identici a #123/#131.
+	 *
+	 * Quindi 0x00133333 non e' una proprieta' del 4352: era una proprieta'
+	 * del DSL, e generalizzarla al chip era sbagliato. Il ramo precedente
+	 * confrontava con quel valore e tornava -ENODEV: su un d6220, dove
+	 * bcma_pmu_pll_init scrive 0x100e, avrebbe bloccato il bring-up.
+	 *
+	 * Ora si limita a loggare il valore trovato: serve a capire cosa la PMU
+	 * ha fatto, non a decidere se procedere. Non abbiamo una condizione
+	 * fondata per rifiutare, e inventarne una blocca hardware buono.
 	 */
-	if (dev->dev->chip_id == 0x4352) {
+	{
 		u32 pllctl3 = bcma_chipco_pll_read(&dev->dev->bdev->bus->drv_cc,
 						   BCMA_CC_PMU_PLL_CTL3);
-		if (pllctl3 != 0x00133333) {
-			b43err(dev->wl,
-			       "AC-PHY: BCM4352 PLLCTL3 is 0x%08x, expected 0x00133333 (PMU not initialised as expected)\n",
-			       pllctl3);
-			return -ENODEV;
-		}
+		b43dbg(dev->wl, "AC-PHY: PLLCTL3 = 0x%08x all'ingresso di op_init\n",
+		       pllctl3);
 	}
 
 	b43_phy_ac_probe_cores(dev);
@@ -4065,42 +4190,13 @@ static int b43_phy_ac_op_init(struct b43_wldev *dev)
 	b43_phy_ac_init_regs(dev);
 
 	/*
-	 * Fine op_init: MAC sospeso. Il vendor blob emette a questo punto
-	 * (vendor #32398-#32418, appena prima di set_channel entry) una
-	 * sequenza di ~20 op che include:
-	 *   - 6× MACCTL write con mask=0xffffffff (val=0x04000400/0x04000404/
-	 *     0x04020402): imposta bit 10, 26, altri config + clear bit 0
-	 *   - 9× MAC.MHF (host-flag config, replicati qui sotto)
-	 *   - 2× MACCTL parziale (bit 14, 17-18, 26)
-	 *   - GPIO.CTL clear
-	 *   - 2× PMU.PLL write
+	 * Config MHF del bring-up, non channel-dependent (identica su ch36, ch44 e
+	 * ch36-bw40). Sull'attach la emette il preambolo, prima del corpo radio
+	 * (#136-#156); qui resta per il bring-up successivo, dove nessuna cattura
+	 * contiene MAC.MHF e quindi non sappiamo se venga rifatta.
 	 *
-	 * Sequenza MHF vendor (identica su ch36, ch44, ch36-bw40 — cioè
-	 * non è channel-dependent, è pura config MAC del bring-up):
-	 *
-	 *   MHF4 |= 0x0080  (bit 7 set)
-	 *   MHF0 |= 0x0100  (bit 8 set)
-	 *   MHF0 &= ~0x0010 (clr bit 4)
-	 *   MHF1 &= ~0x0100 (clr bit 8)
-	 *   MHF2 &= ~0x2000 (clr bit 13)
-	 *   MHF1 &= ~0x0200 (clr bit 9)
-	 *   MHF2 &= ~0x1504 (clr bits 12,10,8,2)
-	 *   MHF2 &= ~0x1000 (clr bit 12, ridondante col precedente)
-	 *   MHF4 &= ~0x0006 (clr bits 2,1)
-	 *
-	 * SALAME: la semantica precisa dei singoli bit MHF non è documentata
-	 * La sequenza è replicata per fedeltà al vendor blob — se il HW 
-	 * dovesse mostrare comportamenti anomali dopo bring-up,
-	 * questi bit sono candidati da indagare.
-	 *
-	 * TODO: portare anche i MACCTL/GPIO/PMU.PLL non-MHF quando la
-	 * semantica sarà nota.
-	 */
-	/*
-	 * Su attach da freddo questa config la emette gia' il preambolo, che il
-	 * driver stock esegue prima del corpo radio (#136-#156); qui resta per
-	 * il bring-up successivo, dove nessuna cattura copre le MHF e quindi non
-	 * sappiamo se e dove venga rifatta.
+	 * SALAME: la semantica dei singoli bit non e' documentata. Se l'hardware
+	 * mostrasse anomalie dopo il bring-up, sono candidati da indagare.
 	 */
 	if (!dev->phy.do_full_init)
 		b43_phy_ac_mhf_config(dev);
@@ -4114,7 +4210,7 @@ static int b43_phy_ac_op_init(struct b43_wldev *dev)
 	/*
 	 * Nessun mac_suspend in coda. b43 arriva a ops->init con il MAC
 	 * disabilitato, quindi qui il suspend non tocca l'hardware: alza solo il
-	 * refcount, e switch_channel -- chiamata subito dopo da b43_phy_init --
+	 * refcount, e set_channel -- chiamata subito dopo da b43_phy_init --
 	 * lo trova a 1 invece di 0, con la conseguenza che le sue 90 coppie
 	 * suspend/enable diventano no-op e il MAC non viene mai togglato durante
 	 * la calibrazione.
@@ -4237,7 +4333,7 @@ static void b43_phy_ac_frontend_gpio_setup(struct b43_wldev *dev)
 	b43_maccontrol_set(dev, (u32)~0x40060000u, 0x40020000);
 }
 
-static void b43_phy_ac_op_switch_analog(struct b43_wldev *dev, bool on)
+static void b43_phy_ac_switch_analog_once(struct b43_wldev *dev, bool on)
 {
 	B43_AC_FN();
 	u16 saved_417, saved_416;
@@ -4300,6 +4396,7 @@ static void b43_phy_ac_op_switch_analog(struct b43_wldev *dev, bool on)
 
 	b43_phy_maskset(dev, 0x02e4, (u16)~0x3f00, 0x0f00);
 
+
 	/*
 	 * Coda del preambolo: i sette clear MHF, poi una seconda copia del banco
 	 * AFE e del trittico (#89-#99). La seconda copia non ripete le cinque
@@ -4319,7 +4416,84 @@ static void b43_phy_ac_op_switch_analog(struct b43_wldev *dev, bool on)
 	b43_phy_write(dev, 0x0417, saved_417);
 	b43_phy_write(dev, 0x0416, saved_416);
 
-	b43_phy_ac_frontend_gpio_setup(dev);
+}
+
+/*
+ * Doppia programmazione dell'analogico durante l'attach: OSSERVATA sull'agcombo
+ * e assente sul d6220, MA IL DISCRIMINANTE NON E' STABILITO.
+ *
+ * Il gate qui sotto e' su chip_id perche' e' l'unica variabile che distingue i
+ * due testimoni, non perche' sia dimostrato. Cosa si sa:
+ *
+ *   - il codice e' IDENTICO fra le due versioni vendor coinvolte. I siti di
+ *     chiamata a wlc_phy_switch_radio (via puntatore, dalla tabella ops) sono 7
+ *     in 7.14.89.14 e 7.14.43.21, funzione per funzione: phy_init 1,
+ *     phy_attach 1, coredisable 1, bmac_set_chanspec 1, bmac_radio_hw 2,
+ *     bmac_init 1. Quindi la differenza e' a RUNTIME, non nel codice.
+ *   - contare i siti da' un limite superiore, non le esecuzioni: un sito in un
+ *     ciclo esegue N volte, due siti in rami esclusivi ne eseguono uno.
+ *   - fra le due entrate il vendor riscrive il PLL con gli STESSI valori, e le
+ *     dieci letture di save ricominciano da capo: e' una seconda invocazione
+ *     completa, non un ciclo interno.
+ *
+ * TODO(4360 con 7.14.89): serve un 4360 con la versione del d6220 per separare
+ * chip da versione. Il VR400 ha 7.14.89 e lo stesso SDK ma monta un 4352.
+ *
+ * Evidenza dalle catture:
+ *
+ *   agcombo   unita AFE a @17, @37, @71, @91   ->  due coppie
+ *             PMU.PLL 0xc31/0x100e riscritti a #123/#131, FRA le due coppie
+ *             PHY.WR 0x01ec = 0x2 dopo la MOD 0x02e4 di ciascuna coppia
+ *   d6220     unita AFE a @17, @36              ->  una coppia
+ *             nessuna seconda scrittura del PLL, nessuna rientrata
+ *
+ * Tutte e quattro le unita' scrivono il banco AFE_ON (0x1725=0x1fff,
+ * 0x1721=0xffff, 0x1720=0x03ff): non c'e' nessuno spegnimento in mezzo, sono
+ * due accensioni. Fra le due il PLL viene riscritto con gli STESSI valori,
+ * quindi se e' la causa lo e' l'atto (re-lock) e non un cambio di frequenza.
+ *
+ * Le op di bus fra le due entrate (SI.COREREG, PMU.PLL, MAC.MCTRL) NON sono
+ * riprodotte: appartengono a bcma e a b43 core, non al PHY. Quello che si
+ * riproduce qui e' la doppia programmazione dell'analogico, che e' la parte di
+ * competenza di questo file.
+ *
+ * TODO(verificare su una board nuova): l'evidenza e' un solo 4360. Serve un
+ * secondo esemplare per distinguere "proprieta' del chip" da "proprieta' di
+ * questa board" -- e per capire se la rientrata segua la riscrittura del PLL o
+ * se entrambe seguano un terzo fattore nella sequenza di attach.
+ */
+static void b43_phy_ac_op_switch_analog(struct b43_wldev *dev, bool on)
+{
+	b43_phy_ac_switch_analog_once(dev, on);
+
+	if (on && dev->phy.do_full_init && dev->dev->chip_id == 0x4360) {
+		/*
+		 * TODO(PMU): fra le due entrate il driver stock emette 9 op di
+		 * bus -- due letture GPIO, SI.COREREG off=0x80, PMU.PLL 0x2 e
+		 * 0x3, SI.COREREG off=0x88, due MAC.MCTRL, e una rilettura di
+		 * 0x000b. E' una re-init del PLL, e va fatta QUI: bcma ha
+		 * gia' finito quando arriviamo, quindi non c'e' nessun altro
+		 * che possa emetterle.
+		 *
+		 * Non sono aperte a mano di proposito: i valori (0xc31, 0x100e)
+		 * sono gli stessi che bcma_pmu_pll_init scrive per questo chip,
+		 * quindi la forma giusta e' richiamare quella, non ricopiarne le
+		 * costanti nel PHY. Serve un entry point bcma invocabile da qui
+		 * e i corrispondenti stub nell'harness (oggi c'e' solo
+		 * bcma_chipco_pll_read). Finche' mancano, restano 13 op di
+		 * sfasamento fra le due entrate.
+		 */
+		b43_phy_ac_switch_analog_once(dev, on);
+	}
+
+	/*
+	 * Il setup GPIO del front-end chiude la sequenza UNA volta, non ogni
+	 * entrata: nella cattura agcombo GPIO.OUT=0x400 compare una volta sola
+	 * (@101, dopo la seconda entrata) mentre il port la emetteva a ogni
+	 * chiamata. Sul 4352, con una sola entrata, il comportamento non cambia.
+	 */
+	if (on)
+		b43_phy_ac_frontend_gpio_setup(dev);
 }
 
 static void b43_phy_ac_op_software_rfkill(struct b43_wldev *dev, bool blocked)
@@ -4490,10 +4664,19 @@ void b43_phy_ac_post_cal_finalize_iter3(struct b43_wldev *dev)
  *                        → PHY.MOD val=val mask=mask_bits
  *   se mask_bits == 0 → phy_write(reg + core_off, val)  (WR raw)
  *
- * TODO(formula): i valori val=0x03ff (0x0724) e val=0x0152 (0x0736) sono
- * i coefficienti I/Q calcolati runtime da rxcal_imbalance[core][step][sample].
- * Formula ancora aperta — per ora captured dal trace vendor ch36. Su altri
- * canali o boards questi valori differiranno.
+ * NON sono coefficienti I/Q per catena: il driver stock scrive gli stessi
+ * valori su entrambe le catene (0x0724/0x0924 e 0x0736/0x0936) e in entrambe le
+ * fasi, mentre i coefficienti per catena differiscono (a = -17 contro -44).
+ * Sono una coppia di costanti per canale, scritte insieme e azzerate insieme:
+ * un arm/disarm del generatore di tono, non una stima.
+ *
+ * SCAFFOLD(ch36): ampiezza del generatore di tono. Fuori dal canale da cui
+ * e' letta pilota il TX a un livello non misurato.
+ *
+ * TODO(formula): serve la mappa canale -> valore, non una formula da
+ * rxcal_imbalance. Punti noti (vedi anche gw_hi in rxgain_perchan_tail):
+ * ch36 -> 0x0154, ch44 -> 0x0152. Il valore per ch36 e' quello che il gate
+ * esercita.
  */
 struct b43_ac_b2j_op {
 	u16 reg_off;
@@ -4752,8 +4935,18 @@ void b43_phy_ac_rxiqcal_apply(struct b43_wldev *dev)
 
 		/*
 		 * B2m (32 op): readback + write coefficient table 0x0007.
-		 * Valori TBL.WR hardcoded dal trace vendor — TODO(formula)
-		 * per il calcolo runtime da rxcal_imbalance.
+		 *
+		 * Gruppi di 3 celle per catena: (0x100,0x103,0x106) e
+		 * (0x101,0x104,0x107). Nelle due catture il vendor legge
+		 * (0x0000, 0x2f13, 0x00f3) e scrive (0x0000, 0x4f7f, 0x00f3)
+		 * sulla catena 0 e (0x0000, 0x2f7f, 0x00f3) sulla catena 1:
+		 * **le due celle esterne sono copie della lettura**, che qui
+		 * viene buttata in dummy_rd, e nella cella centrale il byte
+		 * basso va a 0x7f in entrambe le catene.
+		 *
+		 * TODO(formula): resta il byte alto della cella centrale
+		 * (0x2f -> 0x4f sulla catena 0, invariato sulla catena 1), un
+		 * punto per catena e non abbastanza per fissarlo.
 		 */
 		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
 		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
@@ -5028,11 +5221,32 @@ void b43_phy_ac_post_rxiqcal_stage2(struct b43_wldev *dev)
  *          = 0x0200 per gruppo cmd 0x9XXX (core 1)
  *          = 0x0400 per gruppo cmd 0xaXXX (core 2)
  */
+/*
+ * Conserva il risultato di un iter di commit. Solo i sei offset che la coda di
+ * rxcal_afe_calibrate duplica per antenna; gli altri iter non servono dopo.
+ */
+static void b43_phy_ac_afe_res_store(struct b43_wldev *dev, u16 off,
+				     const u16 *v, u8 n)
+{
+	static const u16 wanted[6] = { 0x40, 0x43, 0x48, 0x4b, 0x50, 0x53 };
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(wanted); i++) {
+		if (wanted[i] != off)
+			continue;
+		dev->phy.ac->afe_res[i].off = off;
+		dev->phy.ac->afe_res[i].n = n;
+		dev->phy.ac->afe_res[i].v[0] = v[0];
+		if (n > 1)
+			dev->phy.ac->afe_res[i].v[1] = v[1];
+		return;
+	}
+}
+
 void b43_phy_ac_rxcal_afe_iter(struct b43_wldev *dev,
 			       u16 cmd, u16 core_off,
 			       const u16 *pre_clear_offs, u8 n_pre_clear,
-			       u16 rd_off, u8 rw_len,
-			       u16 wr_off, const u16 *wr_data)
+			       u16 rd_off, u8 rw_len, u16 wr_off)
 {
 	B43_AC_FN();
 	/*
@@ -5045,7 +5259,7 @@ void b43_phy_ac_rxcal_afe_iter(struct b43_wldev *dev,
 
 	static const u16 zero = 0;
 	u8 i;
-	u16 dummy_rd[2];
+	u16 result[2];
 
 	b43_phy_write(dev, 0x0381, 0x7976);
 	for (i = 0; i < n_pre_clear; i++)
@@ -5074,9 +5288,11 @@ void b43_phy_ac_rxcal_afe_iter(struct b43_wldev *dev,
 	}
 
 	b43_radio_read_log(dev, 0x0144 + core_off);
-	b43_actab_read_bulk(dev, 0x000c, rd_off, 16, rw_len, dummy_rd);
+	/* Il risultato letto e' quello che si riscrive: copia 0x80+n -> 0x40+n. */
+	b43_actab_read_bulk(dev, 0x000c, rd_off, 16, rw_len, result);
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);  /* unlock manuale */
-	b43_actab_write_bulk_scoped(dev, 0x000c, wr_off, 16, rw_len, wr_data);
+	b43_actab_write_bulk_scoped(dev, 0x000c, wr_off, 16, rw_len, result);
+	b43_phy_ac_afe_res_store(dev, wr_off, result, rw_len);
 }
 
 /*
@@ -5120,8 +5336,11 @@ void b43_phy_ac_rxcal_afe_calibrate(struct b43_wldev *dev)
 
 	/*
 	 * Struttura iter table (18 iter = 6 comandi × 3 core).
-	 * Valori hardcoded dal trace d6220 ch36 — TODO(formula) per derivarli
-	 * runtime dal readback RAD.RD + TBL.RD.
+	 *
+	 * I risultati NON sono cablati: li legge rxcal_afe_iter dal readback e li
+	 * riscrive. Gli unici dati statici qui sono i pre[] , che sono offset di
+	 * pre-clear, non valori. I "result 0xNNNN" nei commenti sotto sono
+	 * osservazioni dal trace, non costanti usate dal codice.
 	 */
 
 	/* ==== Gruppo core-0 (cmd 0x8XXX, RAD.RD 0x0144) ==== */
@@ -5129,34 +5348,29 @@ void b43_phy_ac_rxcal_afe_calibrate(struct b43_wldev *dev)
 	/* Iter 1: cmd=0x8434, result 0x0301, pre-clears [0x43, 0x44] */
 	{
 		static const u16 pre[] = { 0x0043, 0x0044 };
-		static const u16 res[] = { 0x0301 };
 		b43_phy_ac_rxcal_afe_iter(dev, 0x8434, 0x0000,
-					  pre, 2, 0x0085, 1, 0x0045, res);
+					  pre, 2, 0x0085, 1, 0x0045);
 	}
 	/* Iter 2: cmd=0x8334, result 0x0102 */
 	{
 		static const u16 pre[] = { 0x0043 };
-		static const u16 res[] = { 0x0102 };
 		b43_phy_ac_rxcal_afe_iter(dev, 0x8334, 0x0000,
-					  pre, 1, 0x0084, 1, 0x0044, res);
+					  pre, 1, 0x0084, 1, 0x0044);
 	}
 	/* Iter 3: cmd=0x8084, result (0x0060, 0x0000) len=2 */
 	{
-		static const u16 res[] = { 0x0060, 0x0000 };
 		b43_phy_ac_rxcal_afe_iter(dev, 0x8084, 0x0000,
-					  NULL, 0, 0x0080, 2, 0x0040, res);
+					  NULL, 0, 0x0080, 2, 0x0040);
 	}
 	/* Iter 4: cmd=0x8267, result 0xff01 */
 	{
-		static const u16 res[] = { 0xff01 };
 		b43_phy_ac_rxcal_afe_iter(dev, 0x8267, 0x0000,
-					  NULL, 0, 0x0083, 1, 0x0043, res);
+					  NULL, 0, 0x0083, 1, 0x0043);
 	}
 	/* Iter 5: cmd=0x8056, result (0x0064, 0x000e) len=2 */
 	{
-		static const u16 res[] = { 0x0064, 0x000e };
 		b43_phy_ac_rxcal_afe_iter(dev, 0x8056, 0x0000,
-					  NULL, 0, 0x0080, 2, 0x0040, res);
+					  NULL, 0, 0x0080, 2, 0x0040);
 	}
 	/*
 	 * Iter 6: cmd=0x8234, result 0xfe02. Termina gruppo core-0 con
@@ -5165,7 +5379,6 @@ void b43_phy_ac_rxcal_afe_calibrate(struct b43_wldev *dev)
 	 * con coefficienti finali calcolati dagli iter 1-6.
 	 */
 	{
-		static const u16 res[] = { 0xfe02 };
 		static const u16 batch_c0[18] = {
 			0x0100, 0x0200, 0x0300, 0x0500, 0x0700, 0x0a00, 0x0f00,
 			0x0f01, 0x0f02, 0x0f03, 0x0f04, 0x0f05, 0x0f06, 0x0f07,
@@ -5177,7 +5390,7 @@ void b43_phy_ac_rxcal_afe_calibrate(struct b43_wldev *dev)
 			0x3c04, 0x3c05, 0x3c06, 0x3c07,
 		};
 		b43_phy_ac_rxcal_afe_iter(dev, 0x8234, 0x0000,
-					  NULL, 0, 0x0083, 1, 0x0043, res);
+					  NULL, 0, 0x0083, 1, 0x0043);
 		b43_phy_ac_rxcal_afe_commit_batch(dev, 0x00, 0x20,
 						  batch_c0, batch_c1, 18);
 	}
@@ -5187,34 +5400,29 @@ void b43_phy_ac_rxcal_afe_calibrate(struct b43_wldev *dev)
 	/* Iter 7: cmd=0x9434, result 0x0001, pre-clears [0x4b, 0x4c] */
 	{
 		static const u16 pre[] = { 0x004b, 0x004c };
-		static const u16 res[] = { 0x0001 };
 		b43_phy_ac_rxcal_afe_iter(dev, 0x9434, 0x0200,
-					  pre, 2, 0x008c, 1, 0x004d, res);
+					  pre, 2, 0x008c, 1, 0x004d);
 	}
 	/* Iter 8: cmd=0x9334, result 0x0000 */
 	{
 		static const u16 pre[] = { 0x004b };
-		static const u16 res[] = { 0x0000 };
 		b43_phy_ac_rxcal_afe_iter(dev, 0x9334, 0x0200,
-					  pre, 1, 0x008b, 1, 0x004c, res);
+					  pre, 1, 0x008b, 1, 0x004c);
 	}
 	/* Iter 9: cmd=0x9084, result (0x0020, 0x0000) len=2 */
 	{
-		static const u16 res[] = { 0x0020, 0x0000 };
 		b43_phy_ac_rxcal_afe_iter(dev, 0x9084, 0x0200,
-					  NULL, 0, 0x0087, 2, 0x0048, res);
+					  NULL, 0, 0x0087, 2, 0x0048);
 	}
 	/* Iter 10: cmd=0x9267, result 0x0100 */
 	{
-		static const u16 res[] = { 0x0100 };
 		b43_phy_ac_rxcal_afe_iter(dev, 0x9267, 0x0200,
-					  NULL, 0, 0x008a, 1, 0x004b, res);
+					  NULL, 0, 0x008a, 1, 0x004b);
 	}
 	/* Iter 11: cmd=0x9056, result (0x0022, 0x0004) len=2 */
 	{
-		static const u16 res[] = { 0x0022, 0x0004 };
 		b43_phy_ac_rxcal_afe_iter(dev, 0x9056, 0x0200,
-					  NULL, 0, 0x0087, 2, 0x0048, res);
+					  NULL, 0, 0x0087, 2, 0x0048);
 	}
 	/*
 	 * Iter 12: cmd=0x9234, result 0x0100. Ultimo iter del gruppo core-1.
@@ -5223,9 +5431,27 @@ void b43_phy_ac_rxcal_afe_calibrate(struct b43_wldev *dev)
 	 * #42843).
 	 */
 	{
-		static const u16 res[] = { 0x0100 };
 		b43_phy_ac_rxcal_afe_iter(dev, 0x9234, 0x0200,
-					  NULL, 0, 0x008a, 1, 0x004b, res);
+					  NULL, 0, 0x008a, 1, 0x004b);
+	}
+
+	/*
+	 * Secondo commit batch fra il gruppo core-1 e il core-2, solo al primo
+	 * bring-up (#14009-#14189): stesse celle e stessa struttura del primo, ma
+	 * con il solo byte basso -- la rampa d'indice, senza il guadagno.
+	 */
+	if (dev->phy.ac->status_mask & B43_PHY_AC_STATE_FIRST_BRINGUP) {
+		static const u16 ramp_c0[18] = {
+			0, 0, 0, 0, 0, 0, 0,
+			1, 2, 3, 4, 5, 6, 7, 7, 7, 7, 7,
+		};
+		static const u16 ramp_c1[18] = {
+			0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+			1, 2, 3, 4, 5, 6, 7,
+		};
+
+		b43_phy_ac_rxcal_afe_commit_batch(dev, 0x00, 0x20,
+						  ramp_c0, ramp_c1, 18);
 	}
 
 	/* ==== Gruppo core-2 (cmd 0xaXXX, RAD.RD 0x0544) ==== */
@@ -5233,41 +5459,35 @@ void b43_phy_ac_rxcal_afe_calibrate(struct b43_wldev *dev)
 	/* Iter 13: cmd=0xa434, result 0xfb03, pre-clears [0x53, 0x54] */
 	{
 		static const u16 pre[] = { 0x0053, 0x0054 };
-		static const u16 res[] = { 0xfb03 };
 		b43_phy_ac_rxcal_afe_iter(dev, 0xa434, 0x0400,
-					  pre, 2, 0x0093, 1, 0x0055, res);
+					  pre, 2, 0x0093, 1, 0x0055);
 	}
 	/* Iter 14: cmd=0xa334, result 0x05fe */
 	{
 		static const u16 pre[] = { 0x0053 };
-		static const u16 res[] = { 0x05fe };
 		b43_phy_ac_rxcal_afe_iter(dev, 0xa334, 0x0400,
-					  pre, 1, 0x0092, 1, 0x0054, res);
+					  pre, 1, 0x0092, 1, 0x0054);
 	}
 	/* Iter 15: cmd=0xa084, result (0xfee0, 0x0080) len=2 */
 	{
-		static const u16 res[] = { 0xfee0, 0x0080 };
 		b43_phy_ac_rxcal_afe_iter(dev, 0xa084, 0x0400,
-					  NULL, 0, 0x008e, 2, 0x0050, res);
+					  NULL, 0, 0x008e, 2, 0x0050);
 	}
 	/* Iter 16: cmd=0xa267, result 0x0d6e */
 	{
-		static const u16 res[] = { 0x0d6e };
 		b43_phy_ac_rxcal_afe_iter(dev, 0xa267, 0x0400,
-					  NULL, 0, 0x0091, 1, 0x0053, res);
+					  NULL, 0, 0x0091, 1, 0x0053);
 	}
 	/* Iter 17: cmd=0xa056, result (0xfed6, 0x00b6) len=2 */
 	{
-		static const u16 res[] = { 0xfed6, 0x00b6 };
 		b43_phy_ac_rxcal_afe_iter(dev, 0xa056, 0x0400,
-					  NULL, 0, 0x008e, 2, 0x0050, res);
+					  NULL, 0, 0x008e, 2, 0x0050);
 	}
 	/* Iter 18: cmd=0xa234, result 0x0764. Tail extra pending (8 WR di
 	 * inizializzazione fase successiva). */
 	{
-		static const u16 res[] = { 0x0764 };
 		b43_phy_ac_rxcal_afe_iter(dev, 0xa234, 0x0400,
-					  NULL, 0, 0x0091, 1, 0x0053, res);
+					  NULL, 0, 0x0091, 1, 0x0053);
 	}
 
 	/*
@@ -5289,30 +5509,23 @@ void b43_phy_ac_rxcal_afe_calibrate(struct b43_wldev *dev)
 
 	/* (a): 12 WR auto-contained (6 offset × 2 antenne) */
 	{
-		static const u16 val_iter5[]  = { 0x0064, 0x000e };
-		static const u16 val_iter6[]  = { 0xfe02 };
-		static const u16 val_iter11[] = { 0x0022, 0x0004 };
-		static const u16 val_iter12[] = { 0x0100 };
-		static const u16 val_iter17[] = { 0xfed6, 0x00b6 };
-		static const u16 val_iter18[] = { 0x0764 };
-
-		struct dup_spec { u16 off; u8 len; const u16 *vals; };
-		static const struct dup_spec dups[] = {
-			{ 0x60, 2, val_iter5  },
-			{ 0x62, 1, val_iter6  },
-			{ 0x64, 2, val_iter11 },
-			{ 0x66, 1, val_iter12 },
-			{ 0x68, 2, val_iter17 },
-			{ 0x6a, 1, val_iter18 },
+		/* Offset di destinazione per ognuno dei sei iter di commit. */
+		static const u16 dst[6] = {
+			0x60, 0x62, 0x64, 0x66, 0x68, 0x6a,
 		};
 		unsigned int i;
 
-		for (i = 0; i < ARRAY_SIZE(dups); i++) {
+		for (i = 0; i < ARRAY_SIZE(dst); i++) {
+			const u16 *v = dev->phy.ac->afe_res[i].v;
+			u8 n = dev->phy.ac->afe_res[i].n;
+
+			if (!n)
+				continue;
+			b43_actab_write_bulk_scoped(dev, 0x000c, dst[i],
+						    16, n, v);
 			b43_actab_write_bulk_scoped(dev, 0x000c,
-				dups[i].off, 16, dups[i].len, dups[i].vals);
-			b43_actab_write_bulk_scoped(dev, 0x000c,
-				dups[i].off + 0x10, 16, dups[i].len,
-				dups[i].vals);
+						    (u16)(dst[i] + 0x10),
+						    16, n, v);
 		}
 	}
 
@@ -5353,8 +5566,11 @@ void b43_phy_ac_rxcal_afe_calibrate(struct b43_wldev *dev)
  *
  * Body (2688 op): loop 128 offset × 3 core, ogni offset emette 3 TBL.WR
  * auto-contained sulle tabelle 0x42 (core 0), 0x62 (core 1), 0x82 (core 2)
- * con valori uniformi per-core (0xfe02, 0x0100, e per core 2 0xff60 fino
- * a offset 0x20 incluso, poi 0xfd56 da 0x21 in poi).
+ * con valori uniformi per-core.
+ *
+ * I valori di core 0 e core 1 sono 0x0002 e 0x0200 e **non dipendono dalla
+ * fase**: sono gli stessi nelle due catture d6220 con i RETVAL. Solo il
+ * default del core 2 cambia fra primo bring-up e switch successivo.
  *
  * SALAME: la transizione a offset 0x21 per core 2 è un dato osservato,
  * non c'è ancora spiegazione. Da approfondire quando la struttura delle
@@ -5371,10 +5587,19 @@ void b43_phy_ac_rxcal_afe_finalize_gain_luts(struct b43_wldev *dev)
 			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
 			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
 
-	static const u16 val_c0 = 0xfe02;
-	static const u16 val_c1 = 0x0100;
-	static const u16 val_c2_lo = 0xff60;
-	static const u16 val_c2_hi = 0xfd56;
+	/*
+	 * Default di gain per core. Al primo bring-up il driver stock scrive un
+	 * set diverso e senza lo split lo/hi sul core 2 (#14634 e seguenti).
+	 * SCAFFOLD(ch36): default delle LUT di gain del core 2, misurati.
+	 *
+	 * TODO(formula): sono valori misurati, cablati da cattura.
+	 */
+	bool first = dev->phy.ac->status_mask &
+		     B43_PHY_AC_STATE_FIRST_BRINGUP;
+	u16 val_c0 = 0x0002;
+	u16 val_c1 = 0x0200;
+	u16 val_c2_lo = first ? 0x0962 : 0xabd0;
+	u16 val_c2_hi = first ? 0x0758 : 0xa9c6;
 	unsigned int i;
 
 	/* Preamble */
@@ -6015,23 +6240,31 @@ void b43_phy_ac_rxiqcal_run_meas_iters(struct b43_wldev *dev)
 			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
 
 	/*
-	 * Spec per-iter (hardcoded dal trace d6220 ch36). 2 iter per core
-	 * (cmd 0x?084 primo, cmd 0x?056 secondo). TODO: derivare i valori
-	 * TBL.WR dalla stima RXIQ runtime.
+	 * Correzione IQ dipendente dalla frequenza: due iterazioni per catena
+	 * (cmd 0x?084 poi 0x?056), che sono i due tap del filtro complesso --
+	 * un tap solo sarebbe piatto in frequenza. Coerente con i tre toni
+	 * seminati da rxiqcal_dds_seed / _second_tone / _third_tone.
+	 *
+	 * I coefficienti NON vanno derivati: li calcola l'hardware. rxcal_afe_iter
+	 * arma la cal scrivendo cmd su 0x0380, attende il bit 15, legge 2 celle a
+	 * rd_off e le riscrive a wr_off. Nella cattura la copia si vede in chiaro
+	 * (RD 0x0c[0x8e]/[0x8f] -> WR 0x0c[0x50]/[0x51], RD [0x91] -> WR [0x53]).
+	 *
+	 * Le due iterazioni per catena scrivono lo stesso wr_off, quindi il
+	 * risultato memorizzato in afe_res e' quello della seconda.
 	 */
 	static const struct {
 		u16 cmd;
 		u16 core_off;
 		u16 rd_off;
 		u16 wr_off;
-		u16 wr_vals[2];
 	} iters[6] = {
-		{ 0x8084, 0x0000, 0x0080, 0x0040, { 0x0060, 0x0000 } }, /* 19 */
-		{ 0x8056, 0x0000, 0x0080, 0x0040, { 0x0062, 0xfffd } }, /* 20 */
-		{ 0x9084, 0x0200, 0x0087, 0x0048, { 0x0020, 0x0000 } }, /* 21 */
-		{ 0x9056, 0x0200, 0x0087, 0x0048, { 0x0023, 0x0003 } }, /* 22 */
-		{ 0xa084, 0x0400, 0x008e, 0x0050, { 0x00c0, 0xff40 } }, /* 23 */
-		{ 0xa056, 0x0400, 0x008e, 0x0050, { 0x00dd, 0xff57 } }, /* 24 */
+		{ 0x8084, 0x0000, 0x0080, 0x0040 }, /* 19 */
+		{ 0x8056, 0x0000, 0x0080, 0x0040 }, /* 20 */
+		{ 0x9084, 0x0200, 0x0087, 0x0048 }, /* 21 */
+		{ 0x9056, 0x0200, 0x0087, 0x0048 }, /* 22 */
+		{ 0xa084, 0x0400, 0x008e, 0x0050 }, /* 23 */
+		{ 0xa056, 0x0400, 0x008e, 0x0050 }, /* 24 */
 	};
 	/*
 	 * Iter 20 batch: 36 fast TBL.WR id=0x000c len=1, coppie
@@ -6063,7 +6296,7 @@ void b43_phy_ac_rxiqcal_run_meas_iters(struct b43_wldev *dev)
 		b43_phy_ac_rxcal_afe_iter(dev, iters[i].cmd, iters[i].core_off,
 					  NULL, 0,
 					  iters[i].rd_off, 2,
-					  iters[i].wr_off, iters[i].wr_vals);
+					  iters[i].wr_off);
 
 		if (i == 1) {
 			/* Iter 20: batch fast 36× TBL.WR len=1 (183 op) */
@@ -6178,9 +6411,8 @@ void b43_phy_ac_iqcal_apply_second_stage(struct b43_wldev *dev)
 	 * diversi in TBL 0x000c (0x60 e 0x64 invece di 0x40 e 0x48).
 	 * TODO: derivare runtime; qui hardcoded dal trace d6220 ch36.
 	 */
-	static const u16 apply_off_0x60[2] = { 0x0062, 0xfffd };
-	static const u16 apply_off_0x64[2] = { 0x0023, 0x0003 };
-	u16 discard[2];
+	/* Riapplica i risultati AFE conservati, non costanti da una cattura. */
+	u16 cell[2];
 
 	/* Kick sequence (7 op) */
 	b43_phy_read_log(dev, 0x0400);
@@ -6205,14 +6437,16 @@ void b43_phy_ac_iqcal_apply_second_stage(struct b43_wldev *dev)
 	b43_phy_maskset(dev, 0x0211, (u16)~0x0001, 0);
 
 	/* Pair 1 (16 op): TBL.RD + TBL.WR len=2 off=0x60 */
-	b43_actab_read_bulk(dev, 0x000c, 0x0060, 16, 2, discard);
+	b43_actab_read_bulk(dev, 0x000c, 0x0060, 16, 2, cell);
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
-	b43_actab_write_bulk_scoped(dev, 0x000c, 0x0060, 16, 2, apply_off_0x60);
+	b43_actab_write_bulk_scoped(dev, 0x000c, 0x0060, 16, 2,
+				    dev->phy.ac->afe_res[0].v);
 
 	/* Pair 2 (16 op): TBL.RD + TBL.WR len=2 off=0x64 */
-	b43_actab_read_bulk(dev, 0x000c, 0x0064, 16, 2, discard);
+	b43_actab_read_bulk(dev, 0x000c, 0x0064, 16, 2, cell);
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
-	b43_actab_write_bulk_scoped(dev, 0x000c, 0x0064, 16, 2, apply_off_0x64);
+	b43_actab_write_bulk_scoped(dev, 0x000c, 0x0064, 16, 2,
+				    dev->phy.ac->afe_res[2].v);
 
 	/* Close (2 op): sync peek + gate re-lock */
 	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
@@ -6626,11 +6860,28 @@ static void iqcal_meas_readback_kick_tail(struct b43_wldev *dev)
 }
 
 /*
+ * Attende la fine di una misura RX-IQ. Il bit 0 di 0x0270 e' il flag di start,
+ * che l'hardware azzera al completamento: il driver stock lo rilegge finche'
+ * resta alto. Budget finito come per il poll di 0x0380, cosi' un hw in stato
+ * inatteso non blocca il kernel.
+ */
+static void iqcal_meas_wait(struct b43_wldev *dev)
+{
+	unsigned int tries;
+
+	for (tries = 0; tries < 1000; tries++) {
+		if (!(b43_phy_read(dev, 0x0270) & 0x0001))
+			return;
+		udelay(1);
+	}
+	b43err(dev->wl, "AC-PHY: RX-IQ meas busy timeout (0x0270 stuck)\n");
+}
+
+/*
  * IQ-cal measurement + apply post second DDS (vendor #50738-#50836, 99 op).
  * Vedi commento in phy_ac.h per struttura completa.
  */
-void b43_phy_ac_iqcal_meas_post_dds_apply(struct b43_wldev *dev,
-					  unsigned int n_peek270)
+void b43_phy_ac_iqcal_meas_post_dds_apply(struct b43_wldev *dev)
 {
 	B43_AC_FN();
 	/*
@@ -6646,26 +6897,18 @@ void b43_phy_ac_iqcal_meas_post_dds_apply(struct b43_wldev *dev,
 	/* Blocchi A+B+C+D (47 op) — helper condiviso */
 	iqcal_meas_readback_kick_tail(dev);
 
-	/* Blocco E (9 op): setup 0x0272/0x0271/0x0270 + 5 peek 0x0270 poll */
+	/* Blocco E: setup 0x0272/0x0271/0x0270, arm, attesa, peek finale */
 	b43_phy_write(dev,    0x0272, 0x0400);
 	b43_phy_maskset(dev,  0x0271, (u16)~0x00ff, 0x0020);
 	b43_phy_maskset(dev,  0x0270, (u16)~0x0002, 0);
 	b43_phy_maskset(dev,  0x0270, (u16)~0x0001, 0x0001);
-	for (c = 0; c < n_peek270; c++)
-		b43_phy_read_log(dev, 0x0270);
+	iqcal_meas_wait(dev);
+	b43_phy_read_log(dev, 0x0270);
 
 	/* Blocco F (12 op): 12 peek gain regs (0x?c0-0x?c5 per 2 core, ordine
 	 * osservato: 0x?c3, 0x?c2, 0x?c5, 0x?c4, 0x?c1, 0x?c0) */
-	for (c = 0; c < 2; c++) {
-		u16 stride = (u16)(c * 0x200);
-
-		b43_phy_read_log(dev, 0x06c3 + stride);
-		b43_phy_read_log(dev, 0x06c2 + stride);
-		b43_phy_read_log(dev, 0x06c5 + stride);
-		b43_phy_read_log(dev, 0x06c4 + stride);
-		b43_phy_read_log(dev, 0x06c1 + stride);
-		b43_phy_read_log(dev, 0x06c0 + stride);
-	}
+	for (c = 0; c < 2; c++)
+		b43_phy_ac_iq_acc_peek(dev, c);
 
 	/* Blocco G (29 op): apply bbmult per-core (variante) */
 	b43_phy_read_log(dev, 0x0464);
@@ -6688,14 +6931,12 @@ void b43_phy_ac_iqcal_meas_post_dds_apply(struct b43_wldev *dev,
 }
 
 /*
- * Sub-block per-core della variante v2: 4 peek + 4 MOD + arm + N poll +
- * 4 WR + 1 peek extra (op count = 14 + N).
+ * Sub-block per-core della variante v2: 4 peek + 4 MOD + arm + attesa +
+ * 4 WR + 1 peek extra.
  */
-static void meas_v2_gain_prog_poll(struct b43_wldev *dev,
-				   unsigned int core, unsigned int n_poll)
+static void meas_v2_gain_prog_poll(struct b43_wldev *dev, unsigned int core)
 {
 	u16 stride = (u16)(core * 0x200);
-	unsigned int i;
 
 	/* 4 peek gain regs (0x?20, 0x?28, 0x?21, 0x?29) */
 	b43_phy_read_log(dev, 0x0720 + stride);
@@ -6712,9 +6953,7 @@ static void meas_v2_gain_prog_poll(struct b43_wldev *dev,
 	/* Arm poll */
 	b43_phy_maskset(dev, 0x0270, (u16)~0x0001, 0x0001);
 
-	/* N poll 0x0270 */
-	for (i = 0; i < n_poll; i++)
-		b43_phy_read_log(dev, 0x0270);
+	iqcal_meas_wait(dev);
 
 	/* 4 WR gain regs (ordine osservato: 0x?29, 0x?21, 0x?28, 0x?20) */
 	b43_phy_write(dev, 0x0729 + stride, 0x0321);
@@ -6730,25 +6969,50 @@ static void meas_v2_gain_prog_poll(struct b43_wldev *dev,
  * 6 peek gain regs 0x?c0-?c5 per un core, ordine osservato:
  * 0x?c3, 0x?c2, 0x?c5, 0x?c4, 0x?c1, 0x?c0.
  */
+/*
+ * Cattura i sei accumulatori RXIQ di un core e li somma nello stato. Le letture
+ * sono quelle che il driver stock emette comunque, nello stesso ordine
+ * (0x?c3, 0x?c2, 0x?c5, 0x?c4, 0x?c1, 0x?c0): qui se ne conserva il valore
+ * invece di scartarlo.
+ */
+static void b43_phy_ac_iq_acc_peek(struct b43_wldev *dev, unsigned int core)
+{
+	struct b43_phy_ac_iq_acc *acc;
+	u16 stride = (u16)(core * 0x200);
+	u16 ii_hi, ii_lo, qq_hi, qq_lo, iq_hi, iq_lo;
+	s64 iq;
+
+	ii_hi = b43_phy_read_log(dev, 0x06c3 + stride);
+	ii_lo = b43_phy_read_log(dev, 0x06c2 + stride);
+	qq_hi = b43_phy_read_log(dev, 0x06c5 + stride);
+	qq_lo = b43_phy_read_log(dev, 0x06c4 + stride);
+	iq_hi = b43_phy_read_log(dev, 0x06c1 + stride);
+	iq_lo = b43_phy_read_log(dev, 0x06c0 + stride);
+
+	if (core >= B43_PHY_AC_MAX_CORES)
+		return;
+	acc = &dev->phy.ac->iq_acc[core];
+
+	iq = (s64)(s32)(((u32)iq_hi << 16) | iq_lo);
+	acc->ii[1] = acc->ii[0];
+	acc->qq[1] = acc->qq[0];
+	acc->iq[1] = acc->iq[0];
+	acc->ii[0] = ((u32)ii_hi << 16) | ii_lo;
+	acc->qq[0] = ((u32)qq_hi << 16) | qq_lo;
+	acc->iq[0] = (s32)iq;
+	acc->rounds++;
+}
+
 static void meas_v2_peek_c0_c5(struct b43_wldev *dev, unsigned int core)
 {
-	u16 stride = (u16)(core * 0x200);
-
-	b43_phy_read_log(dev, 0x06c3 + stride);
-	b43_phy_read_log(dev, 0x06c2 + stride);
-	b43_phy_read_log(dev, 0x06c5 + stride);
-	b43_phy_read_log(dev, 0x06c4 + stride);
-	b43_phy_read_log(dev, 0x06c1 + stride);
-	b43_phy_read_log(dev, 0x06c0 + stride);
+	b43_phy_ac_iq_acc_peek(dev, core);
 }
 
 /*
  * IQ-cal measurement variante v2 (vendor #51814-#51956, 143 op).
  * Vedi commento in phy_ac.h.
  */
-void b43_phy_ac_iqcal_meas_post_dds_apply_v2(struct b43_wldev *dev,
-					     unsigned int n_poll_c1,
-					     unsigned int n_poll_c0)
+void b43_phy_ac_iqcal_meas_post_dds_apply_v2(struct b43_wldev *dev)
 {
 	B43_AC_FN();
 	/*
@@ -6769,12 +7033,10 @@ void b43_phy_ac_iqcal_meas_post_dds_apply_v2(struct b43_wldev *dev,
 	b43_phy_maskset(dev, 0x0271, (u16)~0x00ff, 0x0020);
 	b43_phy_maskset(dev, 0x0270, (u16)~0x0002, 0);
 
-	/* Sub-block core 1 (27 op = 14 + n_poll_c1) */
-	meas_v2_gain_prog_poll(dev, 1, n_poll_c1);
+	meas_v2_gain_prog_poll(dev, 1);
 	/* 6 peek 0x?c0-?c5 core 0 */
 	meas_v2_peek_c0_c5(dev, 0);
-	/* Sub-block core 0 (23 op = 14 + n_poll_c0) */
-	meas_v2_gain_prog_poll(dev, 0, n_poll_c0);
+	meas_v2_gain_prog_poll(dev, 0);
 	/* 6 peek 0x?c0-?c5 core 1 */
 	meas_v2_peek_c0_c5(dev, 1);
 
@@ -6799,8 +7061,79 @@ void b43_phy_ac_iqcal_meas_post_dds_apply_v2(struct b43_wldev *dev,
 }
 
 /*
+ * Risolve i coefficienti RXIQ (a, b) dagli accumulatori di un core, sommando i
+ * due round di stima piu' recenti. Stessa matematica di
+ * b43_phy_ac_rx_iq_comp_update, che il percorso generico non raggiunge ancora.
+ *
+ * Stato: bit-exact su tutti e quattro i coefficienti nella sessione d'attach
+ * (0x3ef/0x04d, 0x3d4/0x03b). Nella down-to-bss-ch36-bw20 torna 15 su 16 -- il
+ * `b` del core 0 da' 0x04b contro 0x04c.
+ *
+ * Residuo caratterizzato: `a` combacia (0x3f0), quindi il rapporto iq/ii e' il
+ * suo. Il `b` risulta di uno piu' basso, e non dipende ne' dall'aggregazione
+ * (provate tutte le 63 combinazioni dei sei round: solo la coppia 4+5 da'
+ * a=0x3f0, e nessuna da' b=0x04c) ne' dall'arrotondamento della radice (il
+ * resto e' 790 contro una soglia di 1099). Serve `v` piu' grande di 1409 su
+ * 1208591, cioe' lo 0,12%: la differenza e' nel termine (qq << 20) / ii, quindi
+ * nell'arrotondamento di quella divisione o in un `qq` leggermente diverso.
+ */
+static void b43_phy_ac_iq_solve(struct b43_phy_ac_iq_acc *acc,
+				s16 *a_out, s16 *b_out)
+{
+	s64 num, v;
+	s32 a;
+	s32 b;
+
+	u64 ii, qq;
+	s64 iq;
+
+	if (acc->solved) {
+		*a_out = acc->a;
+		*b_out = acc->b;
+		return;
+	}
+	if (acc->rounds < 2) {
+		*a_out = 0;
+		*b_out = 0;
+		return;
+	}
+
+	ii = (u64)acc->ii[0] + acc->ii[1];
+	qq = (u64)acc->qq[0] + acc->qq[1];
+	iq = (s64)acc->iq[0] + acc->iq[1];
+	if (!ii) {
+		*a_out = 0;
+		*b_out = 0;
+		return;
+	}
+
+	num = -(iq << 10);
+	a = (s32)div64_s64(num + (num < 0 ? -(s64)(ii >> 1)
+					  : (s64)(ii >> 1)), ii);
+
+	v = (s64)div64_u64((qq << 20) + (ii >> 1), ii) - (s64)a * a;
+	b = v > 0 ? (s32)int_sqrt64((u64)v) : 0;
+	if (v > 0 && (u64)v - (u64)b * b > (u64)b)
+		b++;
+	b -= 1 << 10;
+
+	acc->a = (s16)a;
+	acc->b = (s16)b;
+	acc->solved = true;
+	*a_out = acc->a;
+	*b_out = acc->b;
+}
+
+/*
  * RXIQ correction coefficients per-chan write (vendor #52252-#52255, 4 op).
- * Vedi commento in phy_ac.h. Valori hardcoded dal trace d6220 ch36.
+ *
+ * I coefficienti si calcolano dagli accumulatori che la misura ha raccolto:
+ * stessi ingressi del driver stock, stesso risultato. Verificato bit-exact
+ * sulla cattura d6220 attach-to-bss-up -- core 0 a=-17 b=77 (0x3ef/0x04d),
+ * core 1 a=-44 b=59 (0x3d4/0x03b), identici a cio' che il driver stock scrive.
+ *
+ * Prima erano due costanti prese da una cattura, che divergevano di pochi LSB
+ * da qualunque altra sessione.
  */
 void b43_phy_ac_rxiq_apply_coefficients(struct b43_wldev *dev)
 {
@@ -6813,18 +7146,16 @@ void b43_phy_ac_rxiq_apply_coefficients(struct b43_wldev *dev)
 			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
 			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
 
-	/* Per core [c]: 0x?a0 (I coeff) e 0x?a1 (Q coeff) */
-	static const u16 coeffs[2][2] = {
-		{ 0x03f2, 0x004c },  /* core 0 */
-		{ 0x03db, 0x0037 },  /* core 1 */
-	};
 	unsigned int c;
 
+	/* Per core [c]: 0x?a0 (coeff a) e 0x?a1 (coeff b) */
 	for (c = 0; c < 2; c++) {
 		u16 stride = (u16)(c * 0x200);
+		s16 a, b;
 
-		b43_phy_write(dev, 0x06a0 + stride, coeffs[c][0]);
-		b43_phy_write(dev, 0x06a1 + stride, coeffs[c][1]);
+		b43_phy_ac_iq_solve(&dev->phy.ac->iq_acc[c], &a, &b);
+		b43_phy_write(dev, 0x06a0 + stride, (u16)(a & 0x03ff));
+		b43_phy_write(dev, 0x06a1 + stride, (u16)(b & 0x03ff));
 	}
 }
 
@@ -6994,13 +7325,13 @@ void b43_phy_ac_rxiq_teardown_apply_defaults(struct b43_wldev *dev)
 
 /*
  * Probe cycle (usato in rxiqcal_finalize): pattern di N iter × 17 op che
- * ripete peek gain regs + MAC toggle + MOD 0x0520 bit 2-3 (mode_vals[]).
+ * ripete peek gain regs + MAC toggle + MOD 0x0520 bit 2-3.
  * Ogni iter:
  *   4 peek core 0 (0x07af, 0x07b3, 0x07ab, 0x07b1)
  *   4 peek core 1 (0x09af, 0x09b3, 0x09ab, 0x09b1)
  *   4 peek 0x0523/0x0529/0x0528/0x0527
  *   MAC.MCTRL toggle (set + clr) — flush pre-mode-change
- *   MOD 0x0520 mask=0x000c val=<mode_vals[iter]>
+ *   MOD 0x0520 mask=0x000c val=<toggle, vedi probe_mode_next>
  *   MAC.MCTRL toggle (set + clr) — flush post-mode-change
  *
  * SALAME: interpretazione "probe + mode toggle" nostra. La ratio
@@ -7013,22 +7344,28 @@ static const u16 b43_phy_ac_probe_peek_regs[12] = {
 };
 
 /*
- * mode_vals sweep pattern usato da rxiqcal_finalize: alterna
- * mode 0x04/0x00 sul bit 2-3 di 0x0520 per attivare misure IQ-cal.
- *
- * Il ciclo 1 usa la variante 5-iter (parte con 0x04), mentre i cicli
- * 2, 3, 4 usano la variante 10-iter (parte con 0x00).
+ * Preleva il valore corrente del toggle su 0x0520[3:2] e lo alterna. Il
+ * contatore vive in ac->probe_mode perche' il driver stock non lo riazzera fra
+ * un probe block e il successivo: l'alternanza e' continua su tutta la fase.
  */
-static const u16 b43_phy_ac_probe_mode_vals_5[5] = {
-	0x0004, 0x0000, 0x0004, 0x0000, 0x0004,
-};
-static const u16 b43_phy_ac_probe_mode_vals_10[10] = {
-	0x0000, 0x0004, 0x0000, 0x0004, 0x0000,
-	0x0004, 0x0000, 0x0004, 0x0000, 0x0004,
-};
+static u16 probe_mode_next(struct b43_phy_ac *ac)
+{
+	u16 cur = ac->probe_mode;
 
-static void b43_phy_ac_probe_cycle(struct b43_wldev *dev,
-				   const u16 *mode_vals, unsigned int n_iter)
+	ac->probe_mode = cur ? 0x0000 : 0x0004;
+	return cur;
+}
+
+/* mac_enable + mac_suspend: il "flush" che il driver stock mette attorno a ogni
+ * cambio di modo su 0x0520. */
+static void probe_mac_flush(struct b43_wldev *dev)
+{
+	b43_mac_enable(dev);
+	b43_mac_suspend(dev);
+}
+
+static void b43_phy_ac_probe_cycle(struct b43_wldev *dev, unsigned int n_iter,
+				   bool extended_first, bool closes_sequence)
 {
 	B43_AC_FN();
 	unsigned int iter, k;
@@ -7048,13 +7385,54 @@ static void b43_phy_ac_probe_cycle(struct b43_wldev *dev,
 		for (k = 0; k < ARRAY_SIZE(b43_phy_ac_probe_peek_regs); k++)
 			b43_phy_read_log(dev, b43_phy_ac_probe_peek_regs[k]);
 
-		b43_mac_enable(dev);
-		b43_mac_suspend(dev);
+		if (extended_first && iter == 0) {
+			/*
+			 * Il primo gruppo del primo bring-up e' irregolare:
+			 * porta la coppia 0x0554/0x0555 e tre cambi di modo
+			 * invece di uno, con un flush in piu' attorno al
+			 * secondo e al terzo. Ordine trascritto dalla cattura
+			 * di attach (#28790-#28830); la ratio non e' nota.
+			 */
+			b43_phy_write(dev, 0x0554, 0x0bb8);
+			b43_phy_write(dev, 0x0555, 0x0bb8);
 
-		b43_phy_maskset(dev, 0x0520, (u16)~0x000c, mode_vals[iter]);
+			probe_mac_flush(dev);
+			b43_phy_maskset(dev, 0x0520, (u16)~0x000c,
+					probe_mode_next(dev->phy.ac));
+			probe_mac_flush(dev);
+			b43_phy_maskset(dev, 0x0520, (u16)~0x000c,
+					probe_mode_next(dev->phy.ac));
+			probe_mac_flush(dev);
+			probe_mac_flush(dev);
+			b43_phy_maskset(dev, 0x0520, (u16)~0x000c,
+					probe_mode_next(dev->phy.ac));
+			probe_mac_flush(dev);
+			probe_mac_flush(dev);
+			continue;
+		}
 
-		b43_mac_enable(dev);
-		b43_mac_suspend(dev);
+		probe_mac_flush(dev);
+		b43_phy_maskset(dev, 0x0520, (u16)~0x000c,
+				probe_mode_next(dev->phy.ac));
+
+		if (closes_sequence && iter + 1 == n_iter) {
+			/*
+			 * Il flush che chiude l'intera sequenza probe/measure
+			 * porta dentro l'abbassamento del bit 20 di
+			 * MACCONTROL, fra l'enable e il suspend. Verificato in
+			 * entrambe le fasi (attach V[24607], down->bss
+			 * V[20601]).
+			 *
+			 * SALAME: quel bit non e' tracked; probabile flag di
+			 * calibration-complete o gate MAC.
+			 */
+			b43_mac_enable(dev);
+			b43_maccontrol_set(dev, ~0x00100000u, 0);
+			b43_mac_suspend(dev);
+			continue;
+		}
+
+		probe_mac_flush(dev);
 	}
 }
 
@@ -7157,7 +7535,17 @@ static void b43_phy_ac_rxiqcal_measure_block(struct b43_wldev *dev)
 			b43_phy_maskset(dev, 0x0720 + s, (u16)~0x0010, 0x0010);
 			b43_phy_maskset(dev, 0x0728 + s, (u16)~0x0010, 0x0010);
 			b43_phy_write(dev,   0x0736 + s, 0x0154);
-			b43_phy_write(dev,   0x0724 + s, 0x03ff);
+				/*
+			 * TSSI floor dall'SROM, non una costante. Sulle board in repo il
+			 * campo non e' programmato e legge 0x3ff (il massimo della
+			 * maschera), che e' esattamente il valore che era cablato qui --
+			 * per questo la trascrizione era invisibile. Su una board che lo
+			 * programma davvero, scrivere 0x3ff crudo ignorerebbe in silenzio
+			 * il floor dichiarato.
+			 */
+			b43_phy_write(dev,   0x0724 + s,
+				      dev->dev->bus_sprom->tssifloor5g[dev->phy.ac->pa5g_grp]
+				      & 0x03ff);
 			b43_phy_maskset(dev, 0x073a + s, (u16)~0x0007, 0x0003);
 			b43_phy_maskset(dev, 0x0725 + s, (u16)~0x0020, 0x0020);
 			b43_phy_maskset(dev, 0x0739 + s, (u16)~0x007e, 0x007a);
@@ -7407,6 +7795,15 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
 
 	/*
+	 * Origine del toggle su 0x0520[3:2]. Il driver stock parte da 0x0000 al
+	 * primo bring-up e da 0x0004 su uno switch di canale successivo, poi
+	 * alterna a ogni gruppo di peek fino alla fine della fase.
+	 */
+	dev->phy.ac->probe_mode =
+		(dev->phy.ac->status_mask & B43_PHY_AC_STATE_FIRST_BRINGUP)
+		? 0x0000 : 0x0004;
+
+	/*
 	 * Blocco A (10 op): finalize kick RST2RX + gate scope wrap.
 	 *   pre-kick:  WR 0x040f = 0x09ff  (arm RF ctrl)
 	 *   kick:      force_rf_sequence(RST2RX, gate=OVERRIDE_GATE) — 8 op
@@ -7490,7 +7887,7 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 	 *     0x?678 clr bit 2 per-core)
 	 *   - MAC toggle + MHF + GPIO seq (5 op MAC/GPIO layer)
 	 *   - 8 MOD crs_reg (clip det thresholds) con val=0x34 mask=0x00ff
-	 *   - 8 MOD noise floor clear (0x0910-0x0913, ognuno 2 mask distinte)
+	 *   - 8 MOD sul banco 0x0910-0x0913 (ognuno 2 mask distinte)
 	 *   - MAC.MCTRL toggle finale (set + clr)
 	 */
 	b43_phy_ac_afe_gain_regs_reemit(dev);
@@ -7510,90 +7907,48 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 	b43_phy_ac_crs_regs_write(dev, 0x0034);
 
 	/* Noise floor clear (8 op) — stesso pattern di chanspec_tail. */
-	b43_phy_ac_noise_floor_clear(dev);
+	b43_phy_ac_prog_bank_0910(dev, 0x0034, B43_PHY_AC_CRS_SITE_FINALIZE);
 
 	/* MAC.MCTRL toggle finale */
 	b43_mac_enable(dev);
 	b43_mac_suspend(dev);
 
 	/*
-	 * Probe cycle 1 (vendor #52566-#52650, 5 iter × 17 op = 85 op).
-	 * Sweep mode_vals su 0x0520 bit 2-3: {0x04, 0x00, 0x04, 0x00, 0x04}.
-	 * Vedi helper b43_phy_ac_probe_cycle per la struttura di ogni iter.
-	 */
-	b43_phy_ac_probe_cycle(dev, b43_phy_ac_probe_mode_vals_5,
-			       ARRAY_SIZE(b43_phy_ac_probe_mode_vals_5));
-
-	/*
-	 * Measure block (vendor #52651-#53043, 393 op).
-	 * Blocco ricorrente eseguito dopo ogni probe cycle: RX AFE reconfig +
-	 * Radio 2069 second IQ-cal config + cleanup + tail + arm tone gen +
-	 * poll blocks TX AFE + reset gain regs PHY + radio reset + finalize +
-	 * 2 MAC toggle "arm" per il probe cycle successivo. Chiamato più volte
-	 * (dopo probe cycle 1, 2, 3, 4).
-	 */
-	b43_phy_ac_rxiqcal_measure_block(dev);
-
-	/*
-	 * Probe cycle 2 (vendor #53044-#53213, 170 op).
-	 * 10 iter × 17 op, sweep {0, 4, 0, 4, ...}.
-	 * NB: le 2 MAC toggle di transizione a #53042-#53043 sono nel
-	 * measure block precedente (arm finale).
-	 */
-	b43_phy_ac_probe_cycle(dev, b43_phy_ac_probe_mode_vals_10,
-			       ARRAY_SIZE(b43_phy_ac_probe_mode_vals_10));
-
-	/*
-	 * Middle blocks 1-2 + probe cycles 3-4 (vendor #53214-#54339, 1126 op).
-	 * Ripetizione: measure_block (393 op) + probe_cycle 10-iter (170 op),
-	 * ×2 iter identiche.
+	 * Sequenza probe/measure: `(probe measure)* probe`, con il numero e la
+	 * dimensione dei probe block dettati dalla fase. Localizzata sulle due
+	 * catture d6220 con i RETVAL, raggruppando le PHY.RD 0x07af e chiudendo
+	 * ogni blocco sull'ultima MOD 0x0520:
+	 *
+	 *   primo bring-up    8 gruppi, measure, 5 gruppi      -> 15 toggle
+	 *   switch successivo 5, measure, 10, measure, 4       -> 19 toggle
+	 *
+	 * Nessun measure block dopo l'ultimo probe, e nessun probe cycle in
+	 * coda: su entrambe le catture i gruppi di peek e i cambi di modo sono
+	 * esauriti dai blocchi qui sopra, e la coda che segue non ne contiene.
+	 *
+	 * Il measure block e' un'unita' fissa da 395 op: composizione per classe
+	 * identica in tutte le sue occorrenze nelle due catture.
+	 *
+	 * Il primo gruppo del primo bring-up e' irregolare (extended_first):
+	 * tre cambi di modo invece di uno, piu' la coppia 0x0554/0x0555. Per
+	 * questo i 8 gruppi danno 10 toggle e non 8.
 	 */
 	{
+		static const u8 probe_blocks_first[] = { 8, 5 };
+		static const u8 probe_blocks_next[]  = { 5, 10, 4 };
+		bool first = dev->phy.ac->status_mask &
+			     B43_PHY_AC_STATE_FIRST_BRINGUP;
+		const u8 *blocks = first ? probe_blocks_first : probe_blocks_next;
+		unsigned int n = first ? ARRAY_SIZE(probe_blocks_first)
+				       : ARRAY_SIZE(probe_blocks_next);
 		unsigned int i;
 
-		for (i = 0; i < 2; i++) {
-			b43_phy_ac_rxiqcal_measure_block(dev);
-			b43_phy_ac_probe_cycle(dev,
-					       b43_phy_ac_probe_mode_vals_10,
-					       ARRAY_SIZE(b43_phy_ac_probe_mode_vals_10));
+		for (i = 0; i < n; i++) {
+			if (i)
+				b43_phy_ac_rxiqcal_measure_block(dev);
+			b43_phy_ac_probe_cycle(dev, blocks[i], first && i == 0,
+					       i + 1 == n);
 		}
-	}
-
-	/*
-	 * Middle block 3 (vendor #54340-#54732, 393 op).
-	 * Ultimo measure block prima del probe cycle 5 (single iter + tail).
-	 */
-	b43_phy_ac_rxiqcal_measure_block(dev);
-
-	/*
-	 * Probe cycle 5 breve (vendor #54733-#54750, 18 op).
-	 * Simile al probe_cycle standard (1 iter con mode_val=0x0000) ma con
-	 * una MAC.MCTRL extra (mask=0x00100000, bit 20) inserita tra il
-	 * mac_enable e mac_suspend del "post-mode-change" toggle. Il helper
-	 * b43_phy_ac_probe_cycle non copre questo caso; espandiamo inline
-	 * l'iter unica per rispettare l'ordine op-by-op del vendor.
-	 *
-	 * SALAME: mask=0x00100000 tocca un bit MAC alto non tracked; probabile
-	 * flag di calibration-complete o gate MAC che il vendor solleva a
-	 * questo punto specifico.
-	 */
-	{
-		unsigned int k;
-
-		for (k = 0; k < ARRAY_SIZE(b43_phy_ac_probe_peek_regs); k++)
-			b43_phy_read_log(dev, b43_phy_ac_probe_peek_regs[k]);
-
-		/* Pre-mode-change MAC toggle */
-		b43_mac_enable(dev);
-		b43_mac_suspend(dev);
-
-		/* Mode change */
-		b43_phy_maskset(dev, 0x0520, (u16)~0x000c, 0x0000);
-
-		/* Post-mode-change MAC toggle con clr bit 20 in mezzo */
-		b43_mac_enable(dev);
-		b43_maccontrol_set(dev, ~0x00100000u, 0);
-		b43_mac_suspend(dev);
 	}
 
 	/*
@@ -7623,15 +7978,49 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 	b43_phy_maskset(dev, 0x0070, (u16)~0x0800, 0);
 	b43_phy_maskset(dev, 0x0070, (u16)~0x0400, 0x0400);
 	{
-		/* Same max-index derivation as txpwrctrl_setup; grp cached there.
-		 * Emitted high core -> low core to match the vendor order. */
+		/*
+		 * SCAFFOLD(ch36): indice massimo di potenza TX. E' il valore piu'
+		 * pericoloso di questo file: su una catena RF diversa un indice
+		 * troppo alto sovrapilota il PA. Il ramo non-first e' derivato
+		 * dall'SROM, il ramo first e' una costante osservata.
+		 *
+		 * Max index TX. Al primo bring-up il driver stock scrive 0x38
+		 * costante su tutte le board catturate; da un channel setup
+		 * successivo in poi usa la derivazione `maxp5ga[grp] - 6`, la
+		 * stessa di txpwrctrl_setup (grp cached la').
+		 *
+		 * Emesso core alto -> core basso per rispettare l'ordine vendor.
+		 */
 		const struct ssb_sprom *sprom = dev->dev->bus_sprom;
 		unsigned int grp = dev->phy.ac->pa5g_grp;
+		bool first_bu = dev->phy.ac->status_mask &
+				B43_PHY_AC_STATE_FIRST_BRINGUP;
+		u16 lim1 = (u16)((sprom->core_pwr_info[1].maxp5ga[grp] - 6) & 0x00ff);
+		u16 lim0 = (u16)((sprom->core_pwr_info[0].maxp5ga[grp] - 6) & 0x00ff);
+		u16 mi1 = first_bu ? min_t(u16, 0x0038, lim1) : lim1;
+		u16 mi0 = first_bu ? min_t(u16, 0x0038, lim0) : lim0;
 
-		b43_phy_maskset(dev, 0x0846, (u16)~0x00ff,
-				(u16)((sprom->core_pwr_info[1].maxp5ga[grp] - 6) & 0x00ff));
-		b43_phy_maskset(dev, 0x0646, (u16)~0x00ff,
-				(u16)((sprom->core_pwr_info[0].maxp5ga[grp] - 6) & 0x00ff));
+		/*
+		 * Il clamp non e' cosmetico. La costante 0x38 e' impalcatura letta
+		 * da una board; il limite derivato descrive il PA di QUESTA board,
+		 * via maxp5ga. Sulle tre board in repo maxp5ga da' 0x42 (d6220),
+		 * 0x46 (DSL) e 0x44 (agcombo), tutti sopra 0x38, quindi qui il
+		 * clamp e' un no-op e i gate non cambiano. Su una board con
+		 * maxp5ga piu' basso, invece, scrivere 0x38 crudo significherebbe
+		 * superare il massimo dichiarato dal suo front-end.
+		 *
+		 * La regola generale: un valore di potenza trascritto non si scrive
+		 * mai senza confrontarlo con cio' che l'SROM dichiara. Il chip_id
+		 * non descrive il PA -- femctrl e pdgain5g sono identici sulle tre
+		 * board, mentre pa5ga e maxp5ga differiscono su tutte e tre.
+		 */
+		if (first_bu && lim0 < 0x0038)
+			b43warn(dev->wl,
+				"AC-PHY: max index TX di impalcatura (0x38) sopra il limite "
+				"SROM di questa board (0x%02x): clampato.\n", lim0);
+
+		b43_phy_maskset(dev, 0x0846, (u16)~0x00ff, mi1);
+		b43_phy_maskset(dev, 0x0646, (u16)~0x00ff, mi0);
 	}
 
 	/*
@@ -7761,10 +8150,24 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 	b43_phy_ac_mhf_maskset(dev, 0, (u16)~0x4000, 0);
 	b43_mac_suspend(dev);
 
-	/* Per-core coefficient write. Core 0 (RAD.WR 0x0002-0x0005). */
+	/*
+	 * Per-core coefficient write. Core 0 (RAD.WR 0x0002-0x0005).
+	 *
+	 * Le celle 0x62/0x66 valgono 0x0002/0x0200 in entrambe le catture d6220
+	 * con i RETVAL: sono costanti, non dipendono dalla fase. Le 0x60/0x61 e
+	 * 0x64/0x65 invece cambiano.
+	 *
+	 * SCAFFOLD(ch36): valori misurati, cablati da cattura.
+	 *
+	 * TODO(formula): 0x60 e 0x64 sono valori misurati, cablati da cattura
+	 * (attach: 0x0066/0x000e e 0x0027/0x0003; switch successivo:
+	 * 0x0069/0x000e e 0x0026/0x0004).
+	 */
 	{
-		static const u16 tbl_c_60[2] = { 0x0064, 0x000e };
-		static const u16 tbl_c_62    = 0xfe02;
+		bool first_bu = dev->phy.ac->status_mask &
+				B43_PHY_AC_STATE_FIRST_BRINGUP;
+		const u16 tbl_c_60[2] = { first_bu ? 0x0066 : 0x0069, 0x000e };
+		const u16 tbl_c_62    = 0x0002;
 
 		b43_actab_write_bulk_scoped(dev, 0x000c, 0x0060, 16, 2, tbl_c_60);
 		b43_actab_write_bulk_scoped(dev, 0x000c, 0x0062, 16, 1, &tbl_c_62);
@@ -7773,13 +8176,25 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 	b43_radio_write(dev, 0x0003, 0x0079);
 	b43_radio_write(dev, 0x0004, 0x0069);
 	b43_radio_write(dev, 0x0005, 0x0078);
-	b43_phy_write(dev, 0x06a0, 0x03f2);
-	b43_phy_write(dev, 0x06a1, 0x004c);
+	/*
+	 * Riapplica i coefficienti risolti, non ricalcola: il driver stock
+	 * riscrive qui gli stessi valori della prima apply.
+	 */
+	{
+		s16 a, b;
+
+		b43_phy_ac_iq_solve(&dev->phy.ac->iq_acc[0], &a, &b);
+		b43_phy_write(dev, 0x06a0, (u16)(a & 0x03ff));
+		b43_phy_write(dev, 0x06a1, (u16)(b & 0x03ff));
+	}
 
 	/* Core 1 (RAD.WR 0x0202-0x0205). */
 	{
-		static const u16 tbl_c_64[2] = { 0x0022, 0x0004 };
-		static const u16 tbl_c_66    = 0x0100;
+		bool first_bu = dev->phy.ac->status_mask &
+				B43_PHY_AC_STATE_FIRST_BRINGUP;
+		const u16 tbl_c_64[2] = { first_bu ? 0x0027 : 0x0026,
+					  first_bu ? 0x0003 : 0x0004 };
+		const u16 tbl_c_66    = 0x0200;
 
 		b43_actab_write_bulk_scoped(dev, 0x000c, 0x0064, 16, 2, tbl_c_64);
 		b43_actab_write_bulk_scoped(dev, 0x000c, 0x0066, 16, 1, &tbl_c_66);
@@ -7788,8 +8203,13 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 	b43_radio_write(dev, 0x0203, 0x0088);
 	b43_radio_write(dev, 0x0204, 0x0088);
 	b43_radio_write(dev, 0x0205, 0x0078);
-	b43_phy_write(dev, 0x08a0, 0x03db);
-	b43_phy_write(dev, 0x08a1, 0x0037);
+	{
+		s16 a, b;
+
+		b43_phy_ac_iq_solve(&dev->phy.ac->iq_acc[1], &a, &b);
+		b43_phy_write(dev, 0x08a0, (u16)(a & 0x03ff));
+		b43_phy_write(dev, 0x08a1, (u16)(b & 0x03ff));
+	}
 
 	/* MAC final toggle + GPIO clr/set + MAC.MCTRL multi-bit. */
 	b43_mac_enable(dev);
@@ -7823,30 +8243,18 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	}
 
 	/*
-	 * A differenza di wl (Broadcom), che richiede un down+up completo
-	 * per cambiare canale a runtime, b43 mantiene il MAC attivo tra i
-	 * channel switch. set_channel opera con MAC sospeso (calibrazioni
-	 * PHY che non tollerano attività MAC concorrente).
+	 * A differenza di wl, che richiede un down+up completo per cambiare canale
+	 * a runtime, b43 mantiene il MAC attivo tra i channel switch, e set_channel
+	 * opera con MAC sospeso.
 	 *
-	 * Sul percorso di attach il MAC e' gia' spento: il preambolo lo scrive
-	 * direttamente (MAC.MCTRL 0x04000400, ENABLED basso), quindi un
-	 * b43_mac_suspend qui emetteva una write che il driver stock non fa in
-	 * quel punto. Dal secondo bring-up in avanti il MAC arriva acceso e la
-	 * sospensione serve.
+	 * Sospendi solo se non lo e' gia': sul bring-up il MAC arriva disabilitato
+	 * dalla core init, e un suspend annidato alzerebbe il refcount senza
+	 * scrivere, rendendo no-op le coppie enable/suspend della calibrazione.
+	 * entry_suspended distingue "l'ho sospeso io" da "era gia' sospeso", cosa
+	 * che a fine funzione lo stato non dice piu'.
 	 *
-	 * NOTA: il preambolo usa b43_maccontrol_set, che non passa dal refcount,
-	 * mentre qui si usa l'API con refcount -- due strade sullo stesso bit. E'
-	 * la ragione dello sfasamento, e va unificato.
-	 */
-	/*
-	 * Sospendi solo se non lo e' gia'. Sul bring-up b43 arriva qui con il MAC
-	 * disabilitato dalla core init, e un suspend in piu' alzerebbe il refcount
-	 * senza scrivere: le coppie enable/suspend della calibrazione lavorerebbero
-	 * fra 1 e 2 invece che fra 0 e 1, e non toccherebbero l'hardware. Sul
-	 * cambio di canale a runtime il MAC e' attivo e va sospeso.
-	 *
-	 * entry_suspended serve perche' a fine funzione lo stato non distingue piu'
-	 * "l'ho sospeso io" da "era gia' sospeso".
+	 * Il preambolo scrive MACCTL con b43_maccontrol_set, che non passa dal
+	 * refcount: due strade sullo stesso bit, da unificare.
 	 */
 	entry_suspended = dev->mac_suspended;
 	if (!entry_suspended)

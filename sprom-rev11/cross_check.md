@@ -15,6 +15,25 @@ ledger of those checks.
 
 ## Findings to date
 
+### 0. FEM/PA control block (resolved: canonical + two boards)
+
+`femctrl` non era in nessuna delle due patch. L'offset non era ricavabile per
+value-matching: il blocco ha valori **identici** su entrambe le board di
+riferimento, quindi i due dump danno un vincolo solo, e una ricerca esaustiva
+sui posizionamenti di bit lascia 17 word candidate -- tutte meglio spiegate come
+altri campi (`boardtype`, vendor ID, i blocchi power a passo 0x28).
+
+Risolto leggendo il layout canonico: `bcmsrom_tbl.h` da' `femctrl` a
+`SROM11_FEM_CFG1` con maschera **0xf800** (bit 15:11), non nei bit bassi. Con i
+valori NVRAM la word attesa e' `1 | (10<<4) | (6<<11)` = `0x30A1`, e nei dump
+raw sta alla word 85 = byte **0x0AA**, con `FEM_CFG2` = `0x00A1` alla word
+successiva. **Dodici campi su dodici**, su due board, in posizione contigua a
+`SSB_SPROM11_TXRXC` (0x0A8).
+
+Importa perche' `b43_phy_ac_set_regtbl_on_femctrl` scrive la tabella di
+controllo FEM di femctrl 6: senza questo campo popolato il driver la applicava
+assumendo il valore, e un guard che lo legge avrebbe letto zero su ogni board.
+
 ### 1. IL0MAC / CCODE offset collision (resolved, v3 fix scoped)
 
 `bcmsrom_tbl.h` rev-11 entry table excerpt:
@@ -128,6 +147,8 @@ which would not happen if 0x128 were off by even one word.
 | `SSB_SPROM11_TXRXC`       | 0x00A8 | DSL-3580L + D6220 (same payload) + bcm4360usb | not yet read from canonical |
 | `SSB_SPROM11_SUBBAND5GVER`| 0x00D6 | DSL-3580L + D6220 + bcm4360usb     | not yet read from canonical |
 | `SSB_SPROM11_PDOFFSET40MA`| 0x00CA | DSL-3580L + D6220                  | not yet read from canonical |
+| `SSB_SPROM11_FEM_CFG1`    | 0x00AA | DSL-3580L + D6220 (entrambi 0x30A1; tutti e sei i campi decodificano ai valori NVRAM: tssiposslope2g=1 epagain2g=0 pdgain2g=10 tworangetssi2g=0 papdcap2g=0 femctrl=6) | **si'**, `SROM11_FEM_CFG1` con maschere 0x0001/0x000e/0x01f0/0x0200/0x0400/0xf800 |
+| `SSB_SPROM11_FEM_CFG2`    | 0x00AC | DSL-3580L + D6220 (entrambi 0x00A1; tssiposslope5g=1 epagain5g=0 pdgain5g=10 tworangetssi5g=0 papdcap5g=0 gainctrlsph=0) | **si'**, `SROM11_FEM_CFG2`, stesse maschere con `gainctrlsph` al posto di `femctrl` |
 | `SSB_SPROM11_PDOFFSET80MA`| 0x00D0 | DSL-3580L + D6220 (both {0,0,0}; offset pinned by subband5gver=0x0004 at the adjacent word 107/0xD6) | not yet read from canonical |
 | `SSB_SPROM11_PWR_INFO_*`  | stride 0x28 from 0xD8 | DSL-3580L (3 chains) + D6220 (3 chains, distinct per-chain values) + bcm4360usb (2 chains) | not yet read from canonical |
 | `SSB_SPROM11_PWR_RXGAINS{0,1}` | 0x08 / 0x0A in chain block | bcm4360usb non-saturated triplets | encoding masks not yet read from canonical |

@@ -114,6 +114,11 @@ struct ssb_sprom {
 	u8 rxchain;
 	u8 subband;
 	u8 subband5gver;
+	/* Blocco FEM/PA (SROM11_FEM_CFG1/2), decodificato come in bcma. */
+	u8 tssiposslope2g, epagain2g, pdgain2g, tworangetssi2g, papdcap2g, femctrl;
+	u8 tssiposslope5g, epagain5g, pdgain5g, tworangetssi5g, papdcap5g, gainctrlsph;
+	u16 tssifloor2g;
+	u16 tssifloor5g[4];
 	struct ssb_sprom_core_pwr_info core_pwr_info[4];
 	struct ssb_sprom_rxgains rxgains_2g;
 	struct ssb_sprom_rxgains rxgains_5gl;

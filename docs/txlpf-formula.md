@@ -56,7 +56,7 @@ Cioè:
 
 | Chip | Cattura | chan/BW | lpf_cap | f iniettato | delta da formula |
 |---|---|---|---|---|---|
-| d6220 | attach-to-bss-ch36 | 36/20 | 0xab | **0xa8** | **0** ✓ |
+| d6220 | attach-to-bss-up-ch36-bw20 | 36/20 | 0xab | **0xa9** | **0** ✓ |
 | d6220 | attach-to-bss-ch44 | 44/20 | 0xab | **0xa9** | **+1** |
 | d6220 | attach-to-bss-ch36-bw40 | 36/40 | 0xab | **0xaa** | **+2** |
 | d6220 | down-to-bss-up | 44/20 | 0xab | 0xa9 | +1 |

@@ -13,7 +13,7 @@ per occorrenza), poi il recupero dei blocchi MACRO spostati: i run
 contigui di residui del riferimento vengono cercati come sequenza di
 chiavi ovunque nel vendor, senza vincolo di ordine -- e' il caso di fasi
 che una versione del driver esegue altrove nel flow (es. a init invece
-che a ogni set_channel). Con --replicate un blocco che il vendor esegue
+che a ogni switch_channel). Con --replicate un blocco che il vendor esegue
 una volta sola dove il riferimento lo ripete viene riemesso, marcato
 ';replicated' (compare.py scarta i commenti ';...'). Il tool emette:
 
@@ -198,7 +198,7 @@ def main():
     # Stadio 2 -- blocchi macro spostati. Lo stadio 1 e' vincolato alla
     # monotonia (le ancore passano per una LIS): un blocco che il vecchio
     # driver esegue in un'altra fase del flow (es. a init invece che a
-    # ogni set_channel) la viola e resta nei residui di ENTRAMBI i lati.
+    # ogni switch_channel) la viola e resta nei residui di ENTRAMBI i lati.
     # Qui ogni run contiguo di residui ref viene cercato come sequenza di
     # chiavi contigua nel vendor, ovunque essa sia. Con --replicate, se la
     # sequenza esiste solo in regione gia' consumata (il vendor la esegue

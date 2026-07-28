@@ -15,8 +15,9 @@
 | [`channel-generalization.md`](channel-generalization.md) | Analisi di quanto del driver è già chan/BW-invariant. Diff a 3 vie tra ch36/ch44/ch36-bw40. Quali blocchi vanno generalizzati, con piano operativo in 4 fasi. |
 | [`rxiq-cal-analysis.md`](rxiq-cal-analysis.md) | Analisi del blocco di calibrazione RX-IQ: struttura 4-step del sweep vendor, mapping tra i registri toccati e le fasi (RX AFE reconfig, radio 2069 IQ-cal, poll blocks, cleanup). |
 | [`txlpf-formula.md`](txlpf-formula.md) | Formula della famiglia LPF (TX-LPF, RX-LPF, DACBUF), **risolta**: cap derivato da rccal (E/F/G), pre-state preservato dalla RMW, verificata sui tre board. Include l'analisi storica. |
+| [`bank-0910-analysis.md`](bank-0910-analysis.md) | Il banco `0x0910`: reperti strutturali sulle 12 catture, ipotesi escluse con la prova che le esclude, precedenti in b43/brcmsmac N-PHY (`CRSMINPOWER`) e ath9k (`minCCApwr`, mediana su finestra), e la relazione trovata: il banco e' un offset sulla scala della soglia CRS, `max(0, target - crs)`, con target per sito di chiamata e per chip. Include i controesempi che tengono i target come `TODO(formula)`. |
 | [`nvram-reference.md`](nvram-reference.md) | Significato di ogni variabile NVRAM/SROM rev 11 e sua destinazione nel programming PHY/radio, con livelli di confidenza (verificato / standard / SALAME / TODO). Include la sintesi delle correlazioni confermate (pa5ga→est_pwr, rxgains→rxgain_init, maxp5ga→max index, tssifloor→0x0724). |
-| [`agcombo-macro-order.md`](agcombo-macro-order.md) | Mappa dell'ordine macro di `set_channel`: 17 fasi ancorate a firme dal sorgente, localizzate nel riferimento e negli episodi agcombo. Conclude che l'ordine macro agcombo (wl 7.14) e D6220 è identico; le differenze sono cadenza di ripetizione e contenuto unilaterale, non permutazioni. |
+| [`agcombo-macro-order.md`](agcombo-macro-order.md) | Mappa dell'ordine macro di `switch_channel`: 17 fasi ancorate a firme dal sorgente, localizzate nel riferimento e negli episodi agcombo. Conclude che l'ordine macro agcombo (wl 7.14) e D6220 è identico; le differenze sono cadenza di ripetizione e contenuto unilaterale, non permutazioni. |
 | [`dsl3580l-diff-index.md`](dsl3580l-diff-index.md) | Indice funzione-per-funzione delle differenze DSL-3580L (4352 wl6.30) vs d6220 (4352) vs agcombo (4360), con triangolazione chip/versione. Reperti verificati (0x0033, PLLCTL3, res mask, readback radio), differenze [CHIP] che confermano i condizionali is4360, e fasi non confrontabili col flow down-to-bss (serve attach). |
 
 ## Come navigare
@@ -27,7 +28,7 @@
   `reverse-tools/coverage_by_function.py` (vedi `reverse-tools/README.md`).
 - Per capire **come estendere ad altri canali** dopo il primo bring-up:
   `channel-generalization.md`.
-- Per capire **la struttura del set_channel**: `rxiq-cal-analysis.md` (fase
+- Per capire **la struttura del switch_channel**: `rxiq-cal-analysis.md` (fase
   di calibrazione, che è la parte più grossa).
 - Per capire **cosa significa una variabile NVRAM** e dove finisce nel
   programming: `nvram-reference.md`.
