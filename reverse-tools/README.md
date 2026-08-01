@@ -9,6 +9,9 @@ tabelle statiche dal blob ELF.
 
 Ordine tipico: decodifica → fold RETVAL → collapse → (reorder) → confronto.
 
+- **csanity.py** — controllo lessicale su file C senza compilatore: `*/` dentro
+  la prosa di un commento, commenti o letterali non chiusi, parentesi non
+  bilanciate. Da passare sui `wl_diag.c` prima di build su device.
 - **decode-wl-diag.py** — decodifica i record binari (28 B BE) emessi dal
   modulo `wl-diag` in righe testuali (`PHY.WR addr=.. val=..`, ecc.).
 - **merge_retvals.py** — ripiega le righe `RETVAL` nella op di lettura che le

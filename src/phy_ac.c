@@ -3267,9 +3267,33 @@ static void b43_phy_ac_prog_bank_0910(struct b43_wldev *dev, u16 crs,
 	};
 	u16 target = targets[is4360][site];
 	u16 off = (target > crs) ? (u16)(target - crs) : 0;
-	u16 hi = (u16)(off << 8);
-	u16 lo = off;
-	u16 base;
+	u16 hi, lo, base;
+
+	/*
+	 * Al PRIMO bring-up il sito chanspec_tail scrive zero, qualunque siano
+	 * target e CRS: la cal del rumore non ha ancora girato, non c'e' offset
+	 * da applicare. Evidenza su 5 catture di attach, 2 board, 2 chip:
+	 *
+	 *   d6220   attach ch36 BW20   [0] [5]
+	 *   d6220   attach ch36 BW40   [0] [6] [0]
+	 *   d6220   attach ch44        [0] [0]
+	 *   agcombo attach ch36        [0] [6,9]
+	 *   agcombo attach (wl-diag)   [0] [6,9] [6,9]
+	 *
+	 * Nei down->up il primo blocco NON e' zero -- d6220 [3] [5], agcombo
+	 * [15] [18] -- quindi discrimina la fase, non il sito.
+	 *
+	 * Serve esplicitamente perche' finora lo zero veniva dal clamp per
+	 * coincidenza: sul 4352 target 52 - crs 58 e' negativo, sul 4360
+	 * 64 - 58 = 6 e il clamp non scatta. Difetto che solo la seconda board
+	 * ha reso visibile.
+	 */
+	if (site == B43_PHY_AC_CRS_SITE_CHANSPEC &&
+	    (dev->phy.ac->status_mask & B43_PHY_AC_STATE_FIRST_BRINGUP))
+		off = 0;
+
+	hi = (u16)(off << 8);
+	lo = off;
 
 	for (base = 0x0910; base <= (is4360 ? 0x0b10 : 0x0910); base += 0x200) {
 		b43_phy_maskset(dev, base + 0, (u16)~0xff00, hi);

@@ -17,6 +17,20 @@
 # MAC.MHF.RD (18) e' una read (val UNDEFINED). PHY.AND (19) / PHY.OR (20):
 # reg-op a un operando (addr,val); val e' la maschera-AND risp. il valore-OR,
 # resi con la maschera effettiva derivata (clr ~val / set val).
+# OTP.* (32-34): letture OTP dal livello generico. addr = numero di word o
+# regione; il valore va in un puntatore, non nel ritorno, quindi qui interessa
+# QUANDO e QUALE, non il contenuto (che sta nei dump SROM).
+# TPL.* (27-31): template RAM, dove il PHY carica le forme d'onda dei toni.
+# Le PTRR/DATR hanno il valore nel RETVAL. Su 6.30 esiste solo TPL.RAMW.
+# CHANSPEC (26): cambio canale, addr = chanspec. Il decoder lo espande in
+# canale/banda/larghezza col formato 802.11ac standard (chan=bit 0-7,
+# bw=0x3800, band=0xc000) -- assunzione, non verificata su cattura. Serve a
+# tagliare a posteriori una run che copre piu' canali.
+# OBJ.RD (24) / OBJ.WR (25): object memory del MAC via read/write_objmem16.
+# addr=offset in byte, aux=selettore dello spazio (SHM, SCR, IHR...). La RD ha
+# il valore nel RETVAL come PHY.RD. Serve per il campione di potenza di rumore
+# che la crs_min_pwr cal legge: non passa da un registro PHY, quindi senza
+# questo hook non compare in nessuna cattura.
 import sys, struct
 
 REC = struct.Struct(">QIIIIBBH")   # ts_ns, seq, addr, val, aux, op, cpu, _pad
@@ -32,6 +46,11 @@ OPS = {
     19: "PHY.AND",  20: "PHY.OR",
     21: "SI.COREREG",
     22: "ARGX",     23: "RETVAL",
+    24: "OBJ.RD",   25: "OBJ.WR",
+    26: "CHANSPEC",
+    27: "TPL.PTRW",  28: "TPL.DATW",
+    29: "TPL.PTRR",  30: "TPL.DATR",  31: "TPL.RAMW",
+    32: "OTP.INIT",  33: "OTP.RDW",   34: "OTP.RDR",
     255: "DROP",
 }
 
@@ -39,7 +58,8 @@ OPS = {
 # all'ingresso, o foglia con return non agganciabile). Va emesso UNDEFINED, MAI
 # 0x0000 inventato -- altrimenti si riparte col problema di distinguere zeri
 # veri da zeri finti.
-READS    = {1, 4, 18}                     # PHY.RD, RAD.RD, MAC.MHF.RD
+CHANSPEC = 26
+READS    = {1, 4, 18, 24, 29, 30, 32, 33, 34}                 # PHY.RD, RAD.RD, MAC.MHF.RD, OBJ.RD
 HAS_MASK = {3, 6, 7, 8, 9, 10, 11, 12, 17} # aux e' una mask (RMW, GPIO, MHF)
 GPIO     = {10, 11, 12}                   # niente addr; val=a2, mask=aux=a1
 MCTRL    = {16}                            # MACCONTROL RMW: reg fisso, niente addr; val=a2, mask=aux=a1
@@ -60,6 +80,15 @@ def h(v, wide):
     return f"0x{v:08x}" if wide else f"0x{v:04x}"
 
 
+_BW = {0x1000: "20", 0x1800: "40", 0x2000: "80", 0x2800: "160", 0x3000: "80+80"}
+
+
+def chanspec(cs):
+    """formato 802.11ac: chan bit 0-7, bw 0x3800, band 0xc000"""
+    return (f"ch={cs & 0xff} bw={_BW.get(cs & 0x3800, '?')} "
+            f"band={'5g' if (cs & 0xc000) == 0xc000 else '2g'} raw=0x{cs:04x}")
+
+
 def main():
     f = sys.stdin.buffer
     buf = b""
@@ -74,7 +103,9 @@ def main():
             name = OPS.get(op, f"op{op}")
             t = ts / 1e9
             wide = op in WIDE
-            if op == 255:
+            if op == CHANSPEC:
+                print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} {chanspec(addr)}")
+            elif op == 255:
                 print(f"{t:14.6f}  cpu{cpu}  ** DROP **  persi={aux}")
             elif op == DELAY:                      # niente addr; durata in usec
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} usec={val}")

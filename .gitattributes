@@ -1,0 +1,16 @@
+# Il checkout su Windows con core.autocrlf converte in CRLF, e uno script con
+# CRLF sul router fallisce prima di partire: `set -u\r` diventa un'opzione
+# illegale e il \r manda il cursore a inizio riga mangiando i messaggi
+# d'errore. Vale anche per i sorgenti del modulo e gli oracoli delle catture,
+# dove un \r spurio cambia il confronto.
+* text=auto eol=lf
+
+# Binari: mai toccati.
+*.o        binary
+*.o_save   binary
+*.ko       binary
+*.bin      binary
+*.img      binary
+*.zip      binary
+*.png      binary
+*.pyc      binary
