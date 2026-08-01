@@ -34,6 +34,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/version.h>
 #include <linux/kernel.h>
 #include <linux/kallsyms.h>
 #include <linux/kfifo.h>
@@ -45,6 +46,13 @@
 #include <linux/spinlock.h>
 #include <linux/poll.h>
 #include <asm/cacheflush.h>
+/* Serve per BRK_KPROBE_BP, che discrimina se il kernel ha il ramo
+ * notify_die(DIE_BREAK) in do_bp: senza questo include il #ifdef piu'
+ * sotto sarebbe sempre falso e il percorso break si compilerebbe via in
+ * silenzio anche dove e' disponibile. */
+#include <asm/break.h>
+#include <linux/kdebug.h>
+#include <linux/notifier.h>
 
 static int arm;
 module_param(arm, int, 0444);
@@ -82,6 +90,11 @@ enum wldiag_op {
 	OP_PHY_AND, OP_PHY_OR,				/* 19,20 (append) */
 	OP_SI_COREREG,					/* 21 (append) */
 	OP_ARGX, OP_RETVAL,				/* 22,23 (append) */
+	OP_MAC_OBJ_R, OP_MAC_OBJ_W,			/* 24,25 (append) */
+	OP_CHANSPEC,					/* 26 (append) */
+	OP_TPL_PTRW, OP_TPL_DATW,			/* 27,28 (append) */
+	OP_TPL_PTRR, OP_TPL_DATR, OP_TPL_RAMW,		/* 29,30,31 (append) */
+	OP_OTP_INIT, OP_OTP_RDW, OP_OTP_RDR,		/* 32,33,34 (append) */
 	OP_DROP = 255,
 };
 struct wldiag_rec {
@@ -124,6 +137,9 @@ struct hook {
 	const char *name;
 	u8 op, addr_src, val_src, aux_src;
 	bool shortj;		/* true: detour a 1 parola 'j' (branch nella finestra a 4) */
+	bool use_bp;		/* true: hook via 'break' + die notifier (non detourabile) */
+	bool use_sites;		/* true: patch delle coppie lui/addiu ai siti di chiamata */
+	u32 *bp_stub;		/* stub di ripresa del percorso break */
 	bool retcap;		/* true: cattura il valore di ritorno via trampolino ra */
 	u8 nargx;		/* # arg extra su stack da catturare: arg5@16(sp), arg6@20(sp) */
 	unsigned long addr;
@@ -171,6 +187,35 @@ static struct hook hooks[] = {
 	{ "wlc_bmac_mctrl",     OP_MAC_MCTRL, 0, 2, 1 },
 	{ "wlc_bmac_mhf",       OP_MAC_MHF_W, 1, 3, 2 },
 	{ "wlc_bmac_mhf_get",   OP_MAC_MHF_R, 1, 0, 0, false, true, 0 },
+	/* Object memory del MAC (SHM, SCR, IHR): addr=offset, aux=selettore.
+	 * Cattura anche il campione di rumore della crs_min_pwr cal, che passa da
+	 * wlc_phy_noise_read_shmem -> wlapi_bmac_read_shm -> wlc_bmac_read_shm ->
+	 * qui, non da un registro PHY.
+	 * NOME PER VERSIONE: read_objmem su 6.30, read_objmem16 su 7.14.
+	 * Non si aggancia read_shm: e' un wrapper con jr alla parola 2. */
+	/* Cambio canale: chanspec in a1. Si aggancia la generica, che scatta per
+	 * ogni PHY e permette una run unica su piu' canali da splittare dopo. */
+	/* Template RAM: dove il PHY carica le forme d'onda dei toni, ingresso di
+	 * RXIQ, PAPD e do_dummy_tx. Nessuna classe di op la copriva.
+	 * Su 6.30 gli accessor ptr/data non esistono: la' solo il bulk. */
+	{ "wlc_bmac_templateptr_wreg",  OP_TPL_PTRW, 1, 0, 0 },
+	{ "wlc_bmac_templatedata_wreg", OP_TPL_DATW, 1, 0, 0 },
+	{ "wlc_bmac_templateptr_rreg",  OP_TPL_PTRR, 0, 0, 0, false, true, 0 },
+	{ "wlc_bmac_templatedata_rreg", OP_TPL_DATR, 0, 0, 0, false, true, 0 },
+	{ "wlc_bmac_write_template_ram", OP_TPL_RAMW, 1, 2, 3 },
+	/* OTP: il livello generico ha gli stessi nomi su 6.30 e 7.14 e prologo
+	 * pulito, mentre gli hndotp_ e ipxotp_ cambiano. Il contenuto e' l'immagine
+	 * SROM, statica e gia' nota dai dump: serve per sapere QUANDO viene letta
+	 * e QUALI word, cioe' dove i valori vengono consumati.
+	 *   otp_read_word(oh, wn, *data)              wn=a1
+	 *   otp_read_region(sih, region, *data, *len) region=a1
+	 *   otp_init(sih)                             solo il momento */
+	{ "otp_init",        OP_OTP_INIT, 0, 0, 0, false, true, 0 },
+	{ "otp_read_word",   OP_OTP_RDW,  1, 0, 2, false, true, 0 },
+	{ "otp_read_region", OP_OTP_RDR,  1, 0, 3, false, true, 0 },
+	{ "wlc_phy_chanspec_set", OP_CHANSPEC, 1, 0, 0 },
+	{ "wlc_bmac_read_objmem16",  OP_MAC_OBJ_R, 1, 0, 2, false, true, 0 },
+	{ "wlc_bmac_write_objmem16", OP_MAC_OBJ_W, 1, 2, 3 },
 	/* branch a slot 3 (beq): detour classico a 4 parole impossibile. short-j a
 	 * 1 parola: o[0]=j stub; o[1] (addiu $v0,1) resta come delay slot; lo stub
 	 * riesegue o[0..1] e rientra a +8 (v0 ri-settato DOPO la hook). addr=a1
@@ -315,6 +360,256 @@ static bool is_branch(u32 insn)
 static u32 stub_pool[NHOOK][STUB_WORDS] __attribute__((aligned(8)));
 static u32 ret_tramp[16] __attribute__((aligned(8)));	/* trampolino di ritorno condiviso */
 
+/* Percorso a 'break' per prologhi non detourabili (branch nella finestra).
+ * Una parola, nessun delay slot. do_bp() chiama notify_die(DIE_BREAK) per
+ * BRK_KPROBE_BP fuori da CONFIG_KPROBES, quindi basta un die notifier; con
+ * NOTIFY_STOP non si arriva al die_if_kernel. Verificato su Linux 3.4.
+ * Su 2.6.30 non esiste (do_bp -> do_trap_or_bp, set_except_vector non
+ * esportata): BRK_KPROBE_BP fa da discriminante e il percorso si compila via.
+ * La parola 0 viene rieseguita in uno stub, quindi non puo' essere
+ * PC-relative: si verifica prima di armare. */
+#ifdef BRK_KPROBE_BP
+#define WD_HAVE_BP 1
+
+static bool bp_registered;	/* die notifier registrato */
+
+#define BP_INSN (0x0000000dU | (BRK_KPROBE_BP << 6))	/* break BRK_KPROBE_BP */
+
+static int wd_bp_notify(struct notifier_block *nb, unsigned long val, void *data)
+{
+	struct die_args *args = data;
+	struct pt_regs *regs;
+	int i;
+
+	if (val != DIE_BREAK || !args || !(regs = args->regs))
+		return NOTIFY_DONE;
+
+	for (i = 0; i < (int)ARRAY_SIZE(hooks); i++) {
+		u32 seq;
+
+		if (!hooks[i].use_bp || !hooks[i].armed)
+			continue;
+		if (regs->cp0_epc != hooks[i].addr)
+			continue;
+
+		/* o32: a1..a3 sono $a1..$a3 = regs[5..7] */
+		seq = wl_diag_hook((u32)i, (u32)regs->regs[5],
+				   (u32)regs->regs[6], (u32)regs->regs[7]);
+		if (hooks[i].retcap)
+			regs->regs[31] =
+				wl_diag_enter_ret(regs->regs[31], seq);
+
+		regs->cp0_epc = (unsigned long)hooks[i].bp_stub;
+		return NOTIFY_STOP;
+	}
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block wd_bp_nb = {
+	.notifier_call = wd_bp_notify,
+	.priority = 0x7fffffff,		/* prima di eventuali altri consumatori */
+};
+
+/* stub: [0] parola originale, [1] j func+4, [2] nop */
+static void build_bp_stub(int idx)
+{
+	u32 *s = stub_pool[idx];
+	unsigned long ret = hooks[idx].addr + 4;
+
+	s[0] = hooks[idx].saved[0];
+	s[1] = 0x08000000U | ((ret >> 2) & 0x03ffffffU);	/* j ret */
+	s[2] = 0x00000000U;					/* nop */
+	hooks[idx].bp_stub = s;
+}
+#else
+#define WD_HAVE_BP 0
+#endif
+
+/* Patch dei siti di chiamata. Il modulo e' -mabicalls: zero jal in .text, le
+ * chiamate sono lui/addiu + jalr (o jr $t9 per le tail call), quindi si
+ * riscrive la coppia perche' carichi lo stub. La funzione resta intatta:
+ * nessun vincolo sul prologo, e funziona su 2.6.30 dove il break non c'e'.
+ * Un solo stub serve jalr e jr: preserva ra e salta alla funzione vera.
+ * Tre condizioni, verificate a runtime: la coppia deve dare l'indirizzo
+ * esatto; deve seguirla un salto sullo STESSO registro; l'addiu non deve
+ * essere condiviso (il compilatore riusa la parte bassa fra siti diversi:
+ * nel blob D6220 quello a +0x1f5a24 serve due funzioni). */
+#define MAX_SITES 8
+
+struct site {
+	u32 *hi, *lo;
+	u32 saved_hi, saved_lo;
+};
+static struct site sites[NHOOK][MAX_SITES];
+static int n_sites[NHOOK];
+
+/* immediati di una coppia lui/addiu per caricare `v`: l'addiu estende il segno
+ * della parte bassa, quindi la parte alta va compensata. */
+static inline u16 hi16_of(unsigned long v) { return (u16)((v + 0x8000UL) >> 16); }
+static inline u16 lo16_of(unsigned long v) { return (u16)(v & 0xffff); }
+
+static int find_sites(int idx, unsigned long target)
+{
+	struct module *m = __module_text_address(target);
+	u32 *base;
+	unsigned long words;
+	int n = 0, i, k;
+
+	if (!m) {
+		pr_warn("wl_diag: '%s' non e' in un modulo, niente scansione siti\n",
+			hooks[idx].name);
+		return 0;
+	}
+	base = (u32 *)m->module_core;
+	words = m->core_text_size / 4;
+
+	for (i = 0; i + 1 < (int)words && n < MAX_SITES; i++) {
+		u32 wi = base[i];
+		int rt;
+
+		if ((wi >> 26) != 0x0f)			/* lui */
+			continue;
+		rt = (wi >> 16) & 31;
+
+		for (k = 1; k <= 8 && i + k < (int)words; k++) {
+			u32 wl = base[i + k];
+			unsigned long a;
+			int j, found = 0;
+
+			if ((wl >> 26) != 0x09)		/* addiu */
+				continue;
+			if (((wl >> 21) & 31) != rt || ((wl >> 16) & 31) != rt)
+				continue;
+			a = ((unsigned long)(wi & 0xffff) << 16) +
+			    (long)(s16)(wl & 0xffff);
+			if (a != target)
+				break;
+			/* salto sullo stesso registro entro 8 istruzioni */
+			for (j = 1; j <= 8 && i + k + j < (int)words; j++) {
+				u32 wj = base[i + k + j];
+
+				if ((wj >> 26) != 0 || ((wj >> 21) & 31) != rt)
+					continue;
+				if ((wj & 0x3f) == 0x08 || (wj & 0x3f) == 0x09) {
+					found = 1;
+					break;
+				}
+			}
+			if (!found) {
+				pr_info("wl_diag: '%s' sito @%px senza salto, ignorato\n",
+					hooks[idx].name, &base[i]);
+				break;
+			}
+			sites[idx][n].hi = &base[i];
+			sites[idx][n].lo = &base[i + k];
+			sites[idx][n].saved_hi = wi;
+			sites[idx][n].saved_lo = wl;
+			n++;
+			break;
+		}
+	}
+
+	/* scarta i siti che condividono l'addiu con un altro */
+	for (i = 0; i < n; i++) {
+		int shared = 0;
+
+		for (k = 0; k < n; k++)
+			if (k != i && sites[idx][k].lo == sites[idx][i].lo)
+				shared = 1;
+		if (shared) {
+			pr_warn("wl_diag: '%s' sito @%px scartato (addiu condiviso @%px)\n",
+				hooks[idx].name, sites[idx][i].hi, sites[idx][i].lo);
+			sites[idx][i] = sites[idx][--n];
+			i--;
+		}
+	}
+	n_sites[idx] = n;
+	return n;
+}
+
+static void patch_sites(int idx)
+{
+	unsigned long s = (unsigned long)stub_pool[idx];
+	int i;
+
+	for (i = 0; i < n_sites[idx]; i++) {
+		*sites[idx][i].hi = (sites[idx][i].saved_hi & 0xffff0000) |
+				    hi16_of(s);
+		*sites[idx][i].lo = (sites[idx][i].saved_lo & 0xffff0000) |
+				    lo16_of(s);
+		flush_i((unsigned long)sites[idx][i].hi,
+			(unsigned long)sites[idx][i].hi + 4);
+		flush_i((unsigned long)sites[idx][i].lo,
+			(unsigned long)sites[idx][i].lo + 4);
+	}
+}
+
+static void restore_sites(int idx)
+{
+	int i;
+
+	for (i = 0; i < n_sites[idx]; i++) {
+		*sites[idx][i].hi = sites[idx][i].saved_hi;
+		*sites[idx][i].lo = sites[idx][i].saved_lo;
+		flush_i((unsigned long)sites[idx][i].hi,
+			(unsigned long)sites[idx][i].hi + 4);
+		flush_i((unsigned long)sites[idx][i].lo,
+			(unsigned long)sites[idx][i].lo + 4);
+	}
+	n_sites[idx] = 0;
+}
+
+/* Se il modulo bersaglio se ne va mentre siamo armati, i nostri puntatori
+ * restano su memoria liberata e il ripristino allo scarico scriverebbe li'.
+ * Su 2.6.30 il rescan PCI scarica wl, quindi succede davvero.
+ * Si abbandonano le patch senza toccare la memoria: il modulo sta per sparire. */
+static struct module *target_mod;
+static bool mod_nb_registered;
+static bool mod_ref_held;
+
+/* Tenere un riferimento sul bersaglio: finche' siamo armati `rmmod wl` fallisce
+ * con -EBUSY, e le patch non finiscono su memoria liberata. remove/probe del
+ * device continuano a funzionare: il refcount del modulo non c'entra con la
+ * presenza della funzione PCI -- ed e' per questo che su 3.4 wl resta caricato
+ * quando si rimuove il device. Su 2.6.30 e' lo spazio utente del vendor a fare
+ * rmmod al rescan, e il riferimento glielo impedisce.
+ * try_module_get non e' esportata su 2.6.30; __module_get e' una static inline
+ * che incrementa direttamente. Non controlla MODULE_STATE_GOING, ma qui il
+ * modulo e' vivo: gli abbiamo appena risolto i simboli. */
+static void target_ref_get(struct module *m)
+{
+	if (!m)
+		return;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 0, 0)
+	mod_ref_held = try_module_get(m);
+#else
+	__module_get(m);
+	mod_ref_held = true;
+#endif
+	if (!mod_ref_held)
+		pr_warn("wl_diag: nessun riferimento sul bersaglio: se si scarica "
+			"mentre siamo armati, gli hook vengono abbandonati\n");
+}
+
+static int wd_mod_notify(struct notifier_block *nb, unsigned long ev, void *data)
+{
+	struct module *m = data;
+	int i;
+
+	if (ev != MODULE_STATE_GOING || !target_mod || m != target_mod)
+		return NOTIFY_DONE;
+
+	for (i = 0; i < NHOOK; i++)
+		hooks[i].armed = false;
+	mod_ref_held = false;
+	target_mod = NULL;
+	pr_warn("wl_diag: il modulo bersaglio si sta scaricando: hook abbandonati "
+		"senza ripristino. Ricaricare wl_diag dopo il suo re-insmod.\n");
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block wd_mod_nb = { .notifier_call = wd_mod_notify };
+
 static void build_stub(int idx)
 {
 	u32 *s = stub_pool[idx];
@@ -322,8 +617,10 @@ static void build_stub(int idx)
 	unsigned long hookfn = (unsigned long)&wl_diag_hook;
 	unsigned long argxfn = (unsigned long)&wl_diag_hook_argx;
 	unsigned long enterfn = (unsigned long)&wl_diag_enter_ret;
-	int rep = hooks[idx].shortj ? 2 : 4;	/* parole originali da rieseguire */
-	unsigned long ret = hooks[idx].addr + (hooks[idx].shortj ? 8 : 16);
+	/* sui siti la funzione e' intatta: niente da rieseguire, si rientra da 0 */
+	int rep = hooks[idx].use_sites ? 0 : (hooks[idx].shortj ? 2 : 4);
+	unsigned long ret = hooks[idx].use_sites ? hooks[idx].addr :
+		hooks[idx].addr + (hooks[idx].shortj ? 8 : 16);
 	int n = 0, k;
 
 	s[n++] = i_addiu(R_SP, R_SP, -32);
@@ -540,9 +837,32 @@ static int __init wd_init(void)
 		for (j = 0; j < win; j++)
 			if (branch < 0 && is_branch(o[j]))
 				branch = j;
+		if (branch >= 0 && find_sites(i, hooks[i].addr) > 0) {
+			/* Non detourabile nel prologo, ma i siti di chiamata sono
+			 * patchabili: la funzione resta intatta. Preferito al break,
+			 * che richiede il die notifier e non c'e' su ogni kernel. */
+			hooks[i].use_sites = true;
+			eligible[n_elig++] = i;
+			pr_info("wl_diag: piano hook '%s' @%px [siti: %d] (branch a istr %d)\n",
+				hooks[i].name, o, n_sites[i], branch);
+			continue;
+		}
 		if (branch >= 0) {
-			pr_warn("wl_diag: salto '%s' (branch a istr %d, non rilocabile)\n",
-				hooks[i].name, branch);
+			/* Non detourabile. Il percorso a 'break' serve una parola sola
+			 * e non ha delay slot, ma la parola 0 va rieseguita nello stub
+			 * quindi non puo' essere PC-relative. */
+			if (WD_HAVE_BP && !is_branch(o[0])) {
+				hooks[i].use_bp = true;
+				eligible[n_elig++] = i;
+				pr_info("wl_diag: piano hook '%s' @%px [break] (branch a istr %d)\n",
+					hooks[i].name, o, branch);
+			} else if (WD_HAVE_BP) {
+				pr_warn("wl_diag: salto '%s' (branch a istr %d e parola 0 non rieseguibile)\n",
+					hooks[i].name, branch);
+			} else {
+				pr_warn("wl_diag: salto '%s' (branch a istr %d; percorso break non disponibile su questo kernel)\n",
+					hooks[i].name, branch);
+			}
 			continue;
 		}
 		if (hooks[i].shortj &&
@@ -598,8 +918,15 @@ static int __init wd_init(void)
 		return 0;
 	}
 
-	for (i = 0; i < n_elig; i++)
+	for (i = 0; i < n_elig; i++) {
+#if WD_HAVE_BP
+		if (hooks[eligible[i]].use_bp) {
+			build_bp_stub(eligible[i]);
+			continue;
+		}
+#endif
 		build_stub(eligible[i]);
+	}
 	flush_i((unsigned long)stub_pool,
 		(unsigned long)stub_pool + sizeof(stub_pool));
 	{
@@ -617,7 +944,51 @@ static int __init wd_init(void)
 				(void *)ret_trampoline);
 		}
 	}
+#if WD_HAVE_BP
+	{
+		int any_bp = 0;
+
+		for (i = 0; i < n_elig; i++)
+			if (hooks[eligible[i]].use_bp)
+				any_bp = 1;
+		/* il notifier va registrato PRIMA di piazzare i break, o la
+		 * prima trap finisce in do_trap_or_bp -> panic. */
+		if (any_bp) {
+			err = register_die_notifier(&wd_bp_nb);
+			if (err) {
+				pr_err("wl_diag: register_die_notifier: %d, resto in DRY-RUN\n",
+				       err);
+				return 0;
+			}
+			bp_registered = true;
+		}
+	}
+#endif
+	target_mod = __module_text_address(hooks[eligible[0]].addr);
+	target_ref_get(target_mod);
+	if (register_module_notifier(&wd_mod_nb))
+		pr_warn("wl_diag: register_module_notifier fallita: se il modulo "
+			"bersaglio si scarica mentre siamo armati, non lo sapremo\n");
+	else
+		mod_nb_registered = true;
+
 	for (i = 0; i < n_elig; i++) {
+		if (hooks[eligible[i]].use_sites) {
+			patch_sites(eligible[i]);
+			hooks[eligible[i]].armed = true;
+			continue;
+		}
+#if WD_HAVE_BP
+		if (hooks[eligible[i]].use_bp) {
+			u32 *o = (u32 *)hooks[eligible[i]].addr;
+
+			o[0] = BP_INSN;
+			flush_i(hooks[eligible[i]].addr,
+				hooks[eligible[i]].addr + 4);
+			hooks[eligible[i]].armed = true;
+			continue;
+		}
+#endif
 		patch_entry(eligible[i]);
 		hooks[eligible[i]].armed = true;
 	}
@@ -633,14 +1004,45 @@ static void __exit wd_exit(void)
 	 * stub in volo che hanno gia' dirottato tornano comunque via ret_tramp
 	 * (statico, valido), e synchronize_sched aspetta che completino. */
 	ret_trampoline = 0;
+	if (mod_nb_registered) {
+		unregister_module_notifier(&wd_mod_nb);
+		mod_nb_registered = false;
+	}
 
 	for (i = 0; i < NHOOK; i++)
 		if (hooks[i].armed) {
+			if (hooks[i].use_sites) {
+				restore_sites(i);
+				hooks[i].armed = false;
+				continue;
+			}
+#if WD_HAVE_BP
+			if (hooks[i].use_bp) {
+				u32 *o = (u32 *)hooks[i].addr;
+
+				o[0] = hooks[i].saved[0];
+				flush_i(hooks[i].addr, hooks[i].addr + 4);
+				hooks[i].armed = false;
+				continue;
+			}
+#endif
 			restore_entry(i);
 			hooks[i].armed = false;
 		}
+#if WD_HAVE_BP
+	/* il notifier si sgancia DOPO aver ripristinato le parole: se restasse un
+	 * break in giro senza handler, la trap finirebbe in panic. */
+	if (bp_registered) {
+		unregister_die_notifier(&wd_bp_nb);
+		bp_registered = false;
+	}
+#endif
 	/* lascia agli stub in volo il tempo di completare prima di sparire */
 	synchronize_sched();
+	if (mod_ref_held && target_mod) {
+		module_put(target_mod);
+		mod_ref_held = false;
+	}
 	misc_deregister(&wd_misc);
 	pr_info("wl_diag: scaricato (record persi: %d)\n", atomic_read(&drops));
 }
