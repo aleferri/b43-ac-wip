@@ -148,6 +148,73 @@ viene letta e **quali word**, cioe' dove i valori vengono consumati. Il valore
 finisce in un puntatore, non nel ritorno, quindi nel record c'e' il numero di
 word e non il dato.
 
+### Conservare la fifo sui canali DFS
+
+Sui canali DFS il rivelatore radar interroga `PHY.RD 0x0253` e `0x0254` in
+continuo: **192000 e 194000 letture** nelle quattro fasi, l'85% di tutte le
+letture PHY, e col `retcap` attivo il doppio. Non c'entrano con la
+configurazione del canale, quindi per lo sweep di massa si filtrano prima della
+fifo:
+
+```sh
+insmod wl_diag.ko arm=1 skipphyrd="0x253,0x254"
+```
+
+Due restrizioni deliberate, entrambe da verifiche sui dati.
+
+Il filtro vale **solo per `OP_PHY_R`**: gli spazi di indirizzamento sono
+separati
+per classe, e nelle stesse catture ci sono 32 `OBJ.WR` a `0x252` e 32 a `0x254`
+che sono offset di object memory, non registri PHY. Un filtro sul solo indirizzo
+li avrebbe buttati in silenzio.
+
+E si filtrano **solo `0x253`/`0x254`**. La testa del blocco -- `0x251` e
+`0x252`,
+lette 1558 volte in tutto, una per blocco -- e' plausibilmente lo stato e i dati
+dell'impulso, cioe' la parte utile: costa poco e si tiene.
+
+I record filtrati hanno un contatore separato dai persi, cosi' gli `OP_DROP`
+restano un indicatore di perdita vera. A fine corsa:
+
+    wl_diag: scaricato (persi: 0, filtrati: 148392)
+
+**Le catture DFS vanno fatte senza filtro**, due o tre, perche' quelle letture
+sono l'unico materiale sul rivelatore. Non serve di piu': il classificatore
+ETSI/FCC Linux lo ha gia' in `drivers/net/wireless/ath/dfs_pattern_detector.c`
+(377 righe), che consuma `struct pulse_event {ts, freq, width, rssi, chirp}` --
+e i campi che il driver Broadcom stampa (`min_pw`, `pri`, `fm_min`/`fm_max`,
+`nconsecq_pulses`) mappano su quelli. Quindi dei 24 KB di
+`wlc_phy_radar_detect_run` serve solo il **formato dei quattro registri**, non
+la
+classificazione.
+
+Attenzione alle unita': `pri=44258` e' troppo grande per essere microsecondi,
+dato che i PRI della normativa stanno fra 200 e 3000 us. Da stabilire dalla
+cattura, non per ipotesi.
+
+### Se non arriva nessun RETVAL
+
+Sintomo: tutte le letture hanno `val=UNDEFINED` e nella traccia non c'e' un solo
+record `RETVAL`, quindi si ha la sequenza delle letture ma non i valori.
+
+Prima verifica, una riga:
+
+```sh
+dmesg | grep 'trampolino ritorno'
+```
+
+Manca -> nessun hook eleggibile risultava `retcap`, e il trampolino non e' stato
+costruito. C'e' -> e' costruito ma non viene raggiunto, e il sospetto e' il pool
+di `wl_diag_enter_ret`, che restituisce `orig_ra` in silenzio quando le entry
+sono esaurite.
+
+**E' successo per davvero**, causa: tre campi di stato (`use_bp`, `use_sites`,
+`bp_stub`) inseriti nella `struct hook` **fra `shortj` e `retcap`**. La tabella
+usa inizializzatori posizionali, quindi il `true` destinato a `retcap` finiva in
+`use_bp` e `retcap` restava falso per ogni hook. I campi nuovi ora stanno in
+coda, e gli inizializzatori usano la forma designata (`.retcap = true`) che e'
+immune al riordino.
+
 ### Il rumore passa dall'object memory
 
     wlc_phy_noise_read_shmem -> wlapi_bmac_read_shm -> wlc_bmac_read_shm
@@ -166,6 +233,7 @@ ricostruisce offline.
 
 | param | default | effetto |
 |-------|---------|---------|
+| `skipphyrd` | vuoto | letture di **registro PHY** da non registrare, es. `"0x253,0x254"` |
 | `arm`   | `0` | `0` = dry-run (logga solo il piano hook); `1` = applica le patch |
 | `delay` | `0` | `1` = aggancia anche `osl_delay` (rumoroso, usec inaffidabile) |
 

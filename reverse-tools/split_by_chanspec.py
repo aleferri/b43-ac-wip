@@ -69,7 +69,11 @@ def main():
         print(f"ATTENZIONE: {nseg} segmenti ma {len(chans)} canali nella lista. "
               f"I nomi posizionali sono inaffidabili.")
 
+    # Si scrive TUTTO prima di stampare. Con SIGPIPE a SIG_DFL un `| head` uccide
+    # il processo al primo print, e stampando dentro il ciclo si finirebbe con i
+    # primi file scritti e gli altri no -- silenziosamente. E' successo.
     used = {}
+    esito = []
     for k in range(nseg):
         body = lines[edges[k]:edges[k + 1]]
         if not any(x.strip() for x in body):
@@ -80,15 +84,18 @@ def main():
         name = base if n == 1 else f"{base}-{n}"
         open(os.path.join(out, f"{name}.txt"), 'w').write('\n'.join(body) + '\n')
 
-        # chanspec visti dentro il segmento, per confronto
         cs = [f"ch{m.group(1)}/{m.group(2)}" for x in body
               if (m := RX_CS.search(x))]
+        atteso = f"ch{chans[k]}" if k < len(chans) else None
+        disaccordo = bool(cs) and atteso and not any(
+            c.startswith(atteso + '/') for c in cs)
+        esito.append((name, len(body), cs, disaccordo))
+
+    for name, nrighe, cs, disaccordo in esito:
         tag = ''
         if cs:
-            atteso = f"ch{chans[k]}" if k < len(chans) else None
-            disaccordo = atteso and not any(c.startswith(atteso + '/') for c in cs)
             tag = f"   CHANSPEC: {','.join(cs)}" + ("  <-- non concorda" if disaccordo else "")
-        print(f"  {name + '.txt':24} {len(body):8} righe{tag}")
+        print(f"  {name + '.txt':24} {nrighe:8} righe{tag}")
 
     print("\nI nomi vengono dall'ORDINE della fase in capture_plan.sh, non dai")
     print("record CHANSPEC. Per 40 e 80 MHz il chanspec porta il canale CENTRALE")

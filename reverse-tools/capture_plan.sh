@@ -26,6 +26,11 @@
 #   sh capture_plan.sh 20a wl1 10   interfaccia e attesa espliciti
 #
 # Niente `set -u`: il busybox di questi firmware non lo gestisce.
+#
+# Sui canali DFS (52-64 e 100-140) il rivelatore radar interroga PHY 0x0253/0x0254
+# in continuo, fino all'85% del volume. Per lo sweep di massa conviene armare con
+#   insmod wl_diag.ko arm=1 skipphyrd="0x253,0x254"
+# e fare a parte due o tre catture DFS senza filtro.
 
 FASE="$1"
 IF="$2"

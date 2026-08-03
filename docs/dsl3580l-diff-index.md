@@ -5,6 +5,20 @@ di verifica. **Nessuna modifica al codice**: solo classificazione.
 
 ## Triangolazione
 
+> **Le catture DSL sono state sostituite.** Le due su cui questo documento e'
+> costruito (`down-to-bss ch36` bw20 e bw40) erano state fatte con una build di
+> `wl-diag` che non agganciava object memory, template RAM, chanspec e OTP:
+> mancavano ~1600 op per cattura, cioe' cinque classi intere. Sono state
+> rimpiazzate con catture della stessa configurazione (stessa board, stesso
+> driver 6.30.102.7, stesso flusso down->up) che le contengono, e ne sono state
+> aggiunte cinque su altri canali e larghezze.
+>
+> I reperti qui sotto **precedono la sostituzione** e vanno riverificati: erano
+> corretti su cio' che si vedeva, ma un confronto che ignora `OBJ.*` e `TPL.*`
+> puo' aver letto come "assente" qualcosa che era solo invisibile. Lo stesso
+> vale per il verdetto `[VERSIONE]` contro `[CHIP]`, che poggia sul confronto
+> fra le tre board.
+
 | board | chip | wl | flow catturato |
 |---|---|---|---|
 | d6220 | 4352 | recente (riferimento del port) | attach-to-bss ch36 |

@@ -62,12 +62,6 @@
 #include <linux/spinlock.h>
 #include <linux/poll.h>
 #include <asm/cacheflush.h>
-/* Serve per BRK_KPROBE_BP, che discrimina se il kernel ha il ramo
- * notify_die(DIE_BREAK) in do_bp: senza questo include il #ifdef piu'
- * sotto sarebbe sempre falso e il percorso break si compilerebbe via in
- * silenzio anche dove e' disponibile. */
-#include <asm/break.h>
-#include <linux/kdebug.h>
 #include <linux/notifier.h>
 
 /*
@@ -216,10 +210,83 @@ static DECLARE_WAIT_QUEUE_HEAD(rq);
 static atomic_t seq = ATOMIC_INIT(0);
 static atomic_t drops = ATOMIC_INIT(0);
 
+/* Letture di REGISTRO PHY da non registrare, per conservare la fifo. Nasce dal
+ * polling del rivelatore radar: sui canali DFS il driver interroga 0x0253 e
+ * 0x0254 in continuo -- 192000 e 194000 letture nelle quattro fasi -- e con i
+ * RETVAL attivi il doppio, senza c'entrare niente con la configurazione del
+ * canale. Filtrando QUI, prima della fifo, si conserva il margine; nel decoder
+ * non servirebbe, il collo di bottiglia e' la coda.
+ *
+ *   skipphyrd="0x253,0x254"
+ *
+ * VALE SOLO PER OP_PHY_R, e non e' pignoleria: gli spazi di indirizzamento sono
+ * separati per classe. Nelle stesse catture ci sono 32 OBJ.WR a 0x252 e 32 a
+ * 0x254, che sono offset di object memory e non hanno nulla a che vedere coi
+ * registri PHY omonimi: un filtro sul solo indirizzo li avrebbe buttati in
+ * silenzio.
+ *
+ * E si filtrano SOLO 0x253/0x254. La testa del blocco -- 0x251 e 0x252, lette
+ * 1558 volte in tutto, una per blocco -- e' plausibilmente lo stato e i dati
+ * dell'impulso, cioe' la parte che serve: costa poco e si tiene.
+ *
+ * I record filtrati NON contano come persi: contatore separato, cosi' gli
+ * OP_DROP restano un indicatore di perdita vera.
+ *
+ * Per il DFS servono catture dedicate senza filtro. Il classificatore ETSI/FCC
+ * Linux lo ha gia' (dfs_pattern_detector, 377 righe), quindi serve solo il
+ * formato di quei registri, non la classificazione.
+ */
+#define SKIP_MAX 16
+static char *skipphyrd;
+module_param(skipphyrd, charp, 0444);
+static u32 skip_list[SKIP_MAX];
+static int skip_n;
+static atomic_t filtered = ATOMIC_INIT(0);
+
+static void parse_skipphyrd(void)
+{
+	char buf[128], *p, *tok;
+
+	if (!skipphyrd || !*skipphyrd)
+		return;
+	strncpy(buf, skipphyrd, sizeof(buf) - 1);
+	buf[sizeof(buf) - 1] = 0;
+	p = buf;
+	while ((tok = strsep(&p, ",")) && skip_n < SKIP_MAX) {
+		unsigned long v;
+		char *end;
+
+		while (*tok == ' ')
+			tok++;
+		if (!*tok)
+			continue;
+		/* kstrtoul e' arrivata in 2.6.38: simple_strtoul c'e' su entrambi
+		 * i kernel e la validita' si controlla sul puntatore di fine. */
+		v = simple_strtoul(tok, &end, 0);
+		if (end == tok) {
+			pr_warn("wl_diag: skipphyrd: '%s' non e' un numero\n", tok);
+			continue;
+		}
+		skip_list[skip_n++] = (u32)v;
+	}
+	if (skip_n)
+		pr_info("wl_diag: %d letture PHY filtrate per indirizzo\n", skip_n);
+}
+
 static u32 emit(u8 op, u32 addr, u32 val, u32 aux)
 {
 	struct wldiag_rec r;
 	unsigned long flags;
+	int i;
+
+	if (op == OP_PHY_R) {
+		for (i = 0; i < skip_n; i++) {
+			if (addr == skip_list[i]) {
+				atomic_inc(&filtered);
+				return 0;
+			}
+		}
+	}
 
 	r.ts_ns = wldiag_now_ns();
 	r.seq = (u32)atomic_inc_return(&seq);
@@ -246,17 +313,20 @@ struct hook {
 	const char *name;
 	u8 op, addr_src, val_src, aux_src;
 	bool shortj;		/* true: detour a 1 parola 'j' (branch nella finestra a 4) */
-	bool use_bp;		/* true: hook via 'break' + die notifier (non detourabile) */
-	bool use_sites;		/* true: patch delle coppie lui/addiu ai siti di chiamata */
-	u32 *bp_stub;		/* stub di ripresa del percorso break */
 	bool retcap;		/* true: cattura il valore di ritorno via trampolino ra */
 	u8 nargx;		/* # arg extra su stack da catturare: arg5@16(sp), arg6@20(sp) */
 	unsigned long addr;
 	u32 saved[4];
 	bool armed;
+	/* Campi di stato aggiunti dopo: DEVONO stare in coda, perche' la tabella
+	 * usa inizializzatori posizionali e inserirli in mezzo li sposta tutti.
+	 * E' successo, e per questo gli inizializzatori usano ora la forma
+	 * designata: un `true` destinato a retcap finiva nel campo precedente,
+	 * retcap restava falso per ogni hook e non usciva NESSUN RETVAL. */
+	bool use_sites;		/* patch delle coppie lui/addiu ai siti di chiamata */
 };
 static struct hook hooks[] = {
-	{ "phy_reg_read",       OP_PHY_R,     1, 0, 0, false, true, 0 },
+	{ "phy_reg_read",       OP_PHY_R,     1, 0, 0, .retcap = true },
 	{ "phy_reg_write",      OP_PHY_W,     1, 2, 0 },
 	{ "phy_reg_mod",        OP_PHY_MOD,   1, 3, 2 },
 	/* and/or: reg unico op (addr,val). Op-code distinti cosi' il decoder sa
@@ -266,14 +336,14 @@ static struct hook hooks[] = {
 	{ "phy_reg_or",         OP_PHY_OR,    1, 2, 0 },
 	{ "write_radio_reg",    OP_RADIO_W,   1, 2, 0 },
 	{ "mod_radio_reg",      OP_RADIO_MOD, 1, 3, 2 },
-	{ "si_pmu_chipcontrol", OP_PMU_CC,    1, 3, 2, false, true, 0 },
-	{ "si_pmu_regcontrol",  OP_PMU_RC,    1, 3, 2, false, true, 0 },
-	{ "si_pmu_pllcontrol",  OP_PMU_PLL,   1, 3, 2, false, true, 0 },
+	{ "si_pmu_chipcontrol", OP_PMU_CC,    1, 3, 2, .retcap = true },
+	{ "si_pmu_regcontrol",  OP_PMU_RC,    1, 3, 2, .retcap = true },
+	{ "si_pmu_pllcontrol",  OP_PMU_PLL,   1, 3, 2, .retcap = true },
 	/* si_corereg(sih, coreidx, regoff, mask, val): accesso generico a un
 	 * registro di un core del backplane. addr=regoff(a2), aux=coreidx(a1).
 	 * val (a4, 5o arg) e' sullo stack in o32 -> catturato via nargx (record
 	 * ARGX di continuazione). retcap: il ritorno (read/rmw) va nel RETVAL. */
-	{ "si_corereg",         OP_SI_COREREG,2, 0, 1, false, true, 1 },
+	{ "si_corereg",         OP_SI_COREREG,2, 0, 1, .retcap = true, .nargx = 1 },
 	/* ChipCommon GPIO (sih, mask, val, prio): mask=a1, val=a2 */
 	{ "si_gpiocontrol",     OP_CC_GPIOCTL,0, 2, 1 },
 	{ "si_gpioout",         OP_CC_GPIOOUT,0, 2, 1 },
@@ -295,7 +365,7 @@ static struct hook hooks[] = {
 	 *   wlc_bmac_mhf_get(hw, u8 idx, int bands) idx=a1 (val UNDEFINED) */
 	{ "wlc_bmac_mctrl",     OP_MAC_MCTRL, 0, 2, 1 },
 	{ "wlc_bmac_mhf",       OP_MAC_MHF_W, 1, 3, 2 },
-	{ "wlc_bmac_mhf_get",   OP_MAC_MHF_R, 1, 0, 0, false, true, 0 },
+	{ "wlc_bmac_mhf_get",   OP_MAC_MHF_R, 1, 0, 0, .retcap = true },
 	/* Object memory del MAC (SHM, SCR, IHR): addr=offset, aux=selettore.
 	 * Cattura anche il campione di rumore della crs_min_pwr cal, che passa da
 	 * wlc_phy_noise_read_shmem -> wlapi_bmac_read_shm -> wlc_bmac_read_shm ->
@@ -313,17 +383,17 @@ static struct hook hooks[] = {
 	 *   otp_read_word(oh, wn, *data)              wn=a1
 	 *   otp_read_region(sih, region, *data, *len) region=a1
 	 *   otp_init(sih)                             solo il momento */
-	{ "otp_init",        OP_OTP_INIT, 0, 0, 0, false, true, 0 },
-	{ "otp_read_word",   OP_OTP_RDW,  1, 0, 2, false, true, 0 },
-	{ "otp_read_region", OP_OTP_RDR,  1, 0, 3, false, true, 0 },
+	{ "otp_init",        OP_OTP_INIT, 0, 0, 0, .retcap = true },
+	{ "otp_read_word",   OP_OTP_RDW,  1, 0, 2, .retcap = true },
+	{ "otp_read_region", OP_OTP_RDR,  1, 0, 3, .retcap = true },
 	{ "wlc_phy_chanspec_set", OP_CHANSPEC, 1, 0, 0 },
-	{ "wlc_bmac_read_objmem",  OP_MAC_OBJ_R, 1, 0, 2, false, true, 0 },
+	{ "wlc_bmac_read_objmem",  OP_MAC_OBJ_R, 1, 0, 2, .retcap = true },
 	{ "wlc_bmac_write_objmem", OP_MAC_OBJ_W, 1, 2, 3 },
 	/* branch a slot 3 (beq): detour classico a 4 parole impossibile. short-j a
 	 * 1 parola: o[0]=j stub; o[1] (addiu $v0,1) resta come delay slot; lo stub
 	 * riesegue o[0..1] e rientra a +8 (v0 ri-settato DOPO la hook). addr=a1
 	 * grezzo (l'andi 0xffff e' o[0], rieseguito nello stub). */
-	{ "read_radio_reg",     OP_RADIO_R,   1, 0, 0, true, true, 0 },
+	{ "read_radio_reg",     OP_RADIO_R,   1, 0, 0, .shortj = true, .retcap = true },
 };
 #define NHOOK ARRAY_SIZE(hooks)
 
@@ -463,70 +533,11 @@ static bool is_branch(u32 insn)
 static u32 stub_pool[NHOOK][STUB_WORDS] __attribute__((aligned(8)));
 static u32 ret_tramp[16] __attribute__((aligned(8)));	/* trampolino di ritorno condiviso */
 
-/* Percorso a 'break' per prologhi non detourabili (branch nella finestra).
- * Una parola, nessun delay slot. do_bp() chiama notify_die(DIE_BREAK) per
- * BRK_KPROBE_BP fuori da CONFIG_KPROBES, quindi basta un die notifier; con
- * NOTIFY_STOP non si arriva al die_if_kernel. Verificato su Linux 3.4.
- * Su 2.6.30 non esiste (do_bp -> do_trap_or_bp, set_except_vector non
- * esportata): BRK_KPROBE_BP fa da discriminante e il percorso si compila via.
- * La parola 0 viene rieseguita in uno stub, quindi non puo' essere
- * PC-relative: si verifica prima di armare. */
-#ifdef BRK_KPROBE_BP
-#define WD_HAVE_BP 1
-
-static bool bp_registered;	/* die notifier registrato */
-
-#define BP_INSN (0x0000000dU | (BRK_KPROBE_BP << 6))	/* break BRK_KPROBE_BP */
-
-static int wd_bp_notify(struct notifier_block *nb, unsigned long val, void *data)
-{
-	struct die_args *args = data;
-	struct pt_regs *regs;
-	int i;
-
-	if (val != DIE_BREAK || !args || !(regs = args->regs))
-		return NOTIFY_DONE;
-
-	for (i = 0; i < (int)ARRAY_SIZE(hooks); i++) {
-		u32 seq;
-
-		if (!hooks[i].use_bp || !hooks[i].armed)
-			continue;
-		if (regs->cp0_epc != hooks[i].addr)
-			continue;
-
-		/* o32: a1..a3 sono $a1..$a3 = regs[5..7] */
-		seq = wl_diag_hook((u32)i, (u32)regs->regs[5],
-				   (u32)regs->regs[6], (u32)regs->regs[7]);
-		if (hooks[i].retcap)
-			regs->regs[31] =
-				wl_diag_enter_ret(regs->regs[31], seq);
-
-		regs->cp0_epc = (unsigned long)hooks[i].bp_stub;
-		return NOTIFY_STOP;
-	}
-	return NOTIFY_DONE;
-}
-
-static struct notifier_block wd_bp_nb = {
-	.notifier_call = wd_bp_notify,
-	.priority = 0x7fffffff,		/* prima di eventuali altri consumatori */
-};
-
-/* stub: [0] parola originale, [1] j func+4, [2] nop */
-static void build_bp_stub(int idx)
-{
-	u32 *s = stub_pool[idx];
-	unsigned long ret = hooks[idx].addr + 4;
-
-	s[0] = hooks[idx].saved[0];
-	s[1] = 0x08000000U | ((ret >> 2) & 0x03ffffffU);	/* j ret */
-	s[2] = 0x00000000U;					/* nop */
-	hooks[idx].bp_stub = s;
-}
-#else
-#define WD_HAVE_BP 0
-#endif
+/* Nessun percorso a 'break' su questo kernel: do_bp() va diretto a
+ * do_trap_or_bp() -- panic in kernel mode -- e set_except_vector non e'
+ * esportata. Il discriminante sarebbe BRK_KPROBE_BP, che break.h definisce solo
+ * dove esiste anche lo switch con notify_die. Per i prologhi non detourabili si
+ * usa la patch dei siti di chiamata, che qui funziona ed e' preferibile. */
 
 /* Patch dei siti di chiamata. Il modulo e' -mabicalls: zero jal in .text, le
  * chiamate sono lui/addiu + jalr (o jr $t9 per le tail call), quindi si
@@ -920,6 +931,8 @@ static int __init wd_init(void)
 {
 	int i, err;
 
+	parse_skipphyrd();
+
 	n_elig = 0;
 	for (i = 0; i < NHOOK; i++) {
 		unsigned long a;
@@ -957,21 +970,8 @@ static int __init wd_init(void)
 			continue;
 		}
 		if (branch >= 0) {
-			/* Non detourabile. Il percorso a 'break' serve una parola sola
-			 * e non ha delay slot, ma la parola 0 va rieseguita nello stub
-			 * quindi non puo' essere PC-relative. */
-			if (WD_HAVE_BP && !is_branch(o[0])) {
-				hooks[i].use_bp = true;
-				eligible[n_elig++] = i;
-				pr_info("wl_diag: piano hook '%s' @%px [break] (branch a istr %d)\n",
-					hooks[i].name, o, branch);
-			} else if (WD_HAVE_BP) {
-				pr_warn("wl_diag: salto '%s' (branch a istr %d e parola 0 non rieseguibile)\n",
-					hooks[i].name, branch);
-			} else {
-				pr_warn("wl_diag: salto '%s' (branch a istr %d; percorso break non disponibile su questo kernel)\n",
-					hooks[i].name, branch);
-			}
+			pr_warn("wl_diag: salto '%s' (branch a istr %d, e nessun sito di chiamata patchabile)\n",
+				hooks[i].name, branch);
 			continue;
 		}
 		if (hooks[i].shortj &&
@@ -1028,12 +1028,6 @@ static int __init wd_init(void)
 	}
 
 	for (i = 0; i < n_elig; i++) {
-#if WD_HAVE_BP
-		if (hooks[eligible[i]].use_bp) {
-			build_bp_stub(eligible[i]);
-			continue;
-		}
-#endif
 		build_stub(eligible[i]);
 	}
 	flush_i((unsigned long)stub_pool,
@@ -1053,26 +1047,6 @@ static int __init wd_init(void)
 				(void *)ret_trampoline);
 		}
 	}
-#if WD_HAVE_BP
-	{
-		int any_bp = 0;
-
-		for (i = 0; i < n_elig; i++)
-			if (hooks[eligible[i]].use_bp)
-				any_bp = 1;
-		/* il notifier va registrato PRIMA di piazzare i break, o la
-		 * prima trap finisce in do_trap_or_bp -> panic. */
-		if (any_bp) {
-			err = register_die_notifier(&wd_bp_nb);
-			if (err) {
-				pr_err("wl_diag: register_die_notifier: %d, resto in DRY-RUN\n",
-				       err);
-				return 0;
-			}
-			bp_registered = true;
-		}
-	}
-#endif
 	target_mod = __module_text_address(hooks[eligible[0]].addr);
 	target_ref_get(target_mod);
 	if (register_module_notifier(&wd_mod_nb))
@@ -1087,17 +1061,6 @@ static int __init wd_init(void)
 			hooks[eligible[i]].armed = true;
 			continue;
 		}
-#if WD_HAVE_BP
-		if (hooks[eligible[i]].use_bp) {
-			u32 *o = (u32 *)hooks[eligible[i]].addr;
-
-			o[0] = BP_INSN;
-			flush_i(hooks[eligible[i]].addr,
-				hooks[eligible[i]].addr + 4);
-			hooks[eligible[i]].armed = true;
-			continue;
-		}
-#endif
 		patch_entry(eligible[i]);
 		hooks[eligible[i]].armed = true;
 	}
@@ -1125,27 +1088,9 @@ static void __exit wd_exit(void)
 				hooks[i].armed = false;
 				continue;
 			}
-#if WD_HAVE_BP
-			if (hooks[i].use_bp) {
-				u32 *o = (u32 *)hooks[i].addr;
-
-				o[0] = hooks[i].saved[0];
-				flush_i(hooks[i].addr, hooks[i].addr + 4);
-				hooks[i].armed = false;
-				continue;
-			}
-#endif
 			restore_entry(i);
 			hooks[i].armed = false;
 		}
-#if WD_HAVE_BP
-	/* il notifier si sgancia DOPO aver ripristinato le parole: se restasse un
-	 * break in giro senza handler, la trap finirebbe in panic. */
-	if (bp_registered) {
-		unregister_die_notifier(&wd_bp_nb);
-		bp_registered = false;
-	}
-#endif
 	/* lascia agli stub in volo il tempo di completare prima di sparire */
 	synchronize_sched();
 	if (mod_ref_held && target_mod) {
@@ -1153,7 +1098,8 @@ static void __exit wd_exit(void)
 		mod_ref_held = false;
 	}
 	misc_deregister(&wd_misc);
-	pr_info("wl_diag: scaricato (record persi: %d)\n", atomic_read(&drops));
+	pr_info("wl_diag: scaricato (persi: %d, filtrati: %d)\n",
+		atomic_read(&drops), atomic_read(&filtered));
 }
 
 module_init(wd_init);
