@@ -1856,9 +1856,26 @@ static void b43_phy_ac_radio_percore_setup_1(struct b43_wldev *dev)
  * TODO: parametrizzare per BW (BW40 5G, BW80 5G, 2G) usando LUT
  * separate. Per ora hardcode per BW20 5G (d6220 ch36 attach target).
  */
+/*
+ * Larghezza in MHz, come FATTORE di scala: parecchi parametri del PHY sono
+ * conteggi di campioni o durate e raddoppiano col raddoppiare della banda.
+ */
+static unsigned int b43_phy_ac_bw_mhz(struct b43_wldev *dev)
+{
+	switch (dev->wl->hw->conf.chandef.width) {
+	case NL80211_CHAN_WIDTH_80:
+		return 80;
+	case NL80211_CHAN_WIDTH_40:
+		return 40;
+	default:
+		return 20;
+	}
+}
+
 static void b43_phy_ac_coeff_bank_init_bw20_5g(struct b43_wldev *dev)
 {
 	B43_AC_FN();
+	const unsigned int mult = b43_phy_ac_bw_mhz(dev) / 20;
 	static const u16 lut_0x0180[21] = {
 		/* 0x0180 */ 0x0015,  /* mask=0x001f (5-bit); resto mask=0x07ff */
 		/* 0x0181 */ 0x0146,
@@ -1912,12 +1929,28 @@ static void b43_phy_ac_coeff_bank_init_bw20_5g(struct b43_wldev *dev)
 		b43_phy_maskset(dev, (u16)(0x0180 + i),
 				(u16)~0x07ff, lut_0x0180[i]);
 
-	/* 4. Extra register setup (channel/BW-dependent letterali). */
+	/*
+	 * 4. Extra register setup. Tre scalano con la banda, e la scala viene da
+	 * 33 segmenti DSL su 20/40/80 MHz -- raddoppi esatti, cioe' conteggi di
+	 * campioni al variare della frequenza di campionamento:
+	 *
+	 *   0x0250 byte basso   25 /  50 / 100
+	 *   0x0262             200 / 400 / 800
+	 *   0x0263              25 /  50 / 100
+	 *
+	 * Il valore a 20 MHz del port coincide con quello del DSL su tutte tre,
+	 * quindi si trasferisce la SCALA senza importare valori di un'altra
+	 * board. 0x01b5 e 0x0261 risultano invarianti sui 33 segmenti.
+	 *
+	 * TODO(0x025b): il DSL scrive 0x025b con 8 / 16 / 31 -- stessa scala ma
+	 * saturata (31, non 32) -- e il port non lo scrive affatto. Da capire se
+	 * il d6220 lo scriva: se si', manca una write.
+	 */
 	b43_phy_maskset(dev, 0x01b5, (u16)~0x00ff, 0x0097);
-	b43_phy_maskset(dev, 0x0250, (u16)~0x00ff, 0x0019);
+	b43_phy_maskset(dev, 0x0250, (u16)~0x00ff, (u16)(25 * mult));
 	b43_phy_maskset(dev, 0x0261, (u16)~0x0fff, 0x0014);
-	b43_phy_maskset(dev, 0x0262, (u16)~0x0fff, 0x00c8);
-	b43_phy_maskset(dev, 0x0263, (u16)~0x0fff, 0x0019);
+	b43_phy_maskset(dev, 0x0262, (u16)~0x0fff, (u16)(200 * mult));
+	b43_phy_maskset(dev, 0x0263, (u16)~0x0fff, (u16)(25 * mult));
 	b43_phy_maskset(dev, 0x0312, (u16)~0x00ff, 0x0013);
 	b43_phy_maskset(dev, 0x0313, (u16)~0xff00, 0x1300);
 

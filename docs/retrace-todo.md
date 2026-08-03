@@ -284,7 +284,128 @@ a valle di un disallineamento.
   e' la prima conferma indipendente: non tutti i valori cablati sono
   board-specific.
 
-### Analisi quantitativa del driver proprietario
+### Decorrelazione su 33 segmenti multicanale
+
+Materiale: 4 fasi di `reverse-tools/capture_plan.sh` sul **DSL-3580L**
+(driver 6.30.102.7), 33 segmenti down->up su canali 36-140 a 20/40/80 MHz.
+Strumento: `reverse-tools/decorrelate_channels.py`.
+
+**Attenzione alla provenienza**: il port e' modellato su d6220 / 7.14.89, queste
+catture sono DSL / 6.30. La **struttura** delle dipendenze e' fisica del chip e
+si trasferisce; i **valori** no. Quindi da qui si ricava dove il codice ha
+bisogno di una funzione invece di una costante, e i numeri si prendono dal blob
+del d6220.
+
+### Il risultato
+
+    1581 chiavi (op, addr, mask) distinte
+       invariante      1311   83%
+       stesso-insieme    49    3%
+       solo-canale      13    0.8%
+       solo-larghezza   78    5%
+       centro-freq     130    8%
+       dinamico          0
+
+**Nessun valore dinamico.** Con due segmenti alla stessa etichetta
+(ch40/bw20 compare in due fasi) e i troncati esclusi, non c'e' una sola chiave
+che differisca fra due esecuzioni dello stesso (canale, larghezza). Tutto e'
+funzione deterministica dei due, quindi tabellabile: il lavoro diventa trovare
+le tabelle nel blob, non dedurre formule.
+
+**`solo-canale` e' quasi vuoto: la variabile vera e' la frequenza centrale.**
+Delle 13 chiavi, dieci sono artefatti -- il banco AFE (`0x1720`, `0x1721`,
+`0x1725`, `0x1728`, `0x173a`) mostra `[0x0180]` contro `[0x0180, 0x03ff]`, cioe'
+segmenti dove il bring-up si ferma dopo lo spegnimento e segmenti dove arriva
+all'accensione. Le dipendenze reali dal solo canale sono **`PHY.WR 0x0727` e
+`0x0927`** (per-core, stride 0x200) con valore binario 0 oppure 4.
+
+Questo conferma in modo indipendente la nota del vecchio
+`decorrelate_channel_bw.py`, che su 4 sole trace d6220 diceva "la variabile
+indipendente reale e' la freq centrale, per questo solo-canale esce vuoto".
+
+### Le dipendenze dalla larghezza si calcolano, non si tabellano
+
+78 chiavi, e i pattern sono regolari:
+
+| chiave | 20 MHz | 40 MHz | 80 MHz | forma |
+|---|---|---|---|---|
+| `PHY.MOD 0x?ef` mask `00ff` | 0x0f | 0x1e | 0x3c | raddoppio |
+| `PHY.WR 0x0262` | 200 | 400 | 800 | raddoppio |
+| `PHY.WR 0x0263` | 25 | 50 | 100 | raddoppio |
+| `PHY.WR 0x0250` | 0x2c19 | 0x2c32 | 0x2c64 | byte basso 25/50/100 |
+| `PHY.WR 0x025b` | 8 | 16 | 31 | raddoppio (31, non 32) |
+| `OBJ.WR 0x0018`, `0x001a` | 0x149 | 0x14a | 0x14b | +1 per passo |
+| `OBJ.WR 0x004a` | 0x191 | 0x192 | 0x193 | +1 |
+| `OBJ.WR 0x0944` e famiglia | 0x32ab | 0x32cb | 0x32eb | +0x20 |
+
+I raddoppi sono conteggi di campioni o durate che scalano con la banda: quelli
+il codice li calcola. Gli incrementi di 1 e di 0x20 sono indici in tabelle, e
+quelli vanno risolti nel blob.
+
+`0x025b` fa 8/16/**31**: se fosse un raddoppio puro sarebbe 32, quindi e' un
+valore saturato o un massimo-meno-uno. Da guardare.
+
+### Etichettare i segmenti: il chanspec sta in shared memory
+
+`OBJ.WR 0x00a0` porta il chanspec, ed e' l'etichetta esatta di ogni segmento --
+non serve fidarsi dell'ordine, che si sfasa quando la cattura perde record. E'
+cosi' che si e' scoperto che la fase 20b era **sfasata di uno**: il primo
+segmento e' la coda della fase precedente.
+
+Due avvertenze sul valore: per 40 e 80 MHz porta il canale **centrale** (5g36/40
+diventa `ch=38`), e a fine segmento puo' comparire il chanspec del ciclo
+successivo, quindi si prende la **prima** scrittura.
+
+### Cosa NON usare
+
+I record `CHANSPEC` (da `wlc_phy_chanspec_set`) non servono come confine: ne
+arriva uno per fase o zero, e sono in ritardo di un ciclo. Per marcare i confini
+servirebbe agganciare anche `wlc_phy_chanspec_set_acphy`.
+
+I segmenti troncati falsificano l'analisi: confrontando un segmento da 713
+chiavi con uno da 1554 escono 85 false dipendenze "dinamiche". `--minchiavi`
+li scarta.
+
+### Cosa si e' potuto chiudere, e cosa no
+
+Incrociando le chiavi dipendenti con gli indirizzi cablati in `phy_ac.c`:
+
+    solo-larghezza   78 chiavi  ->  25 cablate nel codice
+    centro-freq     130 chiavi  ->  35 cablate
+    solo-canale      13 chiavi  ->   9 cablate
+
+Le funzioni piu' interessate: `idle_tssi_meas` (8 + 15 + 2),
+`coeff_bank_init_bw20_5g` (4), `chanspec_tail` (4), `set_channel` (8, che sono i
+registri CRS), `post_noise_shaping_rx_regprog_core` (6).
+
+**Chiuso: tre write parametrizzate per banda** in `coeff_bank_init_bw20_5g`.
+`0x0250` (byte basso 25/50/100), `0x0262` (200/400/800), `0x0263` (25/50/100).
+Il valore a 20 MHz del port **coincide** con quello del DSL su tutte tre, quindi
+si trasferisce la scala e non un valore di un'altra board. I gate d6220 non si
+muovono: 99.94% e 99.97%.
+
+**Non chiuso, e perche':**
+
+- `0x06ef` mask `0x00ff`: il DSL fa 0x0f/0x1e/0x3c, ma il port ha **tre** write
+  a quell'indirizzo (`0x0017`, `0x0e00`, `0x000f`) e non e' distinguibile quale
+  corrisponda. Serve il confronto sul d6220, non sul DSL.
+- `0x025b`: il DSL scrive 8/16/31 -- stessa scala ma **saturata**, 31 e non 32
+--
+  e il port non lo scrive affatto. Da capire se il d6220 lo scriva: potrebbe
+  mancare una write.
+- tutto il resto: i valori vengono dal DSL/6.30 e il port modella d6220/7.14.89.
+  La struttura si trasferisce, i numeri no.
+
+### TODO
+
+- risolvere nel blob d6220 le tabelle indicizzate dalle chiavi `centro-freq`
+  (130) e dalle `solo-larghezza` con incremento di indice;
+- capire `PHY.WR 0x0727`/`0x0927`, la sola dipendenza dal canale puro;
+- capire perche' `0x025b` satura a 31;
+- una cattura d6220 multicanale, per avere i valori sulla board che il port
+  modella invece di trasferirli dal DSL.
+
+## Analisi quantitativa del driver proprietario
 
 Quattro blob disponibili, tutti MIPS32 BE non strippati. Serve a rispondere a
 una

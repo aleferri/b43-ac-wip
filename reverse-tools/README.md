@@ -9,9 +9,14 @@ tabelle statiche dal blob ELF.
 
 Ordine tipico: decodifica → fold RETVAL → collapse → (reorder) → confronto.
 
-- **csanity.py** — controllo lessicale su file C senza compilatore: `*/` dentro
-  la prosa di un commento, commenti o letterali non chiusi, parentesi non
-  bilanciate. Da passare sui `wl_diag.c` prima di build su device.
+- **csanity.py** — controllo su file C senza compilatore: `*/` dentro la prosa di
+  un commento multiriga, commenti o letterali non chiusi, parentesi non
+  bilanciate, e **dichiarazione dopo statement** (i kernel target sono C90, dove
+  e' un warning che con `-Werror` diventa errore). Da passare sui `wl_diag.c`
+  prima di build su device: ognuno di questi controlli nasce da un errore che ha
+  bruciato un ciclo di compilazione sul router. Il controllo C90 va usato **solo
+  sui `wl_diag.c`**: il port b43 in `src/` va verso mainline moderno, dove
+  dichiarare dopo uno statement e' normale, e la' segnalerebbe 7 casi legittimi.
 - **decode-wl-diag.py** — decodifica i record binari (28 B BE) emessi dal
   modulo `wl-diag` in righe testuali (`PHY.WR addr=.. val=..`, ecc.).
 - **merge_retvals.py** — ripiega le righe `RETVAL` nella op di lettura che le

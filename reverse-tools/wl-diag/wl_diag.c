@@ -109,10 +109,83 @@ static DECLARE_WAIT_QUEUE_HEAD(rq);
 static atomic_t seq = ATOMIC_INIT(0);
 static atomic_t drops = ATOMIC_INIT(0);
 
+/* Letture di REGISTRO PHY da non registrare, per conservare la fifo. Nasce dal
+ * polling del rivelatore radar: sui canali DFS il driver interroga 0x0253 e
+ * 0x0254 in continuo -- 192000 e 194000 letture nelle quattro fasi -- e con i
+ * RETVAL attivi il doppio, senza c'entrare niente con la configurazione del
+ * canale. Filtrando QUI, prima della fifo, si conserva il margine; nel decoder
+ * non servirebbe, il collo di bottiglia e' la coda.
+ *
+ *   skipphyrd="0x253,0x254"
+ *
+ * VALE SOLO PER OP_PHY_R, e non e' pignoleria: gli spazi di indirizzamento sono
+ * separati per classe. Nelle stesse catture ci sono 32 OBJ.WR a 0x252 e 32 a
+ * 0x254, che sono offset di object memory e non hanno nulla a che vedere coi
+ * registri PHY omonimi: un filtro sul solo indirizzo li avrebbe buttati in
+ * silenzio.
+ *
+ * E si filtrano SOLO 0x253/0x254. La testa del blocco -- 0x251 e 0x252, lette
+ * 1558 volte in tutto, una per blocco -- e' plausibilmente lo stato e i dati
+ * dell'impulso, cioe' la parte che serve: costa poco e si tiene.
+ *
+ * I record filtrati NON contano come persi: contatore separato, cosi' gli
+ * OP_DROP restano un indicatore di perdita vera.
+ *
+ * Per il DFS servono catture dedicate senza filtro. Il classificatore ETSI/FCC
+ * Linux lo ha gia' (dfs_pattern_detector, 377 righe), quindi serve solo il
+ * formato di quei registri, non la classificazione.
+ */
+#define SKIP_MAX 16
+static char *skipphyrd;
+module_param(skipphyrd, charp, 0444);
+static u32 skip_list[SKIP_MAX];
+static int skip_n;
+static atomic_t filtered = ATOMIC_INIT(0);
+
+static void parse_skipphyrd(void)
+{
+	char buf[128], *p, *tok;
+
+	if (!skipphyrd || !*skipphyrd)
+		return;
+	strncpy(buf, skipphyrd, sizeof(buf) - 1);
+	buf[sizeof(buf) - 1] = 0;
+	p = buf;
+	while ((tok = strsep(&p, ",")) && skip_n < SKIP_MAX) {
+		unsigned long v;
+		char *end;
+
+		while (*tok == ' ')
+			tok++;
+		if (!*tok)
+			continue;
+		/* kstrtoul e' arrivata in 2.6.38: simple_strtoul c'e' su entrambi
+		 * i kernel e la validita' si controlla sul puntatore di fine. */
+		v = simple_strtoul(tok, &end, 0);
+		if (end == tok) {
+			pr_warn("wl_diag: skipphyrd: '%s' non e' un numero\n", tok);
+			continue;
+		}
+		skip_list[skip_n++] = (u32)v;
+	}
+	if (skip_n)
+		pr_info("wl_diag: %d letture PHY filtrate per indirizzo\n", skip_n);
+}
+
 static u32 emit(u8 op, u32 addr, u32 val, u32 aux)
 {
 	struct wldiag_rec r;
 	unsigned long flags;
+	int i;
+
+	if (op == OP_PHY_R) {
+		for (i = 0; i < skip_n; i++) {
+			if (addr == skip_list[i]) {
+				atomic_inc(&filtered);
+				return 0;
+			}
+		}
+	}
 
 	r.ts_ns = sched_clock();
 	r.seq = (u32)atomic_inc_return(&seq);
@@ -137,17 +210,21 @@ struct hook {
 	const char *name;
 	u8 op, addr_src, val_src, aux_src;
 	bool shortj;		/* true: detour a 1 parola 'j' (branch nella finestra a 4) */
-	bool use_bp;		/* true: hook via 'break' + die notifier (non detourabile) */
-	bool use_sites;		/* true: patch delle coppie lui/addiu ai siti di chiamata */
-	u32 *bp_stub;		/* stub di ripresa del percorso break */
 	bool retcap;		/* true: cattura il valore di ritorno via trampolino ra */
 	u8 nargx;		/* # arg extra su stack da catturare: arg5@16(sp), arg6@20(sp) */
 	unsigned long addr;
 	u32 saved[4];
 	bool armed;
+	/* Campi di stato aggiunti dopo: DEVONO stare in coda, perche' la tabella
+	 * usa inizializzatori posizionali e inserirli in mezzo li sposta tutti.
+	 * E' successo: un `true` destinato a retcap finiva in use_bp, retcap
+	 * restava falso per ogni hook e non veniva emesso NESSUN RETVAL. */
+	bool use_bp;		/* hook via 'break' + die notifier (non detourabile) */
+	bool use_sites;		/* patch delle coppie lui/addiu ai siti di chiamata */
+	u32 *bp_stub;		/* stub di ripresa del percorso break */
 };
 static struct hook hooks[] = {
-	{ "phy_reg_read",       OP_PHY_R,     1, 0, 0, false, true, 0 },
+	{ "phy_reg_read",       OP_PHY_R,     1, 0, 0, .retcap = true },
 	{ "phy_reg_write",      OP_PHY_W,     1, 2, 0 },
 	{ "phy_reg_mod",        OP_PHY_MOD,   1, 3, 2 },
 	/* and/or: reg unico op (addr,val). Op-code distinti cosi' il decoder sa
@@ -157,14 +234,14 @@ static struct hook hooks[] = {
 	{ "phy_reg_or",         OP_PHY_OR,    1, 2, 0 },
 	{ "write_radio_reg",    OP_RADIO_W,   1, 2, 0 },
 	{ "mod_radio_reg",      OP_RADIO_MOD, 1, 3, 2 },
-	{ "si_pmu_chipcontrol", OP_PMU_CC,    1, 3, 2, false, true, 0 },
-	{ "si_pmu_regcontrol",  OP_PMU_RC,    1, 3, 2, false, true, 0 },
-	{ "si_pmu_pllcontrol",  OP_PMU_PLL,   1, 3, 2, false, true, 0 },
+	{ "si_pmu_chipcontrol", OP_PMU_CC,    1, 3, 2, .retcap = true },
+	{ "si_pmu_regcontrol",  OP_PMU_RC,    1, 3, 2, .retcap = true },
+	{ "si_pmu_pllcontrol",  OP_PMU_PLL,   1, 3, 2, .retcap = true },
 	/* si_corereg(sih, coreidx, regoff, mask, val): accesso generico a un
 	 * registro di un core del backplane. addr=regoff(a2), aux=coreidx(a1).
 	 * val (a4, 5o arg) e' sullo stack in o32 -> catturato via nargx (record
 	 * ARGX di continuazione). retcap: il ritorno (read/rmw) va nel RETVAL. */
-	{ "si_corereg",         OP_SI_COREREG,2, 0, 1, false, true, 1 },
+	{ "si_corereg",         OP_SI_COREREG,2, 0, 1, .retcap = true, .nargx = 1 },
 	/* ChipCommon GPIO (sih, mask, val, prio): mask=a1, val=a2 */
 	{ "si_gpiocontrol",     OP_CC_GPIOCTL,0, 2, 1 },
 	{ "si_gpioout",         OP_CC_GPIOOUT,0, 2, 1 },
@@ -186,7 +263,7 @@ static struct hook hooks[] = {
 	 *   wlc_bmac_mhf_get(hw, u8 idx, int bands) idx=a1 (val UNDEFINED) */
 	{ "wlc_bmac_mctrl",     OP_MAC_MCTRL, 0, 2, 1 },
 	{ "wlc_bmac_mhf",       OP_MAC_MHF_W, 1, 3, 2 },
-	{ "wlc_bmac_mhf_get",   OP_MAC_MHF_R, 1, 0, 0, false, true, 0 },
+	{ "wlc_bmac_mhf_get",   OP_MAC_MHF_R, 1, 0, 0, .retcap = true },
 	/* Object memory del MAC (SHM, SCR, IHR): addr=offset, aux=selettore.
 	 * Cattura anche il campione di rumore della crs_min_pwr cal, che passa da
 	 * wlc_phy_noise_read_shmem -> wlapi_bmac_read_shm -> wlc_bmac_read_shm ->
@@ -200,8 +277,8 @@ static struct hook hooks[] = {
 	 * Su 6.30 gli accessor ptr/data non esistono: la' solo il bulk. */
 	{ "wlc_bmac_templateptr_wreg",  OP_TPL_PTRW, 1, 0, 0 },
 	{ "wlc_bmac_templatedata_wreg", OP_TPL_DATW, 1, 0, 0 },
-	{ "wlc_bmac_templateptr_rreg",  OP_TPL_PTRR, 0, 0, 0, false, true, 0 },
-	{ "wlc_bmac_templatedata_rreg", OP_TPL_DATR, 0, 0, 0, false, true, 0 },
+	{ "wlc_bmac_templateptr_rreg",  OP_TPL_PTRR, 0, 0, 0, .retcap = true },
+	{ "wlc_bmac_templatedata_rreg", OP_TPL_DATR, 0, 0, 0, .retcap = true },
 	{ "wlc_bmac_write_template_ram", OP_TPL_RAMW, 1, 2, 3 },
 	/* OTP: il livello generico ha gli stessi nomi su 6.30 e 7.14 e prologo
 	 * pulito, mentre gli hndotp_ e ipxotp_ cambiano. Il contenuto e' l'immagine
@@ -210,17 +287,17 @@ static struct hook hooks[] = {
 	 *   otp_read_word(oh, wn, *data)              wn=a1
 	 *   otp_read_region(sih, region, *data, *len) region=a1
 	 *   otp_init(sih)                             solo il momento */
-	{ "otp_init",        OP_OTP_INIT, 0, 0, 0, false, true, 0 },
-	{ "otp_read_word",   OP_OTP_RDW,  1, 0, 2, false, true, 0 },
-	{ "otp_read_region", OP_OTP_RDR,  1, 0, 3, false, true, 0 },
+	{ "otp_init",        OP_OTP_INIT, 0, 0, 0, .retcap = true },
+	{ "otp_read_word",   OP_OTP_RDW,  1, 0, 2, .retcap = true },
+	{ "otp_read_region", OP_OTP_RDR,  1, 0, 3, .retcap = true },
 	{ "wlc_phy_chanspec_set", OP_CHANSPEC, 1, 0, 0 },
-	{ "wlc_bmac_read_objmem16",  OP_MAC_OBJ_R, 1, 0, 2, false, true, 0 },
+	{ "wlc_bmac_read_objmem16",  OP_MAC_OBJ_R, 1, 0, 2, .retcap = true },
 	{ "wlc_bmac_write_objmem16", OP_MAC_OBJ_W, 1, 2, 3 },
 	/* branch a slot 3 (beq): detour classico a 4 parole impossibile. short-j a
 	 * 1 parola: o[0]=j stub; o[1] (addiu $v0,1) resta come delay slot; lo stub
 	 * riesegue o[0..1] e rientra a +8 (v0 ri-settato DOPO la hook). addr=a1
 	 * grezzo (l'andi 0xffff e' o[0], rieseguito nello stub). */
-	{ "read_radio_reg",     OP_RADIO_R,   1, 0, 0, true, true, 0 },
+	{ "read_radio_reg",     OP_RADIO_R,   1, 0, 0, .shortj = true, .retcap = true },
 };
 #define NHOOK ARRAY_SIZE(hooks)
 
@@ -811,6 +888,8 @@ static int __init wd_init(void)
 {
 	int i, err;
 
+	parse_skipphyrd();
+
 	n_elig = 0;
 	for (i = 0; i < NHOOK; i++) {
 		unsigned long a;
@@ -1044,7 +1123,8 @@ static void __exit wd_exit(void)
 		mod_ref_held = false;
 	}
 	misc_deregister(&wd_misc);
-	pr_info("wl_diag: scaricato (record persi: %d)\n", atomic_read(&drops));
+	pr_info("wl_diag: scaricato (persi: %d, filtrati: %d)\n",
+		atomic_read(&drops), atomic_read(&filtered));
 }
 
 module_init(wd_init);
