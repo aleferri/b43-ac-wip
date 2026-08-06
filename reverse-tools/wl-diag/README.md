@@ -83,6 +83,16 @@ default 1.03 s: lo `sleep 1` fra i cicli lascia 1.06 s, mentre il campionamento
 periodico del rumore lascia buchi di 1.00 s esatti fra due `OBJ.RD`, e per
 durata sarebbero indistinguibili.
 
+**La coda: 131072 record di default sulla variante 3.4**, cioe' 3.5 MB e ~25 s
+di margine, allocati con `vmalloc` e non `kfifo_alloc` -- quest'ultima usa
+`kmalloc`, che vuole pagine contigue, e su un router frammentato qualche MB non
+si trova. Si alza con `fifo_recs=262144` se l'allocazione riesce.
+
+Ma un buffer grande assorbe le **raffiche**, non un ritmo medio superiore al
+drenaggio: le 232 gocce da 2-3 record della fase 80 MHz dicono che la coda era
+piena piu' volte, cioe' il lettore era in media piu' lento dello scrittore. In
+quel caso si guarda il lato lettura, o si filtra di piu'.
+
 **Il listener non va fermato fra i canali.** La fifo tiene `FIFO_RECS` = 32768
 record; a circa 2500 record/s sono ~13 secondi di margine. Fermandolo, la coda
 si riempie e il modulo emette un record `OP_DROP` col conteggio: utile per
@@ -215,6 +225,28 @@ usa inizializzatori posizionali, quindi il `true` destinato a `retcap` finiva in
 coda, e gli inizializzatori usano la forma designata (`.retcap = true`) che e'
 immune al riordino.
 
+### Accessor che il port non fa affatto
+
+Audit sistematico: si prendono gli accessor **chiamati da codice acphy** (non
+tutti quelli plausibili, che sono 143 e in gran parte irrilevanti) e si vede
+quali non sono agganciati. Ne restano tre dopo aver scartato i wrapper verso
+funzioni gia' coperte:
+
+| funzione | chiamata da | dove va nel port |
+|---|---|---|
+| `wlc_bmac_bw_set` | `chanspec_set_acphy`, `phy_init` | `set_channel` e `op_init` |
+| `si_get/set_sromctl` | `attach_acphy` | il punto di `op_init` che corrisponde ad attach |
+| `wlc_bmac_macphyclk_set` | `init_htphy`, `init_nphy`, `bmac_init` | **da nessuna parte**: non e' nel percorso AC-PHY |
+
+Il port non ha **zero** riferimenti a `bw_set`, `macphyclk` o `sromctl`, e usa
+`CHAN_WIDTH` solo in due punti. Quindi la larghezza al livello MAC non e'
+toccata
+da nessuna parte -- con solo BW20 il default passa inosservato, con 40 e 80 no.
+
+Il **dove** viene dal grafo delle chiamate e non serve una cattura per saperlo:
+il chiamante e' una funzione acphy, e quella ha una controparte nel port. La
+cattura serve per la **posizione dentro** la funzione, che il grafo non da'.
+
 ### Il rumore passa dall'object memory
 
     wlc_phy_noise_read_shmem -> wlapi_bmac_read_shm -> wlc_bmac_read_shm
@@ -233,6 +265,7 @@ ricostruisce offline.
 
 | param | default | effetto |
 |-------|---------|---------|
+| `fifo_recs` | `131072` | record nella coda, 28 B ciascuno: 131072 sono 3.5 MB e ~25 s di margine. Solo variante 3.4 |
 | `skipphyrd` | vuoto | letture di **registro PHY** da non registrare, es. `"0x253,0x254"` |
 | `arm`   | `0` | `0` = dry-run (logga solo il piano hook); `1` = applica le patch |
 | `delay` | `0` | `1` = aggancia anche `osl_delay` (rumoroso, usec inaffidabile) |
@@ -354,21 +387,25 @@ insmod wl_diag.ko arm=1           # + delay=1 se serve la temporizzazione
 dmesg | tail                      # "wl_diag: ARMATO (N hook) -> /dev/wl_diag"
 ```
 
-### 4. mknod in /tmp (niente udev su questo userspace)
+### 4. Niente da creare: il buffer e' in /proc/wl_diag
 
-Il misc-device ha major 10 e minor dinamico; il rootfs e' spesso read-only, per
-questo il nodo va in `/tmp` (tmpfs):
+Appare al caricamento del modulo. Prima era un misc device a minor dinamico e
+bisognava leggere il minor da `/proc/misc` e fare `mknod` a ogni `insmod`, con
+il
+rootfs spesso read-only e il nodo da mettere in `/tmp`.
 
-```sh
-minor=$(awk '$2=="wl_diag"{print $1}' /proc/misc) # o: cat
-/sys/class/misc/wl_diag/dev
-mknod /tmp/wl_diag c 10 "$minor"
-```
+`proc_create` ha la stessa firma su 2.6.30 e 3.4 e prende `file_operations`,
+quindi la stessa chiamata vale per entrambi i kernel.
+
+**Chiudere il lettore prima di `rmmod`.** Il `fops` ha `.owner = THIS_MODULE`,
+quindi con un `cat` aperto lo scarico del modulo fallisce con `-EBUSY` invece di
+lasciare puntatori penzolanti -- ma va comunque terminato, non forzato.
+
 
 ### 5. Avvia la pipe verso l'host (PRIMA del rescan, per non perdere record)
 
 ```sh
-cat /tmp/wl_diag | nc <HOST> 5555 &
+cat /proc/wl_diag | nc <HOST> 5555 &
 ```
 
 ### 6. Rescan PCI: il re-probe esegue l'attach sotto gli hook
