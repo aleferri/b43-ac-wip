@@ -17,6 +17,8 @@
 # MAC.MHF.RD (18) e' una read (val UNDEFINED). PHY.AND (19) / PHY.OR (20):
 # reg-op a un operando (addr,val); val e' la maschera-AND risp. il valore-OR,
 # resi con la maschera effettiva derivata (clr ~val / set val).
+# MAC.BW (35): larghezza al livello MAC, val = il parametro. Il port non la fa.
+# SROMCTL.RD/WR (36,37): registro di controllo SROM, dal percorso di attach.
 # OTP.* (32-34): letture OTP dal livello generico. addr = numero di word o
 # regione; il valore va in un puntatore, non nel ritorno, quindi qui interessa
 # QUANDO e QUALE, non il contenuto (che sta nei dump SROM).
@@ -51,6 +53,7 @@ OPS = {
     27: "TPL.PTRW",  28: "TPL.DATW",
     29: "TPL.PTRR",  30: "TPL.DATR",  31: "TPL.RAMW",
     32: "OTP.INIT",  33: "OTP.RDW",   34: "OTP.RDR",
+    35: "MAC.BW",    36: "SROMCTL.RD", 37: "SROMCTL.WR",
     255: "DROP",
 }
 
@@ -59,7 +62,7 @@ OPS = {
 # 0x0000 inventato -- altrimenti si riparte col problema di distinguere zeri
 # veri da zeri finti.
 CHANSPEC = 26
-READS    = {1, 4, 18, 24, 29, 30, 32, 33, 34}                 # PHY.RD, RAD.RD, MAC.MHF.RD, OBJ.RD
+READS    = {1, 4, 18, 24, 29, 30, 32, 33, 34, 36}                 # PHY.RD, RAD.RD, MAC.MHF.RD, OBJ.RD
 HAS_MASK = {3, 6, 7, 8, 9, 10, 11, 12, 17} # aux e' una mask (RMW, GPIO, MHF)
 GPIO     = {10, 11, 12}                   # niente addr; val=a2, mask=aux=a1
 MCTRL    = {16}                            # MACCONTROL RMW: reg fisso, niente addr; val=a2, mask=aux=a1

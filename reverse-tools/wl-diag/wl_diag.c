@@ -38,7 +38,8 @@
 #include <linux/kernel.h>
 #include <linux/kallsyms.h>
 #include <linux/kfifo.h>
-#include <linux/miscdevice.h>
+#include <linux/vmalloc.h>
+#include <linux/proc_fs.h>
 #include <linux/fs.h>
 #include <linux/uaccess.h>
 #include <linux/sched.h>
@@ -95,6 +96,7 @@ enum wldiag_op {
 	OP_TPL_PTRW, OP_TPL_DATW,			/* 27,28 (append) */
 	OP_TPL_PTRR, OP_TPL_DATR, OP_TPL_RAMW,		/* 29,30,31 (append) */
 	OP_OTP_INIT, OP_OTP_RDW, OP_OTP_RDR,		/* 32,33,34 (append) */
+	OP_MAC_BW, OP_SROMCTL_R, OP_SROMCTL_W,		/* 35,36,37 (append) */
 	OP_DROP = 255,
 };
 struct wldiag_rec {
@@ -102,8 +104,51 @@ struct wldiag_rec {
 	u8 op; u8 cpu; u16 _pad;
 } __packed;
 
-#define FIFO_RECS 32768
-static DEFINE_KFIFO(fifo, struct wldiag_rec, FIFO_RECS);
+/*
+ * Coda allocata a runtime invece che statica: la dimensione diventa un
+ * parametro e un'allocazione che non riesce si vede subito invece di gonfiare
+ * l'immagine del modulo in .bss.
+ *
+ * Perche' serve capiente: sulle catture DSL il ritmo massimo osservato e' 5200
+ * record/s (fase 80 MHz, con i RETVAL attivi), e con 32768 record il margine
+ * era ~6 secondi. Non bastava: quella fase ha perso 1873 record in 232 gocce
+ * da 2-3, cioe' la coda era sul filo per tutta la durata. Con il default di
+ * 131072 il margine sale a ~25 s.
+ *
+ * Costo: 28 byte per record, quindi 131072 record sono 3.5 MB di memoria
+ * kernel non paginabile. Su un router con 64 MB e' una fetta, ma la si paga
+ * solo mentre il modulo e' caricato. Se l'allocazione fallisce si abbassa il
+ * parametro: 65536 sono 1.75 MB e ~12 s di margine.
+ */
+/*
+ * Coda su buffer vmalloc'ato, non kfifo_alloc: __kfifo_alloc usa kmalloc, che
+ * vuole pagine fisicamente CONTIGUE, e su un router frammentato un'allocazione
+ * da qualche MB fallisce. vmalloc non ha quel vincolo. kfifo_init prende il
+ * buffer gia' pronto e ci mette la testa della coda sopra.
+ *
+ * Perche' serve capiente: sulle catture DSL il ritmo massimo osservato e' 5200
+ * record/s (fase 80 MHz, con i RETVAL attivi), e con 32768 record il margine
+ * era ~6 s. Non bastava: quella fase ha perso 1873 record in 232 gocce da 2-3.
+ * Il default di 131072 porta il margine a ~25 s; 262144 a ~50 s, cioe' un
+ * ciclo di canale intero.
+ *
+ * ATTENZIONE a cosa risolve: un buffer piu' grande assorbe le RAFFICHE, non un
+ * ritmo medio superiore al drenaggio. Le 232 gocce da 2-3 record della fase 80
+ * dicono che la coda era piena piu' volte, cioe' il lettore era in media piu'
+ * lento dello scrittore: in quel caso nessuna dimensione basta e va guardato il
+ * lato lettura (TCP, `cat`), oppure si filtra di piu' con skipphyrd.
+ *
+ * Costo: 28 byte per record, quindi 131072 record sono 3.5 MB di memoria
+ * kernel non paginabile, pagati solo mentre il modulo e' caricato.
+ *
+ * fifo_recs viene arrotondato per difetto a potenza di 2: kfifo_init divide la
+ * dimensione in byte per esize e fa rounddown_pow_of_two.
+ */
+#define FIFO_RECS_DEF 131072
+static int fifo_recs = FIFO_RECS_DEF;
+module_param(fifo_recs, int, 0444);
+static DECLARE_KFIFO_PTR(fifo, struct wldiag_rec);
+static void *fifo_buf;
 static DEFINE_RAW_SPINLOCK(fifo_lock);
 static DECLARE_WAIT_QUEUE_HEAD(rq);
 static atomic_t seq = ATOMIC_INIT(0);
@@ -290,6 +335,29 @@ static struct hook hooks[] = {
 	{ "otp_init",        OP_OTP_INIT, 0, 0, 0, .retcap = true },
 	{ "otp_read_word",   OP_OTP_RDW,  1, 0, 2, .retcap = true },
 	{ "otp_read_region", OP_OTP_RDR,  1, 0, 3, .retcap = true },
+	/* Due accessor che il codice acphy chiama e che il port NON fa affatto --
+	 * zero riferimenti a bw_set o sromctl in src/. Il grafo delle chiamate
+	 * dice anche DOVE vanno:
+	 *
+	 *   wlc_bmac_bw_set     <- wlapi_bmac_bw_set <- wlc_phy_chanspec_set_acphy
+	 *                                            <- wlc_phy_init
+	 *     larghezza al livello MAC. Serve per 40 e 80 MHz: con solo BW20 il
+	 *     default passa inosservato. Va in set_channel e in op_init.
+	 *   si_get/set_sromctl  <- wlc_phy_attach_acphy
+	 *     registro di controllo SROM. Va nel punto di op_init che corrisponde
+	 *     ad attach_acphy.
+	 *
+	 * Firme dedotte dal prologo (argomenti intatti in a0-a3):
+	 *   wlc_bmac_bw_set(hw, bw)        bw=a1, non e' un indirizzo -> val
+	 *   si_get_sromctl(sih)            valore nel RETVAL
+	 *   si_set_sromctl(sih, val)       val=a1
+	 *
+	 * NON si aggancia wlc_bmac_macphyclk_set: i suoi chiamanti sono
+	 * init_htphy, init_nphy e wlc_bmac_init, quindi per l'AC-PHY non e' nel
+	 * percorso. Ha anche un bne alla parola 1, ma e' irrilevante. */
+	{ "wlc_bmac_bw_set",  OP_MAC_BW,     0, 1, 0 },
+	{ "si_get_sromctl",   OP_SROMCTL_R,  0, 0, 0, .retcap = true },
+	{ "si_set_sromctl",   OP_SROMCTL_W,  0, 1, 0 },
 	{ "wlc_phy_chanspec_set", OP_CHANSPEC, 1, 0, 0 },
 	{ "wlc_bmac_read_objmem16",  OP_MAC_OBJ_R, 1, 0, 2, .retcap = true },
 	{ "wlc_bmac_write_objmem16", OP_MAC_OBJ_W, 1, 2, 3 },
@@ -874,11 +942,12 @@ static const struct file_operations wd_fops = {
 	.poll = wd_poll,
 	.llseek = no_llseek,
 };
-static struct miscdevice wd_misc = {
-	.minor = MISC_DYNAMIC_MINOR,
-	.name = "wl_diag",
-	.fops = &wd_fops,
-};
+/* Il buffer sta in /proc/wl_diag: appare da se' e non serve mknod. La strada
+ * precedente era un misc device a minor dinamico, che voleva leggere il minor
+ * da /proc/misc e crearlo a mano a ogni caricamento.
+ * proc_create ha la stessa firma su 2.6.30 e 3.4 e prende file_operations,
+ * quindi la stessa chiamata vale per entrambi. */
+#define WD_PROC "wl_diag"
 
 /* ---- init/exit -------------------------------------------------------- */
 static int eligible[NHOOK];   /* indici agganciabili */
@@ -960,9 +1029,34 @@ static int __init wd_init(void)
 		return -ENODEV;
 	}
 
-	err = misc_register(&wd_misc);
-	if (err)
+	if (fifo_recs < 4096) {
+		pr_warn("wl_diag: fifo_recs=%d troppo piccolo, uso 4096\n", fifo_recs);
+		fifo_recs = 4096;
+	}
+	fifo_recs = 1 << (fls(fifo_recs) - 1);	/* potenza di 2 per difetto */
+	fifo_buf = vmalloc(fifo_recs * sizeof(struct wldiag_rec));
+	if (!fifo_buf) {
+		pr_err("wl_diag: vmalloc di %d KB per la coda fallita. "
+		       "Riprovare con fifo_recs piu' basso.\n",
+		       (int)(fifo_recs * sizeof(struct wldiag_rec) / 1024));
+		return -ENOMEM;
+	}
+	err = kfifo_init(&fifo, fifo_buf, fifo_recs * sizeof(struct wldiag_rec));
+	if (err) {
+		pr_err("wl_diag: kfifo_init: %d\n", err);
+		vfree(fifo_buf);
+		fifo_buf = NULL;
 		return err;
+	}
+	pr_info("wl_diag: coda %d record (%d KB)\n", fifo_recs,
+		(int)(fifo_recs * sizeof(struct wldiag_rec) / 1024));
+
+	if (!proc_create(WD_PROC, 0400, NULL, &wd_fops)) {
+		pr_err("wl_diag: proc_create(/proc/%s) fallita\n", WD_PROC);
+		vfree(fifo_buf);
+		fifo_buf = NULL;
+		return -ENOMEM;
+	}
 
 	if (!arm) {
 		pr_info("wl_diag: DRY-RUN (%d hook pianificati). insmod con arm=1 per applicare.\n",
@@ -1071,7 +1165,7 @@ static int __init wd_init(void)
 		patch_entry(eligible[i]);
 		hooks[eligible[i]].armed = true;
 	}
-	pr_info("wl_diag: ARMATO (%d hook) -> /dev/wl_diag\n", n_elig);
+	pr_info("wl_diag: ARMATO (%d hook) -> /proc/wl_diag\n", n_elig);
 	return 0;
 }
 
@@ -1122,7 +1216,9 @@ static void __exit wd_exit(void)
 		module_put(target_mod);
 		mod_ref_held = false;
 	}
-	misc_deregister(&wd_misc);
+	remove_proc_entry(WD_PROC, NULL);
+	vfree(fifo_buf);
+	fifo_buf = NULL;
 	pr_info("wl_diag: scaricato (persi: %d, filtrati: %d)\n",
 		atomic_read(&drops), atomic_read(&filtered));
 }

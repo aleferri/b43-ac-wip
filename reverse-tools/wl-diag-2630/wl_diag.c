@@ -54,7 +54,7 @@
 #include <linux/kernel.h>
 #include <linux/version.h>
 #include <linux/kallsyms.h>
-#include <linux/miscdevice.h>
+#include <linux/proc_fs.h>
 #include <linux/fs.h>
 #include <linux/uaccess.h>
 #include <linux/sched.h>
@@ -195,6 +195,7 @@ enum wldiag_op {
 	OP_TPL_PTRW, OP_TPL_DATW,			/* 27,28 (append) */
 	OP_TPL_PTRR, OP_TPL_DATR, OP_TPL_RAMW,		/* 29,30,31 (append) */
 	OP_OTP_INIT, OP_OTP_RDW, OP_OTP_RDR,		/* 32,33,34 (append) */
+	OP_MAC_BW, OP_SROMCTL_R, OP_SROMCTL_W,		/* 35,36,37 (append) */
 	OP_DROP = 255,
 };
 struct wldiag_rec {
@@ -386,6 +387,29 @@ static struct hook hooks[] = {
 	{ "otp_init",        OP_OTP_INIT, 0, 0, 0, .retcap = true },
 	{ "otp_read_word",   OP_OTP_RDW,  1, 0, 2, .retcap = true },
 	{ "otp_read_region", OP_OTP_RDR,  1, 0, 3, .retcap = true },
+	/* Due accessor che il codice acphy chiama e che il port NON fa affatto --
+	 * zero riferimenti a bw_set o sromctl in src/. Il grafo delle chiamate
+	 * dice anche DOVE vanno:
+	 *
+	 *   wlc_bmac_bw_set     <- wlapi_bmac_bw_set <- wlc_phy_chanspec_set_acphy
+	 *                                            <- wlc_phy_init
+	 *     larghezza al livello MAC. Serve per 40 e 80 MHz: con solo BW20 il
+	 *     default passa inosservato. Va in set_channel e in op_init.
+	 *   si_get/set_sromctl  <- wlc_phy_attach_acphy
+	 *     registro di controllo SROM. Va nel punto di op_init che corrisponde
+	 *     ad attach_acphy.
+	 *
+	 * Firme dedotte dal prologo (argomenti intatti in a0-a3):
+	 *   wlc_bmac_bw_set(hw, bw)        bw=a1, non e' un indirizzo -> val
+	 *   si_get_sromctl(sih)            valore nel RETVAL
+	 *   si_set_sromctl(sih, val)       val=a1
+	 *
+	 * NON si aggancia wlc_bmac_macphyclk_set: i suoi chiamanti sono
+	 * init_htphy, init_nphy e wlc_bmac_init, quindi per l'AC-PHY non e' nel
+	 * percorso. Ha anche un bne alla parola 1, ma e' irrilevante. */
+	{ "wlc_bmac_bw_set",  OP_MAC_BW,     0, 1, 0 },
+	{ "si_get_sromctl",   OP_SROMCTL_R,  0, 0, 0, .retcap = true },
+	{ "si_set_sromctl",   OP_SROMCTL_W,  0, 1, 0 },
 	{ "wlc_phy_chanspec_set", OP_CHANSPEC, 1, 0, 0 },
 	{ "wlc_bmac_read_objmem",  OP_MAC_OBJ_R, 1, 0, 2, .retcap = true },
 	{ "wlc_bmac_write_objmem", OP_MAC_OBJ_W, 1, 2, 3 },
@@ -917,11 +941,12 @@ static const struct file_operations wd_fops = {
 	.poll = wd_poll,
 	.llseek = no_llseek,
 };
-static struct miscdevice wd_misc = {
-	.minor = MISC_DYNAMIC_MINOR,
-	.name = "wl_diag",
-	.fops = &wd_fops,
-};
+/* Il buffer sta in /proc/wl_diag: appare da se' e non serve mknod. La strada
+ * precedente era un misc device a minor dinamico, che voleva leggere il minor
+ * da /proc/misc e crearlo a mano a ogni caricamento.
+ * proc_create ha la stessa firma su 2.6.30 e 3.4 e prende file_operations,
+ * quindi la stessa chiamata vale per entrambi. */
+#define WD_PROC "wl_diag"
 
 /* ---- init/exit -------------------------------------------------------- */
 static int eligible[NHOOK];   /* indici agganciabili */
@@ -990,9 +1015,10 @@ static int __init wd_init(void)
 		return -ENODEV;
 	}
 
-	err = misc_register(&wd_misc);
-	if (err)
-		return err;
+	if (!proc_create(WD_PROC, 0400, NULL, &wd_fops)) {
+		pr_err("wl_diag: proc_create(/proc/%s) fallita\n", WD_PROC);
+		return -ENOMEM;
+	}
 
 	if (!arm) {
 		pr_info("wl_diag: DRY-RUN (%d hook pianificati). insmod con arm=1 per applicare.\n",
@@ -1064,7 +1090,7 @@ static int __init wd_init(void)
 		patch_entry(eligible[i]);
 		hooks[eligible[i]].armed = true;
 	}
-	pr_info("wl_diag: ARMATO (%d hook) -> /dev/wl_diag\n", n_elig);
+	pr_info("wl_diag: ARMATO (%d hook) -> /proc/wl_diag\n", n_elig);
 	return 0;
 }
 
@@ -1097,7 +1123,7 @@ static void __exit wd_exit(void)
 		module_put(target_mod);
 		mod_ref_held = false;
 	}
-	misc_deregister(&wd_misc);
+	remove_proc_entry(WD_PROC, NULL);
 	pr_info("wl_diag: scaricato (persi: %d, filtrati: %d)\n",
 		atomic_read(&drops), atomic_read(&filtered));
 }
