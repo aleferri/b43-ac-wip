@@ -97,6 +97,7 @@ enum wldiag_op {
 	OP_TPL_PTRR, OP_TPL_DATR, OP_TPL_RAMW,		/* 29,30,31 (append) */
 	OP_OTP_INIT, OP_OTP_RDW, OP_OTP_RDR,		/* 32,33,34 (append) */
 	OP_MAC_BW, OP_SROMCTL_R, OP_SROMCTL_W,		/* 35,36,37 (append) */
+	OP_CAL_INIT,					/* 38 (append) */
 	OP_DROP = 255,
 };
 struct wldiag_rec {
@@ -144,6 +145,48 @@ struct wldiag_rec {
  * fifo_recs viene arrotondato per difetto a potenza di 2: kfifo_init divide la
  * dimensione in byte per esize e fa rounddown_pow_of_two.
  */
+/*
+ * Forzare la calibrazione completa, senza remove/rescan del device -- che una
+ * volta su due non riesce.
+ *
+ * Nel driver la logica e' questa, letta dai prologhi del blob D6220:
+ *
+ *   wlc_phy_cal_init(pi)      { if (pi->[251]) return; ...cal completa... }
+ *   wlc_set_phy_uninitted(pi) { pi->[418] = -1; pi->[680] = -1; pi->[251] = 0; }
+ *
+ * Il byte a 251 e' un "gia' calibrato" e la logica e' INVERTITA rispetto a quel
+ * che si aspetterebbe: non si scrive 1, si scrive 0. Azzerandolo prima che
+ * cal_init lo legga, la calibrazione si rifa'.
+ *
+ * DUE parametri, e la distinzione conta:
+ *
+ *   full_init_off   l'offset nella struct, STRUTTURALE: dipende dalla versione
+ *                   (251 su 7.14.89, 227 su 6.30) e viene cotto nello stub
+ *                   all'arming, quindi e' di sola lettura. 0 = il codice non
+ *                   viene emesso affatto.
+ *   force_full_init l'interruttore a RUNTIME, scrivibile da sysfs. Lo stub lo
+ *                   rilegge a ogni chiamata, quindi si puo' alternare fra un
+ *                   ciclo e il successivo:
+ *
+ *                     echo 1 > /sys/module/wl_diag/parameters/force_full_init
+ *                     wl -i wl1 up ; sleep 10 ; wl -i wl1 down    # cal completa
+ *                     echo 0 > /sys/module/wl_diag/parameters/force_full_init
+ *                     wl -i wl1 up ; sleep 10 ; wl -i wl1 down    # a caldo
+ *
+ * Serve cosi' perche' capture_plan.sh gira 30-40 combinazioni dopo un solo
+ * insmod, e ognuna va provata in entrambi i modi: con un parametro fisso
+ * all'arming sarebbero tutte uguali e non ci sarebbe niente da confrontare.
+ *
+ * ATTENZIONE: un offset sbagliato scrive dentro la struct del PHY. L'indirizzo
+ * scrivibile e' solo pi + offset -- `pi` arriva dalla funzione agganciata -- ma
+ * l'offset va verificato sul proprio blob: por_inform scrive 1 al flag POR, e
+ * quello e' l'offset meno 2.
+ */
+static int full_init_off;
+module_param(full_init_off, int, 0444);
+static int force_full_init;
+module_param(force_full_init, int, 0644);
+
 #define FIFO_RECS_DEF 131072
 static int fifo_recs = FIFO_RECS_DEF;
 module_param(fifo_recs, int, 0444);
@@ -267,6 +310,7 @@ struct hook {
 	bool use_bp;		/* hook via 'break' + die notifier (non detourabile) */
 	bool use_sites;		/* patch delle coppie lui/addiu ai siti di chiamata */
 	u32 *bp_stub;		/* stub di ripresa del percorso break */
+	s16 zero_off;		/* != 0: lo stub azzera il byte pi->[zero_off] */
 };
 static struct hook hooks[] = {
 	{ "phy_reg_read",       OP_PHY_R,     1, 0, 0, .retcap = true },
@@ -355,6 +399,12 @@ static struct hook hooks[] = {
 	 * NON si aggancia wlc_bmac_macphyclk_set: i suoi chiamanti sono
 	 * init_htphy, init_nphy e wlc_bmac_init, quindi per l'AC-PHY non e' nel
 	 * percorso. Ha anche un bne alla parola 1, ma e' irrilevante. */
+	/* Solo per forzare la cal completa: il record serve a vedere quando
+	 * cal_init viene invocata, e lo stub azzera pi->[full_init_off] se il
+	 * parametro e' impostato. Prologo: addiu sp / sw s0 / sw ra / lbu 251(a0),
+	 * quindi il branch e' alla parola 4 e il detour a 4 parole regge. La
+	 * parola 3 riesegue la lbu DOPO l'azzeramento, quindi legge 0. */
+	{ "wlc_phy_cal_init", OP_CAL_INIT,   0, 0, 0 },
 	{ "wlc_bmac_bw_set",  OP_MAC_BW,     0, 1, 0 },
 	{ "si_get_sromctl",   OP_SROMCTL_R,  0, 0, 0, .retcap = true },
 	{ "si_set_sromctl",   OP_SROMCTL_W,  0, 1, 0 },
@@ -477,6 +527,9 @@ wl_diag_exit_ret(u32 retval)
 static inline u32 i_addiu(u8 rt, u8 rs, s16 im){ return (0x09u<<26)|(rs<<21)|(rt<<16)|(u16)im; }
 static inline u32 i_sw(u8 rt, u8 b, s16 o){ return (0x2bu<<26)|(b<<21)|(rt<<16)|(u16)o; }
 static inline u32 i_lw(u8 rt, u8 b, s16 o){ return (0x23u<<26)|(b<<21)|(rt<<16)|(u16)o; }
+static inline u32 i_sb(u8 rt, u8 b, s16 o){ return (0x28u<<26)|(b<<21)|(rt<<16)|(u16)o; }
+/* beq rs,rt,off: off in ISTRUZIONI, relativo alla parola dopo il delay slot */
+static inline u32 i_beq(u8 rs, u8 rt, s16 off){ return (0x04u<<26)|(rs<<21)|(rt<<16)|(u16)off; }
 static inline u32 i_lui(u8 rt, u16 im){ return (0x0fu<<26)|(rt<<16)|im; }
 static inline u32 i_ori(u8 rt, u8 rs, u16 im){ return (0x0du<<26)|(rs<<21)|(rt<<16)|im; }
 static inline u32 i_jalr(u8 rs){ return (rs<<21)|(R_RA<<11)|0x09u; }
@@ -815,13 +868,35 @@ static void build_stub(int idx)
 	s[n++] = i_lw(R_A3, R_SP, 12);
 	s[n++] = i_lw(R_RA, R_SP, hooks[idx].retcap ? 24 : 16);
 	s[n++] = i_addiu(R_SP, R_SP, 32);
+	/* $a0 e' il primo argomento della funzione agganciata, cioe' `pi`.
+	 * L'interruttore si rilegge a OGNI chiamata, non si cuoce all'arming:
+	 *   lui/lw  t8 <- force_full_init
+	 *   beq     t8, zero -> salta la sb
+	 *   sb      zero, off(a0)
+	 * Il delay slot del beq porta la sb stessa, quindi con t8 == 0 si salta a
+	 * dopo di essa e non viene eseguita. */
+	if (hooks[idx].zero_off) {
+		unsigned long fp = (unsigned long)&force_full_init;
+
+		/* La parte bassa del lw e' con segno, quindi la parte alta va
+		 * compensata: la stessa aritmetica del patching dei siti. */
+		s[n++] = i_lui(R_T8, (u16)((fp + 0x8000) >> 16));
+		s[n++] = i_lw(R_T8, R_T8, (s16)(fp & 0xffff));
+		/* Il delay slot si esegue SEMPRE, quindi ci va un nop e non la sb:
+		 * altrimenti la scrittura avverrebbe anche a interruttore spento.
+		 * Bersaglio del beq = (indirizzo del delay slot) + off*4, cioe' con
+		 * off=2 si salta la parola dopo la sb. */
+		s[n++] = i_beq(R_T8, R_ZERO, 2);
+		s[n++] = I_NOP;
+		s[n++] = i_sb(R_ZERO, R_A0, hooks[idx].zero_off);
+	}
 	for (k = 0; k < rep; k++)
 		s[n++] = o[k];	/* riesegue le parole spiazzate (o[1] short-j ri-setta v0) */
 	s[n++] = i_lui(R_T9, ret >> 16);
 	s[n++] = i_ori(R_T9, R_T9, ret & 0xffff);
 	s[n++] = i_jr(R_T9);
 	s[n++] = I_NOP;
-	/* max (classic+retcap+nargx) == 40 <= STUB_WORDS */
+	/* max (classic+retcap+nargx+forzatura) == 45 <= STUB_WORDS */
 }
 
 /* Trampolino di ritorno condiviso: la funzione agganciata retcap fa jr ra con
@@ -958,6 +1033,15 @@ static int __init wd_init(void)
 	int i, err;
 
 	parse_skipphyrd();
+
+	if (full_init_off) {
+		for (i = 0; i < NHOOK; i++)
+			if (hooks[i].op == OP_CAL_INIT)
+				hooks[i].zero_off = (s16)full_init_off;
+		pr_info("wl_diag: cal_init puo' azzerare pi->[%d]; interruttore in "
+			"/sys/module/wl_diag/parameters/force_full_init (ora %d)\n",
+			full_init_off, force_full_init);
+	}
 
 	n_elig = 0;
 	for (i = 0; i < NHOOK; i++) {

@@ -158,6 +158,41 @@ viene letta e **quali word**, cioe' dove i valori vengono consumati. Il valore
 finisce in un puntatore, non nel ritorno, quindi nel record c'e' il numero di
 word e non il dato.
 
+### Lo sweep non contiene un attach, e non associa
+
+Il conto delle **parole** di tabella lo dice senza ambiguita':
+
+| id tabella | `attach-to-bss` | `down-to-bss` | segmento dello sweep |
+|---|---|---|---|
+| `0x0c` | 463 | 427 | 42 |
+| `0x0e` | 320 | 320 | **0** |
+| `0x40` | 384 | 384 | 128 |
+| `0x42` | 256 | 256 | **0** |
+| `0x60` | 384 | 384 | 128 |
+| `0x62` | 256 | 256 | **0** |
+| `0x82` | 256 | 256 | **0** |
+| totale | 3776 | 3740 | 1638 |
+
+Quattro tabelle mancano del tutto e `0x40`/`0x60` sono a un terzo: 128 parole
+invece di 384, cioe' **un core invece di tre**. E `0x42`/`0x62`/`0x82` sono la
+stessa famiglia a stride `0x20`, i LUT di gain per core.
+
+La differenza non e' attach contro up: la `down-to-bss`, che **non** e' un
+attach, ha tutte le tabelle a 3740 parole. Quello che manca allo sweep e'
+l'associazione -- `capture_plan.sh` fa `up` e aspetta, senza portare
+l'interfaccia a stabilire il BSS -- e la programmazione per-core sembra avvenire
+la'. E' un'ipotesi: la prova sarebbe una cattura `to-bss` con gli hook attuali,
+che serve comunque per rifare gli oracoli dei gate.
+
+Quindi lo sweep e' valido per **canale e larghezza**, dove conta cio' che varia
+fra i 32 segmenti, e non copre l'inizializzazione per-core.
+
+### Solo builtin negli script sul device
+
+Su questi busybox mancano `head`, `awk` e altri: uno script che li usa muore a
+meta' senza dirlo chiaramente. `capture_plan.sh` usa solo builtin della shell
+piu' `wl` e `sleep`. `gen_syms` gira sul PC per lo stesso motivo.
+
 ### Conservare la fifo sui canali DFS
 
 Sui canali DFS il rivelatore radar interroga `PHY.RD 0x0253` e `0x0254` in
@@ -225,6 +260,45 @@ usa inizializzatori posizionali, quindi il `true` destinato a `retcap` finiva in
 coda, e gli inizializzatori usano la forma designata (`.retcap = true`) che e'
 immune al riordino.
 
+### Forzare la cal completa senza remove/rescan
+
+Il remove/rescan del device riesce una volta su due. L'alternativa e' agire sul
+flag che decide se la calibrazione si rifa'. Dai prologhi del blob D6220:
+
+```c
+wlc_phy_cal_init(pi)      { if (pi->[251]) return; ...cal completa... }
+wlc_set_phy_uninitted(pi) { pi->[418] = -1; pi->[680] = -1; pi->[251] = 0; }
+```
+
+Il byte a 251 e' un **"gia' calibrato"** e la logica e' **invertita**: si scrive
+**0**, non 1. I tre flag adiacenti hanno ruoli distinti e non sono
+interscambiabili -- 249 e' il POR (`por_inform` scrive 1), 250 il "phy_init
+fatto", 251 quello della cal.
+
+**La scrittura la fa lo stub**, non lo spazio utente: ha gia' `pi` in `$a0`
+(primo argomento, salvato a `0(sp)` e ripristinato prima del replay), quindi
+bastano poche istruzioni e non serve esporre nessun indirizzo ne' un poke di
+memoria arbitrario. L'unico indirizzo scrivibile e' `pi + offset`.
+
+E l'azzeramento cade **due istruzioni prima** della `lbu 251($a0)` che lo stub
+riesegue, quindi non c'e' finestra di corsa: con un poke dallo spazio utente
+bisognerebbe indovinare l'istante fra il momento in cui il flag conta e quello
+in cui `cal_init` lo legge.
+
+L'interruttore e' a **runtime** e non all'arming, perche' `capture_plan.sh` gira
+30-40 combinazioni dopo un solo `insmod` e ognuna va provata in entrambi i modi:
+
+```sh
+insmod wl_diag.ko arm=1 full_init_off=251
+echo 1 > /sys/module/wl_diag/parameters/force_full_init   # cal completa
+echo 0 > /sys/module/wl_diag/parameters/force_full_init   # a caldo
+```
+
+Lo stub rilegge la variabile a ogni chiamata: `lui`/`lw` con la parte alta
+compensata per il segno, `beq` con **nop nel delay slot** -- il delay slot su
+MIPS si esegue sempre, quindi mettendoci la `sb` la scrittura avverrebbe anche a
+interruttore spento -- e `off=2` per saltare oltre.
+
 ### Accessor che il port non fa affatto
 
 Audit sistematico: si prendono gli accessor **chiamati da codice acphy** (non
@@ -266,6 +340,8 @@ ricostruisce offline.
 | param | default | effetto |
 |-------|---------|---------|
 | `fifo_recs` | `131072` | record nella coda, 28 B ciascuno: 131072 sono 3.5 MB e ~25 s di margine. Solo variante 3.4 |
+| `full_init_off` | `0` | offset del byte "gia' calibrato" nella struct `pi`: 251 su 7.14.89, 227 su 6.30. Strutturale, di sola lettura. `0` = il codice non viene emesso |
+| `force_full_init` | `0` | interruttore a **runtime** (`0644`): `echo 1 > /sys/module/wl_diag/parameters/force_full_init` |
 | `skipphyrd` | vuoto | letture di **registro PHY** da non registrare, es. `"0x253,0x254"` |
 | `arm`   | `0` | `0` = dry-run (logga solo il piano hook); `1` = applica le patch |
 | `delay` | `0` | `1` = aggancia anche `osl_delay` (rumoroso, usec inaffidabile) |
