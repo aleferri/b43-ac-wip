@@ -24,6 +24,13 @@
 #   sh capture_plan.sh 40           tutti i 40 MHz
 #   sh capture_plan.sh 80           tutti gli 80 MHz
 #   sh capture_plan.sh 20a wl1 10   interfaccia e attesa espliciti
+#   sh capture_plan.sh 20a wl1 10 test-ap   con SSID, per programmare il BSS
+#
+# LA CAL COMPLETA non si forza col remove/rescan del device, che una volta su due
+# non riesce: si arma wl_diag con full_init_off=<offset>, e lo stub azzera il byte
+# "gia' calibrato" della struct pi a ogni cal_init. 251 su 7.14.89, 227 su 6.30.
+#
+#   insmod wl_diag.ko arm=1 skipphyrd="0x253,0x254" full_init_off=251
 #
 # Niente `set -u`: il busybox di questi firmware non lo gestisce.
 #
@@ -35,6 +42,7 @@
 FASE="$1"
 IF="$2"
 SETTLE="$3"
+SSID="$4"
 [ -n "$IF" ] || IF=wl1
 [ -n "$SETTLE" ] || SETTLE=10
 
@@ -79,15 +87,46 @@ emit() {
     return 0
 }
 
-one() {
+# Solo builtin della shell piu' `wl` e `sleep`: su questi busybox mancano head,
+# awk e altri, e uno script che li usa muore a meta' senza dirlo.
+
+# Il BSS. Senza associarsi mancano quattro tabelle intere (0x0e, 0x42, 0x62,
+# 0x82) e 0x40/0x60 restano a un core invece di tre: 1638 parole contro 3740 di
+# una cattura to-bss. Con SSID passato si imposta, altrimenti si salta.
+# DA VERIFICARE sul device: `wl ssid` e' la via scelta, ma se su questo firmware
+# serve altro (`wl ap 1`, o nvram + wlconf) va corretto qui.
+bss_su() {
+    [ -n "$SSID" ] || return 0
+    wl -i "$IF" ssid "$SSID" > /dev/null 2>&1
+    return 0
+}
+
+# Ogni combinazione va provata in DUE modi, cal completa e a caldo:
+# l'interruttore e' a runtime proprio per poterli alternare dopo un solo insmod.
+FORCE=/sys/module/wl_diag/parameters/force_full_init
+
+forza() {
+    if [ -w "$FORCE" ]; then
+        echo "$1" > "$FORCE"
+    fi
+    return 0
+}
+
+imposta() {
     cs="5g$1/$BW"
     if ! wl -i "$IF" chanspec "$cs" > /dev/null 2>&1; then
-        msg=`wl -i "$IF" chanspec "$cs" 2>&1 | head -1`
+        msg=`wl -i "$IF" chanspec "$cs" 2>&1`
         echo "salto $cs: $msg"
-        return 0
+        return 1
     fi
-    emit "chanspec $cs"
-    echo "--- $cs"
+    return 0
+}
+
+ciclo() {
+    forza "$1"
+    emit "chanspec $cs force=$1"
+    echo "--- $cs force=$1"
+    bss_su
     wl -i "$IF" up
     sleep "$SETTLE"
     wl -i "$IF" down
@@ -95,11 +134,13 @@ one() {
 }
 
 emit "inizio fase $FASE"
-wl -i "$IF" down
+wl -i "$IF" down          # sempre, qualunque sia lo stato di partenza
 sleep 1
 
 for c in $LIST; do
-    one "$c"
+    imposta "$c" || continue
+    ciclo 1        # cal completa forzata
+    ciclo 0        # a caldo
 done
 
 emit "fine fase $FASE"

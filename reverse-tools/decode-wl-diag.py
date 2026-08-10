@@ -54,6 +54,7 @@ OPS = {
     29: "TPL.PTRR",  30: "TPL.DATR",  31: "TPL.RAMW",
     32: "OTP.INIT",  33: "OTP.RDW",   34: "OTP.RDR",
     35: "MAC.BW",    36: "SROMCTL.RD", 37: "SROMCTL.WR",
+    38: "CAL.INIT",
     255: "DROP",
 }
 

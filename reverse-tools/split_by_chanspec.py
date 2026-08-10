@@ -23,6 +23,26 @@ signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 RX_CS = re.compile(r'\bCHANSPEC\b.*?\bch=(\d+)\s+bw=(\S+)\s+band=(\S+)')
 RX_T = re.compile(r'\s*([\d.]+)\s+#(\d+)\s+cpu\d+\s+(\S+)')
 
+# La scrittura del chanspec in shared memory: un record per ciclo, all'inizio, e
+# porta l'etichetta. E' il confine esatto e va preferito ai salti temporali.
+BW_CS = {0x1000: 20, 0x1800: 40, 0x2000: 80, 0x2800: 160}
+RX_SHM = re.compile(r'OBJ\.WR\s+addr=0x0*a0\s+val=0x0*([0-9a-f]+)')
+CENTRO = {20: 0, 40: 2, 80: 6, 160: 14}
+
+
+def etichetta(righe):
+    """(canale basso, larghezza) dal primo chanspec in SHM. Per 40 e 80 il
+    valore porta il canale CENTRALE, e viene riportato al basso del blocco."""
+    for l in righe:
+        m = RX_SHM.search(l)
+        if not m:
+            continue
+        cs = int(m.group(1), 16)
+        bw = BW_CS.get(cs & 0x3800)
+        if bw is not None:
+            return (cs & 0xff) - CENTRO[bw], bw
+    return None
+
 # Il gap da solo non basta: mentre l'interfaccia e' su, il campionamento
 # periodico del rumore lascia buchi di 1.00 s fra due OBJ.RD, indistinguibili
 # per durata dallo sleep 1 fra i cicli. Il confine vero ha un cambio di
@@ -51,20 +71,28 @@ def main():
     # come confine -- la funzione viene invocata col chanspec corrente, che e' in
     # ritardo di un ciclo, e in una fase compaiono valori della precedente. Si
     # raccolgono e si riportano, per verifica.
-    bounds = []
-    prev_t, prev_op = None, None
-    for i, l in enumerate(lines):
-        m = RX_T.match(l)
-        if not m:
-            continue
-        t, op = float(m.group(1)), m.group(3)
-        if prev_t is not None and is_boundary(t - prev_t, gap, prev_op, op):
-            bounds.append(i)
-        prev_t, prev_op = t, op
+    bounds = [i for i, l in enumerate(lines) if RX_SHM.search(l)]
+    if bounds:
+        criterio = f"chanspec in SHM: {len(bounds)}"
+    else:
+        # Ripiego. Sul DSL funzionava perche' lo sleep fra i cicli lasciava
+        # 1.06 s contro gli 1.00 s esatti del campionamento del rumore; sul
+        # d6220 le due durate coincidono e il criterio non discrimina, dava 27
+        # segmenti per 19 canali.
+        prev_t, prev_op = None, None
+        for i, l in enumerate(lines):
+            m = RX_T.match(l)
+            if not m:
+                continue
+            t, op = float(m.group(1)), m.group(3)
+            if prev_t is not None and is_boundary(t - prev_t, gap, prev_op, op):
+                bounds.append(i)
+            prev_t, prev_op = t, op
+        criterio = f"salti > {gap}s: {len(bounds)}"
 
     edges = [0] + bounds + [len(lines)]
     nseg = len(edges) - 1
-    print(f"{nseg} segmenti (confini: {len(bounds)} salti > {gap}s)")
+    print(f"{nseg} segmenti (confini da {criterio})")
     if chans and nseg != len(chans):
         print(f"ATTENZIONE: {nseg} segmenti ma {len(chans)} canali nella lista. "
               f"I nomi posizionali sono inaffidabili.")
@@ -78,7 +106,23 @@ def main():
         body = lines[edges[k]:edges[k + 1]]
         if not any(x.strip() for x in body):
             continue
-        base = f"seg{k:02d}" + (f"-ch{chans[k]}" if k < len(chans) else "")
+        # Il primo segmento e' la coda di init prima del primo chanspec: bus,
+        # OTP, PLL. Tutti gli altri sono cicli up/down.
+        #
+        # NON si chiamano "attach" ne' "to-bss", e il conto delle tabelle dice
+        # perche': il primo segmento ha lo stesso profilo di un ciclo qualsiasi
+        # -- 641 record e 1638 parole, identici -- mentre una cattura to-bss del
+        # d6220 ne scrive 3740, con quattro tabelle in piu' (0x0e, 0x42, 0x62,
+        # 0x82) e 0x40/0x60 a 384 parole invece di 128, cioe' per tre core
+        # invece di uno. capture_plan.sh non porta l'interfaccia ad associarsi,
+        # e la programmazione per-core sembra avvenire la'.
+        et = etichetta(body)
+        if k == 0:
+            base = "00-init-parziale"
+        elif et:
+            base = f"{k:02d}-up-ch{et[0]}-bw{et[1]}"
+        else:
+            base = f"{k:02d}" + (f"-ch{chans[k]}" if k < len(chans) else "")
         n = used.get(base, 0) + 1
         used[base] = n
         name = base if n == 1 else f"{base}-{n}"

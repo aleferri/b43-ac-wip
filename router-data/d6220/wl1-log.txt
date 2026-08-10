@@ -1,0 +1,26 @@
+<7>pci 0000:02:00.0: [14e4:4360] type 00 class 0x028000
+<7>pci 0000:02:00.0: reg 10: [mem 0x11000000-0x11007fff 64bit]
+<7>pci 0000:02:00.0: supports D1 D2
+<6>pci 0000:02:00.0: BAR 0: assigned [mem 0x11000000-0x11007fff 64bit]
+<4>wl: passivemode=1
+<6>wl2: creating kthread wl2-kthrd
+<4>wl: napimode=0
+<4>initvars_cis_pci: Not CIS format
+<4>Neither SPROM nor OTP has valid image
+<4>wl:srom/otp not programmed, using main memory mapped srom info(wombo board)
+<4>wl: ID=pci/2/0/
+<4>wl: ID=pci/2/0/
+<4>wl: loading /etc/wlan/bcm4352_map.bin
+<4>wl: updating srom from flash...
+<4>wl: updating srom from flash...
+<4>srom rev:11
+<4>wl: reading /etc/wlan/bcmcmn_nvramvars.bin, file size=32
+<4>wl: reading /etc/wlan/bcm4352_nvramvars.bin, file size=32
+<4>wl2: allocskbmode=1 currallocskbsz=2048
+<4>[ERROR fap] dqmHandlerRegisterHost,222: Exceeded maximum number of DQM IRQ Handlers! (8)
+<4> wfd_bind: Dev wl%d wfd_idx 1 Type skb configured WFD thread wfd1-thrd RxQId (20), status (0) number_of_queues 2 qmask 0x3
+<4>Instantiating WFD 1 thread
+<4>+++++ Added gso loopback support for dev=wl1 <83bd2000>
+<4>wl1: Broadcom BCM4360 802.11 Wireless Controller 7.14.89.14.cpe4.16L03.0-kdb
+<4>dgasp: kerSysRegisterDyingGaspHandler: wl1 registered 
+
