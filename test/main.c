@@ -576,8 +576,8 @@ static void run_switch_channel(void)
 	 * SCRITTO (assumendo che il chip faccia RMW identity-like col
 	 * pre-state già impostato dall'init). Se la formula del scratch
 	 * fosse identity con questi input, matcherebbe. In pratica non
-	 * lo è (vedi TODO in README), ma il flow avanza e i log
-	 * [TXLPFLOG] dal chip vero ci daranno lo_read/hi_read/cur reali.
+	 * lo è, ma il flow avanza. I valori reali di lo_read/hi_read/cur
+	 * richiedono una lettura strumentata ad hoc sul chip vero.
 	 *
 	 * Ordine di consumo del plan (per il call site channel_setup):
 	 *  - TX-LPF: core 0 stage 0..8 (18 read: lo,hi × 9), poi core 1
@@ -849,39 +849,22 @@ static void run_switch_channel(void)
 		b43_test_plan_radio_reads(0x0445, rad_0445, 2);
 
 		/*
-		 * 0x0017 / 0x0217 (radio bit 4 auto-set/clear HW).
+		 * 0x0017 / 0x0217: il bit 4 lo muove l'hardware, non il driver,
+		 * quindi il piano di lettura deve seguirlo slot per slot.
 		 *
-		 * Fase switch_channel matched (rxcal_radio_setup):
-		 *   [0] #34721/34742: bit 4=0 (WR=0x0000 precedente)
-		 *   [1] #38297/38318: idem
-		 *   [2] #39644/39678: bit 4 auto-SET → 0x0010
-		 *   [3] #39658/39692: idem 0x0010
-		 *   [4] #39661/39695: 0x0011 (dopo set bit 0 al [3])
-		 *
-		 * Fase post_cal_finalize iter 2 A3 (#39988/40009):
-		 *   [5] Post rxcal_radio_cleanup WR=0x0011 a #39930/37, ma HW
-		 *       auto-BOUNCE a 0x0002 tra #39930/37 e #39988/40009
-		 *       (bit 4 clear + bit 1 set: side-effect non tracciato,
-		 *       probabile "cal complete" flag HW).
-		 *
-		 * Iter 3 (#40584+) legge dal mirror stabile a 0 (slot [6] = 0
-		 * come guard; se rimosso, il mirror fornisce comunque 0).
-		 *
-		 * Fase rxiqcal_finalize radio setup (#52737+):
-		 *   [7] Baseline RAD.RD 0x0017/0x0217 nel loop — non usato per
-		 *       calcoli (val letto solo per peek).
-		 *   [8] MOD 0x0017 mask=0x0001 val=0x0001 → RD interno = 0x0010
-		 *       → WR = 0x0011 (HW auto-set bit 4 di nuovo dopo iter 3).
-		 *   [9] MOD 0x0017 mask=0x0002 val=0x0000 → RD interno = 0x0011
-		 *       → WR = 0x0011 (bit 1 già clear).
+		 *   [0] [1]  bit 4 basso, dopo una WR a 0
+		 *   [2]      peek di rxcal_radio_setup. Finisce in
+		 *            rxcal_radio_saved[] e il cleanup lo riscrive: la
+		 *            cattura ch36 ripristina 0x0011, quindi il peek deve
+		 *            leggere quello
+		 *   [3] [4]  RD interne dei maskset che seguono
+		 *   [5]      fra il cleanup e l'iter 2 l'hardware fa bounce a
+		 *            0x0002 (bit 4 basso, bit 1 alto) senza nessuna WR
+		 *            tracciata: probabile flag di cal completata
+		 *   [6]      guard a 0 per l'iter 3, che legge il mirror stabile
+		 *   [7]      baseline del loop di rxiqcal_finalize, solo peek
+		 *   [8] [9]  RD interne dei maskset, col bit 4 rialzato dall'hw
 		 */
-		/*
-		 * La prima voce e' il peek di rxcal_radio_setup, che ora finisce in
-		 * rxcal_radio_saved[] e viene riscritto dal cleanup: la cattura ch36
-		 * ripristina 0x0011, quindi il peek deve leggere quello. Le voci
-		 * successive sono le RD interne dei maskset, invariate.
-		 */
-		/* [2] e' il peek di rxcal_radio_setup: il cleanup ripristina 0x0011. */
 		static const u16 rad_0017[] = {
 			0, 0, 0x0011, 0x0010, 0x0011, 0x0002, 0,
 			0, 0x0010, 0x0011,
@@ -1188,6 +1171,53 @@ int main(int argc, char **argv)
 		 */
 		g_wldev.mac_suspended = 0;
 		run_switch_channel();
+	} else if (!strcmp(flow, "periodic")) {
+		/*
+		 * Un tick del watchdog a regime, con la tornata di measure
+		 * block (noise cal). Riferimento: sweep d6220, tick
+		 * #27036-#27791 (ch36 BW20, dopo il primo up del segmento),
+		 * estratto in router-data/d6220/
+		 * wl-diag-wl1-steady-tick-ch36-bw20.txt — file che fa sia da
+		 * AC_READ_ORACLE (i valori SHM/TSSI sono stato ucode, non
+		 * derivabile) sia da riferimento per compare.py.
+		 *
+		 * Stato entrante: MAC attivo (come switch_channel), PHY in
+		 * release — il REQUIRE del measure block vuole
+		 * RX_WAITED|RX_OFDM e niente CLIP_ALL_DIS/CCA_RESET/RX_CCK.
+		 * Il toggle di 0x0520[3:2] parte da 0x0000, il valore che il
+		 * tick di riferimento scrive.
+		 */
+		g_wldev.mac_suspended = 0;
+		g_ac.status_mask = B43_PHY_AC_STATE_RX_WAITED |
+				   B43_PHY_AC_STATE_RX_OFDM;
+		g_ac.probe_mode = 0x0000;
+		b43_phy_ac_watchdog(&g_wldev, true);
+	} else if (!strcmp(flow, "crsmin")) {
+		/*
+		 * Self-test della catena crsmin (non usa oracolo). Esercita
+		 * recalc_txpower tre volte: le prime due (cal_cycles 0->1->2)
+		 * sono "a freddo" e scrivono la ladder bumped (+4); dalla
+		 * terza il bump sparisce. Atteso, ch36 BW20 (idx 1 -> 48):
+		 * cold 52 (=0x34, il valore d'attach osservato), poi 48 (=0x30).
+		 */
+		static const u8 want[3] = { 0x34, 0x34, 0x30 };
+		unsigned int k;
+		int fails = 0;
+
+		g_ac.cal_cycles = 0;
+		for (k = 0; k < 3; k++) {
+			u8 got;
+
+			b43_phyops_ac.recalc_txpower(&g_wldev, false);
+			got = b43_test_mirror_phy_get(0x0324) & 0xff;
+			fprintf(stderr,
+				"crsmin: ciclo %u  CRS byte-basso=0x%02x atteso=0x%02x  %s\n",
+				k, got, want[k], got == want[k] ? "OK" : "FAIL");
+			if (got != want[k])
+				fails++;
+		}
+		fprintf(stderr, "crsmin: %s\n", fails ? "FAIL" : "PASS");
+		return fails ? 1 : 0;
 	} else if (!strcmp(flow, "full")) {
 		run_full();
 	} else {

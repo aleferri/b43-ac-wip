@@ -299,6 +299,51 @@ compensata per il segno, `beq` con **nop nel delay slot** -- il delay slot su
 MIPS si esegue sempre, quindi mettendoci la `sb` la scrittura avverrebbe anche a
 interruttore spento -- e `off=2` per saltare oltre.
 
+### Impostare il BSS: e' quello che mancava
+
+Senza SSID i segmenti di uno sweep scrivevano **1638** parole di tabella; con
+l'SSID impostato prima dell'`up` sono **3740**, cioe' identiche a una cattura
+`down-to-bss`, id per id su tutte 22. Tornano le quattro tabelle che mancavano
+(`0x0e`, `0x42`, `0x62`, `0x82`) e `0x40`/`0x60` passano da 128 a 384 parole,
+cioe' da un core a tre.
+
+Non era l'attach: era l'associazione. Quindi ogni ciclo di uno sweep con SSID e'
+equivalente a una `down-to-bss` su un canale diverso, ed e' usabile come
+oracolo.
+
+### Sei configurazioni che il driver rifiuta, ed e' corretto
+
+In uno sweep completo ne passano 26 su 32. Le assenti sono esattamente quelle il
+cui blocco include i canali **120, 124, 128**:
+
+| chiesto | canali coperti |
+|---|---|
+| `ch120/20`, `ch124/20`, `ch128/20` | se stessi |
+| `ch116/40` | 116, **120** |
+| `ch124/40` | **124, 128** |
+| `ch116/80` | 116, **120, 124, 128** |
+
+E' la banda **TDWR** (5600-5650 MHz), riservata ai radar meteo di terminale e
+vietata alla trasmissione in molte giurisdizioni. Il rifiuto e' la regola, non
+un
+difetto dello script: `ch132` e oltre passano, perche' sono sopra la banda.
+
+### Verificare se il forzamento della cal ha avuto effetto
+
+Leggere `force_full_init` da sysfs a fine corsa **non dice niente**:
+`capture_plan.sh` alterna 1 e 0, quindi il valore e' sempre l'ultimo scritto.
+Due
+modi che funzionano:
+
+```sh
+dmesg | grep azzerare        # al caricamento: c'e' se full_init_off era passato
+```
+
+e, meglio, la traccia stessa: i record `CAL.INIT` portano `addr` = l'offset
+configurato e `val` = lo stato dell'interruttore al momento della chiamata.
+`addr=0x0000` significa che `full_init_off` non era impostato e lo stub non
+contiene l'istruzione affatto.
+
 ### Accessor che il port non fa affatto
 
 Audit sistematico: si prendono gli accessor **chiamati da codice acphy** (non

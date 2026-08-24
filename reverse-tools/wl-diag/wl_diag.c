@@ -429,6 +429,13 @@ wl_diag_hook(u32 id, u32 a1, u32 a2, u32 a3)
 {
 	struct hook *h = &hooks[id];
 
+	/* CAL.INIT porta nel record lo stato dell'interruttore, cosi' la traccia
+	 * dice da se' quali cicli sono stati forzati. Senza questo l'esperimento
+	 * non e' leggibile a posteriori: capture_plan alterna 1 e 0, quindi il
+	 * valore letto da sysfs a fine corsa e' sempre l'ultimo scritto. */
+	if (h->op == OP_CAL_INIT)
+		return emit(h->op, (u32)h->zero_off, (u32)force_full_init, 0);
+
 	return emit(h->op, pick(h->addr_src, a1, a2, a3),
 			   pick(h->val_src,  a1, a2, a3),
 			   pick(h->aux_src,  a1, a2, a3));

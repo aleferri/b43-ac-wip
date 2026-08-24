@@ -1,57 +1,31 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Broadcom B43 AC-PHY -- RX I/Q calibration SKELETON.
+ * Broadcom B43 AC-PHY -- RX I/Q calibration.
  *
- * Struttura e algoritmo generico dalla cal N-PHY di brcmsmac
- * (drivers/net/wireless/broadcom/brcm80211/brcmsmac/phy/phy_n.c), funzioni
- * wlc_phy_cal_rxiq_nphy_rev3 / wlc_phy_calc_rx_iq_comp_nphy /
- * wlc_phy_rx_iq_est_nphy: l'ossatura setup->gainctrl->misura->solve->
- * applica->cleanup e la matematica del solve IQ-imbalance, che e'
- * PHY-independent, adattate ad AC-PHY rev 1 / radio 2069.
+ * Ossatura setup -> gainctrl -> misura -> solve -> apply -> cleanup e matematica
+ * del solve prese dalla cal N-PHY di brcmsmac
+ * (brcm80211/brcmsmac/phy/phy_n.c: wlc_phy_cal_rxiq_nphy_rev3,
+ * wlc_phy_calc_rx_iq_comp_nphy, wlc_phy_rx_iq_est_nphy). Il solve e'
+ * PHY-independent; il register-map e' adattato ad AC-PHY rev 1 / radio 2069.
  *
- * COSA E' GENERICO (portato, rivedibile ora):
- *   - l'ordine delle fasi in b43_phy_ac_rxiqcal (== rev3 N-PHY);
- *   - il solve in b43_phy_ac_rx_iq_comp_update (forma N-PHY).
+ * Quello che i retval hanno chiuso:
+ *   - mapping degli accumulatori: +3/+2 = i_pwr, +5/+4 = q_pwr,
+ *     +1/+0 = iq_prod (signed e piccolo). Il solve riproduce i coefficienti
+ *     del driver stock solo con questo mapping;
+ *   - i coefficienti a/b stanno in 0x?a0/0x?a1 per catena, formato s10;
+ *   - la matematica di b43_phy_ac_rx_iq_comp_update e' bit-exact su 3 vettori
+ *     misura -> coefficiente: somma di 2 round da 0x4000 campioni;
+ *   - iterazioni e tone-mode sono uno schedule FISSO, non un hill-climb, e il
+ *     gain di misura non viene mai modificato: i registri gain sono solo
+ *     salvati e ripristinati attorno alla misura.
  *
- * STATO FILL:
- *   - b43_phy_ac_rxiq_est: RIEMPITO e confermato (d6220 #82533-82556;
- *     agcombo rescan con retval, 10 run). Mapping accumulatori CONFERMATO
- *     dai retval: +3/+2 = i_pwr, +5/+4 = q_pwr, +1/+0 = iq_prod (i/q
- *     grandi e simili, iq piccolo e signed, e il solve sotto riproduce i
- *     coeff vendor solo con questo mapping).
- *   - b43_phy_ac_rxiq_coeffs: RIEMPITO e confermato (agcombo #32043-48):
- *     a/b in 0x?a0/0x?a1 per-core, s10.
- *   - b43_phy_ac_rx_iq_comp_update: matematica CONFERMATA bit-exact contro
- *     3 vettori misura->coeff (vedi docs/rxiq-cal-analysis.md, sezione
- *     agcombo): somma di 2 round da 0x4000 campioni + solve con
- *     arrotondamento al piu' vicino.
- *   - b43_phy_ac_rxcal_apply_gain / tx_tone / stopplayback: RIEMPITI
- *     verbatim dagli episodi (gain #82514-82531, tono #82499-82512,
- *     teardown #82558-82559).
- *   - b43_phy_ac_rxcal_gainctrl: 4 step {bit1,bit2} confermati come
- *     schedule FISSO (vedi FINDING 3).
- *   - rxcal_phy_setup/radio_setup/cleanup: NON riempiti -- bulk (~300 op
- *     RMW, #82151-82478), da fare a pezzi verificati col correlatore.
+ * Non riempiti: rxcal_phy_setup / radio_setup / cleanup, ~300 op di RMW da
+ * fare a pezzi verificati col correlatore.
  *
- * FINDING 1. La cal a bss-up d6220 (ch36) scrive anche la tabella gain
- * (id 0xc); i valori osservati (0x44 a off 0x63/67/6b/73/77/7b) sono
- * costanti in tutte le catture disponibili, non derivati dalle misure.
- * FINDING 2 (RISOLTO, agcombo retval). Il comp AC e' esercitato: la
- * sequenza completa e' sweep tone-mode {4,2,1,0} a 0x400 campioni, poi
- * per ogni core 2 round a 0x4000 campioni con gli ALTRI core mutati
- * (save/RMW/restore di 0x?20/0x?21/0x?28/0x?29), somma dei round, solve,
- * scrittura coeff in 0x?a0/0x?a1.
- * FINDING 3 (RISOLTO, agcombo retval). Nessun hill-climb e nessun
- * criterio dipendente dalle misure: iterazioni e tone-mode sono uno
- * schedule fisso, e il gain di misura non viene MAI modificato -- i
- * registri gain (0x?25/0x?39/0x?3a) sono solo salvati e ripristinati
- * attorno alla misura, il gain resta quello di rxgain_init.
- *
- * Finche' gli stub non sono riempiti, b43_phy_ac_rxiqcal ritorna
- * -EOPNOTSUPP e non tocca il silicio. NON e' wirato in set_channel: e' Fase B,
- * ha senso solo dopo che la RX base su UNII-1 ch.34 funziona.
+ * b43_phy_ac_rxiqcal ritorna -EOPNOTSUPP finche' REGMAP_FILLED e' 0 e non ha
+ * chiamanti nel driver: il path RXIQ in uso e' quello trascritto dalla trace,
+ * in phy_ac.c. Vedi docs/rxiq-cal-analysis.md.
  */
-
 #include <linux/kernel.h>	/* int_sqrt */
 #include "b43.h"
 #include "phy_ac.h"
@@ -101,7 +75,13 @@ struct b43_phy_ac_iq_comp {
  * lettura nella trace: +3,+2 / +5,+4 / +1,+0. */
 #define B43_PHY_AC_RXIQ_ACC(core)	(u16)(0x06c0 + (core) * 0x200)
 
-/* ============================ STUB DA RIEMPIRE ============================ */
+/* ===================== REGISTER MAP DALLA TRACE ========================== */
+/*
+ * Riempite e confermate: rxiq_est, rxiq_coeffs, rxcal_tone_setup/arm,
+ * rxcal_gainctrl (+ step), rxcal_apply_gain, tx_tone, stopplayback.
+ * Ancora stub: rxcal_phy_setup, rxcal_radio_setup, rxcal_cleanup,
+ * rxcal_radio_cleanup -- ~300 op di RMW da fare a pezzi verificati.
+ */
 
 /*
  * Correlatore RX-IQ: arma <num_samps> campioni, attende il completamento,
@@ -279,11 +259,6 @@ void b43_phy_ac_rxcal_tone_arm(struct b43_wldev *dev, u8 rx_core)
  * questi contengono l'accumulator dopo il settling della config; sul test
  * framework sono UNDEFINED (0 di default) e i peek servono solo al match
  * op-per-op.
- *
- * INTERPRETAZIONE: le 4 combinazioni {bit1, bit2} corrispondono a config
- * distinte del loopback measurement. I peek 0x0013 sono l'accumulator di
- * misura globale (comune ai core). Il valore stabilizzato (probabilmente
- * l'ultimo sample o media degli 8) è quello utile per la formula I/Q comp.
  */
 static void rxcal_gainctrl_step(struct b43_wldev *dev, u8 rx_core,
 				u8 step_idx,
@@ -351,41 +326,24 @@ static void b43_phy_ac_stopplayback(struct b43_wldev *dev);
 
 /*
  * Programma il gain di misura sul core <rx_core> (stride +0x200).
- * FINDING (trace, #82514-82531 e ripetuto): il gain e' quasi FISSO tra le
- * iterazioni -- NON un hill-climb ampio. Setting principale usato ~6x, un
- * setting alt (0x0725=0x0600 / 0x0739=0x0000 / 0x073a=0x0180) 2x. Quindi il
- * parametro idx del modello N-PHY non mappa a un ladder ampio: qui si trascrive
- * verbatim il setting principale + il suo micro-settle (0x07e6->0x07e2,
- * 0x00fa->0x007a). Le stesse write vanno su core1 (0x09xx = +0x200).
- * TODO: se serve il setting alt, aggiungere il secondo step e capire il
- * criterio di scelta (non visibile: dipende dalle misure UNDEFINED).
+ *
+ * Il gain non e' un ladder: il parametro idx del modello N-PHY non mappa su
+ * nulla qui. Trascritto il setting principale (usato ~6 volte) col suo
+ * micro-settle 0x07e6->0x07e2 / 0x00fa->0x007a. Esiste un setting alt
+ * (0x0725=0x0600 / 0x0739=0x0000 / 0x073a=0x0180) osservato 2 volte, non
+ * portato: la scelta fra i due non dipende dalle misure -- lo schedule e'
+ * fisso -- ma quale sia il discriminante non e' stabilito.
  */
 /*
- * RX-IQ cal gainctrl AC-PHY: sweep di 4 config di loopback per il core
- * `rx_core`. Ogni step programma 2 bit di controllo su radio 0x000e+s
- * (via 0x016e+s che pilota il gate del bit) e attende 8 letture di 0x0013
- * (accumulator globale) per il settling.
+ * Sweep di 4 configurazioni di loopback per il core `rx_core`, 80 op. Ogni step
+ * programma 2 bit di controllo su radio 0x000e+s (via 0x016e+s, che pilota il
+ * gate del bit) e attende 8 letture di 0x0013 per il settling. L'ordine dei 4
+ * step e' uno schedule fisso, non guidato dalle misure.
  *
- * INTERPRETAZIONE (cross-core measurement): un core inietta il tono
- * calibration con una specifica configurazione (bit1, bit2 di 0x000e+s),
- * e l'accumulator letto misura la risposta rx dei core attivi. Le 4
- * combinazioni sono probabilmente:
- *   (1, 0) → config A (baseline injection)
- *   (0, 0) → injection off / null measurement
- *   (1, 1) → config B (secondo mode)
- *   (0, 1) → config C
- * Il ciclo esterno itera su rx_core, così ogni core-i "trasmette" mentre
- * gli altri "ricevono".
- *
- * TODO(formula): la formula che combina i 4×N valori 0x0013 per core in
- * coefficienti I/Q comp non è ancora derivata. I peek nel trace sono
- * val=UNDEFINED (il tracer wl-diag non registra i valori letti), quindi
- * serve HW test o RE del blob per ricostruire la funzione. Il valore da
- * scrivere nei registri di comp finali dovrebbe essere una combinazione
- * lineare dei accumulator misurati alle 4 config (matrix inversion tipica
- * di IQ compensation).
- *
- * Vendor #39735-#39814 (core 0), #39818-#39897 (core 1): 80 op/core.
+ * Attenzione: la lettura "cross-core", per cui un core inietta e gli altri
+ * ricevono, e' stata provata e **non e' sostenuta** -- nella cattura non c'e'
+ * nessun punto in cui si legge l'accumulatore di un core mentre un altro ha il
+ * tono. Vedi docs/rxiq-cal-analysis.md prima di ripartire da quella premessa.
  */
 void b43_phy_ac_rxcal_gainctrl(struct b43_wldev *dev, u8 rx_core)
 {

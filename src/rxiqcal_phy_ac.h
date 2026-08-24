@@ -5,10 +5,8 @@
 struct b43_wldev;
 
 /*
- * RX I/Q calibration (SKELETON). Struttura + solve generico da brcmsmac N-PHY;
- * register-map AC-PHY da riempire dalla trace. Ritorna -EOPNOTSUPP finche'
- * B43_PHY_AC_RXIQCAL_REGMAP_FILLED == 0. Fase B: non wirare in set_channel
- * prima che la RX base funzioni.
+ * Solver RXIQ generico. Ritorna -EOPNOTSUPP finche' il register-map non e'
+ * riempito; nessun chiamante nel driver. Razionale in rxiqcal_phy_ac.c.
  */
 int b43_phy_ac_rxiqcal(struct b43_wldev *dev, u8 cal_type);
 
@@ -49,10 +47,7 @@ void b43_phy_ac_rxcal_tone_setup(struct b43_wldev *dev);
  */
 void b43_phy_ac_rxcal_tone_arm(struct b43_wldev *dev, u8 rx_core);
 
-/*
- * RX-IQ cal per-core: sweep 4-step con settling. Rimpiazza il vecchio
- * hill-climb N-PHY (che non matcha il pattern AC-PHY). Vendor 80 op/core.
- */
+/* RX-IQ cal per-core: sweep 4-step con settling, schedule fisso. */
 void b43_phy_ac_rxcal_gainctrl(struct b43_wldev *dev, u8 rx_core);
 
 /*

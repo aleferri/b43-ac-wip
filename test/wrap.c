@@ -143,6 +143,11 @@ void b43_test_mirror_phy_set(u16 reg, u16 val)
 		mirror_phy[reg] = val;
 }
 
+u16 b43_test_mirror_phy_get(u16 reg)
+{
+	return (reg < MIRROR_PHY_SZ) ? mirror_phy[reg] : 0;
+}
+
 /* Diagnostics: main.c may want to know whether every scripted plan was
  * consumed to completion (indicating the flow polled as expected). */
 void b43_test_plans_report(FILE *f)
@@ -223,6 +228,7 @@ struct oracle_q {
 
 static struct oracle_q oracle_phy[ORACLE_ADDRS];
 static struct oracle_q oracle_rad[ORACLE_ADDRS];
+static struct oracle_q oracle_obj[ORACLE_ADDRS];
 static int oracle_on;
 static unsigned long oracle_from;
 static long oracle_hits, oracle_miss_addr, oracle_miss_exhausted;
@@ -289,6 +295,10 @@ static void oracle_init(void)
 			if (sscanf(p, "RAD.RD %*[^=]=%x %*[^=]=%x",
 				   &addr, &val) == 2)
 				oracle_push(oracle_rad, addr, val);
+		} else if ((p = strstr(line, "OBJ.RD")) != NULL) {
+			if (sscanf(p, "OBJ.RD %*[^=]=%x %*[^=]=%x",
+				   &addr, &val) == 2)
+				oracle_push(oracle_obj, addr, val);
 		}
 	}
 	fclose(f);
@@ -325,10 +335,13 @@ void b43_test_oracle_report(void)
 	if (!oracle_on)
 		return;
 	for (a = 0; a < ORACLE_ADDRS; a++) {
-		struct oracle_q *q[2] = { &oracle_phy[a], &oracle_rad[a] };
+		struct oracle_q *q[3] = {
+			&oracle_phy[a], &oracle_rad[a], &oracle_obj[a]
+		};
+		static const char *const nm[3] = { "phy", "radio", "obj" };
 		int i;
 
-		for (i = 0; i < 2; i++) {
+		for (i = 0; i < 3; i++) {
 			if (!q[i]->n)
 				continue;
 			addrs++;
@@ -336,7 +349,7 @@ void b43_test_oracle_report(void)
 				partial++;
 				fprintf(stderr,
 					"oracle %s 0x%04x  consumate %d/%d\n",
-					i ? "radio" : "phy", a,
+					nm[i], a,
 					q[i]->iter, q[i]->n);
 			}
 		}
@@ -386,8 +399,6 @@ out:
  * status_mask derivato dallo stato dei registri, non dalle op emesse. La tabella
  * e' la stessa di reverse-tools/annotate_enables.py, cosi' lo stato che le
  * REQUIRE dello scratch vedono e' lo stesso che l'annotatore ricava dalla
- * cattura vendor. Prima era popolato solo MAC_EN: gli altri bit restavano a zero
- * e le precondizioni che li leggono passavano a vuoto.
  */
 static void phy_state_track(struct b43_wldev *dev, u16 reg, u16 val)
 {
@@ -891,14 +902,21 @@ void __wrap_b43_maccontrol_set(struct b43_wldev *dev, u32 mask, u32 set)
 
 /*
  * b43_mac_suspend/enable in-tree sono annidabili: tengono dev->mac_suspended e
- * toccano MACCTL solo sulle transizioni 0->1 e 1->0. Il modello fedele e'
- * quello con il contatore, e si attiva con AC_MAC_REFCOUNT=1.
+ * toccano MACCTL solo sulle transizioni 0->1 e 1->0. E' il modello fedele, ed e'
+ * il DEFAULT: AC_MAC_REFCOUNT=0 torna a una MAC.MCTRL per chiamata.
  *
- * Il default resta senza contatore, cioe' una MAC.MCTRL per chiamata, perche' e'
- * l'assunzione su cui i call site dello scratch sono stati trascritti: con il
- * contatore attivo il MATCH di switch_channel cade, e la differenza misura quanto
- * di quelle op era artefatto del doppio conteggio. Non lasciare il default cosi'
- * a rework finito.
+ * Il default era il contrario, con la nota che i call site erano stati
+ * trascritti nell'assunzione senza contatore e che col contatore il MATCH di
+ * switch_channel sarebbe caduto. La misura dice altro:
+ *
+ *            MAC.MCTRL emesse      similarita' (compare_lcs.py)
+ *   flow1    32 -> 113 (vendor 119)     49.50% -> 99.30%
+ *   flow2    124 -> 124 (vendor 119)    99.19% -> 99.19%
+ *
+ * Su switch_channel il flag non ha effetto: quel percorso non annida. Le 6
+ * MAC.MCTRL che ancora mancano su flow1 sono la lunghezza variabile del ciclo
+ * probe, non op assenti -- vedi il commento in phy_ac.c sulle quattro inserite
+ * prima della prima GPIO.
  *
  * I flow entrano con il MAC sospeso, come ops->init e switch_channel nel driver
  * vero; b43_test_mac_reset() riporta il contatore a quello stato.
@@ -932,8 +950,15 @@ static void mac_state_sync(struct b43_wldev *dev)
 static int mac_rc(void)
 {
 	if (mac_refcount < 0) {
+		/*
+		 * Default acceso: e' il modello fedele e la misura lo conferma. Sul
+		 * flow full il port emette 113 MAC.MCTRL col contatore contro le 119
+		 * del vendor, e 32 senza; in similarita' 99.30% contro 49.50%. Su
+		 * switch_channel il flag e' irrilevante, 124 in entrambi i casi.
+		 * AC_MAC_REFCOUNT=0 lo disattiva.
+		 */
 		const char *e = getenv("AC_MAC_REFCOUNT");
-		mac_refcount = (e && *e == '1');
+		mac_refcount = !(e && *e == '0');
 		e = getenv("AC_MAC_TRACE");
 		mac_trace = (e && *e == '1');
 	}
@@ -999,6 +1024,40 @@ void __wrap_b43_phy_ac_mhf_maskset(struct b43_wldev *dev,
 
 void __wrap_b43_phyop_switch_analog_generic(struct b43_wldev *dev, bool on)
 { (void)dev; (void)on; }
+
+/* ============ SHM (OBJ) accessors ============
+ *
+ * Definizioni piene, non wrap: nel link di test helpers_phy_ac.c non c'e',
+ * quindi b43_shm_read16/write16 non hanno un'implementazione reale da
+ * intercettare. Il tracer le emette come OBJ.RD/OBJ.WR, gli stessi
+ * mnemonici della cattura vendor. Le letture pescano dall'oracolo per
+ * indirizzo (i valori SHM sono stato ucode, non derivabile dal modello) e
+ * cadono sul mirror delle write in sua assenza.
+ */
+#define MIRROR_SHM_WORDS 0x1000	/* offset byte < 0x2000 */
+static u16 mirror_shm[MIRROR_SHM_WORDS];
+
+u16 b43_shm_read16(struct b43_wldev *dev, u16 routing, u16 offset)
+{
+	u16 v;
+
+	(void)dev; (void)routing;
+
+	if (!oracle_take(oracle_obj, offset, &v))
+		v = (offset / 2 < MIRROR_SHM_WORDS) ? mirror_shm[offset / 2]
+						    : 0;
+	fprintf(trace(), "cpu1 OBJ.RD   addr=0x%04x val=0x%04x\n", offset, v);
+	return v;
+}
+
+void b43_shm_write16(struct b43_wldev *dev, u16 routing, u16 offset, u16 val)
+{
+	(void)dev; (void)routing;
+
+	if (offset / 2 < MIRROR_SHM_WORDS)
+		mirror_shm[offset / 2] = val;
+	fprintf(trace(), "cpu1 OBJ.WR   addr=0x%04x val=0x%04x\n", offset, val);
+}
 
 /*
  * b43_current_band: the test main.c sets `b43_test_band` before the

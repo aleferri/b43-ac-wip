@@ -2,7 +2,7 @@
 
 Compila il codice del driver AC-PHY sotto `../src/` in
 userspace e produce una trace nel formato di `wl-diag` da confrontare
-contro le catture vendor sotto `reverse-output/` e `router-data/`.
+contro le catture vendor sotto `router-data/`.
 Non modifica nessun file dello scratch.
 
 ## Come funziona
@@ -75,8 +75,18 @@ make                # compila ac_trace
 ```
 
 Flow disponibili (`argv[1]`): `rxiq_est_debug` (default), `rxiq_comp`,
-`rxiqcal`, `op_init`, `rfkill`, `switch_channel`. Board (`argv[2]`): `d6220`
-(default), `agcombo`, `dsl`.
+`rxiqcal`, `op_init`, `rfkill`, `switch_channel`, `full`, `periodic`,
+`crsmin`. Board (`argv[2]`): `d6220` (default), `agcombo`, `dsl`.
+
+`periodic` esegue un tick del watchdog a regime (poll TSSI/statistiche SHM
++ una tornata di measure block). Le letture SHM e TSSI sono stato ucode e
+vengono dall'oracolo; la stessa cattura fa da riferimento per il confronto:```sh
+AC_READ_ORACLE=../router-data/d6220/wl-diag-wl1-steady-tick-ch36-bw20.txt \
+    ./ac_trace periodic d6220 > gen.periodic.out
+python3 compare.py ../router-data/d6220/wl-diag-wl1-steady-tick-ch36-bw20.txt gen.periodic.out
+# MATCH, 496/496 op; su stderr l'oracolo deve chiudere con 0 code esaurite
+# e 0 non consumati.
+```
 
 `switch_channel` è il flow più ampio: guida l'intera pipeline
 `b43_phy_ac_op_switch_channel`. Su D6220 ch36 emette ~22k operazioni e
@@ -109,7 +119,7 @@ il confronto verifica anche cio' che il driver *calcola* e non solo la sequenza.
 ```sh
 python3 ../reverse-tools/merge_retvals.py \
     ../router-data/d6220/wl-diag-wl1-attach-to-bss-up-ch36-bw20.txt /tmp/att.merged.txt
-AC_MAC_REFCOUNT=1 AC_READ_ORACLE=/tmp/att.merged.txt \
+AC_READ_ORACLE=/tmp/att.merged.txt \
     ./ac_trace full d6220 > trace.full.d6220.out
 python3 compare.py /tmp/att.merged.txt trace.full.d6220.out --range 50:30172
 ```
@@ -118,13 +128,93 @@ python3 compare.py /tmp/att.merged.txt trace.full.d6220.out --range 50:30172
 
 Il nome inganna -- l'op del driver e' `op_switch_channel` e quello che esegue e'
 un bring-up successivo, non l'impostazione di un canale su un PHY gia' su.
+### Il contatore del MAC e' il default
+
+`b43_mac_suspend`/`enable` in-tree sono **annidabili**: toccano MACCTL solo
+sulle transizioni. Dalla versione con `compare_lcs.py` quello e' il default e
+non serve piu' passare `AC_MAC_REFCOUNT=1`; `AC_MAC_REFCOUNT=0` torna al
+comportamento precedente, una `MAC.MCTRL` per chiamata.
+
+Il default era il contrario. La misura:
+
+|  | MAC.MCTRL emesse | similarita' |
+|---|---|---|
+| `full`, senza contatore | 32 (vendor 119) | 49.50% |
+| `full`, con contatore | 113 (vendor 119) | **99.30%** |
+| `switch_channel`, senza | 124 (vendor 119) | 99.19% |
+| `switch_channel`, con | 124 | 99.19% |
+
+Su `switch_channel` il flag **non ha effetto**: quel percorso non annida. Quindi
+l'avvertenza che stava nel codice -- "col contatore il MATCH di switch_channel
+cade" -- non si osserva.
+
+### Due metriche, e non sono confrontabili
+
+| strumento | cosa misura | flow1 |
+|---|---|---|
+| `compare.py` | il port emette **esattamente** la stessa sequenza | 1017 disallineamenti |
+| `compare_lcs.py` | quanto del vendor e' riprodotto **in ordine** | 99.96%, 12 regioni |
+
+La differenza non e' cosmetica: dieci op di lunghezza diversa sfasano il
+confronto posizionale da quel punto in avanti, e `compare.py` conta 1017
+divergenze dove l'altro ne conta poche decine. Le percentuali nei documenti di
+questo repo vengono da `compare_lcs.py`.
+
+**Nota di provenienza**: `compare_lcs.py` e' la ricostruzione di uno script di
+lavoro non versionato, e ora torna: `flow2` da' 21000/21007 identico
+all'originale, `flow1` 25002/25013 contro 24998, dove le quattro op di
+differenza sono le `MAC.MCTRL` aggiunte a `phy_ac.c` dopo che quei numeri erano
+stati presi.
+
+Le normalizzazioni sono tutte **ricavate dai dati**, non assunte:
+
+- si escludono `SI.COREREG` e `PMU.PLL`, che l'harness non simula (i
+  denominatori 25013 e 21007 vengono da li');
+- la larghezza degli esadecimali e i campi `ret=`/`a5=`/`a6=`, che solo la
+  cattura ha;
+- il `cpuN`, perche' l'harness non simula lo scheduling;
+- il rendering di `AND`/`OR`: il vendor scrive `val=0x4000 (set 0x4000)` dove
+  l'harness scrive `mask=0x0`. Su 163 coppie allineate il valore coincide
+  **sempre** e la maschera del port e' **sempre** zero, 93 volte con `(clr)` e
+  70 con `(set)`. Le `PHY.MOD` vere hanno gia' la stessa forma da entrambe le
+  parti.
+
+### I due gate sull'attach, con il set di hook esteso
+
+Le catture storiche in `router-data/d6220/` non hanno `OBJ.*`, `TPL.*`,
+`MAC.BW`, `OTP.*` ne' `SROMCTL`: come oracoli sono cieche a ~1600 op, e appena
+il
+port comincia a emettere scritture in shared memory ogni una risulterebbe una
+divergenza. Le due nuove:
+
+```sh
+# l'attach vero e proprio, tabelle complete comprese le per-core
+python3 ../reverse-tools/merge_retvals.py \
+  ../router-data/d6220/wl-diag-wl1-attach-ch36-bw20-tabelle-complete.txt \
+  /tmp/att2.merged.txt
+AC_READ_ORACLE=/tmp/att2.merged.txt ./ac_trace full d6220
+
+# il preambolo del probe: GPIO, core enable, OTP, PLL, test SHM
+python3 ../reverse-tools/merge_retvals.py \
+  ../router-data/d6220/wl-diag-wl1-attach-ch36-bw20-con-preambolo.txt \
+  /tmp/pre.merged.txt
+AC_READ_ORACLE=/tmp/pre.merged.txt ./ac_trace op_init d6220
+```
+
+**Due gate e non una traccia cucita.** I due attach divergono 68 record dopo il
+punto in cui si agganciano (`OBJ.WR 0x0790` a `0x0500` contro `0x0300`), quindi
+innestare il preambolo di uno sull'altro darebbe una giunzione inventata -- e un
+oracolo vale per l'ordine, quindi una divergenza misurata su una cucitura non
+distingue un errore del port da un artefatto. Il preambolo sta *prima* del punto
+di divergenza, quindi quella regione e' incontestata e si misura da sola.
+
 Va quindi confrontato con `down-to-bss-ch36-bw20`, non con l'attach, e con
 `AC_FIRST_INIT=0`:
 
 ```sh
 python3 ../reverse-tools/merge_retvals.py \
     ../router-data/d6220/wl-diag-wl1-down-to-bss-ch36-bw20.txt /tmp/d2u.merged.txt
-AC_FIRST_INIT=0 AC_MAC_REFCOUNT=1 \
+AC_FIRST_INIT=0 \
     AC_READ_ORACLE=/tmp/d2u.merged.txt AC_READ_ORACLE_FROM=653 \
     ./ac_trace switch_channel d6220 > trace.switch.d6220.out
 python3 compare.py /tmp/d2u.merged.txt trace.switch.d6220.out \
@@ -194,10 +284,14 @@ finestra corrispondente dalla `down→bss-up` annotata:
 
 ```sh
 python3 compare.py \
-    ../reverse-output/d6220-trace2-annotated.txt \
+    ../router-data/d6220/wl-diag-wl1-attach-to-bss-up-ch36-bw20.txt \
     trace.d6220.out \
-    --range 82499:83540 --auto-align
+    --range LO:HI --auto-align
 ```
+
+Attenzione agli indici: gli esempi di finestra che girano nei commenti e nei doc
+(`82499:83540` e simili) vengono da trace annotate che **non sono in questo
+repo**. Vanno ricalcolati sulla cattura che si usa davvero.
 
 - `--range LO:HI` estrae la finestra del blocco d'interesse dal file
   vendor.

@@ -45,7 +45,7 @@ le call.
 
 | Call | SAMCNT | Cosa succede dopo |
 |------|--------|-------------------|
-| #5   | 0x4000 | Write di coefficienti di compensazione (vedi §4) |
+| #5   | 0x4000 | Write dello stato di mute delle altre catene (vedi §4) |
 | #6   | 0x4000 | Ri-write degli stessi coefficienti (verifica)     |
 
 Le call #5 e #6 hanno il tone-mode fermo a 0 (invariato dalla call #4).
@@ -76,203 +76,81 @@ diverso al segnale ricevuto (es. accoppiamento da una catena specifica),
 permettendo all'algoritmo di decomporre lo squilibrio IQ in componenti
 ortogonali.
 
-Osservazione: la misura con tone_mode=0 (call #4) è seguita immediatamente
-dalla fase di precisione senza cambio di gain.
+La lettura "tono spento a tone_mode=0" e' **falsificata** dai valori misurati:
+vedi §6, dove gli accumulatori a `0x0` sono cinque volte piu' grandi. Resta che
+quattro configurazioni distinte con tre bit attivi sono troppo strutturate per
+un interruttore on/off, che di call ne richiederebbe due.
 
-L'ipotesi che tone_mode=0 fosse "tono spento" — e quindi la call #4 una misura
-di riferimento del rumore, con le #1–#3 a isolare le componenti del loopback —
-è stata **falsificata** dai valori misurati (vedi P1 in §7): a tone_mode=0 gli
-accumulatori sono cinque volte più grandi, non più piccoli. Il parallelo col
-metodo rt2800, dove `g_imb` e `ph_rx` si decompongono da misure separate di
-`sigma_i`, `sigma_q` e `r_iq`, resta una analogia possibile per la struttura a
-quattro misure, ma non poggia più su quella lettura di tone_mode.
+## 4. Registri `0x0720`-`0x0729`: non sono coefficienti
 
-**Evidenza contraria da escludere**: se tone_mode fosse un semplice
-on/off, basterebbero 2 call (tono acceso + tono spento), non 4 con valori
-distinti. Il pattern a 4 step con 3 bit attivi è troppo strutturato per
-un interruttore.
+Le quattro scritture per catena che seguono la prima misura di precisione sono
+lo stato **save/restore del mute** delle catene non misurate, non coefficienti
+di compensazione. `0x0720`-`0x0729` e' la pagina AFE -- gli stessi registri che
+`switch_analog` salva nel preambolo di bring-up -- ed e' per questo che compare
+50-60 volte per cattura.
 
-
-## 4. Coefficienti di compensazione: write-back e formato
-
-**SUPERATO — vedi §9.** La cattura agcombo con retval mostra che questi 4
-registri non sono coefficienti: sono lo stato save/restore del mute dei
-core non misurati. I coefficienti veri sono 2 per core in 0x?a0/0x?a1,
-formato s10 come N-PHY. Il testo sotto è conservato come storia
-dell'ipotesi.
-
-Dopo la call #5 (prima misura a 16384 campioni) il blob scrive 4 registri
-per core:
-
-| Registro       | Valore calibrato | Valore default (pre/post cal) |
-|----------------|------------------|-------------------------------|
-| 0x0720 / 0x0920 | 0x0182         | 0x0180                        |
-| 0x0721 / 0x0921 | 0x7761         | 0x5000                        |
-| 0x0728 / 0x0928 | 0x0080         | 0x0880                        |
-| 0x0729 / 0x0929 | 0x0321         | 0x1000                        |
-
-Osservazioni:
-
-- I valori sono **identici** per entrambi i core e identici tra le due
-  trace (DSL e D6220). Due board diverse, stesso chip: i coefficienti
-  dipendono dal silicio, non dalla board.
-- Il delta dal default è minuscolo per 0x0720 (+2) e molto grande per
-  0x0721 (+0x2761) e 0x0728 (–0x0800). Questo è incompatibile con un
-  singolo formato `(a, b)` a 10 bit come nell'N-PHY.
-- I 4 registri (non 2) per core suggeriscono che il formato AC-PHY
-  codifica gain e fase separatamente, non fusi in `a`/`b`.
-- Dopo la call #6 (verifica), gli stessi valori vengono ri-scritti: la
-  seconda misura conferma la prima.
-
+I coefficienti veri sono **due per catena**, in `0x06a0`/`0x06a1` (+`core×0x200`),
+formato s10 come sull'N-PHY, scritti 4-5 volte per cattura. Derivazione e
+verifica bit-exact in §8.
 
 ## 5. Confronto col reference N-PHY (brcmsmac)
 
 | Aspetto | N-PHY (`phy_n.c`) | AC-PHY (dalla trace) |
 |---------|-------------------|----------------------|
 | Misure per calibrazione | 1 | 4 (sweep) + 2 (precisione) |
-| Variabile di sweep | nessuna (misura singola) | 0x0734 tone_mode {4,2,1,0} |
-| Campioni per misura | 0x4000 (fisso) | 0x0400 (sweep) → 0x4000 (precisione) |
-| Registri accumulatore | 0x12b/0x12a/0x129 (cmd) | 0x0272/0x0271/0x0270 (cmd) |
-| Layout risultati | 3 × 32b per core (i²,q²,iq) a 0x06c0+core×0x200 | idem, confermato |
-| Coefficienti | 2 per core (a, b) 10-bit, 0x9a-0x9d | **2 per core (a, b) 10-bit, 0x06a0/0x06a1 + core×0x200** |
-| Formato coeff | gain+fase fusi in a/b | idem, confermato |
+| Variabile di sweep | nessuna | `0x0734` tone_mode {4,2,1,0} |
+| Campioni per misura | `0x4000` fisso | `0x0400` sweep -> `0x4000` precisione |
+| Registri accumulatore | `0x12b`/`0x12a`/`0x129` | `0x0272`/`0x0271`/`0x0270` |
+| Layout risultati | 3 x 32b per catena (i2, q2, iq) | idem, confermato |
+| Coefficienti | 2 per catena (a, b) 10 bit, `0x9a`-`0x9d` | 2 per catena, `0x06a0`/`0x06a1` + `core×0x200` |
+| Formato coeff | gain e fase fusi in a/b | idem, confermato |
 
-L'estimator HW (§readback 0x06c0) usa lo stesso layout dell'N-PHY — la
-trace mostra lo stesso ordine di lettura hi-before-lo per le 3 coppie. La
-differenza è a monte: sweep a 4 configurazioni invece di una misura sola.
-A valle no: i coefficienti sono due per core come sull'N-PHY, e il solve in
-`b43_phy_ac_rx_iq_comp_update` li riproduce bit-exact contro l'agcombo.
+L'estimator hardware usa lo stesso layout dell'N-PHY, con lo stesso ordine di
+lettura hi-prima-di-lo per le tre coppie. La differenza e' **a monte**: sweep a
+quattro configurazioni invece di una misura sola. A valle no, e il solve in
+`b43_phy_ac_rx_iq_comp_update` riproduce i coefficienti bit-exact.
 
-La riga precedente diceva "4 per core, 16-bit, 0x0720-0x0729". È sbagliata:
-`0x0720-0x0729` è la pagina AFE — sono i registri che `switch_analog` salva nel
-preambolo di bring-up — e nelle catture compare 50-60 volte per quel motivo,
-non come coefficienti. I coefficienti sono a `0x06a0`/`0x06a1` (+`core×0x200`),
-scritti 4-5 volte per cattura, una per aggiornamento.
+## 6. Cosa i dati hanno escluso
 
+Due letture sono state provate e vanno registrate perche' sono costate tempo.
 
-## 6. Ipotesi dell'algoritmo completo
-
-**SUPERATO — vedi §9** per l'algoritmo confermato dai retval: compute()
-consuma solo le misure di precisione per-core (con gli altri core mutati),
-non lo sweep, e produce 2 coefficienti s10 per core in 0x?a0/0x?a1.
-
-Dalla struttura della trace si ricostruisce:
-
-```
-rxiq_cal(dev):
-    save gain/tone/comp registers
-
-    arm tone engine (tx_tone)
-    apply gain override (0x0739/0x073a/0x0725)
-
-    for tone_mode in {4, 2, 1, 0}:
-        set 0x0734[core] = tone_mode     ← sweep
-        est[tone_mode] = rxiq_est(1024 samples)
-
-    coeffs = compute(est[4], est[2], est[1], est[0])   ← chiave
-
-    write coeffs to 0x0720-0x0729 per-core
-    verify = rxiq_est(16384 samples)
-    if verify OK:
-        re-write coeffs (conferma)
-    else:
-        retry or fallback
-
-    restore registers
-```
-
-La funzione `compute()` riceve 4 set di accumulatori (i², q², iq) — uno
-per configurazione di loopback — e ne estrae coefficienti di compensazione
-a 4 componenti. Il fatto che siano 4 misure in input e 4 registri in
-output suggerisce una relazione diretta: ogni misura contribuisce
-prevalentemente a uno dei 4 coefficienti.
-
-
-## 7. Predizioni falsificabili
-
-Il debug helper (`b43_phy_ac_rxiq_est_debug`) logga i 3 accumulatori per
-core a ogni tone_mode. Le seguenti predizioni discriminano tra questa
-ipotesi e le alternative.
-
-### P1: tone_mode=0 è noise floor — **FALSIFICATA**
-
-Gli accumulatori del core 0 nella cattura agcombo rescan (che ha i retval):
+**`tone_mode=0` non e' il noise floor.** Accumulatori della catena 0
+nell'agcombo rescan, che ha i retval:
 
 | tone_mode | i_pwr | q_pwr | iq_prod |
 |---|---|---|---|
-| 0x4 | 9 499 843 | 9 691 680 | 20 787 |
-| 0x2 | 8 878 062 | 9 150 008 | −142 124 |
-| 0x1 | 5 726 503 | 7 049 264 | −49 295 |
-| 0x0 | **47 717 674** | **58 550 641** | 560 273 |
+| `0x4` | 9 499 843 | 9 691 680 | 20 787 |
+| `0x2` | 8 878 062 | 9 150 008 | -142 124 |
+| `0x1` | 5 726 503 | 7 049 264 | -49 295 |
+| `0x0` | **47 717 674** | **58 550 641** | 560 273 |
 
-A tone_mode=0 la misura e' **cinque volte piu' grande**, non ordini di
-grandezza piu' piccola. Il tono non e' spento: quella e' la configurazione con
-il segnale piu' forte delle quattro. Nessuna delle quattro misure e' un noise
-floor.
+A `tone_mode=0` la misura e' **cinque volte piu' grande**, non ordini di
+grandezza piu' piccola: e' la configurazione col segnale piu' forte delle
+quattro. Nessuna delle quattro e' un noise floor, e il tono non si spegne.
 
-Nota anche che le quattro modalita' non sono una scala monotona di ampiezza
-(9.5M, 8.9M, 5.7M, 47.7M per 4/2/1/0), quindi `tone_mode` non e' un codice di
-attenuazione. Cosa selezioni resta da stabilire.
+**`tone_mode` non e' un codice di attenuazione.** Le quattro modalita' non sono
+una scala monotona (9.5M, 8.9M, 5.7M, 47.7M per 4/2/1/0). Cosa selezionino resta
+da stabilire.
 
-### P2: i_pwr e q_pwr sono dello stesso ordine a tone_mode=4 — **CONFERMATA**
+Il mapping delle coppie hi/lo e' invece **confermato**: a `tone_mode=4` `i_pwr` e
+`q_pwr` differiscono del 2%, e `iq_prod` e' tre ordini di grandezza piu' piccolo
+in tutte e quattro le modalita' -- quel che si aspetta da un prodotto incrociato
+su un chip poco squilibrato.
 
-A tone_mode=4: `i_pwr` = 9 499 843, `q_pwr` = 9 691 680, differenza **2%**,
-dentro il <20% previsto. E `iq_prod` e' tre ordini di grandezza piu' piccolo in
-tutte e quattro le modalita', come si aspetta da un prodotto incrociato su un
-chip poco squilibrato.
+## 7. Cosa resta aperto
 
-Il mapping delle coppie hi/lo e' quindi corretto, coerentemente con quanto dice
-`b43_phy_ac_rx_iq_comp_update`, il cui solve riproduce bit-exact i coefficienti
-che il driver stock scrive.
+1. Riempire `rxcal_phy_setup` / `radio_setup` / `cleanup` (~300 op di RMW) a
+   pezzi verificati col correlatore.
+2. Determinare lo scopo dello sweep tone-mode. I coefficienti **non** ne
+   dipendono numericamente -- li riproducono le sole misure di precisione -- ma
+   il driver stock lo esegue sempre. Ipotesi: sanity check o warm-up; per
+   discriminare servono catture con retval di un caso di fallimento.
+3. Confermare la scala di `B43_PHY_AC_MIN_RXIQ_PWR`, mai esercitata: nelle
+   catture le potenze sono ordini di grandezza sopra la soglia.
+4. Arrotondamento a frazione esattamente 0.5, non presente nei tre vettori
+   disponibili.
 
-### P3: iq_prod è signed e piccolo rispetto a i_pwr
-
-Nella formulazione standard, `iq_prod = Σ(I·Q)` è proporzionale a
-sin(φ) dove φ è l'errore di fase. Per mismatch tipici (< 5°),
-|iq_prod| < 0.1 · i_pwr. Se il bit 31 del valore ricostruito
-(hi<<16|lo) indica il segno, il risultato è coerente.
-
-Se falsificata (|iq_prod| > i_pwr): il registro letto come iq_prod è in
-realtà i² o q², e quello letto come i² è iq_prod.
-
-### P4: i coefficienti non dipendono dalla board
-
-Le due trace (DSL-3580L e D6220) producono gli stessi coefficienti calibrati
-(0x0182, 0x7761, 0x0080, 0x0321). Se il debug helper su una terza board
-dello stesso stepping (es. agcombo BCM4360) produce valori diversi ma con la
-stessa struttura (4 write per core, delta piccolo su 0x0720, delta grande su
-0x0721), l'algoritmo è confermato come chip-dipendente, non board-dipendente.
-
-### P5: la sequenza è stabile tra canali
-
-Se la struttura {4 sweep + 2 precision} si ripete identica su un canale
-diverso (es. ch44) ma con coefficienti numericamente diversi, la
-calibrazione è channel-dependent come atteso per un compensatore IQ.
-
-Se falsificata (stessi coefficienti su canali diversi): la cal è
-one-shot e i coefficienti sono una proprietà del chip, non del canale.
-Il decorrelation CSV classifica tutti questi registri come `DYN-runtime`,
-coerente con channel-dependence, ma non conclusivo senza valori.
-
-
-## 8. Prossimi passi
-
-**AGGIORNATO dopo §9.** Restano aperti:
-
-1. Riempire rxcal_phy_setup/radio_setup/cleanup (bulk ~300 op RMW,
-   #82151-82478 su d6220) a pezzi verificati col correlatore.
-2. Determinare lo scopo dello sweep tone-mode {4,2,1,0}: i coefficienti
-   non ne dipendono numericamente (riprodotti dalle sole misure di
-   precisione), ma il blob lo esegue sempre. Ipotesi: sanity/linearity
-   check software o warm-up; servono catture con retval di un caso di
-   fallimento per discriminare.
-3. Confermare la scala di B43_PHY_AC_MIN_RXIQ_PWR (mai esercitata:
-   nelle catture le potenze sono ordini di grandezza sopra).
-4. Osservare il comportamento di arrotondamento a frazione esattamente
-   0.5 (non presente nei 3 vettori disponibili).
-
-
-## 9. Verifica con la cattura agcombo a return value
+## 8. Verifica con la cattura agcombo a return value
 
 Cattura: `router-data/agcombo/agcombo-wl1-4360-rescan-to-bss-ch36.txt`
 (wl-diag "capture ret val", 6453 RETVAL), mergiata con
@@ -280,7 +158,7 @@ Cattura: `router-data/agcombo/agcombo-wl1-4360-rescan-to-bss-ch36.txt`
 Board agcombo = BCM4360 3x3: terza catena (registri 0x0aXX/0x0bXX)
 attiva, a differenza di DSL-3580L/D6220.
 
-### 9.1 Struttura confermata
+### 8.1 Struttura confermata
 
 10 run dell'estimator (start su 0x0270), in tre fasi:
 
@@ -294,13 +172,13 @@ attiva, a differenza di DSL-3580L/D6220.
 3. **Precisione per-core** (it4–it9): 2 round × 3 core a 0x4000 campioni.
    Per ogni misura, i registri 0x?20/0x?21/0x?28/0x?29 degli ALTRI due
    core vengono letti (retval: 0x0182/0x7761/0x0080/0x0321 — i "4
-   coefficienti" della vecchia ipotesi §4), modificati per mutare il
+   coefficienti", vedi §4), modificati per mutare il
    core, e ripristinati dopo la misura. Il gain (0x?25/0x?39/0x?3a)
    viene solo salvato e ripristinato: mai modificato.
 4. **Solve + write-back** (#32043-32048): 2 coefficienti per core in
    0x?a0 (a) / 0x?a1 (b), s10.
 
-### 9.2 Vettori misura → coefficienti
+### 8.2 Vettori misura → coefficienti
 
 Somma dei due round per core (hi<<16|lo dagli accumulatori):
 
@@ -325,26 +203,22 @@ Dettagli discriminati dai vettori:
   core 0 a=−2.61→−3 (trunc darebbe −2), core 0 b=109.97→110 e core 1
   b=59.83→60 (floor darebbe 109 e 59). Il fixed-point brcmsmac
   produce ±1 su 3 valori su 6.
-- **Mapping accumulatori** (chiude il DA VERIFICARE storico): +3,+2 =
+- **Mapping accumulatori** : +3,+2 =
   i², +5,+4 = q², +1,+0 = i·q, hi prima di lo. Con qualunque swap il
   solve non riproduce i coefficienti vendor.
 
-### 9.3 Risoluzione delle predizioni (§7)
+### 8.3 Cosa i retval hanno chiuso
 
-- **P1 falsificata**: a tone_mode=0 le potenze sono ~3.4× sotto
-  tone_mode=4, non ordini di grandezza: tutte e 4 le misure vedono
-  segnale; tone_mode è un selettore di ampiezza/configurazione, non un
-  interruttore. La misura di precisione avviene con tone_mode=0.
-- **P2 confermata**: a tone_mode=4, i²≈q² entro il 2-6% su tutti i core.
-- **P3 confermata**: |iq| < 0.07·i² ovunque, con segno (core 0 lo
-  inverte tra i round).
-- **P4 riformulata**: i registri 0x0720-0x0729 sono identici tra board
-  perché NON sono coefficienti (sono config preesistente, save/restore).
-  I coefficienti veri (0x?a0/0x?a1) sono diversi per core e quindi
-  per istanza di silicio, come atteso da una calibrazione reale.
-- **P5 non indirizzata** da questa cattura (singolo canale).
+- `|iq|` sta sotto `0.07 · i2` in ogni punto, con segno (la catena 0 lo inverte
+  fra i round): coerente con un prodotto incrociato.
+- I registri `0x0720`-`0x0729` sono identici fra board **perche' non sono
+  coefficienti** (vedi §4). I coefficienti veri, `0x?a0`/`0x?a1`, sono diversi
+  per catena e quindi per istanza di silicio, come si aspetta da una
+  calibrazione reale.
+- Se la struttura sia stabile fra canali resta non indirizzato: questa cattura
+  copre un canale solo.
 
-### 9.4 Riscontro nel driver
+### 8.4 Riscontro nel driver
 
 `b43_phy_ac_rx_iq_comp_update` (src/rxiqcal_phy_ac.c) implementa il
 solve confermato; il flow `rxiq_comp` del test harness
@@ -352,86 +226,15 @@ solve confermato; il flow `rxiq_comp` del test harness
 accumulatori come read plan e verifica che il codice emetta esattamente
 le sei scritture vendor, azzeramento iniziale compreso.
 
-## 8. Banco 0x0910 / 0x0b10
+## 9. Banco 0x0910 / 0x0b10
 
 Il banco viene scritto durante questa fase, ma non c'e' evidenza che consumi il
-risultato della misura -- vedi "Cosa non e' il valore" sotto. Sta qui per
-vicinanza nel flusso, non per dipendenza dimostrata.
+risultato della misura: sta qui per vicinanza nel flusso, non per dipendenza
+dimostrata. Reperti strutturali, ipotesi escluse e la relazione con la soglia
+CRS sono in [`bank-0910-analysis.md`](bank-0910-analysis.md), che e' il file
+dedicato.
 
-Struttura accertata: N-1 banchi per N core, uno per coppia adiacente, collocati
-nella pagina del core di indice piu' alto -- `0x0910` per la coppia (0,1),
-`0x0b10` per la (1,2). `0x0710` non esiste su nessuna board, quindi non e' una
-grandezza per-core. Quattro registri per banco, lo stesso scalare in entrambi i
-byte, ordine pari hi-poi-lo e dispari lo-poi-hi. Write-only: il driver stock non
-lo rilegge mai.
-
-### Cosa non e' il valore
-
-Ipotesi **respinta**: `b // 10`, dove `b` e' il coefficiente RXIQ comp del core
-alto della coppia. Correlava su 10 punti di 13, ma i tre controesempi la
-smentiscono da entrambi i lati:
-
-    ch36    #52556   banco = 0   con b del core 1 = 55, scritto a #52255
-    DSL     #155080  banco = 0   con b del core 1 = 48, scritto a #154855
-    d2u     #3155    banco = 3   con tutti i coefficienti a zero
-
-Non e' ordine di esecuzione: nella ch36 e nel DSL il coefficiente e' scritto
-centinaia di episodi prima del banco. La correlazione era temporale -- banco e
-coefficienti partono da zero e crescono insieme.
-
-Altri candidati esclusi provando contro le catture:
-
-- il base index idle-TSSI (`0x0645 + core*0x200`): sul d6220 darebbe la
-  differenza giusta fra core (5) ma sull'agcombo -10 dove il banco vale 6, e sul
-  DSL -5 dove vale 0;
-- ogni coppia di registri per-core `0x06xx`/`0x08xx` letta o scritta prima del
-  banco, provate tutte automaticamente;
-- i campi SROM per-core (`pdoffset*`, `rxgainerr*`): identici su tutte e tre le
-  board, quindi darebbero lo stesso valore su tutte;
-- `0x073d + core*0x200`, che viene letto per core ma legge **zero in tutte e
-  quattro le catture**.
-
-Il port lo scrive come costante (0 sul 4352, 0xf sul 4360) e riproduce solo la
-prima occorrenza di alcune catture. La funzione si chiamava
-`noise_floor_clear`, nome senza fonte, ora `prog_bank_0910`.
-
-### Cross-interferenza fra core: ipotesi non sostenuta
-
-L'indirizzamento N-1 per coppie adiacenti suggerisce una compensazione fra core,
-ma tre fatti la contraddicono.
-
-Primo: il driver stock scrive **lo stesso scalare in tutti e otto i campi byte**
-del banco. Un coefficiente di accoppiamento e' complesso, con modulo e fase, e
-per direzione: se il banco portasse fasori i campi sarebbero diversi. Uno
-scalare uniforme e' un azzeramento o una soglia.
-
-Secondo: **non esiste una misura di leakage fra core nella cattura**. Gli arm del
-tono (`0x0394` = `0x0110`/`0x0111`/`0x0112`, indice di core) stanno a
-`#11930-#17774`; le letture degli accumulatori a `#29862-#31149`, dodicimila
-episodi dopo, in una fase separata. Non c'e' nessun punto in cui si legge
-l'accumulatore di un core mentre un altro core ha il tono.
-
-Terzo: nessuna espressione geometrica sui coefficienti riproduce i valori.
-Testate su tre punti (`nf` = 6, 9, 5):
-
-    |v_high|                  101.6  172.6   72.0
-    |v_low|                   110.0  101.6   77.7
-    |v_high - v_low|           98.6   71.6   33.8
-    |v_high| - |v_low|         -8.4   71.0   -5.7
-    atan2(a,b) gradi           53.8   57.8  -37.7
-    delta fase gradi           55.4    4.0  -25.8
-    rapporto moduli x10         9.2   17.0    9.3
-    sqrt(|prodotto scalare|)   79.7  132.3   71.0
-
-La piu' vicina, `|v_high| / 17`, da' 6, 10, 4. L'unica che torna esatta resta
-`b_high // 10`, che e' aritmetica e non geometrica -- il che e' evidenza
-**contro** la lettura come accoppiamento, non a favore di una formula.
-
-Nota metodologica: l'ipotesi cross-core e' rimasta a lungo in piedi sul solo
-indirizzamento, e diversi tentativi hanno adattato numeri a quella premessa
-senza verificarla. Prima di ripartire da qui, stabilire cosa sia il banco.
-
-## 9. Stato reale del port: la calibrazione e' un replay
+## 10. Stato reale del port: la calibrazione e' un replay
 
 Il solve dei coefficienti esiste e la sua matematica e' verificata bit-exact
 (`b43_phy_ac_rx_iq_comp_update`), ma **non viene mai invocato**: zero marker
@@ -456,7 +259,7 @@ Conseguenze:
   riproduca le op di *una* sessione. Su qualunque altra sessione i coefficienti
   divergerebbero, e con loro tutto cio' che li consuma;
 - ogni indagine su grandezze *derivate* dai coefficienti (il banco 0x0910 in
-  §8, per esempio) studia valori che il port non calcola;
+  §9, per esempio) studia valori che il port non calcola;
 - collegare il solve e' la modifica che trasforma questa fase da replay a
   calibrazione, e **non** rompe il confronto op-per-op: lo rafforza. L'oracolo
   serve le stesse letture del driver stock, quindi dallo stesso ingresso il
@@ -484,3 +287,113 @@ Il register-map che manca a `b43_phy_ac_rxiqcal()` resta l'unico ostacolo al
 percorso completo, ma non serve per questo passo: gli accumulatori sono gia'
 letti da `iqcal_meas_post_dds_apply_v2` subito prima di
 `rxiq_apply_coefficients`, che e' dove stanno le costanti.
+
+## 11. Ricerca del guadagno di loopback
+
+Criterio del driver stock, ricostruito dai dati e implementato in
+`b43_phy_ac_loopback_step` / `b43_phy_ac_loopback_gain_search`.
+
+La potenza media per campione e' `round(ii/1024) + round(qq/1024)` (1024 = il
+numero di campioni, `0x400`) e va portata nella finestra `[0xb57, 0x169e]` =
+`[2903, 5790]`. Sotto si alza l'indice, sopra si abbassa, con clamp `[1,10]`.
+L'indice di partenza e' 4 in 5 GHz e 0 in 2 GHz, e sta in `0x0734 + core*0x200`.
+
+Sequenza letta intercalata alle misure (d6220 ch36 BW20, segmento 01):
+
+| `0x734` | potenza | esito |
+|---|---|---|
+| 4 | 18823 | sopra |
+| 2 | 15485 | sopra |
+| 1 | 8480 | sopra |
+| 0 | 4142 | **dentro**, si ferma |
+
+Due correzioni che i dati impongono sulla descrizione di riferimento:
+
+- il passo **non** e' `-1`: la sequenza 4, 2, 1, 0 e' un dimezzamento, coerente
+  col fatto che altrove `0x734` sia mascherato con `0x7`, cioe' tre bit;
+- l'indice arriva a 0, quindi il minimo su questo registro e' 0 e non 1.
+
+La finestra invece e' confermata: 4142 vi cade dentro e le tre misure
+precedenti sono tutte sopra.
+
+Verificato su **tutti i 52 segmenti** dello sweep d6220: la simulazione del
+criterio riproduce la sequenza di indici osservata. La convergenza dipende dalla
+larghezza, e i dati la spiegano:
+
+| BW | ultimo passo | esito |
+|---|---|---|
+| 20 | idx 1 -> ~8400 | sopra, scende a idx 0 e converge |
+| 40 | idx 1 -> ~5650 | dentro, converge a idx 1 |
+| 80 | idx 1 -> ~5700 | dentro, converge a idx 1 |
+
+A banda larga la potenza per campione e' piu' bassa e la finestra si raggiunge
+un passo prima. La scrittura di 0 che segue anche a 40/80 MHz **non** e' un
+passo di ricerca: e' la chiusura, e a 80 MHz e' preceduta dalle misure della
+seconda stima (valori attorno a 70000 e 40000, col loopback smontato).
+Confondere le due cose fa sembrare che il criterio sbagli su 5 segmenti.
+
+**Non coperto dai dati:** cosa faccia il driver stock se a indice 0 la potenza
+e' ancora sopra la finestra, o al massimo e' ancora sotto. Il port esce
+accettando l'indice estremo -- conservativo, non un ciclo infinito e non un
+valore fuori campo -- ma non e' misurato.
+
+Con `AC_READ_ORACLE` il port riceve le stesse letture del driver stock e
+converge sugli stessi indici senza hardware.
+
+## 12. Measure block: struttura e dipendenza dalla larghezza
+
+Blocco ricorrente (393 op) eseguito dopo ogni probe cycle della finalize, in
+nove sotto-blocchi: RX AFE per-core reconfig (86), radio 2069 second IQ-cal
+(68), rxcal cleanup preamble (5), tail perchan (18), arm tone gen (3), poll
+blocks TX AFE (163), reset gain regs PHY (29), radio reset (14), finalize (5),
+piu' 2 MAC toggle di arm.
+
+Non e' esclusivo della cal RXIQ: a regime il driver stock lo riesegue tal quale
+dentro il tick periodico ~5 s (`b43_phy_ac_watchdog`), con lo stesso
+inquadramento interno e **senza** i due MAC toggle finali. E' quindi la tornata
+di misura rumore/RSSI del PHY, usata dalla finalize in 4 round convergenti e dal
+watchdog in round singoli.
+
+I 4 campi gain dell'arming RX sono selezionati dalla **larghezza**, identici fra
+fase di cal e tick periodico. Misurato sullo sweep d6220 (52 segmenti,
+26 configurazioni):
+
+| campo | BW20 | BW40 | BW80 |
+|---|---|---|---|
+| `0x?73a` mask `0x0007` | `0x0003` | `0x0002` | `0x0000` |
+| `0x?739` mask `0x007e` | `0x007a` | `0x007a` | `0x007e` |
+| `0x?73a` mask `0x0008` | `0x0000` | `0x0000` | `0x0008` |
+| `0x?73a` mask `0x0060` | `0x0040` | `0x0000` | `0x0000` |
+
+Il port cabla la colonna BW20, coerente col fatto che `switch_channel` rifiuta
+BW40/80. Le altre colonne vanno prese da qui quando il supporto arrivera'.
+
+## 13. Tabelle `0x0042`/`0x0062`/`0x0082`: coefficienti TX IQ/LO, non default di gain
+
+Le tre tabelle riempite da `b43_phy_ac_rxcal_afe_finalize_gain_luts` non sono
+default di gain e non c'e' una formula da trovare: sono i coefficienti di
+compensazione TX IQ/LO, popolati nel driver stock da
+`wlc_phy_populate_tx_loft_comp_tbl_acphy` (696 B) e prodotti da
+`wlc_phy_cal_txiqlo_acphy` (13144 B) -- identificati dai **simboli del blob**,
+non per inferenza.
+
+I valori cambiano a ogni corsa perche' sono stato accumulato. In brcmsmac
+(`wlc_phy_cal_txiqlo_nphy`, GPL-2.0 e in-tree) la scelta e':
+
+    if (!fullcal && coeffsvalid)  ->  nphy_txiqlocal_bestc
+    else                          ->  tbl_tx_iqlo_cal_startcoefs
+
+Una ricerca sistematica non trova la sorgente nelle catture: 119592
+trasformazioni su 3624 sorgenti (ogni valore letto e scritto nel segmento e in
+quello precedente), nessuna relazione nemmeno al 50%. Coerente con "e' stato
+interno", non con "e' derivato da una lettura".
+
+Sul core 2 del d6220 i valori sono fuori scala -- `0x8bed` = `(-117,-19)` come
+coppia di byte con segno, contro `(-1,1)..(2,1)` sui core collegati e `(-6,-3)`
+sul core 2 dell'agcombo, che ha tre catene: senza catena RF la cal non ha
+segnale da annullare. Il DSL con wl 6.30 scrive zero sui core oltre il primo, il
+7.14 no.
+
+Cablare questi numeri e' sbagliato su una board a tre catene, dove contano. Il
+primo stadio della cal -- la ricerca del guadagno di loopback, §11 -- e'
+implementato e collegato.

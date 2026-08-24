@@ -89,7 +89,8 @@ sono finestre, non tracce complete -- e senza i valori letti un confronto
 verifica indirizzi e classi ma non cio' che il driver *calcola*.
 
 Il flow e la fase devono corrispondere: `full` e' un primo bring-up,
-`switch_channel` con `AC_FIRST_INIT=0` un bring-up successivo. Confrontare un flow
+`switch_channel` con `AC_FIRST_INIT=0` un bring-up successivo. Confrontare un
+flow
 con la cattura dell'altra fase produce divergenze che non sono bug -- per
 esempio il cap del TX-LPF, che viene dall'rccal di `op_init`.
 
@@ -112,3 +113,64 @@ Il DSL espone `srom[72-74]` non zero (Netgear li azzera); il D6220 espone
 `srom[18-39]` non zero (DSL li azzera). Driver OEM diversi loggano blocchi
 SROM diversi — il dato fisico sulla SROM è probabilmente sovrapponibile,
 ognuno dei due dump è parziale.
+
+## Le due catture con il set di hook esteso
+
+Aggiunte dopo che `wl-diag` ha imparato object memory, template RAM, chanspec in
+SHM, OTP, controllo SROM e `bw_set`. Le catture precedenti in questa directory
+non hanno nessuna di quelle classi, quindi come oracoli sono cieche a ~1600 op
+per cattura: usarle mentre il port comincia a emettere `OBJ.WR` mostrerebbe ogni
+scrittura in shared memory come divergenza.
+
+| cattura | record | TBL.WR parole / id | preambolo | copre |
+|---|---|---|---|---|
+| `attach-ch36-bw20-tabelle-complete` | 35108 | 3775 / 22 | **no** | l'attach con tutte le tabelle, comprese le per-core |
+| `attach-ch36-bw20-con-preambolo` | 25600 | 3069 / 18 | **sì** | il probe dall'inizio: GPIO, core enable, OTP, PLL, test SHM |
+
+Entrambe su ch36/bw20, zero record persi, RETVAL presenti.
+
+**Perche' due e non una.** L'attach completo di tabelle e' stato catturato con
+il
+modulo armato *dentro* l'attach, quindi gli manca il preambolo: `SI.COREREG
+off=0x8c` a 3 invece di 4 e `PMU.PLL` a 2 invece di 4, e zero `OTP.*`/`SROMCTL`.
+Quella col preambolo e' un caricamento successivo dove l'arming era gia' in
+posto, ma contiene due attach consecutivi (`OTP.INIT` a 2) e non arriva a
+scrivere le quattro tabelle per-core `0x0e`, `0x42`, `0x62`, `0x82`.
+
+**NON si possono cucire.** I due attach divergono 68 record dopo il punto di
+aggancio, con `OBJ.WR 0x0790` a `0x0500` in una e `0x0300` nell'altra. Una
+traccia innestata avrebbe la giunzione appena dentro, e un oracolo vale per
+l'ordine: una divergenza misurata su una cucitura non distingue un errore del
+port da un artefatto.
+
+**Si usano come due gate distinti.** La regione del preambolo -- i primi ~138
+record di quella `con-preambolo` -- e' *prima* del punto di divergenza, quindi
+e'
+incontestata e si misura per conto suo col flow `op_init`. L'attach vero e
+proprio va contro `tabelle-complete` col flow `full`.
+
+### Cosa contiene il preambolo
+
+138 record, 18 classi, nell'ordine:
+
+    GPIO.OUT   val=0 mask=0x407          spegne le linee
+    GPIO.OE    val=0 mask=0x407          e le disabilita
+    SI.COREREG off=0x64, 0x68, 0x8c, 0x80    abilitazione del core
+    OTP.RDR + OTP.INIT                   apre l'OTP
+    PMU.PLL 0x2 = 0xc31                  i due valori del PLL
+    PMU.PLL 0x3 = 0x100e
+    SI.COREREG off=0x600 (x2), core 3 off=0x1e0 (x2)
+    MAC.MCTRL  val=0x04000400
+    OBJ.RD  0x0000, 0x0002               legge
+    OBJ.WR  0x0000 = 0x55aa              scrive la firma
+    OBJ.WR  0x0002 = 0xaa55              e la controfirma
+    OBJ.RD  0x0000, 0x0002               rilegge per verifica
+
+Il `55aa`/`aa55` scritto e riletto e' il **test della shared memory**: il driver
+verifica che il MAC risponda prima di fidarsi. E i due valori del PLL sono
+`0xc31` e `0x100e`, gli stessi su cui in `phy_ac.c` c'era un controllo che
+restituiva `-ENODEV` sul d6220 -- vedi il commento in `op_init`.
+
+Il confine del preambolo a 138 e' **arbitrario**: e' dove l'arming dell'altra
+cattura e' partito, non un confine del driver. Il confine naturale va scelto
+sulla struttura, probabilmente dopo il test `55aa`/`aa55`.

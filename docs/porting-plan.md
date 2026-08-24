@@ -24,8 +24,8 @@ successivo: scambiarli produce divergenze che non sono bug del driver.
 
 | gate | oracolo | atteso |
 |---|---|---|
-| flow `full` (primo bring-up) | `attach-to-bss-up-ch36-bw20` + oracolo, range `50:30172` | prima divergenza @22478 su 25013 |
-| flow `switch_channel` con `AC_FIRST_INIT=0` (bring-up successivo) | `down-to-bss-ch36-bw20` + oracolo da `#653`, range `653:26671` | prima divergenza @2177 su 21007 |
+| flow `full` (primo bring-up) | `attach-to-bss-up-ch36-bw20` + oracolo, range `50:30172` | prima divergenza @23951 su 25013; con `cmp_skip` 25003/25003 = 100.00% |
+| flow `switch_channel` con `AC_FIRST_INIT=0` (bring-up successivo) | `down-to-bss-ch36-bw20` + oracolo da `#653`, range `653:26671` | 21005/21007 = 99.99% (cmp_skip); residuo: coefficiente RXIQ `b` a ±1 LSB, 2 op |
 | `tables_init` | `attach-to-bss-up`, primo bring-up | 3714/3714, zero gap |
 | `rfkill` d6220 e agcombo | `down-to-bss` | 100% per funzione, zero gap |
 | `init_regs` primo bring-up | `attach-to-bss-up` | 17/17 |
@@ -125,3 +125,36 @@ cattura nuova.
 Manca una cattura di attach del DSL. È la cosa singola che sbloccherebbe di
 più: validerebbe l'ordine del load tabelle sul suo blob e direbbe cosa fa in
 una fase che oggi non vediamo affatto.
+
+## Vincolo di metodo: cosa si puo' guardare
+
+Questo punto delimita cosa e' ammissibile cercare, e va rispettato anche quando
+costa un'incognita aperta.
+
+**Ammissibile.** Intercettare gli **accessor di I/O hardware** — le letture e
+scritture verso registri PHY, radio, MMIO — produce una traccia del
+comportamento dell'*hardware*, che sono fatti sul dispositivo, non l'espressione
+del driver. Estendere `hooks[]` ad altri accessor di quella classe
+(`phy_reg_write_list`, `wlc_phy_write_regs*`, varianti `write_radio_reg_*`)
+resta dentro il confine. Leggere `.rodata` e `.data` e' leggere **dati**, che
+non sono
+protetti: tabelle, ladder, costanti.
+
+**Non ammissibile.** Hookare funzioni interne di logica del driver, per esempio
+quella che richiede il campionamento del rumore per la crsmin cal. Se si
+strumenta il driver in profondita', l'argomento "intercettiamo solo l'I/O" non
+regge piu': si passa dall'osservare l'hardware a osservare l'implementazione.
+
+**Conseguenza, sul caso concreto** (l'indice del ladder crsmin, vedi
+`bank-0910-analysis.md`)**.** L'indice **non** va inseguito hookando la funzione
+che lo produce. Le strade dentro il confine sono:
+
+1. Verificare se la misura passa da un accessor di I/O non ancora coperto — in
+   quel caso il valore e' osservabile legittimamente e basta estendere la
+   copertura.
+2. Interrogare il driver stock dall'esterno, se esiste un iovar
+   (`phy_force_crsmin`): e' un'interfaccia pubblica, non strumentazione.
+3. Leggere altre tabelle da `.rodata`, incluso il ladder di un secondo blob per
+   la verifica agcombo.
+
+Se nessuna delle tre basta, l'incognita resta aperta. E' un esito accettabile.

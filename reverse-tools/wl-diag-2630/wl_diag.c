@@ -1,55 +1,23 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * wl_diag (B) - tracer PHY/radio/PMU per il driver Broadcom "wl" SENZA kprobe.
+ * wl_diag, variante per kernel 2.6.30 (DSL-3580L, SoC BCM6362, MIPS32 BE,
+ * gcc 4.4.2 buildroot).
  *
- * Su questo kernel CONFIG_KPROBES e' disattivato, quindi aggancio gli accessor
- * con un detour all'ingresso funzione: risolvo l'indirizzo via kallsyms,
- * sovrascrivo le prime 4 istruzioni con un salto (lui/ori/jr $t9) verso uno
- * stub eseguibile che registra (op, addr, val, mask), poi riesegue le 4
- * istruzioni originali rilocate e torna a func+16.
+ * Meccanismo, formato dei record e limiti sono quelli della variante 3.4:
+ * vedi la testata di ../wl-diag/wl_diag.c. Identici anche gli op-code, cosi'
+ * decode-wl-diag.py decodifica le tracce di tutti i router e si possono
+ * cross-correlare (fra versioni di wl diverse cambia il contenuto della
+ * trace, non il formato).
  *
- * Cattura SOLO gli argomenti d'ingresso (a1=addr, a2/a3=val/mask). Il valore
- * RESTITUITO dalle read non viene tracciato (scelta di semplificazione): per
- * questo phy_reg_read/read_radio_reg loggano solo l'indirizzo letto, e il
- * decoder li emette come val=UNDEFINED (mai 0x0000).
+ * Qui e' adattato solo il collante kernel pre-2.6.33: coda a ring manuale al
+ * posto del kfifo tipizzato, spinlock_t al posto di raw_spinlock, e i tre
+ * #ifdef qui sotto (pr_warn, kallsyms_lookup_name, sched_clock), ognuno col
+ * suo motivo accanto.
  *
- * read_radio_reg ha un branch alla 4a istruzione (beq): il detour classico a 4
- * parole e' impossibile. Si aggancia con la variante "short-j" (campo shortj):
- * si sovrascrive la SOLA parola d'ingresso con 'j stub' (patch atomica); la 2a
- * parola resta come delay slot e viene comunque rieseguita dallo stub, che
- * riesegue o[0..1] e rientra a func+8. Richiede lo stub nella stessa regione
- * 256MB (verificato in init). osl_delay (usec=a1) e wlc_phy_table_{read,write}_
- * acphy (id/len/off = a1/a2/a3) usano il detour classico a 4 parole.
- *
- * Sicurezza: default arm=0 (dry-run, solo log del piano). Con arm=1 applica le
- * patch scrivendo la parola d'ingresso PER ULTIMA (transitori benigni: t9 non
- * e' usato dai prologhi, verificato sul binario). Il pool stub e' statico e
- * non viene mai liberato, cosi' uno stub eventualmente ancora in volo allo
- * scarico esegue comunque codice valido.
- *
- * Assunzione runtime (MIPS32R1, niente NX/RODATA per il testo dei moduli):
- * memoria modulo RWX + flush_icache_range esplicito. Da confermare sul device.
- *
- * Target: kernel 3.4.x, MIPS32 big-endian, o32, SMP=2, PREEMPT.
- *
- * VARIANTE 2.6.30 (DSL-3580L, SoC BCM6362, SMP=2 PREEMPT, gcc 4.4.2 buildroot):
- * stesso meccanismo (detour d'ingresso + trampolino 'ra') e STESSI record/
- * op-code della versione 3.4, cosi' decode-wl-diag.py decodifica le tracce di
- * tutti i router e si possono cross-correlare (anche con versioni di driver wl
- * diverse: cambia il contenuto della trace, non il formato). Adattato solo il
- * collante kernel pre-2.6.33: coda a ring manuale al posto del kfifo tipizzato,
- * spinlock_t al posto di raw_spinlock, e risoluzione simboli con fallback via
- * parametro 'syms=nome:hexaddr,...' se kallsyms_lookup_name non e' esportato ai
- * moduli su questo build (automatico sotto 2.6.33, dove non lo e'; forzabile
- * con -DWLDIAG_NO_KALLSYMS). Piu' comodo: passare 'klookup=<addr di
- * kallsyms_lookup_name da /proc/kallsyms>' e lasciare che il modulo risolva
- * tutto il resto da se' chiamandola per indirizzo -- un solo numero invece
- * della lista.
- * pr_warn (alias di pr_warning dal 2.6.35) e' rifornito da uno shim; gli
- * indirizzi si stampano con %p, che su 2.6.30 non e' hashed e da' l'indirizzo
- * reale (%px, usato dalla variante 3.4+, e' del 4.15 e qui non esiste).
+ * Se kallsyms_lookup_name non e' esportata ai moduli, la via comoda e'
+ * 'klookup=<addr da /proc/kallsyms>': il modulo la chiama per indirizzo e
+ * risolve il resto da se', un solo numero invece della lista 'syms='.
  */
-
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/version.h>
@@ -448,6 +416,13 @@ u32 __used noinline
 wl_diag_hook(u32 id, u32 a1, u32 a2, u32 a3)
 {
 	struct hook *h = &hooks[id];
+
+	/* CAL.INIT porta nel record lo stato dell'interruttore, cosi' la traccia
+	 * dice da se' quali cicli sono stati forzati. Senza questo l'esperimento
+	 * non e' leggibile a posteriori: capture_plan alterna 1 e 0, quindi il
+	 * valore letto da sysfs a fine corsa e' sempre l'ultimo scritto. */
+	if (h->op == OP_CAL_INIT)
+		return emit(h->op, (u32)h->zero_off, (u32)force_full_init, 0);
 
 	return emit(h->op, pick(h->addr_src, a1, a2, a3),
 			   pick(h->val_src,  a1, a2, a3),

@@ -277,6 +277,76 @@ delle righe rispetto a 5GL/5GM/5GH **non è stabilito**: non assumerlo.
 down->up. Candidato: il desense sommato sopra da `wlc_phy_desense_apply_acphy`,
 non una quarta riga — dopo `+0x40eb3` ricominciano i puntatori.
 
+### 5.1 Perché la ricerca per nome non poteva trovarla
+
+È l'initializer di un **array locale**, quindi `.rodata` **anonima**: nessun
+simbolo. Enumerare i simboli `OBJECT` — anche i 2859 `LOCAL` e i 779 con
+suffisso `.NNNNN` degli static di funzione — non la raggiunge per costruzione.
+
+Peggio: per array piccoli GCC può non usare `.rodata` affatto, e materializzare
+l'initializer come **store immediati** nel codice. In quel caso nessuno scan di
+`.rodata`/`.data` lo trova, e l'unica via è cercare gli immediati nelle
+istruzioni. Qui non serve, ma va tenuto presente prima di dichiarare "assente".
+
+### 5.2 Come cercarla, e come attribuirla
+
+**Cercarla per forma.** Un ladder di soglie è monotono con passi piccoli e
+regolari, e soprattutto **senza tratti a passo 1** — è quel vincolo che elimina
+le liste di indici (le `rate_sets_*`, che dominano i falsi positivi). Con
+dominio generoso `0x10..0x80`, `len >= 8`, passi in `2..8` e almeno due passi
+distinti:
+
+| larghezza | passi | candidati |
+|---|---|---|
+| u8 | 1..8 | 185 |
+| u8 | 1..4 | 123 |
+| u8 | **2..8** | **8** |
+| u16 | 1..8 | 18 |
+| u16 | **2..8** | **1 tabella distinta** |
+
+Il limite superiore conta: a `2..4` la tabella u16 risultava troncata a 16
+entry, a `2..8` si vede intera (25). Fra gli 8 superstiti u8 ci sono le tre
+righe più `acphy_tx_evm_tbl_rev0` e `lpphy_rev2_gain_table`: il filtro
+seleziona la classe giusta di oggetto, ma **non separa soglie da gain**. Serve
+l'attribuzione.
+
+**Attribuirla per indirizzo codificato.** Su MIPS un indirizzo a 32 bit si
+carica con `lui %hi` + `addiu %lo`, e le due istruzioni portano rilocazioni
+`R_MIPS_HI16` / `R_MIPS_LO16`. Non serve disassemblare: si legge `.rel.text`, si
+appaiano le due rilocazioni sullo stesso simbolo, si ricostruisce
+`(hi << 16) + (s16)lo + valore_del_simbolo`, e si guarda quale simbolo `FUNC`
+contiene l'offset della rilocazione.
+
+Su questo blob: 77662 rilocazioni in `.rel.text`, 28554 `HI16`, 8537 indirizzi
+ricostruiti. Le tre righe risultano tutte di `wlc_phy_crs_min_pwr_cal_acphy`.
+
+Il metodo si controlla da sé: l'altro candidato anonimo emerso dal filtro,
+`+0x051b58`, risulta di `wlc_phy_elna_gainctrl_workaround`. Attribuisce blocchi
+diversi a funzioni diverse, non collassa tutto su un nome.
+
+### 5.3 Cosa dice il resto del blob sulla calibrazione
+
+Le stringhe di dump:
+
+    crs_min_pwr cal:
+      ACI desense is on:  crs_min_pwr cal DID NOT run
+       crsmin_cal ran %d times for channel %d:
+       Noise power used for setting crs_min thresholds :
+
+Più i simboli `wlc_phy_set_crs_min_pwr_higain_acphy`,
+`wlc_phy_force_crsmin_acphy`, `wlc_phy_noise_sample_request_crsmincal`, e la
+famiglia `wlc_phy_desense_*_acphy`.
+
+Quindi: la cal misura una potenza di rumore, ne ricava un **indice** nella riga
+della sotto-banda corrente, tiene un contatore di esecuzioni per canale, e non
+gira se l'ACI desense è attivo. Il valore cambia fra invocazioni della stessa
+sessione perché cambia l'indice, non perché sia un continuo.
+
+Per confronto, la N-PHY ha lo stesso oggetto **con un nome**:
+`NPHY_ofdm_desense_lut_rev3to6`, 25 entry `u16` in `.data` con una copia `const`
+in `.rodata`, passi che crescono da 2 a 7 — la firma di una ladder in dB. Per
+l'AC-PHY nessun desense LUT ha un nome.
+
 ### 5.4 La direzione giusta: la somma è la entry, il CRS è il derivato
 
 Test: per ogni blocco, `CRS + banco` è una entry del ladder?
@@ -326,108 +396,6 @@ un'operazione da firmware PHY, sono 4 punti con 3 uscite distinte, e se la
 relazione passa per un indice in un ladder è **a tratti** — su un intervallo
 stretto di `b` si approssima con qualunque cosa. Va nella lista del §2.
 
-### 5.1 Perché la ricerca per nome non poteva trovarla
-
-È l'initializer di un **array locale**, quindi `.rodata` **anonima**: nessun
-simbolo. Enumerare i simboli `OBJECT` — anche i 2859 `LOCAL` e i 779 con
-suffisso `.NNNNN` degli static di funzione — non la raggiunge per costruzione.
-
-Peggio: per array piccoli GCC può non usare `.rodata` affatto, e materializzare
-l'initializer come **store immediati** nel codice. In quel caso nessuno scan di
-`.rodata`/`.data` lo trova, e l'unica via è cercare gli immediati nelle
-istruzioni. Qui non serve, ma va tenuto presente prima di dichiarare "assente".
-
-### 5.2 Come cercarla, e come attribuirla
-
-**Cercarla per forma.** Un ladder di soglie è monotono con passi piccoli e
-regolari, e soprattutto **senza tratti a passo 1** — è quel vincolo che elimina
-le liste di indici (le `rate_sets_*`, che dominano i falsi positivi). Con
-dominio generoso `0x10..0x80`, `len >= 8`, passi in `2..8` e almeno due passi
-distinti:
-
-| larghezza | passi | candidati |
-|---|---|---|
-| u8 | 1..8 | 185 |
-| u8 | 1..4 | 123 |
-| u8 | **2..8** | **8** |
-| u16 | 1..8 | 18 |
-| u16 | **2..8** | **1 tabella distinta** |
-
-Il limite superiore conta: a `2..4` la tabella u16 risultava troncata a 16
-entry, a `2..8` si vede intera (25). Fra gli 8 superstiti u8 ci sono le tre
-righe più `acphy_tx_evm_tbl_rev0` e `lpphy_rev2_gain_table`: il filtro
-seleziona la classe giusta di oggetto, ma **non separa soglie da gain**. Serve
-l'attribuzione.
-
-**Attribuirla per indirizzo codificato.** Su MIPS un indirizzo a 32 bit si
-carica con `lui %hi` + `addiu %lo`, e le due istruzioni portano rilocazioni
-`R_MIPS_HI16` / `R_MIPS_LO16`. Non serve disassemblare: si legge `.rel.text`, si
-appaiano le due rilocazioni sullo stesso simbolo, si ricostruisce
-`(hi << 16) + (s16)lo + valore_del_simbolo`, e si guarda quale simbolo `FUNC`
-contiene l'offset della rilocazione.
-
-Su questo blob: 77662 rilocazioni in `.rel.text`, 28554 `HI16`, 8537 indirizzi
-ricostruiti. Le tre righe risultano tutte di `wlc_phy_crs_min_pwr_cal_acphy`.
-
-Il metodo si controlla da sé: l'altro candidato anonimo emerso dal filtro,
-`+0x051b58`, risulta di `wlc_phy_elna_gainctrl_workaround`. Attribuisce blocchi
-diversi a funzioni diverse, non collassa tutto su un nome.
-
-### 5.6 Vincolo di metodo: cosa si puo' guardare
-
-Questo punto delimita cosa e' ammissibile cercare, e va rispettato anche quando
-costa un'incognita aperta.
-
-**Ammissibile.** Intercettare gli **accessor di I/O hardware** — le letture e
-scritture verso registri PHY, radio, MMIO — produce una traccia del
-comportamento dell'*hardware*, che sono fatti sul dispositivo, non l'espressione
-del driver. Estendere `hooks[]` ad altri accessor di quella classe
-(`phy_reg_write_list`, `wlc_phy_write_regs*`, varianti `write_radio_reg_*`)
-resta dentro il confine. Leggere `.rodata` e `.data` e' leggere **dati**, che
-non sono
-protetti: tabelle, ladder, costanti.
-
-**Non ammissibile.** Hookare funzioni interne di logica del driver, per esempio
-quella che richiede il campionamento del rumore per la crsmin cal. Se si
-strumenta il driver in profondita', l'argomento "intercettiamo solo l'I/O" non
-regge piu': si passa dall'osservare l'hardware a osservare l'implementazione.
-
-**Conseguenza per l'indice.** L'indice **non** va inseguito hookando la funzione
-che lo produce. Le strade dentro il confine sono:
-
-1. Verificare se la misura passa da un accessor di I/O non ancora coperto — in
-   quel caso il valore e' osservabile legittimamente e basta estendere la
-   copertura.
-2. Interrogare il driver stock dall'esterno, se esiste un iovar
-   (`phy_force_crsmin`): e' un'interfaccia pubblica, non strumentazione.
-3. Leggere altre tabelle da `.rodata`, incluso il ladder di un secondo blob per
-   la verifica agcombo.
-
-Se nessuna delle tre basta, l'incognita resta aperta. E' un esito accettabile.
-
-### 5.3 Cosa dice il resto del blob sulla calibrazione
-
-Le stringhe di dump:
-
-    crs_min_pwr cal:
-      ACI desense is on:  crs_min_pwr cal DID NOT run
-       crsmin_cal ran %d times for channel %d:
-       Noise power used for setting crs_min thresholds :
-
-Più i simboli `wlc_phy_set_crs_min_pwr_higain_acphy`,
-`wlc_phy_force_crsmin_acphy`, `wlc_phy_noise_sample_request_crsmincal`, e la
-famiglia `wlc_phy_desense_*_acphy`.
-
-Quindi: la cal misura una potenza di rumore, ne ricava un **indice** nella riga
-della sotto-banda corrente, tiene un contatore di esecuzioni per canale, e non
-gira se l'ACI desense è attivo. Il valore cambia fra invocazioni della stessa
-sessione perché cambia l'indice, non perché sia un continuo.
-
-Per confronto, la N-PHY ha lo stesso oggetto **con un nome**:
-`NPHY_ofdm_desense_lut_rev3to6`, 25 entry `u16` in `.data` con una copia `const`
-in `.rodata`, passi che crescono da 2 a 7 — la firma di una ladder in dB. Per
-l'AC-PHY nessun desense LUT ha un nome.
-
 ### La parametrizzazione è in NVRAM, e su questi board è vuota
 
 Il blob espone una famiglia di variabili NVRAM per questa calibrazione:
@@ -460,7 +428,7 @@ Due strade, entrambe legittime:
    BW20 op-per-op e non pretendono di più.
 2. **Implementare la cal**, che richiede il percorso di campionamento del rumore
    — e quindi piu' copertura degli accessor di I/O per validarla, entro il
-   vincolo del §5.6.
+   vincolo di metodo in `porting-plan.md`.
 
 ### La scorciatoia per i target degli altri canali
 
@@ -529,14 +497,7 @@ esattamente il controesempio di ch44.
 
 ## 7. Nota sul nome
 
-`retrace-todo.md` segnalava che il nome "noise floor" nel port non era fondato,
-perché non compare in `brcmsmac`, in nessun header, né in nessuna fonte. Resta
-vero alla lettera: la sequenza esatta non è documentata da nessuna parte. Ma il
-§3 mostra che una famiglia di registri con quella funzione esiste, si chiama
-`CRSMINPOWER` in N-PHY e `minCCApwr` in ath9k, e ha la scala giusta.
-
-Il nome attuale della funzione nel port descrive comunque ciò che il port fa
-(azzerare), non ciò che fa il driver stock (programmare). Finché la semantica
-non è confermata sul chip, il nome per indirizzo (`prog_bank_0910`) resta la
-scelta corretta: non promette quello che non sappiamo. Il candidato semantico va
-qui, non nel nome del simbolo.
+Il nome per indirizzo (`prog_bank_0910`) resta la scelta corretta finche' la
+semantica non e' confermata sul chip: non promette quello che non sappiamo. Il
+candidato semantico -- `CRSMINPOWER` in N-PHY, `minCCApwr` in ath9k, vedi §3 --
+sta qui, non nel nome del simbolo.

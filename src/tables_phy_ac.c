@@ -14,8 +14,6 @@ u16 b43_phy_ac_tbl_write_lock(struct b43_wldev *dev)
 {
 	u16 saved = b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
 
-	b43info(dev->wl, "[TXLPFLOG] lock saved=0x%04x\n", saved);
-
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE,
 			(u16)~B43_PHY_AC_TBL_WRITE_GATE_LOCK,
 			B43_PHY_AC_TBL_WRITE_GATE_LOCK);
@@ -24,23 +22,16 @@ u16 b43_phy_ac_tbl_write_lock(struct b43_wldev *dev)
 
 void b43_phy_ac_tbl_write_unlock(struct b43_wldev *dev, u16 saved)
 {
-	u16 mask = (u16)~B43_PHY_AC_TBL_WRITE_GATE_LOCK;
-	u16 val  = saved & B43_PHY_AC_TBL_WRITE_GATE_LOCK;
-
-	b43info(dev->wl, "[TXLPFLOG] unlock saved=0x%04x mask=0x%04x val=0x%04x\n",
-		saved, mask, val);
-
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, mask, val);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE,
+			(u16)~B43_PHY_AC_TBL_WRITE_GATE_LOCK,
+			saved & B43_PHY_AC_TBL_WRITE_GATE_LOCK);
 }
 
 /* Bulk table write */
 
 /*
- * b43_actab_write_bulk - write a contiguous run of values into one of the AC-
- * PHY's internal tables.
- */
-/*
- * Corpo comune dei bulk write. `peek` decide se rileggere il gate 0x019e prima
+ * Corpo comune dei bulk write: scrive una serie contigua di valori in una
+ * tabella interna del PHY. `peek` decide se rileggere il gate 0x019e prima
  * della sequenza TABLE_ID/OFFSET/DATA: il driver stock lo rilegge a ogni bulk
  * emesso a gate sbloccato, non quando il chiamante lo tiene bloccato per una
  * serie (nel load tabelle la peek e' una sola, al lock).
@@ -50,13 +41,9 @@ static void actab_write_bulk_common(struct b43_wldev *dev,
 				    size_t len, const void *data, bool peek)
 {
 	size_t i;
-	u16 gate = 0;
 
 	if (peek)
-		gate = b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-	b43info(dev->wl,
-		"[TXLPFLOG] actab_wr id=0x%02x off=0x%04x width=%u len=%zu gate=0x%04x\n",
-		id, offset, width, (size_t)len, gate);
+		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
 
 	b43_phy_write(dev, B43_PHY_AC_TABLE_ID, id);
 	b43_phy_write(dev, B43_PHY_AC_TABLE_OFFSET, offset);
@@ -125,14 +112,10 @@ static void actab_zerofill_common(struct b43_wldev *dev, u16 id, u16 offset,
 				  u8 width, size_t len, bool peek)
 {
 	size_t i;
-	u16 gate = 0;
 
 	/* Stesso prologo di actab_write_bulk_common: vedi la nota su `peek`. */
 	if (peek)
-		gate = b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-	b43info(dev->wl,
-		"[TXLPFLOG] actab_wr id=0x%02x off=0x%04x width=%u len=%zu gate=0x%04x\n",
-		id, offset, width, (size_t)len, gate);
+		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
 
 	b43_phy_write(dev, B43_PHY_AC_TABLE_ID, id);
 	b43_phy_write(dev, B43_PHY_AC_TABLE_OFFSET, offset);
@@ -270,9 +253,6 @@ void b43_actab_read_bulk(struct b43_wldev *dev,
 	/* Vedi actab_write_bulk: la peek 0x019e è il saved per il restore
 	 * al termine dello scope enclosing (tx_lpf o simile). */
 	gate = b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-	b43info(dev->wl,
-		"[TXLPFLOG] actab_rd id=0x%02x off=0x%04x width=%u len=%zu gate=0x%04x\n",
-		id, offset, width, (size_t)len, gate);
 
 	/*
 	 * Il vendor emette un MOD 0x019e set 0x0002 (relock) *condizionale*:
@@ -641,7 +621,6 @@ static const struct b43_phy_ac_table_desc b43_phy_ac_tables_rev0[] = {
 /* Init */
 
 /* TODO: calibrate. */
-/* 4360 agcombo: 787-5804 ; d6220 ch36: n/l come funzione (loader op_init table-driven); i singoli TBL.WR sono nel raw e testimoniati in chan_tables/femctrl/rx_evm */
 void b43_phy_ac_tables_init(struct b43_wldev *dev)
 {
 	B43_AC_FN();
