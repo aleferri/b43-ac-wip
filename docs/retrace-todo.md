@@ -17,6 +17,12 @@ la cattura **grezza** (come `compare.py`), non contro il collassato.
 | radio_2069_afe_lpf_stage | 100% | ~4% | 100% |
 | op_init sub non-tabella (set_pdet, pre_init, mode_init) | 100% | 100% | 100% |
 
+La localizzazione per-funzione nelle catture non e' piu' annotata nei sorgenti:
+era una tabella generata, incolonnata a mano nei commenti e mezza vuota
+("n/l" su un lato). Si rigenera con `reverse-tools/localize_functions.py`, che
+la ricava dalle fingerprint del sorgente corrente invece di fidarsi di un
+commento che nessuno riallinea.
+
 d6220 e agcombo: bring-up radio coperto integralmente, gap 0%. Le divergenze
 sono tutte sul DSL (wl 6.30) e sono i punti aperti sotto.
 
@@ -175,20 +181,10 @@ inaffidabile
   Il valore resta non spiegato. Le costanti attuali (`0` sul 4352, `0xf` sul
   4360) riproducono la prima occorrenza di alcune catture e sbagliano le altre.
 
-- **Coefficienti RXIQ cablati, solve mai invocato.** `rx_iq_comp_update` ha la
-  matematica verificata bit-exact ma zero invocazioni nel flow: il port scrive
-  `coeffs[2][2] = {{0x03f2,0x004c},{0x03db,0x0037}}` in `phy_ac.c`, che non
-  combaciano con la cattura di attach (`0x03ef`, `0x004d`, `0x03d4`, `0x003b`).
-  Vicini ma diversi: i coefficienti sono misurati e variano per sessione.
-
-  **Il solve e' pronto e verificato.** Eseguito a mano sui valori che l'oracolo
-  serve nella cattura di attach, sommando i due round di stima, da' `0x3ef
-  0x04d`
-  e `0x3d4 0x03b` -- bit-exact su entrambi i core contro il driver stock. Gli
-  accumulatori sono gia' letti da `iqcal_meas_post_dds_apply_v2` subito prima di
-  `rxiq_apply_coefficients`, dove stanno le costanti. Collegarlo e' a rischio
-  zero sul gate e rende la fase funzionante su qualunque sessione. Vedi §9 di
-  `rxiq-cal-analysis.md`.
+- **Coefficienti RXIQ — chiuso.** `b43_phy_ac_iq_solve` e' collegato ai tre
+  call site e la formula e' quella verificata sul blob (§8 di
+  `rxiq-cal-analysis.md`). Bit-exact in attach; resta un residuo di 1 LSB sul
+  warm della catena 0, dichiarato e non inseguibile dalle catture.
 - **set_pdet_on_reset e pre_init_frontend sul DSL.** `not found` e 2/13. Non
   ancora isolate.
 - **tables_init sul DSL — nessun oracolo.** L'ordine del load tabelle è
@@ -209,13 +205,56 @@ inaffidabile
   Strumentare funzioni interne farebbe cadere quella distinzione. Leggere
   `.rodata`/`.data` dai blob e' invece lettura di dati, ammissibile.
 
-- **indice del ladder crs_min_pwr.** Manca la regola che scegli l'indice, e
-  **non va cercata hookando la funzione di calibrazione** (vedi il confine
-  sopra). Strade praticabili: verificare se la misura passa da un accessor di
-  I/O non ancora coperto; interrogare il driver stock via iovar se
-  `phy_force_crsmin` esiste; leggere il ladder dal blob agcombo per chiudere la
-  verifica 4360. Se non basta, resta aperta. Vedi
-  [`bank-0910-analysis.md`](bank-0910-analysis.md) §5.4-5.6.
+- **[PARZIALE] indice del ladder crs_min_pwr.** La catena e' chiusa e
+  implementata (ladder + ancoraggio per-BW {34,33,30} + clamp[0,14] + bump
+  a freddo, verificata sul blob D6220 7.14): vedi `crsminpwr-d6220.md` e
+  `b43_phy_ac_op_recalc_txpower`. Resta aperto SOLO il campione
+  d'interferenza per freq_range che seleziona la soglia (l'indice concreto
+  del canale), non misurabile senza hardware -- `crs_index_for_chan` e' un
+  placeholder. Su hardware: verificare se la misura passa da un accessor di
+  I/O non coperto, o via iovar `phy_force_crsmin` sul driver stock.
+
+## Doppia programmazione dell'analogico durante l'attach
+
+Osservata sull'agcombo e assente sul d6220, **ma il discriminante non e'
+stabilito**. Il gate in `b43_phy_ac_op_switch_analog` e' su `chip_id` perche' e'
+l'unica variabile che distingue i due testimoni, non perche' sia dimostrato.
+
+Cosa si sa:
+
+- il codice del driver stock e' **identico** fra le due versioni coinvolte. I
+  siti di chiamata a `wlc_phy_switch_radio` (via puntatore, dalla tabella ops)
+  sono 7 in 7.14.89.14 e 7.14.43.21, funzione per funzione: `phy_init` 1,
+  `phy_attach` 1, `coredisable` 1, `bmac_set_chanspec` 1, `bmac_radio_hw` 2,
+  `bmac_init` 1. Quindi la differenza e' a **runtime**, non nel codice;
+- contare i siti da' un limite superiore, non le esecuzioni: un sito in un ciclo
+  esegue N volte, due siti in rami esclusivi ne eseguono uno;
+- fra le due entrate il driver stock riscrive il PLL con gli **stessi** valori e
+  le dieci letture di save ricominciano da capo: e' una seconda invocazione
+  completa, non un ciclo interno.
+
+Evidenza dalle catture:
+
+| board | unita AFE | altro |
+|---|---|---|
+| agcombo | `@17`, `@37`, `@71`, `@91` -> due coppie | `PMU.PLL 0xc31/0x100e` riscritti a `#123`/`#131`, **fra** le due coppie; `PHY.WR 0x01ec = 0x2` dopo la MOD `0x02e4` di ciascuna coppia |
+| d6220 | `@17`, `@36` -> una coppia | nessuna seconda scrittura del PLL, nessuna rientrata |
+
+Tutte e quattro le unita' scrivono il banco AFE_ON (`0x1725=0x1fff`,
+`0x1721=0xffff`, `0x1720=0x03ff`): non c'e' nessuno spegnimento in mezzo, sono
+due accensioni. Se il PLL e' la causa lo e' l'atto (re-lock), non un cambio di
+frequenza.
+
+Le op di bus fra le due entrate (`SI.COREREG`, `PMU.PLL`, `MAC.MCTRL`) non sono
+riprodotte: appartengono a bcma e al core b43, non al PHY.
+
+- **TODO(4360 con 7.14.89):** serve un 4360 con la versione del d6220 per
+  separare chip da versione. Il VR400 ha 7.14.89 e lo stesso SDK, ma monta un
+  4352.
+- **TODO(verificare su una board nuova):** l'evidenza e' un solo 4360. Serve un
+  secondo esemplare per distinguere "proprieta' del chip" da "proprieta' di
+  questa board", e per capire se la rientrata segua la riscrittura del PLL o se
+  entrambe seguano un terzo fattore nella sequenza di attach.
 
 ## Prima mappatura su agcombo (4360)
 
@@ -228,61 +267,6 @@ Il numero **non e' confrontabile** col 99.94% del d6220: quello misura una
 configurazione validata op-per-op, questo la prima esposizione a una board
 nuova, dove di 1615 regioni solo la prima e' interpretabile perche' il resto e'
 a valle di un disallineamento.
-
-### Reperti
-
-- **`PHY.WR 0x01ec = 0x2`, solo 4360.** Emessa dopo la `MOD 0x02e4` in ciascuna
-  delle due entrate nell'analogico. Zero occorrenze nella cattura d6220, dove il
-  resto del preambolo combacia op-per-op: quindi chip, non fase. Implementata
-  con gate su `chip_id`. Cosa sia `0x01ec` non e' stabilito -- il port lo scrive
-  altrove con `0x9c40` in un punto che combacia su entrambe le board.
-
-- **Doppia programmazione dell'analogico, solo 4360.** Il driver stock esegue
-  l'unita' AFE due volte durante l'attach: unita' a `@17, @37, @71, @91` contro
-  le `@17, @36` del d6220. **Tutte e quattro scrivono il banco `AFE_ON`** -- non
-  c'e' spegnimento in mezzo, sono due accensioni (`AFE_DOWN` scriverebbe
-  `0x1728=0x80`, `0x1720=0x180`, `0x1721=0x5000`, che non compare mai).
-
-  Fra le due coppie il PLL viene **riscritto con gli stessi valori**
-  (`PMU.PLL 0xc31/0x100e` a `#123`/`#131`), quindi se e' la causa lo e' l'atto
-  -- un re-lock -- e non un cambio di frequenza. Il d6220 non ha ne' la seconda
-  scrittura ne' la rientrata. Rescan e attach sono la stessa fase, quindi la
-  fase e' esclusa.
-
-  Implementata con gate su chip. Le op di bus fra le due entrate
-  (`SI.COREREG`, `PMU.PLL`, `MAC.MCTRL`) **non** sono riprodotte: appartengono a
-  bcma e a b43 core. Restano 13 op di sfasamento fra le due coppie per questo.
-
-  `TODO(verificare su una board nuova)`: l'evidenza e' un solo 4360. Serve un
-  secondo esemplare per separare "proprieta' del chip" da "proprieta' di questa
-  board", e per stabilire se la rientrata segua la riscrittura del PLL o se
-  entrambe seguano un terzo fattore.
-
-- **`rxcore_setstate` era chiamata senza condizione.** Serve a spegnere i core
-  che il silicio ha e la board non collega, e il commento lo diceva -- ma la
-  chiamata era incondizionata: si leggeva il conteggio del silicio da `0x000b`
-  e non lo si usava. Su una board che collega tutte le catene emetteva **31 op**
-  che il driver stock non emette. Ora e' gatata su
-  `hweight8(coremask) != num_cores`, con `num_cores` da `RD 0x000b & 0x07` (3 su
-  entrambi i chip) e `coremask` da `rxchain` SROM (7 agcombo, 3 d6220).
-  Verificato: `WR 0x16d8` emessa 0 volte su agcombo e 2 su d6220, come nelle
-  rispettive catture.
-
-- **`MOD 0x02e4 = 0x800` era nel posto sbagliato.** Implementata e gatata bene
-  sul 4360, ma emessa dopo `channel_setup` invece che dentro la sequenza: @6893
-  nel port contro @6250 nel vendor. Spostata fra il relock del gate e la
-  `WR 0x01ec = 0x9c40`. Ora il vicinato locale combacia op-per-op per 11 op
-  consecutive, e lo scarto assoluto residuo (13) e' esattamente il buco delle op
-  di bus fra le due entrate nell'analogico, che non sono riprodotte.
-
-- **132 indirizzi su 294 mai letti dal port**, 8 code dell'oracolo esaurite. Fra
-  questi `0x0bb1`/`0x0bb3` (terza catena) letti 33 volte dal vendor e zero dal
-  port. Non ancora guardato: e' il reperto strutturale grosso che resta.
-
-- **La curva di gain della tabella `0x20` e' davvero invariante.** 128 entry su
-  128 identiche fra d6220 e agcombo. Il commento nel port lo dava per assunto ed
-  e' la prima conferma indipendente: non tutti i valori cablati sono
-  board-specific.
 
 ### Decorrelazione su 33 segmenti multicanale
 
@@ -366,304 +350,6 @@ I segmenti troncati falsificano l'analisi: confrontando un segmento da 713
 chiavi con uno da 1554 escono 85 false dipendenze "dinamiche". `--minchiavi`
 li scarta.
 
-### Cosa si e' potuto chiudere, e cosa no
-
-Incrociando le chiavi dipendenti con gli indirizzi cablati in `phy_ac.c`:
-
-    solo-larghezza   78 chiavi  ->  25 cablate nel codice
-    centro-freq     130 chiavi  ->  35 cablate
-    solo-canale      13 chiavi  ->   9 cablate
-
-Le funzioni piu' interessate: `idle_tssi_meas` (8 + 15 + 2),
-`coeff_bank_init_bw20_5g` (4), `chanspec_tail` (4), `set_channel` (8, che sono i
-registri CRS), `post_noise_shaping_rx_regprog_core` (6).
-
-**Chiuso: tre write parametrizzate per banda** in `coeff_bank_init_bw20_5g`.
-`0x0250` (byte basso 25/50/100), `0x0262` (200/400/800), `0x0263` (25/50/100).
-Il valore a 20 MHz del port **coincide** con quello del DSL su tutte tre, quindi
-si trasferisce la scala e non un valore di un'altra board. I gate d6220 non si
-muovono: 99.94% e 99.97%.
-
-**Non chiuso, e perche':**
-
-- `0x06ef` mask `0x00ff`: il DSL fa 0x0f/0x1e/0x3c, ma il port ha **tre** write
-  a quell'indirizzo (`0x0017`, `0x0e00`, `0x000f`) e non e' distinguibile quale
-  corrisponda. Serve il confronto sul d6220, non sul DSL.
-- `0x025b`: il DSL scrive 8/16/31 -- stessa scala ma **saturata**, 31 e non 32
---
-  e il port non lo scrive affatto. Da capire se il d6220 lo scriva: potrebbe
-  mancare una write.
-- tutto il resto: i valori vengono dal DSL/6.30 e il port modella d6220/7.14.89.
-  La struttura si trasferisce, i numeri no.
-
-### TODO
-
-- risolvere nel blob d6220 le tabelle indicizzate dalle chiavi `centro-freq`
-  (130) e dalle `solo-larghezza` con incremento di indice;
-- capire `PHY.WR 0x0727`/`0x0927`, la sola dipendenza dal canale puro;
-- capire perche' `0x025b` satura a 31;
-- una cattura d6220 multicanale, per avere i valori sulla board che il port
-  modella invece di trasferirli dal DSL.
-
-## Analisi quantitativa del driver proprietario
-
-Quattro blob disponibili, tutti MIPS32 BE non strippati. Serve a rispondere a
-una
-domanda operativa: quando una differenza fra due catture e' del chip e quando e'
-della versione vendor che le ha prodotte.
-
-| device | versione wl | SDK | radio |
-|---|---|---|---|
-| D6220 | 7.14.89.14 | `cpe4.16L03.0-kdb` | 4352 |
-| Archer VR400 | 7.14.89.3303 | `cpe4.16L03.0u1` | 4352 |
-| agcombo (AGSOT 1.0.8) | 7.14.43.21 | `cpe4.16L02A.0-kdb` | 4360 |
-| D6400 | 6.37.15.24 | `cpe4.16L01A.0-kdb` | non verificata |
-
-#### La versione identifica un rilascio Broadcom, non l'OEM
-
-D6220 (Netgear) e VR400 (TP-Link) condividono `7.14.89` e la stessa release SDK.
-Sulle 101 funzioni `acphy` comuni **di pari dimensione**, su 30024 parole di
-codice: 1633 parole differiscono, di cui **1630 sono rilocazioni** (in un file
-REL l'addendo sta dentro l'istruzione, quindi cambia con il layout) e **3 sono
-costanti vere** -- due in `force_spurmode_acphy`, una in `txctl1_calc_ex`.
-
-Cosa autorizza a concludere: per le funzioni di pari dimensione, i blocchi di
-byte hanno **la stessa forma di istruzioni**, e le costanti immediate coincidono
-tranne tre. Non autorizza a concludere che il codice AC sia identico in
-generale: il confronto vale solo dove la dimensione combacia, e non dice nulla
-sulle funzioni che differiscono in dimensione.
-
-**Conseguenza usabile**: ladder e tabelle estratte da un blob sono affidabili
-**per versione**. Il ladder `crs_min_pwr` a `.rodata +0x040e84`, gli offset e le
-maschere sono proprieta' del rilascio, non dell'esemplare, e si possono usare
-per
-un'altra board con la stessa versione.
-
-#### I conteggi dei simboli non sono confrontabili fra artefatti diversi
-
-`readelf` conta le funzioni `acphy` cosi':
-
-    D6220        204        <- .o_save
-    VR400        102        <- .ko
-    agcombo      102        <- .ko
-    D6400        162        <- .o_save
-
-La differenza non e' di funzionalita': **`.o_save` e' l'oggetto prima del link
-finale**, e conserva funzioni che il link poi scarta; le `.ko` sono il modulo
-finale. Confrontare un `.o` con un `.ko` sul numero di simboli non misura
-niente.
-
-La prova sta nelle due `.ko`: VR400 (`7.14.89.3303`) e agcombo (`7.14.43.21`),
-versioni **diverse**, hanno insiemi di funzioni `acphy` **identici** -- jaccard
-1.000. Quindi l'insieme dipende da come la build e' configurata, non dalla
-versione.
-
-Nota minore sui nomi: parte delle "funzioni esclusive" di una build sono
-suffissi
-`.isra.N` / `.constprop.N` che GCC assegna in ordine di elaborazione. Fra
-D6220 e
-D6400, 10 delle 14 esclusive erano solo questo.
-
-#### Correlazione cattura / versione
-
-    0x70e590e = 7.14.89.14   d6220     (4 catture)
-    0x70e2b15 = 7.14.43.21   agcombo   (2 catture)
-    0x61e6607 = 6.30.102.7   DSL       (1 cattura)
-
-**Va messa accanto a ogni reperto.** Una differenza fra catture di versioni
-diverse non e' un reperto sul chip finche' non e' confermata a versione pari.
-Vale per la doppia entrata nell'analogico e per tutto il resto.
-
-Esempio concreto di quanto serva: `radar_detect_on_off_cfg_acphy` e' 144 byte in
-7.14.43, con due scritture allo stesso registro (`0x01ec <- 0x0002` poi
-`<- 0x9c40`), e 52 byte in 7.14.89, dove la prima non c'e' piu'. Nelle catture:
-`0x9c40` compare una volta in ogni cattura di ogni board, `0x0002` solo nei due
-attach dell'agcombo. Il port modella 7.14.89 e quindi non deve emetterla -- non
-e' un gate sul chip.
-
-#### Strumenti
-
-`reverse-tools/similarity.py` calcola la matrice fra build.
-`reverse-tools/cmp_funcs.py` confronta i corpi a due livelli: byte identici, e
-identici a meno delle costanti (immediato a 16 bit e target a 26 azzerati, cosi'
-le rilocazioni non contano).
-
-
-### Bug corretto: il check su PLLCTL3 bloccava il d6220
-
-`op_init` confrontava `PLLCTL3` con `0x00133333` sul 4352 e tornava `-ENODEV` se
-non combaciava, sulla base di "il 4352 arriva con quel valore e il vendor non lo
-tocca". **Falso**: quella e' una proprieta' del **DSL**, le cui catture
-contengono solo letture del PLL. Il d6220 scrive `0xc31`/`0x100e` a `#15`/`#23`
-come il 4360, quindi su un d6220 reale quel ramo avrebbe **rifiutato il
-bring-up**. Ora legge e logga, senza decidere: non c'e' una condizione fondata
-per rifiutare, e inventarne una blocca hardware buono.
-
-### Nota di metodo: tre misure inquinate prima di quella buona
-
-Vale la pena registrarlo perche' l'errore era sempre nell'impostazione, non nel
-porting.
-
-1. Mappata la rescan contro `switch_channel`. Sbagliato: la rescan e' un flow
-   completo, va contro `full`.
-2. Letto il commento del profilo DSL credendolo dell'agcombo, concludendo che il
-   profilo dichiarasse due catene invece di tre.
-3. Il profilo agcombo era senza le word FEM, quindi `femctrl` leggeva 0 e **il
-   guard aggiunto in questa serie** saltava la tabella di controllo FEM in
-   silenzio -- il warning va su stderr e non era stato guardato. Prima
-   divergenza a @230 invece di @1970.
-
-Tre volte lo strumento diceva "porting incompleto" e la causa era la misura.
-Prima di leggere una percentuale su una board nuova: verificare il flow, la
-finestra, il profilo, e **stderr**.
-
-## Stato dei due flussi principali
-
-Misurato con un diff LCS, non col conteggio per indice di `compare.py` (che dopo
-una insert/delete conta divergente tutto il resto e sovrastima: sul flow 1
-riporta 1017 dove le op divergenti sono 15).
-
-| | op in comune | divergenti |
-|---|---|---|
-| `full` / attach ch36 BW20 | 24998/25013 = **99.94%** | 15, di cui 10 artefatti di scheduling |
-| `switch_channel` / down→bss ch36 BW20 | 21000/21007 = **99.97%** | 7, lunghezza identica |
-
-### Chiuso in questo giro
-
-- **gain LUT `0x42`/`0x62`/`0x82`** (384 op sul flow 2). I default di core 0 e
-  core 1 valgono `0x0002` e `0x0200` e **non dipendono dalla fase**: sono gli
-  stessi nelle due catture. Solo il core 2 cambia (`0x0962`/`0x0758` al primo
-  bring-up, `0xabd0`/`0xa9c6` sullo switch successivo). Il port aveva i due rami
-  invertiti su c0/c1 e valori sbagliati su c2.
-- **`TBL 0x0c` off `0x62` e `0x66`** (4 op). Stesse costanti sbagliate
-  (`0xfe02`, `0x0100`) in un secondo punto: valgono `0x0002` e `0x0200`.
-- **Max index TX** (2 op), vedi sopra.
-
-### Aperto sui due flussi
-
-- **Il filtro IQ dipendente dalla frequenza non va derivato: lo calcola
-  l'hardware.** L'equivalente di `wlc_phy_cal_rx_fdiqi_acphy` nel port e'
-  `rxiqcal_run_meas_iters`, due iterazioni per catena (cmd `0x?084` poi
-  `0x?056`) = i due tap di un filtro complesso, coerente con i tre toni di
-  `dds_seed`/`_second_tone`/`_third_tone`. `rxcal_afe_iter` arma la cal
-  scrivendo `cmd` su `0x0380`, attende il bit 15, legge 2 celle a `rd_off` e le
-  **riscrive identiche** a `wr_off`. La copia si vede in chiaro nella cattura:
-  `RD 0x0c[0x8e]/[0x8f] -> WR 0x0c[0x50]/[0x51]`, `RD [0x91] -> WR [0x53]`.
-
-  Conseguenze, applicate: il `TODO: derivare i valori TBL.WR dalla stima RXIQ
-  runtime` era **stantio** ed e' rimosso, e il campo `wr_vals[2]` della tabella
-  `iters[]` era **codice morto** -- dichiarato, inizializzato con i valori
-  trascritti, mai letto -- ed e' rimosso.
-
-- **`TBL 0x0c` off `0x60`/`0x64` dal percorso AFE** (3 op flow 1, 2 flow 2). Il
-  port scrive `afe_res[0].v` e `afe_res[2].v`, che portano `0x64`/`0x22`/`0x04`
-  dove il vendor ha `0x66`/`0x27`/`0x03` (attach) e `0x69`/`0x26` (down→up). I
-  valori dipendono dalla fase. **Non** derivano dai risultati della cal AFE:
-  quelli finiscono su `0x50`-`0x55`, non su `0x60`/`0x64`.
-
-  La storia completa delle celle nella cattura di attach mostra due percorsi
-  distinti:
-
-      #17381  WR [0x60]=0x0066  [0x61]=0x000e     blocco fresco
-      #17415  WR [0x64]=0x0027  [0x65]=0x0003
-      #25692  RD [0x60]=0x0066  [0x61]=0x000e     RMW con modifica reale
-      #25703  WR [0x60]=0x0065  [0x61]=0xfffd
-      #25712  RD [0x64]=0x0027  [0x65]=0x0003
-      #25723  WR [0x64]=0x0027  [0x65]=0x0004
-
-  Il sito nel port non e' **nessuno dei due**: provate entrambe le ipotesi --
-  riscrivere il valore letto, e scrivere lo stesso blocco del sito gemello in
-  `rxiqcal_finalize` -- e **entrambe peggiorano** (flow 1 da 15 a 18 op, flow 2
-  da 7 a 11). Reverted. E' una terza forma non identificata.
-
-  **SALAME**: nel RMW la seconda cella va da `0x000e` a `0xfffd`, cioe' da 14 a
-  -3, delta **-17** -- esattamente il coefficiente `a` della catena 0. Due punti
-  soli, quindi indizio e non altro, ma se regge il RMW somma il coefficiente
-  RXIQ alla cella.
-- **`0x06a1`** (2 op flow 2) -- **spiegato: stato pre-cattura, non un difetto.**
-  Il solve da' `0x4b` dove il vendor scrive `0x4c`. Misurato strumentando il
-  solve sul down->up:
-
-      core 0: ii=80526475 qq=92834643 iq=1279425 a=-16
-              v=1208591 sqrt=1099 resto=790  -> b=0x4b   (vendor 0x4c)
-      core 1: v=1169028  sqrt=1081 resto=467  -> b=0x39   (vendor 0x39, esatto)
-
-  Il round-up scatta se `resto > b`. Al core 0 manca `v + 310` su 1208591, cioe'
-  **0.026%**; al core 1 servirebbe `v + 614` e infatti non scatta. Non e' la
-  formula: una perturbazione minima degli ingressi fa attraversare la soglia a
-  un core solo.
-
-  L'accumulatore e' uno shift register a 2 posizioni e il solve somma le ultime
-  due letture. Provate **tutte** le coppie dei 6 round osservati: nessuna da'
-  `0x4c` sul core 0, e `5+6` -- quella che il port usa -- e' anche l'unica che
-  da' il valore esatto sul core 1. Quindi il contributo mancante non e' dentro
-  la finestra: gli accumulatori non vengono azzerati fra channel setup e il
-  driver stock porta un residuo da prima della cattura.
-
-  **Stessa causa del banco `0x0910` che vuole `3` alla prima passata del
-  down->up**: entrambi i residui del flow 2 sono stato portato da prima della
-  finestra. Non riproducibili da questa cattura, e non difetti del port -- che
-  infatti sull'attach da freddo combacia bit-exact su entrambi.
-
-  **Escluso per bound, non per fit.** `reverse-tools/fit_rxiq_solve.py` prova le
-  forme candidate contro i 4 punti di verita' (2 catture x 2 catene,
-  accumulatori
-  in ingresso e coefficienti scritti dal vendor). Il termine di ampiezza e'
-  `sqrt(qq/ii * 2^20 - correzione)` con correzione >= 0 in ogni variante, quindi
-  `qq/ii` e' un limite superiore. Sul punto critico serve `qq/ii >= 1.153141975`
-  e nessuna combinazione lo raggiunge:
-
-      rapporto delle somme, ultimi 2/3/4/6:  1.152846 1.152754 1.152619 1.126695
-      media dei rapporti,   ultimi 2/3/4/6:  1.152825 1.151779 1.151427 1.102817
-      rapporti per-round: 0.967 1.044 1.150 1.150 1.159 1.147
-
-  L'unico valore osservato sopra soglia e' il round 5 da solo (1.158998), che
-  non
-  e' ne' una somma ne' una media e rompe gli altri tre punti. Sugli altri tre
-  punti invece piu' combinazioni raggiungono la soglia: e' quel punto a essere
-  irraggiungibile, non la formula a essere sbagliata.
-
-- **Il solve e' la forma N-PHY, il vendor ha un arcotangente -- ma i dati dicono
-  divisione.** L'AC-PHY ha `AtanTbl` (72 byte, referenziata solo da
-  `wlc_phy_cordic`/`wlc_phy_inv_cordic`) e raggiunge `inv_cordic` da
-  `wlc_phy_calc_iq_mismatch_acphy`, `wlc_phy_cal_rx_fdiqi_acphy` e i due
-  percorsi
-  PAPD. Il port implementa la forma a divisione di `brcmsmac`, dove il cordic
-  serve solo a generare toni.
-
-  Cio' che i 4 punti discriminano:
-
-  | forma per `a` | punteggio |
-  |---|---|
-  | `-(iq<<10)/ii` sulle somme delle ultime 2 (port) | **4/4** |
-  | media di `atan2(iq_r, ii_r)` sulle ultime 2 | **4/4** |
-  | `atan2` delle somme (qualunque finestra) | 3/4 |
-  | `atan2`/`asin` normalizzati su `sqrt(ii*qq)` | 0/4 |
-
-  Il punto che discrimina e' `down->up c1`: la tangente da' `43.516 -> 44` (il
-  valore vendor) e l'arcotangente `43.49 -> 43`. Cadono ai due lati del bordo
-  `43.5`, quindi a queste ampiezze le due forme **sono** distinguibili su un
-  punto, e il dato esclude l'`atan2` applicato alle somme.
-
-  Per `b` nessuna delle 9 varianti x 4 regole di arrotondamento discrimina: 13
-  combinazioni danno 3/4 con valori identici, incluse `cos(phi)`,
-  `sqrt(qq/ii - sin^2 phi)`, `- tan^2 phi` e la proiezione
-  `(qq - iq^2/ii)/ii`. Il termine di ampiezza resta non determinato da questi
-  dati.
-
-  **Limite da tenere presente**: la forma del port e' validata solo nel regime a
-  piccolo angolo che queste catture esercitano, `|a| <= 44/1024 ~ 2.5 gradi`. Su
-  una board con sbilanciamento peggiore la forma a divisione e quella
-  trigonometrica divergerebbero e nessun gate attuale lo vedrebbe.
-- **`RAD.WR`** (2 op flow 1: `0x224`/`0x225`; 3 op flow 2: `0x3`/`0x5`/`0x203`).
-  Non classificati.
-- **10 `MAC.MCTRL` sul flow 1.** Cadono su un passaggio `cpu0 -> cpu1` e sono
-  plausibilmente il refcount MAC di un altro contesto interlacciato dal tracer.
-  Riprodurle nel driver migliorava il flow 1 e peggiorava il flow 2 di 1180 op:
-  e' un artefatto di scheduling, che l'harness non modella per disegno. Per
-  portarle a zero non si tocca il driver, si decide cosa il gate considera
-  confrontabile.
-
 ## I valori trascritti sono impalcatura, non dati
 
 **Questo punto viene prima del gate.** Una parte del programming non e'
@@ -712,21 +398,16 @@ La **topologia** e' condivisa -- `femctrl=6`, `pdgain5g=10`,
 board: `pa5ga` e `maxp5ga` differiscono su tutte e tre, e `boardtype` non
 distingue d6220 da DSL.
 
-### `femctrl`: era assunto, ora e' letto
+### `femctrl`
 
 `femctrl` seleziona lo schema di controllo del FEM -- linee di enable del PA e
 stato dello switch T/R -- e vale 6 su tutte e tre le board, verificato in NVRAM.
+`b43_phy_ac_set_regtbl_on_femctrl` lo legge e si ferma se non e' 6: la tabella
+portata e' quella di femctrl 6, e pilotare un FEM diverso con quello schema
+significa PA abilitato quando non dovrebbe, o switch T/R nello stato sbagliato
+durante il TX. Meglio un bring-up che fallisce.
 
-`b43_phy_ac_set_regtbl_on_femctrl` scriveva una tabella `fem6_tbl[32]` cablata
-**assumendo** femctrl 6, senza mai leggerlo. E' il caso piu' diretto di tutti:
-non e' un valore di gain un po' fuori taratura, e' pilotare le linee di
-controllo del front-end con lo schema di un'altra board -- il PA abilitato
-quando non dovrebbe, o lo switch nello stato sbagliato durante il TX.
-
-Ora `femctrl` viene letto e la funzione si ferma se non e' 6, con un warning.
-Meglio un bring-up che fallisce che un front-end pilotato a caso.
-
-**Risolto: offset fissato e patch aggiornata.** `bcmsrom_tbl.h` (GPL, in
+**Offset fissato e patch aggiornata.** `bcmsrom_tbl.h` (GPL, in
 asuswrt-merlin e bcmdhd -- gli URL erano gia' in `sprom-rev11/cross_check.md`)
 da' `femctrl` a `SROM11_FEM_CFG1` con maschera `0xf800`, bit 15:11. Con i valori
 NVRAM la word attesa e' `0x30A1`, e nei dump raw sta al byte **0x0AA**, con
@@ -736,16 +417,11 @@ e la loro estrazione in `bcma_sprom_extract_r11` (`git apply --check` passa su
 torvalds/linux master). L'harness non porta piu' `femctrl` come valore cotto: il
 profilo board porta le due word raw e le decodifica con le stesse maschere.
 
-Nota storica sul perche' mancava: il valore e' identico su entrambe le board di
-riferimento, quindi il value-matching che ha fissato gli altri offset qui non
-funziona -- un vincolo solo, 17 word candidate. Serviva la fonte canonica, non
-un terzo dump.
+Perche' il value-matching qui non basta, ed e' utile saperlo per i campi che
+restano: il valore e' identico su entrambe le board di riferimento, quindi da'
+un vincolo solo e 17 word candidate. Serve la fonte canonica, non un terzo dump.
 
-Il draft ampio in `sprom-rev11/` lo aveva gia' nella `struct` e nel percorso
-NVRAM, ma senza offset raw: `bcma_sprom_extract_r11` non poteva riempirlo, e
-su questo porting conta quel percorso, non il filler NVRAM.
-
-Quindi la chiave non e' il board type. **Un valore di potenza trascritto non si
+**Un valore di potenza trascritto non si
 scrive mai senza confrontarlo con cio' che l'SROM dichiara.** Applicato
 all'indice massimo di potenza TX: la costante di impalcatura `0x38` e' ora
 clampata al limite derivato da `maxp5ga`. Sulle tre board quel limite vale
@@ -759,14 +435,28 @@ I siti che scrivono valori trascritti e toccano RF sono marcati
 `SCAFFOLD(ch36)` -- e `SCAFFOLD(femctrl6)` per la tabella di controllo FEM --
 distinti da `TODO(formula)`: il secondo dice "manca la
 formula", il primo dice "questo non e' un valore, e fuori da ch36 e'
-pericoloso". Sono greppabili, e sono cinque: soglie `crs_min_pwr`, ampiezza del
-tono, blocco `0x60`/`0x64`, default LUT di gain del core 2, e **indice massimo
-di potenza TX** -- quest'ultimo il piu' pericoloso del file, perche' un indice
-troppo alto sovrapilota il PA.
+pericoloso". Sono greppabili, e sono tre: soglie `crs_min_pwr`, default LUT di
+gain del core 2, e **indice massimo di potenza TX** -- quest'ultimo il piu'
+pericoloso del file, perche' un indice troppo alto sovrapilota il PA.
+
+Due sono usciti dalla lista, e per ragioni diverse. Il blocco `0x60`/`0x64`
+ora scrive `afe_res[]`/`afe_res_cal[]`, cioe' i risultati riletti dalla cal AFE:
+il valore e' **derivato**, il marcatore va via. L'ampiezza del tono no: resta un
+letterale, ma non e' impalcatura ch36 -- e' misurata invariante su 16 canali e
+tre larghezze (vedi sopra), quindi il marcatore diceva una cosa falsa sul suo
+raggio di validita'. Un `SCAFFOLD` si toglie derivando il valore **oppure**
+dimostrando che l'invarianza copre il dominio; questo e' il secondo caso.
 
 La regola operativa: un `SCAFFOLD` si rimuove solo derivando il valore, oppure
 allargando il filtro dei canali con una cattura a supporto. Non si rimuove
 perche' il gate passa.
+
+Vale anche il verso opposto, che il gate non protegge: **un valore derivato non
+si sostituisce con la costante a cui si riduce sulla board di riferimento.** Il
+confronto op-per-op non lo vede, perche' le due forme emettono la stessa op qui
+-- come `tssifloor5g[grp] & 0x3ff`, che su queste tre board vale esattamente il
+`0x03ff` che era cablato prima. Un refactor va quindi verificato con un diff del
+sorgente a commenti spogliati, non solo con la trace.
 
 ## Audit di cio' che e' cablato: cosa e' derivabile davvero
 
@@ -793,12 +483,28 @@ gia' fatto.
   driver stock scrive **gli stessi valori su entrambe le catene**
   (`0x0724`/`0x0924`, `0x0736`/`0x0936`) e in entrambe le fasi, mentre i
   coefficienti per catena differiscono (`a` = -17 contro -44). Sono una coppia
-  di
-  costanti **per canale**, scritte insieme e azzerate insieme: arm/disarm del
-  generatore di tono. E il commento citava anche la costante sbagliata --
-  `0x0152` e' ch44, ch36 vale `0x0154`, come gia' scritto accanto a `gw_hi`.
-  Quindi non serve una formula da `rxcal_imbalance`, serve una mappa
-  canale -> valore, e i punti noti sono due.
+  scritta insieme e azzerata insieme: arm/disarm del generatore di tono.
+
+  **E non sono nemmeno per canale.** Questa riga diceva "serve una mappa
+  canale -> valore, e i punti noti sono due: `0x0152` e' ch44, ch36 vale
+  `0x0154`". Falso, e l'errore era gia' smentito dai dati in repo. Sui 52
+  segmenti dello sweep d6220 la sequenza delle scritture su `0x0736` e'
+  **identica in tutte e 26 le configurazioni** (16 canali x BW20/40/80):
+
+      0x0154, 0, 0x0152, 0, 0x022a, 0, 0, 0x0154, 0
+
+  I tre valori distinguono i **siti di chiamata**, non i canali: `0x0154` in
+  `rx_gain_regs_program`, `0x0152` nel banco `b2j_ops`, `0x022a` in
+  `rxgain_perchan_config`. Il port aveva le tre costanti giuste per sito da
+  subito; l'errore era solo nella descrizione. Chi ha scritto quella riga ha
+  confrontato due siti diversi di due catture diverse e ha attribuito la
+  differenza al canale.
+
+  Morale, perche' ricorre: prima di dichiarare una dipendenza da canale o
+  larghezza, si guarda la classe della chiave in
+  `full-sweep.zip/decorrelazione-52-segmenti.csv`. Per `0x0736` dice
+  `dinamico`, non `solo-canale` -- e "dinamico" qui significa solo che il
+  numero di scritture varia fra i due cicli, non il valore.
 
 ### 3. Cablato ma parzialmente derivabile
 
@@ -862,9 +568,3 @@ Attenzione al rovescio: una lettura scartata puo' essere legittima. Il vendor
 legge anche per sincronizzare o per sbloccare un gate, non solo per usare il
 dato -- il peek su `0x019e` e il peek finale su `0x0270` sono di quel tipo. Il
 criterio e' se il valore ricompare in una scrittura successiva.
-
-## Catture ancora utili (al prossimo riflash DSL)
-
-Attach da freddo non catturabile (wl si deregistra). Restano: secondo canale
-5G (terzo `lpf_cap0`), BW80, 2.4G (mappa radio 2G non validata), cicli down/up
-(budget dei poll). Dettaglio in `dsl-capture-plan` (output di sessione).

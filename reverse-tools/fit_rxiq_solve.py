@@ -2,9 +2,23 @@
 """Fit the AC-PHY RX IQ-cal coefficient formula against known ground truth.
 
 The driver reads three 32-bit accumulators per chain (ii, qq, iq) and writes two
-10-bit coefficients (a -> 0x?a0, b -> 0x?a1). The port implements the N-PHY
-division form; the vendor blob reaches `wlc_phy_inv_cordic` from
-`wlc_phy_calc_iq_mismatch_acphy`, so the real computation may go through an
+10-bit coefficients (a -> 0x?a0, b -> 0x?a1).
+
+RESOLVED (blob D6220 7.14, wlc_phy_calc_rx_iq_comp_acphy): the formula is
+    a = round(-(iq << 10) / ii)
+    b = isqrt_near((qq << 20) / ii - a*a) - 1024
+with isqrt_near = floor, +1 when remainder > root (== wlc_phy_sqrt_int).
+Note calc_iq_mismatch_acphy (which reaches inv_cordic) is a DIFFERENT path
+(txiqlo/diagnostics), not this one -- the earlier inv_cordic lead was a red
+herring, ruled out because its written `a` did not match the N-PHY division
+form 4/4 while this one does.
+
+Against the four ground-truth points this scores a 4/4, b 3/4. The single
+miss is warm c0: it needs qq/ii >= 1.153141 but the summed accumulators give
+1.152846 (inner 1208590 vs 1208900 needed, gap 310 / 0.0295%). Unreachable
+from the capture oracle because the blob accumulates per-tone with a
+round-half-away before the /N divide (cal_rx_fdiqi, entry+40/+56) and the
+oracle only exposes the pre-summed accumulators. Declared residual: 1 LSB.
 arctangent instead. At the imbalance magnitudes these captures exercise the two
 are numerically indistinguishable, so this harness enumerates candidate
 formulations -- including atan2-based ones -- and scores each against every

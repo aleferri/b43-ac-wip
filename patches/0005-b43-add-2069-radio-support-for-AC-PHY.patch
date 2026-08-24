@@ -1,4 +1,4 @@
-From e7a85308dbb89f6a85a562a82f41075e6ec59464 Mon Sep 17 00:00:00 2001
+From 4b26288db6fea0eead294d5ad4c06074f4cb78c7 Mon Sep 17 00:00:00 2001
 From: Alessio Ferri <alessio.ferri@mythread.it>
 Date: Mon, 20 Jul 2026 10:14:12 +0000
 Subject: [PATCH 5/9] b43: add 2069 radio support for AC-PHY
@@ -9,9 +9,9 @@ map, radio init, channel setup, AFE calibration, and PLL programming.
 Signed-off-by: Alessio Ferri <alessio.ferri@mythread.it>
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |    1 +
- .../net/wireless/broadcom/b43/radio_2069.c    | 1381 +++++++++++++++++
+ .../net/wireless/broadcom/b43/radio_2069.c    | 1385 +++++++++++++++++
  .../net/wireless/broadcom/b43/radio_2069.h    |   44 +
- 3 files changed, 1426 insertions(+)
+ 3 files changed, 1430 insertions(+)
  create mode 100644 drivers/net/wireless/broadcom/b43/radio_2069.c
  create mode 100644 drivers/net/wireless/broadcom/b43/radio_2069.h
 
@@ -29,10 +29,10 @@ index bf37880..647ed15 100644
  b43-y				+= dma.o
 diff --git a/drivers/net/wireless/broadcom/b43/radio_2069.c b/drivers/net/wireless/broadcom/b43/radio_2069.c
 new file mode 100644
-index 0000000..814ba8f
+index 0000000..71f89ff
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/radio_2069.c
-@@ -0,0 +1,1381 @@
+@@ -0,0 +1,1385 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +/*
 + * Broadcom B43 wireless driver 2069 radio — per-channel tuning table, lookup,
@@ -882,6 +882,7 @@ index 0000000..814ba8f
 + */
 +void b43_radio_2069_afe_lpf_stage(struct b43_wldev *dev, u16 afe_728)
 +{
++	B43_AC_FN();
 +	static const u16 clr49[] = {
 +		0xe000, 0x1800, 0x0400, 0x0300, 0x0040, 0x0080,
 +	};
@@ -903,10 +904,10 @@ index 0000000..814ba8f
 +	}
 +}
 +
-+/* 4360 agcombo: 4112-4177 ; d6220 ch36 @#32954 (fp 10/16) */
 +void b43_radio_2069_channel_setup(struct b43_wldev *dev,
 +	const struct b43_phy_ac_channeltab_e_radio2069 *e)
 +{
++	B43_AC_FN();
 +	const struct r2069_chan_write *writes = r2069_chan_writes;
 +	unsigned int n = ARRAY_SIZE(r2069_chan_writes);
 +	unsigned int i;
@@ -1018,6 +1019,7 @@ index 0000000..814ba8f
 +/* Pass 0/1 common preamble: program the engine for this pass. */
 +static void b43_r2069_rccal_setup(struct b43_wldev *dev, unsigned int pass)
 +{
++	B43_AC_FN();
 +	r2069_mod(dev, R2069_RCCAL_CFG, 0x1000,
 +		  (u16)(b43_r2069_rccal_init[pass] << 12));
 +	r2069_mod(dev, R2069_RCCAL_CFG, 0x0018,
@@ -1031,6 +1033,7 @@ index 0000000..814ba8f
 +/* Kick the engine and poll the done bit. */
 +static bool b43_r2069_rccal_run(struct b43_wldev *dev)
 +{
++	B43_AC_FN();
 +	unsigned int i;
 +
 +	r2069_mod(dev, R2069_RCCAL_CFG, 0x0001, 0x0000);
@@ -1102,9 +1105,9 @@ index 0000000..814ba8f
 +	}
 +}
 +
-+/* 4360 agcombo: 174-258 ; d6220 ch36 #32586-32732 (EN1 enable -> 3 pass -> EN1 disable) */
 +void b43_radio_2069_rccal(struct b43_wldev *dev)
 +{
++	B43_AC_FN();
 +	unsigned int pass;
 +
 +	u16 chipnum = dev->dev->chip_id;
@@ -1143,7 +1146,7 @@ index 0000000..814ba8f
 +	}
 +
 +	/*
-+	 * Last pass (dacbuf cap): the engine runs with P2_A/P2_B armed, 
++	 * Last pass (dacbuf cap): the engine runs with P2_A/P2_B armed,
 +	 * then the measurement-enable bit in P2_B is cleared. d6220 ch36 #32671-32729.
 +	 */
 +	b43_r2069_rccal_setup(dev, pass);
@@ -1168,9 +1171,9 @@ index 0000000..814ba8f
 + * first, valid from the second. The post-cal PHY writes are fixed constants,
 + * not a restore of the arm-time values.
 + */
-+/* 4360 agcombo: 8784-8829 ; down-to-bss-up #56954-57000 ; d6220 ch36: n/l */
 +void b43_radio_2069_afecal(struct b43_wldev *dev)
 +{
++	B43_AC_FN();
 +	struct b43_phy_ac *ac = dev->phy.ac;
 +	unsigned int core;
 +
@@ -1275,6 +1278,7 @@ index 0000000..814ba8f
 +
 +static void b43_r2069_prefregs_init(struct b43_wldev *dev)
 +{
++	B43_AC_FN();
 +	unsigned int i;
 +
 +	for (i = 0; i < ARRAY_SIZE(b43_r2069_prefregs_rev4); i++)
@@ -1289,9 +1293,9 @@ index 0000000..814ba8f
 + * gating writes around the radio body, the same pattern already used by
 + * b43_radio_2069_afecal in this file.
 + */
-+/* 4360 agcombo: 86-97 ; d6220 ch36 @#32421 (fp 10/24) */
 +void b43_radio_2069_init(struct b43_wldev *dev)
 +{
++	B43_AC_FN();
 +	u16 saved_728;
 +
 +	saved_728 = b43_phy_read_log(dev, 0x0728);
@@ -1372,9 +1376,9 @@ index 0000000..814ba8f
 + * b43_radio_2069_rccal -- pure radio-register block, no PHY touches,
 + * same misplacement as the prefregs/init functions above.
 + */
-+/* 4360 agcombo: 148-172 ; d6220 ch36 @#32547 (fp 10/17) */
 +void b43_radio_2069_pwron(struct b43_wldev *dev)
 +{
++	B43_AC_FN();
 +	u16 pon0, pon1;
 +
 +	b43_radio_set(dev,   0x08ea, 0x0040);

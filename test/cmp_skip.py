@@ -31,11 +31,68 @@ import sys
 # Divergenze note, per board. Ogni voce:
 #   pattern  : regex sull'op vendor da saltare
 #   dopo     : regex sull'op vendor immediatamente precedente (contesto)
+#   dopo2    : regex sull'op due posizioni prima (opzionale)
+#   prima    : regex sull'op immediatamente successiva (opzionale)
+#   prima2   : regex sull'op due posizioni dopo (opzionale)
 #   max      : quante volte al massimo puo' applicarsi
 #   motivo   : perche' il port non deve emetterla
 #   cascata  : True se l'op potrebbe influenzare valori letti dopo
 # ---------------------------------------------------------------------------
 KNOWN = {
+    'd6220': [
+        dict(pattern=r'^MAC\.MCTRL val=0x1 mask=0x1$',
+             dopo=r'^MAC\.MCTRL val=0x0 mask=0x1$',
+             prima=r'^MAC\.MCTRL val=0x0 mask=0x1$',
+             prima2=r'^PHY\.RD addr=0x7af',
+             ctx=[(-6, r'^PHY\.RD addr=0x527')],
+             max=3, cascata=False,
+             motivo="coppia enable+suspend interlacciata dal contesto up "
+                    "durante l'attesa ~1 s del probe pacing di "
+                    "rxiqcal_finalize: compare solo dopo risvegli in ritardo "
+                    "(gap 1.32 s invece di 1.00 s, es. #28859/#28950) e solo "
+                    "nella cattura -up -- assente in attach ch44, attach "
+                    "ch36-bw40 e down-to-bss. Il contesto a -6 (peek 0x527, "
+                    "cioe' iter regolare) esclude la coppia gemella in coda "
+                    "all'extended-first, che il port trascrive ed emette. "
+                    "Rumore di scheduling, non struttura del driver: il port "
+                    "non deve emetterla."),
+
+        dict(pattern=r'^MAC\.MCTRL val=0x0 mask=0x1$',
+             dopo=r'^MAC\.MCTRL val=0x1 mask=0x1$',
+             dopo2=r'^MAC\.MCTRL val=0x0 mask=0x1$',
+             prima=r'^PHY\.RD addr=0x7af',
+             ctx=[(-7, r'^PHY\.RD addr=0x527')],
+             max=3, cascata=False,
+             motivo="meta' suspend della coppia sopra: stessa evidenza."),
+
+        dict(pattern=r'^MAC\.MCTRL val=0x0 mask=0x1$',
+             dopo=r'^MAC\.MHF addr=0x0 val=0x0 mask=0x4000$',
+             prima=r'^MAC\.MCTRL val=0x1 mask=0x1$',
+             max=1, cascata=False,
+             motivo="prima coppia suspend+enable fra la MHF (clr 0x4000) e la "
+                    "GPIO della finalize: #28759 arriva 1.37 s dopo la MHF e "
+                    "su un'altra cpu (cpu0 -> cpu1) -- attivita' MAC "
+                    "interlacciata dal contesto up, assente nel warm. Il port "
+                    "non la emette."),
+        dict(pattern=r'^MAC\.MCTRL val=0x1 mask=0x1$',
+             dopo=r'^MAC\.MCTRL val=0x0 mask=0x1$',
+             dopo2=r'^MAC\.MHF addr=0x0 val=0x0 mask=0x4000$',
+             max=1, cascata=False,
+             motivo="meta' enable della coppia sopra."),
+        dict(pattern=r'^MAC\.MCTRL val=0x0 mask=0x1$',
+             dopo=r'^MAC\.MCTRL val=0x1 mask=0x1$',
+             prima=r'^MAC\.MCTRL val=0x1 mask=0x1$',
+             ctx=[(-3, r'^MAC\.MHF addr=0x0 val=0x0 mask=0x4000$')],
+             max=1, cascata=False,
+             motivo="seconda coppia fra MHF e GPIO: #28761 a +1.29 s dalla "
+                    "prima, stessa evidenza."),
+        dict(pattern=r'^MAC\.MCTRL val=0x1 mask=0x1$',
+             dopo=r'^MAC\.MCTRL val=0x0 mask=0x1$',
+             prima=r'^GPIO\.OUT val=0x4 mask=0x4',
+             ctx=[(-4, r'^MAC\.MHF addr=0x0 val=0x0 mask=0x4000$')],
+             max=1, cascata=False,
+             motivo="meta' enable della seconda coppia."),
+    ],
     'agcombo': [
         dict(pattern=r'^PHY\.WR addr=0x1ec val=0x2$',
              dopo=r'^PHY\.MOD addr=0x2e4',
@@ -75,10 +132,24 @@ def apply_skips(ops, rules, verbose=False):
                 continue
             if not re.search(r['pattern'], op):
                 continue
-            if r['dopo'] is not None:
-                prev = ops[i - 1] if i else ''
-                if not re.search(r['dopo'], prev):
+            ctx = [('dopo', i - 1), ('dopo2', i - 2),
+                   ('prima', i + 1), ('prima2', i + 2)]
+            ok = True
+            for key, j in ctx:
+                rx = r.get(key)
+                if rx is None:
                     continue
+                neigh = ops[j] if 0 <= j < len(ops) else ''
+                if not re.search(rx, neigh):
+                    ok = False
+                    break
+            for off, rx in r.get('ctx', ()):
+                neigh = ops[i + off] if 0 <= i + off < len(ops) else ''
+                if not re.search(rx, neigh):
+                    ok = False
+                    break
+            if not ok:
+                continue
             hit = k
             break
         if hit is None:

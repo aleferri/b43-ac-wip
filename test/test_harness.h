@@ -32,6 +32,7 @@ void b43_test_plans_report(FILE *f);
  */
 void b43_test_mirror_radio_set(u16 reg, u16 val);
 void b43_test_mirror_phy_set(u16 reg, u16 val);
+u16 b43_test_mirror_phy_get(u16 reg);
 void b43_test_trace_to(FILE *f);
 
 /*

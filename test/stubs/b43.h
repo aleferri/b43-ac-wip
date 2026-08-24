@@ -200,6 +200,12 @@ u16  b43_read16(struct b43_wldev *dev, u16 offset);
 void b43_write16(struct b43_wldev *dev, u16 offset, u16 val);
 void b43_write16f(struct b43_wldev *dev, u16 offset, u16 val);
 
+/* SHM (ucode shared memory) -- kernel: b43/main.h; il tracer li emette
+ * come OBJ.RD/OBJ.WR (implementazione in wrap.c). */
+#define B43_SHM_SHARED 0x0001
+u16  b43_shm_read16(struct b43_wldev *dev, u16 routing, u16 offset);
+void b43_shm_write16(struct b43_wldev *dev, u16 routing, u16 offset, u16 val);
+
 /* MAC gating -- no-op in test (state mask in b43_phy_ac tracks the bit). */
 void b43_mac_enable(struct b43_wldev *dev);
 void b43_mac_suspend(struct b43_wldev *dev);

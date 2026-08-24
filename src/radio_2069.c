@@ -869,7 +869,6 @@ void b43_radio_2069_afe_lpf_stage(struct b43_wldev *dev, u16 afe_728)
 	}
 }
 
-/* 4360 agcombo: 4112-4177 ; d6220 ch36 @#32954 (fp 10/16) */
 void b43_radio_2069_channel_setup(struct b43_wldev *dev,
 	const struct b43_phy_ac_channeltab_e_radio2069 *e)
 {
@@ -1071,7 +1070,6 @@ static void b43_r2069_rccal_disarm_p2b(struct b43_wldev *dev)
 	}
 }
 
-/* 4360 agcombo: 174-258 ; d6220 ch36 #32586-32732 (EN1 enable -> 3 pass -> EN1 disable) */
 void b43_radio_2069_rccal(struct b43_wldev *dev)
 {
 	B43_AC_FN();
@@ -1113,7 +1111,7 @@ void b43_radio_2069_rccal(struct b43_wldev *dev)
 	}
 
 	/*
-	 * Last pass (dacbuf cap): the engine runs with P2_A/P2_B armed, 
+	 * Last pass (dacbuf cap): the engine runs with P2_A/P2_B armed,
 	 * then the measurement-enable bit in P2_B is cleared. d6220 ch36 #32671-32729.
 	 */
 	b43_r2069_rccal_setup(dev, pass);
@@ -1138,7 +1136,6 @@ void b43_radio_2069_rccal(struct b43_wldev *dev)
  * first, valid from the second. The post-cal PHY writes are fixed constants,
  * not a restore of the arm-time values.
  */
-/* 4360 agcombo: 8784-8829 ; down-to-bss-up #56954-57000 ; d6220 ch36: n/l */
 void b43_radio_2069_afecal(struct b43_wldev *dev)
 {
 	B43_AC_FN();
@@ -1261,7 +1258,6 @@ static void b43_r2069_prefregs_init(struct b43_wldev *dev)
  * gating writes around the radio body, the same pattern already used by
  * b43_radio_2069_afecal in this file.
  */
-/* 4360 agcombo: 86-97 ; d6220 ch36 @#32421 (fp 10/24) */
 void b43_radio_2069_init(struct b43_wldev *dev)
 {
 	B43_AC_FN();
@@ -1345,7 +1341,6 @@ void b43_radio_2069_init(struct b43_wldev *dev)
  * b43_radio_2069_rccal -- pure radio-register block, no PHY touches,
  * same misplacement as the prefregs/init functions above.
  */
-/* 4360 agcombo: 148-172 ; d6220 ch36 @#32547 (fp 10/17) */
 void b43_radio_2069_pwron(struct b43_wldev *dev)
 {
 	B43_AC_FN();

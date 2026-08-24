@@ -50,7 +50,8 @@ git -C "$KDIR" commit -q --amend --no-edit
 # helpers_phy_ac.c, rxiqcal_phy_ac.{c,h} + le loro righe Makefile.
 git -C "$KDIR" am -3 -q "$REPO"/patches/0006-*.patch
 cp "$REPO"/src/phy_ac.c "$REPO"/src/phy_ac.h "$REPO"/src/helpers_phy_ac.c \
-   "$REPO"/src/rxiqcal_phy_ac.c "$REPO"/src/rxiqcal_phy_ac.h "$KDIR/$B43DIR/"
+   "$REPO"/src/rxiqcal_phy_ac.c "$REPO"/src/rxiqcal_phy_ac.h \
+   "$REPO"/src/tables_phy_ac.c "$REPO"/src/tables_phy_ac.h "$KDIR/$B43DIR/"
 grep -q 'rxiqcal_phy_ac\.o' "$KDIR/$B43DIR/Makefile" || \
 	sed -i '/+= radio_2069\.o/a b43-$(CONFIG_B43_PHY_AC)\t+= rxiqcal_phy_ac.o\nb43-$(CONFIG_B43_PHY_AC)\t+= helpers_phy_ac.o' \
 	    "$KDIR/$B43DIR/Makefile"

@@ -4,6 +4,7 @@
 
 | Doc | Cosa contiene |
 |---|---|
+| [`crsminpwr-d6220.md`](crsminpwr-d6220.md) | Specifica delle soglie CRS min power derivata dal blob D6220 di riferimento e da 52 segmenti, con le tre LUT a `.rodata+0x40e84/94/a4`, i tre set di registri per larghezza, e la separazione fra reperti [BLOB], [MISURA] e [APERTO]. Include perche la correlazione rumore-banco non poteva funzionare. |
 | [`driver-status.md`](driver-status.md) | Stato attuale del bring-up: board/canale/BW supportati, mappa file→patch, procedura di rigenerazione, split upstream previsto della patch 0006, SALAME notevoli. |
 | [`porting-plan.md`](porting-plan.md) | Criterio di correttezza, gate attivi, cosa resta diviso per natura (trascrizione, derivazione, proprietà altrui), distinzione fra le fasi di bring-up. |
 | [`retrace-todo.md`](retrace-todo.md) | Stato copertura del bring-up per funzione (via i marcatori `B43_AC_FN`) e divergenze note ancora aperte (DSL: prefregs −2 scritture, afe_lpf_stage, rccal ~84%; tables per-contenuto; accessor vendor da verificare col kallsyms). |

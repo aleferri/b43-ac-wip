@@ -2,7 +2,7 @@
 
 Il draft 1 di `switch_channel` è validato op-per-op contro il trace vendor
 `d6220/attach-to-bss-up-ch36-bw20` (flow `full` con oracolo, prima divergenza
-@22478 su 25013 op). Il primo bring-up HW
+@23951 su 25013 op). Il primo bring-up HW
 è quindi atteso funzionante su:
 
 - **Board**: NetGear D6220 (o board equivalenti con chip 0x4352, radio
@@ -105,12 +105,6 @@ verifica in `txlpf-formula.md`):
 - DACBUF: `dacbuf_cap = (RCCAL_G & 0x03e0) >> 5`, dal readback post-apply.
 
 Verificate sui tre board (d6220/DSL/agcombo).
-
-I log `[TXLPFLOG]` che hanno prodotto queste formule sono ancora nel codice
-(sette call site, di cui due dentro `b43_actab_write_bulk`/`read_bulk`) e
-usano `b43info`, quindi emettono una riga di dmesg non condizionata per ogni
-bulk di tabella. Vanno rimossi o messi dietro `b43dbg` prima della
-submission.
 
 ## Poll senza budget — corretto
 

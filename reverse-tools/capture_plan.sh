@@ -108,6 +108,8 @@ FORCE=/sys/module/wl_diag/parameters/force_full_init
 forza() {
     if [ -w "$FORCE" ]; then
         echo "$1" > "$FORCE"
+    else
+        echo "ATTENZIONE: $FORCE non scrivibile, ciclo NON forzato" >&2
     fi
     return 0
 }
@@ -142,6 +144,10 @@ for c in $LIST; do
     ciclo 1        # cal completa forzata
     ciclo 0        # a caldo
 done
+
+# Si lascia l'interruttore a 1: leggerlo a fine corsa dopo un `forza 0` darebbe
+# sempre 0 e non direbbe nulla. Comunque la traccia lo porta nei record CAL.INIT.
+forza 1
 
 emit "fine fase $FASE"
 echo "fase $FASE completata. Splitta la traccia sui record CHANSPEC."

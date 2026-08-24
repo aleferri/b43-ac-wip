@@ -32,11 +32,19 @@ Probe + `ifconfig wlan1 up` + scan passivo + associate su AP 5 GHz ch 36
 Due risultati sono riproducibili in questo repo (vedi
 [Verifica](#verifica-riproducibile)):
 
-- Il bring-up su D6220 ch36 combacia **op-per-op** con la cattura vendor fino
-  a @22478 su 25013 operazioni (flow `full`, primo bring-up). Il bring-up
-  successivo combacia fino a @2177 su 21007 (flow `switch_channel` con
-  `AC_FIRST_INIT=0`), dove si fermano sul banco `0x0910` -- vedi
-  `docs/retrace-todo.md`.
+- Il bring-up su D6220 ch36 combacia **op-per-op con l'intera cattura
+  vendor** (flow `full`, primo bring-up): `cmp_skip.py --board d6220` misura
+  100.00% su 25003 op con 0 regioni divergenti e 10 op vendor saltate su 6
+  regole dichiarate — coppie MAC.MCTRL di scheduling interlacciate dal
+  contesto up, presenti solo dopo risvegli in ritardo del pacing (~1.32 s
+  invece di 1.00 s) e solo in questa cattura. `compare.py`, che non applica
+  eccezioni, si ferma alla prima di quelle coppie (@23951 su 25013). Il
+  bring-up successivo combacia al 99.99% (21005/21007, flow `switch_channel`
+  con `AC_FIRST_INIT=0`): restano 2 op, le due riapplicazioni dello stesso
+  coefficiente RXIQ `b` scarto di 1 LSB — irraggiungibile dagli accumulatori
+  sommati con qualsiasi arrotondamento (bound in
+  `reverse-tools/fit_rxiq_solve.py`; ipotesi: quantizzazione di
+  `wlc_phy_inv_cordic` nel blob). Vedi `docs/retrace-todo.md`.
 - L'estrattore SROM rev 11 passa l'harness userspace su tutti i vettori:
   77/0 (DSL), 74/0 (D6220), 75/0 (agcombo).
 
@@ -102,6 +110,11 @@ bring-up radio (tutte sul DSL, wl 6.30) sono in
   `mac_enable`: `post_cal_finalize` iter 2/3, RXIQ apply + stage 2, cal AFE
   RX, i due round `txpwr`/`rxgain` con misura RXIQ, il loop
   `gainctrl_final_apply`, teardown RXIQ.
+- **Watchdog periodico** (`b43_phy_ac_watchdog`, hook `pwork_15sec`): poll
+  TSSI/statistiche SHM con latch-and-clear della finestra 0x0308–0x0312 e
+  una tornata singola del measure block a MAC sospeso — il ciclo su
+  `0x0725/0x0925` che il vendor esegue ogni ~5 s a regime. Op-per-op
+  contro il tick vendor (vedi [Verifica](#verifica-riproducibile)).
 - **Core b43**: TX/RX wiring (`patches/0008`), allineamento DMA a 64 KB
   (0004), channel set 5 GHz dedicato (0003), PCI bridge ID (0009), bcma PMU
   init PLL + resources (0007).
@@ -112,7 +125,7 @@ Mappa file sorgente → patch: [`docs/driver-status.md`](docs/driver-status.md).
 
 | Blocco | Stato | Impatto |
 |---|---|---|
-| Calibrazione periodica (`recalc_txpower`, `adjust_txpower`) | stub vuoti | Nessun ricalcolo CRS min-power né il ciclo ~10 s su `0x0725/0x0925`: sessioni lunghe driftano |
+| Ricalcolo TX power periodico (`recalc_txpower`) | portata | Catena CRS min-power implementata (ladder + ancoraggio per-BW + bump a freddo, dal blob D6220 7.14). Su hardware manca solo il campione d'interferenza per freq_range che seleziona l'indice, oggi fissato al valore della config validata (ch36 BW20). `adjust_txpower` resta stub: mai invocata nel path MVP |
 | `ppr[24]` (power reduction per-rate) | hardcoded dalla cattura D6220 ch36 | Derivazione da `mcsbw*po` SROM assente: TX power sbagliata su altri canali/board |
 | Base index idle-TSSI | seed catturato, il readback viene scartato | Errore non dominante, ma non è board-independent |
 | GPIO frontend 2-fase, PA bias per-core, PMU regctl enable finale | non implementati | Sono le op che il vendor emette solo a steady state |
@@ -123,10 +136,7 @@ Mappa file sorgente → patch: [`docs/driver-status.md`](docs/driver-status.md).
 
 ### Bug aperti
 
-- **Log `[TXLPFLOG]` a `b43info`**: sette call site, di cui due dentro
-  `b43_actab_write_bulk`/`read_bulk`, cioè una riga di dmesg non
-  condizionata per ogni bulk di tabella. Erano la strumentazione con cui è
-  stata risolta la famiglia LPF; ora che le formule sono chiuse vanno via.
+Nessuno al momento.
 
 Nota per chi legge il descrittore: `est_pwr_lut_core*` e
 `papd_comp_rfpwr_tbl_core*` condividono id e offset **per costruzione**. Il
@@ -147,10 +157,12 @@ del driver. L'esempio: il cap del TX-LPF viene dall'rccal di `op_init`, e in
 cd test && make
 python3 ../reverse-tools/merge_retvals.py \
     ../router-data/d6220/wl-diag-wl1-attach-to-bss-up-ch36-bw20.txt /tmp/att.merged.txt
-AC_MAC_REFCOUNT=1 AC_READ_ORACLE=/tmp/att.merged.txt \
+AC_READ_ORACLE=/tmp/att.merged.txt \
     ./ac_trace full d6220 > trace.full.d6220.out
 python3 compare.py /tmp/att.merged.txt trace.full.d6220.out --range 50:30172
-# prima divergenza: @22478
+# prima divergenza: @23951
+python3 cmp_skip.py /tmp/att.merged.txt trace.full.d6220.out 50:30172 --board d6220
+# CON eccezioni: 25003/25003 = 100.00%, 0 regioni, 10 op saltate su 6 regole
 ```
 
 Sequenza del load tabelle di `op_init` contro la cattura vendor:
@@ -161,6 +173,17 @@ python3 ../reverse-tools/coverage_by_function.py \
     gen.op_init.agcombo.txt \
     ../router-data/agcombo/wl-diag-wl1-attach.txt
 # tables_init 3714/3714 100.0%  #356..#4069 / 0 op nei gap
+```
+
+Tick del watchdog periodico contro il tick vendor a regime (ch36 BW20,
+estratto dallo sweep — la cattura fa sia da oracolo per le letture SHM/TSSI
+sia da riferimento):
+
+```sh
+AC_READ_ORACLE=../router-data/d6220/wl-diag-wl1-steady-tick-ch36-bw20.txt \
+    ./ac_trace periodic d6220 > gen.periodic.out
+python3 compare.py ../router-data/d6220/wl-diag-wl1-steady-tick-ch36-bw20.txt gen.periodic.out
+# MATCH, 496/496 op
 ```
 
 Estrattore SROM rev 11 sui tre board:
@@ -198,7 +221,6 @@ test/                    — harness userspace di verifica trace op-per-op
 patches/                 — serie patch rigenerabile dai sorgenti
 docs/                    — documentazione tecnica (INDEX.md dentro)
 sprom-rev11/             — patch SROM rev 11 + harness userspace
-reverse-output/          — trace annotate/collapsed, correlazione
 reverse-tools/           — script Python (correlatore, estrattori, generatori) + tool C on-device
 router-data/             — dump NVRAM/SROM/wl-diag per board (DSL, D6220, agcombo)
 bring-up-logs/           — log runtime del driver portato (b43 open)
