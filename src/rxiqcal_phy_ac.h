@@ -5,16 +5,17 @@
 struct b43_wldev;
 
 /*
- * Solver RXIQ generico. Ritorna -EOPNOTSUPP finche' il register-map non e'
- * riempito; nessun chiamante nel driver. Razionale in rxiqcal_phy_ac.c.
+ * Generic RX-IQ solver. Returns -EOPNOTSUPP while the register map is not
+ * filled in, and has no callers yet. Rationale in rxiqcal_phy_ac.c.
  */
 int b43_phy_ac_rxiqcal(struct b43_wldev *dev, u8 cal_type);
 
 /*
- * Misura (2 round da 0x4000 campioni, sommati) e programma i coefficienti di
- * compensazione RX-IQ per i core in core_mask. Matematica e regmap confermati
- * bit-exact contro la cattura agcombo con retval (docs/rxiq-cal-analysis.md).
- * Presuppone tone attivo e path di misura gia' configurati dal chiamante.
+ * Measure -- two rounds of 0x4000 samples, summed -- and program the RX-IQ
+ * compensation coefficients for the cores in core_mask. The arithmetic and
+ * the register map are confirmed bit-exactly against the agcombo capture
+ * that records read values (docs/rxiq-cal-analysis.md). Expects the caller
+ * to have the tone running and the measurement path configured.
  */
 int b43_phy_ac_rx_iq_comp_update(struct b43_wldev *dev, u8 core_mask);
 
@@ -26,34 +27,33 @@ int b43_phy_ac_rx_iq_comp_update(struct b43_wldev *dev, u8 core_mask);
 void b43_phy_ac_rxiq_est_debug(struct b43_wldev *dev);
 
 /*
- * Radio-side setup del loopback di misura per rxiqcal. Chiamata per-core
- * dopo rxgainctrl_regs nel flow di set_channel. Ref:
- * wlc_phy_rxcal_radio_setup_nphy (con adattamenti radio 2069).
+ * Radio-side setup of the rxiqcal measurement loopback, called per core
+ * after rxgainctrl_regs in the set_channel flow. After
+ * wlc_phy_rxcal_radio_setup_nphy, adapted to the 2069 radio.
  */
 void b43_phy_ac_rxcal_radio_setup(struct b43_wldev *dev, u8 rx_core);
 
 /*
- * Tone-setup pre-rxcal: PHY-side setup del generatore di tone di calibrazione.
- * Non è per-core: emette un blocco di ~26 op che tocca entrambi i core in
- * un ordine specifico (pass1 core-forward, pass2 core-reverse) più config di
- * 0x0393/0x0394/0x040f. Vendor #39709-#39734.
+ * PHY-side setup of the calibration tone generator, run once rather than per
+ * core: a block of some 26 ops that touches both cores in a specific order
+ * (first pass forward, second pass reversed) plus the 0x0393/0x0394/0x040f
+ * configuration.
  */
 void b43_phy_ac_rxcal_tone_setup(struct b43_wldev *dev);
 
 /*
- * Tone arm per un core specifico: peek 0x0393 + WR 0x0394 (channel|core)
- * + WR 0x0393 = 0x8000 (arm bit). Chiamata prima di gainctrl(core).
- * Vendor #39732-#39734 (core 0), #39815-#39817 (core 1).
+ * Arm the tone for one core: peek 0x0393, write 0x0394 = channel | core,
+ * write 0x0393 = 0x8000. Called before gainctrl() for that core.
  */
 void b43_phy_ac_rxcal_tone_arm(struct b43_wldev *dev, u8 rx_core);
 
-/* RX-IQ cal per-core: sweep 4-step con settling, schedule fisso. */
+/* Per-core RX-IQ cal: a fixed four-step sweep with settling. */
 void b43_phy_ac_rxcal_gainctrl(struct b43_wldev *dev, u8 rx_core);
 
 /*
- * Cleanup per-core dopo gainctrl. PHY: 14 WR (undo rxgainctrl_regs); Radio:
- * 7 WR (undo rxcal_radio_setup). Chiamati in due loop separati (all cores
- * PHY, then all cores radio) per matchare l'ordine vendor.
+ * Per-core cleanup after gainctrl: 14 PHY writes undoing rxgainctrl_regs and
+ * 7 radio writes undoing rxcal_radio_setup. The caller runs two separate
+ * loops, all cores' PHY then all cores' radio, to match the vendor order.
  */
 void b43_phy_ac_rxcal_cleanup(struct b43_wldev *dev, u8 rx_core);
 void b43_phy_ac_rxcal_radio_cleanup(struct b43_wldev *dev, u8 rx_core);

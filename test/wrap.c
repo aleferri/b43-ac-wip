@@ -307,11 +307,38 @@ static void oracle_init(void)
 }
 
 /* Ritorna 1 e scrive *out se l'oracolo ha un valore per questo indirizzo. */
+static int perturb_addr_valid;
+static unsigned perturb_addr;
+static u16 perturb_mask = 1;
+static struct oracle_q *perturb_tbl;
+
+static void perturb_init(void)
+{
+	static int done;
+	const char *a, *m, *k;
+
+	if (done)
+		return;
+	done = 1;
+	a = getenv("AC_READ_PERTURB");
+	if (!a)
+		return;
+	perturb_addr = (unsigned)strtoul(a, NULL, 0);
+	m = getenv("AC_READ_PERTURB_MASK");
+	if (m)
+		perturb_mask = (u16)strtoul(m, NULL, 0);
+	k = getenv("AC_READ_PERTURB_KIND");
+	perturb_tbl = (k && !strcmp(k, "radio")) ? oracle_rad
+		    : (k && !strcmp(k, "obj")) ? oracle_obj : oracle_phy;
+	perturb_addr_valid = 1;
+}
+
 static int oracle_take(struct oracle_q *tbl, u16 addr, u16 *out)
 {
 	struct oracle_q *q;
 
 	oracle_init();
+	perturb_init();
 	if (!oracle_on || addr >= ORACLE_ADDRS)
 		return 0;
 	q = &tbl[addr];
@@ -324,6 +351,20 @@ static int oracle_take(struct oracle_q *tbl, u16 addr, u16 *out)
 		return 0;
 	}
 	*out = q->v[q->iter++];
+
+	/*
+	 * Perturbation hook. AC_READ_PERTURB names one address, and every
+	 * value the oracle hands out for it is XORed with AC_READ_PERTURB_MASK
+	 * (0x0001 by default).
+	 *
+	 * The point is to find reads the port does not actually consume. A read
+	 * whose value the driver uses changes the emitted trace when perturbed;
+	 * one it discards does not. That is decidable at runtime and covers the
+	 * reads whose address is computed, which a source scan cannot classify.
+	 */
+	if (perturb_addr_valid && addr == perturb_addr && tbl == perturb_tbl)
+		*out ^= perturb_mask;
+
 	oracle_hits++;
 	return 1;
 }
@@ -868,6 +909,23 @@ void __wrap_b43_actab_write_r11(struct b43_wldev *dev,
 	}
 }
 
+/* Same, for the constant-fill companion. */
+void __real_b43_actab_fill_r11(struct b43_wldev *dev,
+			       u16 id, u16 offset, size_t len, u16 val);
+
+void __wrap_b43_actab_fill_r11(struct b43_wldev *dev,
+			       u16 id, u16 offset, size_t len, u16 val)
+{
+	size_t i;
+
+	for (i = 0; i < len; i++) {
+		fprintf(trace(),
+			"cpu1 TBL.WR   id=0x%04x off=0x%04x len=1\n",
+			id, (u16)(offset + i));
+		__real_b43_actab_fill_r11(dev, id, (u16)(offset + i), 1, val);
+	}
+}
+
 /* ============ MAC / misc helpers ============ */
 
 /*
@@ -1075,6 +1133,57 @@ int __wrap_b43_phy_init(struct b43_wldev *dev) { (void)dev; return 0; }
  * These are not wrapped -- they are new symbols, since <linux/delay.h>
  * only declares them. Provide no-op bodies (or count-only if useful).
  */
+/*
+ * Scripted per-channel regulatory ceiling. AC_MAX_POWER sets the value for
+ * every channel; AC_MAX_POWER_MAP overrides individual ones as a
+ * comma-separated list of chan:dBm pairs, which is what exercises a
+ * regulatory domain whose limit is not uniform across a bonded block.
+ */
+static struct ieee80211_channel g_reg_chans[64];
+static unsigned int g_reg_n;
+
+struct ieee80211_channel *ieee80211_get_channel(struct wiphy *wiphy, int freq)
+{
+	unsigned int i;
+
+	(void)wiphy;
+	for (i = 0; i < g_reg_n; i++)
+		if (g_reg_chans[i].center_freq == freq)
+			return &g_reg_chans[i];
+	return NULL;
+}
+
+void b43_test_reg_init(int dflt, const char *map)
+{
+	static const u16 chans[] = {
+		36, 40, 44, 48, 52, 56, 60, 64,
+		100, 104, 108, 112, 116, 120, 124, 128,
+		132, 136, 140, 144, 149, 153, 157, 161, 165,
+	};
+	unsigned int i;
+
+	g_reg_n = 0;
+	for (i = 0; i < sizeof(chans) / sizeof(chans[0]); i++) {
+		g_reg_chans[g_reg_n].hw_value = chans[i];
+		g_reg_chans[g_reg_n].center_freq = 5000 + 5 * chans[i];
+		g_reg_chans[g_reg_n].max_power = dflt;
+		g_reg_n++;
+	}
+	while (map && *map) {
+		unsigned long ch = strtoul(map, (char **)&map, 10);
+		long pw;
+
+		if (*map != ':')
+			break;
+		pw = strtol(map + 1, (char **)&map, 10);
+		for (i = 0; i < g_reg_n; i++)
+			if (g_reg_chans[i].hw_value == ch)
+				g_reg_chans[i].max_power = (int)pw;
+		if (*map == ',')
+			map++;
+	}
+}
+
 void udelay(unsigned long us)         { (void)us; }
 void mdelay(unsigned long ms)         { (void)ms; }
 void msleep(unsigned int ms)          { (void)ms; }

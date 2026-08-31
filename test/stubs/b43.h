@@ -40,10 +40,20 @@ enum nl80211_channel_type {
 	NL80211_CHAN_HT40MINUS,
 	NL80211_CHAN_HT40PLUS,
 };
-#define NL80211_CHAN_WIDTH_20  0
-#define NL80211_CHAN_WIDTH_40  1
-#define NL80211_CHAN_WIDTH_80  2
-#define NL80211_CHAN_WIDTH_160 3
+/*
+ * Same order and values as include/uapi/linux/nl80211.h. The previous stub
+ * numbered these from zero without NL80211_CHAN_WIDTH_20_NOHT, so every
+ * value was one below the real one -- harmless while both sides used the
+ * stub, wrong the moment the driver source is read against upstream.
+ */
+enum nl80211_chan_width {
+	NL80211_CHAN_WIDTH_20_NOHT,
+	NL80211_CHAN_WIDTH_20,
+	NL80211_CHAN_WIDTH_40,
+	NL80211_CHAN_WIDTH_80,
+	NL80211_CHAN_WIDTH_80P80,
+	NL80211_CHAN_WIDTH_160,
+};
 
 /* Debug switch used inside b43_phy_read_log macros. */
 #define B43_DEBUG 0
@@ -61,7 +71,7 @@ enum nl80211_channel_type {
  */
 struct cfg80211_chan_def {
 	struct ieee80211_channel *chan;
-	int width;
+	enum nl80211_chan_width width;
 	int center_freq1;
 	int center_freq2;
 };
@@ -70,6 +80,12 @@ struct ieee80211_channel {
 	int band;
 	u16 center_freq;
 	u16 hw_value;
+	/*
+	 * Regulatory ceiling for this channel, in whole dBm, as cfg80211
+	 * fills it from the wiphy's regulatory domain. The TX power
+	 * derivation consumes it; see b43_phy_ac_txpwr_target().
+	 */
+	int max_power;
 	u32 flags;
 };
 
@@ -77,9 +93,20 @@ struct ieee80211_conf {
 	struct cfg80211_chan_def chandef;
 };
 
+struct wiphy;
+
 struct ieee80211_hw {
 	struct ieee80211_conf conf;
+	struct wiphy *wiphy;
 };
+
+/*
+ * Per-channel regulatory lookup. Upstream this walks the wiphy's band
+ * definitions; the harness scripts a small table so the per-sub-channel path
+ * can be exercised without a regulatory core.
+ */
+struct ieee80211_channel *ieee80211_get_channel(struct wiphy *wiphy, int freq);
+void b43_test_reg_init(int dflt, const char *map);
 
 /*
  * SROM rev 11 per-chain power info. Exactly the shape defined by
@@ -98,6 +125,17 @@ struct ssb_sprom_core_pwr_info {
 	u16 pa5ga[12];
 };
 
+/*
+ * Rev-11 per-rate power offsets, as added to struct ssb_sprom by
+ * patches/0001-ssb-bcma-add-SPROM-revision-11-extraction.patch. Four u32 per
+ * band in the real layout (20/40/80/160 MHz); only the two the TX power
+ * derivation consumes are mirrored here.
+ */
+struct ssb_sprom_mcsbw_po {
+	u32 bw20;
+	u32 bw40;
+};
+
 struct ssb_sprom_rxgains {
 	u8 elnagain[3];
 	u8 triso[3];
@@ -110,6 +148,11 @@ struct ssb_sprom_rxgains {
  * we hold only the fields the scratch code reads.
  */
 struct ssb_sprom {
+	/* Per-band rev-11 power offsets: index 0 = 5gl, 1 = 5gm, 2 = 5gh. */
+	struct ssb_sprom_mcsbw_po mcsbw5g_po[3];
+	/* Antenna gain per band, quarter-dB, SROM ag0/ag1. Index 1 is 5 GHz. */
+	s8 antenna_gain_qdb[2];
+
 	u8 revision;
 	u8 rxchain;
 	u8 subband;

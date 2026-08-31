@@ -13,6 +13,7 @@
 
 | Doc | Cosa contiene |
 |---|---|
+| [`txpwr-target-derivation.md`](txpwr-target-derivation.md) | Derivazione del target di potenza TX in `0x0646`: la catena a cinque stadi di `wlc_phy_txpower_recalc_target`, le tre scale di unita (quarti di dBm, mezzi dB dei nibble `po`, dBm interi del regolatorio), la formula parametrica su SROM esatta su 26/26 configurazioni dello sweep, e i nove candidati esclusi con argomento per i due residui a 40 MHz. Include cosa la CLM ha stabilito e cosa no, e quale cattura puo refutare quale ipotesi. |
 | [`channel-generalization.md`](channel-generalization.md) | Analisi di quanto del driver è già chan/BW-invariant. Diff a 3 vie tra ch36/ch44/ch36-bw40. Quali blocchi vanno generalizzati, con piano operativo in 4 fasi. |
 | [`rxiq-cal-analysis.md`](rxiq-cal-analysis.md) | Analisi del blocco di calibrazione RX-IQ: struttura 4-step del sweep vendor, mapping tra i registri toccati e le fasi (RX AFE reconfig, radio 2069 IQ-cal, poll blocks, cleanup). |
 | [`txlpf-formula.md`](txlpf-formula.md) | Formula della famiglia LPF (TX-LPF, RX-LPF, DACBUF), **risolta**: cap derivato da rccal (E/F/G), pre-state preservato dalla RMW, verificata sui tre board. Include l'analisi storica. |

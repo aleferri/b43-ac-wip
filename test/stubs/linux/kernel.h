@@ -23,7 +23,11 @@
 #define clamp_t(t, v, lo, hi) ((t)clamp((v), (lo), (hi)))
 #define abs(x) ((x) < 0 ? -(x) : (x))
 
+#define INT_MAX		2147483647
+
 #define DIV_ROUND_UP(n, d)   (((n) + (d) - 1) / (d))
+#define DIV_ROUND_CLOSEST(n, d)     (((n) + (d) / 2) / (d))
+#define DIV_ROUND_CLOSEST_ULL(n, d) (((n) + (d) / 2) / (d))
 #define round_up(n, m)       (((n) + (m) - 1) & ~((m) - 1))
 #define round_down(n, m)     ((n) & ~((m) - 1))
 
@@ -37,7 +41,18 @@
 #define __maybe_unused  __attribute__((unused))
 #define __must_check    __attribute__((warn_unused_result))
 
-#define IS_ENABLED(cfg) 0
+/*
+ * Real IS_ENABLED semantics: the driver uses it to select a debug-only
+ * code path, so a stub hardwired to 0 would make that path untestable.
+ * Same macro trick as include/linux/kconfig.h -- yields 1 when the symbol
+ * is defined to 1, 0 when it is undefined.
+ */
+#define __ARG_PLACEHOLDER_1		0,
+#define __take_second_arg(__ignored, val, ...)	val
+#define ____is_defined(arg1_or_junk)	__take_second_arg(arg1_or_junk 1, 0)
+#define ___is_defined(val)		____is_defined(__ARG_PLACEHOLDER_##val)
+#define __is_defined(x)			___is_defined(x)
+#define IS_ENABLED(option)		__is_defined(option)
 
 /* Bit-manipulation helpers used by the driver. */
 static inline int __ffs(unsigned long x)  { return __builtin_ctzl(x); }

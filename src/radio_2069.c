@@ -784,7 +784,8 @@ struct r2069_chan_write {
 };
 
 #define BW(N)	(-(N))   /* raw_idx negativo = chan_raw6[N-1] (valori RADIO) */
-/* Per-channel radio writes, registri solo per chip 0x4352/0x4360 (la variante AC diversa è ignorata). */
+/* Per-channel radio writes. These registers cover chips 0x4352 and 0x4360
+ * only; the different AC variant is ignored. */
 static const struct r2069_chan_write r2069_chan_writes[] = {
 	{ 0x08e0,  0 }, { 0x08e1,  1 }, { 0x08dd,  2 }, { 0x08dc,  3 },
 	{ 0x08e6,  4 }, { 0x08e7,  5 }, { 0x08c4,  6 }, { 0x08c5,  7 },
@@ -803,7 +804,42 @@ static const struct r2069_chan_write r2069_chan_writes[] = {
 	{ 0x0630, BW(4) }, { 0x065c, BW(5) }, { 0x0662, BW(6) }, /* target verificati su trace */
 };
 
-/* TODO: try it — mappa radio 2.4GHz (blocco B/C, ramo 4352/4360) estratta dal blob, non ancora validata su hardware. */
+/*
+ * Low three bits of radio 0x066d, the only per-channel radio value that does
+ * not come through the channel table.
+ *
+ * Four codes, keyed on the primary channel's frequency and nothing else --
+ * the d6220 sweep gives the same value for a channel at 20, 40 and 80 MHz,
+ * so neither the bandwidth nor the bonded centre enters:
+ *
+ *   4  below 5240      3  5240 to 5499      1  5500 to 5539      0  from 5540
+ *
+ * Exact on all 26 sweep configurations. The code decreases with frequency and
+ * skips 2, which is why this is a measured step function rather than an
+ * arithmetic one: with 2 absent there is no reason to believe a formula in
+ * frequency, and inventing one would extrapolate past the four groups the
+ * captures actually pin.
+ *
+ * The upper bits are 0x18c0 on every capture.
+ */
+static u16 b43_radio_2069_cal_066d(u16 freq)
+{
+	u16 code;
+
+	if (freq < 5240)
+		code = 4;
+	else if (freq < 5500)
+		code = 3;
+	else if (freq < 5540)
+		code = 1;
+	else
+		code = 0;
+
+	return 0x18c0 | code;
+}
+
+/* TODO: the 2.4 GHz radio map, blocks B and C of the 4352/4360 branch,
+ * extracted from the blob and not yet validated on hardware. */
 static const struct r2069_chan_write r2069_chan_writes_2g[] = {
 	{ 0x08e0,  0 }, { 0x08e1,  1 }, { 0x08dd,  2 }, { 0x08dc,  3 },
 	{ 0x08ee,  4 }, { 0x08e7,  5 }, { 0x08c5,  6 }, { 0x08cc,  7 },
@@ -822,7 +858,8 @@ static u16 r2069_pick_value(const struct b43_phy_ac_channeltab_e_radio2069 *e,
 	if (raw_idx >= 0)
 		return e->radio_raw[raw_idx];
 
-	/* chan_raw6[0..5] = i 6 valori radio del batch r2069_chan_writes. */
+	/* chan_raw6[0..5] are the six radio values of the r2069_chan_writes
+	 * batch. */
 	return e->chan_raw6[-raw_idx - 1];
 }
 
@@ -880,12 +917,14 @@ void b43_radio_2069_channel_setup(struct b43_wldev *dev,
 	if (!e)
 		return;
 
-	/* AFE-gate pulse 0x0728 bit 8 (0x0100). Presente in tutte le catture
-	 * d6220 (attach/attach-bw40/attach-ch44/dtu) e agcombo (attach + dtu)
-	 * subito dopo il freeze RX e prima delle RAD.WR di setup canale.
-	 * Semantica non confermata da RE; il bit 8 di 0x0728 è toccato anche
-	 * da b43_radio_2069_afe_lpf_stage (set+clear), quindi è un trigger
-	 * AFE-related. d6220 ch36 #32902-32903, agcombo ch36 #4102-4103. */
+	/* AFE gate pulse on bit 8 of 0x0728. Present in every d6220 capture --
+	 * attach, attach at 40 MHz, attach on ch44, and down-to-up -- and in
+	 * both agcombo ones, immediately after the RX freeze and before the
+	 * channel-setup radio writes.
+	 *
+	 * The meaning is not established. b43_radio_2069_afe_lpf_stage() also
+	 * touches bit 8 of 0x0728, setting then clearing it, so it is some kind
+	 * of AFE-related trigger. */
 	b43_phy_maskset(dev, 0x0728, (u16)~0x0100, 0x0100);
 	b43_phy_maskset(dev, 0x0728, (u16)~0x0100, 0x0000);
 
@@ -898,14 +937,15 @@ void b43_radio_2069_channel_setup(struct b43_wldev *dev,
 		b43_radio_write(dev, writes[i].reg,
 				r2069_pick_value(e, writes[i].raw_idx));
 
-	/* Radio cal constants, right after channel table writes. ch36 #32949-32952. */
-	b43_radio_write(dev, 0x066d, 0x18c4);
+	/* Radio cal constants, right after the channel table writes. */
+	b43_radio_write(dev, 0x066d,
+			b43_radio_2069_cal_066d(dev->phy.ac->cal_freq));
 	b43_radio_write(dev, 0x0893, 0x0001);
 	b43_radio_write(dev, 0x0145, 0x0185);
 	b43_radio_write(dev, 0x0146, 0x00ac);
 
-	/* 0x0723 = 0x03e0: canale-invariante in tutte le catture d6220+agcombo,
-	 * subito prima del maskset 0x0645. ch36 #32953. */
+	/* 0x0723 = 0x03e0, channel-invariant across every d6220 and agcombo
+	 * capture, immediately before the 0x0645 maskset. */
 	b43_radio_write(dev, 0x0723, 0x03e0);
 
 	b43_radio_maskset(dev, 0x0645, (u16)~0x7000, 0x7000);
@@ -924,13 +964,15 @@ void b43_radio_2069_channel_setup(struct b43_wldev *dev,
 	b43_radio_write(dev,   0x0723, 0x83e0);
 
 	/*
-	 * VCO/PLL enable. Le rfpll writes sopra fissano la reference, questa
-	 * sequenza fa il kick del loop; il PLL locca negli ~15us degli udelay
-	 * sotto. Il lock verify (RAD.RD 0x090b bit 8) è spostato in adc_reset:
-	 * il vendor emette il peek subito prima del release RX finale (ch36
-	 * #38205), non dentro chanspec_set. Semantica: il chip resta nel
-	 * freeze RX per decine di ms mentre il flow di channel_setup gira,
-	 * quindi il lock è già ampiamente assicurato quando serve verificarlo.
+	 * VCO and PLL enable. The rfpll writes above set the reference; this
+	 * sequence kicks the loop, and the PLL locks within the roughly 15us of
+	 * the udelays below.
+	 *
+	 * The lock verify, bit 8 of radio 0x090b, lives in adc_reset() instead:
+	 * the vendor emits that peek immediately before the final RX release,
+	 * not inside chanspec_set(). The chip stays in the RX freeze for tens of
+	 * milliseconds while the channel_setup flow runs, so by the time the
+	 * lock is checked it has long since been achieved.
 	 */
 	b43_radio_maskset(dev, 0x08e5, (u16)~0x4000, 0x0000);
 	b43_radio_maskset(dev, 0x08d0, (u16)~0x0001, 0x0000);
@@ -1154,10 +1196,9 @@ void b43_radio_2069_afecal(struct b43_wldev *dev)
 			continue;
 
 		/*
-		 * Il vendor a #38084-#38086 (core 0), #38121-#38123 (core 1) emette
-		 * 3 peek diagnostici sui registri PHY prima dei maskset arm.
-		 * Serve a "toccare" i registri per lo stato pre-arm (non usato
-		 * nei calcoli, solo campionato dal tracer).
+		 * The vendor emits three diagnostic peeks of the PHY registers
+		 * before the arming masksets, once per core. They sample the
+		 * pre-arm state; nothing consumes the values.
 		 */
 		b43_phy_read_log(dev, 0x0739 + pbase);
 		b43_phy_read_log(dev, 0x073a + pbase);
@@ -1195,9 +1236,9 @@ void b43_radio_2069_afecal(struct b43_wldev *dev)
 		ctrl = b43_radio_read_log(dev, R2069_AFE_CAL_CTRL | rbase);
 
 		/*
-		 * Il vendor legge STAT solo DOPO l'arm write (#38105-#38106),
-		 * NON prima. Cioè: readback CTRL (pre-arm) + WR CTRL arm + 2×
-		 * RD STAT (post-arm). Poi WR CTRL disarm.
+		 * The vendor reads STAT only after the arming write, never before:
+		 * a CTRL readback while still disarmed, the CTRL arm write, two
+		 * STAT reads, then the CTRL disarm write.
 		 */
 		b43_radio_write(dev, R2069_AFE_CAL_CTRL | rbase,
 				R2069_AFECAL_CFG | 0x000f);
