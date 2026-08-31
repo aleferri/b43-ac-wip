@@ -10,11 +10,33 @@ significato è la somma `crs + off`, cioè una soglia assoluta, e l'offset è
 `max(0, target − crs)`. Con `target` per sito di chiamata e per chip il banco
 combacia op-per-op su entrambi i gate. La derivazione è in §4.
 
-Il §5 identifica cosa sono quelle soglie: **entry di un ladder discreto per
-sotto-banda di frequenza**, trovato nel blob D6220 a `.rodata +0x040e84` e
-attribuito a `wlc_phy_crs_min_pwr_cal_acphy`. La cal misura una potenza di
-rumore e ne ricava un **indice** nella riga; l'indice resta l'incognita, il
-ladder no.
+Il §5 identifica cosa sono quelle soglie: **entry di un ladder discreto**,
+trovato nel blob D6220 a `.rodata +0x040e84` e attribuito a
+`wlc_phy_crs_min_pwr_cal_acphy`. La cal misura una potenza di rumore e ne
+ricava un **indice** nella riga.
+
+**Lo sweep chiude la questione dell'indice, in senso negativo: non e' una
+funzione del canale.** Le 32 osservazioni su 16 canali BW20 danno il ladder
+completo, `{49, 52, 57, 64}`, e mostrano che il valore finale **cambia fra le
+due corse dello stesso canale** su ch100, ch108 e ch116 — rispettivamente
+`[57, 52]`, `[57, 52]` e `[52, 57]`. I canali bassi finiscono sempre su 52 e
+ch132-140 sempre su 57; quelli in mezzo oscillano fra i due gradini.
+
+E' la firma di una potenza di rumore misurata vicino a un confine di
+quantizzazione. Non c'e' quindi una mappa canale -> indice da trovare, ed e'
+inutile cercarla: serve la cal.
+
+Conseguenza per il banco. Il banco vale `target - crs`, e **entrambi i termini
+sono esiti della stessa cal sullo stesso ladder** — il che spiega perche' le
+somme cadono sempre su due gradini e perche' il `target` sembrava dipendere
+dalla sotto-banda. Non e' chiudibile per trascrizione: e' chiudibile solo
+implementando la misura di rumore.
+
+Cio' che lo sweep ha comunque corretto nel port e' l'aritmetica: l'offset e'
+**con segno**. Il vendor scrive `0xfb`, cioe' -5, su ch100-140, dove il CRS
+vale 57 e il target 52; la vecchia forma `(target > crs) ? target - crs : 0`
+azzerava quel caso, e sembrava giusta solo perche' su ch36 la differenza cade
+dal lato positivo.
 
 Nota metodologica, perché è il punto che ha ritardato la soluzione: la
 correlazione con il CRS era stata **cercata e scartata a torto**, confrontando

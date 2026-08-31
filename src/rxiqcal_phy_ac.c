@@ -2,29 +2,31 @@
 /*
  * Broadcom B43 AC-PHY -- RX I/Q calibration.
  *
- * Ossatura setup -> gainctrl -> misura -> solve -> apply -> cleanup e matematica
- * del solve prese dalla cal N-PHY di brcmsmac
+ * The setup -> gainctrl -> measure -> solve -> apply -> cleanup skeleton and
+ * the solve itself come from the brcmsmac N-PHY calibration
  * (brcm80211/brcmsmac/phy/phy_n.c: wlc_phy_cal_rxiq_nphy_rev3,
- * wlc_phy_calc_rx_iq_comp_nphy, wlc_phy_rx_iq_est_nphy). Il solve e'
- * PHY-independent; il register-map e' adattato ad AC-PHY rev 1 / radio 2069.
+ * wlc_phy_calc_rx_iq_comp_nphy, wlc_phy_rx_iq_est_nphy). The solve is
+ * PHY-independent; the register map is adapted to AC-PHY rev 1 with the
+ * 2069 radio.
  *
- * Quello che i retval hanno chiuso:
- *   - mapping degli accumulatori: +3/+2 = i_pwr, +5/+4 = q_pwr,
- *     +1/+0 = iq_prod (signed e piccolo). Il solve riproduce i coefficienti
- *     del driver stock solo con questo mapping;
- *   - i coefficienti a/b stanno in 0x?a0/0x?a1 per catena, formato s10;
- *   - la matematica di b43_phy_ac_rx_iq_comp_update e' bit-exact su 3 vettori
- *     misura -> coefficiente: somma di 2 round da 0x4000 campioni;
- *   - iterazioni e tone-mode sono uno schedule FISSO, non un hill-climb, e il
- *     gain di misura non viene mai modificato: i registri gain sono solo
- *     salvati e ripristinati attorno alla misura.
+ * Settled by the captured read values:
+ *   - accumulator layout: +3/+2 is i_pwr, +5/+4 is q_pwr, +1/+0 is iq_prod
+ *     (signed and small). The solve only reproduces the stock driver's
+ *     coefficients with this mapping.
+ *   - the a/b coefficients live in 0x?a0/0x?a1 per chain, s10 format.
+ *   - b43_phy_ac_rx_iq_comp_update() is bit-exact on three
+ *     measurement-to-coefficient vectors: the sum of two rounds of 0x4000
+ *     samples.
+ *   - the iteration and tone-mode sequence is a fixed schedule, not a
+ *     hill-climb, and the measurement gain is never altered: the gain
+ *     registers are only saved and restored around the measurement.
  *
- * Non riempiti: rxcal_phy_setup / radio_setup / cleanup, ~300 op di RMW da
- * fare a pezzi verificati col correlatore.
+ * Not filled in: rxcal_phy_setup, radio_setup and cleanup, some 300 RMW ops
+ * to be done in pieces checked against the correlator.
  *
- * b43_phy_ac_rxiqcal ritorna -EOPNOTSUPP finche' REGMAP_FILLED e' 0 e non ha
- * chiamanti nel driver: il path RXIQ in uso e' quello trascritto dalla trace,
- * in phy_ac.c. Vedi docs/rxiq-cal-analysis.md.
+ * b43_phy_ac_rxiqcal() returns -EOPNOTSUPP while REGMAP_FILLED is 0 and has
+ * no callers: the RX-IQ path in use is the transcribed one in phy_ac.c. See
+ * docs/rxiq-cal-analysis.md.
  */
 #include <linux/kernel.h>	/* int_sqrt */
 #include "b43.h"
@@ -33,69 +35,75 @@
 #include "radio_2069.h"
 #include "rxiqcal_phy_ac.h"
 
-/* Estimator per-core: potenze I/Q e prodotto incrociato dal correlatore.
- * (== struct phy_iq_est di brcmsmac.) */
+/* Per-core estimator output: I/Q powers and cross product from the
+ * correlator. Same shape as brcmsmac's struct phy_iq_est. */
 struct b43_phy_ac_iq_est {
 	s32 iq_prod;
 	u32 i_pwr;
 	u32 q_pwr;
 };
 
-/* Coefficienti di compensazione RX per-core (analogo di nphy_iq_comp, esteso
- * a 3 core: il vendor su agcombo 3x3 programma anche core 2). */
+/* Per-core RX compensation coefficients. Like nphy_iq_comp but extended to
+ * three cores: on the 3x3 agcombo the vendor programs core 2 as well. */
 struct b43_phy_ac_iq_comp {
 	s16 a[3], b[3];
 };
 
 /*
- * Soglia minima di potenza I+Q sotto cui la misura non e' affidabile
- * (== NPHY_MIN_RXIQ_PWR). Valore N-PHY tenuto come segnaposto: la scala degli
- * accumulatori AC-PHY va confermata sull'hardware. TODO(trace/hw).
+ * Minimum I+Q power below which the measurement is not trustworthy, the
+ * N-PHY NPHY_MIN_RXIQ_PWR value kept as a placeholder. The AC-PHY
+ * accumulator scale still has to be confirmed on hardware.
  */
 #define B43_PHY_AC_MIN_RXIQ_PWR		0x100
 #define B43_PHY_AC_RXIQ_CAL_RETRY	2
 
-#define B43_PHY_AC_RXCAL_NUM_SAMPS	1024	/* == 0x400 nella trace */
+#define B43_PHY_AC_RXCAL_NUM_SAMPS	1024	/* 0x400 in the capture */
 
-/* Flip a 1 quando gli stub hardware sotto sono riempiti dalla trace. */
+/* Set to 1 once the hardware stubs below are filled in from a capture. */
 #define B43_PHY_AC_RXIQCAL_REGMAP_FILLED	0
 
 /*
- * Registri del correlatore RX-IQ, CONFERMATI dalla trace (wl-diag down-to-bss-
- * up, episodio #82533-82556 e altri 7). Sono le write/cmd, quindi catturate
- * verbatim; solo i valori delle read (accumulatori) sono UNDEFINED nel trace,
- * ma li legge il silicio a runtime.
+ * RX-IQ correlator registers, confirmed against the capture (the
+ * down-to-bss-up trace, one block of 24 episodes plus seven more). These
+ * are writes and commands, so they are captured verbatim; only the read
+ * values, the accumulators, are undefined in the trace, and the silicon
+ * supplies those at runtime.
  */
 #define B43_PHY_AC_RXIQ_CMD		0x0270	/* bit0 = start, bit1 = iqMode */
 #define  B43_PHY_AC_RXIQ_START		0x0001
 #define  B43_PHY_AC_RXIQ_IQMODE		0x0002
 #define B43_PHY_AC_RXIQ_WAIT		0x0271	/* [7:0] = wait_time */
 #define B43_PHY_AC_RXIQ_NSAMP		0x0272	/* num_samps */
-/* Accumulatori per core: 3 coppie Hi/Lo a base 0x06c0 + core*0x200. Ordine di
- * lettura nella trace: +3,+2 / +5,+4 / +1,+0. */
+/* Per-core accumulators: three Hi/Lo pairs based at 0x06c0 + core * 0x200,
+ * read in the order +3,+2 / +5,+4 / +1,+0. */
 #define B43_PHY_AC_RXIQ_ACC(core)	(u16)(0x06c0 + (core) * 0x200)
 
-/* ===================== REGISTER MAP DALLA TRACE ========================== */
 /*
- * Riempite e confermate: rxiq_est, rxiq_coeffs, rxcal_tone_setup/arm,
- * rxcal_gainctrl (+ step), rxcal_apply_gain, tx_tone, stopplayback.
- * Ancora stub: rxcal_phy_setup, rxcal_radio_setup, rxcal_cleanup,
- * rxcal_radio_cleanup -- ~300 op di RMW da fare a pezzi verificati.
+ * Register map taken from the capture.
+ *
+ * Filled in and confirmed: rxiq_est, rxiq_coeffs, rxcal_tone_setup/arm,
+ * rxcal_gainctrl and its step helper, rxcal_apply_gain, tx_tone,
+ * stopplayback.
+ *
+ * Still stubs: rxcal_phy_setup, rxcal_radio_setup, rxcal_cleanup and
+ * rxcal_radio_cleanup, some 300 RMW ops to be done in verified pieces.
  */
 
 /*
- * Correlatore RX-IQ: arma <num_samps> campioni, attende il completamento,
- * legge gli accumulatori i_pwr/q_pwr/iq_prod per core. Reference:
- * wlc_phy_rx_iq_est_nphy. Registri CONFERMATI dalla trace (#82533-82556):
- *   WR 0x0272 = num_samps ; MOD 0x0271[7:0] = wait_time (32) ;
- *   MOD 0x0270 clr iqMode ; MOD 0x0270 set start ; poll RD 0x0270 ;
- *   read accumulatori 0x06c0+core*0x200 (+0x200 per core1: 0x08c0).
+ * RX-IQ correlator: arm num_samps samples, wait for completion, read the
+ * per-core i_pwr/q_pwr/iq_prod accumulators. Modelled on
+ * wlc_phy_rx_iq_est_nphy. The register sequence is confirmed by the
+ * capture:
+ *   WR 0x0272 = num_samps; MOD 0x0271[7:0] = wait_time (32);
+ *   MOD 0x0270 clear iqMode; MOD 0x0270 set start; poll RD 0x0270;
+ *   read the accumulators at 0x06c0 + core * 0x200, so 0x08c0 for core 1.
  *
- * Mapping accumulatori CONFERMATO (agcombo rescan con retval): coppia
- * +3,+2 = i_pwr, +5,+4 = q_pwr, +1,+0 = iq_prod, con la meta' alta prima.
- * Coerente coi valori misurati (i/q grandi e simili, iq piccolo con segno)
- * e verificato dal solve: solo con questo mapping rx_iq_comp_update riproduce
- * i coeff che il vendor scrive.
+ * The accumulator mapping is confirmed by the agcombo rescan capture, which
+ * records the read values: the +3,+2 pair is i_pwr, +5,+4 is q_pwr and
+ * +1,+0 is iq_prod, high half first. It agrees with the measured values
+ * (i and q large and similar, iq small and signed) and with the solve: only
+ * with this mapping does rx_iq_comp_update reproduce the coefficients the
+ * vendor writes.
  */
 static int b43_phy_ac_rxiq_est(struct b43_wldev *dev,
 			       struct b43_phy_ac_iq_est *est,
@@ -137,13 +145,15 @@ static int b43_phy_ac_rxiq_est(struct b43_wldev *dev,
 }
 
 /*
- * Legge (write=0) o scrive (write=1) i coefficienti di comp RX per-core.
- * Reference N-PHY: wlc_phy_rx_iq_coeffs_nphy (phy reg 0x9a-0x9d).
+ * Read (write = 0) or write (write = 1) the per-core RX compensation
+ * coefficients. The N-PHY equivalent is wlc_phy_rx_iq_coeffs_nphy, which
+ * uses PHY registers 0x9a-0x9d.
  *
- * Regmap AC-PHY CONFERMATO (agcombo rescan-to-bss-ch36 con retval,
- * #32043-#32048): a in 0x06a0 + core*0x200, b in 0x06a1 + core*0x200,
- * s10 nel campo [9:0]. I tre vettori misura->coeff della cattura sono
- * riprodotti bit-exact da rx_iq_comp_update qui sotto.
+ * The AC-PHY map is confirmed by the agcombo rescan-to-bss-ch36 capture,
+ * which records the read values: a at 0x06a0 + core * 0x200, b at
+ * 0x06a1 + core * 0x200, s10 in field [9:0]. rx_iq_comp_update() below
+ * reproduces that capture's three measurement-to-coefficient vectors
+ * bit-exactly.
  */
 #define B43_PHY_AC_RXIQ_COMP_A(core)	(u16)(0x06a0 + (core) * 0x200)
 #define B43_PHY_AC_RXIQ_COMP_B(core)	(u16)(0x06a1 + (core) * 0x200)
@@ -171,31 +181,32 @@ static void b43_phy_ac_rxiq_coeffs(struct b43_wldev *dev, u8 write,
 	}
 }
 
-/* phy-side setup del loopback di misura. Ref: wlc_phy_rxcal_physetup_nphy. */
+/* PHY-side setup of the measurement loopback, after
+ * wlc_phy_rxcal_physetup_nphy. */
 static void b43_phy_ac_rxcal_phy_setup(struct b43_wldev *dev, u8 rx_core)
 {
-	/* TODO(trace): loopback PHY. Ancora WI-7 seq 82533/83649/84049. */
+	/* TODO: the PHY loopback sequence is not transcribed yet. */
 }
 
 /*
- * Tone-setup pre-rxcal (vendor #39709-#39734, 26 op). PHY-side setup del
- * generatore di tone di calibrazione:
+ * PHY-side setup of the calibration tone generator, run once before rxcal
+ * rather than per core. 26 ops:
  *
- *   1. peek gate (0x019e) + peek + clr-bit-9 0x040f + peek 0x0394/0x0393
- *   2. Pass 1: per ogni active core, peek + WR di 3 registri
- *      (0x0739+s, 0x073a+s, 0x0725+s) con valori {0x00fa, 0x01d3, 0x07e6}.
- *      Ordine core: 0 → 1 (forward).
- *   3. Pass 2: solo WR (no peek), 6 op con valori "dithered"
- *      {0x007a, 0x01d3, 0x07e2}. Ordine: core-reverse (1 → 0), reg-reverse
- *      (0x0725/0x0925 → 0x073a/0x093a → 0x0739/0x0939).
- *   4. peek 0x0393 + WR 0x0394=0x0110 + WR 0x0393=0x8000 (arm tone gen).
- *
- * Non è per-core (chiamata unica).
+ *   1. peek the table gate 0x019e, peek and clear bit 9 of 0x040f, peek
+ *      0x0394 and 0x0393.
+ *   2. pass 1, for each active core: peek plus write of three registers
+ *      (0x0739+s, 0x073a+s, 0x0725+s) with {0x00fa, 0x01d3, 0x07e6}, cores
+ *      in forward order.
+ *   3. pass 2, writes only, six ops with the dithered values
+ *      {0x007a, 0x01d3, 0x07e2}, cores in reverse order and registers in
+ *      reverse order too (0x0725 then 0x073a then 0x0739, per core).
+ *   4. peek 0x0393, write 0x0394 = 0x0110, write 0x0393 = 0x8000 to arm the
+ *      generator.
  */
 void b43_phy_ac_rxcal_tone_setup(struct b43_wldev *dev)
 {
 	B43_AC_FN();
-	static const u16 reg_off[3] = { 0x0039, 0x003a, 0x0025 }; /* rel a 0x0700 */
+	static const u16 reg_off[3] = { 0x0039, 0x003a, 0x0025 }; /* relative to 0x0700 */
 	static const u16 pass1_vals[3] = { 0x00fa, 0x01d3, 0x07e6 };
 	static const u16 pass2_vals[3] = { 0x007a, 0x01d3, 0x07e2 };
 	u8 c, num_cores = dev->phy.ac->num_cores;
@@ -228,16 +239,15 @@ void b43_phy_ac_rxcal_tone_setup(struct b43_wldev *dev)
 			b43_phy_write(dev, 0x0700 + reg_off[i] + s, pass2_vals[i]);
 		}
 	}
-	/* Nota: peek 0x0393 + WR 0x0394 + WR 0x0393=0x8000 (arm tone) sono
-	 * emessi separatamente in b43_phy_ac_rxcal_tone_arm, chiamato una
-	 * volta per core con un 0x0394-val leggermente diverso. */
+	/* The arm sequence (peek 0x0393, write 0x0394, write 0x0393 = 0x8000)
+	 * is emitted separately by b43_phy_ac_rxcal_tone_arm(), called once
+	 * per core with a slightly different 0x0394 value. */
 }
 
 /*
- * Arm della generazione tone per calibrazione del core `rx_core`.
- * Emette peek 0x0393 + WR 0x0394 = 0x0110|core + WR 0x0393 = 0x8000.
- * Vendor: #39732-#39734 (core 0) → WR 0x0394 = 0x0110
- *         #39815-#39817 (core 1) → WR 0x0394 = 0x0111
+ * Arm the tone generator for the calibration of rx_core: peek 0x0393,
+ * write 0x0394 = 0x0110 | core, write 0x0393 = 0x8000. The capture shows
+ * 0x0110 for core 0 and 0x0111 for core 1.
  */
 void b43_phy_ac_rxcal_tone_arm(struct b43_wldev *dev, u8 rx_core)
 {
@@ -248,17 +258,16 @@ void b43_phy_ac_rxcal_tone_arm(struct b43_wldev *dev, u8 rx_core)
 }
 
 /*
- * Un singolo step del gainctrl sweep: 4 radio_maskset (12 op tracer) + 8 peek
- * di settling (8 op). Totale 20 op per step. I bit di controllo su radio
- * 0x000e sono {bit1, bit2} — passati come `e_bit1_val` / `e_bit2_val`
- * (già mascherati: 0x0002/0 e 0x0004/0). Il registro 0x016e/0x036e (stride
- * +0x200 per core) è togliato coi bit 0 e 1 in modo idempotente.
+ * One step of the gainctrl sweep: four radio maskset calls, which the tracer
+ * expands to twelve ops, plus eight settling peeks, so twenty ops per step.
+ * The two control bits on radio 0x000e arrive as e_bit1_val and e_bit2_val,
+ * already masked to 0x0002/0 and 0x0004/0. Bits 0 and 1 of 0x016e + core
+ * stride are toggled idempotently.
  *
- * Gli 8 valori letti da PHY 0x0013 vengono SALVATI in
- * dev->phy.ac->rxcal_imbalance[rx_core][step_idx][0..7]. Sul HW reale
- * questi contengono l'accumulator dopo il settling della config; sul test
- * framework sono UNDEFINED (0 di default) e i peek servono solo al match
- * op-per-op.
+ * The eight values read from PHY 0x0013 are stored in
+ * rxcal_imbalance[rx_core][step_idx][0..7]. On real hardware they hold the
+ * accumulator once the configuration has settled; in the trace harness they
+ * are undefined and the peeks only exist for the op-for-op match.
  */
 static void rxcal_gainctrl_step(struct b43_wldev *dev, u8 rx_core,
 				u8 step_idx,
@@ -279,13 +288,14 @@ static void rxcal_gainctrl_step(struct b43_wldev *dev, u8 rx_core,
 	}
 }
 
-/* radio-side setup del loopback. Ref: wlc_phy_rxcal_radio_setup_nphy (2056).
- * Vendor #39641-#39674 (core 0), #39675-#39708 (core 1): 34 op per core:
- *   7 peek iniziali (saved values dei 7 registri: 0x016e, 0x000e, 0x0161,
- *     0x0017, 0x015f, 0x0024, 0x0025 + core stride 0x200)
- *   9 maskset (ognuno espanso in tripletta MOD+RD+WR dal wrap tracer)
- * Totale 34 op = 7 + 9×3. */
-/* Preservati da setup, riscritti da cleanup. Ordine del driver stock. */
+/*
+ * Radio-side setup of the loopback, after wlc_phy_rxcal_radio_setup_nphy for
+ * the 2056. 34 ops per core: seven opening peeks that save the seven
+ * registers below, then nine masksets, each of which the tracer expands to a
+ * MOD/RD/WR triplet -- 7 + 9 * 3.
+ *
+ * Saved by setup, rewritten by cleanup, in the stock driver's order.
+ */
 static const u16 b43_phy_ac_rxcal_radio_regs[7] = {
 	0x016e, 0x000e, 0x0161, 0x0017, 0x015f, 0x0024, 0x0025,
 };
@@ -295,7 +305,7 @@ void b43_phy_ac_rxcal_radio_setup(struct b43_wldev *dev, u8 rx_core)
 	B43_AC_FN();
 	u16 s = (u16)(rx_core * 0x200);
 
-	/* 7 peek dei valori da preservare (#39641-#39647 per core 0). */
+	/* Peek the seven values to be preserved. */
 	{
 		unsigned int i;
 
@@ -308,7 +318,7 @@ void b43_phy_ac_rxcal_radio_setup(struct b43_wldev *dev, u8 rx_core)
 		}
 	}
 
-	/* 9 maskset di programma. Ognuno espanso dal wrap in MOD+RD+WR. */
+	/* Nine programming masksets, each expanded to MOD+RD+WR by the wrap. */
 	b43_radio_maskset(dev, 0x0161 + s, (u16)~0x4000, 0x4000);
 	b43_radio_maskset(dev, 0x000e + s, (u16)~0x0001, 0x0001);
 	b43_radio_maskset(dev, 0x0161 + s, (u16)~0x1000, 0x1000);
@@ -320,35 +330,35 @@ void b43_phy_ac_rxcal_radio_setup(struct b43_wldev *dev, u8 rx_core)
 	b43_radio_maskset(dev, 0x0024 + s, (u16)~0x0700, 0x0300);
 }
 
-/* Definiti piu' sotto, usati dal gainctrl. */
+/* Defined further down, used by the gainctrl. */
 static void b43_phy_ac_tx_tone(struct b43_wldev *dev, u32 freq_hz, u16 amp);
 static void b43_phy_ac_stopplayback(struct b43_wldev *dev);
 
 /*
- * Programma il gain di misura sul core <rx_core> (stride +0x200).
+ * Sweep four loopback configurations for rx_core, 80 ops. Each step programs
+ * two control bits on radio 0x000e + core stride, through 0x016e + stride
+ * which drives the bit's gate, then waits eight reads of 0x0013 for
+ * settling. The order of the four steps is a fixed schedule, not driven by
+ * the measurements.
  *
- * Il gain non e' un ladder: il parametro idx del modello N-PHY non mappa su
- * nulla qui. Trascritto il setting principale (usato ~6 volte) col suo
- * micro-settle 0x07e6->0x07e2 / 0x00fa->0x007a. Esiste un setting alt
- * (0x0725=0x0600 / 0x0739=0x0000 / 0x073a=0x0180) osservato 2 volte, non
- * portato: la scelta fra i due non dipende dalle misure -- lo schedule e'
- * fisso -- ma quale sia il discriminante non e' stabilito.
- */
-/*
- * Sweep di 4 configurazioni di loopback per il core `rx_core`, 80 op. Ogni step
- * programma 2 bit di controllo su radio 0x000e+s (via 0x016e+s, che pilota il
- * gate del bit) e attende 8 letture di 0x0013 per il settling. L'ordine dei 4
- * step e' uno schedule fisso, non guidato dalle misure.
+ * The measurement gain is not a ladder, so the N-PHY model's idx parameter
+ * maps to nothing here. Only the main setting is transcribed, with its
+ * 0x07e6 -> 0x07e2 and 0x00fa -> 0x007a micro-settle; an alternative
+ * setting (0x0725 = 0x0600, 0x0739 = 0x0000, 0x073a = 0x0180) appears twice
+ * in the capture and is not ported, because the choice between the two does
+ * not follow from the measurements -- the schedule is fixed -- and what does
+ * select it is not established.
  *
- * Attenzione: la lettura "cross-core", per cui un core inietta e gli altri
- * ricevono, e' stata provata e **non e' sostenuta** -- nella cattura non c'e'
- * nessun punto in cui si legge l'accumulatore di un core mentre un altro ha il
- * tono. Vedi docs/rxiq-cal-analysis.md prima di ripartire da quella premessa.
+ * A cross-core reading, one core injecting while the others receive, was
+ * considered and is not supported: nowhere in the capture is one core's
+ * accumulator read while another holds the tone. See
+ * docs/rxiq-cal-analysis.md before starting from that premise again.
  */
 void b43_phy_ac_rxcal_gainctrl(struct b43_wldev *dev, u8 rx_core)
 {
-	/* 4 combinazioni {bit1, bit2} di 0x000e+s, ordine emesso dal vendor.
-	 * I readings vengono salvati in phy.ac->rxcal_imbalance[core][step]. */
+	/* The four {bit1, bit2} combinations of 0x000e + stride, in the order
+	 * the vendor emits them. Readings land in
+	 * phy.ac->rxcal_imbalance[core][step]. */
 	rxcal_gainctrl_step(dev, rx_core, 0, 0x0002, 0x0000);   /* (1, 0) */
 	rxcal_gainctrl_step(dev, rx_core, 1, 0x0000, 0x0000);   /* (0, 0) baseline */
 	rxcal_gainctrl_step(dev, rx_core, 2, 0x0002, 0x0004);   /* (1, 1) */
@@ -356,12 +366,16 @@ void b43_phy_ac_rxcal_gainctrl(struct b43_wldev *dev, u8 rx_core)
 }
 
 /*
- * Inietta il tono di calibrazione (setup loopback). Trascritto verbatim da
- * #82499-82512. NB: le op con "mask=0x0000" nel trace sono phy_reg_and/or e il
- * tracer NON distingue le due; qui l'and/or e' dedotto dal valore (0xff..=
- * clear-mask -> and ; piccolo -> or). EURISTICA, da confermare. La freq/amp del
- * tono e' codificata nei registri sotto (0x0463/0x0461/0x0462), non nei
- * parametri.
+ * Inject the calibration tone and set up the loopback, transcribed verbatim
+ * from a 14-op block of the capture.
+ *
+ * The ops that carry mask=0x0000 in the trace are register and/or, which the
+ * tracer does not distinguish. The choice made here is inferred from the
+ * value -- a 0xff.. clear-mask reads as and, a small value as or -- so it is
+ * a heuristic and still to be confirmed.
+ *
+ * The tone frequency and amplitude are encoded in 0x0463/0x0461/0x0462
+ * below, not in the parameters.
  */
 static void b43_phy_ac_tx_tone(struct b43_wldev *dev, u32 freq_hz, u16 amp)
 {
@@ -381,8 +395,8 @@ static void b43_phy_ac_tx_tone(struct b43_wldev *dev, u32 freq_hz, u16 amp)
 	(void)amp;
 }
 
-/* Ferma il tono (teardown post-stima). Trascritto da #82558-82559; and/or
- * euristico come sopra. */
+/* Stop the tone after the estimate. Transcribed from the capture; the
+ * and/or split is the same heuristic as above. */
 static void b43_phy_ac_stopplayback(struct b43_wldev *dev)
 {
 	B43_AC_FN();
@@ -390,12 +404,11 @@ static void b43_phy_ac_stopplayback(struct b43_wldev *dev)
 	b43_phy_mask(dev, 0x0460, (u16)~0x0004);	/* #82559 and 0xfffb */
 }
 
-/* Ripristina phy/radio dopo la misura del core. Ref: rxcal_*cleanup_nphy. */
 /*
- * PHY-side cleanup per-core: reset dei 14 registri gain-control ai loro
- * valori "off/idle". Vendor #39899-#39912 (core 0), #39913-#39926 (core 1).
- * Ordine: tutti i core-0 prima, poi tutti i core-1 (chiamato in loop
- * for-core dal caller).
+ * Per-core PHY-side cleanup after the measurement, after
+ * rxcal_cleanup_nphy: reset the 14 gain-control registers to their idle
+ * values. The caller loops over cores, so all of core 0's writes come out
+ * before any of core 1's.
  */
 void b43_phy_ac_rxcal_cleanup(struct b43_wldev *dev, u8 rx_core)
 {
@@ -415,9 +428,8 @@ void b43_phy_ac_rxcal_cleanup(struct b43_wldev *dev, u8 rx_core)
 }
 
 /*
- * Radio-side cleanup per-core: reset dei 7 registri radio toccati da
- * rxcal_radio_setup ai valori "off". Vendor #39927-#39933 (core 0),
- * #39934-#39940 (core 1). Ordine: tutti core-0, poi tutti core-1.
+ * Per-core radio-side cleanup: restore the seven radio registers that
+ * rxcal_radio_setup saved. Same per-core ordering as above.
  */
 void b43_phy_ac_rxcal_radio_cleanup(struct b43_wldev *dev, u8 rx_core)
 {
@@ -536,23 +548,24 @@ void b43_phy_ac_rxiq_est_debug(struct b43_wldev *dev)
 	saved_040f = b43_phy_read_log(dev, 0x040f);
 
 	/*
-	 * Tone engine init: sequenza vendor scalare #50155-#50200 in ch36
-	 * bw20, identica come op-list a #72757-#72802 in ch36 bw40 (i valori
-	 * scritti sono gli stessi). Programma il classifier RXIQ e azzera i
-	 * coefficienti IQ per-core prima del measurement.
+	 * Tone engine init: a 46-op scalar sequence that programs the RX-IQ
+	 * classifier and clears the per-core IQ coefficients before the
+	 * measurement. The op list is the same on ch36 BW20 and ch36 BW40,
+	 * down to the values written.
 	 *
-	 * NON portato qui: le due TBL.WR 0x000c off 0x0060/0x0064 (2 word
-	 * ciascuna) che il vendor fa in mezzo a questa sequenza. I valori
-	 * SONO channel/bw-dipendenti (bw20 ch36 = {0x0062,0xfffd}/{0x0023,
-	 * 0x0003}; bw40 ch36 = {0x0060,0xfffe}/{0x0025,0x0002}; bw20 ch44 =
-	 * {0x0061,0xfffe}/{0x0022,0x0002}). Senza la formula del vendor che
-	 * li deriva è meglio non scrivere niente che scrivere i valori
-	 * sbagliati per il channel/bw corrente.
+	 * Left out: the two table writes to id 0x000c offsets 0x0060 and
+	 * 0x0064, two words each, that the vendor issues in the middle of
+	 * this sequence. Their values depend on channel and bandwidth
+	 * (ch36 BW20 gives {0x0062,0xfffd}/{0x0023,0x0003}, ch36 BW40 gives
+	 * {0x0060,0xfffe}/{0x0025,0x0002}, ch44 BW20 gives
+	 * {0x0061,0xfffe}/{0x0022,0x0002}), and without the formula that
+	 * derives them, writing nothing beats writing another channel's
+	 * values.
 	 *
-	 * Analogamente non portiamo il gain-override massivo (#50201-#50525,
-	 * ~230 MODs sui 0x072x-074x per core) né la TBL.WR 0x000e off=0
-	 * len=40 (#50652): sono i due grossi blocchi che restano fuori da
-	 * questo helper "measure-only".
+	 * Also left out, for the same reason of scope: the large gain
+	 * override, some 230 MODs over 0x072x-0x074x per core, and the
+	 * 40-word table write to id 0x000e offset 0. Both are outside this
+	 * measure-only helper.
 	 */
 	b43_phy_set(dev, 0x0400, 0x0003);
 	b43_phy_set(dev, 0x0402, 0x0020);
@@ -634,12 +647,13 @@ void b43_phy_ac_rxiq_est_debug(struct b43_wldev *dev)
 	}
 
 	/*
-	 * Cleanup vendor-style: restore il gate 0x040f, poi CCA pulse per
-	 * committare lo stato. Trace ch36 #51726-#51727 fa questo pulse alla
-	 * fine del blocco RXIQ, prima che il vendor passi alla fase successiva.
-	 * Gli altri restore vendor (tbl 0x000c off 0x0063/0067/0073/0077 al
-	 * #51702-51720) sono cleanup del gain-override massivo che non abbiamo
-	 * portato — non c'è nulla da ripristinare qui.
+	 * Cleanup the way the vendor does it: restore the 0x040f gate, then a
+	 * CCA pulse to commit the state. The capture issues that pulse at the
+	 * end of the RX-IQ block, before moving to the next phase.
+	 *
+	 * The vendor's other restores, to table id 0x000c offsets
+	 * 0x0063/0x0067/0x0073/0x0077, undo the large gain override that is
+	 * not ported here, so there is nothing to restore.
 	 */
 	b43_phy_maskset(dev, 0x040f, (u16)~0x0200, saved_040f & 0x0200);
 	b43_phy_set(dev, B43_PHY_AC_BBCFG, B43_PHY_AC_BBCFG_RSTCCA);
@@ -650,19 +664,20 @@ void b43_phy_ac_rxiq_est_debug(struct b43_wldev *dev)
 	b43dbg(dev->wl, "phy-ac: rxiq_est_debug — done\n");
 }
 
-/* ===================== ALGORITMO GENERICO (PORTATO) ====================== */
+/* The generic algorithm, ported as-is. */
 
 /*
- * Misura col correlatore e risolve i coefficienti di compensazione IQ:
- * dalla stima (ii=I^2, qq=Q^2, iq=I*Q) ricava la coppia (a,b) che azzera lo
- * sbilanciamento di gain/fase. Stessa forma di wlc_phy_calc_rx_iq_comp_nphy;
- * i dettagli AC (somma di 2 round, arrotondamento al piu' vicino, formato s10
- * in 0x?a0/0x?a1) sono confermati bit-exact contro i 3 vettori misura->coeff
- * della cattura agcombo con retval (docs/rxiq-cal-analysis.md).
+ * Measure with the correlator and solve for the IQ compensation
+ * coefficients: from the estimate (ii = I^2, qq = Q^2, iq = I*Q), derive the
+ * (a, b) pair that cancels the gain and phase imbalance. Same shape as
+ * wlc_phy_calc_rx_iq_comp_nphy; the AC-specific details -- two rounds
+ * summed, round-to-nearest, s10 format in 0x?a0/0x?a1 -- are confirmed
+ * bit-exactly against the three measurement-to-coefficient vectors of the
+ * agcombo capture. See docs/rxiq-cal-analysis.md.
  *
- * DA VERIFICARE su AC-PHY: la scala di B43_PHY_AC_MIN_RXIQ_PWR (valore
- * N-PHY tenuto come segnaposto; nella cattura le potenze sono ordini di
- * grandezza sopra, il guard non e' mai stato esercitato).
+ * Still to verify on AC-PHY: the scale of B43_PHY_AC_MIN_RXIQ_PWR. It holds
+ * the N-PHY value as a placeholder, and the captured powers are orders of
+ * magnitude above it, so the guard has never been exercised.
  */
 int b43_phy_ac_rx_iq_comp_update(struct b43_wldev *dev, u8 core_mask)
 {
@@ -681,10 +696,11 @@ int b43_phy_ac_rx_iq_comp_update(struct b43_wldev *dev, u8 core_mask)
 
 retry_cal:
 	/*
-	 * Due stime a 0x4000 campioni, sommate. Il vendor misura due round
-	 * per core e risolve sulla SOMMA degli accumulatori, non sulla media
-	 * dei coefficienti: agcombo core 0 da' a=+7 (round 1) e a=-12
-	 * (round 2), il coeff scritto e' -3 = solve(round1+round2).
+	 * Two estimates of 0x4000 samples, summed. The vendor measures two
+	 * rounds per core and solves on the sum of the accumulators, not on
+	 * the mean of the coefficients: on agcombo core 0 the rounds give
+	 * a = +7 and a = -12, and the coefficient written is -3, which is
+	 * solve(round1 + round2).
 	 */
 	err = b43_phy_ac_rxiq_est(dev, est, 0x4000, 32);
 	if (err)
@@ -712,17 +728,16 @@ retry_cal:
 				retry++;
 				goto retry_cal;
 			}
-			new_comp = old_comp;	/* rinuncia: tieni i vecchi */
+			new_comp = old_comp;	/* give up, keep the old ones */
 			break;
 		}
 
 		/*
-		 * a = -(iq/ii), b = sqrt(qq/ii - a^2) - 1.0, entrambi in Q10.
-		 * Arrotondamento al piu' vicino su a e b: i tre vettori
-		 * agcombo con retval lo distinguono dal floor/troncamento
-		 * N-PHY (core 0: a=-2.61 -> vendor -3, b=109.97 -> vendor
-		 * 110; core 1: b=59.83 -> vendor 60). Il comportamento a
-		 * frazione esattamente 0.5 non e' osservato nelle catture.
+		 * a = -(iq/ii), b = sqrt(qq/ii - a^2) - 1.0, both in Q10, with
+		 * round-to-nearest on each. The three agcombo vectors tell
+		 * that apart from the N-PHY floor: a = -2.61 becomes -3,
+		 * b = 109.97 becomes 110, b = 59.83 becomes 60. What happens
+		 * at an exact half is not observed in any capture.
 		 */
 		num = -(iq << 10);
 		a = (s32)div64_s64(num + (num < 0 ? -(s64)(ii >> 1)
@@ -731,7 +746,7 @@ retry_cal:
 		v = div64_u64((qq << 20) + (ii >> 1), ii) - (u64)(a * a);
 		b = (s32)int_sqrt64(v);
 		if (v - (u64)b * b > (u64)b)
-			b++;		/* sqrt arrotondata, non floor */
+			b++;		/* rounded sqrt, not floor */
 		b -= 1 << 10;
 
 		new_comp.a[core] = (s16)a;
@@ -742,13 +757,14 @@ retry_cal:
 	return 0;
 }
 
-/* ======================= ORCHESTRATORE (STRUTTURA) ======================= */
+/* The orchestrator: structure only, the stubs above are not filled in. */
 
 /*
- * cal_type: 0/2 = RX-IQ, 1/2 = RC-cal LPF (qui non trattato: e' un percorso
- * separato, vedi rev3). Ossatura == wlc_phy_cal_rxiq_nphy_rev3:
- *   quiesce -> salva banco gain -> per core {phy/radio setup; se IQ: gainctrl,
- *   tono, misura+solve, stop; cleanup; RESET2RX} -> ripristina.
+ * cal_type 0 or 2 selects RX-IQ, 1 or 2 the RC-cal LPF, which is a separate
+ * path and not handled here. The skeleton follows
+ * wlc_phy_cal_rxiq_nphy_rev3: quiesce, save the gain bank, then per core
+ * {phy and radio setup; if IQ: gainctrl, tone, measure and solve, stop;
+ * cleanup; RESET2RX}, then restore.
  */
 int b43_phy_ac_rxiqcal(struct b43_wldev *dev, u8 cal_type)
 {
@@ -758,17 +774,17 @@ int b43_phy_ac_rxiqcal(struct b43_wldev *dev, u8 cal_type)
 	unsigned int rx_core;
 	u8 coremask = dev->phy.ac->coremask;
 
-	/* Non riempito: nessun accesso al silicio finche' gli stub sono vuoti. */
+	/* Not filled in: no silicon access while the stubs are empty. */
 	if (!B43_PHY_AC_RXIQCAL_REGMAP_FILLED)
 		return -EOPNOTSUPP;
 
-	/* Quiesce PHY (== mod 0x01[15]=0 + stay_in_carriersearch). */
+	/* Quiesce the PHY: clear 0x01 bit 15 and stay in carrier search. */
 	orig_bbcfg = b43_phy_read_log(dev, B43_PHY_AC_BBCFG);
 	b43_phy_mask(dev, B43_PHY_AC_BBCFG, (u16)~0x8000);
 	dev->phy.ac->status_mask &= ~B43_PHY_AC_STATE_PHY_RUN;
 
-	/* Salva il banco gain RF-seq (== tbl RFSEQ off 0x110 su N-PHY).
-	 * FILL(trace): id tabella + offset del banco gain su AC-PHY. */
+	/* Save the RF-seq gain bank, N-PHY table RFSEQ offset 0x110.
+	 * TODO: the AC-PHY table id and offset still come from a capture. */
 	b43_actab_read_bulk(dev, 7 /* TODO id */, 0x110 /* TODO off */,
 			    16, dev->phy.ac->num_cores, gain_save);
 
@@ -786,14 +802,15 @@ int b43_phy_ac_rxiqcal(struct b43_wldev *dev, u8 cal_type)
 			b43_phy_ac_stopplayback(dev);
 		}
 
-		/* cal_type 1/2 (RC-cal LPF): percorso separato, non portato. */
+		/* cal_type 1 and 2, the RC-cal LPF, is a separate path and is
+		 * not ported. */
 
 		b43_phy_ac_rxcal_cleanup(dev, rx_core);
 		b43_phy_ac_force_rf_sequence(dev, B43_PHY_AC_RF_SEQ_RST2RX,
 					     B43_PHY_AC_RF_SEQ_OVERRIDE_GATE);
 	}
 
-	/* Ripristina: banco gain, BBCFG, CCA, RESET2RX finale. */
+	/* Restore the gain bank, BBCFG and CCA, then a closing RESET2RX. */
 	b43_actab_write_bulk(dev, 7 /* TODO id */, 0x110 /* TODO off */,
 			     16, dev->phy.ac->num_cores, gain_save);
 	b43_phy_write(dev, B43_PHY_AC_BBCFG, orig_bbcfg);
@@ -807,7 +824,7 @@ int b43_phy_ac_rxiqcal(struct b43_wldev *dev, u8 cal_type)
 	b43_phy_ac_force_rf_sequence(dev, B43_PHY_AC_RF_SEQ_RST2RX,
 				     B43_PHY_AC_RF_SEQ_OVERRIDE_GATE);
 
-	b43dbg(dev->wl, "phy-ac: rxiqcal skeleton (cal_type %u) -- regmap non riempito\n",
+	b43dbg(dev->wl, "phy-ac: rxiqcal skeleton (cal_type %u) -- register map not filled in\n",
 	       (unsigned int)cal_type);
 	return 0;
 }

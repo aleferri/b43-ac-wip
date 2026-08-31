@@ -30,11 +30,11 @@ void b43_phy_ac_tbl_write_unlock(struct b43_wldev *dev, u16 saved)
 /* Bulk table write */
 
 /*
- * Corpo comune dei bulk write: scrive una serie contigua di valori in una
- * tabella interna del PHY. `peek` decide se rileggere il gate 0x019e prima
- * della sequenza TABLE_ID/OFFSET/DATA: il driver stock lo rilegge a ogni bulk
- * emesso a gate sbloccato, non quando il chiamante lo tiene bloccato per una
- * serie (nel load tabelle la peek e' una sola, al lock).
+ * Shared body of the bulk writes: write a contiguous run of values into one of
+ * the PHY's internal tables. @peek decides whether to re-read the 0x019e gate
+ * before the id/offset/data sequence. The stock driver re-reads it for every
+ * bulk emitted with the gate unlocked, but not when the caller holds it locked
+ * across a run -- in a table load there is one peek, at the lock.
  */
 static void actab_write_bulk_common(struct b43_wldev *dev,
 				    u16 id, u16 offset, u8 width,
@@ -90,9 +90,9 @@ static void actab_write_bulk_common(struct b43_wldev *dev,
 }
 
 /*
- * Variante di write_bulk quando il gate 0x019e era UNLOCKATO all'entrata:
- * emette peek + relock idempotente PRIMA delle WR TABLE_ID/OFFSET/DATA.
- * Nel blob vendor questo è runtime-conditional; qui è una funzione dedicata.
+ * write_bulk for callers that enter with the 0x019e gate unlocked: emits a peek
+ * and an idempotent relock before the id/offset/data writes. In the vendor blob
+ * this is decided at runtime; here it is a function of its own.
  */
 void b43_actab_write_bulk(struct b43_wldev *dev,
 			  u16 id, u16 offset, u8 width,
@@ -191,13 +191,13 @@ void b43_actab_write_bulk_reopen(struct b43_wldev *dev,
 }
 
 /*
- * Variante "auto-contained" (vendor #41503+, fase B4): ogni TBL.WR ha il
- * proprio scope gate — peek 019e + lock all'entrata, unlock finale
- * all'uscita. È il pattern usato quando NON c'è un lock esterno mantenuto
- * per più operazioni consecutive.
+ * Self-contained variant, as used in phase B4: each table write carries its own
+ * gate scope -- peek 0x019e and lock on entry, unlock on exit. This is the
+ * pattern for callers that do not hold an outer lock across several
+ * consecutive operations.
  *
- * Supporta width=16 (data via DATA_LO) e width=32 (data via DATA_HI + DATA_LO,
- * hi-first come il case 32 di write_bulk).
+ * Supports width 16, data through DATA_LO, and width 32, data through DATA_HI
+ * then DATA_LO, high half first as in write_bulk's 32-bit case.
  */
 void b43_actab_write_bulk_scoped(struct b43_wldev *dev,
 				 u16 id, u16 offset, u8 width,
@@ -250,18 +250,20 @@ void b43_actab_read_bulk(struct b43_wldev *dev,
 	size_t i;
 	u16 gate;
 
-	/* Vedi actab_write_bulk: la peek 0x019e è il saved per il restore
-	 * al termine dello scope enclosing (tx_lpf o simile). */
+	/* As in actab_write_bulk(), the 0x019e peek is the saved value for the
+	 * restore at the end of the enclosing scope, tx_lpf or similar. */
 	gate = b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
 
 	/*
-	 * Il vendor emette un MOD 0x019e set 0x0002 (relock) *condizionale*:
-	 * solo quando la peek precedente ritorna gate unlocked (bit 1 = 0).
-	 * Casi (d6220 ch36):
-	 *   #38423 unlock + #38425 peek=0 + #38426 relock (relock emesso)
-	 *   #33228 (peek=0x02 già lockato) + #33230 WR d (no relock)
-	 * Questa condizionalità è specifica di actab_read_bulk — actab_write_bulk
-	 * non la fa mai (idem del vendor: TBL.WR sempre segue peek + WR d).
+	 * The vendor's relock -- MOD 0x019e setting bit 1 -- is conditional: it
+	 * appears only when the preceding peek came back with the gate unlocked.
+	 * The captures show both cases, an unlock followed by a peek of 0 and
+	 * then a relock, and a peek that already reads 0x02 followed straight by
+	 * the data write with no relock.
+	 *
+	 * This is specific to actab_read_bulk(); actab_write_bulk() never does
+	 * it, matching the vendor, where a table write always follows peek then
+	 * data write.
 	 */
 	if (!(gate & 0x0002))
 		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE,
@@ -635,8 +637,8 @@ void b43_phy_ac_tables_init(struct b43_wldev *dev)
 			continue;
 
 		/*
-		 * Varianti _locked: il gate resta bloccato per tutto il loop,
-		 * quindi i singoli bulk non lo rileggono.
+		 * The _locked variants: the gate stays locked for the whole loop,
+		 * so the individual bulks do not re-read it.
 		 */
 		if (t->zero)
 			b43_actab_zerofill_locked(dev, t->id, t->offset,
@@ -661,18 +663,31 @@ void b43_actab_write_r11(struct b43_wldev *dev,
 	size_t i;
 
 	/*
-	 * Pattern vendor per la tabella 0x11 (464 valori u16): per ogni cella,
-	 * peek 0x019e + WR TABLE_ID + WR TABLE_OFFSET + WR DATA_2 (0x0011).
-	 * Non usa auto-increment del TABLE_OFFSET (che sarebbe il comportamento
-	 * standard di actab_write_bulk); riseleziona ID/OFFSET per ciascuna
-	 * cella. La label TBL.WR è emessa dal wrap del tracer (--wrap link
-	 * trick, vedi test/wrap.c).
-	 * d6220 ch36 #35087+ (5 op per cella × 464 celle = 2320 op).
+	 * The vendor's pattern for table 0x11, 464 u16s: for each cell, peek
+	 * 0x019e, write the table id, write the offset, write DATA_2 at 0x0011.
+	 * It does not rely on the offset auto-incrementing, which is what
+	 * actab_write_bulk() does; it reselects id and offset for every cell.
+	 * Five ops per cell over 464 cells, so 2320 ops.
+	 *
+	 * The TBL.WR label comes from the tracer's wrap; see test/wrap.c.
 	 */
 	for (i = 0; i < len; i++) {
 		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
 		b43_phy_write(dev, B43_PHY_AC_TABLE_ID, id);
 		b43_phy_write(dev, B43_PHY_AC_TABLE_OFFSET, (u16)(offset + i));
 		b43_phy_write(dev, B43_PHY_AC_TABLE_DATA_2, data[i]);
+	}
+}
+
+void b43_actab_fill_r11(struct b43_wldev *dev,
+			u16 id, u16 offset, size_t len, u16 val)
+{
+	size_t i;
+
+	for (i = 0; i < len; i++) {
+		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		b43_phy_write(dev, B43_PHY_AC_TABLE_ID, id);
+		b43_phy_write(dev, B43_PHY_AC_TABLE_OFFSET, (u16)(offset + i));
+		b43_phy_write(dev, B43_PHY_AC_TABLE_DATA_2, val);
 	}
 }

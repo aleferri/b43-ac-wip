@@ -12,10 +12,13 @@ struct b43_wldev;
 /*
  * One row of the per-channel table for the 2069 radio.
  *
- * I 45 valori cluster1 dell'entry (u16[2..46]) sono TUTTI write radio:
- *   radio_raw[39]  -> i primi 39 (offset 4..80, regs 0x08e8..0x006f)
- *   chan_raw6[6]   -> batch r2069_chan_writes (offset 82..92), regs radio
- *                     0x11a,0x11b,0x719,0x630,0x65c,0x662
+ * All 45 cluster-1 values of an entry, u16[2..46], are radio writes:
+ *   radio_raw[39]  the first 39, offsets 4 to 80, registers 0x08e8 to 0x006f
+ *   chan_raw6[6]   the r2069_chan_writes batch, offsets 82 to 92, registers
+ *                  0x11a, 0x11b, 0x719, 0x630, 0x65c and 0x662
+ *
+ * These values are validated against the vendor sweep on all 16 BW20 channels
+ * by reverse-tools/check_channeltab.py.
  */
 struct b43_phy_ac_channeltab_e_radio2069 {
 	u8  channel;

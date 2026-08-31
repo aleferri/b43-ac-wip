@@ -53,6 +53,8 @@ struct board_profile {
 	/* maxp5ga per-core (3 core), 4 sub-band u8. NVRAM keys maxp5ga{0,1,2}.
 	 * Drives the per-core max TX index (maxp5ga[grp] - margin). */
 	u8 maxp5ga[3][4];
+	/* mcsbw{20,40}5g{l,m,h}po, NVRAM. Index 0 = 5gl, 1 = 5gm, 2 = 5gh. */
+	u32 mcsbw5g_po[3][2];
 	/* rxgains_5gl per-core (3 core). NVRAM keys rxgains5gelnagaina{0,1,2}
 	 * e rxgains5gtrisoa{0,1,2}. Usati per computare hdr = (elnagain+3)<<1
 	 * e gainctx = ((triso+4)<<1)+2 nel body Phase 3 di noise-shaping. */
@@ -107,6 +109,11 @@ static const struct board_profile PROFILE_D6220 = {
 		{ 72, 70, 86, 0 },
 		{ 72, 70, 86, 0 },
 		{ 76, 76, 76, 76 },
+		},
+.mcsbw5g_po = {
+		{ 0x20000000, 0x21000000 },
+		{ 0x11111111, 0x10000000 },
+		{ 0x98764200, 0x98764200 },
 	},
 };
 
@@ -135,6 +142,11 @@ static const struct board_profile PROFILE_AGCOMBO = {
 		{ 74, 74, 82, 82 },
 		{ 74, 74, 82, 82 },
 		{ 74, 74, 82, 82 },
+		},
+.mcsbw5g_po = {
+		{ 0x88644220, 0x88644220 },
+		{ 0x88644220, 0x88644220 },
+		{ 0xcca88440, 0xcca88440 },
 	},
 };
 
@@ -171,6 +183,11 @@ static const struct board_profile PROFILE_DSL = {
 		{ 76, 76, 76, 76 },
 		{ 76, 76, 76, 76 },
 		{ 76, 76, 76, 76 },
+		},
+.mcsbw5g_po = {
+		{ 0xeca86420, 0xeca86420 },
+		{ 0xcca86420, 0xcca86420 },
+		{ 0xcca86420, 0xcca86420 },
 	},
 };
 
@@ -285,6 +302,10 @@ static void mount_board(const struct board_profile *p)
 	for (unsigned int c = 0; c < 3; c++)
 		memcpy(g_sprom.core_pwr_info[c].maxp5ga, p->maxp5ga[c],
 		       sizeof(g_sprom.core_pwr_info[c].maxp5ga));
+	for (unsigned int b = 0; b < 3; b++) {
+		g_sprom.mcsbw5g_po[b].bw20 = p->mcsbw5g_po[b][0];
+		g_sprom.mcsbw5g_po[b].bw40 = p->mcsbw5g_po[b][1];
+	}
 
 	g_bcma_dev.bus = &g_bcma_bus;
 	g_bus_dev.bus_type = B43_BUS_BCMA;
@@ -292,11 +313,79 @@ static void mount_board(const struct board_profile *p)
 	g_bus_dev.bus_sprom = &g_sprom;
 	g_bus_dev.bdev     = &g_bcma_dev;
 
+	/*
+	 * ch36 unless AC_CHANNEL says otherwise. Driving another channel also
+	 * needs the driver built with CONFIG_B43_PHY_AC_ANY_CHANNEL
+	 * (make AC_ANY_CHANNEL=1), and only makes sense against a capture of
+	 * that channel supplied through AC_READ_ORACLE.
+	 */
 	g_chan.band = NL80211_BAND_5GHZ;
 	g_chan.hw_value = 36;
-	g_chan.center_freq = 5180;
+	{
+		const char *e = getenv("AC_CHANNEL");
+
+		if (e) {
+			unsigned long v = strtoul(e, NULL, 10);
+
+			if (v < 1 || v > 200) {
+				fprintf(stderr, "AC_CHANNEL=%s out of range\n", e);
+				exit(1);
+			}
+			g_chan.hw_value = (u16)v;
+		}
+	}
+	g_chan.center_freq = 5000 + 5 * g_chan.hw_value;
+
+	/*
+	 * Regulatory ceiling for the channel, in dBm, as cfg80211 would supply
+	 * it. The captures were taken on a system whose ceiling does not bind
+	 * -- ch100 receives 86 quarter-dBm, above the 84 a 21 dBm limit would
+	 * allow -- so the default here is permissive and AC_MAX_POWER lowers it
+	 * to exercise the clamp.
+	 */
+	{
+		const char *e = getenv("AC_MAX_POWER");
+		int dflt = e ? (int)strtol(e, NULL, 10) : 30;
+
+		g_chan.max_power = dflt;
+		b43_test_reg_init(dflt, getenv("AC_MAX_POWER_MAP"));
+	}
 	g_hw.conf.chandef.chan  = &g_chan;
-	g_hw.conf.chandef.width = NL80211_CHAN_WIDTH_20;
+
+	/*
+	 * AC_BW selects the operating width: 20, 40 or 80. The centre of a
+	 * bonded channel sits above the primary one by half the bonding span,
+	 * so +10 MHz at 40 and +30 at 80, which is what the sweep's segment
+	 * names imply -- ch36-bw40 is the 36/40 pair centred on 5190, and
+	 * ch36-bw80 is 36 to 48 centred on 5210.
+	 *
+	 * Driving anything but 20 also needs the driver built with
+	 * CONFIG_B43_PHY_AC_ANY_CHANNEL, since no wider configuration is in
+	 * the validated list.
+	 */
+	{
+		const char *e = getenv("AC_BW");
+		unsigned long bw = e ? strtoul(e, NULL, 10) : 20;
+
+		switch (bw) {
+		case 20:
+			g_hw.conf.chandef.width = NL80211_CHAN_WIDTH_20;
+			g_hw.conf.chandef.center_freq1 = g_chan.center_freq;
+			break;
+		case 40:
+			g_hw.conf.chandef.width = NL80211_CHAN_WIDTH_40;
+			g_hw.conf.chandef.center_freq1 = g_chan.center_freq + 10;
+			break;
+		case 80:
+			g_hw.conf.chandef.width = NL80211_CHAN_WIDTH_80;
+			g_hw.conf.chandef.center_freq1 = g_chan.center_freq + 30;
+			break;
+		default:
+			fprintf(stderr, "AC_BW=%s: expected 20, 40 or 80\n", e);
+			exit(1);
+		}
+	}
+	g_hw.wiphy = NULL;
 	g_wl.hw = &g_hw;
 
 	memset(&g_wldev, 0, sizeof(g_wldev));
@@ -316,6 +405,57 @@ static void mount_board(const struct board_profile *p)
 	{
 		const char *e = getenv("AC_FIRST_INIT");
 		g_wldev.phy.do_full_init = !(e && !strcmp(e, "0"));
+	}
+
+	/*
+	 * Channel of the previous calibration, which in a live driver survives
+	 * from one cycle to the next but which a single-flow run has to be
+	 * told. It selects the irregular first probe group; see
+	 * b43_phy_ac_rxiqcal_finalize.
+	 *
+	 * The default matches the flow: a first bring-up has no previous
+	 * calibration, while a later cycle is by default a down-and-up on the
+	 * channel it was already on, which is what the down->up captures are.
+	 * AC_LAST_CAL_CHANNEL overrides it, and is what a warm cycle following
+	 * a channel change needs -- the odd-numbered sweep segments.
+	 */
+	{
+		const char *e = getenv("AC_LAST_CAL_CHANNEL");
+
+		if (e)
+			g_ac.last_cal_channel = (u16)strtoul(e, NULL, 10);
+		else if (!g_wldev.phy.do_full_init)
+			g_ac.last_cal_channel = g_chan.hw_value;
+	}
+
+	/*
+	 * Probe-phase deadline and the ticks the watchdog lands on. In a live
+	 * driver these come from jiffies and from the watchdog work; here the
+	 * flow declares them. The defaults are the two captures: attach runs
+	 * 15 ticks with the watchdog at 10, a later cycle 19 ticks with it at
+	 * 5 and 15.
+	 */
+	{
+		const char *e = getenv("AC_PROBE_TICKS");
+		const char *w = getenv("AC_WATCHDOG_TICKS");
+
+		if (g_wldev.phy.do_full_init) {
+			g_ac.probe_ticks = 15;
+			g_ac.probe_watchdog_tick[0] = 10;
+			g_ac.probe_watchdog_tick[1] = 0xffff;
+		} else {
+			g_ac.probe_ticks = 19;
+			g_ac.probe_watchdog_tick[0] = 5;
+			g_ac.probe_watchdog_tick[1] = 15;
+		}
+		if (e)
+			g_ac.probe_ticks = (u16)strtoul(e, NULL, 10);
+		if (w) {
+			char *end;
+			g_ac.probe_watchdog_tick[0] = (u16)strtoul(w, &end, 10);
+			g_ac.probe_watchdog_tick[1] = *end == ','
+				? (u16)strtoul(end + 1, NULL, 10) : 0xffff;
+		}
 	}
 
 	b43_test_band = NL80211_BAND_5GHZ;

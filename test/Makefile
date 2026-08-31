@@ -21,6 +21,7 @@ CFLAGS  := -O0 -g -Wall -Wno-unused-parameter -Wno-unused-function \
            -Wno-unused-variable -Wno-unused-but-set-variable \
            -Wno-pointer-sign -Wno-sign-compare \
            -DB43_AC_FN_TRACE \
+           $(if $(AC_ANY_CHANNEL),-DCONFIG_B43_PHY_AC_ANY_CHANNEL=1) \
            -I$(STUBS) -I$(SCRATCH) \
            -include stubs/linux/types.h \
            -include stubs/linux/errno.h \
@@ -43,7 +44,8 @@ WRAP_SYMS := \
     b43_actab_read_bulk b43_actab_write_bulk b43_actab_write_bulk_reopen \
     b43_actab_write_bulk_scoped b43_actab_zerofill \
     b43_actab_write_bulk_locked b43_actab_zerofill_locked \
-    b43_actab_write_r11
+    b43_actab_write_r11 \
+    b43_actab_fill_r11
 
 LDFLAGS := $(foreach s,$(WRAP_SYMS),-Wl,--wrap=$(s))
 

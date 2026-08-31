@@ -41,8 +41,9 @@ struct ieee80211_channel;
  */
 #define  B43_PHY_AC_RF_SEQ_RST2RX		0x0020	/* force_rfseq cmd 2 */
 /* force_rfseq cmd->bit: 0=0x01 1=0x02 2=0x20(RST2RX) 3=0x04 4=0x08 5=0x10 */
-/* PHY resampler/BW per-canale 0x371-0x376: valori da chan_tuning u16[52..57]
- * (campo phy_bw[]), NON i valori radio chan_raw6. */
+/* Per-channel PHY resampler and bandwidth registers 0x371-0x376. The values
+ * come from chan_tuning u16[52..57], the phy_bw[] field, not from the radio's
+ * chan_raw6. */
 #define B43_PHY_AC_BW1A				0x371
 #define B43_PHY_AC_BW2				0x372
 #define B43_PHY_AC_BW3				0x373
@@ -68,10 +69,10 @@ struct ieee80211_channel;
 #define B43_PHY_AC_REG_TBL_WRITE_GATE		0x19E
 #define  B43_PHY_AC_TBL_WRITE_GATE_LOCK		0x0002
 /*
- * Bit 0 dello stesso registro: abilita la sequenza di tuning radio, non e' un
- * secondo lock. Il driver stock lo alza prima del banco PLL del 2069 e lo
- * abbassa dopo l'ultima write (d6220 attach-to-bss-up #4497 e #4616); subito
- * dopo la chiusura reinizializza il registro con 0x01c0 / 0x0200 / 0x003c.
+ * Bit 0 of the same register enables the radio tuning sequence; it is not a
+ * second lock. The stock driver raises it before the 2069's PLL bank and
+ * lowers it after the last write, then reinitialises the register with
+ * 0x01c0, 0x0200 and 0x003c.
  */
 #define  B43_PHY_AC_TBL_WRITE_GATE_RADIO_TUNE	0x0001
 #define  B43_PHY_AC_RF_SEQ_OVERRIDE_GATE	0x0001
@@ -106,16 +107,17 @@ struct ieee80211_channel;
 #define B43_PHY_AC_STATE_CCA_RESET	0x0100	/* BBCFG bit 0x4000 (RSTCCA active) */
 #define B43_PHY_AC_STATE_AFE_ON		0x0200	/* RF front-end armed (enable_afe ON) */
 /*
- * Primo bring-up. b43_phy_init azzera phy->do_full_init fra ops->init e
- * set_channel, quindi da set_channel in avanti quel flag e' sempre falso:
- * op_init lo latcha qui mentre e' ancora valido, per le costanti che il driver
- * stock sceglie in base alla fase.
+ * First bring-up. b43_phy_init() clears phy->do_full_init between ops->init
+ * and set_channel, so from set_channel on that flag is always false. op_init
+ * latches it here while it is still valid, for the constants the stock driver
+ * selects by phase.
  */
 #define B43_PHY_AC_STATE_FIRST_BRINGUP	0x0800
 /*
- * Richiesta di risorsa PMU (regctl 0 bit 1) alzata dal driver. Il bit hardware
- * non e' rileggibile attraverso l'API bcma, quindi lo si traccia qui: serve a
- * distinguere "va abbassato" da "e' gia' basso", come il refcount fa per il MAC.
+ * The PMU resource request, regctl 0 bit 1, as raised by the driver. The
+ * hardware bit cannot be read back through the bcma API, so it is tracked
+ * here to tell "needs lowering" from "already low", the way the refcount does
+ * for the MAC.
  */
 #define B43_PHY_AC_STATE_PMU_REQ	0x0400
 #define B43_PHY_AC_STATE_FAULTED	0x8000	/* sticky: a precondition failed */
@@ -130,23 +132,113 @@ struct ieee80211_channel;
 #define B43_PHY_AC_MAX_CORES		3
 
 /*
- * Accumulatori RXIQ per core. Il solve somma i **due** round di stima piu'
- * recenti -- verificato: con un round solo i coefficienti non combaciano. Le
- * letture di 0x?c0-0x?c5 avvengono nella misura, che gira piu' volte; i valori
- * si conservano qui perche' il solve sta in un'altra funzione.
+ * Per-core RX-IQ accumulators. The solve sums the two most recent estimate
+ * rounds; with only one round the coefficients do not match, which is how that
+ * was established. The reads of 0x?c0-0x?c5 happen inside the measurement,
+ * which runs several times, and the values are kept here because the solve
+ * lives in a different function.
  */
 struct b43_phy_ac_iq_acc {
-	/* Finestra scorrevole degli ultimi due round: [0] e' il piu' recente. */
+	/* Sliding window over the last two rounds; [0] is the most recent. */
 	u32 ii[2];
 	u32 qq[2];
 	s32 iq[2];
 	unsigned int rounds;
-	/* Coefficienti risolti, calcolati una volta e riapplicati: il driver stock
-	 * riscrive gli stessi valori alla seconda apply invece di ricalcolare. */
+	/* The solved coefficients, computed once and reapplied: the stock driver
+	 * rewrites the same values on the second apply rather than recomputing
+	 * them. */
 	s16 a;
 	s16 b;
 	bool solved;
 };
+
+#define B43_PHY_AC_NUM_RATES_CCK		4
+#define B43_PHY_AC_NUM_RATES_OFDM		8
+#define B43_PHY_AC_NUM_RATES_MCS		8
+
+/*
+ * Per-rate TX power limits, in quarter-dBm.
+ *
+ * Same shape and units as struct txpwr_limits in
+ * brcm80211/brcmsmac/phy/phy_hal.h, because the computation that fills it is
+ * the one brcmsmac already carries as wlc_phy_txpower_recalc_target(). The
+ * quarter-dB unit is that driver's BRCMS_TXPWR_DB_FACTOR of 4; the register
+ * this eventually feeds, 0x0646, is in the same unit while the SROM and
+ * regulatory values are in whole dB.
+ *
+ * The limits are segmented, and not only between OFDM and legacy: each
+ * modulation, bandwidth and stream count has its own row. A single scalar
+ * cannot stand in for them, which is why fitting one constant against the
+ * captured 0x0646 values could never close.
+ *
+ * The AC-PHY reduces this to two things:
+ *   - the maximum over rates, written per core to 0x0646[7:0];
+ *   - the per-rate distance from that maximum, which lands in table 0x21,
+ *     the array this driver calls ppr[24].
+ * That split explains why ppr is channel-invariant across the sweep while
+ * 0x0646 is not: moving channel moves the maximum, not the spacing.
+ */
+struct b43_phy_ac_txpwr_limits {
+	u8 cck[B43_PHY_AC_NUM_RATES_CCK];
+	u8 ofdm[B43_PHY_AC_NUM_RATES_OFDM];
+	u8 ofdm_cdd[B43_PHY_AC_NUM_RATES_OFDM];
+	u8 ofdm_40_siso[B43_PHY_AC_NUM_RATES_OFDM];
+	u8 ofdm_40_cdd[B43_PHY_AC_NUM_RATES_OFDM];
+	u8 mcs_20_siso[B43_PHY_AC_NUM_RATES_MCS];
+	u8 mcs_20_cdd[B43_PHY_AC_NUM_RATES_MCS];
+	u8 mcs_20_stbc[B43_PHY_AC_NUM_RATES_MCS];
+	u8 mcs_20_mimo[B43_PHY_AC_NUM_RATES_MCS];
+	u8 mcs_40_siso[B43_PHY_AC_NUM_RATES_MCS];
+	u8 mcs_40_cdd[B43_PHY_AC_NUM_RATES_MCS];
+	u8 mcs_40_stbc[B43_PHY_AC_NUM_RATES_MCS];
+	u8 mcs_40_mimo[B43_PHY_AC_NUM_RATES_MCS];
+};
+
+/*
+ * Flat rate index into the limit and target arrays, same segmentation and
+ * same numbering as the TXP_* defines in brcmsmac/phy/phy_int.h. Kept
+ * identical so the two can be read side by side; only the segments the
+ * AC-PHY exercises are filled in at first.
+ */
+#define B43_PHY_AC_TXP_FIRST_CCK		0
+#define B43_PHY_AC_TXP_LAST_CCK			3
+#define B43_PHY_AC_TXP_FIRST_OFDM		4
+#define B43_PHY_AC_TXP_LAST_OFDM		11
+#define B43_PHY_AC_TXP_FIRST_OFDM_20_CDD	12
+#define B43_PHY_AC_TXP_LAST_OFDM_20_CDD		19
+#define B43_PHY_AC_TXP_FIRST_MCS_20_SISO	20
+#define B43_PHY_AC_TXP_LAST_MCS_20_SISO		27
+#define B43_PHY_AC_TXP_FIRST_MCS_20_CDD		28
+#define B43_PHY_AC_TXP_LAST_MCS_20_CDD		35
+#define B43_PHY_AC_TXP_FIRST_MCS_20_STBC	36
+#define B43_PHY_AC_TXP_LAST_MCS_20_STBC		43
+#define B43_PHY_AC_TXP_FIRST_MCS_20_SDM		44
+#define B43_PHY_AC_TXP_LAST_MCS_20_SDM		51
+#define B43_PHY_AC_TXP_FIRST_OFDM_40_SISO	52
+#define B43_PHY_AC_TXP_LAST_OFDM_40_SISO	59
+#define B43_PHY_AC_TXP_FIRST_OFDM_40_CDD	60
+#define B43_PHY_AC_TXP_LAST_OFDM_40_CDD		67
+#define B43_PHY_AC_TXP_FIRST_MCS_40_SISO	68
+#define B43_PHY_AC_TXP_LAST_MCS_40_SISO		75
+#define B43_PHY_AC_TXP_FIRST_MCS_40_CDD		76
+#define B43_PHY_AC_TXP_LAST_MCS_40_CDD		83
+#define B43_PHY_AC_TXP_FIRST_MCS_40_STBC	84
+#define B43_PHY_AC_TXP_LAST_MCS_40_STBC		91
+#define B43_PHY_AC_TXP_FIRST_MCS_40_SDM		92
+#define B43_PHY_AC_TXP_LAST_MCS_40_SDM		99
+#define B43_PHY_AC_TXP_NUM_RATES		101
+
+/* Quarter-dBm conversion, brcmsmac's BRCMS_TXPWR_DB_FACTOR. */
+#define B43_PHY_AC_QDB(n)			((n) * 4)
+
+/*
+ * Measurement field of PHY 0x0012, the idle-TSSI readback. Bit 11 is set on
+ * every sample the captures contain; a sample whose measurement field is zero
+ * carries no reading and the average skips it.
+ */
+#define B43_PHY_AC_IDLE_TSSI_MEAS		0x07ff
+/* Bit 11 of the same readback, surviving the shift by two. */
+#define B43_PHY_AC_IDLE_TSSI_BASE		0x0200
 
 struct b43_phy_ac {
 	/* active RF-chain count (PHY reg 0x0B & 0x07), set at op_init */
@@ -160,27 +252,49 @@ struct b43_phy_ac {
 	/* Software mirror of tracked HW gate bits; see B43_PHY_AC_STATE_*. */
 	u16 status_mask;
 	/*
-	 * Stato del toggle su 0x0520[3:2] usato dai probe cycle di
-	 * rxiqcal_finalize. Il driver stock lo alterna a ogni gruppo di peek per
-	 * tutta la fase, senza ripartire fra un blocco e il successivo, e
-	 * l'origine dipende dalla fase: 0x0000 al primo bring-up, 0x0004 su uno
-	 * switch di canale successivo. Verificato sulle due catture d6220 con i
-	 * RETVAL: alternanza perfetta su 15 e 19 occorrenze rispettivamente.
+	 * State of the 0x0520[3:2] toggle the probe cycles of
+	 * rxiqcal_finalize() use. The stock driver alternates it at every group
+	 * of peeks and never restarts it, not even across a channel switch.
+	 *
+	 * Verified over the 32 warm cycles of the d6220 sweep: the mode each
+	 * cycle opens on always follows from the parity of the toggle count of
+	 * the cycle before it, 31 transitions out of 31.
 	 */
 	u16 probe_mode;
 	/*
-	 * Contatore di cicli di calibrazione della sessione, per il gate del
-	 * bump a freddo di recalc_txpower (crsmin): il blob bumpa la ladder
-	 * per le prime due calibrazioni. Satura a 2 a quanto pare.
+	 * Channel of the last completed calibration, 0 when none has run.
+	 *
+	 * The first probe group of a calibration is irregular -- see
+	 * b43_phy_ac_probe_cycle() -- and what selects it is whether the
+	 * channel has changed since the previous calibration, not whether this
+	 * is a first bring-up. The d6220 sweep settles it: across its 32 warm
+	 * cycles, in which no bring-up is a first one, the irregular group
+	 * appears in exactly the 16 cycles that follow a channel change,
+	 * 32 out of 32.
+	 */
+	u16 last_cal_channel;
+	/*
+	 * Deadline of the probe/measure phase, in 1-second ticks, and the two
+	 * ticks the periodic watchdog lands on within it (0xffff for none).
+	 * Both stand in for a clock the trace harness does not have; see
+	 * b43_phy_ac_rxiqcal_finalize().
+	 */
+	u16 probe_ticks;
+	u16 probe_watchdog_tick[2];
+	/*
+	 * Count of calibration cycles this session, gating the cold bump in
+	 * recalc_txpower()'s crsmin path: the blob bumps the ladder for the
+	 * first two calibrations. It appears to saturate at two.
 	 */
 	u8 cal_cycles;
-	/* Accumulatori RXIQ raccolti dalla misura, consumati dal solve. */
+	/* RX-IQ accumulators gathered by the measurement, consumed by the
+	 * solve. */
 	struct b43_phy_ac_iq_acc iq_acc[B43_PHY_AC_MAX_CORES];
 	/* Salvati da rxcal_radio_setup, riscritti da rxcal_radio_cleanup. */
 	u16 rxcal_radio_saved[B43_PHY_AC_MAX_CORES][7];
 	/*
-	 * Risultati degli iter di commit della cal AFE, indicizzati dall'offset di
-	 * scrittura. La coda di rxcal_afe_calibrate li duplica per antenna.
+	 * Results of the AFE cal's commit iterations, indexed by write offset.
+	 * The tail of rxcal_afe_calibrate() duplicates them per antenna.
 	 */
 	struct {
 		u16 off;
@@ -188,13 +302,13 @@ struct b43_phy_ac {
 		u8 n;
 	} afe_res[6];
 	/*
-	 * Snapshot di afe_res a fine b43_phy_ac_rxcal_afe_calibrate (pass 1
-	 * della cal). Serve perchè il blob riscrive gli stessi offset con
-	 * i risultati del secondo tono, applicati una volta temporaneamente,
-	 * mentre le riapplicazioni finali (finalize kick e rxiqcal_finalize)
-	 * usano di nuovo i risultati della pass 1.
-	 * osservato sull'attach d6220: #25697 scrive la pass 2,
-	 * #28651 e #30097 di nuovo la pass 1.
+	 * Snapshot of afe_res at the end of b43_phy_ac_rxcal_afe_calibrate(),
+	 * the cal's first pass. It is needed because the blob rewrites the same
+	 * offsets with the second tone's results, applied once and temporarily,
+	 * while the final reapplications -- the finalize kick and
+	 * rxiqcal_finalize() -- use the first pass's results again. The attach
+	 * capture shows exactly that: one write of the second pass, then two of
+	 * the first.
 	 */
 	struct {
 		u16 off;
@@ -205,22 +319,36 @@ struct b43_phy_ac {
 	 * by txpwrctrl_setup so later cal blocks can derive per-core power. */
 	u8 pa5g_grp;
 	/*
-	 * RX-IQ imbalance accumulator readings dal probe sweep in
-	 * b43_phy_ac_rxcal_gainctrl. Indicizzato [core][step_idx][sample]:
-	 *   step_idx = ordine vendor delle 4 combinazioni {bit1, bit2}
-	 *     di radio 0x000e+s:
-	 *       [0]: (bit1=1, bit2=0)
-	 *       [1]: (bit1=0, bit2=0)  — baseline (injection off)
-	 *       [2]: (bit1=1, bit2=1)
-	 *       [3]: (bit1=0, bit2=1)
-	 *   sample 0..7 = le 8 letture consecutive di PHY 0x0013
-	 *     (accumulator globale) usate dal vendor per settling.
+	 * Channel being programmed, cached by set_channel for the cal blocks
+	 * that run after it. Not read from dev->phy.channel: b43 only updates
+	 * that once ops->switch_channel has returned, so during the
+	 * calibrations it still holds the previous channel.
+	 */
+	u16 cal_channel;
+	/*
+	 * Centre frequency of the same configuration, for the data that is
+	 * keyed on frequency rather than on the channel number.
+	 */
+	u16 cal_freq;
+	/* Operating width of the same configuration. */
+	enum nl80211_chan_width cal_width;
+	/*
+	 * RX-IQ imbalance accumulator readings from the probe sweep in
+	 * b43_phy_ac_rxcal_gainctrl(), indexed [core][step_idx][sample]:
+	 *   step_idx is the vendor's order of the four {bit1, bit2} combinations
+	 *     of radio 0x000e plus stride:
+	 *       [0]: bit1 set, bit2 clear
+	 *       [1]: both clear -- the baseline, injection off
+	 *       [2]: both set
+	 *       [3]: bit1 clear, bit2 set
+	 *   sample 0 to 7 are the eight consecutive reads of PHY 0x0013, the
+	 *     global accumulator, that the vendor uses for settling.
 	 *
-	 * Uso previsto: calcolo dei coefficienti I/Q compensation
-	 * (formula ancora TBD — vedi TODO in rxcal_gainctrl). Non usato
-	 * per il match op-per-op, che valuta solo le op emesse; sul HW
-	 * reale questi sono i valori "trovati" durante la cal e vanno
-	 * consumati dalla fase successiva (rxiq comp write).
+	 * Intended use: computing the I/Q compensation coefficients; the formula
+	 * is still open, see the TODO in rxcal_gainctrl(). Not used for the
+	 * op-for-op match, which only looks at the ops emitted. On real hardware
+	 * these are the values the cal finds, to be consumed by the next phase,
+	 * the RX-IQ compensation write.
 	 */
 	u16 rxcal_imbalance[B43_PHY_AC_MAX_CORES][4][8];
 };
@@ -309,11 +437,11 @@ u16  b43_phy_ac_classifier(struct b43_wldev *dev, u16 mask, u16 val);
 void b43_phy_ac_reset_cca(struct b43_wldev *dev);
 
 /*
- * Calibrazioni post-channel-setup, nell'ordine in cui le chiama
- * b43_phy_ac_set_channel_calibrations (phy_ac.c), che documenta i round.
- * Ogni funzione e' una fase trascritta dalla cattura vendor; la struttura
- * interna, gli op count e i valori ancora cablati stanno accanto al codice.
- * Mappa fase -> intervallo di op nella cattura: docs/vendor-op-map.md.
+ * Post-channel-setup calibrations, in the order
+ * b43_phy_ac_set_channel_calibrations() calls them; that function documents
+ * the rounds. Each of these is a phase transcribed from a capture, with its
+ * internal structure, op counts and still-transcribed values documented next
+ * to the code. Phase-to-op-range map: docs/vendor-op-map.md.
  */
 void b43_phy_ac_post_cal_finalize(struct b43_wldev *dev);
 void b43_phy_ac_post_cal_finalize_iter3(struct b43_wldev *dev);
@@ -322,7 +450,7 @@ void b43_phy_ac_post_rxiqcal_stage2(struct b43_wldev *dev);
 void b43_phy_ac_rxcal_afe_calibrate(struct b43_wldev *dev);
 void b43_phy_ac_rxcal_afe_finalize_gain_luts(struct b43_wldev *dev);
 
-/* Open-loop TX power. INDEX_DEFAULT e' il valore fisso della cattura. */
+/* Open-loop TX power; INDEX_DEFAULT is the capture's fixed value. */
 #define B43_PHY_AC_TXPWR_INDEX_DEFAULT	0x40
 void b43_phy_ac_txpwr_by_index(struct b43_wldev *dev, u8 idx);
 
@@ -349,9 +477,9 @@ void b43_phy_ac_rxiq_teardown_apply_defaults(struct b43_wldev *dev);
 void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev);
 
 /*
- * Un iter della cal AFE: arma un comando su 0x0380, attende il bit di busy,
- * rilegge il risultato e lo riscrive su wr_off. Usato dai due gruppi di iter.
- * core_off = core * 0x200.
+ * One AFE cal iteration: arm a command on 0x0380, wait on the busy bit, read
+ * the result back and rewrite it at wr_off. Used by both iteration groups.
+ * core_off is core * 0x200.
  */
 void b43_phy_ac_rxcal_afe_iter(struct b43_wldev *dev,
 			       u16 cmd, u16 core_off,
@@ -359,9 +487,9 @@ void b43_phy_ac_rxcal_afe_iter(struct b43_wldev *dev,
 			       u16 rd_off, u8 rw_len, u16 wr_off);
 
 /*
- * Un round della ricerca del guadagno di loopback. core_mask seleziona i core
- * del round, r734_vals[] e' indicizzato per numero di core. Il criterio di
- * convergenza e il chiamante sono in phy_ac.c.
+ * One round of the loopback gain search. core_mask selects the round's cores
+ * and r734_vals[] is indexed by core number. The convergence criterion and the
+ * caller are in phy_ac.c.
  */
 void b43_phy_ac_gainctrl_final_apply(struct b43_wldev *dev,
 				     bool with_peek_preamble,
@@ -369,10 +497,11 @@ void b43_phy_ac_gainctrl_final_apply(struct b43_wldev *dev,
 				     const u16 r734_vals[3]);
 
 /*
- * Watchdog periodico a regime: poll TSSI/statistiche SHM ogni tick, con
- * una tornata singola del measure block (noise_cal=true) alla cadenza
- * lunga. Sequenza op-per-op del tick vendor ~5 s (sweep d6220); nel
- * driver e' agganciato a pwork_15sec. Vedi il commento in phy_ac.c.
+ * Steady-state periodic watchdog: poll TSSI and the SHM statistics every tick,
+ * with a single pass of the measure block, noise_cal true, on the longer
+ * cadence. The op sequence follows the vendor's roughly 5 s tick from the
+ * d6220 sweep; in this driver it hangs off pwork_15sec. See the comment in
+ * phy_ac.c.
  */
 void b43_phy_ac_watchdog(struct b43_wldev *dev, bool noise_cal);
 

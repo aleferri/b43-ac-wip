@@ -2,14 +2,15 @@
 /*
  * Broadcom B43 wireless driver AC-PHY low-level helpers.
  *
- * Isolati in un file a parte da phy_ac.c per due motivi:
- *   1. Sono le uniche primitive AC-PHY che non stanno nel PHY-table path
- *      (tables_phy_ac.c) né nel radio-specific path (radio_2069.c) — cioè
- *      helper "trasversali" al MAC/PHY boundary.
- *   2. Nel test env userspace il --wrap del linker intercetta le chiamate
- *      inter-object; se la definizione fosse nello stesso .o del chiamante,
- *      la risoluzione locale bypasserebbe il wrap e il tracer perderebbe
- *      le op MAC.MHF / MAC.MCTRL.
+ * Kept out of phy_ac.c for two reasons:
+ *   1. These are the only AC-PHY primitives that belong to neither the
+ *      PHY-table path (tables_phy_ac.c) nor the radio-specific path
+ *      (radio_2069.c); they sit across the MAC/PHY boundary.
+ *   2. The userspace trace harness intercepts these symbols with the
+ *      linker's --wrap, which only applies to cross-object calls. A
+ *      definition in the caller's own object would be resolved locally,
+ *      bypass the wrap, and drop the MAC.MHF / MAC.MCTRL ops from the
+ *      trace.
  */
 
 #include "b43.h"
@@ -17,17 +18,19 @@
 #include "main.h"
 
 /*
- * SHM r/m/w sui 5 slot HOSTFn. Il vendor AC-PHY tocca 5 slot indipendenti
- * (0=HOSTF1..4=HOSTF5); b43_hf_write mainline copre solo i 3 bassi come
- * un u64 unico, che non ha la semantica maskset atomica richiesta qui.
+ * Read/modify/write of one of the five HOSTFn SHM slots.
  *
- * Il layout HOSTFn nel kernel è sparso in offset non contigui (HOSTF4 a
- * +0x18 da HOSTF3, HOSTF5 a +0x5c da HOSTF4), quindi una lookup table
- * risolve lo slot al registro.
+ * The AC-PHY touches all five slots (0 = HOSTF1 .. 4 = HOSTF5)
+ * independently. b43_hf_write() covers only the low three and treats them
+ * as a single u64, which does not give the per-slot mask/set semantics
+ * needed here.
+ *
+ * The HOSTFn registers are not contiguous (HOSTF4 is +0x18 from HOSTF3,
+ * HOSTF5 is +0x5c from HOSTF4), hence the lookup table.
  *
  * slot: 0..4
- * mask: bit da preservare del vecchio valore
- * val:  bit da imporre (già mascherati a ~mask dal chiamante)
+ * mask: bits of the old value to preserve
+ * val:  bits to force in, already masked to ~mask by the caller
  */
 static const u16 b43_phy_ac_hostf_regs[5] = {
 	B43_SHM_SH_HOSTF1,
@@ -50,10 +53,9 @@ void b43_phy_ac_mhf_maskset(struct b43_wldev *dev, u16 slot, u16 mask, u16 val)
 }
 
 /*
- * r/m/w su B43_MMIO_MACCTL. Il core b43 mainline non esporta questo helper
- * — il pattern equivalente è b43_maskset32 inlineato per ogni call site.
- * Qui è isolato per leggibilità del setup AC-PHY e per essere wrappabile
- * dal tracer di test.
+ * Read/modify/write of B43_MMIO_MACCTL. The b43 core has no such helper;
+ * call sites inline b43_maskset32() instead. Wrapping it here keeps the
+ * AC-PHY setup readable and gives the trace harness a symbol to intercept.
  */
 void b43_maccontrol_set(struct b43_wldev *dev, u32 mask, u32 set)
 {
