@@ -299,6 +299,55 @@ compensata per il segno, `beq` con **nop nel delay slot** -- il delay slot su
 MIPS si esegue sempre, quindi mettendoci la `sb` la scrittura avverrebbe anche a
 interruttore spento -- e `off=2` per saltare oltre.
 
+### Init a freddo: un ciclo per canale, ricaricando `wl`
+
+`force_full_init` non da' una fase di attach, e il perche' e' nel modulo:
+`zero_off` e' **un solo campo**, assegnato al solo hook `OP_CAL_INIT`, quindi
+lo stub azzera il byte della cal (251 su 7.14, 227 su 6.30) e nient'altro. I
+flag adiacenti restano: 250 e' il "phy_init fatto", 249 il POR. Ne esce una cal
+completa dentro un `phy_init` a caldo, che non riproduce le costanti di fase --
+coppia di gain ADC in `init_regs`, campo a 6 bit di `0x02e4`, preambolo
+analogico.
+
+`reverse-tools/cold_capture.sh` (solo 3.4) fa quindi un ciclo per canale, e con
+l'armamento dinamico il ciclo e' tutto sul solo `wl`:
+
+    MARK ; rmmod wl ; insmod wl ; chanspec ; [ssid] ; up ; attesa ;
+    [bss up ; attesa] ; down
+
+```sh
+insmod /tmp/wl_diag.ko arm=1
+cat /proc/wl_diag | nc <HOST> 5555 &
+IF=wl1 SSID=test-ap sh cold_capture.sh 20 36 40 44 48
+```
+
+Cosa si guadagna rispetto allo sweep a caldo di `capture_plan.sh`:
+
+- il primo `up` dopo il ricarico e' un `phy_init` con `do_full_init` vero e una
+  `cal_init` mai fatta, senza toccare nessun flag;
+- **c'e' anche l'attach**, perche' gli hook sono in piedi dal `COMING`, cioe'
+  prima di `mod->init` e quindi prima del probe PCI. Non serve il remove/rescan
+  del device, che riusciva circa una volta su due;
+- il taglio a posteriori e' deterministico: `split_by_mark.py` sui record MARK,
+  non l'euristica dei salti temporali;
+- la fifo e' meno sotto pressione: il lettore resta aperto per tutta la corsa e
+  non c'e' un `insmod` di mezzo, quindi `skipphyrd` si puo' lasciare vuoto e i
+  canali DFS si catturano col rivelatore radar incluso.
+
+L'attach cade sul chanspec di default e solo il primo `up` sul canale chiesto:
+e' il `phy_init` per-canale che si vuole, il preambolo di probe non dipende dal
+canale.
+
+Due controlli che lo script fa e che conviene conoscere:
+
+- se dopo il ricarico `wl -i wl1 isup` risponde `1`, il primo `phy_init` e' gia'
+  avvenuto per mano di qualcun altro (hotplug del vendor, `wlconf`, `nas`) e si
+  ferma invece di produrre un down->up etichettato come cattura a freddo. I
+  demoni da terminare si passano in `KILL`;
+- l'identita' dell'interfaccia si verifica sul `deviceid` di `wl revinfo`, non
+  sul nome: la numerazione delle istanze la assegna l'ordine di probe, e
+  catturare l'altra radio darebbe una traccia plausibile e sbagliata.
+
 ### Impostare il BSS: e' quello che mancava
 
 Senza SSID i segmenti di uno sweep scrivevano **1638** parole di tabella; con
@@ -389,6 +438,7 @@ ricostruisce offline.
 | `force_full_init` | `0` | interruttore a **runtime** (`0644`): `echo 1 > /sys/module/wl_diag/parameters/force_full_init` |
 | `skipphyrd` | vuoto | letture di **registro PHY** da non registrare, es. `"0x253,0x254"` |
 | `arm`   | `0` | `0` = dry-run (logga solo il piano hook); `1` = applica le patch |
+| `target` | `wl` | nome del modulo da agganciare: gli hook si armano al suo `MODULE_STATE_COMING` e si disarmano al `GOING`. Serve anche a scartare i simboli che `kallsyms` risolve in un altro modulo |
 | `delay` | `0` | `1` = aggancia anche `osl_delay` (rumoroso, usec inaffidabile) |
 
 ## Build
@@ -404,31 +454,60 @@ Copia `wl_diag.ko` sul device e `decode-wl-diag.py` sull'host di raccolta.
 
 ## Workflow di cattura (target 5 GHz, wl1 = `0x14e4:0x43b3`)
 
-Il modulo `wl` resta **caricato** per tutta la procedura: `kallsyms` deve vedere
-i suoi simboli al momento dell'`insmod`. Si stacca il *device* (funzione PCI),
-non il modulo. La regola d'oro: **armare mentre il device e' giu'**, cosi' il
-re-probe successivo esegue l'attach attraverso gli hook.
+`wl_diag` si arma **da se'** sulla notifica `MODULE_STATE_COMING` del bersaglio
+e si disarma su `MODULE_STATE_GOING`, quindi si carica una volta e si lascia
+stare: `rmmod wl` e `insmod wl` in ciclo non lo riguardano, e non serve
+ricaricarlo per far ri-risolvere gli indirizzi.
 
-**Su 2.6.30 il rescan scarica `wl`.** Non e' il kernel: rimuovere una funzione
-PCI chiama `remove()` del driver ma non scarica il modulo -- ed e' per questo
-che
-su 3.4 `wl` resta caricato quando si rimuove il device. Su 2.6.30 e' lo spazio
-utente del vendor (hotplug o script `rc`) a fare `rmmod wl`.
+Verificato su `kernel/module.c` del tag `v3.4`, perche' tutto il meccanismo
+dipende dall'ordine:
 
-Due difese, in ordine:
+| momento | dove | cosa implica |
+|---|---|---|
+| `COMING` | `init_module`, dopo `load_module`, **prima** di `do_one_initcall(mod->init)` | il probe del driver e l'attach cadono sotto gli hook: niente remove/rescan PCI |
+| | anche **prima** di `set_section_ro_nx` | la patch iniziale non dipende dal testo dei moduli scrivibile |
+| `kallsyms` | `list_add_rcu` + `add_kallsyms` sono dentro `load_module` | al `COMING` i simboli del bersaglio si risolvono gia'; nel 3.4 `module_kallsyms_lookup_name` non filtra sullo stato del modulo (il filtro `MODULE_STATE_UNFORMED` e' del 3.9+) |
+| `GOING` | `delete_module`, **dopo** `mod->exit()` e prima di `free_module()` | il detach viene tracciato, e il ripristino dei prologhi avviene con il testo ancora mappato |
 
-**Riferimento sul bersaglio.** All'arming `wl_diag` prende un riferimento su
-`wl`, quindi `rmmod wl` fallisce con `-EBUSY` e il modulo non se ne va;
-remove/probe del device continuano a funzionare. Lo script del vendor loggera'
-un errore sul suo `rmmod`: e' atteso. Per scaricare `wl` va prima scaricato
-`wl_diag`.
+Il disarmo al `GOING` ripristina le parole e poi fa `synchronize_sched()`: il
+ripristino impedisce a una chiamata **nuova** di entrare in uno stub, la
+sincronizzazione aspetta quelle **gia' dentro**. E' per questo che non serve
+tenere un riferimento sul bersaglio -- e non si potrebbe, dato che `rmmod wl` e'
+il passo centrale di una cattura a freddo.
 
-**Notifier di riserva**, se il riferimento non si e' potuto prendere: su
-`MODULE_STATE_GOING` del bersaglio gli hook vengono abbandonati **senza
-ripristino** -- la memoria sta per essere liberata e riscriverla sarebbe peggio.
+Sequenza minima:
 
-Dopo un re-`insmod` di `wl` va comunque ricaricato `wl_diag`: gli indirizzi
-cambiano.
+```sh
+insmod /tmp/wl_diag.ko arm=1          # una volta, con o senza wl caricato
+cat /proc/wl_diag | nc <HOST> 5555 &  # il lettore resta aperto per tutta la corsa
+sh cold_capture.sh 20 36 40 44        # rmmod/insmod di wl a ogni canale
+```
+
+`target=<nome>` cambia il modulo agganciato, se non si chiama `wl`.
+
+**Su 2.6.30 non e' verificato.** L'ordine delle notifiche in quel
+`kernel/module.c` non e' stato controllato, e li' e' lo spazio utente del vendor
+(hotplug o script `rc`) a fare `rmmod wl` al rescan del device: con l'armamento
+dinamico quel `rmmod` non e' piu' un problema in linea di principio -- il
+disarmo e il successivo riarmo sono automatici -- ma resta da provare sul campo.
+
+### I confini fra i cicli: record MARK
+
+Scrivere sul buffer inietta un record con l'etichetta scritta:
+
+```sh
+echo "ch36 bw20" > /proc/wl_diag
+```
+
+Dodici caratteri, impacchettati big-endian nei tre campi `u32` del record.
+`wl_diag` ne emette due da se', `mod COMING` e `mod GOING`, ai bordi di ogni
+caricamento del bersaglio. Il record entra in coda come tutti gli altri, quindi
+e' **ordinato con le op che lo circondano** e non con l'orologio di chi scrive.
+
+`reverse-tools/split_by_mark.py` taglia sui MARK e prende i nomi dalle
+etichette. E' la differenza con `split_by_chanspec.py`, che per uno sweep a
+caldo deve tagliare sui salti temporali con soglia 1.03 s perche' i record
+`CHANSPEC` arrivano in ritardo di un ciclo e uno solo per fase.
 
 ### Checkout su Windows: CRLF
 

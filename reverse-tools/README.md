@@ -16,7 +16,11 @@ Ordine tipico: decodifica → fold RETVAL → collapse → (reorder) → confron
   prima di build su device: ognuno di questi controlli nasce da un errore che ha
   bruciato un ciclo di compilazione sul router. Il controllo C90 va usato **solo
   sui `wl_diag.c`**: il port b43 in `src/` va verso mainline moderno, dove
-  dichiarare dopo uno statement e' normale, e la' segnalerebbe 7 casi legittimi.
+  dichiarare dopo uno statement e' normale, e la' segnala oltre cento casi
+  legittimi. Controlla anche l'**uso di un simbolo `static` di file prima della
+  sua dichiarazione**, che in C non compila e che e' facile introdurre spostando
+  un blocco durante un refactor; quel controllo non ha falsi positivi sul repo e
+  si puo' passare su tutto.
 - **decode-wl-diag.py** — decodifica i record binari (28 B BE) emessi dal
   modulo `wl-diag` in righe testuali (`PHY.WR addr=.. val=..`, ecc.).
 - **merge_retvals.py** — ripiega le righe `RETVAL` nella op di lettura che le
@@ -56,6 +60,26 @@ Ordine tipico: decodifica → fold RETVAL → collapse → (reorder) → confron
 
 ## Lato device: hook del tracer
 
+- **capture_plan.sh** — sweep **a caldo** sul device: un solo `insmod` e N cicli
+  `{chanspec; up; attesa; down}`, ognuno dei quali e' un down->up. Si confronta
+  col gate `switch_channel` e `AC_FIRST_INIT=0`, non col flow `full`.
+- **cold_capture.sh** — un ciclo **a freddo** per canale: `rmmod wl` +
+  `insmod wl` a ogni giro, senza toccare `wl_diag`, che si arma da se' al
+  `MODULE_STATE_COMING` del bersaglio -- nel 3.4 prima di `mod->init`, quindi
+  l'attach cade sotto gli hook senza remove/rescan PCI. Solo kernel 3.4 (sul
+  2.6.30 l'ordine delle notifiche non e' stato verificato). Il primo `up` dopo
+  il ricarico e' un `phy_init` con `do_full_init` e una `cal_init` mai fatta,
+  che `force_full_init` non da': nel modulo `zero_off` e' un solo campo,
+  assegnato al solo hook `OP_CAL_INIT`, quindi azzera il byte della cal e non i
+  flag 250 ("phy_init fatto") e 249 (POR). Procedura in `wl-diag/README.md`.
+- **split_by_mark.py** — taglia una traccia sui record **MARK**, un file per
+  etichetta. I MARK li inietta chi cattura (`echo "ch36 bw20" > /proc/wl_diag`)
+  e `wl_diag` ai bordi di ogni caricamento del bersaglio, quindi il confine e'
+  scritto nella traccia e i nomi vengono dalle etichette.
+- **split_by_chanspec.py** — la controparte per gli sweep a caldo di
+  `capture_plan.sh`, che non hanno MARK: taglia sui **salti temporali** (soglia
+  1.03 s) perche' i record `CHANSPEC` sono in ritardo di un ciclo e ne arriva
+  uno solo per fase, e prende i nomi dall'ordine della fase.
 - **gen_syms.py** — costruisce la riga `syms=` per l'insmod di `wl-diag` da un
   `/proc/kallsyms` copiato dal device. La lista degli accessor vendor tracciati
   è in `wl-diag/wl_diag.c` (`hooks[]`): `phy_reg_*`, `write/read/mod_radio_reg`,

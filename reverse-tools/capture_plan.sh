@@ -26,6 +26,11 @@
 #   sh capture_plan.sh 20a wl1 10   interfaccia e attesa espliciti
 #   sh capture_plan.sh 20a wl1 10 test-ap   con SSID, per programmare il BSS
 #
+# Per gli init A FREDDO questo non e' lo strumento: vedi cold_capture.sh, che
+# ricarica `wl` a ogni canale e prende anche l'attach. Qui la cal si forza sul
+# flag, e quello da' una cal completa dentro un phy_init a caldo -- non le
+# costanti di fase di attach.
+#
 # LA CAL COMPLETA non si forza col remove/rescan del device, che una volta su due
 # non riesce: si arma wl_diag con full_init_off=<offset>, e lo stub azzera il byte
 # "gia' calibrato" della struct pi a ogni cal_init. 251 su 7.14.89, 227 su 6.30.

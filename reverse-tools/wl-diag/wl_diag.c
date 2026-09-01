@@ -30,6 +30,26 @@
  * Assunzione runtime (MIPS32R1, niente NX/RODATA per il testo dei moduli):
  * memoria modulo RWX + flush_icache_range esplicito. Da confermare sul device.
  *
+ * Armamento DINAMICO. Gli hook non si applicano all'insmod di questo modulo ma
+ * alla notifica MODULE_STATE_COMING del bersaglio, che nel 3.4
+ * (kernel/module.c, SYSCALL_DEFINE3(init_module)) arriva DOPO load_module --
+ * modulo rilocato e gia' in `modules`, quindi kallsyms lo vede -- e PRIMA di
+ * do_one_initcall(mod->init). Quindi il probe del driver, e l'attach che ne
+ * segue, cadono sotto gli hook senza remove/rescan del device PCI. Arriva anche
+ * prima di set_section_ro_nx, cosi' la patch iniziale non dipende dal testo dei
+ * moduli scrivibile; il ripristino si.
+ *
+ * Il disarmo sta sulla notifica MODULE_STATE_GOING, che nel 3.4 arriva DOPO
+ * mod->exit() e prima di free_module(): il detach viene tracciato, e il testo e'
+ * ancora mappato quando si ripristinano i prologhi. Ripristino piu'
+ * synchronize_sched() li' e' cio' che impedisce a una chiamata nuova di entrare
+ * in uno stub mentre la memoria del bersaglio sta per essere liberata.
+ *
+ * Conseguenza operativa: `rmmod wl; modprobe wl` in ciclo senza toccare questo
+ * modulo, con il lettore di /proc/wl_diag aperto per tutta la corsa. I confini
+ * fra i cicli si mettono nella traccia con `echo <etichetta> > /proc/wl_diag`
+ * (record MARK).
+ *
  * Target: kernel 3.4.x, MIPS32 big-endian, o32, SMP=2, PREEMPT.
  */
 
@@ -58,6 +78,13 @@
 static int arm;
 module_param(arm, int, 0444);
 MODULE_PARM_DESC(arm, "0=dry-run (solo log del piano), 1=applica le patch");
+
+/* Nome del modulo bersaglio, per il match su mod->name nel notifier. Non e' un
+ * dettaglio cosmetico: gli hook si risolvono per nome di simbolo, e senza il
+ * confronto sul modulo un COMING qualsiasi farebbe ripartire il piano. */
+static char *target = "wl";
+module_param(target, charp, 0444);
+MODULE_PARM_DESC(target, "nome del modulo da agganciare (default wl)");
 
 /* osl_delay e' rumoroso (una entry per ogni udelay) e il valore usec catturato
  * da a1 non e' affidabile su tutti i percorsi -- a volte e' spazzatura (arg in
@@ -98,6 +125,7 @@ enum wldiag_op {
 	OP_OTP_INIT, OP_OTP_RDW, OP_OTP_RDR,		/* 32,33,34 (append) */
 	OP_MAC_BW, OP_SROMCTL_R, OP_SROMCTL_W,		/* 35,36,37 (append) */
 	OP_CAL_INIT,					/* 38 (append) */
+	OP_MARK,					/* 39 (append) */
 	OP_DROP = 255,
 };
 struct wldiag_rec {
@@ -288,6 +316,35 @@ static u32 emit(u8 op, u32 addr, u32 val, u32 aux)
 	raw_spin_unlock_irqrestore(&fifo_lock, flags);
 	wake_up_interruptible(&rq);
 	return r.seq;
+}
+
+/* ---- marcatori -------------------------------------------------------- *
+ * Un record MARK porta 12 caratteri impacchettati nei tre campi u32, quindi
+ * l'etichetta del ciclo sta DENTRO la traccia e il taglio a posteriori non ha
+ * bisogno di euristiche sui salti temporali. L'impacchettamento e' esplicito
+ * big-endian e non dipende dall'endianness della macchina: il decoder fa
+ * l'inverso a mano.
+ * Dodici caratteri bastano per "ch140 bw80"; l'eccedenza viene tagliata. */
+static u32 pack4(const char *p)
+{
+	return ((u32)(u8)p[0] << 24) | ((u32)(u8)p[1] << 16) |
+	       ((u32)(u8)p[2] << 8) | (u32)(u8)p[3];
+}
+
+static void emit_mark(const char *b12)
+{
+	emit(OP_MARK, pack4(b12), pack4(b12 + 4), pack4(b12 + 8));
+}
+
+static void mark(const char *s)
+{
+	char b[12];
+	int i;
+
+	memset(b, 0, sizeof(b));
+	for (i = 0; i < (int)sizeof(b) && s[i]; i++)
+		b[i] = s[i];
+	emit_mark(b);
 }
 
 /* ---- tabella hook ----------------------------------------------------- *
@@ -653,9 +710,28 @@ static int n_sites[NHOOK];
 static inline u16 hi16_of(unsigned long v) { return (u16)((v + 0x8000UL) >> 16); }
 static inline u16 lo16_of(unsigned long v) { return (u16)(v & 0xffff); }
 
-static int find_sites(int idx, unsigned long target)
+/* Identita' del bersaglio, SENZA riferimento: serve per due cose, dare a
+ * find_sites la base del testo da scandire e scartare i simboli che kallsyms
+ * risolve fuori da questo modulo. Il secondo non e' teorico: i nomi degli
+ * accessor non sono namespacati, e agganciare l'omonimo di un altro modulo
+ * patcherebbe codice estraneo senza un errore. */
+static struct module *target_mod;
+
+/* Filtro puramente aritmetico, nessuna traversata di liste: si applica dopo che
+ * il primo simbolo ha stabilito quale modulo e' il bersaglio. */
+static bool dentro_bersaglio(unsigned long a)
 {
-	struct module *m = __module_text_address(target);
+	unsigned long base;
+
+	if (!target_mod)
+		return true;
+	base = (unsigned long)target_mod->module_core;
+	return a >= base && a < base + target_mod->core_text_size;
+}
+
+static int find_sites(int idx, unsigned long fnaddr)
+{
+	struct module *m = target_mod ? target_mod : __module_text_address(fnaddr);
 	u32 *base;
 	unsigned long words;
 	int n = 0, i, k;
@@ -687,7 +763,7 @@ static int find_sites(int idx, unsigned long target)
 				continue;
 			a = ((unsigned long)(wi & 0xffff) << 16) +
 			    (long)(s16)(wl & 0xffff);
-			if (a != target)
+			if (a != fnaddr)
 				break;
 			/* salto sullo stesso registro entro 8 istruzioni */
 			for (j = 1; j <= 8 && i + k + j < (int)words; j++) {
@@ -764,52 +840,40 @@ static void restore_sites(int idx)
 	n_sites[idx] = 0;
 }
 
-/* Se il modulo bersaglio se ne va mentre siamo armati, i nostri puntatori
- * restano su memoria liberata e il ripristino allo scarico scriverebbe li'.
- * Su 2.6.30 il rescan PCI scarica wl, quindi succede davvero.
- * Si abbandonano le patch senza toccare la memoria: il modulo sta per sparire. */
-static struct module *target_mod;
+/* Il notifier e' il perno dell'armamento dinamico, non una difesa di riserva:
+ * COMING arma (prima di mod->init, quindi prima del probe del driver), GOING
+ * disarma (dopo mod->exit, quando il testo e' ancora mappato). Niente
+ * riferimento sul bersaglio: `rmmod wl` deve poter riuscire, ed e' il passo
+ * centrale di una cattura a freddo. */
 static bool mod_nb_registered;
-static bool mod_ref_held;
 
-/* Tenere un riferimento sul bersaglio: finche' siamo armati `rmmod wl` fallisce
- * con -EBUSY, e le patch non finiscono su memoria liberata. remove/probe del
- * device continuano a funzionare: il refcount del modulo non c'entra con la
- * presenza della funzione PCI -- ed e' per questo che su 3.4 wl resta caricato
- * quando si rimuove il device. Su 2.6.30 e' lo spazio utente del vendor a fare
- * rmmod al rescan, e il riferimento glielo impedisce.
- * try_module_get non e' esportata su 2.6.30; __module_get e' una static inline
- * che incrementa direttamente. Non controlla MODULE_STATE_GOING, ma qui il
- * modulo e' vivo: gli abbiamo appena risolto i simboli. */
-static void target_ref_get(struct module *m)
-{
-	if (!m)
-		return;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 0, 0)
-	mod_ref_held = try_module_get(m);
-#else
-	__module_get(m);
-	mod_ref_held = true;
-#endif
-	if (!mod_ref_held)
-		pr_warn("wl_diag: nessun riferimento sul bersaglio: se si scarica "
-			"mentre siamo armati, gli hook vengono abbandonati\n");
-}
+static int arma(void);
+static void disarma(void);
 
 static int wd_mod_notify(struct notifier_block *nb, unsigned long ev, void *data)
 {
 	struct module *m = data;
-	int i;
 
-	if (ev != MODULE_STATE_GOING || !target_mod || m != target_mod)
+	if (!m || !target || strcmp(m->name, target))
 		return NOTIFY_DONE;
 
-	for (i = 0; i < NHOOK; i++)
-		hooks[i].armed = false;
-	mod_ref_held = false;
-	target_mod = NULL;
-	pr_warn("wl_diag: il modulo bersaglio si sta scaricando: hook abbandonati "
-		"senza ripristino. Ricaricare wl_diag dopo il suo re-insmod.\n");
+	switch (ev) {
+	case MODULE_STATE_COMING:
+		/* Un COMING senza il GOING precedente non dovrebbe accadere, ma
+		 * ripatchare su indirizzi vecchi sarebbe silenzioso e fatale. */
+		disarma();
+		target_mod = m;
+		mark("mod COMING");
+		arma();
+		break;
+	case MODULE_STATE_GOING:
+		mark("mod GOING");
+		disarma();
+		target_mod = NULL;
+		break;
+	default:
+		break;
+	}
 	return NOTIFY_DONE;
 }
 
@@ -1018,9 +1082,35 @@ static unsigned int wd_poll(struct file *f, poll_table *wait)
 	return 0;
 }
 
+/* Scrivere sul buffer inietta un MARK con l'etichetta scritta:
+ *
+ *     echo "ch36 bw20" > /proc/wl_diag
+ *
+ * Serve perche' con l'armamento dinamico il lettore resta aperto per tutta la
+ * corsa e i confini fra cicli non sono piu' file separati. Il record entra in
+ * coda come tutti gli altri, quindi e' ordinato con le op che lo circondano e
+ * non con l'orologio di chi scrive. */
+static ssize_t wd_write(struct file *f, const char __user *ubuf, size_t len,
+			loff_t *off)
+{
+	char b[12];
+	size_t n = len < sizeof(b) ? len : sizeof(b);
+	int i;
+
+	memset(b, 0, sizeof(b));
+	if (n && copy_from_user(b, ubuf, n))
+		return -EFAULT;
+	for (i = 0; i < (int)sizeof(b); i++)
+		if (b[i] == '\n' || b[i] == '\r')
+			b[i] = 0;
+	emit_mark(b);
+	return len;
+}
+
 static const struct file_operations wd_fops = {
 	.owner = THIS_MODULE,
 	.read = wd_read,
+	.write = wd_write,
 	.poll = wd_poll,
 	.llseek = no_llseek,
 };
@@ -1031,26 +1121,61 @@ static const struct file_operations wd_fops = {
  * quindi la stessa chiamata vale per entrambi. */
 #define WD_PROC "wl_diag"
 
-/* ---- init/exit -------------------------------------------------------- */
+/* ---- piano, armamento, disarmo ---------------------------------------- */
 static int eligible[NHOOK];   /* indici agganciabili */
 static int n_elig;
+static bool armato;
 
-static int __init wd_init(void)
+/*
+ * Stato che dipende dal CARICAMENTO del bersaglio: indirizzi, parole salvate,
+ * esito dell'eleggibilita', siti di chiamata trovati. Va azzerato prima di ogni
+ * nuovo piano, perche' dopo un re-insmod del bersaglio gli indirizzi sono altri
+ * e ripatchare sui vecchi non da' errore, da' danno.
+ *
+ * NON si toccano shortj, retcap, nargx, zero_off: sono la definizione
+ * dell'hook, non stato. E' lo stesso confine che ha gia' prodotto un bug
+ * quando i campi di stato sono finiti in mezzo agli inizializzatori
+ * posizionali della tabella.
+ */
+static void azzera_stato(void)
 {
-	int i, err;
+	unsigned long f;
+	int i, j;
 
-	parse_skipphyrd();
-
-	if (full_init_off) {
-		for (i = 0; i < NHOOK; i++)
-			if (hooks[i].op == OP_CAL_INIT)
-				hooks[i].zero_off = (s16)full_init_off;
-		pr_info("wl_diag: cal_init puo' azzerare pi->[%d]; interruttore in "
-			"/sys/module/wl_diag/parameters/force_full_init (ora %d)\n",
-			full_init_off, force_full_init);
+	for (i = 0; i < NHOOK; i++) {
+		hooks[i].addr = 0;
+		hooks[i].armed = false;
+		hooks[i].use_bp = false;
+		hooks[i].use_sites = false;
+		hooks[i].bp_stub = NULL;
+		for (j = 0; j < 4; j++)
+			hooks[i].saved[j] = 0;
+		n_sites[i] = 0;
 	}
 
+	/* Il pool dei ritorni. Una entry rimasta occupata da un thread che non
+	 * tornera' piu' -- perche' il bersaglio si e' scaricato mentre era
+	 * dentro un accessor -- fa restituire orig_ra in silenzio ai retcap
+	 * successivi: nessun RETVAL e nessun errore, che e' un sintomo gia'
+	 * visto una volta. */
+	raw_spin_lock_irqsave(&ret_lock, f);
+	for (i = 0; i < RET_POOL; i++)
+		ret_pool[i].task = NULL;
+	ret_order = 0;
+	raw_spin_unlock_irqrestore(&ret_lock, f);
+
 	n_elig = 0;
+}
+
+/* Risolve i simboli e decide per ogni hook come si aggancia. Ritorna il numero
+ * di hook eleggibili. Al COMING del bersaglio i simboli sono gia' visibili:
+ * load_module fa list_add_rcu(&mod->list, &modules) e add_kallsyms prima della
+ * notifica, e module_kallsyms_lookup_name nel 3.4 scorre la lista senza
+ * filtrare sullo stato del modulo. */
+static int pianifica(void)
+{
+	int i;
+
 	for (i = 0; i < NHOOK; i++) {
 		unsigned long a;
 		u32 *o;
@@ -1064,8 +1189,15 @@ static int __init wd_init(void)
 
 		a = kallsyms_lookup_name(hooks[i].name);
 		if (!a) {
-			pr_warn("wl_diag: '%s' non trovato (wl caricato?)\n",
-				hooks[i].name);
+			pr_warn("wl_diag: '%s' non trovato ('%s' caricato?)\n",
+				hooks[i].name, target);
+			continue;
+		}
+		if (!target_mod)
+			target_mod = __module_text_address(a);
+		if (!dentro_bersaglio(a)) {
+			pr_warn("wl_diag: '%s' risolto fuori da '%s', salto\n",
+				hooks[i].name, target);
 			continue;
 		}
 		hooks[i].addr = a;
@@ -1115,67 +1247,23 @@ static int __init wd_init(void)
 			hooks[i].shortj ? " [short-j]" : "");
 	}
 
-	if (!n_elig) {
-		pr_err("wl_diag: nessuna funzione agganciabile\n");
+	return n_elig;
+}
+
+static int arma(void)
+{
+	int i;
+
+	azzera_stato();
+
+	if (!pianifica()) {
+		pr_err("wl_diag: nessuna funzione agganciabile in '%s'\n", target);
 		return -ENODEV;
 	}
-
-	if (fifo_recs < 4096) {
-		pr_warn("wl_diag: fifo_recs=%d troppo piccolo, uso 4096\n", fifo_recs);
-		fifo_recs = 4096;
-	}
-	fifo_recs = 1 << (fls(fifo_recs) - 1);	/* potenza di 2 per difetto */
-	fifo_buf = vmalloc(fifo_recs * sizeof(struct wldiag_rec));
-	if (!fifo_buf) {
-		pr_err("wl_diag: vmalloc di %d KB per la coda fallita. "
-		       "Riprovare con fifo_recs piu' basso.\n",
-		       (int)(fifo_recs * sizeof(struct wldiag_rec) / 1024));
-		return -ENOMEM;
-	}
-	err = kfifo_init(&fifo, fifo_buf, fifo_recs * sizeof(struct wldiag_rec));
-	if (err) {
-		pr_err("wl_diag: kfifo_init: %d\n", err);
-		vfree(fifo_buf);
-		fifo_buf = NULL;
-		return err;
-	}
-	pr_info("wl_diag: coda %d record (%d KB)\n", fifo_recs,
-		(int)(fifo_recs * sizeof(struct wldiag_rec) / 1024));
-
-	if (!proc_create(WD_PROC, 0400, NULL, &wd_fops)) {
-		pr_err("wl_diag: proc_create(/proc/%s) fallita\n", WD_PROC);
-		vfree(fifo_buf);
-		fifo_buf = NULL;
-		return -ENOMEM;
-	}
-
 	if (!arm) {
-		pr_info("wl_diag: DRY-RUN (%d hook pianificati). insmod con arm=1 per applicare.\n",
+		pr_info("wl_diag: DRY-RUN (%d hook pianificati). arm=1 per applicare.\n",
 			n_elig);
 		return 0;
-	}
-
-	/* risolvi il flush della i-cache. NB: questo kernel ha KALLSYMS ma non
-	 * KALLSYMS_ALL, quindi kallsyms espone solo simboli di TESTO (funzioni):
-	 * la variabile-puntatore 'flush_icache_range' (in BSS) e' invisibile.
-	 * Risolviamo direttamente la funzione del cache-layer R4K, con ripieghi. */
-	{
-		static const char * const cand[] = {
-			"r4k_flush_icache_range",
-			"local_r4k_flush_icache_range",
-			"local_flush_icache_range",  /* anch'esso var: probabile miss */
-		};
-		int k;
-
-		for (k = 0; k < ARRAY_SIZE(cand); k++) {
-			unsigned long a = kallsyms_lookup_name(cand[k]);
-
-			if (a) {
-				p_flush_icache = (flush_fn_t)a;
-				pr_info("wl_diag: flush via '%s' @%px\n", cand[k], (void *)a);
-				break;
-			}
-		}
 	}
 	if (!p_flush_icache) {
 		pr_err("wl_diag: nessun flush i-cache risolvibile, resto in DRY-RUN\n");
@@ -1210,14 +1298,14 @@ static int __init wd_init(void)
 	}
 #if WD_HAVE_BP
 	{
-		int any_bp = 0;
+		int any_bp = 0, err;
 
 		for (i = 0; i < n_elig; i++)
 			if (hooks[eligible[i]].use_bp)
 				any_bp = 1;
 		/* il notifier va registrato PRIMA di piazzare i break, o la
 		 * prima trap finisce in do_trap_or_bp -> panic. */
-		if (any_bp) {
+		if (any_bp && !bp_registered) {
 			err = register_die_notifier(&wd_bp_nb);
 			if (err) {
 				pr_err("wl_diag: register_die_notifier: %d, resto in DRY-RUN\n",
@@ -1228,13 +1316,6 @@ static int __init wd_init(void)
 		}
 	}
 #endif
-	target_mod = __module_text_address(hooks[eligible[0]].addr);
-	target_ref_get(target_mod);
-	if (register_module_notifier(&wd_mod_nb))
-		pr_warn("wl_diag: register_module_notifier fallita: se il modulo "
-			"bersaglio si scarica mentre siamo armati, non lo sapremo\n");
-	else
-		mod_nb_registered = true;
 
 	for (i = 0; i < n_elig; i++) {
 		if (hooks[eligible[i]].use_sites) {
@@ -1256,22 +1337,32 @@ static int __init wd_init(void)
 		patch_entry(eligible[i]);
 		hooks[eligible[i]].armed = true;
 	}
+	armato = true;
 	pr_info("wl_diag: ARMATO (%d hook) -> /proc/wl_diag\n", n_elig);
 	return 0;
 }
 
-static void __exit wd_exit(void)
+/*
+ * Ripristina i prologhi e aspetta che gli stub in volo escano.
+ *
+ * Dal GOING questo e' l'unico momento utile: nel 3.4 la delete_module chiama
+ * mod->exit() e SOLO DOPO la notifica, quindi qui il detach del bersaglio e'
+ * finito ma free_module() non e' ancora partita e il testo e' ancora mappato.
+ * Ripristinare le parole impedisce a una chiamata nuova di entrare in uno stub,
+ * e synchronize_sched aspetta quelle gia' dentro; il contesto e' dormibile
+ * (notifier blocking, module_mutex non tenuto sul percorso di rmmod).
+ */
+static void disarma(void)
 {
 	int i;
+
+	if (!armato)
+		return;
 
 	/* stop nuovi dirottamenti di ra prima di ripristinare i prologhi; gli
 	 * stub in volo che hanno gia' dirottato tornano comunque via ret_tramp
 	 * (statico, valido), e synchronize_sched aspetta che completino. */
 	ret_trampoline = 0;
-	if (mod_nb_registered) {
-		unregister_module_notifier(&wd_mod_nb);
-		mod_nb_registered = false;
-	}
 
 	for (i = 0; i < NHOOK; i++)
 		if (hooks[i].armed) {
@@ -1301,12 +1392,114 @@ static void __exit wd_exit(void)
 		bp_registered = false;
 	}
 #endif
-	/* lascia agli stub in volo il tempo di completare prima di sparire */
+	/* lascia agli stub in volo il tempo di completare */
 	synchronize_sched();
-	if (mod_ref_held && target_mod) {
-		module_put(target_mod);
-		mod_ref_held = false;
+	armato = false;
+	pr_info("wl_diag: DISARMATO (persi finora: %d, filtrati: %d)\n",
+		atomic_read(&drops), atomic_read(&filtered));
+}
+
+/* ---- init/exit -------------------------------------------------------- */
+static int __init wd_init(void)
+{
+	int i, err;
+
+	parse_skipphyrd();
+
+	if (full_init_off) {
+		for (i = 0; i < NHOOK; i++)
+			if (hooks[i].op == OP_CAL_INIT)
+				hooks[i].zero_off = (s16)full_init_off;
+		pr_info("wl_diag: cal_init puo' azzerare pi->[%d]; interruttore in "
+			"/sys/module/wl_diag/parameters/force_full_init (ora %d)\n",
+			full_init_off, force_full_init);
 	}
+
+	if (fifo_recs < 4096) {
+		pr_warn("wl_diag: fifo_recs=%d troppo piccolo, uso 4096\n", fifo_recs);
+		fifo_recs = 4096;
+	}
+	fifo_recs = 1 << (fls(fifo_recs) - 1);	/* potenza di 2 per difetto */
+	fifo_buf = vmalloc(fifo_recs * sizeof(struct wldiag_rec));
+	if (!fifo_buf) {
+		pr_err("wl_diag: vmalloc di %d KB per la coda fallita. "
+		       "Riprovare con fifo_recs piu' basso.\n",
+		       (int)(fifo_recs * sizeof(struct wldiag_rec) / 1024));
+		return -ENOMEM;
+	}
+	err = kfifo_init(&fifo, fifo_buf, fifo_recs * sizeof(struct wldiag_rec));
+	if (err) {
+		pr_err("wl_diag: kfifo_init: %d\n", err);
+		vfree(fifo_buf);
+		fifo_buf = NULL;
+		return err;
+	}
+	pr_info("wl_diag: coda %d record (%d KB)\n", fifo_recs,
+		(int)(fifo_recs * sizeof(struct wldiag_rec) / 1024));
+
+	/* 0600 e non 0400: la write inietta un record MARK, che e' come si
+	 * mettono i confini fra i cicli quando il lettore resta aperto. */
+	if (!proc_create(WD_PROC, 0600, NULL, &wd_fops)) {
+		pr_err("wl_diag: proc_create(/proc/%s) fallita\n", WD_PROC);
+		vfree(fifo_buf);
+		fifo_buf = NULL;
+		return -ENOMEM;
+	}
+
+	/* risolvi il flush della i-cache. NB: questo kernel ha KALLSYMS ma non
+	 * KALLSYMS_ALL, quindi kallsyms espone solo simboli di TESTO (funzioni):
+	 * la variabile-puntatore 'flush_icache_range' (in BSS) e' invisibile.
+	 * Risolviamo direttamente la funzione del cache-layer R4K, con ripieghi.
+	 * Sta qui e non in arma(): e' testo del kernel, non cambia fra un
+	 * caricamento del bersaglio e il successivo. */
+	{
+		static const char * const cand[] = {
+			"r4k_flush_icache_range",
+			"local_r4k_flush_icache_range",
+			"local_flush_icache_range",  /* anch'esso var: probabile miss */
+		};
+		int k;
+
+		for (k = 0; k < ARRAY_SIZE(cand); k++) {
+			unsigned long a = kallsyms_lookup_name(cand[k]);
+
+			if (a) {
+				p_flush_icache = (flush_fn_t)a;
+				pr_info("wl_diag: flush via '%s' @%px\n", cand[k], (void *)a);
+				break;
+			}
+		}
+	}
+
+	/* Fatale, e non un warning: senza notifier un rmmod del bersaglio non ci
+	 * viene detto, i prologhi patchati restano su memoria che viene liberata
+	 * e il ripristino allo scarico scrive li'. */
+	err = register_module_notifier(&wd_mod_nb);
+	if (err) {
+		pr_err("wl_diag: register_module_notifier: %d\n", err);
+		remove_proc_entry(WD_PROC, NULL);
+		vfree(fifo_buf);
+		fifo_buf = NULL;
+		return err;
+	}
+	mod_nb_registered = true;
+
+	/* Se il bersaglio e' gia' caricato si arma subito, cosi' l'uso "aggancia
+	 * un wl che sta girando" resta quello di prima. Se non c'e', non e' un
+	 * errore: si aspetta il suo COMING. */
+	if (arma())
+		pr_info("wl_diag: in attesa del caricamento di '%s'\n", target);
+
+	return 0;
+}
+
+static void __exit wd_exit(void)
+{
+	if (mod_nb_registered) {
+		unregister_module_notifier(&wd_mod_nb);
+		mod_nb_registered = false;
+	}
+	disarma();
 	remove_proc_entry(WD_PROC, NULL);
 	vfree(fifo_buf);
 	fifo_buf = NULL;
