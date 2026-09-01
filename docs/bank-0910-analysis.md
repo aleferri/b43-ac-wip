@@ -15,22 +15,42 @@ trovato nel blob D6220 a `.rodata +0x040e84` e attribuito a
 `wlc_phy_crs_min_pwr_cal_acphy`. La cal misura una potenza di rumore e ne
 ricava un **indice** nella riga.
 
-**Lo sweep chiude la questione dell'indice, in senso negativo: non e' una
-funzione del canale.** Le 32 osservazioni su 16 canali BW20 danno il ladder
-completo, `{49, 52, 57, 64}`, e mostrano che il valore finale **cambia fra le
-due corse dello stesso canale** su ch100, ch108 e ch116 — rispettivamente
-`[57, 52]`, `[57, 52]` e `[52, 57]`. I canali bassi finiscono sempre su 52 e
-ch132-140 sempre su 57; quelli in mezzo oscillano fra i due gradini.
+**Lo sweep chiude la questione dell'indice.** Le 32 osservazioni su 16 canali
+BW20 danno il ladder completo, `{45, 48, 53, 60}` grezzo, che con il bump a
+freddo di 4 compare come `{49, 52, 57, 64}`. E la misura che seleziona l'indice
+e' identificata: **`OBJ 0x0308`**, la statistica di rumore che il watchdog
+latcha dalla finestra SHM `0x0308-0x0314`.
 
-E' la firma di una potenza di rumore misurata vicino a un confine di
-quantizzazione. Non c'e' quindi una mappa canale -> indice da trovare, ed e'
-inutile cercarla: serve la cal.
+La regola, esatta su tutte le 66 scritture CRS dei 32 segmenti e verificata dal
+port che gira su 32/32:
 
-Conseguenza per il banco. Il banco vale `target - crs`, e **entrambi i termini
-sono esiti della stessa cal sullo stesso ladder** — il che spiega perche' le
-somme cadono sempre su due gradini e perche' il `target` sembrava dipendere
-dalla sotto-banda. Non e' chiudibile per trascrizione: e' chiudibile solo
-implementando la misura di rumore.
+    campione < 1526    indice 1
+    campione < 1800    indice 3
+    oltre              indice 6
+    nessun campione    resta l'indice in forza
+    cambio sotto-banda indice 0
+
+Due dettagli che i dati impongono. Il campione e' latchato dal watchdog, che
+gira **dopo** il channel setup, quindi un ciclo scrive con l'indice che ha
+ereditato e il campione nuovo agisce dal ciclo successivo. E la partizione del
+reset e' quella di `pa5g_group()`, a 5250 e 5500 MHz, non quella del tetto di
+potenza che ha il primo confine a 5210: e' per questo che l'indice riparte da
+zero su ch36, ch52 e ch100 e su nessun altro canale.
+
+Stato del banco. Con `crs` finalmente corretto su tutti i canali il banco e'
+**misurabile**, e non lo era prima: il suo ingresso sbagliava su 13 canali, per
+cui ogni conclusione sui suoi valori — comprese quelle di una versione
+precedente di questo documento, che parlava di somme su due gradini — poggiava
+su un ingresso difettoso.
+
+Cio' che si osserva ora e' che `off = target - crs` con un target per sito non
+basta: ch36 con `crs` 49 da' offset 0, ch40-48 con `crs` 52 danno +5, e ch48 nei
+suoi due cicli da' 0 e +5 a parita' di `crs`. Tre somme distinte, non due, e un
+target che non e' costante nel sito.
+
+C'e' anche un problema di conteggio da sciogliere prima dei valori: su ch40
+ciclo 1 il vendor emette 32 op sul banco dove il port ne emette 16, ed e' lo
+stesso ciclo in cui compare il gradino 64, unico caso nei 32 segmenti.
 
 Cio' che lo sweep ha comunque corretto nel port e' l'aritmetica: l'offset e'
 **con segno**. Il vendor scrive `0xfb`, cioe' -5, su ch100-140, dove il CRS

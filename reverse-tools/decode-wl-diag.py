@@ -24,6 +24,10 @@
 # QUANDO e QUALE, non il contenuto (che sta nei dump SROM).
 # TPL.* (27-31): template RAM, dove il PHY carica le forme d'onda dei toni.
 # Le PTRR/DATR hanno il valore nel RETVAL. Su 6.30 esiste solo TPL.RAMW.
+# CS.SHM (40): il chanspec scritto in shared memory, addr = chanspec. E' il
+# confine di ciclo affidabile: CHANSPEC (26) viene dalla generica
+# wlc_phy_chanspec_set, che sull'AC-PHY non e' sul percorso e quando scatta porta
+# il chanspec CORRENTE, cioe' in ritardo di un ciclo.
 # CHANSPEC (26): cambio canale, addr = chanspec. Il decoder lo espande in
 # canale/banda/larghezza col formato 802.11ac standard (chan=bit 0-7,
 # bw=0x3800, band=0xc000) -- assunzione, non verificata su cattura. Serve a
@@ -34,11 +38,16 @@
 # viene dal driver: e' un confine messo nella traccia da chi cattura, e sostuisce
 # il taglio a posteriori sui salti temporali. wl_diag ne emette due da se',
 # "mod COMING" e "mod GOING", ai bordi di ogni caricamento del bersaglio.
-# OBJ.RD (24) / OBJ.WR (25): object memory del MAC via read/write_objmem16.
-# addr=offset in byte, aux=selettore dello spazio (SHM, SCR, IHR...). La RD ha
-# il valore nel RETVAL come PHY.RD. Serve per il campione di potenza di rumore
-# che la crs_min_pwr cal legge: non passa da un registro PHY, quindi senza
-# questo hook non compare in nessuna cattura.
+# OBJ.RD (24) / OBJ.WR (25): object memory del MAC. addr=offset in byte,
+# sel=selettore dello spazio (SHM, SCR, IHR...) e va STAMPATO: senza di lui la
+# traccia non distingue i tre spazi, e il record binario lo porta comunque. La RD ha il valore nel RETVAL
+# come PHY.RD. Serve per il campione di potenza di rumore che la crs_min_pwr cal
+# legge: non passa da un registro PHY, quindi senza questo hook non compare in
+# nessuna cattura.
+# ATTENZIONE all'origine, che cambia con la build: su 7.14.89 sono
+# read/write_objmem16 e aux porta il selettore vero; su 7.14.43 quegli accessor
+# non esistono e i record vengono da wlc_bmac_read/write_shm, che coprono il
+# SOLO spazio SHM -- la' aux e' sempre 0 e gli accessi a SCR e IHR non compaiono.
 import sys, struct
 
 REC = struct.Struct(">QIIIIBBH")   # ts_ns, seq, addr, val, aux, op, cpu, _pad
@@ -62,6 +71,7 @@ OPS = {
     35: "MAC.BW",    36: "SROMCTL.RD", 37: "SROMCTL.WR",
     38: "CAL.INIT",
     39: "MARK",
+    40: "CS.SHM",
     255: "DROP",
 }
 
@@ -70,6 +80,8 @@ OPS = {
 # 0x0000 inventato -- altrimenti si riparte col problema di distinguere zeri
 # veri da zeri finti.
 CHANSPEC = 26
+CS_SHM   = 40
+OBJ      = {24, 25}
 MARK     = 39
 READS    = {1, 4, 18, 24, 29, 30, 32, 33, 34, 36}                 # PHY.RD, RAD.RD, MAC.MHF.RD, OBJ.RD
 HAS_MASK = {3, 6, 7, 8, 9, 10, 11, 12, 17} # aux e' una mask (RMW, GPIO, MHF)
@@ -124,7 +136,7 @@ def main():
             if op == MARK:
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} "
                       f"{unmark(addr, val, aux)!r}")
-            elif op == CHANSPEC:
+            elif op in (CHANSPEC, CS_SHM):
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} {chanspec(addr)}")
             elif op == 255:
                 print(f"{t:14.6f}  cpu{cpu}  ** DROP **  persi={aux}")
@@ -148,6 +160,10 @@ def main():
             elif op == COREREG:                    # core reg: core+off, valore non catturato all'ingresso
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} "
                       f"core={h(aux, False)} off={h(addr, False)} val=UNDEFINED")
+            elif op in OBJ:                        # object memory: serve il selettore
+                valstr = "UNDEFINED" if op in READS else h(val, wide)
+                print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} "
+                      f"addr={h(addr, False)} val={valstr} sel={h(aux, False)}")
             elif op == PHY_AND:                    # read & val ; bit azzerati = ~val
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} "
                       f"addr={h(addr, False)} val={h(val, False)} "

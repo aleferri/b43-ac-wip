@@ -23,6 +23,7 @@
 #include "b43.h"
 #include "phy_common.h"
 #include "phy_ac.h"
+#include "radio_2069.h"
 #include "rxiqcal_phy_ac.h"
 #include "test_harness.h"
 #include "readplan_0270.h"
@@ -349,6 +350,22 @@ static void mount_board(const struct board_profile *p)
 
 		g_chan.max_power = dflt;
 		b43_test_reg_init(dflt, getenv("AC_MAX_POWER_MAP"));
+	}
+
+	/*
+	 * CRS minimum-power state carried in from the previous cycle. The sweep
+	 * is a continuous chain of channel changes, so running one segment on
+	 * its own needs the state the chain would have left: AC_CRS_INDEX and
+	 * AC_CRS_SUBBAND are the ladder entry and sub-band in force. The default
+	 * sub-band of 0xff forces the reset to the floor, which is what a cold
+	 * start does.
+	 */
+	{
+		const char *e = getenv("AC_CRS_INDEX");
+
+		g_ac.crs_index = e ? (u8)strtoul(e, NULL, 0) : 0;
+		e = getenv("AC_CRS_SUBBAND");
+		g_ac.crs_subband = e ? (u8)strtoul(e, NULL, 0) : 0xff;
 	}
 	g_hw.conf.chandef.chan  = &g_chan;
 
@@ -1299,6 +1316,107 @@ int main(int argc, char **argv)
 		fprintf(stderr, "test: rxiqcal returned %d\n", r);
 	} else if (!strcmp(flow, "op_init")) {
 		run_op_init();
+	} else if (!strcmp(flow, "up")) {
+		/*
+		 * The up half of a sweep cycle, from the segment boundary on.
+		 *
+		 * Same reason the down phase has its own flow: switch_analog()
+		 * calls rx_gain_regs_program(), whose eleven reads happen before
+		 * a segment starts, so running them here takes the oracle queue
+		 * entries for 0x073a, 0x0725 and their neighbours that the up
+		 * phase itself needs. Everything after the radio init is the
+		 * same as "full".
+		 */
+		/*
+		 * A warm segment is not a first bring-up and the vendor's
+		 * init_regs takes its two-pass branch there, so do_full_init has
+		 * to be clear before op_init and not just before
+		 * switch_channel. A cold segment is the opposite, and
+		 * AC_FIRST_INIT picks between them: the cold sweep has one
+		 * module load per channel, so both cases are now captured.
+		 */
+		{
+			const char *e = getenv("AC_FIRST_INIT");
+
+			g_wldev.phy.do_full_init = e && strtoul(e, NULL, 10);
+		}
+		run_rfkill();
+		run_op_init();
+		run_switch_channel();
+
+		/*
+		 * A segment's up phase ends with a watchdog tick: the vendor's
+		 * second CRS write comes from there, not from a second site in
+		 * the channel setup, and on the channels where a noise sample
+		 * lands between the two the ladder moves in between. Without
+		 * the tick the comparison sees the port's own later write in
+		 * its place and the two agree only by coincidence.
+		 */
+		g_wldev.mac_suspended = 0;
+		g_ac.status_mask = B43_PHY_AC_STATE_RX_WAITED |
+				   B43_PHY_AC_STATE_RX_OFDM;
+		g_ac.probe_mode = 0x0000;
+		b43_phy_ac_watchdog(&g_wldev, true);
+	} else if (!strcmp(flow, "down")) {
+		/*
+		 * The down phase on its own: the radio init that heads a sweep
+		 * segment, episodes 72 to 232 of an up cycle. 130 ops.
+		 *
+		 * It gets its own flow because the read oracle is a per-address
+		 * queue and every flow that reaches this code emits a save-gain
+		 * prologue first. Those reads touch 0x0728, 0x0720 and 0x0408
+		 * and take the queue entries the down phase itself needs, so the
+		 * phase then reads the *second* value for each and every
+		 * read-modify-write after it lands one field off. Comparing the
+		 * phase in isolation is the only way its reads line up with the
+		 * capture.
+		 */
+		g_ac.status_mask = 0;
+		/*
+		 * set_channel caches these and this flow does not run it, so the
+		 * chanspec and the MAC bandwidth write need them seeded from
+		 * AC_CHANNEL and AC_BW.
+		 */
+		g_ac.cal_channel = g_chan.hw_value;
+		g_ac.cal_width = g_hw.conf.chandef.width;
+		g_ac.cal_freq = g_hw.conf.chandef.center_freq1;
+		/*
+		 * The caller writes these, just before the radio init rather
+		 * than inside it: in the attach capture that carries the OBJ
+		 * class the chanspec is at episode 35395 and the first op of
+		 * b43_radio_2069_init() at 35396, with the prefregs at 35420.
+		 *
+		 * AC_MAC_WIDTH seeds the width the MAC was last told about, so
+		 * a segment run on its own does not repeat a write the chain
+		 * already made.
+		 */
+		b43_phy_ac_write_chanspec(&g_wldev);
+		{
+			const char *mw = getenv("AC_MAC_WIDTH");
+
+			g_ac.mac_width = mw ? (enum nl80211_chan_width)
+					      strtoul(mw, NULL, 0)
+					    : g_ac.cal_width;
+			if (g_ac.cal_width != g_ac.mac_width) {
+				b43_mac_bw_set(&g_wldev,
+					g_ac.cal_width == NL80211_CHAN_WIDTH_80
+						? B43_MAC_BW_80
+					: g_ac.cal_width == NL80211_CHAN_WIDTH_40
+						? B43_MAC_BW_40
+						: B43_MAC_BW_20);
+				g_ac.mac_width = g_ac.cal_width;
+			}
+		}
+		{
+			static const u16 rccal_stat[] = {
+				0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0010,
+				0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0010,
+				0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0010,
+			};
+			b43_test_plan_radio_reads(0x0413, rccal_stat,
+						  ARRAY_SIZE(rccal_stat));
+		}
+		b43_radio_2069_init(&g_wldev);
 	} else if (!strcmp(flow, "rfkill")) {
 		run_rfkill();
 	} else if (!strcmp(flow, "switch_channel")) {
@@ -1367,6 +1485,7 @@ int main(int argc, char **argv)
 
 	fprintf(stderr, "test: plan consumption ---\n");
 	b43_test_plans_report(stderr);
+	b43_test_oracle_coverage_report();
 	b43_test_oracle_report();
 	return 0;
 }

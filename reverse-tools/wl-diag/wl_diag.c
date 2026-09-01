@@ -126,6 +126,7 @@ enum wldiag_op {
 	OP_MAC_BW, OP_SROMCTL_R, OP_SROMCTL_W,		/* 35,36,37 (append) */
 	OP_CAL_INIT,					/* 38 (append) */
 	OP_MARK,					/* 39 (append) */
+	OP_CHANSPEC_SHM,				/* 40 (append) */
 	OP_DROP = 255,
 };
 struct wldiag_rec {
@@ -173,47 +174,13 @@ struct wldiag_rec {
  * fifo_recs viene arrotondato per difetto a potenza di 2: kfifo_init divide la
  * dimensione in byte per esize e fa rounddown_pow_of_two.
  */
-/*
- * Forzare la calibrazione completa, senza remove/rescan del device -- che una
- * volta su due non riesce.
- *
- * Nel driver la logica e' questa, letta dai prologhi del blob D6220:
- *
- *   wlc_phy_cal_init(pi)      { if (pi->[251]) return; ...cal completa... }
- *   wlc_set_phy_uninitted(pi) { pi->[418] = -1; pi->[680] = -1; pi->[251] = 0; }
- *
- * Il byte a 251 e' un "gia' calibrato" e la logica e' INVERTITA rispetto a quel
- * che si aspetterebbe: non si scrive 1, si scrive 0. Azzerandolo prima che
- * cal_init lo legga, la calibrazione si rifa'.
- *
- * DUE parametri, e la distinzione conta:
- *
- *   full_init_off   l'offset nella struct, STRUTTURALE: dipende dalla versione
- *                   (251 su 7.14.89, 227 su 6.30) e viene cotto nello stub
- *                   all'arming, quindi e' di sola lettura. 0 = il codice non
- *                   viene emesso affatto.
- *   force_full_init l'interruttore a RUNTIME, scrivibile da sysfs. Lo stub lo
- *                   rilegge a ogni chiamata, quindi si puo' alternare fra un
- *                   ciclo e il successivo:
- *
- *                     echo 1 > /sys/module/wl_diag/parameters/force_full_init
- *                     wl -i wl1 up ; sleep 10 ; wl -i wl1 down    # cal completa
- *                     echo 0 > /sys/module/wl_diag/parameters/force_full_init
- *                     wl -i wl1 up ; sleep 10 ; wl -i wl1 down    # a caldo
- *
- * Serve cosi' perche' capture_plan.sh gira 30-40 combinazioni dopo un solo
- * insmod, e ognuna va provata in entrambi i modi: con un parametro fisso
- * all'arming sarebbero tutte uguali e non ci sarebbe niente da confrontare.
- *
- * ATTENZIONE: un offset sbagliato scrive dentro la struct del PHY. L'indirizzo
- * scrivibile e' solo pi + offset -- `pi` arriva dalla funzione agganciata -- ma
- * l'offset va verificato sul proprio blob: por_inform scrive 1 al flag POR, e
- * quello e' l'offset meno 2.
+/* Un ciclo di init A FREDDO si ottiene ricaricando il modulo bersaglio -- e' cio'
+ * che fa reverse-tools/cold_capture.sh, con gli hook gia' armati dal
+ * MODULE_STATE_COMING -- non manomettendo la struct del PHY dallo stub. Il byte
+ * "gia' calibrato" (251 su 7.14.89, 227 su 6.30) resta quindi solo una nota:
+ * a freddo e' pi->[251] == 0 che rende completa la cal_init, e nella traccia lo
+ * si vede dal record CAL.INIT.
  */
-static int full_init_off;
-module_param(full_init_off, int, 0444);
-static int force_full_init;
-module_param(force_full_init, int, 0644);
 
 #define FIFO_RECS_DEF 131072
 static int fifo_recs = FIFO_RECS_DEF;
@@ -367,7 +334,6 @@ struct hook {
 	bool use_bp;		/* hook via 'break' + die notifier (non detourabile) */
 	bool use_sites;		/* patch delle coppie lui/addiu ai siti di chiamata */
 	u32 *bp_stub;		/* stub di ripresa del percorso break */
-	s16 zero_off;		/* != 0: lo stub azzera il byte pi->[zero_off] */
 };
 static struct hook hooks[] = {
 	{ "phy_reg_read",       OP_PHY_R,     1, 0, 0, .retcap = true },
@@ -456,18 +422,54 @@ static struct hook hooks[] = {
 	 * NON si aggancia wlc_bmac_macphyclk_set: i suoi chiamanti sono
 	 * init_htphy, init_nphy e wlc_bmac_init, quindi per l'AC-PHY non e' nel
 	 * percorso. Ha anche un bne alla parola 1, ma e' irrilevante. */
-	/* Solo per forzare la cal completa: il record serve a vedere quando
-	 * cal_init viene invocata, e lo stub azzera pi->[full_init_off] se il
-	 * parametro e' impostato. Prologo: addiu sp / sw s0 / sw ra / lbu 251(a0),
-	 * quindi il branch e' alla parola 4 e il detour a 4 parole regge. La
-	 * parola 3 riesegue la lbu DOPO l'azzeramento, quindi legge 0. */
+	/* Momento in cui cal_init viene invocata: una per ciclo di bring-up,
+	 * quindi e' anche l'ancora piu' solida per segmentare uno sweep. Prologo:
+	 * addiu sp / sw s0 / sw ra / lbu 251(a0), branch alla parola 4, il detour a
+	 * 4 parole regge. */
 	{ "wlc_phy_cal_init", OP_CAL_INIT,   0, 0, 0 },
 	{ "wlc_bmac_bw_set",  OP_MAC_BW,     0, 1, 0 },
 	{ "si_get_sromctl",   OP_SROMCTL_R,  0, 0, 0, .retcap = true },
 	{ "si_set_sromctl",   OP_SROMCTL_W,  0, 1, 0 },
 	{ "wlc_phy_chanspec_set", OP_CHANSPEC, 1, 0, 0 },
+	/* Il chanspec scritto in shared memory. Serve come CONFINE per segmentare
+	 * uno sweep: wlc_phy_chanspec_set non e' sul percorso dell'AC-PHY (il
+	 * setter per-PHY e' una funzione statica, senza simbolo: in questi blob non
+	 * esiste alcun wlc_phy_chanspec_set_acphy), e sull'AC non produce record.
+	 * Prologo: lw / lw / sltiu / beq, quindi il branch e' alla parola 3 e il
+	 * detour a 4 parole non regge; le prime due parole sono lw, non sono
+	 * PC-relative, quindi lo short-j a 2 parole si'.
+	 * DA CONFERMARE alla prima cattura: che il chanspec sia a1. Se il record
+	 * porta un valore assurdo, la firma e' diversa da quella assunta. */
+	{ "wlc_phy_chanspec_shm_set", OP_CHANSPEC_SHM, 1, 0, 0, .shortj = true },
 	{ "wlc_bmac_read_objmem16",  OP_MAC_OBJ_R, 1, 0, 2, .retcap = true },
 	{ "wlc_bmac_write_objmem16", OP_MAC_OBJ_W, 1, 2, 3 },
+	/* Varianti per le build dove i due sopra NON esistono. Su 7.14.43 non c'e'
+	 * alcun accessor a 16 bit: solo la coppia bulk copyfrom/copyto_objmem, e i
+	 * 16 bit passano da qui. Coprono il solo selettore SHM, non SCR ne' IHR,
+	 * quindi aux resta 0.
+	 *
+	 * Sono thunk brevi con tail-call -- read_shm 16 B, write_shm 20 B, entrambi
+	 * con `jr $t9` dentro la finestra a 4 parole -- quindi il detour classico
+	 * non regge. Le prime DUE parole sono lui/addiu e lui/andi, non
+	 * PC-relative, quindi lo short-j si': lo stub le riesegue e rientra a +8,
+	 * dove sta il resto del tail-call. NON si va per siti: read_shm ne ha ~34 e
+	 * MAX_SITES e' 8.
+	 *
+	 * Sono anche il caso che ha reso necessaria la scelta del registro di
+	 * rientro nello stub: la parola 0 e' `lui $t9`, e con $t9 usato anche per
+	 * il rientro si torna a +8 con $t9 sbagliato, l'addiu ci somma il lo16 e il
+	 * `jr $t9` finisce in mezzo a un'altra funzione.
+	 *
+	 *   wlc_bmac_read_shm(hw, offset)         offset=a1, valore nel RETVAL
+	 *   wlc_bmac_write_shm(hw, offset, val)   offset=a1, val=a2
+	 *
+	 * val arriva GIA' troncato a 16 bit, al contrario di read_radio_reg: la'
+	 * l'andi e' la parola 0, che lo short-j sostituisce con la `j`, qui e' la
+	 * parola 1, cioe' il delay slot della `j`, che si esegue PRIMA dello stub.
+	 * Lo stub la riesegue, ed e' idempotente. */
+	{ "wlc_bmac_read_shm",  OP_MAC_OBJ_R, 1, 0, 0,
+	  .shortj = true, .retcap = true },
+	{ "wlc_bmac_write_shm", OP_MAC_OBJ_W, 1, 2, 0, .shortj = true },
 	/* branch a slot 3 (beq): detour classico a 4 parole impossibile. short-j a
 	 * 1 parola: o[0]=j stub; o[1] (addiu $v0,1) resta come delay slot; lo stub
 	 * riesegue o[0..1] e rientra a +8 (v0 ri-settato DOPO la hook). addr=a1
@@ -490,8 +492,10 @@ wl_diag_hook(u32 id, u32 a1, u32 a2, u32 a3)
 	 * dice da se' quali cicli sono stati forzati. Senza questo l'esperimento
 	 * non e' leggibile a posteriori: capture_plan alterna 1 e 0, quindi il
 	 * valore letto da sysfs a fine corsa e' sempre l'ultimo scritto. */
+	/* CAL.INIT non porta payload: dice QUANDO cal_init e' stata invocata, ed e'
+	 * anche l'ancora per segmentare uno sweep, una per ciclo. */
 	if (h->op == OP_CAL_INIT)
-		return emit(h->op, (u32)h->zero_off, (u32)force_full_init, 0);
+		return emit(h->op, 0, 0, 0);
 
 	return emit(h->op, pick(h->addr_src, a1, a2, a3),
 			   pick(h->val_src,  a1, a2, a3),
@@ -591,9 +595,7 @@ wl_diag_exit_ret(u32 retval)
 static inline u32 i_addiu(u8 rt, u8 rs, s16 im){ return (0x09u<<26)|(rs<<21)|(rt<<16)|(u16)im; }
 static inline u32 i_sw(u8 rt, u8 b, s16 o){ return (0x2bu<<26)|(b<<21)|(rt<<16)|(u16)o; }
 static inline u32 i_lw(u8 rt, u8 b, s16 o){ return (0x23u<<26)|(b<<21)|(rt<<16)|(u16)o; }
-static inline u32 i_sb(u8 rt, u8 b, s16 o){ return (0x28u<<26)|(b<<21)|(rt<<16)|(u16)o; }
 /* beq rs,rt,off: off in ISTRUZIONI, relativo alla parola dopo il delay slot */
-static inline u32 i_beq(u8 rs, u8 rt, s16 off){ return (0x04u<<26)|(rs<<21)|(rt<<16)|(u16)off; }
 static inline u32 i_lui(u8 rt, u16 im){ return (0x0fu<<26)|(rt<<16)|im; }
 static inline u32 i_ori(u8 rt, u8 rs, u16 im){ return (0x0du<<26)|(rs<<21)|(rt<<16)|im; }
 static inline u32 i_jalr(u8 rs){ return (rs<<21)|(R_RA<<11)|0x09u; }
@@ -602,6 +604,47 @@ static inline u32 i_j(unsigned long tgt){ return (0x02u<<26)|(u32)((tgt>>2)&0x03
 #define I_NOP 0u
 
 /* true se l'opcode e' un branch/jump (non rilocabile verbatim nello stub) */
+/*
+ * Registro di destinazione di un'istruzione, o 0xff se non ne scrive.
+ * Serve per UN motivo preciso: lo stub, dopo aver rieseguito le parole
+ * spiazzate, carica l'indirizzo di rientro in un registro e ci salta. Se una
+ * delle parole rieseguite scriveva QUEL registro, il valore che il codice
+ * originale si aspetta al rientro viene distrutto.
+ *
+ * Non e' teorico: il prologo di un thunk con tail-call e' lui/addiu su $t9, e
+ * usando $t9 anche per il rientro si torna a funzione+8 con $t9 = indirizzo di
+ * rientro invece del bersaglio. Il successivo `addiu $t9, $t9, lo` produce un
+ * indirizzo casuale e il `jr $t9` salta in mezzo a un'altra funzione: oops per
+ * accesso non allineato, con $t9 == epc nel dump.
+ */
+static u8 dest_reg(u32 insn)
+{
+	u32 op = insn >> 26;
+
+	if (op == 0) {				/* SPECIAL: dest = rd */
+		u32 f = insn & 0x3f;
+
+		if (f == 0x08 || f == 0x09)	/* jr/jalr: nessun rd utile */
+			return 0xff;
+		return (u8)((insn >> 11) & 31);
+	}
+	if (op == 0x0f || op == 0x09 || op == 0x0c || op == 0x0d ||
+	    op == 0x0a || op == 0x0b || op == 0x08 ||	/* lui/addiu/andi/ori/slti* */
+	    (op >= 0x20 && op <= 0x27))			/* load: dest = rt */
+		return (u8)((insn >> 16) & 31);
+	return 0xff;				/* store, branch, altro */
+}
+
+static bool scrive_reg(const u32 *w, int n, u8 r)
+{
+	int i;
+
+	for (i = 0; i < n; i++)
+		if (dest_reg(w[i]) == r)
+			return true;
+	return false;
+}
+
 static bool is_branch(u32 insn)
 {
 	u32 op = insn >> 26;
@@ -804,6 +847,9 @@ static int find_sites(int idx, unsigned long fnaddr)
 			i--;
 		}
 	}
+	if (n == MAX_SITES)
+		pr_warn("wl_diag: '%s' ha raggiunto il cap di %d siti: le chiamate oltre "
+			"il cap NON sono intercettate\n", hooks[idx].name, MAX_SITES);
 	n_sites[idx] = n;
 	return n;
 }
@@ -891,6 +937,7 @@ static void build_stub(int idx)
 	unsigned long ret = hooks[idx].use_sites ? hooks[idx].addr :
 		hooks[idx].addr + (hooks[idx].shortj ? 8 : 16);
 	int n = 0, k;
+	u8 rj;
 
 	s[n++] = i_addiu(R_SP, R_SP, -32);
 	s[n++] = i_sw(R_A0, R_SP, 0);
@@ -939,35 +986,17 @@ static void build_stub(int idx)
 	s[n++] = i_lw(R_A3, R_SP, 12);
 	s[n++] = i_lw(R_RA, R_SP, hooks[idx].retcap ? 24 : 16);
 	s[n++] = i_addiu(R_SP, R_SP, 32);
-	/* $a0 e' il primo argomento della funzione agganciata, cioe' `pi`.
-	 * L'interruttore si rilegge a OGNI chiamata, non si cuoce all'arming:
-	 *   lui/lw  t8 <- force_full_init
-	 *   beq     t8, zero -> salta la sb
-	 *   sb      zero, off(a0)
-	 * Il delay slot del beq porta la sb stessa, quindi con t8 == 0 si salta a
-	 * dopo di essa e non viene eseguita. */
-	if (hooks[idx].zero_off) {
-		unsigned long fp = (unsigned long)&force_full_init;
-
-		/* La parte bassa del lw e' con segno, quindi la parte alta va
-		 * compensata: la stessa aritmetica del patching dei siti. */
-		s[n++] = i_lui(R_T8, (u16)((fp + 0x8000) >> 16));
-		s[n++] = i_lw(R_T8, R_T8, (s16)(fp & 0xffff));
-		/* Il delay slot si esegue SEMPRE, quindi ci va un nop e non la sb:
-		 * altrimenti la scrittura avverrebbe anche a interruttore spento.
-		 * Bersaglio del beq = (indirizzo del delay slot) + off*4, cioe' con
-		 * off=2 si salta la parola dopo la sb. */
-		s[n++] = i_beq(R_T8, R_ZERO, 2);
-		s[n++] = I_NOP;
-		s[n++] = i_sb(R_ZERO, R_A0, hooks[idx].zero_off);
-	}
 	for (k = 0; k < rep; k++)
 		s[n++] = o[k];	/* riesegue le parole spiazzate (o[1] short-j ri-setta v0) */
-	s[n++] = i_lui(R_T9, ret >> 16);
-	s[n++] = i_ori(R_T9, R_T9, ret & 0xffff);
-	s[n++] = i_jr(R_T9);
+	/* Registro per il salto di rientro: $t9 se nessuna parola rieseguita lo
+	 * scrive, altrimenti $t8. pianifica() ha gia' scartato l'hook se li scrive
+	 * entrambi, quindi qui una delle due va sempre bene. */
+	rj = scrive_reg(hooks[idx].saved, rep, R_T9) ? R_T8 : R_T9;
+	s[n++] = i_lui(rj, ret >> 16);
+	s[n++] = i_ori(rj, rj, ret & 0xffff);
+	s[n++] = i_jr(rj);
 	s[n++] = I_NOP;
-	/* max (classic+retcap+nargx+forzatura) == 45 <= STUB_WORDS */
+	/* max (classic+retcap+nargx) == 40 <= STUB_WORDS */
 }
 
 /* Trampolino di ritorno condiviso: la funzione agganciata retcap fa jr ra con
@@ -1126,13 +1155,27 @@ static int eligible[NHOOK];   /* indici agganciabili */
 static int n_elig;
 static bool armato;
 
+/* Un op ha UN hook: il primo della tabella che risolve e risulta agganciabile se
+ * lo prende, gli altri vengono scartati. E' cio' che permette di elencare in
+ * tabella piu' varianti della stessa cosa per build diverse -- i nomi degli
+ * accessor cambiano fra 6.30, 7.14.43 e 7.14.89 -- senza produrre due record per
+ * lo stesso accesso dove entrambe esistono. L'ordine in tabella e' l'ordine di
+ * preferenza. */
+static u8 op_preso[256];
+
+static void elegge(int i)
+{
+	eligible[n_elig++] = i;
+	op_preso[hooks[i].op] = 1;
+}
+
 /*
  * Stato che dipende dal CARICAMENTO del bersaglio: indirizzi, parole salvate,
  * esito dell'eleggibilita', siti di chiamata trovati. Va azzerato prima di ogni
  * nuovo piano, perche' dopo un re-insmod del bersaglio gli indirizzi sono altri
  * e ripatchare sui vecchi non da' errore, da' danno.
  *
- * NON si toccano shortj, retcap, nargx, zero_off: sono la definizione
+ * NON si toccano shortj, retcap, nargx: sono la definizione
  * dell'hook, non stato. E' lo stesso confine che ha gia' prodotto un bug
  * quando i campi di stato sono finiti in mezzo agli inizializzatori
  * posizionali della tabella.
@@ -1164,6 +1207,7 @@ static void azzera_stato(void)
 	ret_order = 0;
 	raw_spin_unlock_irqrestore(&ret_lock, f);
 
+	memset(op_preso, 0, sizeof(op_preso));
 	n_elig = 0;
 }
 
@@ -1181,6 +1225,11 @@ static int pianifica(void)
 		u32 *o;
 		int j, win, branch = -1;
 
+		if (op_preso[hooks[i].op]) {
+			pr_info("wl_diag: '%s' non serve, l'op e' gia' coperta\n",
+				hooks[i].name);
+			continue;
+		}
 		if (hooks[i].op == OP_DELAY && !delay) {
 			pr_info("wl_diag: '%s' staccato (delay=0)\n",
 				hooks[i].name);
@@ -1213,7 +1262,7 @@ static int pianifica(void)
 			 * patchabili: la funzione resta intatta. Preferito al break,
 			 * che richiede il die notifier e non c'e' su ogni kernel. */
 			hooks[i].use_sites = true;
-			eligible[n_elig++] = i;
+			elegge(i);
 			pr_info("wl_diag: piano hook '%s' @%px [siti: %d] (branch a istr %d)\n",
 				hooks[i].name, o, n_sites[i], branch);
 			continue;
@@ -1224,7 +1273,7 @@ static int pianifica(void)
 			 * quindi non puo' essere PC-relative. */
 			if (WD_HAVE_BP && !is_branch(o[0])) {
 				hooks[i].use_bp = true;
-				eligible[n_elig++] = i;
+				elegge(i);
 				pr_info("wl_diag: piano hook '%s' @%px [break] (branch a istr %d)\n",
 					hooks[i].name, o, branch);
 			} else if (WD_HAVE_BP) {
@@ -1242,7 +1291,18 @@ static int pianifica(void)
 				hooks[i].name);
 			continue;
 		}
-		eligible[n_elig++] = i;
+		/* Lo stub ha bisogno di UN registro per il salto di rientro, e non
+		 * puo' essere uno di quelli che le parole rieseguite scrivono. Con
+		 * t8 e t9 entrambi occupati non resta niente di sicuro: meglio
+		 * nessun hook che un rientro che salta a un indirizzo calcolato
+		 * male. */
+		if (scrive_reg(hooks[i].saved, win, R_T9) &&
+		    scrive_reg(hooks[i].saved, win, R_T8)) {
+			pr_warn("wl_diag: salto '%s' (le parole spiazzate scrivono sia t8 sia t9)\n",
+				hooks[i].name);
+			continue;
+		}
+		elegge(i);
 		pr_info("wl_diag: piano hook '%s' @%px%s\n", hooks[i].name, o,
 			hooks[i].shortj ? " [short-j]" : "");
 	}
@@ -1405,15 +1465,6 @@ static int __init wd_init(void)
 	int i, err;
 
 	parse_skipphyrd();
-
-	if (full_init_off) {
-		for (i = 0; i < NHOOK; i++)
-			if (hooks[i].op == OP_CAL_INIT)
-				hooks[i].zero_off = (s16)full_init_off;
-		pr_info("wl_diag: cal_init puo' azzerare pi->[%d]; interruttore in "
-			"/sys/module/wl_diag/parameters/force_full_init (ora %d)\n",
-			full_init_off, force_full_init);
-	}
 
 	if (fifo_recs < 4096) {
 		pr_warn("wl_diag: fifo_recs=%d troppo piccolo, uso 4096\n", fifo_recs);

@@ -1,7 +1,7 @@
 # Stato del bring-up
 
 Il draft 1 di `switch_channel` è validato op-per-op contro il trace vendor
-`d6220/attach-to-bss-up-ch36-bw20` (flow `full` con oracolo, prima divergenza
+`d6220/cold-sweep.zip`, segmento ch36 bw20 (flow `down` e `up` con oracolo, via test/gates.sh; prima divergenza
 @23951 su 25013 op). Il primo bring-up HW
 è quindi atteso funzionante su:
 

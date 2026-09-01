@@ -20,12 +20,11 @@
 # ai bordi di ogni caricamento. Nessuna euristica sui salti temporali, e nessun
 # file da rinominare a mano.
 #
-# Perche' ricaricare `wl` e non usare force_full_init: nel modulo `zero_off` e'
-# un solo campo, assegnato al solo hook OP_CAL_INIT, quindi lo stub azzera il
-# byte della cal (251 su 7.14, 227 su 6.30) e nient'altro. I flag adiacenti
-# restano -- 250 "phy_init fatto", 249 POR -- e ne esce una cal completa dentro
-# un phy_init a caldo, che non riproduce le costanti di fase dell'attach:
-# coppia di gain ADC in init_regs, campo a 6 bit di 0x02e4, preambolo analogico.
+# Perche' ricaricare `wl` e non toccare la struct del PHY: azzerare il byte
+# "gia' calibrato" darebbe una cal completa dentro un phy_init A CALDO, con i
+# flag adiacenti (250 "phy_init fatto", 249 POR) intatti, e quindi senza le
+# costanti di fase dell'attach: coppia di gain ADC in init_regs, campo a 6 bit
+# di 0x02e4, preambolo analogico.
 #
 # Ciclo, per ogni canale:
 #     MARK ; rmmod wl ; insmod wl ; chanspec ; [ssid] ; up ; attesa ;
@@ -51,7 +50,7 @@
 #   IF         interfaccia                                   (default wl1)
 #   SETTLE     attesa dopo up e dopo bss up, secondi          (default 10)
 #   SSID       se impostato: ssid + bss up prima dell'attesa  (default vuoto)
-#   WL_KO      argomento di insmod per wl                     (default wl)
+#   WL_KO      percorso di wl.ko: OBBLIGATORIO, vedi sotto
 #   DEVID      deviceid atteso su IF, da `wl revinfo`         (default 0x43b3)
 #   BR         bridge da cui staccare l'interfaccia           (default vuoto)
 #   KILL       demoni da terminare prima del ricarico         (default vuoto)
@@ -67,7 +66,6 @@ shift
 
 [ -n "$IF" ]     || IF=wl1
 [ -n "$SETTLE" ] || SETTLE=10
-[ -n "$WL_KO" ]  || WL_KO=wl
 [ -n "$DEVID" ]  || DEVID=0x43b3
 
 case "$BW" in
@@ -78,6 +76,23 @@ esac
 case "$SETTLE" in
     ''|*[!0-9]*) echo "attesa non numerica: '$SETTLE'" >&2; exit 1 ;;
 esac
+
+# Il percorso di wl.ko va saputo PRIMA del primo rmmod, non al momento
+# dell'insmod: `insmod wl` senza percorso funziona solo sui busybox con la
+# variante modprobe-small, e su questi firmware non e' garantito. Se il
+# problema salta fuori al primo ciclo, `wl` e' gia' stato scaricato e la radio
+# resta giu' fino a un reboot.
+if [ -z "$WL_KO" ]; then
+    echo "serve WL_KO=<percorso di wl.ko>. Cercalo in" >&2
+    echo "/lib/modules/`uname -r 2>/dev/null`/ o nella riga di insmod dello" >&2
+    echo "script di avvio del vendor." >&2
+    exit 1
+fi
+
+if [ ! -r "$WL_KO" ]; then
+    echo "WL_KO='$WL_KO' non leggibile" >&2
+    exit 1
+fi
 
 if ! grep -q '^wl_diag ' /proc/modules 2>/dev/null; then
     echo "wl_diag non e' caricato. Caricalo una volta sola, prima di questo" >&2
@@ -181,7 +196,8 @@ scarica_wl() {
 
 carica_wl() {
     if ! insmod "$WL_KO" 2>&1; then
-        echo "insmod '$WL_KO' fallito" >&2
+        echo "insmod '$WL_KO' fallito: ORA NON C'E' NESSUN wl CARICATO." >&2
+        echo "Ricaricalo a mano prima di riprovare:  insmod $WL_KO" >&2
         return 1
     fi
     sleep 2
@@ -242,6 +258,7 @@ ciclo() {
 }
 
 echo "cold_capture: $IF, BW$BW, attesa ${SETTLE}s, deviceid atteso $DEVID"
+echo "modulo: $WL_KO"
 [ -n "$SSID" ] || echo "SSID non impostato: la bss non sale e mancheranno le tabelle per-core"
 echo "il rmmod di wl porta giu' anche il 2.4 GHz: non guidare questa procedura in wifi"
 echo "il lettore di /proc/wl_diag deve essere gia' attivo"

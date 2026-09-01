@@ -348,6 +348,7 @@ struct b43_phy_ac_table_desc {
 	const void *data;	/* NULL when zero is set */
 	const char *name;	/* for dmesg on skip */
 	bool zero;		/* fill len cells with 0 instead of copying data */
+	bool first_only;	/* written on a first bring-up only, see below */
 };
 
 /*
@@ -577,6 +578,33 @@ static const u32 papd_cal_scalars_tbl_core2_rev0[64] = {
 	  .len = (_len), .data = NULL, .name = (_name), .zero = true }
 
 /*
+ * Same two, for the tables the stock driver writes on a first bring-up and
+ * never again.
+ *
+ * The d6220 captures separate cleanly: the attach selects table ids
+ * 1, 2, 3, 5, 0x41, 0x47, 0x48 and their per-core mirrors, while a warm cycle
+ * -- both the down-to-bss capture and every one of the 32 sweep segments --
+ * selects the same reduced set and none of those. So this is a phase
+ * distinction, not a board or chip one.
+ *
+ * It reads as deliberate rather than incidental: the attach-only entries are
+ * the PHY constants that never change once loaded (mcs, tx_evm, phasetrack)
+ * and the PAPD state -- the epsilon and scalar tables and the 0x41 zero-fill.
+ * Rewriting the latter on every channel change would throw away the
+ * calibration the device has accumulated, which is also why the 0x42 and 0x62
+ * zero-fills are *not* in this set: those the vendor does redo.
+ */
+#define TBL_POPULATED_FIRST(_id, _off, _w, _core, _arr, _name) \
+	{ .id = (_id), .offset = (_off), .width = (_w), .core = (_core), \
+	  .len = ARRAY_SIZE(_arr), .data = (_arr), .name = (_name), \
+	  .first_only = true }
+
+#define TBL_ZERO_FIRST(_id, _off, _w, _core, _len, _name) \
+	{ .id = (_id), .offset = (_off), .width = (_w), .core = (_core), \
+	  .len = (_len), .data = NULL, .name = (_name), .zero = true, \
+	  .first_only = true }
+
+/*
  * acphytbl_info_rev0 entries, in the order the vendor emits them (agcombo
  * attach, TABLE_ID sequence at #357..#3939). The zero-fills are interleaved
  * here rather than run as a separate pass: the vendor puts 0x04/0x03 between
@@ -592,33 +620,35 @@ static const u32 papd_cal_scalars_tbl_core2_rev0[64] = {
  * chain.
  */
 static const struct b43_phy_ac_table_desc b43_phy_ac_tables_rev0[] = {
-	TBL_POPULATED(0x01, 0, 16, TBL_SHARED, acphy_mcs_tbl_rev0,                "mcs"),
-	TBL_POPULATED(0x02, 0,  8, TBL_SHARED, acphy_tx_evm_tbl_rev0,             "tx_evm"),
-	TBL_ZERO     (0x04, 0,  8, TBL_SHARED, 256,                               "zero_cal_0x04"),
-	TBL_ZERO     (0x03, 0, 32, TBL_SHARED, 256,                               "zero_cal_0x03"),
-	TBL_POPULATED(0x05, 0, 32, TBL_SHARED, phasetrack_tbl_rev0,               "phasetrack"),
+	TBL_POPULATED_FIRST(0x01, 0, 16, TBL_SHARED, acphy_mcs_tbl_rev0,                "mcs"),
+	TBL_POPULATED_FIRST(0x02, 0,  8, TBL_SHARED, acphy_tx_evm_tbl_rev0,             "tx_evm"),
+	TBL_ZERO_FIRST(0x04, 0,  8, TBL_SHARED, 256,                               "zero_cal_0x04"),
+	TBL_ZERO_FIRST(0x03, 0, 32, TBL_SHARED, 256,                               "zero_cal_0x03"),
+	TBL_POPULATED_FIRST(0x05, 0, 32, TBL_SHARED, phasetrack_tbl_rev0,               "phasetrack"),
 	TBL_POPULATED(0x40, 0, 16, 0,          est_pwr_lut_core0_rev0,            "est_pwr_lut_core0"),
 	TBL_POPULATED(0x60, 0, 16, 1,          est_pwr_lut_core1_rev0,            "est_pwr_lut_core1"),
 	TBL_POPULATED(0x80, 0, 16, 2,          est_pwr_lut_core2_rev0,            "est_pwr_lut_core2"),
-	TBL_ZERO     (0x41, 0, 32, 0,          128,                               "zero_cal_core0_0x41"),
-	TBL_ZERO     (0x61, 0, 32, 1,          128,                               "zero_cal_core1_0x61"),
-	TBL_ZERO     (0x81, 0, 32, 2,          128,                               "zero_cal_core2_0x81"),
+	TBL_ZERO_FIRST(0x41, 0, 32, 0,          128,                               "zero_cal_core0_0x41"),
+	TBL_ZERO_FIRST(0x61, 0, 32, 1,          128,                               "zero_cal_core1_0x61"),
+	TBL_ZERO_FIRST(0x81, 0, 32, 2,          128,                               "zero_cal_core2_0x81"),
 	TBL_ZERO     (0x42, 0, 16, 0,          128,                               "zero_cal_core0_0x42"),
 	TBL_ZERO     (0x62, 0, 16, 1,          128,                               "zero_cal_core1_0x62"),
 	TBL_ZERO     (0x82, 0, 16, 2,          128,                               "zero_cal_core2_0x82"),
 	TBL_POPULATED(0x40, 0, 16, 0,          papd_comp_rfpwr_tbl_core0_rev0,    "papd_comp_rfpwr_tbl_core0"),
 	TBL_POPULATED(0x60, 0, 16, 1,          papd_comp_rfpwr_tbl_core1_rev0,    "papd_comp_rfpwr_tbl_core1"),
 	TBL_POPULATED(0x80, 0, 16, 2,          papd_comp_rfpwr_tbl_core2_rev0,    "papd_comp_rfpwr_tbl_core2"),
-	TBL_POPULATED(0x47, 0, 32, 0,          papd_comp_epsilon_tbl_core0_rev0,  "papd_comp_epsilon_tbl_core0"),
-	TBL_POPULATED(0x67, 0, 32, 1,          papd_comp_epsilon_tbl_core1_rev0,  "papd_comp_epsilon_tbl_core1"),
-	TBL_POPULATED(0x87, 0, 32, 2,          papd_comp_epsilon_tbl_core2_rev0,  "papd_comp_epsilon_tbl_core2"),
-	TBL_POPULATED(0x48, 0, 32, 0,          papd_cal_scalars_tbl_core0_rev0,   "papd_cal_scalars_tbl_core0"),
-	TBL_POPULATED(0x68, 0, 32, 1,          papd_cal_scalars_tbl_core1_rev0,   "papd_cal_scalars_tbl_core1"),
-	TBL_POPULATED(0x88, 0, 32, 2,          papd_cal_scalars_tbl_core2_rev0,   "papd_cal_scalars_tbl_core2"),
+	TBL_POPULATED_FIRST(0x47, 0, 32, 0,          papd_comp_epsilon_tbl_core0_rev0,  "papd_comp_epsilon_tbl_core0"),
+	TBL_POPULATED_FIRST(0x67, 0, 32, 1,          papd_comp_epsilon_tbl_core1_rev0,  "papd_comp_epsilon_tbl_core1"),
+	TBL_POPULATED_FIRST(0x87, 0, 32, 2,          papd_comp_epsilon_tbl_core2_rev0,  "papd_comp_epsilon_tbl_core2"),
+	TBL_POPULATED_FIRST(0x48, 0, 32, 0,          papd_cal_scalars_tbl_core0_rev0,   "papd_cal_scalars_tbl_core0"),
+	TBL_POPULATED_FIRST(0x68, 0, 32, 1,          papd_cal_scalars_tbl_core1_rev0,   "papd_cal_scalars_tbl_core1"),
+	TBL_POPULATED_FIRST(0x88, 0, 32, 2,          papd_cal_scalars_tbl_core2_rev0,   "papd_cal_scalars_tbl_core2"),
 };
 
 #undef TBL_POPULATED
 #undef TBL_ZERO
+#undef TBL_POPULATED_FIRST
+#undef TBL_ZERO_FIRST
 
 /* Init */
 
@@ -634,6 +664,14 @@ void b43_phy_ac_tables_init(struct b43_wldev *dev)
 	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_tables_rev0); i++) {
 		t = &b43_phy_ac_tables_rev0[i];
 		if (t->core != TBL_SHARED && t->core >= dev->phy.ac->num_cores)
+			continue;
+		/*
+		 * do_full_init and not the latched
+		 * B43_PHY_AC_STATE_FIRST_BRINGUP: op_init latches that flag
+		 * after this call, so reading it here would give the previous
+		 * cycle's phase.
+		 */
+		if (t->first_only && !dev->phy.do_full_init)
 			continue;
 
 		/*
