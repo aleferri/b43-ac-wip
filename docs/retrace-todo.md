@@ -568,3 +568,57 @@ Attenzione al rovescio: una lettura scartata puo' essere legittima. Il vendor
 legge anche per sincronizzare o per sbloccare un gate, non solo per usare il
 dato -- il peek su `0x019e` e il peek finale su `0x0270` sono di quel tipo. Il
 criterio e' se il valore ricompare in una scrittura successiva.
+## Fuori perimetro: la regione probe-response della shared memory
+
+Ogni segmento dello sweep d6220 contiene sette scritture in SHM che il port non
+emette, con valori costanti su tutti i 52 segmenti e tutte e tre le larghezze:
+
+| offset | valore | decimale |
+|---|---|---|
+| `0x0180` | `0x0527` | 1319 |
+| `0x0182` | `0x01f4` | 500 |
+| `0x0184` | `0x0000` | 0 |
+| `0x0186` | `0x0032` | 50 |
+
+`0x0184` viene scritto a zero e **riletto** 29 episodi dopo, sempre zero, una
+volta per segmento: e' un handshake col firmware, non configurazione depositata.
+
+Cadono in una regione che `b43.h` mappa parzialmente, fra `B43_SHM_SH_PRSSID`
+(`0x0160`, SSID della probe response, 32 byte) e `B43_SHM_SH_PRPHYCTL`
+(`0x0188`, il suo control word PHY). Nessuna funzione del core b43 scrive
+`0x0180`-`0x0187`.
+
+**Non vanno portate**, e la ragione sta nel core, non in un'ipotesi. Le probe
+request sono il meccanismo della scansione attiva; il lato AP deve risponderci
+entro un tempo stretto, e ci sono due strategie: risponde il firmware, che per
+farlo ha bisogno del template e delle temporizzazioni in shared memory, oppure
+risponde il software. `wl` scegle la prima; b43 la seconda, e la disattiva
+esplicitamente in `main.c`:
+
+    /* Disable sending probe responses from firmware.
+     * Setting the MaxTime to one usec will always trigger
+     * a timeout, so we never send any probe resp. */
+    b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_PRMAXTIME, 1);
+
+Quindi quelle quattro scritture configurano un offload che b43 tiene spento per
+scelta architetturale: sarebbero senza effetto, e romperebbero i due gate.
+
+Il gate `if (dev->phy.type == B43_PHYTYPE_AC)` nel core sarebbe disponibile —
+quattro patch della serie lo usano gia' — quindi il problema non era mai il
+rischio per gli altri PHY: e' che la funzionalita' non esiste in questo stack.
+
+Nota sulle catture. Le due usate dai gate — `att.merged.txt` e
+`dtb.merged.txt` — **non tracciano affatto la classe `OBJ`**: zero letture e
+zero scritture, contro 1084 e 900 in un segmento dello sweep. L'hook non
+esisteva quando sono state prese, quindi l'assenza di una `OBJ.WR` in quelle
+due non dice nulla.
+
+Le due catture di attach che hanno la classe completa sono
+`wl-diag-wl1-attach-ch36-bw20-con-preambolo.txt` (3630 op `OBJ`) e
+`wl-diag-wl1-attach-ch36-bw20-tabelle-complete.txt` (3328), e **entrambe
+contengono queste sette scritture**. Quindi non sono legate all'operativita' da
+AP: l'argomento resta il `PRMAXTIME=1` del core, non la loro assenza.
+
+Classi assenti per intero dalle catture dei gate, da trattare come non
+informative su quelle due: `OBJ.RD`, `OBJ.WR`, `TPL.RAMW`, `MAC.BW`,
+`CAL.INIT`. Un'assenza vale come prova solo se la classe e' tracciata.

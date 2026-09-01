@@ -62,6 +62,10 @@ def main():
             if m:
                 trovati += 1
                 etichetta = m.group(1)
+                if etichetta == "fine corsa":
+                    # chiude una corsa, non un ciclo: non e' un confine
+                    corrente.append(riga)
+                    continue
                 automatico = bool(RE_MOD.match(etichetta))
                 if not automatico or a.skip_mod:
                     if corrente:

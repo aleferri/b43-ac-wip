@@ -20,6 +20,30 @@ prima di flashare invece di scoprirlo dal log:
 | `wlc_bmac_mhf_get` | `beq` alla parola 1: nemmeno lo short-j sta in piedi. Risolta patchando i **siti di chiamata**, vedi sotto. |
 | `wlc_bmac_read_shm` / `_write_shm` | wrapper di 16 e 20 byte con `jr` alla parola 2. Per questo si aggancia il bersaglio della tail call, `read/write_objmem16`, che ha prologo pulito. |
 
+### Il registro di rientro dello stub
+
+Lo stub, dopo aver rieseguito le parole spiazzate, carica l'indirizzo di rientro
+in un registro e ci salta. Quel registro **non puo'** essere uno che le parole
+rieseguite scrivono, e il caso reale che lo ha imposto e' il prologo di un thunk
+con tail-call: `lui $t9` / `addiu $t9`. Usando $t9 anche per il rientro si torna
+a funzione+8 con $t9 uguale all'indirizzo di rientro invece del bersaglio,
+l'`addiu` ci somma il lo16 e il `jr $t9` salta in mezzo a un'altra funzione.
+
+Il sintomo e' inconfondibile e vale la pena riconoscerlo al volo:
+
+    Unhandled kernel unaligned access
+    epc : c2df18e4 wlc_bmac_core_phypll_ctl+0xa8 [wl]
+    ra  : c2df3de4 wlc_bmac_mhf+0x154 [wl]
+    $24 : 00000000 c2df18e4          <- t9 == epc
+
+`$t9 == epc` dice che il salto era `jr $t9` con $t9 gia' sbagliato, e `ra`
+identifica il chiamante: da lui si trova quale funzione agganciata sta in mezzo
+(qui `wlc_bmac_mhf` chiama `wlc_bmac_write_shm` e rientra a +0x154).
+
+Lo stub sceglie: $t9 se le parole rieseguite non lo scrivono, altrimenti $t8. Se
+le scrivono entrambe l'hook viene scartato in pianificazione, perche' un rientro
+calcolato male e' peggio di un hook in meno.
+
 ### Prologhi non agganciabili, e le due vie
 
 Alcune funzioni hanno un branch nella finestra del detour, quindi ne' il detour
@@ -260,54 +284,14 @@ usa inizializzatori posizionali, quindi il `true` destinato a `retcap` finiva in
 coda, e gli inizializzatori usano la forma designata (`.retcap = true`) che e'
 immune al riordino.
 
-### Forzare la cal completa senza remove/rescan
-
-Il remove/rescan del device riesce una volta su due. L'alternativa e' agire sul
-flag che decide se la calibrazione si rifa'. Dai prologhi del blob D6220:
-
-```c
-wlc_phy_cal_init(pi)      { if (pi->[251]) return; ...cal completa... }
-wlc_set_phy_uninitted(pi) { pi->[418] = -1; pi->[680] = -1; pi->[251] = 0; }
-```
-
-Il byte a 251 e' un **"gia' calibrato"** e la logica e' **invertita**: si scrive
-**0**, non 1. I tre flag adiacenti hanno ruoli distinti e non sono
-interscambiabili -- 249 e' il POR (`por_inform` scrive 1), 250 il "phy_init
-fatto", 251 quello della cal.
-
-**La scrittura la fa lo stub**, non lo spazio utente: ha gia' `pi` in `$a0`
-(primo argomento, salvato a `0(sp)` e ripristinato prima del replay), quindi
-bastano poche istruzioni e non serve esporre nessun indirizzo ne' un poke di
-memoria arbitrario. L'unico indirizzo scrivibile e' `pi + offset`.
-
-E l'azzeramento cade **due istruzioni prima** della `lbu 251($a0)` che lo stub
-riesegue, quindi non c'e' finestra di corsa: con un poke dallo spazio utente
-bisognerebbe indovinare l'istante fra il momento in cui il flag conta e quello
-in cui `cal_init` lo legge.
-
-L'interruttore e' a **runtime** e non all'arming, perche' `capture_plan.sh` gira
-30-40 combinazioni dopo un solo `insmod` e ognuna va provata in entrambi i modi:
-
-```sh
-insmod wl_diag.ko arm=1 full_init_off=251
-echo 1 > /sys/module/wl_diag/parameters/force_full_init   # cal completa
-echo 0 > /sys/module/wl_diag/parameters/force_full_init   # a caldo
-```
-
-Lo stub rilegge la variabile a ogni chiamata: `lui`/`lw` con la parte alta
-compensata per il segno, `beq` con **nop nel delay slot** -- il delay slot su
-MIPS si esegue sempre, quindi mettendoci la `sb` la scrittura avverrebbe anche a
-interruttore spento -- e `off=2` per saltare oltre.
-
 ### Init a freddo: un ciclo per canale, ricaricando `wl`
 
-`force_full_init` non da' una fase di attach, e il perche' e' nel modulo:
-`zero_off` e' **un solo campo**, assegnato al solo hook `OP_CAL_INIT`, quindi
-lo stub azzera il byte della cal (251 su 7.14, 227 su 6.30) e nient'altro. I
-flag adiacenti restano: 250 e' il "phy_init fatto", 249 il POR. Ne esce una cal
-completa dentro un `phy_init` a caldo, che non riproduce le costanti di fase --
-coppia di gain ADC in `init_regs`, campo a 6 bit di `0x02e4`, preambolo
-analogico.
+Un init a freddo si ottiene ricaricando il modulo bersaglio, non manomettendo la
+struct del PHY: azzerare dallo stub il byte "gia' calibrato" darebbe una cal
+completa dentro un `phy_init` **a caldo**, che non riproduce le costanti di fase
+dell'attach -- coppia di gain ADC in `init_regs`, campo a 6 bit di `0x02e4`,
+preambolo analogico. I flag adiacenti (250 "phy_init fatto", 249 POR) resterebbero
+come sono.
 
 `reverse-tools/cold_capture.sh` (solo 3.4) fa quindi un ciclo per canale, e con
 l'armamento dinamico il ciclo e' tutto sul solo `wl`:
@@ -377,22 +361,6 @@ vietata alla trasmissione in molte giurisdizioni. Il rifiuto e' la regola, non
 un
 difetto dello script: `ch132` e oltre passano, perche' sono sopra la banda.
 
-### Verificare se il forzamento della cal ha avuto effetto
-
-Leggere `force_full_init` da sysfs a fine corsa **non dice niente**:
-`capture_plan.sh` alterna 1 e 0, quindi il valore e' sempre l'ultimo scritto.
-Due
-modi che funzionano:
-
-```sh
-dmesg | grep azzerare        # al caricamento: c'e' se full_init_off era passato
-```
-
-e, meglio, la traccia stessa: i record `CAL.INIT` portano `addr` = l'offset
-configurato e `val` = lo stato dell'interruttore al momento della chiamata.
-`addr=0x0000` significa che `full_init_off` non era impostato e lo stub non
-contiene l'istruzione affatto.
-
 ### Accessor che il port non fa affatto
 
 Audit sistematico: si prendono gli accessor **chiamati da codice acphy** (non
@@ -429,13 +397,31 @@ scritture sono gia' catturate (215 record, indici 0..4), quindi lo stato si
 ricostruisce offline.
 
 
+**Da quali simboli, secondo la build.** Su 7.14.89 la coppia e'
+`wlc_bmac_read/write_objmem16`, e `aux` porta il selettore dello spazio. Su
+**7.14.43 quegli accessor non esistono affatto**: ci sono solo la coppia bulk
+`copyfrom/copyto_objmem` -- dove il valore sta in un buffer, quindi fuori
+portata per un hook all'ingresso -- e i thunk `wlc_bmac_read/write_shm`, che la
+tabella elenca come varianti. Coprono il **solo spazio SHM**: `aux` resta 0 e
+gli accessi a SCR e IHR non compaiono.
+
+I due thunk sono brevi (16 e 20 B) e hanno `jr $t9` dentro la finestra a 4
+parole, quindi vanno di **short-j** a 2 parole; per i siti di chiamata non si
+puo' passare, perche' `read_shm` ne ha ~34 e `MAX_SITES` e' 8. Una conseguenza
+del meccanismo, non ovvia: in `write_shm` l'`andi 0xffff` e' la parola 1, cioe'
+il delay slot della `j`, e si esegue **prima** dello stub -- quindi il valore
+arriva gia' troncato a 16 bit. In `read_radio_reg` lo stesso `andi` e' la parola
+0, che lo short-j sostituisce, e per questo la' `addr` e' grezzo.
+
+Quando in una build esistono entrambe le vie, ne viene armata **una sola**: un
+op ha un hook, e vince il primo della tabella che risolve e risulta
+agganciabile. L'ordine in tabella e' l'ordine di preferenza.
+
 ## Parametri
 
 | param | default | effetto |
 |-------|---------|---------|
 | `fifo_recs` | `131072` | record nella coda, 28 B ciascuno: 131072 sono 3.5 MB e ~25 s di margine. Solo variante 3.4 |
-| `full_init_off` | `0` | offset del byte "gia' calibrato" nella struct `pi`: 251 su 7.14.89, 227 su 6.30. Strutturale, di sola lettura. `0` = il codice non viene emesso |
-| `force_full_init` | `0` | interruttore a **runtime** (`0644`): `echo 1 > /sys/module/wl_diag/parameters/force_full_init` |
 | `skipphyrd` | vuoto | letture di **registro PHY** da non registrare, es. `"0x253,0x254"` |
 | `arm`   | `0` | `0` = dry-run (logga solo il piano hook); `1` = applica le patch |
 | `target` | `wl` | nome del modulo da agganciare: gli hook si armano al suo `MODULE_STATE_COMING` e si disarmano al `GOING`. Serve anche a scartare i simboli che `kallsyms` risolve in un altro modulo |

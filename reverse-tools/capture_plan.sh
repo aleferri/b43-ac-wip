@@ -26,16 +26,9 @@
 #   sh capture_plan.sh 20a wl1 10   interfaccia e attesa espliciti
 #   sh capture_plan.sh 20a wl1 10 test-ap   con SSID, per programmare il BSS
 #
-# Per gli init A FREDDO questo non e' lo strumento: vedi cold_capture.sh, che
-# ricarica `wl` a ogni canale e prende anche l'attach. Qui la cal si forza sul
-# flag, e quello da' una cal completa dentro un phy_init a caldo -- non le
-# costanti di fase di attach.
-#
-# LA CAL COMPLETA non si forza col remove/rescan del device, che una volta su due
-# non riesce: si arma wl_diag con full_init_off=<offset>, e lo stub azzera il byte
-# "gia' calibrato" della struct pi a ogni cal_init. 251 su 7.14.89, 227 su 6.30.
-#
-#   insmod wl_diag.ko arm=1 skipphyrd="0x253,0x254" full_init_off=251
+# Questo e' lo sweep A CALDO: un solo insmod e N cicli down->up. Per gli init a
+# freddo, e per l'attach, lo strumento e' cold_capture.sh, che ricarica `wl` a
+# ogni canale con gli hook gia' armati dal MODULE_STATE_COMING.
 #
 # Niente `set -u`: il busybox di questi firmware non lo gestisce.
 #
@@ -106,19 +99,6 @@ bss_su() {
     return 0
 }
 
-# Ogni combinazione va provata in DUE modi, cal completa e a caldo:
-# l'interruttore e' a runtime proprio per poterli alternare dopo un solo insmod.
-FORCE=/sys/module/wl_diag/parameters/force_full_init
-
-forza() {
-    if [ -w "$FORCE" ]; then
-        echo "$1" > "$FORCE"
-    else
-        echo "ATTENZIONE: $FORCE non scrivibile, ciclo NON forzato" >&2
-    fi
-    return 0
-}
-
 imposta() {
     cs="5g$1/$BW"
     if ! wl -i "$IF" chanspec "$cs" > /dev/null 2>&1; then
@@ -130,9 +110,8 @@ imposta() {
 }
 
 ciclo() {
-    forza "$1"
-    emit "chanspec $cs force=$1"
-    echo "--- $cs force=$1"
+    emit "chanspec $cs"
+    echo "--- $cs"
     bss_su
     wl -i "$IF" up
     sleep "$SETTLE"
@@ -146,13 +125,8 @@ sleep 1
 
 for c in $LIST; do
     imposta "$c" || continue
-    ciclo 1        # cal completa forzata
-    ciclo 0        # a caldo
+    ciclo
 done
-
-# Si lascia l'interruttore a 1: leggerlo a fine corsa dopo un `forza 0` darebbe
-# sempre 0 e non direbbe nulla. Comunque la traccia lo porta nei record CAL.INIT.
-forza 1
 
 emit "fine fase $FASE"
 echo "fase $FASE completata. Splitta la traccia sui record CHANSPEC."

@@ -207,20 +207,13 @@ static atomic_t drops = ATOMIC_INIT(0);
  * formato di quei registri, non la classificazione.
  */
 #define SKIP_MAX 16
-/*
- * Forzare la cal completa a ogni `up` senza remove/rescan. Nel driver:
- *   wlc_phy_cal_init(pi)      { if (pi->[N]) return; ...cal completa... }
- *   wlc_set_phy_uninitted(pi) { ...; pi->[N] = 0; }
- * Il byte e' un "gia' calibrato", quindi si scrive 0 e non 1. Lo stub lo fa da
- * se': ha `pi` in $a0. Su 6.30 l'offset e' 227 (su 7.14.89 e' 251: i tre flag
- * adiacenti si spostano di 24). 0 = disattivato.
+/* Un ciclo di init A FREDDO si ottiene ricaricando il modulo bersaglio, non
+ * manomettendo la struct del PHY dallo stub. Il byte "gia' calibrato" (227 su
+ * 6.30, 251 su 7.14.89) resta quindi solo una nota: a freddo e' quel byte a zero
+ * che rende completa la cal_init, e nella traccia lo si vede dal record CAL.INIT.
+ * NB: su 2.6.30 il ricarico di `wl` non e' praticabile come sul 3.4 -- vedi il
+ * README -- quindi qui la fase a freddo resta quella del solo probe.
  */
-static int full_init_off;
-module_param(full_init_off, int, 0444);
-/* interruttore a runtime: lo stub lo rilegge a ogni chiamata, cosi' si puo'
- * alternare fra un ciclo e il successivo invece di fissarlo all'arming. */
-static int force_full_init;
-module_param(force_full_init, int, 0644);
 
 static char *skipphyrd;
 module_param(skipphyrd, charp, 0444);
@@ -309,7 +302,6 @@ struct hook {
 	 * designata: un `true` destinato a retcap finiva nel campo precedente,
 	 * retcap restava falso per ogni hook e non usciva NESSUN RETVAL. */
 	bool use_sites;		/* patch delle coppie lui/addiu ai siti di chiamata */
-	s16 zero_off;		/* != 0: lo stub azzera il byte pi->[zero_off] */
 };
 static struct hook hooks[] = {
 	{ "phy_reg_read",       OP_PHY_R,     1, 0, 0, .retcap = true },
@@ -417,12 +409,10 @@ wl_diag_hook(u32 id, u32 a1, u32 a2, u32 a3)
 {
 	struct hook *h = &hooks[id];
 
-	/* CAL.INIT porta nel record lo stato dell'interruttore, cosi' la traccia
-	 * dice da se' quali cicli sono stati forzati. Senza questo l'esperimento
-	 * non e' leggibile a posteriori: capture_plan alterna 1 e 0, quindi il
-	 * valore letto da sysfs a fine corsa e' sempre l'ultimo scritto. */
+	/* CAL.INIT non porta payload: dice QUANDO cal_init e' stata invocata, ed e'
+	 * anche l'ancora per segmentare uno sweep, una per ciclo. */
 	if (h->op == OP_CAL_INIT)
-		return emit(h->op, (u32)h->zero_off, (u32)force_full_init, 0);
+		return emit(h->op, 0, 0, 0);
 
 	return emit(h->op, pick(h->addr_src, a1, a2, a3),
 			   pick(h->val_src,  a1, a2, a3),
@@ -522,9 +512,7 @@ wl_diag_exit_ret(u32 retval)
 static inline u32 i_addiu(u8 rt, u8 rs, s16 im){ return (0x09u<<26)|(rs<<21)|(rt<<16)|(u16)im; }
 static inline u32 i_sw(u8 rt, u8 b, s16 o){ return (0x2bu<<26)|(b<<21)|(rt<<16)|(u16)o; }
 static inline u32 i_lw(u8 rt, u8 b, s16 o){ return (0x23u<<26)|(b<<21)|(rt<<16)|(u16)o; }
-static inline u32 i_sb(u8 rt, u8 b, s16 o){ return (0x28u<<26)|(b<<21)|(rt<<16)|(u16)o; }
 /* beq rs,rt,off: off in ISTRUZIONI, dal delay slot */
-static inline u32 i_beq(u8 rs, u8 rt, s16 off){ return (0x04u<<26)|(rs<<21)|(rt<<16)|(u16)off; }
 static inline u32 i_lui(u8 rt, u16 im){ return (0x0fu<<26)|(rt<<16)|im; }
 static inline u32 i_ori(u8 rt, u8 rs, u16 im){ return (0x0du<<26)|(rs<<21)|(rt<<16)|im; }
 static inline u32 i_jalr(u8 rs){ return (rs<<21)|(R_RA<<11)|0x09u; }
@@ -804,19 +792,6 @@ static void build_stub(int idx)
 	s[n++] = i_lw(R_A3, R_SP, 12);
 	s[n++] = i_lw(R_RA, R_SP, hooks[idx].retcap ? 24 : 16);
 	s[n++] = i_addiu(R_SP, R_SP, 32);
-	/* $a0 e' `pi`. L'interruttore si rilegge a ogni chiamata. Il delay slot
-	 * del beq si esegue SEMPRE, quindi ci va un nop e non la sb; con off=2 il
-	 * bersaglio e' la parola dopo la sb. La parte bassa del lw e' con segno,
-	 * quindi la parte alta va compensata. */
-	if (hooks[idx].zero_off) {
-		unsigned long fp = (unsigned long)&force_full_init;
-
-		s[n++] = i_lui(R_T8, (u16)((fp + 0x8000) >> 16));
-		s[n++] = i_lw(R_T8, R_T8, (s16)(fp & 0xffff));
-		s[n++] = i_beq(R_T8, R_ZERO, 2);
-		s[n++] = I_NOP;
-		s[n++] = i_sb(R_ZERO, R_A0, hooks[idx].zero_off);
-	}
 	for (k = 0; k < rep; k++)
 		s[n++] = o[k];	/* riesegue le parole spiazzate (o[1] short-j ri-setta v0) */
 	s[n++] = i_lui(R_T9, ret >> 16);
@@ -966,15 +941,6 @@ static int __init wd_init(void)
 	int i, err;
 
 	parse_skipphyrd();
-
-	if (full_init_off) {
-		for (i = 0; i < NHOOK; i++)
-			if (hooks[i].op == OP_CAL_INIT)
-				hooks[i].zero_off = (s16)full_init_off;
-		pr_info("wl_diag: cal_init puo' azzerare pi->[%d]; interruttore in "
-			"/sys/module/wl_diag/parameters/force_full_init (ora %d)\n",
-			full_init_off, force_full_init);
-	}
 
 	n_elig = 0;
 	for (i = 0; i < NHOOK; i++) {

@@ -233,6 +233,9 @@ static int oracle_on;
 static unsigned long oracle_from;
 static long oracle_hits, oracle_miss_addr, oracle_miss_exhausted;
 
+static int oracle_has_obj, oracle_has_tpl, oracle_has_cal;
+static const char *oracle_path;
+
 static void oracle_push(struct oracle_q *tbl, unsigned addr, unsigned val)
 {
 	struct oracle_q *q;
@@ -265,6 +268,7 @@ static void oracle_init(void)
 	path = getenv("AC_READ_ORACLE");
 	if (!path || !*path)
 		return;
+	oracle_path = path;
 	{
 		const char *e = getenv("AC_READ_ORACLE_FROM");
 
@@ -278,6 +282,21 @@ static void oracle_init(void)
 	while (fgets(line, sizeof(line), f)) {
 		unsigned addr, val;
 		char *p;
+
+		/*
+		 * Track the classes the capture traces at all, before the
+		 * episode filter: the tracer gained OBJ, TPL and CAL hooks over
+		 * time, and a capture taken earlier has none of those ops. An
+		 * op missing from such a capture says nothing about the driver,
+		 * so a flow that needs them must not be gated on it. See
+		 * router-data/CLASS-COVERAGE.md.
+		 */
+		if (strstr(line, " OBJ."))
+			oracle_has_obj = 1;
+		if (strstr(line, " TPL."))
+			oracle_has_tpl = 1;
+		if (strstr(line, " CAL."))
+			oracle_has_cal = 1;
 
 		if (oracle_from) {
 			char *h = strchr(line, '#');
@@ -307,6 +326,27 @@ static void oracle_init(void)
 }
 
 /* Ritorna 1 e scrive *out se l'oracolo ha un valore per questo indirizzo. */
+/*
+ * Complain once if the capture behind the oracle does not trace a class. The
+ * flow may still be comparable on the classes that are there, but any argument
+ * from the absence of an op in a missing class is void.
+ */
+void b43_test_oracle_coverage_report(void)
+{
+	if (!oracle_path)
+		return;
+	if (oracle_has_obj && oracle_has_tpl && oracle_has_cal)
+		return;
+
+	fprintf(stderr, "wrap: oracle %s does not trace:%s%s%s\n", oracle_path,
+		oracle_has_obj ? "" : " OBJ",
+		oracle_has_tpl ? "" : " TPL",
+		oracle_has_cal ? "" : " CAL");
+	fprintf(stderr, "wrap:   absence of those ops in it is not evidence; "
+		"see router-data/CLASS-COVERAGE.md\n");
+}
+
+
 static int perturb_addr_valid;
 static unsigned perturb_addr;
 static u16 perturb_mask = 1;
@@ -1182,6 +1222,12 @@ void b43_test_reg_init(int dflt, const char *map)
 		if (*map == ',')
 			map++;
 	}
+}
+
+void b43_mac_bw_set(struct b43_wldev *dev, u32 bw)
+{
+	(void)dev;
+	fprintf(trace(), "cpu1 MAC.BW   addr=0x0000 val=%#06x\n", bw);
 }
 
 void udelay(unsigned long us)         { (void)us; }

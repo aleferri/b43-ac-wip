@@ -107,6 +107,12 @@ struct ieee80211_hw {
  */
 struct ieee80211_channel *ieee80211_get_channel(struct wiphy *wiphy, int freq);
 void b43_test_reg_init(int dflt, const char *map);
+/*
+ * MAC bandwidth register. Upstream this is a write to the MAC's band/bandwidth
+ * control; the harness only needs it to appear in the op stream.
+ */
+void b43_mac_bw_set(struct b43_wldev *dev, u32 bw);
+void b43_test_oracle_coverage_report(void);
 
 /*
  * SROM rev 11 per-chain power info. Exactly the shape defined by

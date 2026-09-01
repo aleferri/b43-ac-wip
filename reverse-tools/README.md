@@ -69,9 +69,9 @@ Ordine tipico: decodifica → fold RETVAL → collapse → (reorder) → confron
   l'attach cade sotto gli hook senza remove/rescan PCI. Solo kernel 3.4 (sul
   2.6.30 l'ordine delle notifiche non e' stato verificato). Il primo `up` dopo
   il ricarico e' un `phy_init` con `do_full_init` e una `cal_init` mai fatta,
-  che `force_full_init` non da': nel modulo `zero_off` e' un solo campo,
-  assegnato al solo hook `OP_CAL_INIT`, quindi azzera il byte della cal e non i
-  flag 250 ("phy_init fatto") e 249 (POR). Procedura in `wl-diag/README.md`.
+  che nessuna manomissione della struct del PHY riprodurrebbe: azzerare il byte
+  della cal lascerebbe come sono i flag 250 ("phy_init fatto") e 249 (POR).
+  Procedura in `wl-diag/README.md`.
 - **split_by_mark.py** — taglia una traccia sui record **MARK**, un file per
   etichetta. I MARK li inietta chi cattura (`echo "ch36 bw20" > /proc/wl_diag`)
   e `wl_diag` ai bordi di ogni caricamento del bersaglio, quindi il confine e'
@@ -80,6 +80,14 @@ Ordine tipico: decodifica → fold RETVAL → collapse → (reorder) → confron
   `capture_plan.sh`, che non hanno MARK: taglia sui **salti temporali** (soglia
   1.03 s) perche' i record `CHANSPEC` sono in ritardo di un ciclo e ne arriva
   uno solo per fase, e prende i nomi dall'ordine della fase.
+- **audit_hooks.py** — dato un `wl.ko` e `wl-diag/wl_diag.c`, dice per ogni hook
+  se il simbolo **esiste** in quella build, se il prologo e' **agganciabile** col
+  detour a 4 parole (o a 2 con `.shortj`) e quanti **siti di chiamata indiretta**
+  ci sono. Risponde su un blob prima di bruciare una corsa di cattura: su agcombo
+  (7.14.43) ha mostrato che `wlc_bmac_read/write_objmem16` non esistono affatto,
+  mentre sul d6220 (7.14.89) ci sono. NB: `syms=` e `klookup=`
+  esistono nella variante **2.6.30**, non in quella 3.4, che risolve da se' via
+  `kallsyms`: la riga di `gen_syms.py` va all'insmod del `wl-diag-2630`.
 - **gen_syms.py** — costruisce la riga `syms=` per l'insmod di `wl-diag` da un
   `/proc/kallsyms` copiato dal device. La lista degli accessor vendor tracciati
   è in `wl-diag/wl_diag.c` (`hooks[]`): `phy_reg_*`, `write/read/mod_radio_reg`,

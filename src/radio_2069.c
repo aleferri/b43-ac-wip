@@ -941,8 +941,19 @@ void b43_radio_2069_channel_setup(struct b43_wldev *dev,
 	b43_radio_write(dev, 0x066d,
 			b43_radio_2069_cal_066d(dev->phy.ac->cal_freq));
 	b43_radio_write(dev, 0x0893, 0x0001);
-	b43_radio_write(dev, 0x0145, 0x0185);
-	b43_radio_write(dev, 0x0146, 0x00ac);
+
+	/*
+	 * These two change at 80 MHz only: 0x0185 and 0x00ac at 20 and 40,
+	 * 0x0188 and 0x010c at 80. Constant across every channel of the cold
+	 * sweep within each group.
+	 */
+	if (dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_80) {
+		b43_radio_write(dev, 0x0145, 0x0188);
+		b43_radio_write(dev, 0x0146, 0x010c);
+	} else {
+		b43_radio_write(dev, 0x0145, 0x0185);
+		b43_radio_write(dev, 0x0146, 0x00ac);
+	}
 
 	/* 0x0723 = 0x03e0, channel-invariant across every d6220 and agcombo
 	 * capture, immediately before the 0x0645 maskset. */
@@ -962,6 +973,31 @@ void b43_radio_2069_channel_setup(struct b43_wldev *dev,
 	}
 
 	b43_radio_write(dev,   0x0723, 0x83e0);
+
+	/*
+	 * One extra write on the lowest 40 MHz block of the band, right after
+	 * the one above and on the chain below it: 0x83e9 against 0x83e0, the
+	 * same register with the low nibble set.
+	 *
+	 * It reads as a workaround for an edge case of the synthesiser rather
+	 * than as configuration: the block starting at ch36 sits against the
+	 * bottom of U-NII-1, its centre at 5190 MHz, and it is the only
+	 * bandwidth and channel combination that gets it.
+	 *
+	 * Twenty-one observations across three captures agree -- the d6220 cold
+	 * sweep, the agcombo cold sweep and the agcombo hot sweep -- three
+	 * positive on ch36 at 40 MHz and eighteen negative on every other
+	 * 40 MHz channel. The first segment of the 80 MHz group is also ch36
+	 * and does not get it, so the width is part of the condition and not
+	 * just the position in the sweep.
+	 *
+	 * Whether the real condition is "the lowest 40 MHz block" or "5190 MHz
+	 * exactly" cannot be told apart here: no 40 MHz block sits below this
+	 * one in the band.
+	 */
+	if (dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_40 &&
+	    dev->phy.ac->cal_freq == 5190)
+		b43_radio_write(dev, 0x0523, 0x83e9);
 
 	/*
 	 * VCO and PLL enable. The rfpll writes above set the reference; this
@@ -1299,6 +1335,63 @@ static void b43_r2069_prefregs_init(struct b43_wldev *dev)
  * gating writes around the radio body, the same pattern already used by
  * b43_radio_2069_afecal in this file.
  */
+
+/*
+ * Per-chain LO-leakage trim, run only below 5250 MHz.
+ *
+ * The bipartition is exact in the cold sweep: the seven segments whose centre
+ * frequency is under 5250 do this on four chains, and the nineteen above it do
+ * not do it at all. That is the pa5g_group boundary, the same one that keys the
+ * channel table and the CRS sub-band reset.
+ *
+ * The shape is save, clear, walk, restore: six registers are read and zeroed,
+ * ten single-bit fields are then set or cleared one at a time, and the six go
+ * back at the end -- 0x003d to 0x000f rather than to what it held, which is
+ * what the capture shows on every one of the seven.
+ *
+ * Each step is a read-modify-write, so the bits the trim leaves behind depend
+ * on the readback; the values here are the masks, not the results.
+ */
+static void b43_radio_2069_lo_trim_unii1(struct b43_wldev *dev)
+{
+	static const struct { u16 reg, mask, val; } steps[10] = {
+		{ 0x0023, 0x0100, 0x0000 },
+		{ 0x003d, 0x0010, 0x0000 },
+		{ 0x0023, 0x0020, 0x0000 },
+		{ 0x0023, 0x0040, 0x0000 },
+		{ 0x0021, 0x0020, 0x0000 },
+		{ 0x0021, 0x0004, 0x0004 },
+		{ 0x0023, 0x0001, 0x0001 },
+		{ 0x0023, 0x0200, 0x0200 },
+		{ 0x0021, 0x0003, 0x0000 },
+		{ 0x0023, 0x0006, 0x0000 },
+	};
+	static const u16 saved_regs[6] = {
+		0x0020, 0x0021, 0x0022, 0x0023, 0x003a, 0x003d,
+	};
+	u8 chain, num_cores = dev->phy.ac->num_cores;
+	unsigned int i;
+
+	B43_AC_FN();
+
+	for (chain = 0; chain < num_cores + 1; chain++) {
+		u16 base = (u16)(chain * 0x200);
+
+		for (i = 0; i < ARRAY_SIZE(saved_regs); i++)
+			b43_radio_read(dev, saved_regs[i] + base);
+		for (i = 0; i < ARRAY_SIZE(saved_regs); i++)
+			b43_radio_write(dev, saved_regs[i] + base, 0x0000);
+
+		for (i = 0; i < ARRAY_SIZE(steps); i++)
+			b43_radio_maskset(dev, steps[i].reg + base,
+					  (u16)~steps[i].mask, steps[i].val);
+
+		for (i = 0; i < ARRAY_SIZE(saved_regs) - 1; i++)
+			b43_radio_write(dev, saved_regs[i] + base, 0x0000);
+		b43_radio_write(dev, 0x003d + base, 0x000f);
+	}
+}
+
 void b43_radio_2069_init(struct b43_wldev *dev)
 {
 	B43_AC_FN();

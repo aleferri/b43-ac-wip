@@ -3,7 +3,8 @@
 
 b43_phy_ac_set_channel() only programs ch36 because most of the values it
 writes were transcribed from a ch36 capture. The table itself, however,
-carries a row per channel, and the sweep holds one warm cycle per channel,
+carries a row per channel, and a sweep holds one cycle per channel -- warm
+segments named *-up-chNN-bwNN or the cold ones named coldNN-chNN-bwNN,
 so the rows can be checked without tuning anything.
 
 For each channel present in the sweep this compares the table row against
@@ -122,7 +123,7 @@ def main():
     regs_phy = set(PHY_BW_REGS)
 
     segs = {}
-    for path in sorted(glob.glob(os.path.join(segdir, "*-up-ch*-bw20.txt"))):
+    for path in sorted(glob.glob(os.path.join(segdir, "*ch*-bw20.txt"))):
         ch = int(re.search(r"ch(\d+)-bw20", path).group(1))
         segs.setdefault(ch, []).append(path)
 

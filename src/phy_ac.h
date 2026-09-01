@@ -228,6 +228,25 @@ struct b43_phy_ac_txpwr_limits {
 #define B43_PHY_AC_TXP_LAST_MCS_40_SDM		99
 #define B43_PHY_AC_TXP_NUM_RATES		101
 
+/*
+ * Chanspec, as the ucode reads it out of shared memory at 0x00a0. The low
+ * byte is the *centre* channel, not the primary, and the high bits carry the
+ * width. Verified across all 26 sweep configurations: ch36 gives 0xd024 at
+ * 20 MHz, 0xd826 at 40 -- centre 38 of the 36+40 pair -- and 0xe02a at 80,
+ * centre 42 of the 36..48 block.
+ */
+#define B43_PHY_AC_CHANSPEC_BW20		0xd000
+#define B43_PHY_AC_CHANSPEC_BW40		0xd800
+#define B43_PHY_AC_CHANSPEC_BW80		0xe000
+#define B43_SHM_AC_CHANSPEC			0x00a0
+
+void b43_phy_ac_write_chanspec(struct b43_wldev *dev);
+
+/* MAC bandwidth register, written when the operating width changes. */
+#define B43_MAC_BW_20				0x1000
+#define B43_MAC_BW_40				0x1800
+#define B43_MAC_BW_80				0x2000
+
 /* Quarter-dBm conversion, brcmsmac's BRCMS_TXPWR_DB_FACTOR. */
 #define B43_PHY_AC_QDB(n)			((n) * 4)
 
@@ -330,6 +349,17 @@ struct b43_phy_ac {
 	 * keyed on frequency rather than on the channel number.
 	 */
 	u16 cal_freq;
+	/*
+	 * CRS minimum-power state: the ladder entry in force and the sub-band it
+	 * was measured in. The threshold carries across channel changes within
+	 * a sub-band, so it has to outlive a single set_channel.
+	 */
+	u8 crs_index;
+	/* CRS value chanspec_tail() last wrote, reused by the Block E site. */
+	u8 crs_written;
+	/* Operating width the MAC was last told about, 0 when never. */
+	enum nl80211_chan_width mac_width;
+	u8 crs_subband;
 	/* Operating width of the same configuration. */
 	enum nl80211_chan_width cal_width;
 	/*
