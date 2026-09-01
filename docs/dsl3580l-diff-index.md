@@ -88,7 +88,7 @@ conteggi gonfi = slittamento, **non** differenze reali.
 1. `0x0033` nibble `0x6000` (DSL): config o residuo? — decide se il maskset del port è corretto sul DSL.
 2. readback radio `0x040c`/`0x0416`: valori diversi fra i due 4352 → possibile [VERSIONE] o read-plan da ritarare.
 3. `0x0072` (tutti diversi): unico registro con conteggio diverso su tutti e tre nelle fasi affidabili.
-4. Cattura **attach del DSL** per sbloccare le 8 fasi non confrontabili + init/PLL da freddo.
+4. Cattura **attach del DSL** per sbloccare le 8 fasi non confrontabili + init/PLL da freddo. `reverse-tools/cold_capture.sh` la darebbe, ma l'armamento dinamico su cui si appoggia e' verificato solo sul `kernel/module.c` del 3.4, e il DSL gira su 2.6.30 (`router_info.txt`): prima di provarla la' va controllato l'ordine delle notifiche di modulo in quel kernel. Il `rmmod wl` che lo spazio utente del vendor fa al rescan non e' piu' un ostacolo, dato che il tracer non tiene un riferimento sul bersaglio.
 
 ## Riproducibilità
 

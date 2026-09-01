@@ -9,6 +9,9 @@ compilatore segnala in modo confuso, tipicamente decine di righe dopo la causa:
   - commento aperto e non chiuso
   - letterale di stringa o carattere non terminato sulla riga
   - graffe, tonde, quadre non bilanciate
+  - uso di un simbolo `static` di file prima della sua dichiarazione: in C non
+    c'e' forward reference implicito, quindi spostare un blocco piu' in basso
+    durante un refactor rompe la build ('undeclared identifier')
 
 Non e' un parser: e' un tokenizzatore che salta commenti e letterali
 correttamente e conta il resto.
@@ -135,10 +138,127 @@ def check_c90(path):
     return errs
 
 
+def spoglia_commenti_e_letterali(src):
+    """sostituisce commenti e letterali con spazi, tenendo i newline: cosi' i
+    numeri di riga restano quelli veri e un identificatore citato nella prosa
+    di un commento non conta come uso."""
+    out = []
+    i, n = 0, len(src)
+    while i < n:
+        if src.startswith('/*', i):
+            j = src.find('*/', i + 2)
+            j = n if j < 0 else j + 2
+            out.append(re.sub(r'[^\n]', ' ', src[i:j]))
+            i = j
+            continue
+        if src.startswith('//', i):
+            j = src.find('\n', i)
+            j = n if j < 0 else j
+            out.append(' ' * (j - i))
+            i = j
+            continue
+        if src[i] in '"\'':
+            q, j = src[i], i + 1
+            while j < n and src[j] != q:
+                j += 2 if src[j] == '\\' else 1
+            j = min(j + 1, n)
+            out.append(re.sub(r'[^\n]', ' ', src[i:j]))
+            i = j
+            continue
+        out.append(src[i])
+        i += 1
+    return ''.join(out)
+
+
+# Dichiarazione a livello di file: si prende la parte di riga PRIMA del
+# terminatore e l'ultimo identificatore che c'e' dentro. Tokenizzare invece di
+# scrivere una regex per il nome evita di sbagliare su
+# `static struct module *target_mod;`, dove una regex ingenua cattura 'module'.
+RX_STATIC = re.compile(r'^static\b(.*)$', re.M)
+RX_ID = re.compile(r'\b[A-Za-z_]\w*\b')
+TIPO_TOKEN = re.compile(r'^(?:' + TIPI + r'|\w+_t|__\w+)$')
+
+
+def _nome_dichiarato(testo):
+    """l'ultimo identificatore prima di ; = ( [ , cioe' il nome dichiarato"""
+    taglio = len(testo)
+    for c in ';=([,':
+        k = testo.find(c)
+        if 0 <= k < taglio:
+            taglio = k
+    ids = RX_ID.findall(testo[:taglio])
+    if not ids:
+        return None
+    nome = ids[-1]
+    # `static DEFINE_RAW_SPINLOCK(x)` e simili: il nome vero lo fa la macro, e
+    # non si sa quale sia. Meglio nessuna dichiarazione che una sbagliata.
+    if TIPO_TOKEN.match(nome) or nome.isupper():
+        return None
+    return nome
+
+
+def check_ordine(path):
+    """uso di un simbolo di file prima della sua dichiarazione.
+
+    In C non c'e' forward reference implicito: una funzione che nomina una
+    variabile o una funzione statica dichiarata piu' in basso non compila
+    ('undeclared identifier'), ed e' facilissimo farlo spostando codice in
+    blocchi durante un refactor. Il compilatore lo dice chiaro, ma solo dopo un
+    ciclo di cross-build."""
+    src = spoglia_commenti_e_letterali(open(path, errors='replace').read())
+    righe = src.split('\n')
+    off = []
+    k = 0
+    for r in righe:
+        off.append(k)
+        k += len(r) + 1
+
+    def riga_di(pos):
+        lo, hi = 0, len(off) - 1
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if off[mid] <= pos:
+                lo = mid
+            else:
+                hi = mid - 1
+        return lo + 1
+
+    decl = {}
+    for m in RX_STATIC.finditer(src):
+        nome = _nome_dichiarato(m.group(1))
+        if nome and nome not in decl:
+            decl[nome] = m.start() + m.group(0).index(nome)
+
+    errs = []
+    for nome, pos_decl in decl.items():
+        rx = re.compile(r'\b' + re.escape(nome) + r'\b')
+        for m in rx.finditer(src):
+            if m.start() >= pos_decl:
+                break
+            riga = righe[riga_di(m.start()) - 1]
+            col = m.start() - off[riga_di(m.start()) - 1]
+            prefisso = riga[:col]
+            prima = prefisso.rstrip()
+            # accesso a membro: e' un campo omonimo, non il simbolo di file
+            if prima.endswith('.') or prima.endswith('->'):
+                continue
+            # dichiarazione locale, campo di struct o parametro con lo stesso
+            # nome: il token precedente e' un tipo. Anche questo e' shadowing,
+            # non un uso anticipato.
+            tok = RX_ID.findall(prima)
+            separato = prefisso != prima or prima.endswith('*')
+            if separato and tok and TIPO_TOKEN.match(tok[-1]):
+                continue
+            errs.append(f"{path}:{riga_di(m.start())}: '{nome}' usato prima "
+                        f"della dichiarazione (riga {riga_di(pos_decl)})")
+            break
+    return sorted(errs)
+
+
 def main():
     bad = 0
     for p in sys.argv[1:]:
-        e = check(p) + check_c90(p)
+        e = check(p) + check_c90(p) + check_ordine(p)
         if e:
             bad += 1
             for x in e:

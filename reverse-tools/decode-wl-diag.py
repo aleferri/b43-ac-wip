@@ -28,6 +28,12 @@
 # canale/banda/larghezza col formato 802.11ac standard (chan=bit 0-7,
 # bw=0x3800, band=0xc000) -- assunzione, non verificata su cattura. Serve a
 # tagliare a posteriori una run che copre piu' canali.
+# MARK (39): etichetta iniettata dallo spazio utente con
+#     echo "ch36 bw20" > /proc/wl_diag
+# 12 caratteri impacchettati big-endian nei tre campi u32 (addr, val, aux). Non
+# viene dal driver: e' un confine messo nella traccia da chi cattura, e sostuisce
+# il taglio a posteriori sui salti temporali. wl_diag ne emette due da se',
+# "mod COMING" e "mod GOING", ai bordi di ogni caricamento del bersaglio.
 # OBJ.RD (24) / OBJ.WR (25): object memory del MAC via read/write_objmem16.
 # addr=offset in byte, aux=selettore dello spazio (SHM, SCR, IHR...). La RD ha
 # il valore nel RETVAL come PHY.RD. Serve per il campione di potenza di rumore
@@ -55,6 +61,7 @@ OPS = {
     32: "OTP.INIT",  33: "OTP.RDW",   34: "OTP.RDR",
     35: "MAC.BW",    36: "SROMCTL.RD", 37: "SROMCTL.WR",
     38: "CAL.INIT",
+    39: "MARK",
     255: "DROP",
 }
 
@@ -63,6 +70,7 @@ OPS = {
 # 0x0000 inventato -- altrimenti si riparte col problema di distinguere zeri
 # veri da zeri finti.
 CHANSPEC = 26
+MARK     = 39
 READS    = {1, 4, 18, 24, 29, 30, 32, 33, 34, 36}                 # PHY.RD, RAD.RD, MAC.MHF.RD, OBJ.RD
 HAS_MASK = {3, 6, 7, 8, 9, 10, 11, 12, 17} # aux e' una mask (RMW, GPIO, MHF)
 GPIO     = {10, 11, 12}                   # niente addr; val=a2, mask=aux=a1
@@ -93,6 +101,12 @@ def chanspec(cs):
             f"band={'5g' if (cs & 0xc000) == 0xc000 else '2g'} raw=0x{cs:04x}")
 
 
+def unmark(addr, val, aux):
+    """i 12 byte impacchettati in tre u32, fino al primo NUL"""
+    b = b"".join(w.to_bytes(4, "big") for w in (addr, val, aux))
+    return b.split(b"\x00")[0].decode("ascii", "replace")
+
+
 def main():
     f = sys.stdin.buffer
     buf = b""
@@ -107,7 +121,10 @@ def main():
             name = OPS.get(op, f"op{op}")
             t = ts / 1e9
             wide = op in WIDE
-            if op == CHANSPEC:
+            if op == MARK:
+                print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} "
+                      f"{unmark(addr, val, aux)!r}")
+            elif op == CHANSPEC:
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} {chanspec(addr)}")
             elif op == 255:
                 print(f"{t:14.6f}  cpu{cpu}  ** DROP **  persi={aux}")
