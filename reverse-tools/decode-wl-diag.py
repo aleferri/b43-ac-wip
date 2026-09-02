@@ -64,6 +64,10 @@ OPS = {
     21: "SI.COREREG",
     22: "ARGX",     23: "RETVAL",
     24: "OBJ.RD",   25: "OBJ.WR",
+    41: "OBJ.BULKR", 42: "OBJ.BULKW",
+    43: "AMT.WR",    44: "RCMTA.WR",  45: "ADDRM.SET",
+    46: "PHY.WARR",  47: "PHY.RDW",   48: "PHY.WRW",
+    49: "IHR.WR",    50: "OBJ.SET",
     26: "CHANSPEC",
     27: "TPL.PTRW",  28: "TPL.DATW",
     29: "TPL.PTRR",  30: "TPL.DATR",  31: "TPL.RAMW",
@@ -82,8 +86,25 @@ OPS = {
 CHANSPEC = 26
 CS_SHM   = 40
 OBJ      = {24, 25}
+# Object memory in blocco: il record porta offset (a1) e lunghezza (a3). Il
+# valore NON c'e' -- sta in un buffer del chiamante -- e non e' una read con
+# RETVAL: non va in READS, o compare.py lo vedrebbe come val=UNDEFINED, cioe'
+# un wildcard che combacia con tutto. Il SELETTORE e' il 5o argomento e arriva
+# in un record ARGX come a5: dopo merge_retvals.py la riga lo porta in coda.
+OBJ_BULK = {41, 42}
+# Address match: il record porta il solo indice (a1). AMT.WR porta anche a3.
+ADDRMATCH = {43, 44, 45}
+# PHY.WARR: scrittura PHY in blocco. NON porta un indirizzo -- l'argomento e'
+# un puntatore all'array -- ma il conteggio delle voci. E' un marcatore: le
+# singole scritture arrivano dagli hook a 16 bit che la funzione chiama.
+PHY_WARR = 46
+# Registro fisso, nessun argomento indirizzo: stamparne uno sarebbe uno zero
+# inventato. PHY.RDW e' anche una read, quindi il valore arriva dal RETVAL.
+NO_ADDR  = {47, 48}
+# OBJ.SET: memset su shared memory, offset + valore + lunghezza.
+OBJ_SET  = 50
 MARK     = 39
-READS    = {1, 4, 18, 24, 29, 30, 32, 33, 34, 36}                 # PHY.RD, RAD.RD, MAC.MHF.RD, OBJ.RD
+READS    = {1, 4, 18, 24, 29, 30, 32, 33, 34, 36, 47}                 # PHY.RD, RAD.RD, MAC.MHF.RD, OBJ.RD
 HAS_MASK = {3, 6, 7, 8, 9, 10, 11, 12, 17} # aux e' una mask (RMW, GPIO, MHF)
 GPIO     = {10, 11, 12}                   # niente addr; val=a2, mask=aux=a1
 MCTRL    = {16}                            # MACCONTROL RMW: reg fisso, niente addr; val=a2, mask=aux=a1
@@ -160,6 +181,21 @@ def main():
             elif op == COREREG:                    # core reg: core+off, valore non catturato all'ingresso
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} "
                       f"core={h(aux, False)} off={h(addr, False)} val=UNDEFINED")
+            elif op == PHY_WARR:                   # conteggio voci, non un addr
+                print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<9} n={val}")
+            elif op in NO_ADDR:                    # registro fisso, niente addr
+                valstr = "UNDEFINED" if op in READS else h(val, False)
+                print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<9} val={valstr}")
+            elif op == OBJ_SET:                    # off + val + len
+                print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<9} "
+                      f"addr={h(addr, False)} val={h(val, False)} len={aux}")
+            elif op in OBJ_BULK:                   # offset + lunghezza; sel via ARGX
+                print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<9} "
+                      f"addr={h(addr, False)} len={aux}")
+            elif op in ADDRMATCH:                  # indice; nessun valore nel record
+                print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<9} "
+                      f"idx={h(addr, False)}"
+                      + (f" a3={h(aux, True)}" if aux else ""))
             elif op in OBJ:                        # object memory: serve il selettore
                 valstr = "UNDEFINED" if op in READS else h(val, wide)
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} "

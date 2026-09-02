@@ -13,11 +13,12 @@
 #
 # Su 2.6.30 kallsyms_lookup_name esiste ma NON e' esportata ai moduli (l'export
 # arriva in 2.6.33), quindi il sorgente disabilita da se' quel ramo sotto 2.6.33:
-# non serve alcun flag per compilare. Per risolvere i simboli, la via comoda e'
-# passare l'indirizzo di kallsyms_lookup_name (una riga di /proc/kallsyms):
+# non serve alcun flag per compilare. I simboli si risolvono passando
+# l'indirizzo di kallsyms_lookup_name, una riga di /proc/kallsyms:
 #   insmod wl_diag.ko arm=1 klookup=0x<addr_di_kallsyms_lookup_name>
-# e il modulo trova gli altri da solo. In alternativa, la lista esplicita:
-#   insmod wl_diag.ko arm=1 syms="phy_reg_read:80xxxxxx,si_corereg:80yyyyyy,..."
+# e il modulo trova gli altri da solo, ririsolvendoli a ogni ricaricamento del
+# bersaglio. reverse-tools/gen_syms.py costruisce la riga da un dump di
+# /proc/kallsyms e dice in anticipo quali hook si risolveranno.
 # Per forzare lo stesso comportamento su un kernel piu' recente:
 #   make KDIR=... EXTRA_CFLAGS=-DWLDIAG_NO_KALLSYMS ...
 

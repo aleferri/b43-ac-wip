@@ -417,6 +417,107 @@ Quando in una build esistono entrambe le vie, ne viene armata **una sola**: un
 op ha un hook, e vince il primo della tabella che risolve e risulta
 agganciabile. L'ordine in tabella e' l'ordine di preferenza.
 
+## Le due versioni del tracer, e cosa le separa
+
+`wl-diag/` gira sul kernel 3.4 contro `wl` 7.14, `wl-diag-2630/` sul 2.6.30
+contro `wl` 6.30. Le tabelle `hooks[]` sono ora allineate, e le differenze che
+restano sono imposte dai simboli dei due blob, non da scelte:
+
+| hook | 6.30 | 7.14 |
+| --- | --- | --- |
+| `wlc_bmac_read/write_objmem` | `LOCAL` | assente |
+| `wlc_bmac_read/write_objmem16` | assente | `LOCAL` |
+| `wlc_bmac_read/write_shm` | `GLOBAL` | `GLOBAL` |
+| `wlc_bmac_copyfrom/copyto_objmem` | `GLOBAL` | `GLOBAL` |
+| `wlc_bmac_template*_reg` | assente | `GLOBAL` |
+| `wlc_bmac_write_template_ram` | `GLOBAL` | `GLOBAL` |
+| `wlc_bmac_set_addrmatch` | `GLOBAL` | assente |
+| `wlc_set_addrmatch` | assente | `GLOBAL` |
+| `wlc_bmac_write_amt` | `GLOBAL` | `GLOBAL` |
+| `wlc_bmac_set_rcmta` | `GLOBAL` | `GLOBAL` |
+| `phy_reg_write_array` | `GLOBAL` | `GLOBAL` |
+| `phy_reg_read/write_wide` | `GLOBAL` | `GLOBAL` |
+| `wlc_bmac_write_ihr` | `GLOBAL` | `GLOBAL` |
+| `wlc_bmac_set_shm` | `GLOBAL` | `GLOBAL` |
+
+Verificato con `readelf -s` sui due oggetti di riferimento. Gli accessor a 16
+bit sono `LOCAL` in entrambi i blob, cioe' static, e `kallsyms_lookup_name`
+trova i locali di un modulo solo con `CONFIG_KALLSYMS_ALL`: se non si
+risolvono, la shared memory si vede comunque dai thunk `read/write_shm`, che
+sono globali, mentre le altre regioni di object memory si vedono solo dalla
+coppia bulk. Il log di `wd_init` dice quali hook si sono installati, e va
+guardato prima di dedurre qualcosa da un'assenza.
+
+### Le firme si leggono dal prologo, non dal nome
+
+Un hook si scrive solo sapendo quale argomento porta l'offset, quale il valore
+e quale la lunghezza, e se il prologo e' agganciabile. `reverse-tools/mipsdis.py
+<oggetto> --prologo <simbolo>` stampa le prime otto istruzioni e dice se c'e' un
+branch nella finestra delle quattro parole, che e' cio' che decide fra detour
+classico, short-j e patch dei siti.
+
+Gli accessor a 16 bit di object memory sono `LOCAL` in entrambi i blob, ma sul
+firmware DSL si risolvono comunque: `kallsyms_lookup_name` li trova, quindi quel
+kernel ha `CONFIG_KALLSYMS_ALL`. Da cui una conseguenza che va gestita: i thunk
+`wlc_bmac_read/write_shm` tail-callano quegli accessor, e agganciare entrambi
+darebbe DUE record per ogni accesso alla shared memory -- uno dal thunk, con
+`aux = 0` per costruzione, e uno dall'ingresso dell'accessor, col selettore
+vero. Il campo `ripiego_di` di `struct hook` serve a questo: `pianifica()`
+scarta il thunk quando l'accessor di sotto si e' agganciato, e lo dice nel log.
+I thunk restano per un firmware dove l'accessor non si risolve.
+
+Sui cinque accessor aggiunti per ultimi, quattro firme su sei non erano quello
+che il nome suggeriva:
+
+| funzione | firma letta dal prologo |
+| --- | --- |
+| `phy_reg_write_array(pi, array, n)` | `a1` e' un PUNTATORE, `a2` il conteggio (`blez a2` esce). Nessun indirizzo. Dentro chiama `phy_reg_and` & co., quindi e' un marcatore e le singole scritture arrivano dagli hook a 16 bit |
+| `phy_reg_write_wide(pi, val)` | nessun indirizzo: registro fisso, valore in `a1` |
+| `phy_reg_read_wide(pi)` | nessun argomento utile, valore nel `RETVAL` |
+| `wlc_bmac_write_ihr(hw, off, val)` | `off=a1`, `val=a2`; `a3` non esiste |
+| `wlc_bmac_set_shm(hw, off, val, len)` | `off=a1`, `val=a2`, `len=a3` |
+| `wlc_bmac_set_addrmatch(hw, idx, addr)` | `idx=a1`, `a2` e' un puntatore. Branch alla parola 2 -> **short-j** |
+
+Registrare un puntatore in un campo `addr=` non e' un dettaglio: chi legge la
+traccia lo prende per un indirizzo di registro.
+
+Un candidato che non si aggancia non fa danno: `pianifica()` se ne accorge dal
+prologo e lo salta con un `pr_warn`, quindi il costo di provarne uno e' un
+avviso nel log.
+
+I codici op sono gli stessi numeri nei due tracer e `decode-wl-diag.py` non
+distingue le versioni: aggiungendone uno va aggiunto in coda a entrambi gli
+enum, con lo stesso valore.
+
+### Caldo/freddo: armamento dinamico su entrambi i kernel
+
+Entrambi i tracer emettono i `MARK` -- l'etichetta di ciclo da
+`echo "ch36 bw20" > /proc/wl_diag`, piu' `mod COMING` e `mod GOING` sulle
+notifiche di modulo -- quindi una traccia si taglia in segmenti con
+`split_by_mark.py`.
+
+E entrambi riarmano: `COMING` rifa' il piano e applica le patch, `GOING`
+ripristina, senza eccezioni. Serve per la cattura a freddo, dove ogni ciclo e'
+un `rmmod` piu' un `insmod` del bersaglio, e il piano va rifatto perche' al
+ricaricamento gli indirizzi cambiano.
+
+L'ordine delle notifiche in 2.6.30 lo permette, ed e' lo stesso del 3.4 --
+verificato su `kernel/module.c` dei due:
+
+| | 2.6.30 | 3.4 |
+| --- | --- | --- |
+| `init_module()` | `load_module()`, poi `COMING`, poi `mod->init` | idem |
+| testo scrivibile a `COMING` | sempre: `set_section_ro_nx` non esiste | si', ma stretto: gira subito DOPO `COMING` |
+| `delete_module()` | `mod->exit()`, poi `GOING`, poi `free_module()` | idem |
+
+Quindi a `COMING` le rilocazioni sono applicate e il driver non e' ancora
+partito, e a `GOING` il testo e' ancora mappato: l'armamento cade in una
+finestra buona da entrambe le parti, e su 2.6.30 non c'e' nemmeno la finestra
+RO da rispettare.
+
+Nessuno dei due tiene un riferimento sul bersaglio: `rmmod wl` deve poter
+riuscire. La sicurezza viene dal disarmo al `GOING`.
+
 ## Parametri
 
 | param | default | effetto |

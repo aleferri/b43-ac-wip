@@ -24,9 +24,119 @@ la ricava dalle fingerprint del sorgente corrente invece di fidarsi di un
 commento che nessuno riallinea.
 
 d6220 e agcombo: bring-up radio coperto integralmente, gap 0%. Le divergenze
-sono tutte sul DSL (wl 6.30) e sono i punti aperti sotto.
+sono tutte sul DSL (wl 6.30).
+
+## Il DSL non e' un oracolo
+
+Il bersaglio del port e' il d6220, e il confronto si fa contro le sue catture.
+Il DSL-3580L serve per una cosa sola: gira wl 6.30 su kernel 2.6.30, quindi
+espone percorsi che sulle catture d6220 non si vedono -- non perche' il d6220
+non li faccia, ma perche' quando sono state prese gli hook non c'erano. Quello
+che se ne ricava si porta nel driver e poi si torna sul d6220.
+
+Percio' le divergenze del DSL elencate sotto NON sono debito del port verso
+quella board: sono differenze di versione o di taratura, e stanno qui come
+contesto. Nessun punteggio si misura sul DSL, e i suoi segmenti non vanno usati
+come oracolo -- fra l'altro la fase probe la' non mostra i marcatori
+`PHY.MOD 0x0520` e `PHY.RD 0x07af` che sul d6220 ci sono, e non e' una cosa da
+capire: e' una board che non stiamo portando.
 
 ## Punti aperti
+
+- **MAC filter e address match sull'AC — chiuso, `patches/0011`.** Dalla
+  cattura a freddo del DSL-3580L (kernel 2.6.30, wl 6.30.102.7):
+
+  `wlc_bmac_set_addrmatch` -- la funzione che scrive la porta MACFILTER
+  `0x0420`/`0x0422` -- era fra gli hook armati e **non ha sparato una volta** in
+  un bring-up completo. Quella porta non viene scritta.
+
+  Al suo posto la address match table, e nella traccia si vede tutta:
+  `wlc_bmac_write_amt` su tutte le 64 voci durante il core init, due passate,
+  poi `idx=0x3e a3=0x8002` (BSSID) e `idx=0x3f a3=0x8008` (station address).
+  `wlc_bmac_set_rcmta` chiama `write_amt` al suo interno, che e' perche' le due
+  classi compaiono interlacciate voce per voce.
+
+  Il formato della voce: routing `B43_SHM_RCMTA`, due word a `idx * 2`, byte
+  basso dell'indirizzo per primo, e i flag nella meta' alta della seconda word
+  -- `0x8000` = valida. E' lo stesso impacchettamento che `keymac_write()` usa
+  da sempre in quello spazio; l'unica differenza e' che la seconda word va
+  scritta a 32 bit per portarci i flag. Confermato per costruzione: le tre
+  half-word che ne escono per un MAC noto sono le stesse che `wl` scrive nella
+  copia in shared memory della voce qui sotto.
+
+  Il gate e' `core_rev >= 42`, ed e' confrontabile direttamente con le
+  catture: il valore che il driver mette in `B43_SHM_SH_WLCOREREV` e' quello
+  stesso campo, e vale `0x2a` su tutte e tre le board -- d6220, DSL-3580L e
+  agcombo. La 41 non l'abbiamo mai vista e sotto e' non testato, quindi resta
+  la porta MACFILTER: sbagliare il confine verso il basso lascerebbe il filtro
+  RX non programmato, sbagliarlo verso l'alto lascia le cose come sono oggi.
+
+- **L'indirizzo MAC in shared memory a `0x078c-0x0790`.** `wl` scrive tre word
+  la', e sono i sei byte del MAC col byte basso di ogni coppia per primo -- lo
+  stesso impacchettamento di `b43_macfilter_set()`. I valori combaciano col
+  `macaddr` di NVRAM di due board: `00:00:00:00:00:03` sul d6220 da'
+  `0x0000/0x0000/0x0300`, `00:c0:02:01:07:24` sull'agcombo da'
+  `0xc000/0x0102/0x2407`. Il `sel` e' zero sulla cattura agcombo, che lo porta,
+  quindi la destinazione e' shared memory.
+
+  b43 quelle celle non le tocca. `patches/0010` aggiunge
+  `b43_shm_macaddr_set()` accanto alla scrittura MACFILTER in
+  `b43_upload_card_macaddress()`, gatata su `B43_PHYTYPE_AC`, con
+  `B43_SHM_SH_AC_MACADDR` in `b43.h`; il doppione nell'harness e'
+  `emit_core_shm_macaddr()` in `test/main.c`, col MAC nel profilo di board. La
+  scrittura e' additiva e non disturba la porta MACFILTER.
+
+  Aperto: se all'ucode serva, e in che rapporto stia con la voce sopra. Nella
+  traccia cade prima del punto in cui b43 chiama
+  `b43_upload_card_macaddress()`.
+
+- **Config MAC/ucode del core b43 all'attach — 1250 op, il pezzo piu' grosso
+  che resta.** L'obiettivo e' che b43 emetta una-per-una tutte le op di `wl`,
+  quindi queste non sono fuori perimetro: sono debito, e vanno scritte nel core
+  (`main.c`, `xmit.c`) come patch della serie, non nel PHY.
+
+  Sul segmento `cold01` dello sweep a freddo, misurato senza perimetro:
+
+  | episodio | op | contenuto |
+  |---|---|---|
+  | `#12243` | 583 | `OBJ.WR` x550: init della shared memory del MAC |
+  | `#12860` | 129 | tabelle rate lette, key index block, `0x8ec-0x94a`, 12 RMW a `0x99a-0xa8e` |
+  | `#13540` | 94 | continuazione della config MAC |
+  | `#14085` | 73 | idem |
+  | `#14170` | 68 | idem |
+  | `#30735` | 123 | `OBJ.WR` x97 + 4 `TPL.RAMW`, prima della fase probe |
+
+  **Buona parte di `b43_wireless_core_init` la fa gia'.** Su `cold01` le op
+  `#649-#658` sono `MAXBFRAMES`, `ANTSWAP`, `WLCOREREV`, `MACHW_L`/`MACHW_H`,
+  `BTL0`, `BTSFOFF`, `SFFBLIM=3`, `LFFBLIM=2`, e b43 le emette tutte in
+  `b43_wireless_core_init` con gli stessi valori. Mancano dal confronto solo
+  perche' l'harness compila `src/` e non `main.c`. Prima di scrivere codice
+  nuovo per questo blocco va guardato op per op quanto e' gia' coperto: la
+  stima di 1250 op di debito e' con ogni probabilita' gonfiata.
+
+  Il blocco `#12860` e' configurazione, non raccolta di statistiche: con un
+  tick del watchdog condivide solo le celle dei contatori, una passata invece
+  di due, e per il resto scrive 16 word a `0x92c-0x94a` con valori tipo
+  `0x3475`/`0x217c`. E' identico sull'agcombo, quindi non e' taratura di board.
+
+  Perche' e' portabile. Il port carica il firmware 784.2, lo stesso di `wl` e
+  preso da `wl`, quindi la mappa della shared memory sopra `0x0700` e' quella
+  che quei valori assumono. Il firmware open non regge l'AC, e adattarlo e' un
+  lavoro a se'.
+
+  Attenzione a un tranello di nomenclatura: `OBJ.WR 0x0910` qui e' shared
+  memory, **non** il registro PHY `0x0910` del banco CRS di questo stesso
+  documento. Spazi di indirizzamento diversi, stesso numero.
+
+- **OTP e SROMCTL all'attach — verificare contro `patches/0001`, poi SKIP.**
+  Tre op su `cold01` (`SROMCTL.RD`, `OTP.RDW`, `OTP.INIT` a `#548-#551`), in
+  mezzo alla sequenza analogica. Le emette il codice srom di bcma, che
+  `patches/0001` tocca per aggiungere l'estrazione rev 11. Da verificare che
+  siano esattamente quelle che la patch produce; se lo sono lo skip e'
+  definitivo e la finestra del confronto va fatta partire dopo, altrimenti e'
+  un buco della patch.
+
+  Meno urgenti, stessa natura: `MAC.MHF.RD` a `#13537` (`b43_hf_read()`, che nel core c'e' gia'), le 19 `TPL.RAMW` e la `CAL.INIT`.
 
 - **prefregs_init sul DSL — due scritture in meno.** Il DSL salta `RAD 0x065e`
   (e una seconda scrittura poco dopo); il resto della sequenza è identico, solo
@@ -195,10 +305,32 @@ inaffidabile
 - **coefficiente RX-LPF (221/222, 215/216).** Fitta due campioni (d6220,
   agcombo); serve un terzo `lpf_cap0` (altro canale 5G) per disambiguare —
   vedi `txlpf-formula.md`.
-- **accessor vendor.** Verificare col `/proc/kallsyms` del DSL riflashato che
-  `hooks[]` copra tutti gli accessor: cercare `phy_reg_write_list`,
-  `wlc_phy_write_regs*`, varianti `write_radio_reg_*`. Se esistono e non sono
-  hookati, le catture sono cieche su quelle op.
+- **accessor vendor — parzialmente chiuso.** L'accessor che questo punto
+  cercava sotto il nome `phy_reg_write_list` esiste e si chiama
+  `phy_reg_write_array`: e' `GLOBAL` in entrambi i blob ed e' ora agganciato,
+  insieme a `phy_reg_read_wide`/`phy_reg_write_wide` (accesso PHY a 32 bit),
+  `wlc_bmac_write_ihr` (gli Indirect Hardware Registers del core d11) e
+  `wlc_bmac_set_shm` (scrittura mascherata in shared memory). Nessuno dei
+  cinque era coperto, quindi finora le catture erano cieche su quelle op.
+
+  Le firme sono lette dai prologhi dell'oggetto 6.30 con
+  `reverse-tools/mipsdis.py --prologo`, e quattro su sei non erano quello che il
+  nome suggeriva -- `phy_reg_write_array` prende un puntatore e un conteggio,
+  non un indirizzo; i due `_wide` non hanno indirizzo affatto. Tabella in
+  `reverse-tools/wl-diag/README.md`.
+
+  Restano da cercare, e non sono in questi due blob con questi nomi:
+  `wlc_phy_write_regs*` e varianti `write_radio_reg_*`. Da verificare col
+  `/proc/kallsyms` del DSL riflashato, che elenca anche cio' che il blob non
+  chiama per nome.
+
+  **Uno accertato mancante: `wlc_bmac_set_addrmatch`.** Programma i registri
+  RXE di match dell'indirizzo con una write diretta sulla finestra del core
+  d11 (`rcm_ctl`, `rcm_mat_data`, cioe' `0x0420`/`0x0422`), quindi non passa
+  ne' da objmem ne' da `si_corereg` e nessun hook attuale la vede. Firma come
+  `wlc_bmac_mctrl`: `(hw, int match_reg_offset, const u8 *addr)`, offset in
+  a1. Serve a decidere il punto aperto sull'indirizzo MAC in shared memory
+  qui sopra -- se `wl` scriva una strada, l'altra o entrambe.
 
   **Confine.** Si intercettano gli accessor di **I/O hardware**, non la logica
   interna del driver: la traccia deve restare un'osservazione del dispositivo.

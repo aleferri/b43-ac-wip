@@ -15,6 +15,23 @@ Uso:
 Il segmento parte DAL marcatore, cosi' "mod COMING" e l'attach che segue stanno
 nello stesso file dell'etichetta di canale che li precede. Quello che viene
 prima del primo MARK va in `00-preambolo.txt` invece di essere buttato.
+
+Un'etichetta non garantisce un ciclo. Nello sweep a freddo del d6220 la prima
+`ch36 bw20` compare tre volte prima che un attach arrivi in fondo: la prima
+inquadra solo lo snapshot GPIO del tracer e un `mod GOING`, la seconda un
+insmod interrotto dopo 170 op, la terza il ciclo vero. Tagliare su ognuna da'
+due file che non sono cicli e sfasa la numerazione di due rispetto ai canali.
+
+--solo-bringup tiene fra i segmenti numerati solo quelli in cui il bring-up
+arriva alla radio, e mette gli altri in `00-scartati.txt` senza perderli. La
+numerazione torna cosi' a seguire i canali.
+
+Il criterio e' la presenza di op RAD, non di op PHY, e la differenza conta:
+l'insmod interrotto del d6220 emette dieci scritture PHY (0xa5-0xa7, 0x8f,
+0x78) ma zero RAD, mentre ogni ciclo vero ne ha circa 1710. Quelle scritture
+PHY sono del core, non del driver PHY -- e' lo stesso motivo per cui la prima
+op PHY di un segmento non e' un buon punto di partenza per il confronto.
+Neanche una soglia di dimensione andrebbe: sarebbe scelta a occhio.
 """
 import argparse
 import os
@@ -46,6 +63,9 @@ def main():
     ap.add_argument("--prefix", default="", help="prefisso dei nomi di file")
     ap.add_argument("--skip-mod", action="store_true",
                     help="taglia anche sui MARK 'mod COMING'/'mod GOING'")
+    ap.add_argument("--solo-bringup", action="store_true",
+                    help="numera solo i segmenti con almeno una op PHY; gli "
+                         "altri vanno in 00-scartati.txt")
     a = ap.parse_args()
 
     os.makedirs(a.outdir, exist_ok=True)
@@ -83,6 +103,33 @@ def main():
         print("Se la cattura viene da capture_plan.sh (sweep a caldo) il tool "
               "giusto e' split_by_chanspec.py.", file=sys.stderr)
         return 1
+
+    if a.solo_bringup:
+        RE_RAD = re.compile(r"\bRAD\.(RD|WR|MOD|AND|OR)\b")
+        buoni, scartati = [], []
+        for nome, righe in segmenti:
+            if nome.startswith("00-") or any(RE_RAD.search(r) for r in righe):
+                buoni.append((nome, righe))
+            else:
+                scartati.append((nome, righe))
+        # rinumera, cosi' i numeri seguono i canali e non le etichette spurie
+        rinum = []
+        k = 0
+        for nome, righe in buoni:
+            if nome.startswith("00-"):
+                rinum.append((nome, righe))
+                continue
+            k += 1
+            rinum.append((re.sub(r"^\d+-", f"{k:02d}-", nome), righe))
+        segmenti = rinum
+        if scartati:
+            dest = os.path.join(a.outdir, a.prefix + "00-scartati.txt")
+            with open(dest, "w", encoding="utf-8") as g:
+                for nome, righe in scartati:
+                    g.write(f"### {nome}: nessuna op RAD, non e' un bring-up\n")
+                    g.writelines(righe)
+            print(f"{dest}: {len(scartati)} segmenti senza op RAD "
+                  f"({', '.join(n for n, _ in scartati)})")
 
     for nome, righe in segmenti:
         dest = os.path.join(a.outdir, a.prefix + nome if a.prefix else nome)

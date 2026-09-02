@@ -68,6 +68,9 @@ struct board_profile {
 	/* R2069_RCCAL_G (radio 0x0416), read post-apply: dacbuf_cap =
 	 * (rccal_g & 0x03e0) >> 5. Per-board analog measurement. */
 	u16 rccal_g;
+	/* macaddr dell'NVRAM. Lo consuma emit_core_shm_macaddr(), che sta in
+	 * piedi per il core: e' dato di board, non una costante. */
+	u8 macaddr[6];
 };
 
 /*
@@ -80,6 +83,8 @@ struct board_profile {
  */
 static const struct board_profile PROFILE_D6220 = {
 	.name = "d6220", .chip_id = 0x4352, .radio_rev = 4,
+	/* macaddr=00:00:00:00:00:03 (wl1_nvram.txt) */
+	.macaddr = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x03 },
 	.radio_ver = 0x2069, .phy_rev = 1,
 	.num_cores = 3, .coremask = 0x3, .rxchain = 3,
 	.subband5gver = 0x4,
@@ -120,6 +125,8 @@ static const struct board_profile PROFILE_D6220 = {
 
 static const struct board_profile PROFILE_AGCOMBO = {
 	.name = "agcombo", .chip_id = 0x4360, .radio_rev = 4,
+	/* macaddr=00:c0:02:01:07:24 (agcombo_nvram.txt) */
+	.macaddr = { 0x00, 0xc0, 0x02, 0x01, 0x07, 0x24 },
 	/*
 	 * Blocco FEM/PA sintetizzato dalla NVRAM agcombo con le maschere
 	 * canoniche (SROM11_FEM_CFG1/2): femctrl=6 pdgain=10 tssiposslope=1,
@@ -238,8 +245,12 @@ static void plan_rxiq_poll(const char *board, bool first_init)
 	b43_test_plan_phy_reads(0x0270, plan, n);
 }
 
+/* Profilo montato, per i pochi punti che servono a modellare il core. */
+static const struct board_profile *g_profile;
+
 static void mount_board(const struct board_profile *p)
 {
+	g_profile = p;
 	memset(&g_ac, 0, sizeof(g_ac));
 	g_ac.num_cores  = p->num_cores;
 	g_ac.coremask   = p->coremask;
@@ -448,18 +459,25 @@ static void mount_board(const struct board_profile *p)
 	/*
 	 * Probe-phase deadline and the ticks the watchdog lands on. In a live
 	 * driver these come from jiffies and from the watchdog work; here the
-	 * flow declares them. The defaults are the two captures: attach runs
-	 * 15 ticks with the watchdog at 10, a later cycle 19 ticks with it at
-	 * 5 and 15.
+	 * flow declares them.
+	 *
+	 * The cold defaults come from the 26 segments of the d6220 cold sweep
+	 * that reach the phase: the watchdog fires on tick 9 in all 26, and on
+	 * tick 19 in every segment whose deadline reaches that far -- one timer
+	 * with a period of ten, the warm pair 5 and 15 being the same period at
+	 * another phase. The deadline is clock jitter and spreads over 18 to 21,
+	 * so 19 here is only the commonest of the 26; a run against a specific
+	 * segment should take it from that segment, which
+	 * reverse-tools/probe_schedule.py reads off the timestamps.
 	 */
 	{
 		const char *e = getenv("AC_PROBE_TICKS");
 		const char *w = getenv("AC_WATCHDOG_TICKS");
 
 		if (g_wldev.phy.do_full_init) {
-			g_ac.probe_ticks = 15;
-			g_ac.probe_watchdog_tick[0] = 10;
-			g_ac.probe_watchdog_tick[1] = 0xffff;
+			g_ac.probe_ticks = 19;
+			g_ac.probe_watchdog_tick[0] = 9;
+			g_ac.probe_watchdog_tick[1] = 19;
 		} else {
 			g_ac.probe_ticks = 19;
 			g_ac.probe_watchdog_tick[0] = 5;
@@ -1127,9 +1145,45 @@ static void run_switch_channel(void)
  * Bring-up continuo, nell'ordine di b43_phy_init(): switch_analog(true) ->
  * software_rfkill(false) -> ops->init -> switch_channel.
  */
+/*
+ * Doppione di b43_shm_macaddr_set() di patches/0010, che vive in main.c del
+ * core e che l'harness non compila.
+ *
+ * Sta qui e non in src/ perche' NON e' codice del PHY: se finisse la' sarebbe
+ * un errore di attribuzione. La forma e i valori sono gli stessi della patch --
+ * tre word a 0x078c, byte basso di ogni coppia per primo -- cosi' se la patch
+ * cambia questo diventa sbagliato e il confronto lo dice.
+ *
+ * Il PUNTO in cui viene chiamato e' quello di wl (subito dopo i limiti di
+ * ritrasmissione in core init), non quello di b43, che chiama
+ * b43_upload_card_macaddress() piu' tardi. E' la stessa licenza che l'harness
+ * si prende altrove nel modellare l'ordine del core, e la riconciliazione dei
+ * due ordini e' in docs/retrace-todo.md: qui serve a far avanzare il confronto
+ * oltre queste tre op, non a dimostrare che b43 le emette nel posto giusto.
+ */
+static void emit_core_shm_macaddr(const struct board_profile *p)
+{
+	unsigned int i;
+
+	for (i = 0; i < 6; i += 2)
+		b43_shm_write16(&g_wldev, B43_SHM_SHARED, (u16)(0x078c + i),
+				(u16)(p->macaddr[i] | (p->macaddr[i + 1] << 8)));
+}
+
 static void run_full(void)
 {
+	/*
+	 * Manca la scrittura del chanspec in shared memory (OBJ.WR 0x00a0), che
+	 * il flow `down` fa e questo no. Non e' una riga da aggiungere qui: la
+	 * cattura la mette a #691, dopo le due unita' AFE dell'attach e la
+	 * config MAC del core, mentre questo flow apre con una sola
+	 * switch_analog e il suo prologo save-gain. Metterla in testa la
+	 * piazza nel posto sbagliato -- provato. Va risolta insieme
+	 * all'ordinamento della testa dell'attach, cioe' alla doppia
+	 * programmazione dell'analogico di docs/retrace-todo.md.
+	 */
 	b43_phyops_ac.switch_analog(&g_wldev, true);
+	emit_core_shm_macaddr(g_profile);
 	run_rfkill();
 	run_op_init();
 	/*

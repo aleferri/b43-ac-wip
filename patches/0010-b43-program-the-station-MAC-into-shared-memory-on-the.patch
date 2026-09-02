@@ -1,0 +1,88 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alessandro Ferri <aleferri@example.invalid>
+Date: Tue, 2 Sep 2026 12:00:00 +0200
+Subject: [PATCH 10/10] b43: program the station MAC into shared memory on the
+ AC PHY
+
+The OEM driver writes the station address into three shared-memory words
+at 0x078c-0x0790. The values are the six address bytes with the low byte
+of each pair first, which is the packing b43_macfilter_set() already uses
+for the MACFILTER port, and they match the boards' NVRAM macaddr:
+00:00:00:00:00:03 on the Netgear D6220 gives 0x0000/0x0000/0x0300 and
+00:c0:02:01:07:24 on a BCM4360 board gives 0xc000/0x0102/0x2407. The
+routing selector is zero on the capture that carries it, so the
+destination is shared memory and not one of the other regions behind the
+same object-memory port.
+
+b43 has never touched those cells. It programs the address only through
+the MACFILTER port, which is a different mechanism, so this copy is
+simply missing.
+
+The write is additive and gated on the AC PHY: it fills cells b43 leaves
+alone and does not disturb the MACFILTER path. What the microcode does
+with them, and whether the MACFILTER port is still the right one on this
+core at all, has not been established; a capture with the address-match
+accessors traced will say.
+
+Placed next to the MACFILTER write so the two stay together. The OEM
+emits its copy earlier than b43_upload_card_macaddress() runs; b43's core
+init has a different order and reconciling the two is separate work.
+
+Signed-off-by: Alessandro Ferri <aleferri@example.invalid>
+---
+ drivers/net/wireless/broadcom/b43/b43.h  |  2 ++
+ drivers/net/wireless/broadcom/b43/main.c | 22 ++++++++++++++++++++++
+ 2 files changed, 24 insertions(+)
+
+diff --git a/drivers/net/wireless/broadcom/b43/b43.h b/drivers/net/wireless/broadcom/b43/b43.h
+index c0d8fc0..ef62dbb 100644
+--- a/drivers/net/wireless/broadcom/b43/b43.h
++++ b/drivers/net/wireless/broadcom/b43/b43.h
+@@ -310,6 +310,8 @@ enum {
+ #define B43_SHM_SH_PRTLEN		0x004A	/* Probe Response template length */
+ #define B43_SHM_SH_PRMAXTIME		0x0074	/* Probe Response max time */
+ #define B43_SHM_SH_PRPHYCTL		0x0188	/* Probe Response PHY TX control word */
++/* SHM_SHARED station address, AC PHY: three words, low byte first */
++#define B43_SHM_SH_AC_MACADDR		0x078C
+ /* SHM_SHARED rate tables */
+ #define B43_SHM_SH_OFDMDIRECT		0x01C0	/* Pointer to OFDM direct map */
+ #define B43_SHM_SH_OFDMBASIC		0x01E0	/* Pointer to OFDM basic rate map */
+diff --git a/drivers/net/wireless/broadcom/b43/main.c b/drivers/net/wireless/broadcom/b43/main.c
+index 817448e..7707912 100644
+--- a/drivers/net/wireless/broadcom/b43/main.c
++++ b/drivers/net/wireless/broadcom/b43/main.c
+@@ -702,10 +702,32 @@ static void b43_write_mac_bssid_templates(struct b43_wldev *dev)
+ 	}
+ }
+ 
++/* Shared-memory copy of the station address, AC PHY only. Three words at
++ * B43_SHM_SH_AC_MACADDR, low byte of each address pair first, which is the
++ * same packing b43_macfilter_set() uses for the MACFILTER port. */
++static void b43_shm_macaddr_set(struct b43_wldev *dev, const u8 *mac)
++{
++	static const u8 zero_addr[ETH_ALEN] = { 0 };
++	unsigned int i;
++
++	if (dev->phy.type != B43_PHYTYPE_AC)
++		return;
++	if (!mac)
++		mac = zero_addr;
++
++	for (i = 0; i < ETH_ALEN; i += 2) {
++		u16 data = mac[i] | (mac[i + 1] << 8);
++
++		b43_shm_write16(dev, B43_SHM_SHARED,
++				B43_SHM_SH_AC_MACADDR + i, data);
++	}
++}
++
+ static void b43_upload_card_macaddress(struct b43_wldev *dev)
+ {
+ 	b43_write_mac_bssid_templates(dev);
+ 	b43_macfilter_set(dev, B43_MACFILTER_SELF, dev->wl->mac_addr);
++	b43_shm_macaddr_set(dev, dev->wl->mac_addr);
+ }
+ 
+ static void b43_set_slot_time(struct b43_wldev *dev, u16 slot_time)
+-- 
+2.43.0

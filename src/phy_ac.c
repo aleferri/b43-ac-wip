@@ -261,6 +261,7 @@ static void b43_phy_ac_pmu_req(struct b43_wldev *dev, bool on);
 static void b43_phy_ac_probe_cycle(struct b43_wldev *dev, unsigned int n_iter,
 				   bool extended_first, bool closes_sequence);
 static void b43_phy_ac_rxiqcal_measure_block(struct b43_wldev *dev);
+static void b43_phy_ac_wd_stats_clear(struct b43_wldev *dev);
 static void b43_phy_ac_farrow_setup(struct b43_wldev *dev,
 				    struct ieee80211_channel *channel);
 
@@ -2072,21 +2073,28 @@ static void b43_phy_ac_rx_evm_shaping_override(struct b43_wldev *dev);
  * The centre channel is the primary for a 20 MHz configuration and the middle
  * of the block otherwise: +2 channels at 40 MHz and +6 at 80, which is half
  * the bonded span.
+ *
+ * The values come from the chandef and not from the cal_* fields, which
+ * set_channel() fills: the vendor writes the chanspec at the head of the RF
+ * bring-up, before any channel setup has run, so at that point cal_* are still
+ * from the previous cycle or zero. The chandef is the same source set_channel()
+ * reads, and it is already valid when the core initialises the PHY.
  */
 void b43_phy_ac_write_chanspec(struct b43_wldev *dev)
 {
-	struct b43_phy_ac *ac = dev->phy.ac;
+	const struct cfg80211_chan_def *chandef = &dev->wl->hw->conf.chandef;
+	u16 chan = chandef->chan->hw_value;
 	u16 spec;
 
-	switch (ac->cal_width) {
+	switch (chandef->width) {
 	case NL80211_CHAN_WIDTH_80:
-		spec = B43_PHY_AC_CHANSPEC_BW80 | (ac->cal_channel + 6);
+		spec = B43_PHY_AC_CHANSPEC_BW80 | (chan + 6);
 		break;
 	case NL80211_CHAN_WIDTH_40:
-		spec = B43_PHY_AC_CHANSPEC_BW40 | (ac->cal_channel + 2);
+		spec = B43_PHY_AC_CHANSPEC_BW40 | (chan + 2);
 		break;
 	default:
-		spec = B43_PHY_AC_CHANSPEC_BW20 | ac->cal_channel;
+		spec = B43_PHY_AC_CHANSPEC_BW20 | chan;
 		break;
 	}
 
@@ -5076,6 +5084,17 @@ static void b43_phy_ac_op_software_rfkill(struct b43_wldev *dev, bool blocked)
 	}
 
 	/*
+	 * The chanspec heads the radio bring-up, and one position covers both
+	 * phases: on the cold attach it is the op immediately before the
+	 * radio prologue (cold03 #691, prologue at #692), and on a warm cycle
+	 * it lands immediately before the first op of b43_radio_2069_init().
+	 *
+	 * The harness also writes it from the `down` flow, which does not run
+	 * this function; the two must stay in step.
+	 */
+	b43_phy_ac_write_chanspec(dev);
+
+	/*
 	 * b43_phy_init drives us with blocked=false before ops->init, so
 	 * the core inventory must be probed here as well. Idempotent when
 	 * op_init has already run.
@@ -5180,6 +5199,15 @@ void b43_phy_ac_post_cal_finalize_iter3(struct b43_wldev *dev)
 	 * txpwrctrl rather than into another idle_tssi iteration.
 	 */
 	b43_phy_write(dev, 0x0339, 0x0fff);
+
+	/*
+	 * The RX suspend closes with the same clear of the statistics window
+	 * that a watchdog tick does: cold03 #15729-#15734, between the 0x0339
+	 * write above and the mac_suspend below. The counters have been
+	 * accumulating since the channel setup, and the probe phase that
+	 * follows reads the window on every tick.
+	 */
+	b43_phy_ac_wd_stats_clear(dev);
 
 	/*
 	 * Ensure the MAC is suspended without nesting. The write the stock
@@ -8313,28 +8341,73 @@ static u32 b43_phy_ac_wd_shm_read32x3(struct b43_wldev *dev, u16 lo_off)
 }
 
 /*
+ * Zero the six-word ucode statistics window.
+ *
+ * It is the clear half of the latch-and-clear: b43_phy_ac_wd_stats_tail()
+ * reads the window, this zeroes it, and without the zeroing the counters
+ * saturate. Note the asymmetry in the range -- the latch reads up to 0x0314,
+ * the clear stops at 0x0312 -- which is what every capture shows.
+ *
+ * Two callers, and they are not the same phase: the watchdog tick, where it
+ * follows the TSSI peek, and post_cal_finalize_iter3(), where it follows the
+ * RX suspend.
+ */
+static void b43_phy_ac_wd_stats_clear(struct b43_wldev *dev)
+{
+	u16 off;
+
+	for (off = 0x0308; off <= 0x0312; off += 2)
+		b43_shm_write16(dev, B43_SHM_SHARED, off, 0);
+}
+
+/*
  * Sampling phase: peek TSSI and status with the MAC suspended, zero the
  * statistics window, and change the measurement mode on 0x0520[3:2]. This is
  * the same continuous toggle as the probe cycle -- 0x0000 and 0x0004
  * alternating, never reset -- verified over 21 consecutive instances in the
  * sweep.
  */
-static void b43_phy_ac_wd_sample_phase(struct b43_wldev *dev)
+static void b43_phy_ac_wd_sample_phase_opt(struct b43_wldev *dev, bool peek,
+					   bool arm_tone)
 {
 	unsigned int k;
 
-	b43_mac_suspend(dev);
-	for (k = 0; k < ARRAY_SIZE(b43_phy_ac_probe_peek_regs); k++)
-		b43_phy_read_log(dev, b43_phy_ac_probe_peek_regs[k]);
-	b43_mac_enable(dev);
+	/*
+	 * Il peek e la coppia 0x0554/0x0555 sono opzionali perche' i tick della
+	 * fase probe non sono tutti uguali. Sul segmento cold01 i venti tick
+	 * hanno questa forma, letta marcatore per marcatore:
+	 *
+	 *   tick 0        poll, peek, 0x0554/0x0555, clear, mode
+	 *   tick 1 e 2    poll, latch, clear, mode              <- senza peek
+	 *   tick 3..18    poll, latch, peek, clear, mode        <- forma piena
+	 *   tick 9        come sopra, col measure block dopo il poll
+	 *   tick 19       poll, measure block, e la fase finisce
+	 *
+	 * Il tick periodico a regime e' la forma piena, ed e' quello che
+	 * b43_phy_ac_watchdog() emette.
+	 */
+	if (peek) {
+		b43_mac_suspend(dev);
+		for (k = 0; k < ARRAY_SIZE(b43_phy_ac_probe_peek_regs); k++)
+			b43_phy_read_log(dev, b43_phy_ac_probe_peek_regs[k]);
+		if (arm_tone) {
+			b43_phy_write(dev, 0x0554, 0x0bb8);
+			b43_phy_write(dev, 0x0555, 0x0bb8);
+		}
+		b43_mac_enable(dev);
+	}
 
-	for (k = 0; k < 6; k++)
-		b43_shm_write16(dev, B43_SHM_SHARED, (u16)(0x0308 + 2 * k), 0);
+	b43_phy_ac_wd_stats_clear(dev);
 
 	b43_mac_suspend(dev);
 	b43_phy_maskset(dev, 0x0520, (u16)~0x000c,
 			probe_mode_next(dev->phy.ac));
 	b43_mac_enable(dev);
+}
+
+static void b43_phy_ac_wd_sample_phase(struct b43_wldev *dev)
+{
+	b43_phy_ac_wd_sample_phase_opt(dev, true, false);
 }
 
 /* SHM statistics poll, with the MAC active. Order and repetitions are
@@ -8431,6 +8504,20 @@ static void b43_phy_ac_op_pwork_15sec(struct b43_wldev *dev)
 		return;
 
 	b43_phy_ac_watchdog(dev, true);
+}
+
+/*
+ * Whether the periodic watchdog fires on tick @tick of the probe phase.
+ *
+ * The caller supplies the ticks because the trace harness has no clock; see
+ * the probe loop in b43_phy_ac_rxiqcal_finalize() for what they are and how
+ * the sweep pins them down.
+ */
+static bool b43_phy_ac_watchdog_on_tick(const struct b43_phy_ac *ac,
+					unsigned int tick)
+{
+	return ac->probe_watchdog_tick[0] == tick ||
+	       ac->probe_watchdog_tick[1] == tick;
 }
 
 /*
@@ -8615,54 +8702,80 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 					  B43_PHY_AC_CRS_SITE_FINALIZE);
 	}
 
-	/* MAC.MCTRL toggle finale */
+	/*
+	 * Il MAC torna attivo e ci resta: la fase probe che segue apre ogni tick
+	 * col poll delle statistiche, che gira a MAC attivo, ed e' il tick a
+	 * sospenderlo per il peek e a riabilitarlo. Su cold01 wl emette qui una
+	 * sola abilitazione (#30918) e subito dopo il poll (#30919); una coppia
+	 * enable+suspend lascerebbe il MAC sospeso e sfaserebbe di un'op tutti
+	 * e venti i tick.
+	 */
 	b43_mac_enable(dev);
-	b43_mac_suspend(dev);
 
 	/*
 	 * Probe and measure sequence.
 	 *
-	 * This is not a schedule: the phase runs to a wall-clock deadline,
-	 * emitting one probe group per 1-second tick. The irregular first
-	 * group consumes three ticks rather than one -- it carries three mode
-	 * changes instead of one -- so a calibration that follows a channel
-	 * change ends up with exactly two groups fewer than one that repeats
-	 * the same channel.
+	 * Non e' una schedule: la fase corre a una scadenza di orologio ed
+	 * emette un tick per secondo. @probe_ticks e' la scadenza e
+	 * @probe_watchdog_tick i tick su cui cade il measure block; entrambi
+	 * vengono dal chiamante perche' l'harness non ha un clock. In un driver
+	 * vero la scadenza e' jiffies e il measure block appartiene al lavoro
+	 * periodico, non a qui.
 	 *
-	 * The d6220 sweep settles it. Over its 32 warm cycles the phase lasts
-	 * either 8.03 s or 9.03 s and nothing else, groups fall 1.004 s apart,
-	 * and groups = ticks - (channel changed ? 2 : 0) holds 32 times out of
-	 * 32. The two older captures fit the same rule with budgets of 15 and
-	 * 19 ticks, which are also their toggle counts.
+	 * Un tick e' un giro del watchdog periodico, non un blocco a se': poll
+	 * delle statistiche, latch della finestra, peek, clear e mode change.
+	 * Le stesse funzioni che b43_phy_ac_watchdog() chiama, nell'ordine in
+	 * cui questa fase le emette -- il tick a regime e' lo stesso ciclo
+	 * tagliato in un altro punto, non una sequenza diversa.
 	 *
-	 * The measure block that lands mid-phase is not part of this: it is
-	 * the periodic watchdog firing asynchronously. Its offset from the
-	 * start of the phase is always a whole second, and the cycles without
-	 * one line up with gaps of exactly two and three cycle periods.
+	 * I 26 segmenti a freddo del d6220 inchiodano il measure block: cade sul
+	 * tick 9 in tutti e 26, e sul tick 19 in ogni segmento la cui scadenza
+	 * arriva fin la'. Sono quindi un timer di periodo dieci, e la coppia
+	 * delle catture a caldo -- 5 e 15 -- e' lo stesso periodo a fase
+	 * diversa. Puo' cadere sul tick di chiusura, oltre l'ultimo tick della
+	 * fase, e allora quel tick porta solo il poll e il blocco.
 	 *
-	 * @probe_ticks is therefore a deadline and @probe_watchdog_tick the
-	 * tick the watchdog lands on; both come from the caller because the
-	 * trace harness has no clock. In a live driver the deadline is jiffies
-	 * and the measure block belongs to the watchdog work, not here.
+	 * Le irregolarita' dei primi tre tick sono in
+	 * b43_phy_ac_wd_sample_phase_opt(), che le documenta una per una.
 	 */
 	{
 		struct b43_phy_ac *ac = dev->phy.ac;
-		bool chan_changed = ac->last_cal_channel != ac->cal_channel;
 		unsigned int ticks = ac->probe_ticks;
-		unsigned int spent = 0;
-		bool irregular = chan_changed;
+		unsigned int tick;
 
-		while (spent < ticks) {
-			unsigned int cost = irregular ? 3 : 1;
+		for (tick = 0; tick < ticks; tick++) {
+			b43_phy_ac_wd_stats_poll(dev);
 
-			if (ac->probe_watchdog_tick[0] == spent ||
-			    ac->probe_watchdog_tick[1] == spent)
+			if (b43_phy_ac_watchdog_on_tick(ac, tick)) {
+				b43_mac_suspend(dev);
 				b43_phy_ac_rxiqcal_measure_block(dev);
+				b43_mac_enable(dev);
+			}
 
-			b43_phy_ac_probe_cycle(dev, 1, irregular,
-					       spent + cost >= ticks);
-			spent += cost;
-			irregular = false;
+			/*
+			 * Il primo tick non latcha: la finestra e' stata letta
+			 * poco sopra, prima del blocco CRS, e non ha avuto il
+			 * tempo di riempirsi.
+			 */
+			if (tick)
+				b43_phy_ac_wd_stats_tail(dev);
+
+			b43_phy_ac_wd_sample_phase_opt(dev,
+						       tick != 1 && tick != 2,
+						       tick == 0);
+		}
+
+		/*
+		 * Il tick di chiusura, quando la scadenza cade su un tick di
+		 * misura: porta il poll, il blocco e il latch, e poi la fase
+		 * finisce -- niente peek, clear o mode change.
+		 */
+		if (b43_phy_ac_watchdog_on_tick(ac, ticks)) {
+			b43_phy_ac_wd_stats_poll(dev);
+			b43_mac_suspend(dev);
+			b43_phy_ac_rxiqcal_measure_block(dev);
+			b43_mac_enable(dev);
+			b43_phy_ac_wd_stats_tail(dev);
 		}
 
 		ac->last_cal_channel = ac->cal_channel;

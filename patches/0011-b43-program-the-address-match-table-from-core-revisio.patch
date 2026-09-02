@@ -1,0 +1,232 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alessandro Ferri <aleferri@example.invalid>
+Date: Tue, 2 Sep 2026 23:30:00 +0200
+Subject: [PATCH 11/11] b43: program the address match table from core revision
+ 42
+
+b43_macfilter_set() writes the MACFILTER port at 0x0420/0x0422, and from
+802.11 core revision 42 that is not what the hardware reads. The address match
+table has taken its place: 64 rows in the receive-match shared-memory space
+b43 already knows as B43_SHM_RCMTA, two words each, with a flags half-word
+above the last two address bytes. The top two rows hold what the port used to
+-- 0x3f the station address and 0x3e the BSSID -- and 0x8000 in the flags says
+the row is live.
+
+So the station address and the BSSID go unprogrammed on those cores. That is
+not an omission against a reference trace, it is the receive filter not being
+set up.
+
+A cold capture from a BCM43b3, with the OEM driver's writer for that port among
+the traced functions, shows it never being entered: the hook is armed and does
+not fire once in a full bring-up. The same capture shows the table being used
+instead -- all 64 rows written during core init, then row 0x3f with flags
+0x8008 and row 0x3e with 0x8002.
+
+The row format is the one keymac_write() has always used for this space, low
+address byte first, one word pair per index. The only difference is the second
+word: writing it 16 bits wide, as that function did, leaves the flags at
+whatever they were, so it is now written 32 bits wide and the flags come from
+the caller. Key rows pass B43_AMT_KEEP_FLAGS, which reads the flags back and
+puts them in unchanged -- a key row has no business changing what is above its
+address.
+
+The row count follows the layout: 64 on the wide one, and the 50 pairwise keys
+below it, which is what B43_WARN_ON in keymac_write() now checks against.
+
+42 is the revision the captures report, on all three boards they come from, and
+the one on which that writer is never entered. 41 has not been seen and lower
+revisions are untested, so they keep the MACFILTER path: getting this boundary
+wrong downwards would leave the receive filter unprogrammed, while getting it
+wrong upwards only leaves things as they are today. The number is comparable
+with what the captures show directly, since the value the driver puts in
+B43_SHM_SH_WLCOREREV is this same field.
+
+Signed-off-by: Alessandro Ferri <aleferri@example.invalid>
+---
+ drivers/net/wireless/broadcom/b43/b43.h  |  11 +++
+ drivers/net/wireless/broadcom/b43/main.c | 124 ++++++++++++++++++++++++++-----
+ 2 files changed, 119 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/net/wireless/broadcom/b43/b43.h b/drivers/net/wireless/broadcom/b43/b43.h
+index c0d8fc0..bdf715a 100644
+--- a/drivers/net/wireless/broadcom/b43/b43.h
++++ b/drivers/net/wireless/broadcom/b43/b43.h
+@@ -399,6 +399,17 @@ enum {
+ #define B43_MACFILTER_SELF		0x0000
+ #define B43_MACFILTER_BSSID		0x0003
+ 
++/* Address match table, wide layout (802.11 core revision >= 42). Same routing
++ * as the older receive-match table, B43_SHM_RCMTA, two words per row. The top
++ * two rows replace the MACFILTER port, and the flags half-word above the
++ * address says the row is live and what it matches. */
++#define B43_AMT_WIDE_ENTRIES		64
++#define B43_AMT_BSSID			0x3e
++#define B43_AMT_SELF			0x3f
++#define B43_AMT_F_VALID			0x8000
++#define B43_AMT_F_BSSID			(B43_AMT_F_VALID | 0x0002)
++#define B43_AMT_F_SELF			(B43_AMT_F_VALID | 0x0008)
++
+ /* PowerControl */
+ #define B43_PCTL_IN			0xB0
+ #define B43_PCTL_OUT			0xB4
+diff --git a/drivers/net/wireless/broadcom/b43/main.c b/drivers/net/wireless/broadcom/b43/main.c
+index 817448e..aa82bb8 100644
+--- a/drivers/net/wireless/broadcom/b43/main.c
++++ b/drivers/net/wireless/broadcom/b43/main.c
+@@ -662,6 +662,33 @@ void b43_macfilter_set(struct b43_wldev *dev, u16 offset, const u8 *mac)
+ 	if (!mac)
+ 		mac = zero_addr;
+ 
++	/*
++	 * On the wide layout this port is not what the hardware reads: the
++	 * address match table has taken over, and the two rows at the top of
++	 * it hold what the port used to. A capture with the OEM driver's writer
++	 * for this port traced shows it never being entered, while the table is
++	 * written throughout the bring-up.
++	 */
++	if (b43_amt_wide(dev)) {
++		u16 index, flags;
++
++		switch (offset) {
++		case B43_MACFILTER_SELF:
++			index = B43_AMT_SELF;
++			flags = B43_AMT_F_SELF;
++			break;
++		case B43_MACFILTER_BSSID:
++			index = B43_AMT_BSSID;
++			flags = B43_AMT_F_BSSID;
++			break;
++		default:
++			B43_WARN_ON(1);
++			return;
++		}
++		b43_amt_write(dev, index, mac, flags);
++		return;
++	}
++
+ 	offset |= 0x0020;
+ 	b43_write16(dev, B43_MMIO_MACFILTER_CONTROL, offset);
+ 
+@@ -846,9 +873,71 @@ static void key_write(struct b43_wldev *dev,
+ 	}
+ }
+ 
++/* Whether the address match table has the wide layout: 64 rows with a flags
++ * half-word, rather than the plain address rows the older cores take.
++ *
++ * 42 is the revision the captures report, on all three boards they come from,
++ * and the one on which the OEM driver's MACFILTER writer is never entered. 41
++ * has not been seen and lower revisions are untested, so they keep the old
++ * path: getting this boundary wrong downwards would leave the receive filter
++ * unprogrammed, while getting it wrong upwards only leaves things as they are
++ * today.
++ *
++ * The number is comparable with what the captures show directly: the value the
++ * driver puts in B43_SHM_SH_WLCOREREV is this same field. */
++static bool b43_amt_wide(struct b43_wldev *dev)
++{
++	return dev->dev->core_rev >= 42;
++}
++
++/*
++ * One entry of the address match table.
++ *
++ * Same routing and the same address packing keymac_write() has always used --
++ * B43_SHM_RCMTA, one word pair per index, low byte first -- with the flags
++ * half-word the AC cores keep above the last two address bytes. Passing
++ * B43_AMT_KEEP_FLAGS leaves the flags alone, which is what the callers that
++ * only set an address want.
++ *
++ * The entry is two words at index * 2. The second is written 32 bits wide so
++ * the flags go with it: writing 16 bits, as keymac_write() did, leaves
++ * whatever the flags were.
++ */
++#define B43_AMT_KEEP_FLAGS	0xffff
++
++/* Rows available for keys and matches. The wide layout has 64, and reserves the
++ * top two for the station address and the BSSID. */
++static u16 b43_amt_entries(struct b43_wldev *dev)
++{
++	return b43_amt_wide(dev) ? B43_AMT_WIDE_ENTRIES : B43_NR_PAIRWISE_KEYS;
++}
++
++static void b43_amt_write(struct b43_wldev *dev, u16 index, const u8 *addr,
++			  u16 flags)
++{
++	u32 lo = 0, hi = 0;
++
++	if (addr) {
++		lo = addr[0];
++		lo |= ((u32)addr[1] << 8);
++		lo |= ((u32)addr[2] << 16);
++		lo |= ((u32)addr[3] << 24);
++		hi = addr[4];
++		hi |= ((u32)addr[5] << 8);
++	}
++
++	if (flags == B43_AMT_KEEP_FLAGS)
++		hi |= b43_shm_read32(dev, B43_SHM_RCMTA,
++				     (index * 2) + 1) & 0xffff0000;
++	else
++		hi |= (u32)flags << 16;
++
++	b43_shm_write32(dev, B43_SHM_RCMTA, (index * 2) + 0, lo);
++	b43_shm_write32(dev, B43_SHM_RCMTA, (index * 2) + 1, hi);
++}
++
+ static void keymac_write(struct b43_wldev *dev, u8 index, const u8 *addr)
+ {
+-	u32 addrtmp[2] = { 0, 0, };
+ 	u8 pairwise_keys_start = B43_NR_GROUP_KEYS * 2;
+ 
+ 	if (b43_new_kidx_api(dev))
+@@ -861,22 +950,12 @@ static void keymac_write(struct b43_wldev *dev, u8 index, const u8 *addr)
+ 	 * So we must adjust the index here.
+ 	 */
+ 	index -= pairwise_keys_start;
+-	B43_WARN_ON(index >= B43_NR_PAIRWISE_KEYS);
+-
+-	if (addr) {
+-		addrtmp[0] = addr[0];
+-		addrtmp[0] |= ((u32) (addr[1]) << 8);
+-		addrtmp[0] |= ((u32) (addr[2]) << 16);
+-		addrtmp[0] |= ((u32) (addr[3]) << 24);
+-		addrtmp[1] = addr[4];
+-		addrtmp[1] |= ((u32) (addr[5]) << 8);
+-	}
++	B43_WARN_ON(index >= b43_amt_entries(dev));
+ 
+-	/* Receive match transmitter address (RCMTA) mechanism */
+-	b43_shm_write32(dev, B43_SHM_RCMTA,
+-			(index * 2) + 0, addrtmp[0]);
+-	b43_shm_write16(dev, B43_SHM_RCMTA,
+-			(index * 2) + 1, addrtmp[1]);
++	/* Receive match transmitter address (RCMTA) mechanism. Keep the flags:
++	 * on the wide layout the self and BSSID entries carry them, and a key
++	 * row has no business changing what is above its address. */
++	b43_amt_write(dev, index, addr, B43_AMT_KEEP_FLAGS);
+ }
+ 
+ /* The ucode will use phase1 key with TEK key to decrypt rx packets.
+@@ -4953,6 +5032,19 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
+ 	b43_bluetooth_coext_enable(dev);
+ 
+ 	b43_bus_powerup(dev, !(sprom->boardflags_lo & B43_BFL_XTAL_NOSLOW));
++	/*
++	 * Clear the whole address match table before anything is put in it. The
++	 * OEM driver does this from its own core init, all 64 rows, and it
++	 * matters because a row left over with its valid flag set matches an
++	 * address nobody asked for.
++	 */
++	if (b43_amt_wide(dev)) {
++		u16 i;
++
++		for (i = 0; i < B43_AMT_WIDE_ENTRIES; i++)
++			b43_amt_write(dev, i, NULL, 0);
++	}
++
+ 	b43_upload_card_macaddress(dev);
+ 	b43_security_init(dev);
+ 
+-- 
+2.43.0

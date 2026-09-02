@@ -27,7 +27,14 @@ Non modifica nessun file dello scratch.
   visibilità né dipendenze verso il framework.
 - **`compare.py`** normalizza una cattura wl-diag (rimuove timestamp,
   numero episodio, colonna cpu, unifica `PHY.OR`/`PHY.AND` a
-  `PHY.MOD`) e diffa contro l'output del test.
+  `PHY.MOD`) e diffa contro l'output del test. Applica anche il
+  **perimetro**, cioè scarta le op vendor che appartengono a codice fuori
+  dall'unità sotto test — shared memory del MAC, template RAM, OTP, SROM —
+  perché l'harness compila solo `src/` e non ha nessuno che le emetta. È il
+  default, non un'opzione: su ogni cattura in repo un confronto senza
+  perimetro si ferma sulla prima op del core. `--senza-perimetro` lo
+  disattiva per ispezionare una cattura, e il numero che ne esce non è una
+  misura del port. Le liste e i motivi sono in `PERIMETER` dentro il file.
 
 ## Read plans (mappa associativa scriptata)
 
