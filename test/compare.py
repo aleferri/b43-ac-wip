@@ -9,6 +9,7 @@ Usage:
     compare.py <vendor.txt> <test.out> [OPTIONS]
 
 --range LO:HI     keep only vendor lines whose episode # is within [LO,HI]
+--senza-perimetro confronta anche le op del core b43 (vedi PERIMETER)
 --auto-align     find the offset in <test> that best matches <vendor>[0]
                   by scanning for the first common op; useful when the
                   test flow does a prologue (save-gain, save-tone, ...)
@@ -139,6 +140,188 @@ def normalize_op(op: str) -> str:
     op = re.sub(r'^GPIO\.OUTEN\b', 'GPIO.OE', op)
     return canon_ws(canon_values(op))
 
+# ---------------------------------------------------------------------------
+# PERIMETRO: op che l'harness non puo' emettere, non op che non ci riguardano.
+#
+# L'obiettivo e' che b43 emetta una-per-una TUTTE le op di wl, comprese quelle
+# del core. Quindi questo non e' un elenco di cose fuori scopo: e' il limite
+# dell'harness, che compila solo src/ e non main.c ne' xmit.c ne' bcma. Cio' che
+# finisce qui e' debito, ed e' tracciato in docs/retrace-todo.md.
+#
+# Percio' il numero da guardare e' quello SENZA perimetro, e --senza-perimetro
+# e' il modo di ottenerlo. Il perimetro serve per una cosa sola: trovare la
+# prossima divergenza del PHY senza fermarsi sulla prima op del core. E' uno
+# strumento di navigazione, non un punteggio.
+#
+# Il criterio e' l'appartenenza: si scarta solo cio' di cui si puo' mostrare che
+# e' di qualcun altro. NON la raggiungibilita' da src/, che sarebbe degenere --
+# farebbe restringere il denominatore quando il port si restringe, e togliere
+# codice alzerebbe il punteggio.
+#
+# Le prove:
+#   CORE_SHM     nomi e blocchi di b43.h del kernel (drivers/net/wireless/
+#                broadcom/b43/b43.h); le dimensioni dei blocchi vengono da la'.
+#   TPL.RAMW     template RAM, che b43 scrive in
+#                b43_write_template_common() e
+#                b43_write_mac_bssid_templates().
+#   MAC.MHF.RD   b43_hf_read() sta nel core; in src/ non c'e' nessuna
+#                chiamata, e l'unico accesso del PHY e' mhf_maskset().
+#   OTP, SROMCTL codice srom di bcma.
+#
+# Cio' che NON e' qui, e resta contato contro di noi anche quando e' con ogni
+# probabilita' del core: i contatori 0x768-0x790, 0x7d6-0x7e6 e 0x10c-0x15e,
+# che b43.h non nomina perche' b43 non legge mai le statistiche, e le regioni
+# 0x8ec-0xa8e, 0x10f4-0x14b2, 0x0020, 0x018a-0x018c, 0x0eec. Spostarle qui
+# serve una prova, non un numero migliore.
+# ---------------------------------------------------------------------------
+CORE_SHM = [
+    (0x0000, 0x0006, "UCODEREV/PATCH/DATE/TIME"),
+    (0x0008, 0x0008, "PCTLWDPOS"),
+    (0x000e, 0x000e, "EDCFSTAT"),
+    (0x0010, 0x0012, "SLOTT/DTIMPER"),
+    (0x0016, 0x001e, "WLCOREREV/BTL0/BTL1/BTSFOFF/TIMBPOS"),
+    (0x0022, 0x0022, "ACKCTSPHYCTL"),
+    (0x0030, 0x0030, "TXFCUR"),
+    (0x0034, 0x0034, "RXPADOFF"),
+    (0x003c, 0x003e, "DEFAULTIV/NRRXTRANS"),
+    (0x0040, 0x004c, "UCODESTAT..NOSLPZNATDTIM"),
+    (0x0050, 0x0056, "PHYVER/PHYTYPE/BEACPHYCTL/KTP"),
+    (0x0058, 0x005a, "TSSI_CCK, 32 bit"),
+    (0x005c, 0x0066, "ANTSWAP/HOSTF1-3/RFATT/RADAR"),
+    (0x0068, 0x006a, "BT_BASE0 / TSSI_OFDM_A, 32 bit"),
+    (0x006e, 0x006e, "PHYTXNOI"),
+    (0x0070, 0x0072, "TSSI_OFDM_G / RFRXSP1, 32 bit"),
+    (0x0074, 0x0074, "PRMAXTIME"),
+    (0x0078, 0x0078, "HOSTF4"),
+    (0x0080, 0x0080, "MAXBFRAMES"),
+    (0x0088, 0x008a, "JSSI0/JSSI1"),
+    (0x0094, 0x009e, "SPUWKUP/PRETBTT/SIZE01..SIZE67"),
+    (0x00a8, 0x00a8, "MCASTCOOKIE"),
+    (0x00b0, 0x00b0, "EXTNPHYCTL"),
+    (0x00b6, 0x00b6, "BCN_LI"),
+    (0x00c0, 0x00c2, "MACHW_L/MACHW_H"),
+    (0x00d4, 0x00d4, "HOSTF5"),
+    (0x0100, 0x0100, "CHAN_5GHZ"),
+    (0x0108, 0x0108, "BCMCFIFOID"),
+    (0x0160, 0x017e, "PRSSID, SSID da 32 byte"),
+    (0x0180, 0x0186, "temporizzazioni probe response: non nominate in b43.h, "
+                     "ma b43 spegne l'offload con PRMAXTIME=1 e non le scrive "
+                     "mai. Vedi docs/retrace-todo.md"),
+    (0x0188, 0x0188, "PRPHYCTL"),
+    (0x01c0, 0x023e, "tabelle rate: OFDMDIRECT/BASIC, CCKDIRECT/BASIC"),
+    (0x0240, 0x02be, "EDCFQ, 4 code x 16 parametri"),
+    (0x0318, 0x05d3, "TKIPTSCTTAK, 50 voci da 14 byte"),
+    (0x05d4, 0x0648, "KEYIDXBLOCK, 58 chiavi"),
+]
+
+# Celle che b43.h nomina come del MAC ma che il PHY AC usa davvero, con la
+# citazione. Restano nel denominatore.
+#
+# Aggiungere una voce qui puo' solo abbassare il punteggio o lasciarlo dov'e',
+# mai alzarlo: tiene un'op vendor nel confronto, quindi se il port la emette
+# numeratore e denominatore crescono insieme, e se non la emette cresce solo il
+# denominatore. E' il verso sicuro, ed e' il motivo per cui questa lista non ha
+# bisogno della cautela che serve a CORE_SHM.
+PHY_ANCHE = [
+    (0x008c, 0x008c, "JSSIAUX per b43.h; la legge wd_stats_tail()"),
+    (0x00a0, 0x00a0, "CHAN per b43.h; e' B43_SHM_AC_CHANSPEC in "
+                     "src/phy_ac.h, e write_chanspec() la scrive"),
+]
+
+PERIMETER = [
+    dict(pattern=r'^OBJ\.(RD|WR) ', core_shm=True,
+         motivo="celle di shared memory che b43.h del kernel dichiara del "
+                "core. Sono le sole op OBJ che si scartano: il resto della "
+                "finestra resta nel denominatore anche quando e' con ogni "
+                "probabilita' del core, perche' non abbiamo una prova e "
+                "sbagliare in quel verso gonfierebbe il punteggio. Vedi il "
+                "blocco sopra per il criterio e per il motivo per cui non si "
+                "usa la raggiungibilita' da src/."),
+
+    dict(pattern=r'^TPL\.RAMW\b',
+         motivo="template RAM: i template dei frame, che b43 scrive in "
+                "b43_write_template_common() e in "
+                "b43_write_mac_bssid_templates(). Il PHY "
+                "non ne tocca nessuna cella."),
+
+    dict(pattern=r'^MAC\.MHF\.RD\b',
+         motivo="lettura nuda delle host flags. Il PHY non le legge mai da "
+                "solo: il suo unico accesso e' b43_phy_ac_mhf_maskset(), che "
+                "l'harness traccia come MAC.MHF con maschera, e in src/ non "
+                "c'e' nessuna chiamata a b43_hf_read(). Nel segmento compare "
+                "una volta sola, a #13537, in mezzo al blocco di config MAC "
+                "del core -- fra OBJ.WR 0x60 e la sospensione del MAC -- ed e' "
+                "b43_hf_read() di main.c."),
+
+    dict(pattern=r'^(OTP\.|SROMCTL\.)',
+         motivo="OTP e registro di controllo della SROM: le legge il codice "
+                "srom di bcma. Non sono fuori scopo -- bcma/sprom.c e' toccato "
+                "da patches/0001, che aggiunge l'estrazione rev 11 -- ma sono "
+                "fuori da src/, e l'harness monta il profilo di board "
+                "direttamente invece di leggere la SROM. Nell'attach a freddo "
+                "cadono in mezzo alla sequenza analogica, fra le dieci letture "
+                "di save e il banco AFE, quindi senza questa voce il confronto "
+                "posizionale si ferma la'.\n"
+                "TODO: verificare che le tre op del segmento (SROMCTL.RD, "
+                "OTP.RDW, OTP.INIT a #548-#551 su cold01) siano quelle che "
+                "patches/0001 gia' emette. Se lo sono, lo skip e' definitivo e "
+                "la finestra del confronto va fatta partire dopo -- e' a questo "
+                "che serve il --range di questo strumento. Se non lo sono, e' "
+                "un buco della patch."),
+
+    dict(pattern=r'^CAL\.INIT\b',
+         motivo="switch di forzatura delle calibrazioni del driver stock. In "
+                "questa build il record non porta ne' indirizzo ne' valore, "
+                "quindi non c'e' niente da riprodurre."),
+]
+
+
+ADDR = re.compile(r'\baddr=(0x[0-9a-f]+)')
+SPACE = re.compile(r'^([A-Z]+)\.')
+
+
+def _cella(op):
+    m = ADDR.search(op)
+    return int(m.group(1), 16) if m else None
+
+
+def _core_shm(op):
+    a = _cella(op)
+    if a is None:
+        return False
+    if any(lo <= a <= hi for lo, hi, _ in PHY_ANCHE):
+        return False
+    return any(lo <= a <= hi for lo, hi, _ in CORE_SHM)
+
+
+def apply_perimeter(ops):
+    """Togli le op vendor di cui si puo' mostrare che sono di altri.
+
+    Ritorna (dentro, scartate, celle). La terza voce e' l'insieme
+    (spazio, indirizzo) scartato: va guardata, non contata, perche' se una
+    cella del PHY finisse la' dentro il conto tornerebbe con l'omissione
+    nascosta.
+    """
+    out, dropped, keys = [], [], set()
+    for op in ops:
+        hit = None
+        for k, r in enumerate(PERIMETER):
+            if not re.search(r['pattern'], op):
+                continue
+            if r.get('core_shm') and not _core_shm(op):
+                continue
+            hit = k
+            break
+        if hit is None:
+            out.append(op)
+        else:
+            dropped.append((op, hit))
+            m, s = ADDR.search(op), SPACE.match(op)
+            if m and s:
+                keys.add((s.group(1), m.group(1)))
+    return out, dropped, keys
+
+
 VAL_TOK = re.compile(r'val=(?:0x[0-9a-fA-F]+|UNDEFINED)')
 
 RET_SUFFIX = re.compile(r'\s+ret=0x[0-9a-fA-F]+')
@@ -205,6 +388,16 @@ def main():
     ap.add_argument('--auto-align', action='store_true',
                     help='skip test prologue by aligning on vendor[0]')
     ap.add_argument('--align-on', help='align test on this exact op string')
+    ap.add_argument('--senza-perimetro', action='store_true',
+                    help='confronta ANCHE le op fuori dal perimetro del PHY. '
+                         'Il risultato non e\' una misura del port: si ferma '
+                         'sulla prima op del core b43, che l\'harness non '
+                         'compila. Serve per ispezionare una cattura, non per '
+                         'dare un numero')
+    ap.add_argument('--perimetro-addr', action='store_true',
+                    help='elenca le celle scartate dal perimetro: l\'insieme '
+                         'va guardato, perche\' una cella che il port dovrebbe '
+                         'toccare e non tocca finisce qui')
     args = ap.parse_args()
 
     rng = None
@@ -214,6 +407,17 @@ def main():
 
     vendor = load_vendor(args.vendor, rng)
     test = load_test(args.test)
+
+    if not args.senza_perimetro:
+        vendor, outside, keys = apply_perimeter(vendor)
+        print(f"fuori perimetro: {len(outside)} op vendor scartate su "
+              f"{len(keys)} celle dichiarate di altri; "
+              f"vedi PERIMETER in questo file")
+        if args.perimetro_addr:
+            for space in sorted({s for s, _ in keys}):
+                a = sorted((x for s, x in keys if s == space),
+                           key=lambda v: int(v, 16))
+                print(f"  {space}: " + " ".join(a))
 
     if args.align_on:
         off = find_offset(test, args.align_on)

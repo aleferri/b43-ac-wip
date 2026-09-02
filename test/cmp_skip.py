@@ -27,6 +27,7 @@ import importlib.util
 import re
 import sys
 
+
 # ---------------------------------------------------------------------------
 # Divergenze note, per board. Ogni voce:
 #   pattern  : regex sull'op vendor da saltare
@@ -196,13 +197,29 @@ def main():
     T = [canon(x) for x in t]
 
     eq0, nreg0, _ = lcs_stats(V0, T)
-    V1, skipped, used = apply_skips(V0, rules, args.verbose)
+    VP, outside, keys = C.apply_perimeter(V0)
+    eqp, nregp, _ = lcs_stats(VP, T)
+    V1, skipped, used = apply_skips(VP, rules, args.verbose)
     eq1, nreg1, diff1 = lcs_stats(V1, T)
 
     print(f"board {args.board}, finestra {lo}:{hi}\n")
-    print(f"SENZA eccezioni : {eq0}/{len(V0)} = {100.0 * eq0 / len(V0):.2f}%   {nreg0} regioni")
+    print("La riga che conta e' 'grezzo': op di wl riprodotte in ordine su")
+    print("TUTTE quelle di wl. 'nel perimetro' toglie cio' che l'harness non")
+    print("puo' emettere e serve a navigare, non a dare un punteggio: quel")
+    print("debito e' tracciato in docs/retrace-todo.md.\n")
+    print(f"grezzo          : {eq0}/{len(V0)} = {100.0 * eq0 / len(V0):.2f}%   {nreg0} regioni")
+    print(f"nel perimetro   : {eqp}/{len(VP)} = {100.0 * eqp / len(VP):.2f}%   {nregp} regioni")
+    print(f"                  {len(outside)} op fuori perimetro su "
+          f"{len(keys)} celle dichiarate di altri")
     print(f"CON  eccezioni  : {eq1}/{len(V1)} = {100.0 * eq1 / len(V1):.2f}%   {nreg1} regioni")
     print(f"                  {len(skipped)} op saltate su {len(rules)} regole\n")
+
+    for k, r in enumerate(C.PERIMETER):
+        n = sum(1 for _, h in outside if h == k)
+        print(f"  [perimetro {k}] {n} op" + ("  NON APPLICATA" if not n else ""))
+        for line in re.findall(r'.{1,72}(?:\s|$)', r['motivo']):
+            print(f"      {line.strip()}")
+        print()
 
     casc = False
     for k, r in enumerate(rules):

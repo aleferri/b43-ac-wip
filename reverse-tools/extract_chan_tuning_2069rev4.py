@@ -94,12 +94,12 @@ def main():
     c.close()
 
     m.write(f"# chan_tuning_2069rev4 — per-channel radio tuning (5 GHz, ch >= 34)\n\n")
-    m.write(f"Source: `{src}` (sha256 `{sha[:16]}...`). Table `{SYM}` "
-            f"(radio 2069 **rev4**, the DSL-3580L variant"
+    m.write(f"Source: `{src}` (sha256 `{sha[:16]}...`). Table `{SYM}`.\n\n")
     m.write(f"Entry = 58 u16: `[0]`=channel, `[1]`=freq(MHz), `[2..57]`=56 radio "
             f"raw values. {len(sel)} channels at freq >= {a.min_freq} MHz.\n\n")
-    m.write("Each channel below: the 45 **cluster1** writes "
-            "values (off 94..114) are listed raw.\n\n")
+    m.write("Each channel below: the 45 **cluster1** writes as "
+            "`radio[reg] <- value`, then the rev4 tail (off 94..114), whose "
+            "register targets are not identified, listed raw.\n\n")
     for u in sel:
         m.write(f"## ch {u[0]} ({u[1]} MHz)\n\n```\n")
         for o in offs:

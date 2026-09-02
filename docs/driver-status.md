@@ -33,6 +33,8 @@ sono un artefatto rigenerato.
 | — (bcma PMU init) | 0007 |
 | — (core TX/RX wiring, `xmit.c`/`main.c`) | 0008 |
 | — (bcma PCI bridge ID) | 0009 |
+| — (MAC in shared memory, AC) | 0010 |
+| — (address match table, corerev >= 42) | 0011 |
 
 Farrow e rxgain non hanno file dedicati: `b43_phy_ac_farrow_setup` e il
 blocco rxgain vivono come sezioni di `phy_ac.c` (patch 0006).

@@ -1,14 +1,27 @@
 #!/bin/sh
-# Cattura di init A FREDDO, un ciclo per canale. SOLO kernel 3.4.
+# Cattura di init A FREDDO, un ciclo per canale. Kernel 3.4 e 2.6.30.
 #
 # Presupposto: wl_diag caricato UNA volta e lasciato li'. Si arma da se' alla
-# notifica MODULE_STATE_COMING di `wl`, che nel 3.4 arriva prima di mod->init,
-# quindi il probe PCI e l'attach che ne segue cadono sotto gli hook senza
-# remove/rescan del device. Il lettore resta aperto per tutta la corsa, quindi
-# non ci sono pause: lo script gira anche sotto nohup.
+# notifica MODULE_STATE_COMING di `wl` e disarma al GOING, quindi il probe PCI e
+# l'attach che ne segue cadono sotto gli hook senza remove/rescan del device. Il
+# lettore resta aperto per tutta la corsa, quindi non ci sono pause: lo script
+# gira anche sotto nohup.
+#
+# L'ordine delle notifiche lo permette su entrambi i kernel, verificato su
+# kernel/module.c: load_module() finisce del tutto -- rilocazioni applicate,
+# add_kallsyms fatta, modulo in lista -- poi arriva COMING, poi mod->init;
+# in scaricamento gira mod->exit(), poi GOING, poi free_module().
 #
 # Sul device, una volta sola:
+#   sul 3.4:
 #     insmod /tmp/wl_diag.ko arm=1
+#   sul 2.6.30, dove kallsyms_lookup_name esiste ma non e' esportata ai moduli
+#   (l'export arriva in 2.6.33), le si passa l'indirizzo:
+#     A=$(awk '$3=="kallsyms_lookup_name"{print $1}' /proc/kallsyms)
+#     insmod /tmp/wl_diag.ko arm=1 klookup=0x$A
+#   reverse-tools/gen_syms.py costruisce quella riga da un dump di
+#   /proc/kallsyms, e dice in anticipo quali hook si risolveranno.
+#   poi, su entrambi:
 #     cat /proc/wl_diag | nc <HOST> 5555 &
 # sull'host:
 #     ncat -l 5555 | python3 decode-wl-diag.py | tee cold.txt
@@ -34,9 +47,8 @@
 # chiesto: e' il phy_init per-canale che si vuole, il preambolo di probe non
 # dipende dal canale.
 #
-# Su 2.6.30 la procedura non e' verificata: l'ordine delle notifiche di modulo
-# in quel kernel non e' stato controllato, e il rescan PCI la' scarica `wl` per
-# mano dello spazio utente del vendor.
+# Su 2.6.30 il rescan PCI scarica `wl` per mano dello spazio utente del vendor:
+# wl_diag non tiene un riferimento sul bersaglio proprio per non farlo fallire.
 #
 # ATTENZIONE: `wl` serve entrambi i core, quindi il rmmod porta giu' anche il
 # 2.4 GHz. Questa procedura si guida da seriale o da ethernet, non in wifi.

@@ -127,6 +127,10 @@ enum wldiag_op {
 	OP_CAL_INIT,					/* 38 (append) */
 	OP_MARK,					/* 39 (append) */
 	OP_CHANSPEC_SHM,				/* 40 (append) */
+	OP_MAC_OBJ_BULK_R, OP_MAC_OBJ_BULK_W,		/* 41,42 (append) */
+	OP_AMT_W, OP_RCMTA_W, OP_ADDRMATCH,		/* 43,44,45 (append) */
+	OP_PHY_WARR, OP_PHY_RDW, OP_PHY_WRW,		/* 46,47,48 (append) */
+	OP_IHR_W, OP_OBJ_SET,				/* 49,50 (append) */
 	OP_DROP = 255,
 };
 struct wldiag_rec {
@@ -443,6 +447,85 @@ static struct hook hooks[] = {
 	{ "wlc_phy_chanspec_shm_set", OP_CHANSPEC_SHM, 1, 0, 0, .shortj = true },
 	{ "wlc_bmac_read_objmem16",  OP_MAC_OBJ_R, 1, 0, 2, .retcap = true },
 	{ "wlc_bmac_write_objmem16", OP_MAC_OBJ_W, 1, 2, 3 },
+	/* Coppia BULK di object memory. Serve per due ragioni indipendenti.
+	 *
+	 * La prima: copre le regioni che la coppia a 16 bit non fa vedere. I due
+	 * accessor `*_objmem16` sono simboli LOCAL, cioe' static, mentre
+	 * `copyfrom/copyto_objmem` sono GLOBAL, e kallsyms_lookup_name trova i
+	 * locali di un modulo solo con CONFIG_KALLSYMS_ALL. Le op in shared
+	 * memory si vedono comunque dai thunk read/write_shm, che sono globali;
+	 * quello che passa dal bulk senza toccarli no.
+	 *
+	 * La seconda: il bulk porta il SELETTORE, e con esso la regione. Nelle
+	 * catture attuali ogni op OBJ e' shared memory, e di regioni diverse non
+	 * si vede niente -- fra cui la address match table, che e' il punto
+	 * aperto su MAC e BSSID in docs/retrace-todo.md.
+	 *
+	 *   wlc_bmac_copyfrom_objmem(hw, offset, buf, len, sel)
+	 *   wlc_bmac_copyto_objmem(hw, offset, buf, len, sel)
+	 *
+	 * offset=a1, len=a3, sel e' il 5o argomento e in o32 sta sullo stack a
+	 * 16(sp): si cattura con nargx, come si fa per si_corereg. `buf` (a2) e'
+	 * un puntatore e non viene registrato: il contenuto lo danno le op a 16
+	 * bit sottostanti quando l'altro hook e' attivo, altrimenti resta fuori.
+	 * DA CONFERMARE alla prima cattura: che il selettore arrivi in a5. Se il
+	 * record porta un valore assurdo la firma e' diversa da questa. */
+	{ "wlc_bmac_copyfrom_objmem", OP_MAC_OBJ_BULK_R, 1, 0, 3, .nargx = 1 },
+	{ "wlc_bmac_copyto_objmem",   OP_MAC_OBJ_BULK_W, 1, 0, 3, .nargx = 1 },
+	/* Address match: vedi la nota nel tracer per il 2.6.30, che li ha gli
+	 * stessi. I nomi cambiano fra le versioni e sono elencati entrambi;
+	 * quello che non c'e' non si risolve. Firme da brcms_b_set_addrmatch()
+	 * di brcmsmac, indice in a1. DA CONFERMARE alla prima cattura. */
+	/* set_addrmatch ha un branch alla parola 2 del prologo (il test su
+	 * hw+72), quindi il detour a 4 parole non ci sta: short-j. Le parole
+	 * 0 e 1 sono `lw` e `sltiu`, non PC-relative e senza effetti
+	 * collaterali, quindi la rieseuzione nello stub e' innocua.
+	 * a1 = indice, a2 = puntatore all'indirizzo (si legge `lbu 1($a2)`). */
+	{ "wlc_bmac_set_addrmatch", OP_ADDRMATCH, 1, 0, 0, .shortj = true },
+	{ "wlc_set_addrmatch",      OP_ADDRMATCH, 1, 0, 0 },
+	/* write_amt: a1 = indice (`sll a1,1`), a3 = valore a 16 bit con segno
+	 * su cui la funzione fa `bltz`. Prologo libero. */
+	{ "wlc_bmac_write_amt",     OP_AMT_W,     1, 0, 3 },
+	{ "wlc_bmac_set_rcmta",     OP_RCMTA_W,   1, 0, 0 },
+	/* Accessor trovati nei blob di entrambe le versioni e non coperti dagli
+	 * hook sopra. Coprono cio' di cui oggi non si vede niente:
+	 *
+	 *   phy_reg_write_array   scrittura PHY in blocco. E' l'accessor che il
+	 *                         TODO in docs/retrace-todo.md andava a cercare
+	 *                         sotto il nome phy_reg_write_list. Se dentro
+	 *                         chiama phy_reg_write le singole scritture si
+	 *                         vedono gia' e questo hook aggiunge un marcatore,
+	 *                         come TBL.WR fa per le tabelle; se non lo chiama,
+	 *                         e' l'unica via per vederle. Utile nei due casi.
+	 *   phy_reg_read/write_wide   accesso PHY a 32 bit. Gli hook a 16 bit non
+	 *                         lo intercettano.
+	 *   wlc_bmac_write_ihr    gli Indirect Hardware Registers del core d11.
+	 *                         objmem li raggiunge per selettore, ma un writer
+	 *                         dedicato li scrive senza passarci.
+	 *   wlc_bmac_set_shm      scrittura mascherata in shared memory.
+	 *
+	 * Firme lette dai prologhi dell'oggetto 6.30, non assunte -- e quattro su
+	 * sei non erano cio' che sembrava dal nome:
+	 *
+	 *   phy_reg_write_array(pi, array, n)   NON ha un indirizzo: a1 e' un
+	 *       puntatore all'array e a2 il conteggio (un `blez a2` ci esce). Si
+	 *       registra il solo n. Dentro chiama phy_reg_and & co., quindi le
+	 *       singole scritture si vedono gia' dagli hook a 16 bit e questa e'
+	 *       un marcatore -- come TBL.WR per le tabelle.
+	 *   phy_reg_write_wide(pi, val)   NON ha un indirizzo: registro fisso,
+	 *       valore in a1 mascherato a 16 bit. Come wlc_bmac_mctrl.
+	 *   phy_reg_read_wide(pi)   nessun argomento utile, valore nel RETVAL.
+	 *   wlc_bmac_write_ihr(hw, off, val)   off=a1, val=a2; a3 non esiste.
+	 *   wlc_bmac_set_shm(hw, off, val, len)   off=a1, val=a2, len=a3: e' un
+	 *       memset sulla shared memory, e nel loop chiama l'accessor a 16 bit.
+	 *
+	 * Un candidato che non si aggancia non fa danno: pianifica() se ne accorge
+	 * dal prologo e lo salta con un pr_warn. */
+	{ "phy_reg_write_array", OP_PHY_WARR, 0, 2, 0 },
+	{ "phy_reg_read_wide",   OP_PHY_RDW,  0, 0, 0, .retcap = true },
+	{ "phy_reg_write_wide",  OP_PHY_WRW,  0, 1, 0 },
+	{ "wlc_bmac_write_ihr",  OP_IHR_W,    1, 2, 0 },
+	{ "wlc_bmac_set_shm",    OP_OBJ_SET,  1, 2, 3 },
 	/* Varianti per le build dove i due sopra NON esistono. Su 7.14.43 non c'e'
 	 * alcun accessor a 16 bit: solo la coppia bulk copyfrom/copyto_objmem, e i
 	 * 16 bit passano da qui. Coprono il solo selettore SHM, non SCR ne' IHR,
@@ -468,8 +551,10 @@ static struct hook hooks[] = {
 	 * parola 1, cioe' il delay slot della `j`, che si esegue PRIMA dello stub.
 	 * Lo stub la riesegue, ed e' idempotente. */
 	{ "wlc_bmac_read_shm",  OP_MAC_OBJ_R, 1, 0, 0,
-	  .shortj = true, .retcap = true },
-	{ "wlc_bmac_write_shm", OP_MAC_OBJ_W, 1, 2, 0, .shortj = true },
+	  .shortj = true, .retcap = true,
+	  .ripiego_di = "wlc_bmac_read_objmem16" },
+	{ "wlc_bmac_write_shm", OP_MAC_OBJ_W, 1, 2, 0, .shortj = true,
+	  .ripiego_di = "wlc_bmac_write_objmem16" },
 	/* branch a slot 3 (beq): detour classico a 4 parole impossibile. short-j a
 	 * 1 parola: o[0]=j stub; o[1] (addiu $v0,1) resta come delay slot; lo stub
 	 * riesegue o[0..1] e rientra a +8 (v0 ri-settato DOPO la hook). addr=a1
@@ -1305,6 +1390,34 @@ static int pianifica(void)
 		elegge(i);
 		pr_info("wl_diag: piano hook '%s' @%px%s\n", hooks[i].name, o,
 			hooks[i].shortj ? " [short-j]" : "");
+	}
+
+	/* Scarta i ripieghi il cui accessor di sotto si e' agganciato: vedi
+	 * `ripiego_di` in struct hook per il perche'. */
+	{
+		int k, j, w = 0;
+
+		for (k = 0; k < n_elig; k++) {
+			struct hook *h = &hooks[eligible[k]];
+			bool sotto = false;
+
+			for (j = 0; j < n_elig && h->ripiego_di; j++)
+				if (!strcmp(hooks[eligible[j]].name,
+					    h->ripiego_di)) {
+					sotto = true;
+					break;
+				}
+			if (sotto) {
+				pr_info("wl_diag: salto '%s': e' un thunk su "
+					"'%s', che si e' agganciato -- "
+					"altrimenti ogni op uscirebbe doppia\n",
+					h->name, h->ripiego_di);
+				h->addr = 0;
+				continue;
+			}
+			eligible[w++] = eligible[k];
+		}
+		n_elig = w;
 	}
 
 	return n_elig;

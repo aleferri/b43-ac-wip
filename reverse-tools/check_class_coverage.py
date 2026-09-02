@@ -20,11 +20,24 @@ import os
 import re
 import sys
 
-OP = re.compile(r"cpu\d+\s+([A-Z]+)\.[A-Z]+")
+# La classe e' la parte prima del punto. OBJ.BULKR/W contano anche come
+# "OBJ.BULK", perche' l'accessor bulk e' un hook a se' e la sua assenza
+# non si deve confondere con quella della coppia a 16 bit.
+OP = re.compile(r"cpu\d+\s+([A-Z]+)\.([A-Z]+)")
 
-# Classes a complete capture has. PHY/RAD/TBL/MAC/SI/PMU/GPIO are in every
-# capture ever taken; these three are the ones that came later.
+# Classes a complete capture has, for the purpose of judging it as an oracle
+# for the PHY. PHY/RAD/TBL/MAC/SI/PMU/GPIO are in every capture ever taken;
+# these three came later and their absence has already produced wrong
+# conclusions.
 LATE = ("OBJ", "TPL", "CAL")
+
+# Classes the current tracer emits that no capture in the repo has yet: the
+# address match path and the bulk object-memory accessors. They are NOT in LATE
+# on purpose -- requiring them would fail every existing capture and block the
+# PHY gates, and they are not needed to compare the PHY. They are reported so
+# that an absence is read as "this capture predates the hook" and not as "the
+# driver does not do it", which is the mistake CLASS-COVERAGE.md is about.
+NUOVE = ("AMT", "RCMTA", "ADDRM", "OBJ.BULK")
 
 ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                     "router-data")
@@ -37,6 +50,8 @@ def classes(path):
             m = OP.search(line)
             if m:
                 c[m.group(1)] += 1
+                if m.group(1) == "OBJ" and m.group(2).startswith("BULK"):
+                    c["OBJ.BULK"] += 1
     return c
 
 
@@ -48,12 +63,15 @@ def report(paths):
         if total < 500:
             continue
         missing = [k for k in LATE if not c[k]]
-        rows.append((p, total, missing))
+        nuove = [k for k in NUOVE if c[k]]
+        rows.append((p, total, missing, nuove))
 
     rows.sort(key=lambda r: (len(r[2]), r[0]))
-    for p, total, missing in rows:
+    for p, total, missing, nuove in rows:
         name = os.path.relpath(p, ROOT) if p.startswith(ROOT) else p
         tag = "complete" if not missing else "missing " + " ".join(missing)
+        if nuove:
+            tag += "  +" + " ".join(nuove)
         print(f"  {name:58s} {total:7d}  {tag}")
     return rows
 

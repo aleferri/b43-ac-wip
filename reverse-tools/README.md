@@ -85,10 +85,10 @@ Ordine tipico: decodifica → fold RETVAL → collapse → (reorder) → confron
   detour a 4 parole (o a 2 con `.shortj`) e quanti **siti di chiamata indiretta**
   ci sono. Risponde su un blob prima di bruciare una corsa di cattura: su agcombo
   (7.14.43) ha mostrato che `wlc_bmac_read/write_objmem16` non esistono affatto,
-  mentre sul d6220 (7.14.89) ci sono. NB: `syms=` e `klookup=`
-  esistono nella variante **2.6.30**, non in quella 3.4, che risolve da se' via
-  `kallsyms`: la riga di `gen_syms.py` va all'insmod del `wl-diag-2630`.
-- **gen_syms.py** — costruisce la riga `syms=` per l'insmod di `wl-diag` da un
+  mentre sul d6220 (7.14.89) ci sono. NB: `klookup=` esiste nella variante
+  **2.6.30**, non in quella 3.4, che risolve da se' via `kallsyms`: la riga di
+  `gen_syms.py` va all'insmod del `wl-diag-2630`.
+- **gen_syms.py** — costruisce la riga `insmod` di `wl-diag` (con `klookup=`) da un
   `/proc/kallsyms` copiato dal device. La lista degli accessor vendor tracciati
   è in `wl-diag/wl_diag.c` (`hooks[]`): `phy_reg_*`, `write/read/mod_radio_reg`,
   `si_pmu_*`, `si_corereg`, `si_gpio*`, `wlc_phy_table_*_acphy`, `wlc_bmac_*`,
