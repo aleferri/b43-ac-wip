@@ -44,14 +44,12 @@ B43_SHM_SH_WLCOREREV is this same field.
 Signed-off-by: Alessandro Ferri <aleferri@example.invalid>
 ---
  drivers/net/wireless/broadcom/b43/b43.h  |  11 +++
- drivers/net/wireless/broadcom/b43/main.c | 124 ++++++++++++++++++++++++++-----
+ drivers/net/wireless/broadcom/b43/main.c | 124 ++++++++++++++++++++++++-----
  2 files changed, 119 insertions(+), 16 deletions(-)
 
-diff --git a/drivers/net/wireless/broadcom/b43/b43.h b/drivers/net/wireless/broadcom/b43/b43.h
-index c0d8fc0..bdf715a 100644
 --- a/drivers/net/wireless/broadcom/b43/b43.h
 +++ b/drivers/net/wireless/broadcom/b43/b43.h
-@@ -399,6 +399,17 @@ enum {
+@@ -401,6 +401,17 @@
  #define B43_MACFILTER_SELF		0x0000
  #define B43_MACFILTER_BSSID		0x0003
  
@@ -69,46 +67,10 @@ index c0d8fc0..bdf715a 100644
  /* PowerControl */
  #define B43_PCTL_IN			0xB0
  #define B43_PCTL_OUT			0xB4
-diff --git a/drivers/net/wireless/broadcom/b43/main.c b/drivers/net/wireless/broadcom/b43/main.c
-index 817448e..aa82bb8 100644
 --- a/drivers/net/wireless/broadcom/b43/main.c
 +++ b/drivers/net/wireless/broadcom/b43/main.c
-@@ -662,6 +662,33 @@ void b43_macfilter_set(struct b43_wldev *dev, u16 offset, const u8 *mac)
- 	if (!mac)
- 		mac = zero_addr;
- 
-+	/*
-+	 * On the wide layout this port is not what the hardware reads: the
-+	 * address match table has taken over, and the two rows at the top of
-+	 * it hold what the port used to. A capture with the OEM driver's writer
-+	 * for this port traced shows it never being entered, while the table is
-+	 * written throughout the bring-up.
-+	 */
-+	if (b43_amt_wide(dev)) {
-+		u16 index, flags;
-+
-+		switch (offset) {
-+		case B43_MACFILTER_SELF:
-+			index = B43_AMT_SELF;
-+			flags = B43_AMT_F_SELF;
-+			break;
-+		case B43_MACFILTER_BSSID:
-+			index = B43_AMT_BSSID;
-+			flags = B43_AMT_F_BSSID;
-+			break;
-+		default:
-+			B43_WARN_ON(1);
-+			return;
-+		}
-+		b43_amt_write(dev, index, mac, flags);
-+		return;
-+	}
-+
- 	offset |= 0x0020;
- 	b43_write16(dev, B43_MMIO_MACFILTER_CONTROL, offset);
- 
-@@ -846,9 +873,71 @@ static void key_write(struct b43_wldev *dev,
- 	}
+@@ -653,6 +653,69 @@
+ 	b43_time_unlock(dev);
  }
  
 +/* Whether the address match table has the wide layout: 64 rows with a flags
@@ -174,13 +136,52 @@ index 817448e..aa82bb8 100644
 +	b43_shm_write32(dev, B43_SHM_RCMTA, (index * 2) + 1, hi);
 +}
 +
+ static
+ void b43_macfilter_set(struct b43_wldev *dev, u16 offset, const u8 *mac)
+ {
+@@ -662,6 +725,33 @@
+ 	if (!mac)
+ 		mac = zero_addr;
+ 
++	/*
++	 * On the wide layout this port is not what the hardware reads: the
++	 * address match table has taken over, and the two rows at the top of
++	 * it hold what the port used to. A capture with the OEM driver's writer
++	 * for this port traced shows it never being entered, while the table is
++	 * written throughout the bring-up.
++	 */
++	if (b43_amt_wide(dev)) {
++		u16 index, flags;
++
++		switch (offset) {
++		case B43_MACFILTER_SELF:
++			index = B43_AMT_SELF;
++			flags = B43_AMT_F_SELF;
++			break;
++		case B43_MACFILTER_BSSID:
++			index = B43_AMT_BSSID;
++			flags = B43_AMT_F_BSSID;
++			break;
++		default:
++			B43_WARN_ON(1);
++			return;
++		}
++		b43_amt_write(dev, index, mac, flags);
++		return;
++	}
++
+ 	offset |= 0x0020;
+ 	b43_write16(dev, B43_MMIO_MACFILTER_CONTROL, offset);
+ 
+@@ -870,7 +960,6 @@
+ 
  static void keymac_write(struct b43_wldev *dev, u8 index, const u8 *addr)
  {
 -	u32 addrtmp[2] = { 0, 0, };
  	u8 pairwise_keys_start = B43_NR_GROUP_KEYS * 2;
  
  	if (b43_new_kidx_api(dev))
-@@ -861,22 +950,12 @@ static void keymac_write(struct b43_wldev *dev, u8 index, const u8 *addr)
+@@ -883,22 +972,12 @@
  	 * So we must adjust the index here.
  	 */
  	index -= pairwise_keys_start;
@@ -208,7 +209,7 @@ index 817448e..aa82bb8 100644
  }
  
  /* The ucode will use phase1 key with TEK key to decrypt rx packets.
-@@ -4953,6 +5032,19 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
+@@ -4975,6 +5054,19 @@
  	b43_bluetooth_coext_enable(dev);
  
  	b43_bus_powerup(dev, !(sprom->boardflags_lo & B43_BFL_XTAL_NOSLOW));

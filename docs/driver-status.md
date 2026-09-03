@@ -35,6 +35,7 @@ sono un artefatto rigenerato.
 | — (bcma PCI bridge ID) | 0009 |
 | — (MAC in shared memory, AC) | 0010 |
 | — (address match table, corerev >= 42) | 0011 |
+| — (celle SHM, corerev >= 42) | 0012 |
 
 Farrow e rxgain non hanno file dedicati: `b43_phy_ac_farrow_setup` e il
 blocco rxgain vivono come sezioni di `phy_ac.c` (patch 0006).

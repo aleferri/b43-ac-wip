@@ -53,7 +53,12 @@ def load(path, rx):
 
 
 def lcs_len(a, b):
-    """Matched-in-order op count, same measure compare_lcs.py reports."""
+    """Matched-in-order op count, la stessa misura di test/cmp_skip.py.
+
+    NB: qui il denominatore sono le sole op del vendor, mentre cmp_skip.py usa
+    l'unione dei due flussi e penalizza le op in piu'. I numeri non sono
+    confrontabili; per un punteggio citabile si usa cmp_skip.py.
+    """
     sm = difflib.SequenceMatcher(a=a, b=b, autojunk=False)
     return sum(n for _, _, n in sm.get_matching_blocks())
 

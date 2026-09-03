@@ -108,8 +108,14 @@ struct ieee80211_hw {
 struct ieee80211_channel *ieee80211_get_channel(struct wiphy *wiphy, int freq);
 void b43_test_reg_init(int dflt, const char *map);
 /*
- * MAC bandwidth register. Upstream this is a write to the MAC's band/bandwidth
- * control; the harness only needs it to appear in the op stream.
+ * Hook del vendor su wlc_bmac_bw_set. NON e' una scrittura di registro: il suo
+ * equivalente GPL in brcmsmac, brcms_b_bw_set(), fa `pi->bw = bw` piu' un reset
+ * e un init del PHY, e nelle catture fra il record e il prologo radio non c'e'
+ * nessuna scrittura. In b43 la larghezza sta in phy.chandef e la imposta
+ * b43_phy_init(): non c'e' niente da chiamare, e nessun codice del port emette
+ * questa op. Vedi SOLO_VENDOR in test/compare.py.
+ *
+ * Il prototipo resta per non rompere link di scratch che lo usassero.
  */
 void b43_mac_bw_set(struct b43_wldev *dev, u32 bw);
 void b43_test_oracle_coverage_report(void);
@@ -191,6 +197,14 @@ struct b43_bus_dev {
  * Radio version constants (only the bits the code compares are used).
  */
 struct b43_phy {
+	/*
+	 * Larghezza e canale correnti. In b43 li punta b43_phy_init() alla
+	 * config dell'hardware, prima di switch_analog() e di
+	 * b43_software_rfkill(), e b43_op_config() li ripunta a ogni cambio di
+	 * canale; b43_is_40mhz() legge da qui. L'harness lo fa in mount_board(),
+	 * cosi' il codice del PHY vede lo stesso oggetto.
+	 */
+	const struct cfg80211_chan_def *chandef;
 	u8  rev;
 	u16 radio_ver;
 	u8  radio_rev;

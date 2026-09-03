@@ -1,487 +1,266 @@
-# test/ — userspace trace-verification harness
+# test/ — harness di verifica su trace
 
-Compila il codice del driver AC-PHY sotto `../src/` in
-userspace e produce una trace nel formato di `wl-diag` da confrontare
-contro le catture vendor sotto `router-data/`.
-Non modifica nessun file dello scratch.
+Compila il driver AC-PHY di `../src/` in userspace e produce una trace nel
+formato di `wl-diag`, da confrontare contro le catture del vendor in
+`../router-data/`. Non modifica nessun file di `src/`.
 
-## Come funziona
+## Obiettivo
 
-- **Nessun `#ifdef` nei sorgenti scratch.** Ogni accessor HW low-level
-  (`b43_phy_read/write/mask/maskset/…`, `b43_radio_*`, `b43_read16`,
-  `b43_write16`, `b43_actab_*`, `b43_mac_*`, `bcma_*`) è intercettato al
-  linker con `-Wl,--wrap=<sym>`. La lista completa è in `Makefile`
-  (variabile `WRAP_SYMS`).
-- **`wrap.c`** fornisce `__wrap_<sym>` per ogni simbolo: emette una
-  riga wl-diag su stdout, aggiorna un mirror di memoria in-process per
-  le write, e ritorna il valore corretto per le read (vedi sotto).
-- **`main.c`** monta un `struct b43_wldev` fittizio con la config della
-  board scelta (D6220 2x2, DSL-3580L 2x2, agcombo 3x3), registra i
-  read plans, e chiama uno dei flow pubblici.
-- **`stubs/`** contiene i minimi header kernel (`linux/{types,kernel,
-  delay,slab,errno}.h`) e i minimi header b43 (`b43.h`, `phy_common.h`,
-  `main.h`) necessari a compilare i .c dello scratch senza il tree del
-  kernel.
-- **`test_harness.h`** è l'API pubblica del framework (`b43_test_*`);
-  è inclusa solo da `main.c` e `wrap.c`. Il codice scratch non ha
-  visibilità né dipendenze verso il framework.
-- **`compare.py`** normalizza una cattura wl-diag (rimuove timestamp,
-  numero episodio, colonna cpu, unifica `PHY.OR`/`PHY.AND` a
-  `PHY.MOD`) e diffa contro l'output del test. Applica anche il
-  **perimetro**, cioè scarta le op vendor che appartengono a codice fuori
-  dall'unità sotto test — shared memory del MAC, template RAM, OTP, SROM —
-  perché l'harness compila solo `src/` e non ha nessuno che le emetta. È il
-  default, non un'opzione: su ogni cattura in repo un confronto senza
-  perimetro si ferma sulla prima op del core. `--senza-perimetro` lo
-  disattiva per ispezionare una cattura, e il numero che ne esce non è una
-  misura del port. Le liste e i motivi sono in `PERIMETER` dentro il file.
+Che b43 emetta, una per una e nello stesso ordine, tutte le operazioni che il
+driver stock emette su un attach a freddo: senza op mancanti, senza op di
+troppo e senza valori sbagliati. Il punteggio dice quanto manca, il debito
+residuo con il perche' di ogni pezzo sta in `../docs/retrace-todo.md`.
 
-## Read plans (mappa associativa scriptata)
+## La procedura, che e' una sola
 
-Ogni read wrappata risolve così:
+**Non inventarne altre.** Ogni comando qui sotto e' quello con cui il repo
+produce i numeri che cita; le varianti ad hoc danno risultati non
+confrontabili.
 
-1. Se l'indirizzo ha un plan registrato: ritorna `results[iter]` (o 0
-   se `iter >= cap`) e incrementa `iter`.
-2. Altrimenti: ritorna il valore del write-mirror (l'ultima cosa
-   scritta a quell'indirizzo, o 0 se mai scritta).
-
-API:
-
-```c
-#include "test_harness.h"
-
-/* prima di lanciare il flow */
-static const u16 poll_0x270[] = {
-    /* est#1 */ 0x0001, 0x0001, 0x0001, 0x0000,
-    /* est#2 */ 0x0001, 0x0001, 0x0001, 0x0000,
-    /* ... */
-};
-
-b43_test_plans_reset();
-b43_test_plan_phy_reads(0x0270, poll_0x270,
-                        sizeof(poll_0x270)/sizeof(u16));
-/* similmente: b43_test_plan_radio_reads(...), _mmio_reads(...) */
-```
-
-Al termine del flow, `b43_test_plans_report(stderr)` stampa quanti
-elementi di ciascun plan sono stati consumati — utile per verificare
-che il codice sia arrivato dove ci si aspetta e non abbia terminato in
-anticipo per un poll che non è mai stato registrato.
-
-Un helper Python (TODO) estrarrà i plans da una trace vendor contando
-le RD consecutive per indirizzo tra due WR e generando una tabella C
-da incollare in `main.c`.
-
-## Build e run
+### 1. Preparare le catture
 
 ```sh
-make                # compila ac_trace
-./ac_trace                         # default: rxiq_est_debug su D6220
-./ac_trace rxiq_est_debug d6220 > trace.d6220.out
-./ac_trace rxiq_est_debug agcombo > trace.agcombo.out
+unzip -d /tmp/cold ../router-data/d6220/cold-sweep.zip
 ```
 
-Flow disponibili (`argv[1]`): `rxiq_est_debug` (default), `rxiq_comp`,
-`rxiqcal`, `op_init`, `rfkill`, `switch_channel`, `full`, `periodic`,
-`crsmin`. Board (`argv[2]`): `d6220` (default), `agcombo`, `dsl`.
+I 26 segmenti stanno in `/tmp/cold/segmenti/coldNN-chC-bwB.txt`. Sono catture
+grezze: le letture hanno `val=UNDEFINED` e il valore sta nella riga `RETVAL`
+successiva. **Prima di usarle per una grep sui valori** vanno ripiegate:
 
-`periodic` esegue un tick del watchdog a regime (poll TSSI/statistiche SHM
-+ una tornata di measure block). Le letture SHM e TSSI sono stato ucode e
-vengono dall'oracolo; la stessa cattura fa da riferimento per il confronto:```sh
+```sh
+python3 ../reverse-tools/merge_retvals.py \
+    /tmp/cold/segmenti/cold01-ch36-bw20.txt /tmp/m01
+```
+
+Dimenticarlo e' l'errore piu' facile da fare: una `grep 'val=0x...'` su un file
+non ripiegato non trova nessuna lettura e sembra che l'op non ci sia.
+
+### 2. Compilare
+
+```sh
+make                     # ch36 BW20, la configurazione validata
+make AC_ANY_CHANNEL=1    # per ogni altro canale o larghezza
+```
+
+Il guard di `set_channel()` rifiuta tutto cio' che non e' fra le configurazioni
+validate, salvo il secondo build. Se il port emette poche migliaia di op invece
+di ventimila e' quello, e `gates.sh` lo dice da se'.
+
+**Ricompilare senza `AC_ANY_CHANNEL=1` prima di chiudere**, o il gate di
+riferimento gira su un binario che difende meno.
+
+### 3. I due gate, che sono la verifica canonica
+
+```sh
+./gates.sh                                             # cold01 ch36 bw20
+./gates.sh /tmp/cold/segmenti/cold05-ch52-bw20.txt     # un altro segmento
+./gates.sh /tmp/cold/segmenti/cold[0-9][0-9]-ch*.txt   # tutti e 26
+
 AC_READ_ORACLE=../router-data/d6220/wl-diag-wl1-steady-tick-ch36-bw20.txt \
-    ./ac_trace periodic d6220 > gen.periodic.out
-python3 compare.py ../router-data/d6220/wl-diag-wl1-steady-tick-ch36-bw20.txt gen.periodic.out
-# MATCH, 496/496 op; su stderr l'oracolo deve chiudere con 0 code esaurite
-# e 0 non consumati.
-```
-
-`switch_channel` è il flow più ampio: guida l'intera pipeline
-`b43_phy_ac_op_switch_channel`. Su D6220 ch36 emette ~22k operazioni e
-consuma per intero ogni read plan registrato in `main.c`:
-
-```sh
-./ac_trace switch_channel d6220 > trace.switch.d6220.out
-# a fine run, su stderr, la plan-consumption deve mostrare iter=N/N per
-# ogni indirizzo: nessun underrun (flow terminato in anticipo) né overrun.
-```
-
-Nota: il nome del flow da passare sulla riga di comando è `switch_channel`;
-`b43_phy_ac_op_switch_channel` è il nome della op kernel che il flow
-invoca, non la stringa da passare a `argv[1]`.
-
-Il binario stampa la trace su stdout, i log del driver (`b43dbg`,
-`b43err`) su stderr. Il mirror di memoria simula la chiusura del bit
-START di 0x0270 al primo read post-scrittura, così il poll del
-correlatore non va in timeout.
-
-## Confrontare con la vendor trace
-
-### Flow `full` con oracolo (la validazione canonica)
-
-Confronta la trace di `full d6220` contro
-`router-data/d6220/wl-diag-wl1-attach-to-bss-up-ch36-bw20.txt`, la sola cattura
-ch36 completa e con i valori letti. `AC_READ_ORACLE` serve i valori veri, quindi
-il confronto verifica anche cio' che il driver *calcola* e non solo la sequenza.
-
-```sh
-python3 ../reverse-tools/merge_retvals.py \
-    ../router-data/d6220/wl-diag-wl1-attach-to-bss-up-ch36-bw20.txt /tmp/att.merged.txt
-AC_READ_ORACLE=/tmp/att.merged.txt \
-    ./ac_trace full d6220 > trace.full.d6220.out
-python3 compare.py /tmp/att.merged.txt trace.full.d6220.out --range 50:30172
-```
-
-### Flow `switch_channel`: e' il bring-up **successivo**
-
-Il nome inganna -- l'op del driver e' `op_switch_channel` e quello che esegue e'
-un bring-up successivo, non l'impostazione di un canale su un PHY gia' su.
-### Il contatore del MAC e' il default
-
-`b43_mac_suspend`/`enable` in-tree sono **annidabili**: toccano MACCTL solo
-sulle transizioni. Dalla versione con `compare_lcs.py` quello e' il default e
-non serve piu' passare `AC_MAC_REFCOUNT=1`; `AC_MAC_REFCOUNT=0` torna al
-comportamento precedente, una `MAC.MCTRL` per chiamata.
-
-Il default era il contrario. La misura:
-
-|  | MAC.MCTRL emesse | similarita' |
-|---|---|---|
-| `full`, senza contatore | 32 (vendor 119) | 49.50% |
-| `full`, con contatore | 113 (vendor 119) | **99.30%** |
-| `switch_channel`, senza | 124 (vendor 119) | 99.19% |
-| `switch_channel`, con | 124 | 99.19% |
-
-Su `switch_channel` il flag **non ha effetto**: quel percorso non annida. Quindi
-l'avvertenza che stava nel codice -- "col contatore il MATCH di switch_channel
-cade" -- non si osserva.
-
-### Due metriche, e non sono confrontabili
-
-| strumento | cosa misura | flow1 |
-|---|---|---|
-| `compare.py` | il port emette **esattamente** la stessa sequenza | 1017 disallineamenti |
-| `compare_lcs.py` | quanto del vendor e' riprodotto **in ordine** | 99.96%, 12 regioni |
-
-La differenza non e' cosmetica: dieci op di lunghezza diversa sfasano il
-confronto posizionale da quel punto in avanti, e `compare.py` conta 1017
-divergenze dove l'altro ne conta poche decine. Le percentuali nei documenti di
-questo repo vengono da `compare_lcs.py`.
-
-**Nota di provenienza**: `compare_lcs.py` e' la ricostruzione di uno script di
-lavoro non versionato, e ora torna: `flow2` da' 21000/21007 identico
-all'originale, `flow1` 25002/25013 contro 24998, dove le quattro op di
-differenza sono le `MAC.MCTRL` aggiunte a `phy_ac.c` dopo che quei numeri erano
-stati presi.
-
-Le normalizzazioni sono tutte **ricavate dai dati**, non assunte:
-
-- si escludono `SI.COREREG` e `PMU.PLL`, che l'harness non simula (i
-  denominatori 25013 e 21007 vengono da li');
-- la larghezza degli esadecimali e i campi `ret=`/`a5=`/`a6=`, che solo la
-  cattura ha;
-- il `cpuN`, perche' l'harness non simula lo scheduling;
-- il rendering di `AND`/`OR`: il vendor scrive `val=0x4000 (set 0x4000)` dove
-  l'harness scrive `mask=0x0`. Su 163 coppie allineate il valore coincide
-  **sempre** e la maschera del port e' **sempre** zero, 93 volte con `(clr)` e
-  70 con `(set)`. Le `PHY.MOD` vere hanno gia' la stessa forma da entrambe le
-  parti.
-
-### I due gate sull'attach, con il set di hook esteso
-
-Le catture storiche in `router-data/d6220/` non hanno `OBJ.*`, `TPL.*`,
-`MAC.BW`, `OTP.*` ne' `SROMCTL`: come oracoli sono cieche a ~1600 op, e appena
-il
-port comincia a emettere scritture in shared memory ogni una risulterebbe una
-divergenza. Le due nuove:
-
-```sh
-# l'attach vero e proprio, tabelle complete comprese le per-core
-python3 ../reverse-tools/merge_retvals.py \
-  ../router-data/d6220/wl-diag-wl1-attach-ch36-bw20-tabelle-complete.txt \
-  /tmp/att2.merged.txt
-AC_READ_ORACLE=/tmp/att2.merged.txt ./ac_trace full d6220
-
-# il preambolo del probe: GPIO, core enable, OTP, PLL, test SHM
-python3 ../reverse-tools/merge_retvals.py \
-  ../router-data/d6220/wl-diag-wl1-attach-ch36-bw20-con-preambolo.txt \
-  /tmp/pre.merged.txt
-AC_READ_ORACLE=/tmp/pre.merged.txt ./ac_trace op_init d6220
-```
-
-**Due gate e non una traccia cucita.** I due attach divergono 68 record dopo il
-punto in cui si agganciano (`OBJ.WR 0x0790` a `0x0500` contro `0x0300`), quindi
-innestare il preambolo di uno sull'altro darebbe una giunzione inventata -- e un
-oracolo vale per l'ordine, quindi una divergenza misurata su una cucitura non
-distingue un errore del port da un artefatto. Il preambolo sta *prima* del punto
-di divergenza, quindi quella regione e' incontestata e si misura da sola.
-
-Va quindi confrontato con `down-to-bss-ch36-bw20`, non con l'attach, e con
-`AC_FIRST_INIT=0`:
-
-```sh
-python3 ../reverse-tools/merge_retvals.py \
-    ../router-data/d6220/wl-diag-wl1-down-to-bss-ch36-bw20.txt /tmp/d2u.merged.txt
-AC_FIRST_INIT=0 \
-    AC_READ_ORACLE=/tmp/d2u.merged.txt AC_READ_ORACLE_FROM=653 \
-    ./ac_trace switch_channel d6220 > trace.switch.d6220.out
-python3 compare.py /tmp/d2u.merged.txt trace.switch.d6220.out \
-    --range 653:26671 --auto-align
-# prima divergenza @2177 (banco 0x0910, vedi docs/retrace-todo.md)
-```
-
-`AC_READ_ORACLE_FROM` e' necessario: le code dell'oracolo sono per indirizzo e
-in ordine, quindi caricare la cattura dall'inizio per un flow che ne esegue una
-fetta fa consumare i valori delle letture precedenti.
-
-Senza `AC_FIRST_INIT=0`, o confrontato con la cattura di attach, il flow diverge
-su tutto cio' che dipende dalla fase -- il cap del TX-LPF viene dall'rccal di
-`op_init` e produce `0x50db` dove il driver stock scrive `0x52db`. Non e' un bug
-del driver, e' il gate sbagliato.
-
-Output atteso:
-
-```
-aligning test at offset 2 (auto: 'PHY.RD   addr=0x019e val=UNDEFINED')
-vendor: 22268 ops
-test:   22268 ops
-MATCH
-```
-
-- `--range 32887:55154`: l'estremo basso è l'episodio della prima
-  `PHY.RD 0x019e` del blocco di channel-programming; salta le ~489 op di
-  preambolo attach del vendor (MAC/PMU/setup, ep 32398..32886). L'estremo
-  alto è l'ultimo episodio della cattura.
-- `--auto-align`: salta le 2 op di prologo dell'harness (il `MAC.MCTRL`
-  di disable e la `PMU.RC`), agganciando `test[2]` a `vendor[489]`.
-- **Il poll di `0x0270` e i read plan.** Il numero di letture di `0x0270` non
-  e' un parametro del driver: il bit 0 e' il flag di start della misura RX-IQ,
-  l'hardware lo azzera e il driver rilegge finche' resta alto. Il valore letto
-  governa quindi quante op vengono emesse, e deve arrivare da una cattura. Con
-  `AC_READ_ORACLE` arriva da li'; senza oracolo arriva da
-  `readplan_0270.h`, generato dalle catture con i RETVAL:
-
-  ```sh
-  python3 ../reverse-tools/gen_readplan.py 0x0270 \
-      d6220_first=../router-data/d6220/wl-diag-wl1-attach-to-bss-up-ch36-bw20.txt \
-      d6220_next=../router-data/d6220/wl-diag-wl1-down-to-bss-ch36-bw20.txt \
-      agcombo=../router-data/agcombo/agcombo-wl1-4360-rescan-to-bss-ch36.txt \
-      dsl=../router-data/dsl3580l/wl-diag-wl1-down-to-bss-ch36-bw20.txt \
-      > readplan_0270.h
-  ```
-
-  La scelta del plan e' su board e fase (`AC_FIRST_INIT`), gli stessi assi da
-  cui dipendono i conteggi. Verificato: con il plan la struttura dei poll
-  coincide con la cattura sia su d6220 (12 run, `[5,5,5,5,29,1,27,1,22,1,41,1]`
-  sul down->up e `[5,5,5,5,44,1,14,1,42,1,43,1]` sull'attach) sia con
-  l'oracolo attivo. Per agcombo esiste una sola cattura con i RETVAL (un
-  rescan, fase successiva) e per il DSL solo dei down->up: la stessa serve
-  entrambe le fasi, ed e' un'approssimazione dichiarata.
-
-- **I poll non si collassano.** Il numero di letture di `0x0270` non è un
-  parametro del driver: è l'osservabile di un'attesa, e il driver esce quando
-  il bit 0 si azzera. Con un oracolo che serve i valori reali il conteggio
-  segue la cattura da sé, quindi il confronto resta op-per-op e la lunghezza
-  è confrontabile. Un conteggio che non torna è un difetto da guardare, non
-  rumore da nascondere.
-
-### Sotto-finestra: solo il blocco RXIQ
-
-Per isolare un singolo blocco (es. la calibrazione RX-IQ) si estrae la
-finestra corrispondente dalla `down→bss-up` annotata:
-
-```sh
+    ./ac_trace periodic d6220 > /tmp/p.out
 python3 compare.py \
-    ../router-data/d6220/wl-diag-wl1-attach-to-bss-up-ch36-bw20.txt \
-    trace.d6220.out \
-    --range LO:HI --auto-align
+    ../router-data/d6220/wl-diag-wl1-steady-tick-ch36-bw20.txt /tmp/p.out
+# deve stampare MATCH
 ```
 
-Attenzione agli indici: gli esempi di finestra che girano nei commenti e nei doc
-(`82499:83540` e simili) vengono da trace annotate che **non sono in questo
-repo**. Vanno ricalcolati sulla cattura che si usa davvero.
+`gates.sh` fa tutto da se': ripiega la cattura, ricava la finestra dalla prima
+op PHY dell'attach, ricava la schedule dei tick con `probe_schedule.py`, lancia
+il flow `full` con l'oracolo di lettura e chiama `cmp_skip.py` e `compare.py`.
+Non serve rifarne i passi a mano, e farlo a mano sbaglia la finestra.
 
-- `--range LO:HI` estrae la finestra del blocco d'interesse dal file
-  vendor.
-- `--auto-align` cerca in `test` la prima op che matcha `vendor[0]` e
-  usa quell'indice come inizio del confronto. Utile quando il flow di
-  test fa un prologo (save-gain, save-tone, ...) che il vendor non
-  emette. In alternativa `--align-on OP` pinna l'allineamento su un op
-  specifico.
+Il gate periodico va rilanciato a **ogni** modifica: e' l'unico confronto
+posizione-per-posizione che sta a `MATCH`, quindi e' il rilevatore di
+regressioni piu' sensibile che ci sia.
 
-Formato ops (allineato al vendor):
+### 4. Leggere il punteggio
 
-| Kernel call                          | Trace emesso                              |
-|--------------------------------------|-------------------------------------------|
-| `b43_phy_read(reg)`                  | `PHY.RD  addr=X val=UNDEFINED`            |
-| `b43_phy_write(reg, val)`            | `PHY.WR  addr=X val=Y`                    |
-| `b43_phy_mask(reg, kmask)`           | `PHY.MOD addr=X val=<kmask> mask=0x0000`  |
-| `b43_phy_set(reg, kset)`             | `PHY.MOD addr=X val=<kset>  mask=0x0000`  |
-| `b43_phy_maskset(reg, kmask, kset)`  | `PHY.MOD addr=X val=<kset>  mask=<~kmask>`|
+```
+grezzo          : 26670/29292 = 91.05%   439 regioni
+                  428 col valore sbagliato, 1673 op di wl mancanti,
+                  93 op del port di troppo
+nel perimetro   : ...
+```
 
-`compare.py` normalizza le varianti `PHY.OR`/`PHY.AND` del vendor allo
-stesso formato `PHY.MOD` singolo.
+Il denominatore di **`grezzo`** e' l'unione dei due flussi: fa 100% solo se
+coincidono. Le tre voci sono tre lavori diversi e non vanno sommate a occhio:
 
-### Cross-driver: agcombo (OEM 7.14) contro l'ordine D6220
+- **valore sbagliato** — registro giusto, numero no: c'e' una formula da
+  trovare;
+- **op di wl mancanti** — c'e' codice da scrivere;
+- **op del port di troppo** — c'e' un gate da mettere, o una fase che sul
+  vendor non gira.
 
-La cattura agcombo viene da un driver OEM piu' vecchio (7.14.43) di
-quello che ha prodotto l'ordine replicato dal port. La semantica del
-riordino distingue due livelli: il MACRO ordine (fasi intere in punti
-diversi del flow) e' una scelta architetturale lecita della versione e
-viene normalizzato; il MICRO ordine dentro le fasi e' probabile bug o
-differenza 4352/4360 e viene PRESERVATO, cosi' compare.py a valle lo
-mostra come cluster di mismatch localizzato accanto ai mismatch di
-valore:
+**`nel perimetro`** toglie le op di codice fuori da `src/` e serve a navigare,
+non a dare un punteggio. Il numero da citare e' `grezzo`.
+
+### 5. Trovare la prossima divergenza
 
 ```sh
-./ac_trace switch_channel agcombo > trace.agcombo.out
-python3 ../reverse-tools/collapse_trace.py \
-    ../router-data/agcombo/agcombo-wl1-4360-down-to-bss-ch36.txt v.col
-python3 ../reverse-tools/collapse_trace.py trace.agcombo.out h.col
-python3 ../reverse-tools/reorder_trace.py h.col v.col \
-    --out-vendor v.reord --out-ref h.match \
-    --res-vendor v.only --res-ref h.only --replicate
-python3 compare.py v.reord h.match
+python3 compare.py /tmp/m01 /tmp/gate.full --range 528:36542 --auto-align
 ```
 
-Numeri attesi (oggi): 7573 op accoppiate (87.5% del riferimento) di cui
-7382 dallo scheletro monotono e 191 da blocchi macro spostati (168
-replicate: blocchi che il 7.14 esegue una volta dove il driver nuovo li
-ripete, es. i readback rxgain 0x09aX); 80 blocchi macro; 351 mismatch.
-Le fasi da channel_switch_prep a rxcal compreso sono a 0 mismatch di
-valore fino a idle_tssi escluso: il residuo di valore vive in
-idle_tssi/rxcal (tone_mode 0x?34 dello sweep, radio core-2 0x0445,
-bassi di 0x?45) e nella coda est (54% di copertura). Il resto dei
-mismatch e' micro-ordine preservato: il 7.14 legge i registri mute
-core-N prima di pulire iqMode su 0x0270 (il port dopo), e piazza i
-toggle MAC.MCTRL prima dei readback rxgain invece che dopo -- da
-vagliare uno a uno come bug o differenza 4352/4360. La fase
-phy_channel_setup resta al 93% di copertura per il blocco RF-seq, che
-esiste 1:1 su entrambi i lati ma con micro-ordine 7.14 (arming
-per-core: 0x0160/0x0401 core-select a 0x0001 invece del coremask) che
-il matcher non riesce ad accoppiare: e' segnale di versione, non un
-buco del port. I residui non sono rumore: `v.only` e' il lavoro che
-solo il 7.14 fa (gain-cal core-2 su tabella 0xc off 0x6b/0x7b, blocco
-rxiq a fine cattura), `h.only` quello che solo il driver nuovo fa (RAD
-0x020e/0x036e).
+`compare.py` e' posizione-per-posizione e si ferma alla prima divergenza col
+contesto: e' lo strumento per navigare. `gates.sh` lo lancia da se' e stampa il
+primo `@N`. Un'op mancante sfasa tutto quello che segue, quindi `@N` dice dove
+guardare, non quante cose sono rotte.
 
-Limite noto: --replicate attinge dalla stessa cattura. Se il blocco non
-c'e' affatto (es. le catture rescan non passano mai da init), serve una
-seconda cattura come donatrice -- estensione futura.
-
-## Interpretazione del diff
-
-Con format e align a posto, un diff non-vuoto evidenzia una di tre
-categorie di causa:
-
-1. **Peek mancante nel codice scratch.** Il vendor emette una
-   `PHY.RD` "gratuita" (valore scartato) prima di alcune MOD; se nel
-   diff appare `vendor: PHY.RD ... / test: PHY.MOD ...` all'inizio di
-   una sequenza, molto probabilmente il codice scratch dovrebbe fare
-   una `(void)b43_phy_read()` prima di quella MOD. Verificato su
-   `gate_setup` con 0x0400 (peek assente).
-2. **Ordine diverso.** Op emesse in ordine diverso; il codice scratch
-   ha scritto la sequenza in modo differente dal vendor.
-3. **Valore diverso.** Address giusto ma val/mask diversi; bug di
-   porting nel valore hard-coded o nell'uso del mask.
-
-Nessuna delle tre è "colpa" del framework: sta segnalando divergenze
-reali fra il codice scratch e la trace vendor, che è esattamente lo
-scopo.
-
-## Estendere il set di flow
-
-Oggi `main.c` cabla sei flow:
-
-- `rxiq_est_debug` — Phase 1 sweep only (rxiqcal_phy_ac.c).
-- `rxiq_comp` — solo `b43_phy_ac_rx_iq_comp_update` sui tre core.
-- `rxiqcal` — Phase 1+2+3, ma resta gated da
-  `B43_PHY_AC_RXIQCAL_REGMAP_FILLED == 0` dentro rxiqcal_phy_ac.c e
-  ritorna presto senza toccare l'HW. Per attivarlo servirebbe cambiare
-  quel define nel sorgente scratch: fuori dallo scope di questo harness
-  (che non modifica lo scratch).
-- `op_init` — `b43_phyops_ac.init` in isolamento.
-- `rfkill` — `b43_phy_ac_op_software_rfkill` (bring-up radio 2069).
-- `switch_channel` — l'intera pipeline `b43_phy_ac_op_switch_channel`
-  (channel prep, table-7 program, radio 2069 channel setup, RX-IQ cal,
-  finalize). È il flow con la copertura più larga: su D6220 ch36 emette
-  ~22k operazioni.
-
-Il full driver è già in `SCRATCH_SRCS_FULL` (`rxiqcal_phy_ac.c`,
-`tables_phy_ac.c`, `phy_ac.c`, `radio_2069.c`) e la `SRCS` di default
-lo usa: `make` compila e linka senza toccare i sorgenti scratch.
-
-Per aggiungere un flow nuovo:
-
-1. Se serve un altro .c dello scratch non ancora compilato, aggiungilo a
-   `SCRATCH_SRCS_FULL` nel `Makefile`.
-2. Compila; eventuali errori "field X of struct Y not declared" si
-   risolvono aggiungendo il campo a `stubs/b43.h`.
-3. Errori "undefined reference to `<sym>`" al link: se `<sym>` è un HW
-   accessor che vuoi tracciare, aggiungilo a `WRAP_SYMS` e scrivi un
-   `__wrap_<sym>` in `wrap.c`. Se è un helper che non vuoi tracciare,
-   forniscine uno stub no-op in `wrap.c` (senza `__wrap_`).
-4. Aggiungi il case in `main.c` sotto `argv[1]`, con gli eventuali read
-   plan/pre-seed del mirror che il flow richiede.
-
-## Stato oggi
-
-Con gli stub attuali (senza tocchi ai sorgenti scratch) tutti i .c in
-`SCRATCH_SRCS_FULL` compilano e linkano: `make` produce `ac_trace`
-pulito.
-
-| File scratch          | Compile | Note                                    |
-|-----------------------|---------|-----------------------------------------|
-| `rxiqcal_phy_ac.c`    | ✓       | build+run+trace ok con rxiq_est_debug   |
-| `tables_phy_ac.c`     | ✓       |                                         |
-| `radio_2069.c`        | ✓       | compila senza toccare gli stub          |
-| `phy_ac.c`            | ✓       | compila e linka; abilita il flow `switch_channel` |
-
-Il flow `switch_channel` gira end-to-end: su D6220 ch36 emette 22276 righe
-di trace, ritorna 0, e la plan-consumption mostra `iter=N/N` per ogni
-read plan (nessun underrun/overrun). La op kernel invocata è
-`b43_phy_ac_op_switch_channel`.
-
-Copertura rispetto al vendor: `switch_channel` copre la porzione di
-channel-switch della sequenza `down→bss-up`, non l'intera cattura. Il
-vendor `d6220-trace2` include un preambolo (GPIO, PMU-PLL, init radio)
-che questo flow non riproduce, quindi un `compare.py` senza `--range`
-diffa liste di lunghezza diversa. Per confronti mirati usare `--range`
-sulla finestra del blocco d'interesse, come nell'esempio RXIQ sopra.
-
-## Cosa il framework NON simula
-
-- **HW dinamico**: read ritornano solo l'ultimo write, non ci sono
-  bit read-only che rispondono a stimoli (temperature sensor,
-  rxpower detector, ecc.). Se un test vuole vedere quella logica,
-  serve un modello nel mirror.
-- **Timing**: `udelay`/`msleep` sono no-op. L'ordinamento è preservato
-  (single-threaded), ma non le finestre reali.
-- **Race con MAC**: le funzioni `b43_mac_*` sono no-op. La finestra di
-  quiesce MAC non viene simulata perché nessuna trace del vendor la
-  richiede per il confronto.
-
-## Copertura per funzione (marcatori `B43_AC_FN`)
-
-Ogni funzione del driver è marcata con `B43_AC_FN()` (in `phy_ac.h`): no-op nel
-kernel, nell'harness emette `----FN:nome----` all'ingresso e `----/FN:nome----`
-all'uscita (via l'attributo `cleanup` di GCC, così i nesting sono corretti). I
-marcatori escono **solo** con `AC_FN_MARKERS=1`, altrimenti il trace resta
-identico al vendor e `compare.py` non si rompe.
+Per capire **chi** emette un'op nel port:
 
 ```sh
-# trace annotato per l'analisi di copertura
-AC_FN_MARKERS=1 ./ac_trace rfkill d6220 > gen.rfkill.d6220.txt
-
-# copertura per-funzione + gap, contro la cattura GREZZA (non collassata)
-python3 ../reverse-tools/coverage_by_function.py \
-    gen.rfkill.d6220.txt \
-    ../router-data/d6220/wl-diag-wl1-down-to-bss-up_delay_only.txt
-
-# localizzazione delle funzioni nel trace vendor
-python3 ../reverse-tools/localize_functions.py gen.rfkill.d6220.txt <trace>
+AC_FN_MARKERS=1 AC_CHANNEL=36 AC_BW=20 AC_FIRST_INIT=1 ./ac_trace full d6220
 ```
 
-Le funzioni che scrivono tabelle (`tables_init`, `tables_zero_cal`) non si
-misurano per sequenza: l'harness le emette come `PHY.WR` sul data-port, il
-vendor le intercala con `TBL.WR/RD` in ordine diverso. Vanno confrontate per
-contenuto delle celle.
+annota l'output con `----FN:nome----`.
+
+Attenzione ai file temporanei: `gates.sh` scrive sempre in `/tmp/gate.merged` e
+`/tmp/gate.full`. Analizzarli dopo aver lanciato il gate su **un altro**
+segmento significa leggere i file del segmento sbagliato.
+
+### 6. Prima di dire che una fase e' assente nel vendor
+
+Serve un **testimone**: un registro o una tabella che nel port solo quella
+funzione tocca. Si conta su tutti i segmenti, non su uno:
+
+```sh
+for s in /tmp/cold/segmenti/cold[0-9][0-9]-ch*.txt; do
+    printf '%-24s %s\n' "$(basename $s)" "$(grep -c 'addr=0x0380' $s)"
+done
+```
+
+Il metodo trova solo le fasi che hanno un testimone esclusivo: una fase che
+condivide tutti i suoi registri con altre non si vede cosi', e va detto invece
+di concludere che non c'e'.
+
+## Le tre liste di eccezione, e perche' esistono
+
+Stanno in `compare.py`, ognuna con la ragione voce per voce. Sono l'unico posto
+dove si dichiara che un'op non conta, e ogni voce e' un pezzo di obiettivo
+sospeso: vanno tenute corte e argomentate.
+
+### `SOLO_PORT` — op del port che l'oracolo non puo' contenere
+
+Oggi una voce: **`AMT.*`**, la address match table. Il port la scrive per via di
+`patches/0011`, ricavata dalla cattura a freddo del DSL-3580L; le catture del
+d6220 non la hanno perche' l'hook su `wlc_bmac_write_amt` e' stato aggiunto
+dopo che sono state prese. **Non e' un'op di troppo: e' un'op giusta senza
+oracolo**, e ci resta finche' non c'e' un retrace del d6220 con quell'hook.
+
+I casi legittimi per questa lista sono due e vanno distinti: un'op che b43 deve
+fare per la sua struttura dove wl ne fa una diversa, che e' permanente, e un'op
+giusta la cui controparte esiste ma non e' stata catturata, che e' temporanea
+per definizione e si chiude con una ricattura. Tutto il resto e' il port che fa
+qualcosa di troppo, e si corregge nel driver, non nella lista.
+
+### `SOLO_VENDOR` — op che nessun codice b43 puo' emettere
+
+Oggi una voce: **`MAC.BW`**, l'hook su `wlc_bmac_bw_set`. Il suo equivalente
+GPL in brcmsmac fa `pi->bw = bw` e nient'altro, piu' un reset e un init del
+PHY; in b43 la larghezza sta in `phy.chandef`, che `b43_phy_init()` imposta
+prima che il PHY arrivi la', e non c'e' nessun registro da scrivere. E' un
+confine di funzione che b43 non ha.
+
+Ogni voce qui dichiara un pezzo di obiettivo **irraggiungibile**, quindi serve
+la prova che non ci sia niente da emettere, non l'impressione.
+
+### `PERIMETER` — op di codice fuori da `src/`
+
+Shared memory del MAC, template RAM, OTP, SROM. Il criterio e' l'appartenenza
+dimostrata da `b43.h`, **non** la raggiungibilita' da `src/`: quest'ultima e'
+degenere, perche' farebbe salire il punteggio quando si toglie codice.
+
+Va **ristretta ogni volta che il port impara a scrivere una cella**: il
+perimetro scarta dal solo lato vendor, quindi una cella che il port emette e il
+perimetro scarta diventa un'inserzione senza controparte e rompe il confronto
+posizionale. E' successo.
+
+## Come funziona l'harness
+
+- **Nessun `#ifdef` nei sorgenti di `src/`.** Ogni accessor hardware
+  (`b43_phy_read/write/mask/maskset`, `b43_radio_*`, `b43_read16`,
+  `b43_write16`, `b43_actab_*`, `b43_mac_*`, `bcma_*`) e' intercettato al linker
+  con `-Wl,--wrap=<sym>`. La lista e' in `Makefile`, variabile `WRAP_SYMS`.
+- **`wrap.c`** fornisce `__wrap_<sym>`: emette una riga wl-diag, aggiorna un
+  mirror di memoria in-process per le write, e ritorna il valore per le read.
+- **`main.c`** monta un `struct b43_wldev` fittizio col profilo di board
+  (D6220 2x2, DSL-3580L 2x2, agcombo 3x3), registra i read plan e chiama uno
+  dei flow.
+- **`stubs/`** ha i minimi header kernel e b43 per compilare `src/` senza il
+  tree del kernel.
+- **`test_harness.h`** e' l'API del framework, inclusa solo da `main.c` e
+  `wrap.c`. Il codice di `src/` non vede il framework.
+
+### Flow
+
+| flow | cosa fa |
+|---|---|
+| `full` | l'attach completo: e' quello da usare contro un segmento a freddo |
+| `periodic` | un tick del watchdog, contro l'oracolo steady-tick |
+| `switch_channel` | il cambio di canale a caldo, contro un segmento dello sweep a caldo |
+| `up`, `down`, `op_init` | pezzi, per lavoro mirato |
+
+Un segmento a freddo e' un ciclo `up` intero, e il flow da usarci e' `full`,
+non `switch_channel`.
+
+### Doppioni del core in `main.c`
+
+Alcune op che il vendor emette stanno in codice del core (`main.c` del kernel),
+che l'harness non compila. Dove servono al confronto sono rispecchiate in
+`main.c` del test — `emit_core_shm_chipinit()`, `emit_core_hostflags()`,
+`emit_core_shm_macaddr()`, `emit_core_amt()` — con i valori presi dalla patch
+corrispondente, cosi' che se la patch cambia il doppione diventa sbagliato e il
+confronto lo dice.
+
+**L'ordine conta piu' del valore**: una sola inversione fa scartare l'op dal
+confronto. Su cold01 l'ordine e' AMT `#443`, chip init `#649-#658`, MAC in
+shared memory `#661-#663`, host flag `#686-#690`, chanspec `#691`.
+
+## Read plans
+
+Per le letture che il driver consuma, l'harness serve valori scriptati invece
+del mirror. Due modi:
+
+- `AC_READ_ORACLE=<cattura>` — i valori vengono dalla cattura stessa,
+  nell'ordine in cui compaiono. E' il modo canonico ed e' quello che `gates.sh`
+  usa; `AC_READ_ORACLE_FROM=<episodio>` sposta il punto di partenza.
+- `b43_test_plan_phy_reads()` e simili in `main.c`, per casi mirati.
+
+A fine run, su stderr, l'oracolo stampa una riga come:
+
+```
+oracle: 6830 hit, 0 indirizzi senza voce, 0 code esaurite;
+        339 indirizzi noti, 102 non consumati del tutto
+```
+
+Le due che devono essere **zero** sono `indirizzi senza voce` (il port ha letto
+un indirizzo che la cattura non ha) e `code esaurite` (il port ha letto lo
+stesso indirizzo piu' volte di quante la cattura lo abbia). Entrambe
+invalidano il confronto da quel punto in avanti.
+
+`non consumati del tutto` **non** deve essere zero e non e' un difetto:
+l'oracolo carica ogni indirizzo che la cattura legge, compresi quelli che
+legge il core, e il port non li tocca. Sulla corsa canonica di cold01 sono 102.
+
+I read plan espliciti, quelli registrati in `main.c`, devono invece mostrare
+`iter=N/N`: la' un underrun vuol dire che il flow e' terminato in anticipo e un
+overrun che ha girato piu' del previsto.
+
+## Cosa l'harness NON simula
+
+- **Hardware dinamico**: una read ritorna l'ultimo write o il valore
+  dell'oracolo. Non ci sono bit read-only che rispondono a stimoli.
+- **Timing**: `udelay`/`msleep` sono no-op. L'ordine e' preservato, le finestre
+  reali no.
+- **Race col MAC**: le `b43_mac_*` sono no-op.
+- **Scheduling**: single-threaded, e la colonna `cpuN` della cattura e' quindi
+  normalizzata via.
+
+## Copertura per funzione
+
+```sh
+AC_FN_MARKERS=1 ./ac_trace full d6220 > /tmp/annotato.txt
+python3 ../reverse-tools/coverage_by_function.py /tmp/annotato.txt \
+    /tmp/cold/segmenti/cold01-ch36-bw20.txt
+```
+
+La copertura si misura contro la cattura **grezza**, non ripiegata: i marcatori
+si allineano agli episodi.

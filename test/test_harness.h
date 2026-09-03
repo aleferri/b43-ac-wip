@@ -20,6 +20,11 @@ void b43_test_plan_phy_reads(u16 addr, const u16 *results, int cap);
 /* Plan per cella di tabella: indipendente dalla posizione nella coda 0x000f. */
 void b43_test_plan_table_cell(u16 id, u16 off, const u16 *vals, int n);
 void b43_test_plan_radio_reads(u16 addr, const u16 *results, int cap);
+
+/* Address match table: un record per riga, la granularita' del tracer.
+ * Doppione di b43_amt_write() di patches/0011, che vive nel core e che
+ * l'harness non compila. */
+void b43_test_emit_amt(u16 idx, u16 flags);
 void b43_test_plan_mmio_reads(u16 addr, const u16 *results, int cap);
 void b43_test_plans_reset(void);
 void b43_test_plans_report(FILE *f);

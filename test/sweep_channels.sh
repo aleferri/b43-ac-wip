@@ -5,11 +5,9 @@
 # op_switch_channel does, so the flow is switch_channel with AC_FIRST_INIT=0 and
 # the segment itself as the read oracle.
 #
-# For the COLD sweep this is the wrong tool: a cold segment is a whole up cycle,
-# no single flow reproduces it, and running "full" over it consumes the read
-# oracle entries that the phase under test needs -- see the header of
-# sweep_compare.sh, which splits a segment into down and up halves around the
-# RAD.MOD 0x08ea anchor. Use sweep_compare.sh, or gates.sh for the two gates.
+# For the COLD sweep this is the wrong tool: a cold segment is a whole up cycle
+# and the flow to run against it is "full", not "switch_channel". Use gates.sh,
+# which derives the window and the tick schedule from the segment itself.
 #
 # The binary must be built with the channel guard overridden:
 #     make clean && make AC_ANY_CHANNEL=1
