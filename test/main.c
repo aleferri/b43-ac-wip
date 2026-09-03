@@ -71,6 +71,12 @@ struct board_profile {
 	/* macaddr dell'NVRAM. Lo consuma emit_core_shm_macaddr(), che sta in
 	 * piedi per il core: e' dato di board, non una costante. */
 	u8 macaddr[6];
+	/* Revisione del core 802.11 e MAC_HW_CAP. Li consuma
+	 * emit_core_shm_chipinit(): b43 li scrive in shared memory al core
+	 * init, il primo da dev->dev->core_rev e il secondo da una lettura
+	 * MMIO di B43_MMIO_MAC_HW_CAP che l'harness non modella. */
+	u16 core_rev;
+	u32 mac_hw_cap;
 };
 
 /*
@@ -85,6 +91,8 @@ static const struct board_profile PROFILE_D6220 = {
 	.name = "d6220", .chip_id = 0x4352, .radio_rev = 4,
 	/* macaddr=00:00:00:00:00:03 (wl1_nvram.txt) */
 	.macaddr = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x03 },
+	/* WLCOREREV e MACHW_L/H come li scrive il vendor: cold01 #652-#654 */
+	.core_rev = 42, .mac_hw_cap = 0x30518c05,
 	.radio_ver = 0x2069, .phy_rev = 1,
 	.num_cores = 3, .coremask = 0x3, .rxchain = 3,
 	.subband5gver = 0x4,
@@ -127,6 +135,7 @@ static const struct board_profile PROFILE_AGCOMBO = {
 	.name = "agcombo", .chip_id = 0x4360, .radio_rev = 4,
 	/* macaddr=00:c0:02:01:07:24 (agcombo_nvram.txt) */
 	.macaddr = { 0x00, 0xc0, 0x02, 0x01, 0x07, 0x24 },
+	.core_rev = 42, .mac_hw_cap = 0x30518c05,
 	/*
 	 * Blocco FEM/PA sintetizzato dalla NVRAM agcombo con le maschere
 	 * canoniche (SROM11_FEM_CFG1/2): femctrl=6 pdgain=10 tssiposslope=1,
@@ -425,6 +434,11 @@ static void mount_board(const struct board_profile *p)
 	g_wldev.phy.dacbuf_cap = g_ac.dacbuf_cap;
 	g_wldev.phy.lpf_cap    = g_ac.lpf_cap0;
 	g_wldev.phy.ac         = &g_ac;
+	/*
+	 * Come b43_phy_init(): il PHY guarda phy.chandef, non dentro hw->conf.
+	 * DOPO il memset di g_wldev qui sopra, o si perde.
+	 */
+	g_wldev.phy.chandef    = &g_hw.conf.chandef;
 	/*
 	 * Primo bring-up per default: e' la fase che le catture attach
 	 * testimoniano. AC_FIRST_INIT=0 seleziona il bring-up successivo, da
@@ -1161,6 +1175,61 @@ static void run_switch_channel(void)
  * due ordini e' in docs/retrace-todo.md: qui serve a far avanzare il confronto
  * oltre queste tre op, non a dimostrare che b43 le emette nel posto giusto.
  */
+/*
+ * Host flags. b43 le scrive con b43_hf_write(), che copre le parole 1..3;
+ * patches/0012 aggiunge la 4 e la 5. Il vendor le mette qui, appena prima del
+ * chanspec (cold01 #686-#690), mentre b43 le scrive molto prima, fra WLCOREREV
+ * e MACHW: l'ordine e' un punto di riconciliazione aperto, e qui si segue il
+ * vendor perche' e' quello che il confronto misura.
+ *
+ * b43_hf_write() e' preceduta da b43_hf_read(), tre letture che il vendor in
+ * questo punto non fa: non si emettono, sarebbero tre op in piu' che nessuna
+ * cattura ha.
+ *
+ * Le parole 4 e 5 escono col PARZIALE, 0x0040 e 0x0080, che e' quello che il
+ * vendor scrive qui: i bit in piu' (-> 0x0060 e 0x8088) arrivano dopo, in un
+ * blocco che l'harness non modella. Scrivere subito il valore finale
+ * salterebbe uno stato che l'ucode puo' leggere nel frattempo, e comunque non
+ * combacerebbe. TODO: trovare i due punti dove i bit si aggiungono; sono a
+ * #12243, #13526 e #13531 su cold01.
+ */
+/*
+ * Op del core init di cui NON sappiamo il significato, trascritte per chiudere
+ * la finestra del confronto posizionale. Ognuna e' un TODO.
+ *
+ *   0x0092  letta una volta prima della scrittura del MAC (cold01 #659) e una
+ *           seconda a #12194. Vale 0xacc su d6220 e agcombo, quindi non e'
+ *           stato di sessione ma qualcosa che l'ucode pubblica. b43.h non la
+ *           nomina.
+ *   0x077c  letta a 32 bit nella forma alto/basso/alto (#664-#668), che e' il
+ *           modo in cui il driver stock legge i contatori a 32 bit. Vale zero
+ *           qui: e' il primo campionamento, prima che qualcosa conti.
+ *
+ * Sono letture, quindi non cambiano lo stato dell'hardware: trascriverle costa
+ * solo il fatto che il port fa due accessi che non sa spiegare. Il valore lo
+ * fornisce l'oracolo, non e' cablato qui.
+ */
+static void emit_core_shm_unexplained(void)
+{
+	b43_shm_read16(&g_wldev, B43_SHM_SHARED, 0x0092);
+}
+
+static void emit_core_counters_first(void)
+{
+	b43_shm_read16(&g_wldev, B43_SHM_SHARED, 0x077e);
+	b43_shm_read16(&g_wldev, B43_SHM_SHARED, 0x077c);
+	b43_shm_read16(&g_wldev, B43_SHM_SHARED, 0x077e);
+}
+
+static void emit_core_hostflags(void)
+{
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x005e, 0x0100);
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x0060, 0x0000);
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x0062, 0x0000);
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x0078, 0x0040);
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00d4, 0x0080);
+}
+
 static void emit_core_shm_macaddr(const struct board_profile *p)
 {
 	unsigned int i;
@@ -1168,6 +1237,81 @@ static void emit_core_shm_macaddr(const struct board_profile *p)
 	for (i = 0; i < 6; i += 2)
 		b43_shm_write16(&g_wldev, B43_SHM_SHARED, (u16)(0x078c + i),
 				(u16)(p->macaddr[i] | (p->macaddr[i + 1] << 8)));
+}
+
+/*
+ * Doppione di b43_amt_write() di patches/0011, che vive in main.c del core.
+ *
+ * Emette UN record per riga, che e' la granularita' del tracer: il suo hook su
+ * wlc_bmac_write_amt da' `AMT.WR idx=`, non le due word sottostanti. Quelle il
+ * vendor le scrive sulla coppia objaddr/objdata direttamente, che nessun
+ * accessor agganciato copre, quindi non sono confrontabili e non si emettono.
+ *
+ * Come per emit_core_shm_macaddr(): sta qui e non in src/ perche' non e'
+ * codice del PHY, e i valori sono quelli della patch, cosi' se la patch cambia
+ * questo diventa sbagliato e il confronto lo dice.
+ */
+/*
+ * Doppione delle celle di patches/0012, che vivono nel core init.
+ *
+ * Divise in due perche' la traccia le mette in due punti distinti: ANTSWAP e
+ * BTSFOFF nel blocco di chip init prima del chanspec (cold01 #650, #656), il
+ * resto nel blocco di config MAC dopo l'init radio. L'ordine conta: mettere
+ * una di queste dopo il chanspec quando il vendor la fa prima basta a far
+ * perdere l'appaiamento.
+ *
+ * Le celle del secondo gruppo non sono rispecchiate: cadono fra #12197 e
+ * #14172, dentro un blocco che l'harness non modella affatto, e emetterle
+ * altrove le metterebbe nel posto sbagliato -- peggio che non emetterle. La
+ * patch le scrive comunque, perche' quello che conta per l'hardware e' lo
+ * stato finale; qui conta l'ordine, e non lo sappiamo riprodurre.
+ */
+static void emit_core_shm_chipinit(const struct board_profile *p)
+{
+	/* patches/0012 */
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x0080, 8);      /* MAXBFRAMES */
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x005c, 0x000a); /* ANTSWAP */
+
+	/*
+	 * Queste b43 le scrive gia', e mancavano solo perche' l'harness compila
+	 * src/ e non main.c. Nell'ordine di b43, che NON e' quello del vendor:
+	 * b43 mette WLCOREREV, poi le host flag, poi MACHW; il vendor mette
+	 * MACHW subito dopo WLCOREREV e le host flag molto piu' tardi, appena
+	 * prima del chanspec. Vedi docs/retrace-todo.md.
+	 */
+	/*
+	 * Modo operativo del core: INFRA e DISCPMQ, AP azzerato. Lo fa
+	 * b43_adjust_opmode(); stava dentro frontend_gpio_setup del PHY e
+	 * l'abbiamo spostato qui, che e' dove il vendor lo emette -- fra
+	 * ANTSWAP e WLCOREREV, non con la GPIO.CTL.
+	 */
+	b43_maccontrol_set(&g_wldev, (u32)~0x40060000u, 0x40020000);
+
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x0016, p->core_rev);
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00c0,
+			(u16)(p->mac_hw_cap & 0xffff));
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00c2,
+			(u16)((p->mac_hw_cap >> 16) & 0xffff));
+
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x001c, 0x0006); /* BTSFOFF */
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x0044, 3);      /* SFFBLIM */
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x0046, 2);      /* LFFBLIM */
+}
+
+static void emit_core_amt(const struct board_profile *p)
+{
+	u16 i;
+
+	/* Azzeramento di tutte le righe, come fa il core init. */
+	for (i = 0; i < 64; i++)
+		b43_test_emit_amt(i, 0);
+
+	/* Le due righe in cima: BSSID e indirizzo di stazione. Il BSSID a
+	 * questo punto non c'e' ancora -- l'associazione e' dopo -- ma la riga
+	 * viene scritta comunque, azzerata e marcata valida. */
+	b43_test_emit_amt(0x3e, 0x8002);
+	b43_test_emit_amt(0x3f, 0x8008);
+	(void)p;
 }
 
 static void run_full(void)
@@ -1183,7 +1327,19 @@ static void run_full(void)
 	 * programmazione dell'analogico di docs/retrace-todo.md.
 	 */
 	b43_phyops_ac.switch_analog(&g_wldev, true);
+	/*
+	 * L'ordine e' quello della traccia, e conta piu' dei valori: una sola
+	 * inversione fa scartare l'op dal confronto. Su cold01: AMT #443,
+	 * blocco di chip init #649-#658, MAC in shared memory #661-#663, host
+	 * flag #686-#690, chanspec #691 (quello lo scrive il driver, in
+	 * op_software_rfkill).
+	 */
+	emit_core_amt(g_profile);
+	emit_core_shm_chipinit(g_profile);
+	emit_core_shm_unexplained();
 	emit_core_shm_macaddr(g_profile);
+	emit_core_counters_first();
+	emit_core_hostflags();
 	run_rfkill();
 	run_op_init();
 	/*

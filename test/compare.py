@@ -141,6 +141,22 @@ def normalize_op(op: str) -> str:
     return canon_ws(canon_values(op))
 
 # ---------------------------------------------------------------------------
+# LA METRICA PENALIZZA LE OP IN PIU'
+#
+# Il denominatore del punteggio e' l'unione: tutte le op di wl piu' quelle che
+# il port emette e wl no. Fa 100% solo se i due flussi coincidono.
+#
+# Prima il denominatore erano le sole op di wl, e le inserzioni del port erano
+# gratis. Non lo sono: il driver deve emettere le op di wl, non le sue, e un
+# accesso di troppo a un registro e' un difetto quanto uno mancante -- puo'
+# lasciare l'hardware in uno stato che il driver stock non produce mai. Con la
+# vecchia metrica togliere 6000 op spurie dal port non muoveva il numero di
+# un'unita', il che rendeva invisibile l'unico tipo di progresso che quel giorno
+# si stava facendo.
+#
+# Le op che il port emette legittimamente e wl non ha vanno in SOLO_PORT, con
+# la ragione scritta. La lista e' vuota di proposito.
+
 # PERIMETRO: op che l'harness non puo' emettere, non op che non ci riguardano.
 #
 # L'obiettivo e' che b43 emetta una-per-una TUTTE le op di wl, comprese quelle
@@ -178,29 +194,28 @@ CORE_SHM = [
     (0x0000, 0x0006, "UCODEREV/PATCH/DATE/TIME"),
     (0x0008, 0x0008, "PCTLWDPOS"),
     (0x000e, 0x000e, "EDCFSTAT"),
-    (0x0010, 0x0012, "SLOTT/DTIMPER"),
-    (0x0016, 0x001e, "WLCOREREV/BTL0/BTL1/BTSFOFF/TIMBPOS"),
+    (0x0012, 0x0012, "DTIMPER"),
+    (0x0018, 0x001a, "BTL0/BTL1"),
+    (0x001e, 0x001e, "TIMBPOS"),
     (0x0022, 0x0022, "ACKCTSPHYCTL"),
     (0x0030, 0x0030, "TXFCUR"),
     (0x0034, 0x0034, "RXPADOFF"),
-    (0x003c, 0x003e, "DEFAULTIV/NRRXTRANS"),
-    (0x0040, 0x004c, "UCODESTAT..NOSLPZNATDTIM"),
+    (0x003e, 0x003e, "NRRXTRANS"),
+    (0x0040, 0x0042, "UCODESTAT/FWCAPA"),
+    (0x0048, 0x0048, "PRSSIDLEN"),
+    (0x004a, 0x004c, "PRTLEN/NOSLPZNATDTIM"),
     (0x0050, 0x0056, "PHYVER/PHYTYPE/BEACPHYCTL/KTP"),
     (0x0058, 0x005a, "TSSI_CCK, 32 bit"),
-    (0x005c, 0x0066, "ANTSWAP/HOSTF1-3/RFATT/RADAR"),
+    (0x0066, 0x0066, "RADAR"),
     (0x0068, 0x006a, "BT_BASE0 / TSSI_OFDM_A, 32 bit"),
     (0x006e, 0x006e, "PHYTXNOI"),
     (0x0070, 0x0072, "TSSI_OFDM_G / RFRXSP1, 32 bit"),
     (0x0074, 0x0074, "PRMAXTIME"),
-    (0x0078, 0x0078, "HOSTF4"),
-    (0x0080, 0x0080, "MAXBFRAMES"),
     (0x0088, 0x008a, "JSSI0/JSSI1"),
     (0x0094, 0x009e, "SPUWKUP/PRETBTT/SIZE01..SIZE67"),
     (0x00a8, 0x00a8, "MCASTCOOKIE"),
     (0x00b0, 0x00b0, "EXTNPHYCTL"),
     (0x00b6, 0x00b6, "BCN_LI"),
-    (0x00c0, 0x00c2, "MACHW_L/MACHW_H"),
-    (0x00d4, 0x00d4, "HOSTF5"),
     (0x0100, 0x0100, "CHAN_5GHZ"),
     (0x0108, 0x0108, "BCMCFIFOID"),
     (0x0160, 0x017e, "PRSSID, SSID da 32 byte"),
@@ -209,10 +224,23 @@ CORE_SHM = [
                      "mai. Vedi docs/retrace-todo.md"),
     (0x0188, 0x0188, "PRPHYCTL"),
     (0x01c0, 0x023e, "tabelle rate: OFDMDIRECT/BASIC, CCKDIRECT/BASIC"),
-    (0x0240, 0x02be, "EDCFQ, 4 code x 16 parametri"),
+    (0x0242, 0x02be, "EDCFQ, code 1..3"),
     (0x0318, 0x05d3, "TKIPTSCTTAK, 50 voci da 14 byte"),
-    (0x05d4, 0x0648, "KEYIDXBLOCK, 58 chiavi"),
+    (0x05d4, 0x05f2, "KEYIDXBLOCK"),
 ]
+
+# Celle che erano in CORE_SHM e sono state TOLTE perche' il port le scrive:
+# 0x0010 SLOTT, 0x0016 WLCOREREV, 0x001c BTSFOFF, 0x003c DEFAULTIV,
+# 0x0044/0x0046 SFFBLIM/LFFBLIM, 0x005c ANTSWAP, 0x005e-0x0062 HOSTF1-3,
+# 0x0064 RFATT, 0x0078 HOSTF4, 0x0080 MAXBFRAMES, 0x00c0/0x00c2 MACHW,
+# 0x00d4 HOSTF5, 0x0240 EDCFQ base, 0x05f4 PSM.
+#
+# Vanno tolte, non e' facoltativo: il perimetro scarta op dal solo lato vendor,
+# quindi una cella che il port emette e il perimetro scarta diventa
+# un'inserzione senza controparte e rompe il confronto posizionale a quel
+# punto. E' successo -- il posizionale e' rimasto a @66 mentre l'LCS saliva --
+# ed e' la ragione per cui questa lista va ristretta ogni volta che il port
+# impara a scrivere una cella.
 
 # Celle che b43.h nomina come del MAC ma che il PHY AC usa davvero, con la
 # citazione. Restano nel denominatore.
@@ -227,6 +255,61 @@ PHY_ANCHE = [
     (0x00a0, 0x00a0, "CHAN per b43.h; e' B43_SHM_AC_CHANSPEC in "
                      "src/phy_ac.h, e write_chanspec() la scrive"),
 ]
+
+# Op che il vendor emette e che NESSUN codice b43 puo' emettere, perche'
+# corrispondono a un confine di funzione che b43 non ha e non hanno effetto
+# sull'hardware. Si scartano dal solo lato vendor.
+#
+# Non e' il perimetro, che scarta celle di altri, e non e' SOLO_PORT, che
+# scarta op del port senza oracolo. E' una terza categoria e va tenuta
+# corta: ogni voce e' un pezzo di obiettivo dichiarato irraggiungibile, e serve
+# la prova che non ci sia niente da emettere.
+#
+#   MAC.BW   hook su wlc_bmac_bw_set. L'equivalente GPL in brcmsmac,
+#            brcms_b_bw_set(), fa wlc_phy_bw_state_set() -- che e' `pi->bw = bw`
+#            e nient'altro -- piu' un reset e un init del PHY. Nelle catture
+#            fra il record e il prologo radio non c'e' nessuna scrittura di
+#            registro, e il prologo radio e' quell'init, che il port fa. In b43
+#            la larghezza sta in phy.chandef, che b43_phy_init() punta prima di
+#            switch_analog e di b43_software_rfkill: e' gia' impostata quando il
+#            PHY arriva qui, e non c'e' nulla da scrivere.
+SOLO_VENDOR = (r'^MAC\.BW\b',)
+
+# Op che il PORT emette e che il vendor legittimamente non ha. Si scartano dal
+# solo lato test, e servono perche' il punteggio penalizza le op in piu': senza
+# questa lista un'op giusta ma senza controparte peserebbe come un difetto.
+#
+# Ogni voce va argomentata qui, come per SOLO_VENDOR: un'op senza controparte
+# di solito vuol dire che il port fa qualcosa di troppo, non che la metrica
+# vada aggiustata. I casi legittimi sono due -- un'op che b43 deve fare per la
+# sua struttura dove wl ne fa una diversa, e un'op giusta la cui controparte
+# esiste ma non e' stata catturata perche' l'hook e' arrivato dopo. La seconda
+# e' temporanea per definizione: si chiude con una ricattura.
+#   AMT.*  la address match table. Il port la scrive per via di `patches/0011`,
+#          ricavata dalla cattura a freddo del DSL-3580L; le catture del d6220
+#          non la hanno perche' l'hook su `wlc_bmac_write_amt` e' stato aggiunto
+#          dopo che sono state prese. NON e' un'op di troppo: e' un'op giusta
+#          senza oracolo, e ci resta finche' non c'e' un retrace del d6220 con
+#          quell'hook. Quel giorno questa voce va togliata e il confronto
+#          diventa piu' severo, che e' il verso giusto.
+SOLO_PORT = (r'^AMT\.',)
+
+
+def drop_solo_port(ops):
+    """Togli dal port le op che il vendor legittimamente non ha."""
+    out, dropped = [], []
+    for op in ops:
+        (dropped if any(re.search(p, op) for p in SOLO_PORT) else out).append(op)
+    return out, dropped
+
+
+def drop_solo_vendor(ops):
+    """Togli dal vendor le op che nessun codice b43 puo' emettere."""
+    out, dropped = [], []
+    for op in ops:
+        (dropped if any(re.search(p, op) for p in SOLO_VENDOR) else out).append(op)
+    return out, dropped
+
 
 PERIMETER = [
     dict(pattern=r'^OBJ\.(RD|WR) ', core_shm=True,
@@ -407,6 +490,15 @@ def main():
 
     vendor = load_vendor(args.vendor, rng)
     test = load_test(args.test)
+
+    vendor, sv = drop_solo_vendor(vendor)
+    test, sp = drop_solo_port(test)
+    if sv:
+        print(f"solo vendor: {len(sv)} op scartate perche' nessun codice b43 "
+              f"puo' emetterle; vedi SOLO_VENDOR in questo file")
+    if sp:
+        print(f"solo port: {len(sp)} op del port scartate perche' l'oracolo "
+              f"non le puo' contenere; vedi SOLO_PORT in questo file")
 
     if not args.senza_perimetro:
         vendor, outside, keys = apply_perimeter(vendor)

@@ -286,6 +286,83 @@ static void b43_phy_ac_adc_hold(struct b43_wldev *dev, bool hold)
 }
 
 /*
+ * Bandwidth step: 0 at 20 MHz, 1 at 40, 2 at 80.
+ *
+ * Several registers move by a fixed amount per step rather than taking three
+ * unrelated values, so the step is worth having as a number. Each user below
+ * says which law it follows and what the three values are, because the law is
+ * fitted to three points and nothing more: it is a compact way of writing what
+ * was measured, not a prediction. 160 MHz would be a fourth point and there is
+ * no capture of one.
+ */
+static unsigned int b43_phy_ac_bw_step(struct b43_wldev *dev)
+{
+	switch (dev->phy.ac->cal_width) {
+	case NL80211_CHAN_WIDTH_80:
+		return 2;
+	case NL80211_CHAN_WIDTH_40:
+		return 1;
+	default:
+		return 0;
+	}
+}
+
+/*
+ * Eight shared-memory cells the stock driver reads and writes straight back
+ * without changing anything: 0x099e and every 0x14 from there, up to 0x0a2a.
+ *
+ * No value is written from here -- what goes back is what came out -- so there
+ * is nothing to transcribe and nothing that can be wrong on a board this was
+ * not measured on. That the values ARE constant is how the read-back is known
+ * to be faithful rather than a coincidence: 0x44, 0x3c, 0x34, 0x30, 0x2c,
+ * 0x2c, 0x28 and 0x28, the same on two channels of the D6220 and on a BCM4360,
+ * which makes them microcode defaults.
+ *
+ * Why the stock driver bothers is not known. A read-modify-write whose
+ * modification is a no-op on this hardware would look exactly like this, and
+ * so would a deliberate touch to make the microcode notice the cells. The
+ * captures cannot tell those apart, and reproducing the accesses costs nothing
+ * either way.
+ *
+ * These are cells of the MAC, not of the PHY, so this belongs in the core.
+ * It sits here because the captures put it between the PHY write of 0x0339 and
+ * the host flag that follows, and the core has no hook at that point; see
+ * docs/retrace-todo.md.
+ */
+static void b43_phy_ac_shm_readback_block(struct b43_wldev *dev)
+{
+	unsigned int i;
+
+	/*
+	 * Four accesses that open the block, and none of them is understood.
+	 *
+	 * TODO 0x0092: read, not written, and b43.h does not name the cell. It
+	 * reads 0xacc on both boards, so it is something the microcode
+	 * publishes rather than session state; nothing here consumes the value.
+	 * It is read once earlier too, during core init.
+	 *
+	 * TODO 0x000c: written with 0xf, and b43.h does not name it either.
+	 *
+	 * The slot time, 0x03ff then 9, is the second half of what
+	 * patches/0012 introduced -- and the captures put BOTH writes here, not
+	 * at core init where that patch does the 9. What 0x03ff is for is not
+	 * known; writing the maximum and then the real value looks like a
+	 * deliberate two-step, so it is reproduced as one.
+	 */
+	b43_shm_read16(dev, B43_SHM_SHARED, 0x0092);
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x000c, 0x000f);
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x0010, 0x03ff);	/* SLOTT */
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x0010, 9);
+
+	for (i = 0; i < 8; i++) {
+		u16 cell = (u16)(0x099e + i * 0x14);
+
+		b43_shm_write16(dev, B43_SHM_SHARED, cell,
+				b43_shm_read16(dev, B43_SHM_SHARED, cell));
+	}
+}
+
+/*
  * CLASSCTL write with a status_mask update: no peek and no clip detect. The
  * capture has two cases of an isolated write with no preceding peek.
  */
@@ -294,7 +371,15 @@ static void b43_phy_ac_classctl_write(struct b43_wldev *dev, bool arm)
 	B43_AC_FN();
 	struct b43_phy_ac *phy_ac = dev->phy.ac;
 
-	b43_phy_write(dev, 0x0140, arm ? 0x0df4 : 0x0df6);
+	/*
+	 * Bit 0x0800 is set at 20 MHz and clear above it: the captures write
+	 * 0x0df4/0x0df6 at 20 MHz and 0x05f4/0x05f6 at 40 and 80, and the rest
+	 * of the word does not move. Seventeen of the eighteen writes to this
+	 * register follow that; the one that does not comes from elsewhere.
+	 */
+	b43_phy_write(dev, 0x0140,
+		      (u16)((arm ? 0x0df4 : 0x0df6) &
+			    (b43_phy_ac_bw_step(dev) ? ~0x0800 : ~0)));
 	phy_ac->status_mask = (phy_ac->status_mask & ~B43_PHY_AC_STATE_RX_ANY) |
 			      (arm ? B43_PHY_AC_STATE_RX_WAITED
 				   : (B43_PHY_AC_STATE_RX_WAITED |
@@ -595,15 +680,19 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 		b43_phy_write(dev, 0x0725, 0x0600);
 		b43_phy_write(dev, 0x073a, 0x0180);
 		b43_phy_write(dev, 0x0739, 0x0000);
-		b43_phy_read(dev, 0x0393);
-		b43_phy_write(dev, 0x0394, 0x0110 | core);
-		b43_phy_write(dev, 0x0393, 0x8000);
 		/*
-		 * Sample the measurement and average it. Each pass reads
-		 * 0x0013 then 0x0012; a pass whose measurement field is zero
-		 * carries no reading and is dropped. See the base index write
-		 * below for what the average feeds and why a single sample is
-		 * not enough.
+		 * Sample the measurement and average it. Each pass arms the
+		 * measurement and then reads 0x0013 then 0x0012; a pass whose
+		 * measurement field is zero carries no reading and is dropped.
+		 * See the base index write below for what the average feeds
+		 * and why a single sample is not enough.
+		 *
+		 * The arming is per pass, not once before the loop: the
+		 * captures re-read 0x0393 and rewrite 0x0394 and 0x0393 before
+		 * every pair of sample reads. At 20 and 40 MHz there is a
+		 * single pass and the two arrangements are indistinguishable;
+		 * at 80 MHz, where the count is 256, arming once gave 256 pairs
+		 * of reads against the stock driver's 256 armed passes.
 		 */
 		{
 			unsigned int passes = b43_phy_ac_idle_tssi_passes(dev);
@@ -611,6 +700,10 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 			u32 sum = 0;
 
 			for (i = 0; i < passes; i++) {
+				b43_phy_read(dev, 0x0393);
+				b43_phy_write(dev, 0x0394, 0x0110 | core);
+				b43_phy_write(dev, 0x0393, 0x8000);
+
 				r013 = b43_phy_read(dev, 0x0013);
 				r012 = b43_phy_read(dev, 0x0012);
 
@@ -669,7 +762,13 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 			b43_actab_write_bulk(dev, 0x000c, 0x0073, 16, 1, &tblw_val_14);
 		}
 		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
-		b43_radio_write(dev, 0x004e, 0x8000);
+		/*
+		 * 9 per bandwidth step in the low bits: 0x8000 at 20 MHz,
+		 * 0x8009 at 40, 0x8012 at 80. The per-core twin at 0x024e
+		 * takes the same value.
+		 */
+		b43_radio_write(dev, 0x004e,
+				(u16)(0x8000 + 9 * b43_phy_ac_bw_step(dev)));
 		b43_radio_write(dev, 0x0166, 0x0000);
 		b43_phy_write(dev, 0x0932, 0x0000);
 		b43_phy_write(dev, 0x0933, 0x0000);
@@ -689,7 +788,9 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 			b43_actab_write_bulk(dev, 0x000c, 0x0077, 16, 1, &tblw_val_16);
 		}
 		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
-		b43_radio_write(dev, 0x024e, 0x8000);
+		/* Come 0x004e qui sopra: 9 per passo di banda. */
+		b43_radio_write(dev, 0x024e,
+				(u16)(0x8000 + 9 * b43_phy_ac_bw_step(dev)));
 		b43_radio_write(dev, 0x0366, 0x0000);
 		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~(0x0002), (0x0002));
 		b43_phy_write(dev, 0x0394, 0x000b);
@@ -2074,15 +2175,20 @@ static void b43_phy_ac_rx_evm_shaping_override(struct b43_wldev *dev);
  * of the block otherwise: +2 channels at 40 MHz and +6 at 80, which is half
  * the bonded span.
  *
- * The values come from the chandef and not from the cal_* fields, which
+ * The values come from phy.chandef and not from the cal_* fields, which
  * set_channel() fills: the vendor writes the chanspec at the head of the RF
  * bring-up, before any channel setup has run, so at that point cal_* are still
- * from the previous cycle or zero. The chandef is the same source set_channel()
- * reads, and it is already valid when the core initialises the PHY.
+ * from the previous cycle or zero.
+ *
+ * phy.chandef is where b43 keeps the width -- b43_phy_init() points it at the
+ * hardware config before switch_analog() and before b43_software_rfkill(),
+ * which is what calls this, and b43_op_config() repoints it on every channel
+ * change. It is also what b43_is_40mhz() reads. So the bandwidth is already
+ * established here and there is nothing to set.
  */
 void b43_phy_ac_write_chanspec(struct b43_wldev *dev)
 {
-	const struct cfg80211_chan_def *chandef = &dev->wl->hw->conf.chandef;
+	const struct cfg80211_chan_def *chandef = dev->phy.chandef;
 	u16 chan = chandef->chan->hw_value;
 	u16 spec;
 
@@ -2099,6 +2205,7 @@ void b43_phy_ac_write_chanspec(struct b43_wldev *dev)
 	}
 
 	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_AC_CHANSPEC, spec);
+
 }
 
 static void b43_phy_ac_chanspec_tail(struct b43_wldev *dev);
@@ -3992,6 +4099,32 @@ static void b43_phy_ac_rxgain_init(struct b43_wldev *dev, unsigned int core)
  * iteration, a second txpwr round with the gainctrl_final loop, then the RXIQ
  * teardown and finalize.
  */
+/*
+ * Whether the calibrations that transmit may run on this channel.
+ *
+ * Above 5250 MHz the captures do not run them at all. Two phases are absent
+ * outright, and the evidence is the same on every segment: not one access to
+ * the command register 0x0380 and not one to 0x0b22 on any of the nineteen
+ * segments from channel 52 up, against 313 to 978 and nine respectively on
+ * every segment from 48 down. It is not a shorter run, it is nothing, and it
+ * is most of the difference between a 36k-operation attach and a 20k one.
+ *
+ * 5250 MHz is where the regulatory domains put the DFS boundary, and these
+ * calibrations transmit -- they drive the tone generator and poll for the
+ * result. A radio that may not transmit until the channel availability check
+ * has finished cannot run them, which is a reason for the split rather than
+ * just a line that happens to fit. Not proof, though: the same boundary is
+ * also "the second 5 GHz sub-band", and the captures do not separate the two.
+ *
+ * Only the phases proven absent are behind this. The rest of the block below
+ * runs on both sides of the boundary as far as has been checked, and where the
+ * boundary really falls in it is in docs/retrace-todo.md.
+ */
+static bool b43_phy_ac_may_calibrate_tx(struct b43_wldev *dev)
+{
+	return dev->phy.chandef->chan->center_freq <= 5250;
+}
+
 static void b43_phy_ac_set_channel_calibrations(struct b43_wldev *dev)
 {
 	/*
@@ -4016,11 +4149,24 @@ static void b43_phy_ac_set_channel_calibrations(struct b43_wldev *dev)
 	b43_phy_ac_post_cal_finalize(dev);
 	b43_phy_ac_post_cal_finalize_iter3(dev);
 	b43_phy_ac_rxiqcal_apply(dev);
-	b43_phy_ac_post_rxiqcal_stage2(dev);
+	/*
+	 * Salta dal canale 52 in su: la tabella 0x000e, che questa fase e' la
+	 * sola a toccare, ha 8 accessi sui canali fino al 48 e zero dal 52 in
+	 * su su tutti e ventidue i segmenti.
+	 */
+	if (b43_phy_ac_may_calibrate_tx(dev))
+		b43_phy_ac_post_rxiqcal_stage2(dev);
 
-	/* RX AFE calibration (vendor #41909+, ~1500 op). */
-	b43_phy_ac_rxcal_afe_calibrate(dev);
-	b43_phy_ac_rxcal_afe_finalize_gain_luts(dev);
+	/*
+	 * RX AFE calibration (vendor #41909+, ~1500 op), on the lower 5 GHz
+	 * channels only.
+	 *
+	 * Skipped above 5250 MHz; see b43_phy_ac_may_calibrate_tx().
+	 */
+	if (b43_phy_ac_may_calibrate_tx(dev)) {
+		b43_phy_ac_rxcal_afe_calibrate(dev);
+		b43_phy_ac_rxcal_afe_finalize_gain_luts(dev);
+	}
 
 	/*
 	 * Primo round post-cal RXIQ (vendor #45962-#46774).
@@ -4032,9 +4178,18 @@ static void b43_phy_ac_set_channel_calibrations(struct b43_wldev *dev)
 	b43_phy_ac_rxiqcal_apply_tx_gain_bbmult(dev);
 	b43_phy_ac_rxiqcal_dds_seed(dev);
 	b43_phy_ac_rxiqcal_prep_second_iter(dev);
-	b43_phy_ac_rxiqcal_run_meas_iters(dev);
+	if (b43_phy_ac_may_calibrate_tx(dev))
+		b43_phy_ac_rxiqcal_run_meas_iters(dev);
 	b43_phy_ac_rxiqcal_apply_tx_bbmult_kick(dev);
-	b43_phy_ac_iqcal_coeff_tables_reset(dev);
+	/*
+	 * Azzeramento delle tabelle dei coefficienti IQ, 0x42/0x62/0x82: 256
+	 * voci ciascuna sui canali fino al 48, zero dal 52 in su su tutti e
+	 * ventidue i segmenti. Sono le tabelle che le fasi di calibrazione
+	 * dietro may_calibrate_tx() riempiono, quindi la' non c'e' niente da
+	 * azzerare.
+	 */
+	if (b43_phy_ac_may_calibrate_tx(dev))
+		b43_phy_ac_iqcal_coeff_tables_reset(dev);
 
 	/*
 	 * Second round post-cal: applica coefficienti misurati dagli iter
@@ -4052,7 +4207,8 @@ static void b43_phy_ac_set_channel_calibrations(struct b43_wldev *dev)
 	 * Ricerca del guadagno di loopback (round 6°-9° di txpwr apply):
 	 * vedi b43_phy_ac_loopback_gain_search e il commento alla ricerca.
 	 */
-	b43_phy_ac_loopback_gain_search(dev);
+	if (b43_phy_ac_may_calibrate_tx(dev))
+		b43_phy_ac_loopback_gain_search(dev);
 
 	/* 5° dds_seed + meas_apply variante v2 */
 	b43_phy_ac_rxiqcal_dds_seed_second_tone(dev);
@@ -4091,7 +4247,31 @@ static const struct {
 	{ 36, NL80211_CHAN_WIDTH_20 },
 };
 
-static bool b43_phy_ac_config_validated(u16 chan, enum nl80211_chan_width width)
+/*
+ * Avviso una volta per sito: dice che qui il driver scrive qualcosa che non sa
+ * derivare, e cosa puo' andare storto se l'hardware non e' quello su cui il
+ * valore e' stato ricavato.
+ *
+ * Una volta e non ogni volta: alcuni di questi punti stanno in un ciclo di
+ * calibrazione e riempirebbero il log. E per sito e non globale: quale dei
+ * punti si e' toccato e' l'informazione utile.
+ *
+ * Non e' B43_WARN_ON, che segnala uno stato che non dovrebbe accadere: questi
+ * accadono per costruzione, e il messaggio serve a chi legge un dmesg dopo che
+ * qualcosa non ha funzionato.
+ */
+#define b43_phy_ac_todo(dev, fmt, ...)					\
+	do {								\
+		static bool __ac_todo_said;				\
+									\
+		if (!__ac_todo_said) {					\
+			__ac_todo_said = true;				\
+			b43warn((dev)->wl, "AC-PHY: " fmt, ##__VA_ARGS__); \
+		}							\
+	} while (0)
+
+static bool b43_phy_ac_config_validated(struct b43_wldev *dev, u16 chan,
+					enum nl80211_chan_width width)
 {
 	unsigned int i;
 
@@ -4101,8 +4281,16 @@ static bool b43_phy_ac_config_validated(u16 chan, enum nl80211_chan_width width)
 	 * above. It defeats a guard that protects the PA, hence
 	 * B43_DEBUG-only and default n.
 	 */
-	if (IS_ENABLED(CONFIG_B43_PHY_AC_ANY_CHANNEL))
+	if (IS_ENABLED(CONFIG_B43_PHY_AC_ANY_CHANNEL)) {
+		b43_phy_ac_todo(dev,
+			"channel guard defeated by CONFIG_B43_PHY_AC_ANY_CHANNEL. "
+			"Several tables are fitted to ch36 at 20 MHz and have no "
+			"evidence elsewhere: the AFE low-pass stages, the CRS "
+			"minimum power ladder, and the per-bandwidth entries of "
+			"the 0x00ec-0x00f5 block. Transmit power and receive "
+			"sensitivity may be wrong here.\n");
 		return true;
+	}
 
 	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_validated_configs); i++)
 		if (b43_phy_ac_validated_configs[i].channel == chan &&
@@ -4175,7 +4363,7 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
 	 * reproducing it, and the list disappears once the values are derived
 	 * rather than transcribed.
 	 */
-	if (!b43_phy_ac_config_validated(channel->hw_value, width)) {
+	if (!b43_phy_ac_config_validated(dev, channel->hw_value, width)) {
 		b43warn(dev->wl,
 			"AC-PHY: refusing ch%u at %s: its programming has not "
 			"been checked against a capture, and several of the "
@@ -4433,6 +4621,7 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
 	 * gate released from the idle_tssi phase.
 	 */
 	b43_phy_write(dev, 0x0339, 0x0fff);
+	b43_phy_ac_shm_readback_block(dev);
 	b43_phy_ac_mhf_maskset(dev, 4, (u16)~0x0008, 0x0008);
 	b43_phy_ac_mhf_maskset(dev, 0, (u16)~0x4000, 0);
 	b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
@@ -4697,6 +4886,7 @@ static void b43_phy_ac_mhf_config(struct b43_wldev *dev)
 {
 	b43_phy_ac_mhf_maskset(dev, 4, (u16)~0x0080, 0x0080);
 	b43_phy_ac_mhf_maskset(dev, 0, (u16)~0x0100, 0x0100);
+
 	b43_phy_ac_mhf_bringup_clears(dev);
 }
 
@@ -4912,6 +5102,25 @@ static void b43_phy_ac_frontend_gpio_setup(struct b43_wldev *dev)
 	b43_phy_ac_mhf_maskset(dev, 0, (u16)~0x0100, 0x0100);
 	b43_maccontrol_set(dev, 0, 0x04000400);
 
+	/*
+	 * A second write of the 0x2e4 field, on the upper 5 GHz channels only.
+	 * The lower ones -- 36 to 48 -- take one write, done in the AFE unit
+	 * above; everything from 52 up takes this one as well.
+	 *
+	 * The condition is on the channel because nothing else is available:
+	 * the sweep this comes from unloads and reloads the driver between
+	 * channels, so there is no carried-over state for the driver to have
+	 * branched on, and the whole attach is 36k operations on 36 to 48
+	 * against 20k from 52 up. What the field means is not known, and which
+	 * property of the channel the stock driver actually tests is not
+	 * either: 5250 MHz is where the regulatory domains put the DFS
+	 * boundary, and the traces show no DFS-specific work on either side, so
+	 * "above 5250" and "requires radar detection" are the same set here and
+	 * cannot be told apart.
+	 */
+	if (dev->phy.chandef->chan->center_freq > 5250)
+		b43_phy_maskset(dev, 0x02e4, (u16)~0x3f00, 0x0f00);
+
 	b43_phy_ac_pmu_req(dev, false);
 
 	b43_maccontrol_set(dev, 0, 0x04000404);
@@ -4925,7 +5134,17 @@ static void b43_phy_ac_frontend_gpio_setup(struct b43_wldev *dev)
 	b43_maccontrol_set(dev, 0, 0x04020402);
 	b43_maccontrol_set(dev, (u32)~0x0000c000u, 0);
 	bcma_chipco_gpio_control(cc, 0x00000000, 0x00000000);
-	b43_maccontrol_set(dev, (u32)~0x40060000u, 0x40020000);
+
+	/*
+	 * The preamble used to end with a fourth MACCONTROL write here, setting
+	 * INFRA and DISCPMQ and clearing AP. Those are the core's operating
+	 * mode, not the front end's, and b43_adjust_opmode() sets them: the PHY
+	 * had no business writing them. The captures agree -- the stock driver
+	 * emits it after the core has written its chip-init cells to shared
+	 * memory, not with the GPIO setup (cold01 #645 for the GPIO control
+	 * write above, #651 for this one, with two shared-memory writes in
+	 * between).
+	 */
 }
 
 static void b43_phy_ac_switch_analog_once(struct b43_wldev *dev, bool on)
@@ -5254,6 +5473,9 @@ struct b43_ac_b2j_op {
 	u16 reg_off;
 	u16 mask_bits;   /* 0 sentinel = WR raw */
 	u16 val;
+	/* Somma il passo di banda al valore: vedi b43_phy_ac_bw_step(). Serve
+	 * per le voci il cui campo cresce di uno per raddoppio della banda. */
+	bool bw_step;
 };
 
 static const struct b43_ac_b2j_op b43_phy_ac_b2j_ops[] = {
@@ -5308,7 +5530,9 @@ static const struct b43_ac_b2j_op b43_phy_ac_b2j_ops[] = {
 	{ 0x0723, 0x0800, 0x0800 },
 	{ 0x0735, 0x0700, 0x0300 },
 	{ 0x0735, 0x3800, 0x1800 },
-	{ 0x0738, 0x0007, 0x0003 },
+	/* Il campo [2:0] cresce di 1 per passo di banda: 3 a 20 MHz, 4 a 40, 5 a
+	 * 80. Qui c'e' il valore a 20 e il loop ci somma il passo. */
+	{ 0x0738, 0x0007, 0x0003, .bw_step = true },
 	{ 0x0723, 0x0001, 0x0001 },
 	{ 0x0735, 0x0001, 0x0000 },
 	{ 0x0723, 0x0020, 0x0020 },
@@ -5369,12 +5593,16 @@ static void b43_phy_ac_rxiqcal_apply_body_core(struct b43_wldev *dev,
 	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_b2j_ops); i++) {
 		const struct b43_ac_b2j_op *op = &b43_phy_ac_b2j_ops[i];
 		u16 addr = op->reg_off + core_off;
+		u16 val = op->val;
+
+		if (op->bw_step)
+			val = (u16)(val + b43_phy_ac_bw_step(dev));
 
 		if (op->mask_bits == 0)
-			b43_phy_write(dev, addr, op->val);
+			b43_phy_write(dev, addr, val);
 		else
 			b43_phy_maskset(dev, addr,
-					(u16)~op->mask_bits, op->val);
+					(u16)~op->mask_bits, val);
 	}
 }
 
@@ -5695,7 +5923,13 @@ void b43_phy_ac_post_rxiqcal_stage2(struct b43_wldev *dev)
 		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
 
 		b43_phy_mask(dev, 0x0471, (u16)~0x0001);
-		b43_phy_write(dev, 0x0463, 0x0027);
+		/*
+		 * 0x27 at 20 MHz, 0x4f at 40, 0x9f at 80: the value plus one
+		 * doubles with the bandwidth, which is the shape of a count of
+		 * samples over a fixed time rather than three separate numbers.
+		 */
+		b43_phy_write(dev, 0x0463,
+			      (u16)(0x28 * (1u << b43_phy_ac_bw_step(dev)) - 1));
 		b43_phy_write(dev, 0x0461, 0xffff);
 		b43_phy_write(dev, 0x0462, 0x003c);
 		b43_phy_read_log(dev, 0x0400);
@@ -5816,7 +6050,12 @@ void b43_phy_ac_rxcal_afe_iter(struct b43_wldev *dev,
 	u8 i;
 	u16 result[2];
 
-	b43_phy_write(dev, 0x0381, 0x7976);
+	/*
+	 * Cal parameter A, 0x11 per bandwidth step: 0x7976 at 20 MHz, 0x7987 at
+	 * 40, 0x7998 at 80.
+	 */
+	b43_phy_write(dev, 0x0381,
+		      (u16)(0x7976 + 0x11 * b43_phy_ac_bw_step(dev)));
 	for (i = 0; i < n_pre_clear; i++)
 		b43_actab_write_bulk_scoped(dev, 0x000c, pre_clear_offs[i],
 					    16, 1, &zero);
@@ -6137,6 +6376,14 @@ void b43_phy_ac_rxcal_afe_calibrate(struct b43_wldev *dev)
 void b43_phy_ac_rxcal_afe_finalize_gain_luts(struct b43_wldev *dev)
 {
 	B43_AC_FN();
+
+	b43_phy_ac_todo(dev,
+		"TX IQ/LO compensation coefficients are written from a table, "
+		"not computed. They are accumulated calibration state and no "
+		"formula for them has been found; what is written here is what "
+		"one board produced on one run. Transmit spectrum may be worse "
+		"than the hardware can do.\n");
+
 	B43_PHY_AC_REQUIRE(dev,
 			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
 			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
@@ -7740,6 +7987,14 @@ void b43_phy_ac_rxiq_apply_coefficients(struct b43_wldev *dev)
 
 	unsigned int c;
 
+	b43_phy_ac_todo(dev,
+		"the RX IQ coefficient b lands one LSB away from what the stock "
+		"driver writes, on both of the two boards it was checked "
+		"against. The accumulators feeding it are reproduced exactly, "
+		"so the difference is in the last step, and no rounding of the "
+		"sum reaches the stock value. Receive image rejection may be "
+		"marginally worse.\n");
+
 	/* Per core [c]: 0x?a0 (coeff a) e 0x?a1 (coeff b) */
 	for (c = 0; c < 2; c++) {
 		u16 stride = (u16)(c * 0x200);
@@ -8415,7 +8670,7 @@ static void b43_phy_ac_wd_sample_phase(struct b43_wldev *dev)
  * sweep, two hi/lo/hi passes over the six 32-bit counters, the three counters
  * at 0x07e0, 0x07e4 and 0x07dc, the 0x07d6-0x07da group and two trailing
  * words. */
-static void b43_phy_ac_wd_stats_poll(struct b43_wldev *dev)
+static void b43_phy_ac_wd_stats_poll_opt(struct b43_wldev *dev, bool ctr32_pass)
 {
 	static const u16 head[4] = { 0x010e, 0x0158, 0x010c, 0x015e };
 	static const u16 ctr32[6] = {
@@ -8428,6 +8683,21 @@ static void b43_phy_ac_wd_stats_poll(struct b43_wldev *dev)
 		b43_shm_read16(dev, B43_SHM_SHARED, head[i]);
 	for (off = 0x0768; off <= 0x078a; off += 2)
 		b43_shm_read16(dev, B43_SHM_SHARED, off);
+
+	/*
+	 * Le due passate hi/lo/hi sui contatori a 32 bit non ci sono sempre.
+	 * Su cold01 i primi tre poll -- #12961, #13481 e #13540, dentro il
+	 * blocco di config MAC del core -- hanno la sola spazzata: 18 letture
+	 * in 0x0768-0x078a contro le 54 della forma piena. Dal poll della fase
+	 * probe in avanti sono tutte piene.
+	 *
+	 * Il senso e' plausibile e non provato: le due passate leggono i
+	 * contatori come valori a 32 bit stabili, e prima che il MAC abbia
+	 * contato qualcosa non c'e' niente da leggere in quel modo. La
+	 * spazzata piatta resta perche' fa parte del latch della finestra.
+	 */
+	if (!ctr32_pass)
+		return;
 
 	for (pass = 0; pass < 2; pass++)
 		for (i = 0; i < ARRAY_SIZE(ctr32); i++)
@@ -8460,6 +8730,11 @@ static void b43_phy_ac_wd_stats_tail(struct b43_wldev *dev)
 		if (off == 0x0308)
 			b43_phy_ac_crs_note_noise(dev, v);
 	}
+}
+
+static void b43_phy_ac_wd_stats_poll(struct b43_wldev *dev)
+{
+	b43_phy_ac_wd_stats_poll_opt(dev, true);
 }
 
 void b43_phy_ac_watchdog(struct b43_wldev *dev, bool noise_cal)

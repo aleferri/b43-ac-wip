@@ -378,7 +378,17 @@ static struct hook hooks[] = {
 	 *                                           idx=a1, mask=a2, val=a3
 	 *   wlc_bmac_mhf_get(hw, u8 idx, int bands) idx=a1 (val UNDEFINED) */
 	{ "wlc_bmac_mctrl",     OP_MAC_MCTRL, 0, 2, 1 },
-	{ "wlc_bmac_mhf",       OP_MAC_MHF_W, 1, 3, 2 },
+	/* `bands` e' il 5o argomento e in o32 sta a 16(sp): si cattura con
+	 * nargx, e serve. Nelle catture la scrittura della cella HOSTF a
+	 * volte segue la chiamata e a volte no -- su cold01 #469 slot 3 e
+	 * #620 slot 4 non hanno la scrittura adiacente, che ricompare al
+	 * flush di #689-#690, mentre #623, #12242, #13525, #13530 e #13535
+	 * la hanno subito. L'ipotesi e' che la cella si scriva solo quando
+	 * `bands` combacia con la banda corrente e che altrimenti il valore
+	 * resti in cache; senza quell'argomento non si distingue, e i valori
+	 * accumulati (0x80 -> 0x88 -> 0x8088 su slot 4) restano senza
+	 * spiegazione. */
+	{ "wlc_bmac_mhf",       OP_MAC_MHF_W, 1, 3, 2, .nargx = 1 },
 	{ "wlc_bmac_mhf_get",   OP_MAC_MHF_R, 1, 0, 0, .retcap = true },
 	/* Object memory del MAC (SHM, SCR, IHR): addr=offset, aux=selettore.
 	 * Cattura anche il campione di rumore della crs_min_pwr cal, che passa da

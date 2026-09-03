@@ -29,61 +29,51 @@ Probe + `ifconfig wlan1 up` + scan passivo + associate su AP 5 GHz ch 36
 
 ## Stato corrente
 
-Due risultati sono riproducibili in questo repo (vedi
-[Verifica](#verifica-riproducibile)):
+Il numero di riferimento viene dal gate a freddo, che si lancia con
+`test/gates.sh`. La procedura esatta, con le trappole, sta in
+[`test/README.md`](test/README.md) e **non va reinventata**: e' l'unico posto
+dove si documenta come si produce un numero citabile.
 
-- Il bring-up su D6220 ch36 combacia **op-per-op con l'intera cattura
-  vendor** (flow `full`, primo bring-up): `cmp_skip.py --board d6220` misura
-  100.00% su 25003 op con 0 regioni divergenti e 10 op vendor saltate su 6
-  regole dichiarate — coppie MAC.MCTRL di scheduling interlacciate dal
-  contesto up, presenti solo dopo risvegli in ritardo del pacing (~1.32 s
-  invece di 1.00 s) e solo in questa cattura. `compare.py`, che non applica
-  eccezioni, si ferma alla prima di quelle coppie (@23951 su 25013). Il
-  bring-up successivo combacia al 99.99% (21005/21007, flow `switch_channel`
-  con `AC_FIRST_INIT=0`): restano 2 op, le due riapplicazioni dello stesso
-  coefficiente RXIQ `b` scarto di 1 LSB — irraggiungibile dagli accumulatori
-  sommati con qualsiasi arrotondamento (bound in
-  `reverse-tools/fit_rxiq_solve.py`; ipotesi: quantizzazione di
-  `wlc_phy_inv_cordic` nel blob). Vedi `docs/retrace-todo.md`.
-- L'estrattore SROM rev 11 passa l'harness userspace su tutti i vettori:
-  77/0 (DSL), 74/0 (D6220), 75/0 (agcombo).
+Su `cold01-ch36-bw20`, il segmento di riferimento:
 
-Cosa il match copre e cosa no: le op di tabella sono tracciate come marker
-`TBL.WR id/off/len` **seguito dalle write dei singoli word** sul data port
-(`PHY.WR addr=0x000f`), quindi anche il payload dei bulk è confrontato
-word-per-word. Resta fuori solo ciò che il flow non esegue: il load delle
-tabelle init di `op_init`, che ha un flow separato e per cui non esiste
-oracolo (vedi i bug aperti).
+```
+grezzo: 26670/29292 = 91.05%
+        428 col valore sbagliato, 1673 op di wl mancanti, 93 op del port di troppo
+```
 
-Su hardware il driver **non completa ancora `ifconfig up`**. L'unico run
-in repo ([`bring-up-logs/`](bring-up-logs/)) è sul DSL-3580L: probe, load
-firmware 784.2, `op_init` e il load delle tabelle passano; `switch_channel` parte,
-arriva alla scrittura della tabella txgain `id=0x20` e si ferma lì.
+Il denominatore e' l'unione dei due flussi, quindi fa 100% solo se il port
+emette esattamente le op del driver stock: ne' meno, ne' di piu', ne' con
+valori diversi. Le tre voci sono tre lavori distinti — una formula da trovare,
+del codice da scrivere, un gate da mettere — e stanno in
+[`docs/retrace-todo.md`](docs/retrace-todo.md).
+
+Sui 26 segmenti dello sweep a freddo il punteggio va da ~91% sui quattro
+canali UNII-1 a 20 MHz fino a ~45% su ch100 a 80 MHz. La differenza non e'
+qualita' del port su quei canali: sopra i 5250 MHz il driver stock **salta**
+alcune calibrazioni che trasmettono, il port ne esegue ancora una parte, e le
+op di troppo pesano. Cinque fasi sono gia' gatate, il resto e' tracciato.
+
+Il secondo gate e' il tick del watchdog periodico contro l'oracolo a regime, e
+sta a **`MATCH`** — confronto posizione-per-posizione, nessuna eccezione. E'
+il rilevatore di regressioni piu' sensibile del repo e va rilanciato a ogni
+modifica.
+
+L'estrattore SROM rev 11 passa l'harness userspace su tutti i vettori: 77/0
+(DSL), 74/0 (D6220), 75/0 (agcombo).
+
+Su hardware il driver **non completa ancora `ifconfig up`**. L'unico run in
+repo ([`bring-up-logs/`](bring-up-logs/)) e' sul DSL-3580L: probe, load
+firmware 784.2, `op_init` e il load delle tabelle passano; `switch_channel`
+parte, arriva alla scrittura della tabella txgain `id=0x20` e si ferma li'.
 Diagnosi corrente: mancano dei delay prima di quella scrittura. Attenzione,
 quel log precede la risoluzione della famiglia LPF — emette una diagnostica
-`f_predicted/f_actual` che nei sorgenti non esiste più — quindi non
-fotografa il codice attuale. Serve un run nuovo.
+`f_predicted/f_actual` che nei sorgenti non esiste piu' — quindi non fotografa
+il codice attuale. Serve un run nuovo.
 
-Copertura per-funzione del bring-up radio (`rfkill`), misurata con
-`coverage_by_function.py`: d6220 e agcombo 100% con zero gap; DSL con le
-divergenze note (`prefregs` 91.7%, `rccal` 84.2%, `afe_lpf_stage` 4.2%).
-
-`op_init` ha il suo gate contro `router-data/agcombo/wl-diag-wl1-attach.txt`,
-la sola cattura in repo che contenga il load tabelle: `set_pdet_on_reset`,
-`pre_init_frontend` e `mode_init` al 100%, `tables_init` **3714/3714** su una
-span continua (`#356..#4069`), zero op vendor non attribuite.
-
-`init_regs` si misura in due fasi, perché il numero di passate sul blocco gain
-ADC le segue: **17/17** al primo bring-up contro `d6220/attach-to-bss-up`, e
-**33/33** al successivo contro `d6220/down-to-bss-ch36-bw20` e
-`agcombo/down-to-bss-ch36`. La `d6220/down-to-bss-up` non va usata per i
-conteggi: sottoconta, vedi `docs/retrace-todo.md`.
-
-Il match op-per-op vale per D6220/ch36/BW20. Cosa questo implica sugli
-altri board, canali e bandwidth è in
-[`docs/driver-status.md`](docs/driver-status.md); le divergenze note del
-bring-up radio (tutte sul DSL, wl 6.30) sono in
-[`docs/retrace-todo.md`](docs/retrace-todo.md).
+Cosa il confronto copre e cosa no: le op di tabella sono tracciate come
+marcatore `TBL.WR id/off/len` **seguito dalle write dei singoli word** sul data
+port (`PHY.WR 0x000f`), quindi anche il payload dei bulk e' confrontato
+word-per-word.
 
 ## Cosa è portato
 
@@ -111,7 +101,9 @@ bring-up radio (tutte sul DSL, wl 6.30) sono in
   RX, i due round `txpwr`/`rxgain` con misura RXIQ, il loop
   `gainctrl_final_apply`, teardown RXIQ.
 - **Watchdog periodico** (`b43_phy_ac_watchdog`, hook `pwork_15sec`): poll
-  TSSI/statistiche SHM con latch-and-clear della finestra 0x0308–0x0312 e
+  TSSI/statistiche SHM con latch-and-clear della finestra SHM: il latch
+  legge fino a 0x0314 e la clear si ferma a 0x0312, asimmetria che ogni
+  cattura mostra e che e' voluta. Piu'
   una tornata singola del measure block a MAC sospeso — il ciclo su
   `0x0725/0x0925` che il vendor esegue ogni ~5 s a regime. Op-per-op
   contro il tick vendor (vedi [Verifica](#verifica-riproducibile)).
@@ -129,9 +121,9 @@ Mappa file sorgente → patch: [`docs/driver-status.md`](docs/driver-status.md).
 | `ppr[24]` (power reduction per-rate) | hardcoded dalla cattura D6220 ch36 | Derivazione da `mcsbw*po` SROM assente: TX power sbagliata su altri canali/board |
 | Base index idle-TSSI | seed catturato, il readback viene scartato | Errore non dominante, ma non è board-independent |
 | GPIO frontend 2-fase, PA bias per-core, PMU regctl enable finale | non implementati | Sono le op che il vendor emette solo a steady state |
-| BW40 / BW80 | `switch_channel` ritorna `-EOPNOTSUPP` | — |
+| BW40 / BW80 | `switch_channel` ritorna `-EOPNOTSUPP` | Il codice c'e' ed e' confrontato contro i segmenti a 40 e 80 MHz con `make AC_ANY_CHANNEL=1`; quello che manca e' la validazione che apra il guard |
 | 2.4 GHz | `op_switch_channel` ritorna `-EOPNOTSUPP` | Mappa radio 2G non validata |
-| Canali ≠ 36 | 50 voci in channeltab (5170–5825 MHz), solo ch36 validato | Piano in [`docs/channel-generalization.md`](docs/channel-generalization.md) |
+| Canali ≠ 36 | 50 voci in channeltab (5170–5825 MHz), solo ch36 in `b43_phy_ac_validated_configs[]` | Il confronto gira su tutti e 26 i segmenti con `AC_ANY_CHANNEL=1`, che scavalca il guard e lo dice con un `b43warn`. Piano in [`docs/channel-generalization.md`](docs/channel-generalization.md) |
 | `b43_phy_ac_rxiqcal()` (solver generico da brcmsmac) | gated da `REGMAP_FILLED == 0`, nessun chiamante nel driver | Il path RXIQ effettivo è quello trascritto dalla trace, già wirato |
 
 ### Bug aperti
@@ -146,57 +138,28 @@ sequenza di init (agcombo attach `#1345` e `#2899`). Non è un bug e non va
 
 ## Verifica riproducibile
 
-Match op-per-op, contro `d6220/attach-to-bss-up-ch36-bw20` — la sola cattura
-ch36 completa e con i valori letti (5074 RETVAL). Il flow da usare e' `full`,
-non `switch_channel` da solo: quest'ultimo non esegue `op_init`, quindi tutto cio'
-che dipende dallo stato che `op_init` calcola divergerebbe senza che sia un bug
-del driver. L'esempio: il cap del TX-LPF viene dall'rccal di `op_init`, e in
-`switch_channel` standalone resta al default.
+La procedura sta in [`test/README.md`](test/README.md), in sei passi. Qui solo
+i due gate, per averli a portata:
 
 ```sh
-cd test && make
-python3 ../reverse-tools/merge_retvals.py \
-    ../router-data/d6220/wl-diag-wl1-attach-to-bss-up-ch36-bw20.txt /tmp/att.merged.txt
-AC_READ_ORACLE=/tmp/att.merged.txt \
-    ./ac_trace full d6220 > trace.full.d6220.out
-python3 compare.py /tmp/att.merged.txt trace.full.d6220.out --range 50:30172
-# prima divergenza: @23951
-python3 cmp_skip.py /tmp/att.merged.txt trace.full.d6220.out 50:30172 --board d6220
-# CON eccezioni: 25003/25003 = 100.00%, 0 regioni, 10 op saltate su 6 regole
-```
+cd test
+unzip -d /tmp/cold ../router-data/d6220/cold-sweep.zip
+make
+./gates.sh                                    # cold a freddo: grezzo + prima divergenza
+./gates.sh /tmp/cold/segmenti/cold*.txt       # tutti e 26
 
-Sequenza del load tabelle di `op_init` contro la cattura vendor:
-
-```sh
-AC_FN_MARKERS=1 ./ac_trace op_init agcombo > gen.op_init.agcombo.txt
-python3 ../reverse-tools/coverage_by_function.py \
-    gen.op_init.agcombo.txt \
-    ../router-data/agcombo/wl-diag-wl1-attach.txt
-# tables_init 3714/3714 100.0%  #356..#4069 / 0 op nei gap
-```
-
-Tick del watchdog periodico contro il tick vendor a regime (ch36 BW20,
-estratto dallo sweep — la cattura fa sia da oracolo per le letture SHM/TSSI
-sia da riferimento):
-
-```sh
 AC_READ_ORACLE=../router-data/d6220/wl-diag-wl1-steady-tick-ch36-bw20.txt \
-    ./ac_trace periodic d6220 > gen.periodic.out
-python3 compare.py ../router-data/d6220/wl-diag-wl1-steady-tick-ch36-bw20.txt gen.periodic.out
-# MATCH, 496/496 op
+    ./ac_trace periodic d6220 > /tmp/p.out
+python3 compare.py \
+    ../router-data/d6220/wl-diag-wl1-steady-tick-ch36-bw20.txt /tmp/p.out
+# MATCH
 ```
 
-Estrattore SROM rev 11 sui tre board:
-
-```sh
-cd sprom-rev11/harness && make
-make check            # DSL-3580L  → 77 PASS / 0 FAIL
-make check-d6220      # D6220      → 74 PASS / 0 FAIL
-make check-agcombo    # agcombo    → 75 PASS / 0 FAIL
-```
-
-Dettagli su range, allineamento, read plan e copertura per funzione:
-[`test/README.md`](test/README.md).
+Le catture in `router-data/*/` sono lo sweep a freddo e quello a caldo negli
+zip, piu' l'oracolo del tick a regime e i dump statici (NVRAM, SROM, tabelle
+PHY, revinfo). Le catture singole di attach citate nelle versioni precedenti di
+questo file non esistono piu': sono state sostituite dai segmenti degli sweep,
+che coprono ogni canale e larghezza invece di uno.
 
 ## Build e test su hardware
 

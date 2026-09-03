@@ -235,6 +235,10 @@ struct b43_phy_ac_txpwr_limits {
  * 20 MHz, 0xd826 at 40 -- centre 38 of the 36+40 pair -- and 0xe02a at 80,
  * centre 42 of the 36..48 block.
  */
+/* Campo di banda del chanspec: e' anche l'argomento che il driver stock passa
+ * a b43_mac_bw_set(). 0xd000 & 0x3800 = 0x1000, 0xd800 -> 0x1800,
+ * 0xe000 -> 0x2000. */
+#define B43_PHY_AC_CHANSPEC_BW_MASK		0x3800
 #define B43_PHY_AC_CHANSPEC_BW20		0xd000
 #define B43_PHY_AC_CHANSPEC_BW40		0xd800
 #define B43_PHY_AC_CHANSPEC_BW80		0xe000

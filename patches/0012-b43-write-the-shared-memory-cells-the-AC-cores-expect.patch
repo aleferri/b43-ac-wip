@@ -1,0 +1,144 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alessandro Ferri <aleferri@example.invalid>
+Date: Wed, 3 Sep 2026 00:30:00 +0200
+Subject: [PATCH 12/12] b43: write the shared-memory cells the AC cores expect
+
+A set of shared-memory cells that b43 has been leaving at whatever the
+microcode starts them with, and that the OEM driver writes during bring-up.
+b43.h already names all of them.
+
+    SLOTT        9        slot time
+    MAXBFRAMES   8        maximum frames in a burst
+    ANTSWAP      0x000a   antenna swap threshold
+    BTSFOFF      0x003a   beacon TSF offset
+    DEFAULTIV    0x000a   default IV location
+    RFATT        0x0480   radio attenuation
+    HOSTF4       0x0060   host flags 4
+    HOSTF5       0x8088   host flags 5
+    EDCFQ        0        EDCF queue info
+    PSM          0        PSM transmitter address match block
+
+Every value is the same on a BCM4352 and on a BCM4360, across every channel
+and both driver versions the captures cover, so none of it is board data.
+
+The slot time is the one value here that is derived rather than observed: 9 is
+the 802.11a slot time, the only one that band has. b43_set_slot_time() had been
+leaving the cell alone because writing it hurt the transmit rate on BCM4311 and
+that was never understood, and returning before doing anything at all on 5 GHz
+because the IFS slot register it writes is a 2.4 GHz affair. The cell is now
+written from revision 42, which leaves BCM4311 and everything else as it was,
+and 5 GHz gets it during core init rather than waiting for mac80211 to report
+an ERP slot change that cannot come on a band with one slot time.
+
+For the rest the meaning is not established beyond the name, and the values are
+observed. They are written because the hardware is evidently expected to have
+them: leaving a cell at a default the OEM driver always overwrites is a guess
+too, and the worse one.
+
+Where a cell is written more than once during bring-up -- host flags 4 and 5
+gain bits as the driver goes, the beacon TSF offset changes once -- the value
+here is the one it ends at. b43's core init has a different shape from the
+OEM's and the intermediate points have no counterpart in it, so the end state
+matches and the order does not.
+
+Left alone: the probe response offload cells, PRSSID, PRSSIDLEN and PRTLEN.
+b43 turns that offload off with PRMAXTIME, so they are meant to be untouched.
+
+Signed-off-by: Alessandro Ferri <aleferri@example.invalid>
+---
+ drivers/net/wireless/broadcom/b43/main.c | 72 ++++++++++++++++++++++++++-----
+ 1 file changed, 64 insertions(+), 8 deletions(-)
+
+--- a/drivers/net/wireless/broadcom/b43/main.c
++++ b/drivers/net/wireless/broadcom/b43/main.c
+@@ -823,17 +823,23 @@
+ static void b43_set_slot_time(struct b43_wldev *dev, u16 slot_time)
+ {
+ 	/* slot_time is in usec. */
+-	/* This test used to exit for all but a G PHY. */
++
++	/*
++	 * The shared-memory slot time was left alone here because writing it
++	 * hurt the transmit rate on BCM4311, and that was never understood. It
++	 * is still left alone on those cores. From revision 42 it is written,
++	 * and it is the only thing done on 5 GHz: there the OEM driver writes
++	 * 9 and nothing else, which is the 802.11a slot time, and the IFS slot
++	 * register below is a 2.4 GHz affair -- this function used to return
++	 * early on 5 GHz for that reason.
++	 */
++	if (dev->dev->core_rev >= 42)
++		b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_SLOTT,
++				slot_time);
++
+ 	if (b43_current_band(dev->wl) == NL80211_BAND_5GHZ)
+ 		return;
+ 	b43_write16(dev, B43_MMIO_IFSSLOT, 510 + slot_time);
+-	/* Shared memory location 0x0010 is the slot time and should be
+-	 * set to slot_time; however, this register is initially 0 and changing
+-	 * the value adversely affects the transmit rate for BCM4311
+-	 * devices. Until this behavior is unterstood, delete this step
+-	 *
+-	 * b43_shm_write16(dev, B43_SHM_SHARED, 0x0010, slot_time);
+-	 */
+ }
+ 
+ static void b43_short_slot_timing_enable(struct b43_wldev *dev)
+@@ -5012,6 +5018,56 @@
+ 	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_SFFBLIM, 3);
+ 	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_LFFBLIM, 2);
+ 
++	/*
++	 * Cells b43 has been leaving at whatever the microcode starts them
++	 * with, and that the OEM driver writes. Every value below is the same
++	 * on a BCM4352 and on a BCM4360, across every channel and both driver
++	 * versions, so none of it is board data.
++	 *
++	 * The meaning of most of these is not established beyond the name
++	 * b43.h already carries, and the values are observed rather than
++	 * derived. They are written because the hardware is evidently expected
++	 * to have them: leaving a cell at a microcode default the OEM driver
++	 * always overwrites is a guess too, and the worse one.
++	 *
++	 * Where a cell is written more than once during bring-up -- host flags
++	 * 4 and 5 gain bits as the driver goes, beacon TSF offset changes once
++	 * -- the value here is the one it ends at. b43's core init has a
++	 * different shape from the OEM's and the intermediate points have no
++	 * counterpart in it, so the end state matches and the order does not.
++	 *
++	 * Not written: the probe response offload cells, PRSSID, PRSSIDLEN and
++	 * PRTLEN. b43 turns that offload off with PRMAXTIME just below, so
++	 * they are meant to be untouched.
++	 */
++	if (dev->dev->core_rev >= 42) {
++		b43_shm_write16(dev, B43_SHM_SHARED,
++				B43_SHM_SH_MAXBFRAMES, 8);
++		b43_shm_write16(dev, B43_SHM_SHARED,
++				B43_SHM_SH_ANTSWAP, 0x000a);
++		b43_shm_write16(dev, B43_SHM_SHARED,
++				B43_SHM_SH_BTSFOFF, 0x003a);
++		b43_shm_write16(dev, B43_SHM_SHARED,
++				B43_SHM_SH_DEFAULTIV, 0x000a);
++		b43_shm_write16(dev, B43_SHM_SHARED,
++				B43_SHM_SH_RFATT, 0x0480);
++		b43_shm_write16(dev, B43_SHM_SHARED,
++				B43_SHM_SH_HOSTF4, 0x0060);
++		b43_shm_write16(dev, B43_SHM_SHARED,
++				B43_SHM_SH_HOSTF5, 0x8088);
++		b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_EDCFQ, 0);
++		b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_PSM, 0);
++	}
++
++	/*
++	 * 5 GHz has one slot time and it is the short one, so set it here
++	 * rather than waiting for mac80211 to report an ERP slot change that
++	 * will never come. b43_set_slot_time() writes the shared-memory cell
++	 * and leaves the 2.4 GHz IFS slot register alone on this band.
++	 */
++	if (b43_current_band(dev->wl) == NL80211_BAND_5GHZ)
++		b43_short_slot_timing_enable(dev);
++
+ 	/* Disable sending probe responses from firmware.
+ 	 * Setting the MaxTime to one usec will always trigger
+ 	 * a timeout, so we never send any probe resp.
+-- 
+2.43.0

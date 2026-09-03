@@ -127,7 +127,7 @@ PY
 	echo "  --- cmp_skip ---"
 	python3 "$HERE/cmp_skip.py" /tmp/gate.merged /tmp/gate.full \
 		"$from:$last" --board d6220 \
-		| grep -E 'grezzo|nel perimetro|CON  ecce|fuori perimetro|op saltate'
+		| grep -E 'grezzo|nel perimetro|CON  ecce|fuori perimetro|op saltate|valore sbagliato|op di wl mancanti|solo vendor|solo port|invisibili'
 	echo "  --- compare ---"
 	python3 "$HERE/compare.py" /tmp/gate.merged /tmp/gate.full \
 		--range "$from:$last" --auto-align \

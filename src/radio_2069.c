@@ -1047,7 +1047,29 @@ void b43_radio_2069_channel_setup(struct b43_wldev *dev,
 #define R2069_AFE_CAL_CLK	0x121	/* [12] per-core cal clock enable */
 #define R2069_AFE_CAL_CTRL	0x122	/* [3:0] cal-enable bits */
 #define R2069_AFE_CAL_STAT	0x144	/* [1]=done (1st read) [0]=valid (2nd) */
-#define R2069_AFECAL_CFG	0x5830	/* fixed CTRL config; enable nibble = 0x000f (dtbu trace #56978: WR 0x583f then 0x5830) */
+/*
+ * AFE_CAL_CTRL config word, over which the enable nibble 0x000f is set and
+ * then dropped. It is NOT fixed, though it was written here as if it were: the
+ * top bits depend on the bandwidth.
+ *
+ *   20 MHz  0x5830      40 MHz  0x5030      80 MHz  0x4230
+ *
+ * which is 0x4030 in common plus 0x1800, 0x1000 and 0x0200. What that field
+ * selects is not known; the three values are read off the cold sweep and each
+ * is the same on two different channels of its width, so it does not depend on
+ * the channel.
+ */
+static u16 r2069_afecal_cfg(struct b43_wldev *dev)
+{
+	switch (dev->phy.chandef->width) {
+	case NL80211_CHAN_WIDTH_80:
+		return 0x4230;
+	case NL80211_CHAN_WIDTH_40:
+		return 0x5030;
+	default:
+		return 0x5830;
+	}
+}
 
 static inline void r2069_mod(struct b43_wldev *dev, u16 reg, u16 mask, u16 val)
 {
@@ -1209,7 +1231,8 @@ void b43_radio_2069_rccal(struct b43_wldev *dev)
  * Two passes over the active chains, faithful to the d6220 down-to-bss-up
  * capture (#56954-57000): arm every core (route the PHY in, gate the cal
  * clock off), settle, then launch every core (gate the clock on, set the
- * AFE_CAL_CTRL enable nibble over the fixed 0x5830 config, poll done/valid,
+ * AFE_CAL_CTRL enable nibble over the bandwidth-dependent config, poll
+ * done/valid,
  * drop the nibble). Completion is two STAT reads per try -- done from the
  * first, valid from the second. The post-cal PHY writes are fixed constants,
  * not a restore of the arm-time values.
@@ -1277,7 +1300,7 @@ void b43_radio_2069_afecal(struct b43_wldev *dev)
 		 * STAT reads, then the CTRL disarm write.
 		 */
 		b43_radio_write(dev, R2069_AFE_CAL_CTRL | rbase,
-				R2069_AFECAL_CFG | 0x000f);
+				r2069_afecal_cfg(dev) | 0x000f);
 		post[0] = b43_radio_read_log(dev, R2069_AFE_CAL_STAT | rbase);
 		udelay(5);
 		post[1] = b43_radio_read_log(dev, R2069_AFE_CAL_STAT | rbase);
@@ -1287,7 +1310,8 @@ void b43_radio_2069_afecal(struct b43_wldev *dev)
 		       "radio 2069: afecal core %u ctrl=0x%04x stat post(0/1/10us)=0x%04x/0x%04x\n",
 		       core, ctrl, post[0], post[1]);
 
-		b43_radio_write(dev, R2069_AFE_CAL_CTRL | rbase, R2069_AFECAL_CFG);
+		b43_radio_write(dev, R2069_AFE_CAL_CTRL | rbase,
+				r2069_afecal_cfg(dev));
 
 		b43_phy_write(dev, 0x0739 + pbase, 0x0000);
 		b43_phy_write(dev, 0x073a + pbase, 0x0180);

@@ -1112,12 +1112,40 @@ void __wrap_b43_mac_phy_clock_set(struct b43_wldev *dev, bool on)
  * Differisce da b43_hf_write mainline (che ha signature `u64 value` e
  * supporta solo 3 slot). Vedi test/stubs/b43.h per la motivazione.
  */
+/* Celle di shared memory delle cinque word di host flag. */
+static const u16 mhf_shm_cell[5] = { 0x005e, 0x0060, 0x0062, 0x0078, 0x00d4 };
+
 void __wrap_b43_phy_ac_mhf_maskset(struct b43_wldev *dev,
 				   u16 slot, u16 mask, u16 val)
 {
-	(void)dev;
 	fprintf(trace(), "cpu1 MAC.MHF  addr=0x%04x val=0x%04x mask=0x%04x\n",
 		slot, val, (u16)~mask);
+
+	/*
+	 * TODO -- REGOLA CUCITA SU UN CASO SINGOLO, DA SOSTITUIRE.
+	 *
+	 * Nelle catture la chiamata e' a volte seguita dalla scrittura della
+	 * cella HOSTF corrispondente e a volte no: su cold01 la hanno #623,
+	 * #12242, #13525, #13530 e #13535, non la hanno #469, #470, #593,
+	 * #594, #620 e #13409, e i valori di queste ultime ricompaiono al
+	 * flush di #689-#690. I valori sono accumuli coerenti -- slot 4 fa
+	 * 0x80 -> 0x88 -> 0x8088, slot 3 fa 0x40 -> 0x60 -- quindi la funzione
+	 * del vendor tiene un valore in cache e scrive la cella solo in certe
+	 * condizioni.
+	 *
+	 * L'ipotesi e' che scriva quando il quinto argomento della sua firma,
+	 * `bands`, combacia con la banda corrente. NON E' STABILITO: quel
+	 * campo non era catturato, e l'hook ora lo prende via nargx.
+	 *
+	 * Nel frattempo qui c'e' la condizione minima che fa combaciare il solo
+	 * caso che blocca il confronto posizionale, e vale 10144 posizioni
+	 * (@52 -> @10196). Non e' un modello: e' un tappo. Alla prossima
+	 * cattura con `bands` va sostituita dalla condizione vera, e se invece
+	 * si scoprisse che la scrittura e' una hf_write separata del driver
+	 * allora non va qui affatto ma in src/, insieme al resto.
+	 */
+	if (slot == 0 && val == 0x0100)
+		b43_shm_write16(dev, B43_SHM_SHARED, mhf_shm_cell[slot], val);
 }
 
 void __wrap_b43_phyop_switch_analog_generic(struct b43_wldev *dev, bool on)
@@ -1155,6 +1183,26 @@ void b43_shm_write16(struct b43_wldev *dev, u16 routing, u16 offset, u16 val)
 	if (offset / 2 < MIRROR_SHM_WORDS)
 		mirror_shm[offset / 2] = val;
 	fprintf(trace(), "cpu1 OBJ.WR   addr=0x%04x val=0x%04x\n", offset, val);
+}
+
+/* ============ address match table ============
+ *
+ * Un record per riga, che e' la granularita' del tracer: il suo hook su
+ * wlc_bmac_write_amt da' `AMT.WR idx=`, non le due word sottostanti. Quelle il
+ * vendor le scrive sulla coppia objaddr/objdata direttamente, per una via che
+ * nessun accessor agganciato copre, quindi non sono confrontabili.
+ *
+ * Non passa da b43_shm_write16: quella ignora il routing e indicizza il mirror
+ * su offset/2, quindi una riga AMT -- word 0..127 -- calpesterebbe le celle
+ * basse della shared memory, UCODEREV e le HOSTF comprese.
+ */
+void b43_test_emit_amt(u16 idx, u16 flags)
+{
+	if (flags)
+		fprintf(trace(), "cpu1 AMT.WR    idx=0x%04x a3=0x%08x\n",
+			idx, flags);
+	else
+		fprintf(trace(), "cpu1 AMT.WR    idx=0x%04x\n", idx);
 }
 
 /*

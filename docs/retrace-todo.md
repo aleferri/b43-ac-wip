@@ -41,7 +41,310 @@ come oracolo -- fra l'altro la fase probe la' non mostra i marcatori
 `PHY.MOD 0x0520` e `PHY.RD 0x07af` che sul d6220 ci sono, e non e' una cosa da
 capire: e' una board che non stiamo portando.
 
+## Avvisi nel driver
+
+I punti dove il driver scrive qualcosa che non sa derivare emettono un
+`b43warn` una volta per sito, con la macro `b43_phy_ac_todo()`. Una volta e non
+ogni volta perche' alcuni stanno in un ciclo di calibrazione; per sito e non
+globale perche' quale punto si e' toccato e' l'informazione utile. Non e'
+`B43_WARN_ON`, che segnala uno stato che non dovrebbe accadere: questi
+accadono per costruzione, e il messaggio serve a chi legge un dmesg dopo che
+qualcosa non ha funzionato.
+
+Oggi sono tre: i coefficienti TX IQ/LO scritti da tabella invece che calcolati,
+il residuo di 1 LSB sul coefficiente `b` della RX IQ, e il guard di canale
+scavalcato da `CONFIG_B43_PHY_AC_ANY_CHANNEL`, che elenca quali tabelle sono
+fittate su ch36 a 20 MHz e non hanno prove altrove.
+
 ## Punti aperti
+
+- **Il poll delle statistiche ha due forme; il parametro c'e', il chiamante
+  no.** Su `cold01` i 23 poll che iniziano con `0x010e` si dividono cosi': i
+  primi tre -- `#12961`, `#13481`, `#13540`, dentro il blocco di config MAC del
+  core -- hanno **18** letture in `0x0768-0x078a`, cioe' la sola spazzata
+  piatta; i venti dalla fase probe in avanti ne hanno 54, cioe' la spazzata piu'
+  le due passate `hi/lo/hi` sui sei contatori a 32 bit. Uno ne ha 57.
+
+  `b43_phy_ac_wd_stats_poll_opt(dev, ctr32_pass)` prende il parametro, e
+  `b43_phy_ac_wd_stats_poll()` resta come involucro che passa `true` -- che e'
+  la forma giusta per il tick a regime, e il gate periodico lo conferma
+  (`MATCH`). I tre poll ridotti cadono nel blocco di config MAC, che l'harness
+  non modella, quindi oggi nessun chiamante passa `false`: il parametro e'
+  pronto e serve quando quel blocco verra' modellato.
+
+  Il senso e' plausibile e non provato: le due passate leggono i contatori come
+  valori a 32 bit stabili, e prima che il MAC abbia contato qualcosa non c'e'
+  niente da leggere in quel modo. La spazzata piatta resta perche' fa parte del
+  latch della finestra.
+
+  Da guardare: il poll con 57 letture, tre in piu' della forma piena. Tre e' la
+  lunghezza di una lettura `hi/lo/hi`, quindi e' un contatore in piu' letto una
+  volta -- quale, non lo so.
+
+- **Il punteggio ora penalizza le op in piu', e il quadro cambia.** Il
+  denominatore e' l'unione dei due flussi, non le sole op di wl: fa 100% solo
+  se coincidono. Prima le inserzioni del port erano gratis, il che rendeva
+  invisibile l'unico tipo di progresso che si stava facendo -- togliere ~6000
+  op spurie non muoveva il numero di un'unita'.
+
+  Il conteggio e' in tre voci, non due, perche' due difetti diversi si
+  confondevano in uno. Un'op emessa sul registro giusto col valore sbagliato
+  compare due volte nel diff -- manca la versione di wl e sopravanza quella del
+  port -- e contarla come "una mancante piu' una di troppo" gonfia il difetto e
+  lo chiama col nome sbagliato: il registro e' quello giusto, il numero no.
+  `classify()` in `cmp_skip.py` le accoppia per identita' dentro la stessa
+  regione sostituita, e l'identita' non e' sempre l'indirizzo: alcune op
+  generano altre op tracciate, e alcune classi scrivono su **porte**, che hanno
+  sempre lo stesso indirizzo.
+
+  Le porte sono `PHY 0x000d`/`0x000e` (indirizzo delle tabelle) e
+  `0x000f`/`0x0010` (dati, word bassa e alta). Una `TBL.WR` e' un marcatore: i
+  dati escono come una corsa sulla porta, una coppia per voce. Due scritture su
+  `0x000f` non sono la stessa op solo perche' l'indirizzo coincide -- coincide
+  sempre -- e possono appartenere a tabelle diverse, quindi la loro chiave
+  include il marcatore `TBL` che le precede.
+
+  Relazioni controllate e per cui non serve regola, perche' le classi generate
+  non compaiono nelle catture del d6220: `TPL.RAMW` -> `TPL.PTRW`/`TPL.DATW`
+  (zero occorrenze delle seconde) e `OBJ.BULKW` -> `OBJ.WR` (la coppia bulk non
+  e' agganciata la'). Una che c'e' ma non e' un pericolo per l'accoppiamento:
+  `MAC.MHF` scrive la cella `HOSTF` in cinque casi su undici, quindi un MHF
+  mancante porta con se' una `OBJ.WR` mancante -- due op tracciate che contano
+  due, ma che non si accoppiano fra loro perche' le classi sono diverse.
+
+  | segmento | grezzo | valore sbagliato | mancanti | di troppo |
+  | --- | --- | --- | --- | --- |
+  | cold01 ch36 bw20 | 91.05% | 428 | 1673 | 93 |
+  | cold05 ch52 bw20 | 62.35% | 115 | 2668 | **4990** |
+  | cold09 ch100 bw20 | 54.76% | 74 | 3749 | **6053** |
+
+  Su cold01 le op di troppo sono 93, non 521: le altre 428 sono valori
+  sbagliati, e 257 di quelli sono il payload TX IQ/LO, il debito noto. Sulla
+  forma corta invece le op di troppo sono reali e sono la voce dominante -- il
+  port esegue fasi di calibrazione che il vendor la' non esegue.
+
+  `SOLO_PORT` in `compare.py` e' la lista delle op del port che l'oracolo non
+  puo' contenere. Ci sta una voce, `AMT.*`: il port scrive la address match
+  table per via di `patches/0011`, ricavata dalla cattura a freddo del
+  DSL-3580L, e le catture del d6220 non la hanno perche' l'hook su
+  `wlc_bmac_write_amt` e' stato aggiunto dopo. **Non e' un'op di troppo: e'
+  un'op giusta senza oracolo**, e ci resta finche' non c'e' un retrace del
+  d6220 con quell'hook -- quel giorno la voce va togliata e il confronto
+  diventa piu' severo.
+
+  I casi legittimi per quella lista sono due e vanno distinti: un'op che b43
+  deve fare per la sua struttura dove wl ne fa una diversa, che e' permanente,
+  e un'op giusta la cui controparte esiste ma non e' stata catturata, che e'
+  temporanea per definizione. Tutto il resto e' il port che fa qualcosa di
+  troppo.
+
+  Verificato che sia l'unica: delle op che il port emette per via del DSL,
+  `0x078c` (il MAC in shared memory, `patches/0010`) e le dieci celle di
+  `patches/0012` hanno tutte controparte nelle catture d6220 -- e' la' che sono
+  state trovate. Le AMT sono le sole senza.
+
+  `INVISIBILI`, che esisteva solo per le AMT e le scartava da entrambi i lati,
+  e' stata rimossa: diceva "nessuna cattura puo' contenerle", che e' falso --
+  una cattura con l'hook le contiene.
+
+- **Il blocco di config MAC dopo l'init radio: aperto per un pezzo.** Il muro
+  del posizionale e' lo stesso su tutti e 26 i segmenti -- il percorso PHY e'
+  concluso su ogni canale e larghezza -- e apre con quattro accessi piu' due
+  gruppi di lettura-riscrittura.
+
+  **Fatto**, in `b43_phy_ac_shm_readback_block()`: le quattro op di apertura,
+  trascritte con i loro TODO (`RD 0x0092`, `WR 0x000c = 0xf`, `SLOTT` `0x3ff`
+  poi `9`), e il gruppo A -- otto celle a `0x099e` con passo `0x14`, lette e
+  **riscritte col valore appena letto**. Quel gruppo non trascrive niente: cio'
+  che torna e' cio' che e' uscito, quindi non c'e' un valore che possa essere
+  sbagliato su una board non misurata. Che i valori SIANO costanti --
+  `44 3c 34 30 2c 2c 28 28` su due canali del d6220 e su un 4360 -- e' come si
+  sa che la rilettura e' fedele e non una coincidenza: sono default dell'ucode.
+
+  Perche' il driver stock lo faccia non e' noto. Una read-modify-write la cui
+  modifica e' un no-op su questo hardware avrebbe esattamente questa forma, e
+  cosi' l'avrebbe un tocco deliberato per far notare le celle all'ucode; le
+  catture non le distinguono, e riprodurre gli accessi non costa niente in
+  nessuno dei due casi.
+
+  **Correzione alla `patches/0012`**: le catture mettono ENTRAMBE le scritture
+  di `SLOTT` qui, non al core init dove quella patch mette il `9`. La patch va
+  rivista.
+
+  **Da fare**, il gruppo B: dodici celle di cui quattro passano da `0` a `0xd0`
+  (`0x0a3a`, `0x0a56`, `0x0a72`, `0x0a8e`) e otto restano a zero ma vengono
+  comunque lette e riscritte. Il valore dipende dal canale -- `0xd0` su ch36,
+  `0xf8` su ch100, `0xd0` sull'agcombo a ch36 -- quindi va derivato, non
+  trascritto.
+
+- **Sopra i 5250 MHz le calibrazioni che trasmettono non girano — tre fasi
+  fatte, il confine esatto no.** Il predicato e'
+  `b43_phy_ac_may_calibrate_tx()`, `center_freq <= 5250`, e ci sono dietro le
+  tre fasi di cui l'assenza e' **provata su tutti e 26 i segmenti**:
+
+  | fase | testimone | ch <= 48 | ch >= 52 |
+  | --- | --- | --- | --- |
+  | `rxcal_afe_calibrate` + `finalize_gain_luts` | PHY `0x0380` | 313-978 | **0** |
+  | `rxiqcal_run_meas_iters` | PHY `0x0380` | idem | **0** |
+  | `loopback_gain_search` | PHY `0x0b22` | 9 | **0** |
+  | `iqcal_coeff_tables_reset` | tab. `0x42`/`0x62`/`0x82` | 256 ciascuna | **0** |
+  | `post_rxiqcal_stage2` | tab. `0x000e` | 8 | **0** |
+
+  Verificate su tutti e 26 i segmenti, non su un campione. Il testimone di una
+  fase e' un registro o una tabella che nel port solo quella funzione tocca --
+  il metodo trova le fasi che ne hanno uno, e non quelle che condividono tutto
+  con altre.
+
+  Due che NON vanno gatate, controllate e scartate: `idle_tssi_meas` (198
+  campionamenti a ch36 contro 192 a ch52: gira su entrambe) e
+  `rxiqcal_finalize` (19 e 19).
+
+  Una da guardare: `iqcal_meas_post_dds_apply_v2`, il cui testimone PHY
+  `0x0270` fa 110-202 accessi sotto i 5250 MHz ed esattamente **1** sopra, su
+  ogni segmento. Quasi assente ma non del tutto, e quell'uno va spiegato prima
+  di gatare la fase intera.
+
+  Non e' una corsa piu' breve, e' niente, ed e' la maggior parte della
+  differenza fra un attach da 36k op e uno da 20k. Il port le eseguiva sempre:
+  27420 op a ogni canale contro le 20191 del vendor a ch52.
+
+  La ragione fisica c'e' e non e' solo una linea che combacia: quelle
+  calibrazioni **trasmettono** -- pilotano il generatore di tono e attendono il
+  risultato -- e una radio che non puo' trasmettere finche' il channel
+  availability check non e' finito non puo' eseguirle. Non e' una prova: lo
+  stesso confine e' anche "la seconda sottobanda dei 5 GHz".
+
+  **Da fare: dove cade il confine dentro il resto del blocco.** Dietro il
+  predicato ci sono solo le fasi provate assenti; le altre di
+  `set_channel_calibrations()` girano su entrambi i lati per quanto e' stato
+  controllato, ma il metodo usato -- cercare un registro emesso da una sola
+  funzione -- trova solo le fasi che ne hanno uno. Una fase saltata che
+  condivide tutti i suoi registri con altre non si vede cosi'. Restano ~1100 op
+  di scarto fra port e vendor a ch52, e sono probabilmente la'.
+
+  Nota che nessuna di queste tre muove il punteggio o il posizionale: stanno
+  oltre il muro a `~@9600` e l'LCS non penalizza le inserzioni. Togliere op che
+  non ci dovevano essere e' giusto per il driver, non per il numero.
+
+- **La forma corta salta la sequenza classctl + clip-hold.** Dove la forma
+  lunga ha `PHY.WR 0x0339 = 0x0fff` e poi il blocco di config MAC, la corta va
+  diritta al blocco dopo `PHY.WR 0x0170 = 0x7d0`: il port invece emette in
+  mezzo il peek di `0x0140`, la classctl, i quattro `adc_hold`
+  (`0x02ed`-`0x02f9`), i tre `clip_det` (`0x06d4`/`0x08d4`/`0x0ad4`) e
+  `PHY.WR 0x0339 = 0`. E' il bloccante dei 19 segmenti corti a `~@9600`, e non
+  e' un valore sbagliato: e' una sequenza in piu'.
+
+  E la posizione del blocco di config MAC differisce fra le due forme: sulla
+  lunga il vendor lo mette dopo `PHY.WR 0x0339 = 0x0fff`, che e' dove
+  `b43_phy_ac_shm_readback_block()` lo emette; sulla corta subito dopo
+  `0x0170`. Quindi non basta togliere la sequenza in piu', va anche spostato il
+  punto di emissione del blocco -- o capito da cosa dipende.
+
+- **La misura di idle TSSI armava una volta invece che a ogni passata.**
+  `b43_phy_ac_idle_tssi_meas()` leggeva `0x0393`, scriveva `0x0394` e `0x0393`
+  UNA volta e poi leggeva le coppie `0x0013`/`0x0012` in un loop. Le catture
+  riarmano prima di **ogni** coppia:
+
+      RD 0x0393 -> WR 0x0394 = 0x0110|core -> WR 0x0393 = 0x8000 -> RD 0x0013 -> RD 0x0012
+
+  A 20 e 40 MHz la passata e' una sola e le due forme sono indistinguibili; a
+  80 MHz, dove il conteggio e' 256, il port emetteva 256 coppie di letture
+  contro 256 passate armate. Spostata l'arma dentro il loop.
+
+  `cold24-ch36-bw80` passa da 67.90% a **81.91%** e il posizionale da `@9863` a
+  `@12759`, che e' il salto singolo piu' grande di questo giro. Ed e' anche un
+  difetto funzionale, non solo di traccia: senza il riarmo le 256 letture
+  campionavano la stessa misura invece di 256 misure, quindi la media
+  dell'idle TSSI a 80 MHz era un solo campione ripetuto.
+
+- **Registri che dipendono dalla banda e stavano fissi al valore di 20 MHz.**
+  Nove gruppi, trovati confrontando i segmenti bw40 e bw80 contro il port e
+  filtrando alle sole SCRITTURE con valore diverso. Quattro fatti, cinque no.
+
+  Fatti, e sono quelli con una legge aritmetica invece di tre numeri:
+
+  | registro | 20 MHz | 40 | 80 | legge |
+  | --- | --- | --- | --- | --- |
+  | `R2069_AFECAL_CFG` (radio `0x122`) | `0x5830` | `0x5030` | `0x4230` | comune `0x4030` + campo |
+  | PHY `0x0381` | `0x7976` | `0x7987` | `0x7998` | `+0x11` per passo |
+  | PHY `0x0463` | `0x27` | `0x4f` | `0x9f` | `(x+1)` raddoppia |
+  | radio `0x004e`/`0x024e` | `0x8000` | `0x8009` | `0x8012` | `+9` per passo |
+  | PHY `0x0738`/`0x0938` campo `[2:0]` | `3` | `4` | `5` | `+1` per passo |
+
+  `b43_phy_ac_bw_step()` da' il passo, 0/1/2. Il commento dell'helper dice la
+  cosa che conta: la legge e' fittata su tre punti e niente di piu', ed e' un
+  modo compatto di scrivere cio' che e' stato misurato, non una previsione --
+  160 MHz sarebbe un quarto punto e non c'e' cattura. `AFECAL_CFG` nel
+  sorgente era commentato "fixed CTRL config", e non lo era.
+
+  Fatto anche PHY `0x0140`, che si e' rivelato una regola e non tre numeri: il
+  bit `0x0800` e' impostato a 20 MHz e azzerato sopra, e il resto della parola
+  non si muove -- `0x0df4`/`0x0df6` a 20, `0x05f4`/`0x05f6` a 40 e 80. Vale su
+  17 delle 18 scritture a quel registro; la diciottesima viene da un altro
+  sito e resta da trovare.
+
+  Restano da fare, e sono tre valori per tre larghezze senza legge:
+
+  | registro | 20 MHz | 40 | 80 | |
+  | --- | --- | --- | --- | --- |
+  | PHY `0x0646`/`0x0846` | `0x38` x3 | `0x3e` x1 + `0x42` x2 | idem 40 | tre siti con valori diversi sopra i 20, tutti uguali a 20 |
+  | PHY `0x0737`/`0x0937` | `0x91` | `0x8d` | `0x8d` | uguale a 40 e 80 |
+  | PHY `0x0321`-`0x0336` | `0x34`, `0x3a` | `0x36`, `0x3c` | `0x32`, `0x3d` | due scritture su `[7:0]`, non monotone; `[15:8]` sempre `0x36` |
+  | PHY `0x073a`/`0x093a` | campo `[2:0]`=`3`, `[6:5]`=`2` | `[2:0]`=`2`, `[6:5]`=`0` | il bit `0x8` al posto di `[2:0]` | piu' campi cambiano, e a 80 MHz cambia quale |
+
+  Nota su cosa NON e' un problema: nel confronto su bw40/80 la maggior parte
+  delle differenze sono `OBJ.RD` e `PHY.RD`, cioe' valori **letti** --
+  contatori a `0x0768`-`0x0788`, campioni di guadagno a `0x07ab`, finestra
+  statistiche a `0x0308`. Divergono perche' sono a valle delle scritture
+  sbagliate, non perche' il port legga male. Vanno riguardati dopo.
+
+- **Le due forme di attach: la seconda `0x2e4`.** I 26 segmenti si dividono in
+  due forme, 7 lunghe (~36k op) e 19 corte (~20k). Il bloccante del posizionale
+  su tutte e 19 era la stessa op, `PHY.MOD 0x02e4 val=0x0f00 mask=0x3f00`:
+  nella forma corta il vendor la scrive **tre** volte e nella lunga una, e il
+  port ne emetteva una.
+
+  Aggiunta in `b43_phy_ac_frontend_gpio_setup()`, fra la terza
+  `b43_maccontrol_set(0x04000400)` e `b43_phy_ac_pmu_req(dev, false)`, gatata
+  su `center_freq > 5250`. Il posizionale dei 19 passa da `@54` a **~@9600**.
+
+  Perche' la condizione e' sul canale: lo sweep e' **a freddo**, `rmmod` piu'
+  `insmod` fra un ciclo e l'altro, quindi non esiste stato riportato dal ciclo
+  precedente e nessuna regola del tipo "il primo canale di questa larghezza"
+  puo' essere quella vera. Resta una proprieta' del canale, e i dati la danno
+  netta: una scrittura sui canali 36-48, tre da 52 in su.
+
+  Cosa NON e' stabilito: quale proprieta' del canale il driver stock testi
+  davvero. 5250 MHz e' dove i domini regolatori mettono il confine DFS, e le
+  tracce non mostrano lavoro specifico per il DFS da nessuna delle due parti --
+  `B43_SHM_SH_RADAR` non e' toccata da nessun segmento e il poll radar c'e' in
+  tutti -- quindi "sopra 5250" e "richiede radar detection" sono lo stesso
+  insieme qui e non si distinguono. E cosa significhi quel campo non e' noto.
+
+- **`MAC.BW` a 40 e 80 MHz — non c'era niente da aggiungere.** Il primo
+  tentativo aggiungeva una chiamata a `b43_mac_bw_set()` in
+  `b43_phy_ac_write_chanspec()`, col campo di banda del chanspec. Portava il
+  posizionale dei tre segmenti a banda larga da `@88` a `@9472`, ed era
+  sbagliato: quella funzione non esiste in b43 e il guadagno era comprato con
+  del codice che non doveva esserci.
+
+  `b43_mac_bw_set` non scrive un registro. L'equivalente GPL in brcmsmac,
+  `brcms_b_bw_set()`, fa `wlc_phy_bw_state_set()` -- che e' `pi->bw = bw` e
+  nient'altro -- piu' un reset e un init del PHY; e nelle catture fra il record
+  e il prologo radio non c'e' nessuna scrittura di registro, con il prologo
+  radio che e' quell'init.
+
+  In b43 la larghezza sta in `phy.chandef`, che `b43_phy_init()` punta prima di
+  `switch_analog()` e di `b43_software_rfkill()` -- cioe' prima di dove il PHY
+  scrive il chanspec -- e che `b43_op_config()` ripunta a ogni cambio di
+  canale. `b43_is_40mhz()` legge da la'. E' gia' impostata, e non c'e' nulla da
+  scrivere.
+
+  Cosa e' rimasto: `b43_phy_ac_write_chanspec()` ora legge `dev->phy.chandef`
+  invece di frugare in `dev->wl->hw->conf.chandef`, che e' l'idioma di b43 e la
+  fonte che il resto del driver usa. E `MAC.BW` e' in `SOLO_VENDOR` di
+  `compare.py`, la lista delle op che nessun codice b43 puo' emettere: una per
+  segmento a banda larga, e sblocca il posizionale a `@9471`.
 
 - **MAC filter e address match sull'AC — chiuso, `patches/0011`.** Dalla
   cattura a freddo del DSL-3580L (kernel 2.6.30, wl 6.30.102.7):
@@ -63,6 +366,19 @@ capire: e' una board che non stiamo portando.
   scritta a 32 bit per portarci i flag. Confermato per costruzione: le tre
   half-word che ne escono per un MAC noto sono le stesse che `wl` scrive nella
   copia in shared memory della voce qui sotto.
+
+  Nell'harness il doppione e' `emit_core_amt()` in `test/main.c`, che emette
+  **un record per riga** -- la granularita' del tracer, il cui hook da'
+  `AMT.WR idx=` e non le due word sottostanti, che il vendor scrive sulla
+  coppia objaddr/objdata per una via che nessun accessor agganciato copre.
+  Non passa da `b43_shm_write16` dell'harness: quella ignora il routing e
+  indicizza il mirror su `offset/2`, quindi una riga AMT calpesterebbe le celle
+  basse della shared memory.
+
+  Le 66 op che ne escono non sono in nessuna cattura del d6220, perche' l'hook
+  e' arrivato dopo lo sweep: `compare.py` le scarta da **entrambi** i lati via
+  `INVISIBILI`, e lo riporta. Appena una cattura le contiene quella lista si
+  svuota e il confronto diventa piu' severo.
 
   Il gate e' `core_rev >= 42`, ed e' confrontabile direttamente con le
   catture: il valore che il driver mette in `B43_SHM_SH_WLCOREREV` e' quello
@@ -89,6 +405,118 @@ capire: e' una board che non stiamo portando.
   Aperto: se all'ucode serva, e in che rapporto stia con la voce sopra. Nella
   traccia cade prima del punto in cui b43 chiama
   `b43_upload_card_macaddress()`.
+
+- **Celle di shared memory che le catture scrivono e b43 no — triate.** Delle
+  1835 op `OBJ` che il port non riproduce su `cold01`, l'inventario contro
+  `b43.h` e i sorgenti del core:
+
+  | | op |
+  | --- | --- |
+  | b43 le emette gia' (nome usato nel core): mancano solo perche' l'harness compila `src/` e non `main.c` | 280 |
+  | celle che `b43.h` nomina ma il core non usa | 47 |
+  | celle che `b43.h` non nomina affatto | 1508 |
+
+  Delle 47 nominate, trenta sono `PRSSID`/`PRSSIDLEN`/`PRTLEN`, cioe' l'offload
+  delle probe response, che b43 **disabilita di proposito** con
+  `PRMAXTIME = 1`: restano non scritte anche da noi. Le altre sono in
+  `patches/0012`: `SLOTT`, `MAXBFRAMES`, `ANTSWAP`, `BTSFOFF`, `DEFAULTIV`,
+  `RFATT`, `HOSTF4`, `HOSTF5`, `EDCFQ`, `PSM`.
+
+  Di quelle il solo `SLOTT = 9` e' derivato -- e' lo slot di 802.11a -- e il
+  resto e' osservato: stesso valore su due chip, ogni canale e due versioni di
+  wl. Si scrivono perche' l'hardware evidentemente se le aspetta: lasciare una
+  cella al default dell'ucode che il driver stock sovrascrive sempre e'
+  anch'esso un'ipotesi, e la peggiore.
+
+  Dove una cella viene scritta piu' volte durante il bring-up -- `HOSTF4` e
+  `HOSTF5` guadagnano bit strada facendo, `BTSFOFF` cambia una volta -- la
+  patch mette il valore finale: per l'hardware conta lo stato, e il core init
+  di b43 ha una forma diversa da quella del vendor, quindi i punti intermedi
+  non hanno un corrispondente.
+
+  Delle 1508 non nominate, 480 sono l'azzeramento di `0x10f4-0x14b2`:
+  identico su tutti gli 8 segmenti d6220 provati, e **assente sull'agcombo**.
+  Quindi non e' un "azzera questa regione all'init" universale, e scriverlo
+  incondizionatamente divergerebbe sull'altra board. Serve capire da cosa
+  dipende prima che diventi codice.
+
+  **L'ordine conta piu' del valore.** `MAXBFRAMES`, `ANTSWAP` e `BTSFOFF`
+  rispecchiate nell'harness al punto giusto -- prima del chanspec, come la
+  traccia -- vengono appaiate: 92.5654% -> 92.5724%. Metterle dopo il chanspec
+  non ne appaia nessuna, perche' una sola inversione fa scartare l'op. Il resto
+  del gruppo cade fra `#12197` e `#14172`, in un blocco che l'harness non
+  modella, e non e' rispecchiato: emetterlo altrove lo metterebbe nel posto
+  sbagliato.
+
+  Il blocco di chip init e le host flag sono ora modellati nell'harness --
+  `emit_core_shm_chipinit()` e `emit_core_hostflags()` in `test/main.c`, con
+  `core_rev` e `mac_hw_cap` nel profilo di board -- e portano da 92.5654% a
+  92.6002%. Appaiate: `MAXBFRAMES`, `ANTSWAP`, `WLCOREREV`, `MACHW_L`/`H`,
+  `BTSFOFF`, `SFFBLIM`, `LFFBLIM`, `HOSTF1`/`2`/`3`.
+
+  Non appaiate, e si sa perche':
+
+  - `MAC.MCTRL 0x40020000/0x40060000` a `#651` e `BTL0 = 7` a `#655`. La stima
+    di 280 op "che b43 fa gia'" era ottenuta cercando il nome nel sorgente, che
+    non e' la stessa cosa che scriverle in quel punto: `BTL0` b43 la usa solo
+    in `b43_write_beacon_template`, non al core init. La stima e' quindi alta.
+  - `HOSTF4 = 0x40` e `HOSTF5 = 0x80`. `patches/0012` scrive il valore finale,
+    `0x0060` e `0x8088`, e quelle due op non combaceranno mai: e' la
+    conseguenza voluta di quella scelta, non un difetto da inseguire.
+
+- **Le host flag: la cella si scrive a volte e a volte no, e manca l'argomento
+  che lo spiega.** `wlc_bmac_mhf(hw, idx, mask, val, bands)` ha un quinto
+  argomento che il tracer non catturava. Su `cold01` le chiamate che impostano
+  bit sono seguite dalla scrittura della cella HOSTF solo in cinque casi su
+  undici: `#623`, `#12242`, `#13525`, `#13530`, `#13535` si', mentre `#469`,
+  `#470`, `#593`, `#594`, `#620` e `#13409` no -- e i loro valori ricompaiono
+  al flush di `#689-#690`.
+
+  I valori che si vedono sono accumuli coerenti: slot 4 va `0x80` -> `0x88` ->
+  `0x8088`, slot 3 va `0x40` -> `0x60`. Quindi la funzione tiene un valore in
+  cache e scrive la cella solo in certe condizioni; l'ipotesi e' che scriva
+  quando `bands` combacia con la banda corrente. **Non e' stabilito**, e senza
+  quell'argomento non si distingue.
+
+  L'hook ora lo cattura via `nargx`, come per `si_corereg`. La prossima cattura
+  lo dice, e da la' si sa dove b43 deve mettere le sue scritture di HOSTF4 e
+  HOSTF5 invece di metterle tutte al core init.
+
+- **Il confine fra core e PHY nel port e' in un punto sbagliato.** Il vendor
+  emette op del core mentre sta facendo il PHY, e dove il port ha messo quelle
+  op dentro una funzione del PHY il confronto si blocca: le op che mancano
+  cadono in mezzo a quelle che la funzione emette in blocco, e l'harness puo'
+  inserire solo ai confini fra chiamate del flow.
+
+  Uno risolto: `b43_phy_ac_frontend_gpio_setup()` chiudeva con un
+  `b43_maccontrol_set(~0x40060000, 0x40020000)`, cioe' `INFRA | DISCPMQ` con
+  `AP` azzerato -- il modo operativo del **core**, che `b43_adjust_opmode()`
+  imposta. Il PHY non doveva scriverlo, e le catture concordano: il vendor lo
+  emette dopo che il core ha scritto le sue celle di chip init (`cold01` `#645`
+  per la GPIO.CTL, `#651` per questo, con due scritture in mezzo). Togliato da
+  `src/` e spostato nel modello del core init.
+
+  Ne resta almeno uno: `OBJ.WR 0x5e = 0x100` a `#624` cade dentro la sequenza
+  MHF del preambolo. Era il bloccante del posizionale, e nei primi 2000 op era
+  **l'unica** non appaiata: una sola op mancante sfasa di uno tutto quello che
+  segue. Emessa dal wrapper MHF dell'harness con la condizione minima
+  `slot == 0 && val == 0x100`, il posizionale passa da `@52` a `@10196`.
+
+  Quella condizione e' un tappo e nel codice e' marcata come tale: e' cucita
+  sul caso singolo, non e' un modello, e va sostituita dalla condizione vera
+  appena una cattura porta `bands`. Se poi si scoprisse che la scrittura e' una
+  `hf_write` separata del driver, non va nel wrapper affatto ma in `src/`.
+
+  **L'ordine conta piu' del valore, e va rispettato quello della traccia.** Tre
+  volte in questo giro un gruppo di op giuste non si e' appaiato per una sola
+  inversione: `MAXBFRAMES` messa dopo il chanspec invece che prima, le host
+  flag messe prima del MAC in shared memory invece che dopo, l'AMT dopo il
+  blocco di chip init invece che prima. Su cold01 l'ordine e' AMT `#443`, chip
+  init `#649-#658`, MAC `#661-#663`, host flag `#686-#690`, chanspec `#691`.
+
+  Nota che b43 il suo core init lo fa in un ordine diverso -- mette le host
+  flag fra `WLCOREREV` e `MACHW`, il vendor molto piu' tardi -- quindi
+  l'harness segue il vendor e la riconciliazione dei due ordini resta aperta.
 
 - **Config MAC/ucode del core b43 all'attach — 1250 op, il pezzo piu' grosso
   che resta.** L'obiettivo e' che b43 emetta una-per-una tutte le op di `wl`,
