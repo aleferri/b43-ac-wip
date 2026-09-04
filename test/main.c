@@ -723,6 +723,9 @@ static void run_rfkill(void)
 	fprintf(stderr, "test: software_rfkill(false) done\n");
 }
 
+static void emit_core_bss_config(void);
+static void emit_core_bss_config1(void);
+
 static void run_switch_channel(void)
 {
 
@@ -1152,6 +1155,17 @@ static void run_switch_channel(void)
 	}
 
 	int r = b43_phyops_ac.switch_channel(&g_wldev, 36);
+
+	/*
+	 * L'ordine di b43_op_config(), tutto dentro la sua parentesi di
+	 * sospensione: switch_channel, la configurazione BSS del core, la
+	 * seconda meta' del setup, poi l'enable e le calibrazioni.
+	 */
+	emit_core_bss_config();
+	b43_phy_ac_channel_setup_tail(&g_wldev, &g_chan);
+	b43_mac_enable(&g_wldev);
+	if (r == 0)
+		b43_phy_ac_set_channel_calibrations(&g_wldev);
 	fprintf(stderr, "test: switch_channel returned %d\n", r);
 }
 
@@ -1292,10 +1306,97 @@ static void emit_core_shm_chipinit(const struct board_profile *p)
 			(u16)(p->mac_hw_cap & 0xffff));
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00c2,
 			(u16)((p->mac_hw_cap >> 16) & 0xffff));
+	/*
+	 * BTL0 a 7, cold01 #655. Il vendor la riscrive a 0x012a nella config
+	 * BSS: sono due scritture della stessa cella in due fasi, e servono
+	 * entrambe perche' il perimetro non la scarta piu'.
+	 */
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x0018, 0x0007);
 
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x001c, 0x0006); /* BTSFOFF */
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x0044, 3);      /* SFFBLIM */
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x0046, 2);      /* LFFBLIM */
+}
+
+/*
+ * La coda comune alle due passate della config BSS: TIMBPOS, la lunghezza del
+ * template beacon (@btl, 0x0018 per il primo e 0x001a per il secondo), PRTLEN,
+ * l'SSID `test-ap` con gli zeri fino a 0x017e, e PRSSIDLEN.
+ */
+static void emit_core_bss_ssid(u16 btl)
+{
+	static const u16 ssid[] = { 0x6574, 0x7473, 0x612d, 0x0070 };
+	unsigned int i;
+	u16 off;
+
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x001e, 0x0043);
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, btl, 0x012a);
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x004a, 0x0118);
+
+	for (i = 0; i < ARRAY_SIZE(ssid); i++)
+		b43_shm_write16(&g_wldev, B43_SHM_SHARED,
+				(u16)(0x0160 + i * 2), ssid[i]);
+	for (off = 0x0168; off <= 0x017e; off += 2)
+		b43_shm_write16(&g_wldev, B43_SHM_SHARED, off, 0x0000);
+
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x0048, 0x0007);
+}
+
+/*
+ * Configurazione BSS del core, cold01 #13593-#13624.
+ *
+ * Sta fra le due meta' del setup di canale: in b43 la fa il core dentro
+ * b43_op_config(), fra il ritorno di b43_switch_channel() e la chiamata a
+ * b43_phy_txpower_check(). Il vincolo di posizione e' reale e non un
+ * allineamento di traccia: l'ucode legge SSID e lunghezze dei template quando
+ * trasmette, quindi devono esserci prima che il MAC riparta -- e il MAC qui e'
+ * ancora sospeso, l'enable arriva dopo.
+ *
+ * L'SSID e' quello della cattura, `test-ap`, con zeri fino a 0x017e: b43 non lo
+ * scrive in shared memory, in AP mode sta nel template beacon, quindi qui e' un
+ * valore della cattura e non un derivato. Le due lunghezze sono 0x0018
+ * (B43_SHM_SH_BTL0) e 0x004a (B43_SHM_SH_PRTLEN), nomi di b43.h, che il core
+ * scrive dal percorso dei template. Le TPL.RAMW che il vendor emette fra loro
+ * non si riproducono: sono gia' dichiarate fra le op che nessun codice PHY di
+ * b43 emette, e il confronto le scarta.
+ */
+static void emit_core_bss_config(void)
+{
+	/*
+	 * Solo le celle che il perimetro conta. Le altre del blocco --
+	 * 0x0012 DTIMPER, 0x0018 BTL0, 0x001e TIMBPOS, 0x0022 ACKCTSPHYCTL,
+	 * 0x0048 PRSSIDLEN, 0x004a PRTLEN e l'SSID 0x0160-0x017e -- sono
+	 * dichiarate del core in CORE_SHM e restano la': il vendor le scrive
+	 * anche al chip init, dove il port non arriva, quindi toglierle dal
+	 * perimetro scoprirebbe op che non emettiamo e farebbe crollare il
+	 * confronto posizionale all'inizio della traccia. Provato: il muro
+	 * torna a @72.
+	 */
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x0020, 0x0000);
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x0022, 0x0000);
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x0012, 0x0003);
+
+	b43_shm_read16(&g_wldev, B43_SHM_SHARED, 0x00cc);
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00cc, 0x0044);
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00cc, 0x0045);
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00ce, 0x0000);
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00d0, 0x0000);
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x001c, 0x003a);
+	emit_core_bss_ssid(0x0018);
+}
+
+/*
+ * Seconda passata della config BSS, cold01 #14103-#14127: il secondo template
+ * beacon. Differisce dalla prima per la lunghezza -- 0x001a (BTL1) invece di
+ * 0x0018 (BTL0), come b43_upload_beacon1() contro b43_upload_beacon0() -- e
+ * perche' 0x00cc riceve una scrittura sola invece di due.
+ */
+static void emit_core_bss_config1(void)
+{
+	u16 cc = b43_shm_read16(&g_wldev, B43_SHM_SHARED, 0x00cc);
+
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00cc, cc);
+	emit_core_bss_ssid(0x001a);
 }
 
 static void emit_core_amt(const struct board_profile *p)

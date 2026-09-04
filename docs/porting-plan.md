@@ -109,10 +109,15 @@ soluzione è uno skip mirato nel confronto, non duplicare codice.
 
 ## Fuori scope MVP
 
-BW40/BW80 (`-EOPNOTSUPP`), 2.4 GHz (`-EOPNOTSUPP` in `op_switch_channel`),
-HT/VHT, MIMO. Lo split static/volatile di `tables_init` non è un fix: finché
-non c'è cambio banda nessuna tabella ha input che possano variare fra due
-bring-up.
+**Da rivedere: questa sezione precede la definizione corrente dell'MVP.** Il
+traguardo e' la configurazione completa di ogni pezzo hardware piu' il beacon
+in aria su tutte le 5 GHz, quindi BW40/BW80 e le fasi da AP ci sono dentro; il
+`-EOPNOTSUPP` sulle larghezze e' un guard di lavoro in corso, non un confine di
+scopo. Fuori restano la trasmissione e ricezione dati e i 2.4 GHz. Vedi il
+README.
+
+Lo split static/volatile di `tables_init` non è un fix: finché non c'è cambio
+banda nessuna tabella ha input che possano variare fra due bring-up.
 
 ## DSL-3580L
 

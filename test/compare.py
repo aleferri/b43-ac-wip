@@ -205,7 +205,8 @@ CORE_SHM = [
     (0x0048, 0x0048, "PRSSIDLEN"),
     (0x004a, 0x004c, "PRTLEN/NOSLPZNATDTIM"),
     (0x0050, 0x0056, "PHYVER/PHYTYPE/BEACPHYCTL/KTP"),
-    (0x0058, 0x005a, "TSSI_CCK, 32 bit"),
+    (0x0058, 0x0058, "TSSI_CCK, la meta' che il port non scrive: la 0x005a "
+                     "la scrive channel_setup()"),
     (0x0066, 0x0066, "RADAR"),
     (0x0068, 0x006a, "BT_BASE0 / TSSI_OFDM_A, 32 bit"),
     (0x006e, 0x006e, "PHYTXNOI"),
@@ -262,6 +263,18 @@ PHY_ANCHE = [
     (0x0200, 0x021e, "DIRMAP_B: letta dalla scansione, e il ciclo dei dodici "
                      "rate ne usa quattro voci per i blocchi CCK"),
     (0x01e0, 0x01fe, "BBRSMAP_A: la scrive b43_phy_ac_basic_rate_map()"),
+    # Celle della config BSS che emit_core_bss_config() emette come doppione del
+    # core. Nessuna di queste ha una scrittura precoce nella cattura, quindi
+    # toglierle non scopre op che il port non emette. Fuori resta 0x0018 (BTL0):
+    # il vendor la scrive anche a #655, dentro il blocco di chip init.
+    (0x0012, 0x0012, "DTIMPER, emessa da emit_core_bss_config()"),
+    (0x0018, 0x0018, "BTL0: a 7 da emit_core_shm_chipinit(), a 0x012a da "
+                     "emit_core_bss_config()"),
+    (0x001e, 0x001e, "TIMBPOS, idem"),
+    (0x0022, 0x0022, "ACKCTSPHYCTL, idem"),
+    (0x0048, 0x0048, "PRSSIDLEN, idem"),
+    (0x004a, 0x004a, "PRTLEN, idem"),
+    (0x0160, 0x017e, "PRSSID, l'SSID da 32 byte, idem"),
     (0x0056, 0x0056, "chiude la scansione delle direct-map table"),
 ]
 

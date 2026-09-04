@@ -529,8 +529,10 @@ static void b43_phy_ac_shm_readback_block(struct b43_wldev *dev)
  * Verificato su cold01 al microsecondo per tutti e otto i rate: 420, 292, 228,
  * 164, 132, 100, 84 e 80 us con len = 284 e SIFS = 16.
  *
- * @len e' la lunghezza della probe response piu' l'FCS. Sul ferro va presa dal
- * template che il core costruisce, e non c'e' ancora niente che la fornisca:
+ * @len e' la lunghezza della probe response piu' l'FCS. Sul ferro va letta da
+ * B43_SHM_SH_PRTLEN (0x004a), dove il core scrive la lunghezza del template --
+ * nella cattura vale 0x0118, cioe' 280, e 280 + 4 di FCS fa i 284 usati qui.
+ * Niente ancora la fornisce, quindi per ora:
  * qui e' quella delle catture, 284 byte a 20 MHz e un byte in piu' per ogni
  * raddoppio della larghezza. Quel +1 per larghezza non e' spiegato -- il
  * template a 20 MHz ne misura 280 nella TPL.RAMW, e 280 + 4 di FCS torna, ma a
@@ -660,9 +662,10 @@ static u16 b43_phy_ac_cck_rate_po(struct b43_phy_ac *ac)
  * 0x04ee per 24, 36, 48 e 54. Non c'e' niente di trascritto, i puntatori
  * vengono dalla tabella.
  *
- * Le tre celle prima -- 0x0082, 0x00ba, 0x003c -- sono invarianti su tutti e 26
- * i segmenti dello sweep a freddo; a cosa servano non e' noto. Fra loro e la
- * mappa il vendor scrive KEYIDXBLOCK, che e' del core.
+ * Il vendor la esegue due volte per attach: cold01 #13458, dentro il blocco di
+ * config MAC, e #13585, dopo la terza spazzata. Solo la prima e' preceduta dalle
+ * tre celle invarianti 0x0082/0x00ba/0x003c, che stanno quindi al sito di
+ * chiamata e non qui.
  */
 static void b43_phy_ac_basic_rate_map(struct b43_wldev *dev)
 {
@@ -670,15 +673,18 @@ static void b43_phy_ac_basic_rate_map(struct b43_wldev *dev)
 	static const u8 basic_of[8] = { 0, 0, 2, 2, 4, 4, 4, 4 };
 	unsigned int i;
 
-	b43_shm_write16(dev, B43_SHM_SHARED, 0x0082, 0x2710);
-	b43_shm_write16(dev, B43_SHM_SHARED, 0x00ba, 0xffff);
-	b43_shm_write16(dev, B43_SHM_SHARED, 0x003c, 0x000a);
-
 	for (i = 0; i < ARRAY_SIZE(basic_of); i++)
 		b43_shm_write16(dev, B43_SHM_SHARED,
 				B43_AC_RT_BBRSMAP_A +
 				b43_phy_ac_ofdm_dirmap[i] * 2,
 				dev->phy.ac->rate_ptr[basic_of[i]]);
+}
+
+/* Una passata del PLCP, per il chiamante che la invoca fuori dal setup. */
+void b43_phy_ac_prb_rsp_plcp_pass(struct b43_wldev *dev)
+{
+	b43_phy_ac_prb_rsp_plcp(dev,
+			b43_phy_ac_prb_rsp_len(dev->phy.ac->cal_width));
 }
 
 static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev)
@@ -3893,13 +3899,15 @@ static void b43_phy_ac_rxgainctrl_regs(struct b43_wldev *dev)
 }
 
 
+/* Registri ADC per core, usati dalle due fasi del setup. */
+static const u16 b43_phy_ac_adc_hi[8] = { 0x33a, 0x33b, 0x33e, 0x33f,
+					  0x342, 0x343, 0x346, 0x347 }; /* = 0x03ac */
+static const u16 b43_phy_ac_adc_lo[8] = { 0x33c, 0x33d, 0x340, 0x341,
+					  0x344, 0x345, 0x348, 0x349 }; /* = 0x032c */
+
 static void b43_phy_ac_adc_reset(struct b43_wldev *dev)
 {
 	B43_AC_FN();
-	static const u16 adc_hi[8] = { 0x33a, 0x33b, 0x33e, 0x33f,
-				       0x342, 0x343, 0x346, 0x347 }; /* = 0x03ac */
-	static const u16 adc_lo[8] = { 0x33c, 0x33d, 0x340, 0x341,
-				       0x344, 0x345, 0x348, 0x349 }; /* = 0x032c */
 	u8 c, num_cores = dev->phy.ac->num_cores;
 	u8 mask = dev->phy.ac->coremask;
 	u16 saved;
@@ -3965,6 +3973,28 @@ static void b43_phy_ac_adc_reset(struct b43_wldev *dev)
 		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0000);
 	}
 	(void)saved;
+}
+
+/*
+ * Abilitazione del controllo di potenza TX, seconda fase PHY del setup.
+ *
+ * Era la coda di b43_phy_ac_adc_reset(), che con 192 righe portava due blocchi
+ * distinti sotto il nome del primo. Lo split non cambia una sola op: le due
+ * meta' restano chiamate in sequenza da set_channel, ed e' il posto giusto --
+ * il marcatore di questo blocco, PHY.WR 0x1641, compare una volta sola nella
+ * cattura a freddo e cade dentro la prima fase PHY.
+ *
+ * Non confonderlo con il ricalcolo del target di potenza, 0x0644/0x0646 per
+ * core: quello e' la fase PHY che nella cattura cade *dopo* la config BSS del
+ * core, ed e' quello che in b43 spetta a b43_phy_txpower_check() chiamata da
+ * b43_op_config().
+ */
+static void b43_phy_ac_txpwrctrl_enable(struct b43_wldev *dev)
+{
+	B43_AC_FN();
+	u8 c, num_cores = dev->phy.ac->num_cores;
+	u8 mask = dev->phy.ac->coremask;
+	unsigned int i;
 
 	/*
 	 * TX power-control enable (0x70[15:13]), framed by 0x1641 (broadcast
@@ -4050,12 +4080,12 @@ static void b43_phy_ac_adc_reset(struct b43_wldev *dev)
 
 	/*
 	 * ADC config: two consecutive rounds with different values. The first
-	 * uses adc_hi 0x03ac and adc_lo 0x032c, the second 0x03bf and 0x0340.
+	 * uses b43_phy_ac_adc_hi 0x03ac and b43_phy_ac_adc_lo 0x032c, the second 0x03bf and 0x0340.
 	 */
 	for (i = 0; i < 8; i++)
-		b43_phy_write(dev, adc_hi[i], 0x03ac);
+		b43_phy_write(dev, b43_phy_ac_adc_hi[i], 0x03ac);
 	for (i = 0; i < 8; i++)
-		b43_phy_write(dev, adc_lo[i], 0x032c);
+		b43_phy_write(dev, b43_phy_ac_adc_lo[i], 0x032c);
 	/*
 	 * The second round only happens from the second bring-up on: on attach
 	 * the stock driver programs the pair once with 0x03ac/0x032c and moves
@@ -4064,9 +4094,9 @@ static void b43_phy_ac_adc_reset(struct b43_wldev *dev)
 	 */
 	if (!(dev->phy.ac->status_mask & B43_PHY_AC_STATE_FIRST_BRINGUP)) {
 		for (i = 0; i < 8; i++)
-			b43_phy_write(dev, adc_hi[i], 0x03bf);
+			b43_phy_write(dev, b43_phy_ac_adc_hi[i], 0x03bf);
 		for (i = 0; i < 8; i++)
-			b43_phy_write(dev, adc_lo[i], 0x0340);
+			b43_phy_write(dev, b43_phy_ac_adc_lo[i], 0x0340);
 	}
 
 	b43_phy_maskset(dev, 0x016e, (u16)~0x0002, 0x0002);
@@ -4086,6 +4116,7 @@ static void b43_phy_ac_adc_reset(struct b43_wldev *dev)
 	 */
 	b43_phy_ac_cca_pulse(dev);
 }
+
 
 /*
  * CRS clip-detector thresholds: eight registers, four per core with a +0xc
@@ -4522,7 +4553,7 @@ static bool b43_phy_ac_may_calibrate_tx(struct b43_wldev *dev)
 	return dev->phy.chandef->chan->center_freq <= 5250;
 }
 
-static void b43_phy_ac_set_channel_calibrations(struct b43_wldev *dev)
+void b43_phy_ac_set_channel_calibrations(struct b43_wldev *dev)
 {
 	/*
 	 * Called from set_channel() after mac_enable and after the body of
@@ -4987,6 +5018,7 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
 	 * control enable (mid-block).
 	 */
 	b43_phy_ac_adc_reset(dev);
+	b43_phy_ac_txpwrctrl_enable(dev);
 
 	/*
 	 * Idle-TSSI measurement, iteration 1. The REQUIRE preconditions are
@@ -5116,6 +5148,15 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
 	b43_phy_maskset(dev, 0x0878, (u16)~0x0004, 0);           /* #39187 clr bit 2 c1 */
 	b43_phy_ac_mhf_maskset(dev, 3, (u16)~0x0040, 0x0040);    /* #39188 MHF3 set bit 6 */
 	b43_phy_ac_ofdm_pctl1_readback(dev);
+	/*
+	 * cold01 #13451-#13453, invarianti su tutti e 26 i segmenti; a cosa
+	 * servano non e' noto. Fra queste e la mappa il vendor scrive
+	 * KEYIDXBLOCK, che e' del core. Solo la prima delle due passate della
+	 * mappa le porta.
+	 */
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x0082, 0x2710);
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x00ba, 0xffff);
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x003c, 0x000a);
 	b43_phy_ac_basic_rate_map(dev);
 	b43_maccontrol_set(dev, ~0x00100000u, 0);                /* #39189 clr bit 20 */
 	b43_maccontrol_set(dev, ~0x01c00000u, 0);                /* #39190 clr bits 22-24 */
@@ -5144,12 +5185,57 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
 			       (dev->phy.ac->status_mask &
 				B43_PHY_AC_STATE_FIRST_BRINGUP) ? 0 : 0x0001);
 	b43_mac_suspend(dev);                                    /* #39194 */
+	/*
+	 * cold01 #13529. Invariante su tutti e 26 i segmenti dello sweep a
+	 * freddo; a cosa serva non e' noto.
+	 */
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x007c, 0x0320);
 	b43_phy_ac_mhf_maskset(dev, 3, (u16)~0x0020, 0x0020);    /* #39195 MHF3 set bit 5 */
 	b43_mac_enable(dev);                                     /* #39196 */
+	/*
+	 * cold01 #13533. Dipende dalla sola larghezza -- 0x0f0f a 20 e 80 MHz,
+	 * 0x0303 a 40 -- e i due byte sono sempre uguali fra loro, quindi e' un
+	 * valore replicato su due meta'. Che 0x0f diventi 0x03 a 40 MHz e' un
+	 * quarto e non un mezzo, e non e' spiegato.
+	 */
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x005a,
+			(dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_40)
+				? 0x0303 : 0x0f0f);
 	b43_phy_maskset(dev, 0x0042, (u16)~0x8000, 0x8000);      /* #39197 set bit 15 */
 	b43_phy_ac_mhf_maskset(dev, 1, (u16)~0x0020, 0x0020);    /* #39198 MHF1 set bit 5 */
 	b43_mac_suspend(dev);                                    /* #39199 */
 	b43_phy_ac_wd_stats_poll_opt(dev, true, 0);
+	b43_phy_ac_basic_rate_map(dev);				/* cold01 #13585 */
+
+	/*
+	 * Fine della prima meta'. Il resto lo invoca il chiamante, dopo che il
+	 * core ha scritto la configurazione BSS -- SSID e lunghezze dei
+	 * template, cold01 #13593-#13624 -- con il MAC ancora sospeso.
+	 */
+	return 0;
+}
+
+/*
+ * Seconda meta' del setup di canale.
+ *
+ * E' cio' che in b43 invoca il core dopo il ritorno di b43_switch_channel():
+ * b43_op_config() chiama b43_phy_txpower_check(), e fra le due meta' il core
+ * scrive la configurazione BSS. Il confine e' letto dai dati, non scelto: sul
+ * segmento di riferimento l'ultima op della prima meta' e' #13585 e la prima
+ * di questa e' il PLCP a #13627, col blocco BSS #13593-#13624 in mezzo.
+ *
+ * Prende `channel` per parametro e ricava il resto da `dev`: sono i soli due
+ * valori del prologo di set_channel che questa meta' usava, per cui il taglio
+ * non porta stato implicito. Un taglio che ne lasciasse compilerebbe senza un
+ * warning e sbaglierebbe i valori a runtime.
+ */
+void b43_phy_ac_channel_setup_tail(struct b43_wldev *dev,
+				   struct ieee80211_channel *channel)
+{
+	B43_AC_FN();
+	struct b43_phy *phy = &dev->phy;
+
+	(void)phy;
 	b43_phy_ac_prb_rsp_plcp(dev,
 			b43_phy_ac_prb_rsp_len(dev->phy.ac->cal_width));
 	b43_maccontrol_set(dev, ~0x10000000u, 0x10000000);       /* #39200 set bit 28 */
@@ -5159,6 +5245,27 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
 	b43_mac_enable(dev);                                     /* #39204 */
 	b43_maccontrol_set(dev, ~0x00100000u, 0x00100000);       /* #39205 set bit 20 */
 	b43_mac_suspend(dev);                                    /* #39206 */
+	/*
+	 * Lettura-modifica-scrittura di 0x00cc, cold01 #13673-#13676: legge il
+	 * valore e lo riscrive due volte identico. La cella e' toccata cosi'
+	 * anche nella config BSS e a ogni tick del watchdog, sempre con lo
+	 * stesso schema; a cosa serva la doppia riscrittura non e' noto.
+	 */
+	{
+		u16 cc = b43_shm_read16(dev, B43_SHM_SHARED, 0x00cc);
+
+		b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
+		b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
+	}
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x00ce, 0x0000);
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x00d0, 0x0000);
+
+	/*
+	 * Seconda passata del ciclo dei dodici rate, cold01 #13683-#13740. Fra
+	 * le celle sopra e questa il vendor scrive KEYIDXBLOCK, che e' del
+	 * core.
+	 */
+	b43_phy_ac_prb_rsp_rate_po(dev);
 	b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);                               /* #39207 peek */
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);      /* #39208 relock */
 
@@ -5250,14 +5357,12 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
 
 	/*
 	 * The post-channel calibration sequence -- post_cal_finalize, rxiqcal,
-	 * rxcal_afe, the gainctrl_final loop and the teardown -- is invoked by
-	 * op_switch_channel() after mac_enable; see
+	 * rxcal_afe, the gainctrl_final loop and the teardown -- is invoked by the caller of
+	 * op_switch_channel(), after its mac_enable; see
 	 * b43_phy_ac_op_switch_channel() and
 	 * b43_phy_ac_set_channel_calibrations(). The vendor emits the MAC.MCTRL
 	 * enable between the end of the rxcal cleanup and post_cal_finalize.
 	 */
-
-	return 0;
 }
 
 /*
@@ -9792,12 +9897,13 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	ret = b43_phy_ac_set_channel(dev, channel, channel_type);
 
 	/*
-	 * Unconditional enable. This is not the release of what this function
-	 * acquired: it is a requirement of the post-channel calibrations, which
-	 * run with the MAC active and demand it in their preconditions. The
-	 * stock driver enables it here regardless of how it got into this state.
+	 * L'enable incondizionato non e' qui. Non e' il rilascio di cio' che
+	 * questa funzione ha acquisito: e' un requisito delle calibrazioni
+	 * post-canale, che girano a MAC attivo e lo pretendono nelle loro
+	 * precondizioni. Siccome quelle le invoca il chiamante, l'enable tocca
+	 * a lui -- e questo lascia libera la finestra fra le due fasi, dove il
+	 * core scrive la configurazione BSS con il MAC ancora sospeso.
 	 */
-	b43_mac_enable(dev);
 
 	/*
 	 * Post-channel calibrations, which the vendor emits after the MAC.MCTRL
@@ -9806,9 +9912,12 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	 * with their RX-IQ measurement and the gainctrl_final loop, then the
 	 * final RX-IQ teardown.
 	 */
-	if (ret == 0)
-		b43_phy_ac_set_channel_calibrations(dev);
-
+	/*
+	 * Le calibrazioni post-canale non sono qui: le invoca il chiamante,
+	 * come in b43 fa il core dopo il ritorno di b43_switch_channel(). Sono
+	 * centinaia di op, e tenerle in coda a questa funzione impedisce di
+	 * inserire fra le due fasi la configurazione BSS che il core scrive.
+	 */
 	return ret;
 }
 
