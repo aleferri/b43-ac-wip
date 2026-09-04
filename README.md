@@ -37,18 +37,22 @@ dove si documenta come si produce un numero citabile.
 Su `cold01-ch36-bw20`, il segmento di riferimento:
 
 ```
-grezzo: 26670/29292 = 91.05%
-        428 col valore sbagliato, 1673 op di wl mancanti, 93 op del port di troppo
+grezzo: 27759/29030 = 95.62%
+        259 col valore sbagliato, 753 op di wl mancanti, 0 op del port di troppo
 ```
 
 Il denominatore e' l'unione dei due flussi, quindi fa 100% solo se il port
 emette esattamente le op del driver stock: ne' meno, ne' di piu', ne' con
 valori diversi. Le tre voci sono tre lavori distinti — una formula da trovare,
 del codice da scrivere, un gate da mettere — e stanno in
-[`docs/retrace-todo.md`](docs/retrace-todo.md).
+[`docs/retrace-todo.md`](docs/retrace-todo.md). Sul segmento di riferimento la
+terza voce e' a zero; resta aperta sui canali sopra i 5250 MHz.
 
-Sui 26 segmenti dello sweep a freddo il punteggio va da ~91% sui quattro
-canali UNII-1 a 20 MHz fino a ~45% su ch100 a 80 MHz. La differenza non e'
+Sui 26 segmenti dello sweep a freddo il punteggio parte da ~95% sui canali
+UNII-1 a 20 MHz e scende sui canali alti e larghi. L'intervallo pieno e' da
+rimisurare: dopo la chiusura dei poll di up sono stati rifatti solo quattro
+segmenti (ch36, ch40, ch44 e ch52 a 20 MHz), gli altri 22 portano ancora i
+numeri precedenti. La differenza fra canali non e'
 qualita' del port su quei canali: sopra i 5250 MHz il driver stock **salta**
 alcune calibrazioni che trasmettono, il port ne esegue ancora una parte, e le
 op di troppo pesano. Cinque fasi sono gia' gatate, il resto e' tracciato.

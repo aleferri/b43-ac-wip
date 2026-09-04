@@ -114,14 +114,107 @@ fittate su ch36 a 20 MHz e non hanno prove altrove.
 
   | segmento | grezzo | valore sbagliato | mancanti | di troppo |
   | --- | --- | --- | --- | --- |
-  | cold01 ch36 bw20 | 91.05% | 428 | 1673 | 93 |
-  | cold05 ch52 bw20 | 62.35% | 115 | 2668 | **4990** |
-  | cold09 ch100 bw20 | 54.76% | 74 | 3749 | **6053** |
+  | cold01 ch36 bw20 | 92.67% | 306 | 1518 | 0 |
+  | cold05 ch52 bw20 | 67.76% | 97 | 1986 | **4370** |
 
-  Su cold01 le op di troppo sono 93, non 521: le altre 428 sono valori
-  sbagliati, e 257 di quelli sono il payload TX IQ/LO, il debito noto. Sulla
-  forma corta invece le op di troppo sono reali e sono la voce dominante -- il
-  port esegue fasi di calibrazione che il vendor la' non esegue.
+  Su cold01 le op di troppo sono ormai zero: erano l'ombra dei tre poll di up
+  e un bracket MAC duplicato, entrambi chiusi sotto. Dei valori sbagliati, il payload TX IQ/LO
+  resta il debito dominante. Sulla forma corta invece le op di troppo sono
+  reali e sono la voce dominante -- il port esegue fasi di calibrazione che il
+  vendor la' non esegue.
+
+  **Le 93 di cold01 erano l'ombra di tre poll mancanti nel path di up, e sono
+  chiuse.** Escono tutte da `b43_phy_ac_rxiqcal_finalize` (attribuzione con
+  `AC_FN_MARKERS=1`), in un blocco contiguo di 91 op piu' due coppie isolate,
+  e il blocco e' riga per riga un ciclo intero di
+  `b43_phy_ac_wd_stats_poll_opt` in forma piena.
+
+  Il censimento dei 23 poll della cattura, per forma:
+
+  | poll | thread | forma |
+  | --- | --- | --- |
+  | 3 (`#12961`, `#13481`, `#13540`) | cpu1, 754.75-754.78 | sola spazzata: 18 letture `0x0768-0x078a` |
+  | 20 (`#30919`-`#35059`) | cpu0, 762.3-781.0 | forma piena: 54 letture, coda, latch, clear |
+  | 1 (`#35321`) | cpu0, 782.3 | piu' lunga: 57 letture, 32 hi/lo, clear assente |
+  | 1 frammento (`#12944`) | cpu1 | sola coda, senza testa |
+
+  I tre a spazzata sola non sono misure del PHY: stanno su `cpu1` in una
+  raffica di 24 ms nel path di `up`, fra le scritture di config MAC che li
+  circondano -- parametri WME `0x05d4-0x05da`, limiti di retry
+  `0x01f0-0x01fc`, `MAC.MHF`, `TPL.RAMW` -- mentre i venti pieni stanno su
+  `cpu0` a un secondo di distanza l'uno dall'altro. Le celle lette sono i
+  contatori macstat, non le celle TSSI `0x0725`/`0x0925`.
+
+  Il port non li emetteva, e `b43_phy_ac_wd_stats_poll_opt(dev, false)` -- la
+  forma corta, che il sorgente implementa da sempre -- **non aveva chiamanti**:
+  ogni chiamata passava da `b43_phy_ac_wd_stats_poll()`, che passa `true`. Il
+  deficit che ne seguiva era per indirizzo e non un solo scalare (3 su testa e
+  `0x0780-0x078a`, 4 sui `lo` dei contatori, 5 sugli `hi`, 7 su `0x077e`, 1-2
+  sulle celle di coda), e l'oracolo delle letture -- FIFO per indirizzo -- da
+  quel punto serviva al port il valore dell'occorrenza sbagliata: i valori
+  divergenti rompevano la corsa di uguaglianza e producevano le 93 alla
+  cucitura, con 58 op vendor cancellate nella regione adiacente.
+
+  Che quelle op le emetta `src/` e' legittimo: non le fa il core b43, nessuno
+  ne consuma il valore, e per la posizione nel flusso appartengono a
+  `set_channel`. Gli ancoraggi sono op che entrambi i lati emettono, e sono
+  senza ambiguita':
+
+  | poll | dopo | prima di |
+  | --- | --- | --- |
+  | `#12961` | `mhf_maskset(dev, 0, ~0x4000, 0)` | il peek di `TBL_WRITE_GATE` (#39179) |
+  | `#13481` | `b43_mac_enable()` (#39191) | `mhf_maskset(dev, 4, ~0x8000, ...)` (#39192) |
+  | `#13540` | `b43_mac_suspend()` (#39199) | `maccontrol_set(~0x10000000u, 0x10000000)` (#39200) |
+
+  Incondizionate, non sotto `FIRST_BRINGUP`: i segmenti `up` dello sweep a
+  caldo hanno anch'essi 3, 3 e 4 poll a spazzata sola, quindi il vendor li
+  emette anche sui bring-up successivi.
+
+  Effetto misurato, con i due gate canonici (periodico a `MATCH`):
+
+  | segmento | prima | dopo |
+  | --- | --- | --- |
+  | cold01 ch36 bw20 | 91.05% -- 428 / 1673 / 93 | **92.67%** -- 306 / 1518 / **0** |
+  | cold02 ch40 bw20 | 89.61% -- 441 / 2127 / 109 | **91.29%** -- 320 / 1956 / **0** |
+  | cold03 ch44 bw20 | 88.37% -- 396 / 2172 / 422 | **91.56%** -- 339 / 1714 / **28** |
+  | cold05 ch52 bw20 | 62.35% -- 115 / 2668 / 4990 | **67.76%** -- 97 / 1986 / **4370** |
+
+  Le ultime 4 op di troppo di cold01 erano un bracket MAC duplicato, non un
+  poll: `b43_phy_ac_rxiqcal_measure_block()` chiudeva il blocco con
+  `mac_enable` + `mac_suspend` -- dichiarati "arm del probe cycle successivo"
+  -- mentre entrambi i chiamanti lo circondavano gia' con
+  `mac_suspend`/`mac_enable`. Il port emetteva quindi `enable, suspend, enable`
+  dove il vendor ha un solo `enable`, due volte per segmento: sul tick di
+  misura e sul tick di chiusura. Il wrapper senza quelle due op non aggiungeva
+  nulla a `b43_phy_ac_measure_block()`, quindi e' stato rimosso e i due
+  chiamanti chiamano il blocco direttamente. Il tick periodico non passava da
+  quel wrapper, e infatti resta a `MATCH`.
+
+  Restano 28 op di troppo su cold03, che ha 5 poll a spazzata sola contro i 3
+  emessi: e' la prima cosa da guardare la'. Le 4370 di cold05 sono l'altra
+  causa, le calibrazioni che il vendor salta sopra i 5250 MHz. I 22 segmenti
+  non rimisurati vanno rifatti prima di citare l'intervallo dello sweep.
+
+  Nota per chi tornera' qui: `PERIMETER` e' la leva sbagliata per questa
+  famiglia di celle. Il port emette `0x0768-0x078a` nei suoi poll, quindi
+  scartarle dal lato vendor lascerebbe venti cicli senza controparte -- il caso
+  che `test/README.md` avverte di non creare.
+
+  Il conteggio dei poll a spazzata sola **non** spiega le op di troppo sugli
+  altri segmenti, e la verifica lo esclude:
+
+  | segmento | solo-spazzata | di troppo |
+  | --- | --- | --- |
+  | cold01 ch36 bw20 | 3 | 93 |
+  | cold02 ch40 bw20 | 3 | 109 |
+  | cold03 ch44 bw20 | 5 | 422 |
+  | cold04 ch48 bw20 | 8 | 559 |
+  | cold05 ch52 bw20 | 4 | 4990 |
+  | cold26 ch100 bw80 | 4 | 12565 |
+
+  Sui quattro UNII-1 a 20 MHz la scala e' monotona, sopra i 5250 MHz la voce e'
+  dominata dalle calibrazioni che il vendor salta e il port esegue: sono due
+  cause distinte sotto la stessa etichetta.
 
   `SOLO_PORT` in `compare.py` e' la lista delle op del port che l'oracolo non
   puo' contenere. Ci sta una voce, `AMT.*`: il port scrive la address match
@@ -148,8 +241,574 @@ fittate su ch36 a 20 MHz e non hanno prove altrove.
   una cattura con l'hook le contiene.
 
 - **Il blocco di config MAC dopo l'init radio: aperto per un pezzo.** Il muro
-  del posizionale e' lo stesso su tutti e 26 i segmenti -- il percorso PHY e'
-  concluso su ogni canale e larghezza -- e apre con quattro accessi piu' due
+  del posizionale e' questo blocco su tutti e 26 i segmenti, ma non allo stesso
+  punto, e la differenza dice quale lavoro viene prima:
+
+  | famiglia | segmenti | prima divergenza | vendor | port |
+  | --- | --- | --- | --- | --- |
+  | A | 7, tutti UNII-1 (ch36/40/44/48, bw20/40/80) | `@10214-10220` (`@12780` a 80 MHz) | `OBJ.WR 0xd4 = 0x88` | `MAC.MHF slot 0 mask 0x4000` |
+  | B | 19, da ch52 in su | `@9599-9622` | `OBJ.RD 0x92` | `PHY.RD 0x140` |
+
+  La B e' l'ingresso del blocco -- `OBJ.RD 0x0092` e' l'apertura di
+  `b43_phy_ac_shm_readback_block()` -- e il port ci arriva in ritardo perche'
+  sta ancora eseguendo le calibrazioni che sopra i 5250 MHz il vendor salta.
+  Quindi la B e' un sintomo anticipato del gating mancante, non un muro
+  distinto: chiuderla porta quei 19 segmenti sul muro della A.
+
+  **La A e' il write-through delle host flag, ed e' bloccata sui dati.** Il
+  vendor non rilegge mai le cinque celle HOSTF -- **zero** `OBJ.RD` su
+  `0x005e`, `0x0060`, `0x0062`, `0x0078`, `0x00d4` in tutta la cattura --
+  quindi tiene uno shadow in memoria e ne scrive la cella solo in 5 chiamate su
+  38, piu' un flush di tutte e cinque a `#686-#690`. `b43_phy_ac_mhf_maskset()`
+  in `src/helpers_phy_ac.c` fa invece read-modify-write sulla cella a ogni
+  chiamata: e' una differenza strutturale, non un blocco di scritture
+  mancanti. Nell'harness la cosa e' nascosta perche' `helpers_phy_ac.c` non e'
+  nel link di test e `wrap.c` modella la funzione, col tappo che ci sta dentro
+  dichiarato come tale.
+
+  La condizione **e' stabilita**, e non e' `bands`: l'equivalente GPL in
+  brcmsmac (`brcms_b_mhf()`, `brcm80211/brcmsmac/main.c`) scrive la cella solo
+  se
+
+  ```c
+  if (wlc_hw->clk && (band->mhfs[idx] != save) && (band == wlc_hw->band))
+  ```
+
+  cioe' clock su, **shadow cambiato**, e banda modificata uguale alla corrente.
+  Il discriminante che mancava e' l'ottimizzazione "solo se cambia". Il modello
+  (clock su da una soglia in poi) AND (shadow cambiato) predice **tutte** le
+  chiamate di entrambi i testimoni: 38 su 38 su cold01 del d6220 e 56 su 56 sul
+  DSL, con la soglia a `#623` e `#424` rispettivamente. Le due catture sono di
+  versioni diverse del blob (7.14 e 6.30) e danno la stessa partizione:
+  scrivono `(slot0, 0x100)`, `(slot4, 0x08)`, `(slot4, 0x8000)`, `(slot3,
+  0x20)` -- piu' `(slot1, 0x20)` sul solo d6220 -- e non scrivono i clear ne'
+  le riscritture dello stesso bit. `bands` non serve: in queste catture ogni
+  chiamata e' sulla banda corrente.
+
+  **Fatto.** Lo shadow sta in `struct b43_phy_ac` (`mhfs[5]` piu'
+  `mhf_writethrough`), `b43_phy_ac_mhf_maskset()` scrive la cella solo quando
+  la word cambia e non la rilegge mai, e il flag passa a vero fra la chiamata
+  slot 4 e la slot 0 del blocco GPIO frontend, dove le catture mettono la
+  transizione. E' stato dichiarato che lo shadow duplica stato che in b43
+  sarebbe del core: il vendor ne tiene molto, e se serve al PHY sta nel PHY.
+  Nell'harness il tappo di `wrap.c` e' stato rimosso e `helpers_phy_ac.c` e'
+  entrato nel link, cosi' la decisione di scrivere e' quella del driver e non
+  un modello parallelo; il wrapper emette il solo record `MAC.MHF` e delega a
+  `__real_`. Corroborazione: allo scatto del flag lo shadow vale
+  `{0x100, 0, 0, 0x40, 0x80}`, gli stessi cinque valori del flush del core.
+
+  **Lo shadow sopravvive a un down/up e si azzera solo col ricaricamento del
+  modulo**, e le catture lo provano: il flush di un `up` a caldo scrive i
+  valori accumulati dal ciclo precedente -- `0x0060` in HOSTF4 e `0x0088` in
+  HOSTF5 (`01-up-ch36-bw20` `#29158-#29162`) -- dove un ciclo a freddo flusha
+  `0x0040` e `0x0080`. Siccome `b43_wireless_core_init()` chiama
+  `prepare_structs` a ogni `up`, il `memset` di
+  `b43_phy_ac_op_prepare_structs()` porta lo shadow attraverso il reset; quello
+  che lo azzera e' la `kzalloc` di `op_allocate()`. Nell'harness il freddo e'
+  giusto da se': `mount_board()` azzera `g_ac` a ogni processo, cioe' un modulo
+  ricaricato.
+
+  **Trappola per il confronto a caldo, da chiudere prima di usarlo.** Ogni
+  invocazione dell'harness e' un processo nuovo, quindi lo shadow parte sempre
+  a zero: un flusso `switch_channel` o `up` confrontato con un segmento dello
+  sweep a caldo emetterebbe i write-through del blocco GPIO frontend, che la
+  cattura non ha perche' la' lo shadow era gia' accumulato. Serve un seme per i
+  run non-primo-bring-up, sulla stessa leva di `AC_FIRST_INIT`, col valore in
+  cui un ciclo a freddo termina.
+
+  **Fatto anche RFATT**: `OBJ.WR 0x0064 = 0x0480`, subito dopo il
+  write-through di HOSTF5. Costante su tutti e 26 i segmenti a freddo, una
+  volta per segmento, e identica sul DSL nella stessa posizione. Trascritta: a
+  cosa serva su un AC-PHY non e' noto.
+
+  **Fatti i due azzeramenti.** Nel blob sono caricamenti di tabella da rodata,
+  e le tabelle sono tutte zeri: un ciclo le sostituisce senza perdere niente,
+  quindi non c'e' nessuna tabella da trascrivere.
+
+  | blocco | word | episodi cold01 |
+  | --- | --- | --- |
+  | `0x10f4-0x14b2` | 480 | `#12311-#12790` |
+  | `0x05e0-0x0666` | 68 | `#12791-#12858` |
+
+  Contigui fra loro, una volta per attach, subito dopo RFATT, e identici su
+  ogni segmento controllato a ogni canale e larghezza. Le prime dieci word del
+  secondo cadono nel `KEYIDXBLOCK` che `b43.h` dichiara del core, ma il vendor
+  le scrive in quella corsa e non altrove -- ogni cella compare una volta sola
+  nella cattura -- quindi la corsa e' riprodotta per intero e la voce
+  `CORE_SHM` e' stata ristretta a `0x05d4-0x05de`, come la regola di
+  `test/README.md` prescrive quando il port impara a scrivere una cella.
+
+  **Il muro ora e' `0x0020 = 0x0800` seguito da `0x08ec-0x0a8e`**, e cambia
+  natura: quei blocchi portano valori, non zeri. Decorrelati con
+  `reverse-tools/decorrelate_channels.py` sui 26 segmenti a freddo, 1782 chiavi
+  in tutto, le 72 del blocco si dividono cosi'. **Attenzione a leggere la
+  categoria `dinamico` su questo dataset: e' vacua** -- sullo sweep a caldo, che
+  ha due cicli per configurazione, le dinamiche sono 123 su 1737. Lo sweep a freddo ha un
+  solo segmento per etichetta `(canale, larghezza)`, e un valore dinamico si
+  rileva confrontando due segmenti con la stessa etichetta. Per quello servono
+  i 52 segmenti a caldo, 26 configurazioni per due cicli, quelli su cui e'
+  costruito `crsminpwr-d6220.md`.
+
+  | classe | chiavi | cosa serve |
+  | --- | --- | --- |
+  | invariante | 45 | letterali, fra cui `0x0020`, `0x08ec`, `0x0910` |
+  | solo-larghezza | 15 | una funzione della larghezza |
+  | centro-freq | 12 | una funzione della frequenza centrale |
+
+  Le solo-larghezza stanno a passo `0x14` (`0x0994`, `0x09a8`, `0x09bc`, ...) e
+  fanno `0x238b -> 0x23ab -> 0x23cb` per 20/40/80, cioe' `+0x20` per passo sul
+  byte alto; le celle adiacenti (`0x0998`, `0x09ac`, ...) cambiano solo a 80
+  MHz, `0x01a4 -> 0x01a8`.
+
+  Le celle a passo `0x1c` sono il **gruppo B** gia' aperto sopra, e il muro
+  posizionale si ferma la', a `OBJ.RD 0x0a3a` seguita dalla sua riscrittura.
+  Non sono le soglie CRS di `crsminpwr-d6220.md`: quella specifica riguarda i
+  registri PHY `0x324` e il banco `0x910-0x913`, un altro spazio di indirizzi.
+
+  **E' una funzione di canale e larghezza, non una misura**, e lo sweep a caldo
+  lo dimostra: 52 segmenti, 26 configurazioni per due cicli, e' l'unico dataset
+  in cui la categoria `dinamico` sia rilevabile -- ne trova 123 su 1737 chiavi
+  -- e tutte e dodici queste celle escono `centro-freq`. I due cicli sulla
+  stessa configurazione danno lo stesso valore.
+
+  I valori sono campi su bit `[7:3]`, cioe' interi a 5 bit con segno. Per
+  `0x0a3a` (le altre tre della famiglia sono sempre identiche):
+
+  | bw | ch36 | ch40 | ch44 | ch48 | ch52 | ch56-64 | ch100+ |
+  | --- | --- | --- | --- | --- | --- | --- | --- |
+  | 20 | -1 | -1 | -2 | -2 | -3 | -3 | -1 |
+  | 40 | -2 | | -1 | | -3 | -2 (ch60) | -1 |
+  | 80 | -1 | | | | -3 | | -1 |
+
+  Due cose che la forma **non** e': non e' monotona nella frequenza centrale
+  (5190 da -2 mentre 5180 e 5200 danno -1; 5210 da -1 e 5220 da -2), quindi
+  l'etichetta `centro-freq` dice solo "dipende dalla combinazione"; e non e' per
+  sottobanda, perche' dentro UNII-1 a 20 MHz cambia a ch44 e `subband5gver=0x4`
+  non ha quel confine. La famiglia a passo `0x14` ha valori positivi (0, 1, 2,
+  6) e le sue ultime due celle divergono dalle altre sei sui canali alti.
+
+  **Origine trovata: sono i blocchi per-rate della shared memory, e le tre
+  voci che questo documento teneva separate -- le quindici solo-larghezza, le
+  dodici centro-freq e il gruppo A del read-back -- sono una cosa sola.**
+
+  L'indirizzo non e' una costante. Ogni accesso e' preceduto dalla lettura di
+  una voce della direct-map table, che e' un puntatore:
+
+      blocco = 2 * shm_read(DIRMAP + indice * 2)
+
+  cioe' `brcms_b_rate_shm_offset()` di brcmsmac. `M_RT_DIRMAP_A` sta a `0x01c0`
+  e `M_RT_DIRMAP_B` a `0x0200`. L'indice non e' il numero del rate: e' il
+  nibble basso del campo SIGNAL del PLCP, per cui 6, 9, 12, 18, 24, 36, 48 e 54
+  Mbit/s stanno agli indici 11, 15, 10, 14, 9, 13, 8 e 12 -- ed e' per questo
+  che i puntatori sembravano letti fuori sequenza. I passi `0x14` e `0x1c` che
+  sembravano struttura sono la spaziatura dei blocchi su questa board.
+
+  Offset toccati dentro il blocco, su cold01:
+
+  | offset | op | volte | cosa e' |
+  | --- | --- | --- | --- |
+  | +8, +10, +12 | solo WR | 80 ciascuno | tre word, i sei byte del PLCP |
+  | +14 | RD+WR | 36 | 12 rate per 3 passate |
+  | +18 | RD+WR | 16 | 8 rate OFDM per 2 passate |
+
+  I nomi `M_RT_*` di brcmsmac **non** si possono trasferire: quello scrive il
+  PLCP a +10 e +12, due word, il blob tre word a +8. Il layout del blocco AC e'
+  spostato, quindi chiamare +18 `OFDM_PCTL1` perche' la' sta a 18 sarebbe una
+  deduzione dal nome e non dai dati.
+
+  **Fatto: +14 per gli otto rate OFDM.** Il valore e' il nibble di `mcsbw*po`
+  del MCS su cui il rate legacy ricade -- 6, 9, 12, 18 su mcs0; 24 su mcs1; 36
+  su mcs2; 48 su mcs3; 54 su mcs4 -- moltiplicato per 8, con l'indice di banda
+  che `b43_phy_ac_po_band()` gia' calcolava. Esatto su 12 delle 26
+  configurazioni a freddo; le altre 14 differiscono per un termine additivo per
+  canale, non nella forma, e quel termine non e' identificato.
+
+  **La forma della regola e' sbagliata, e phy_n la da'.** La catena e'
+  quella del PPR: massimo per rate dalla SROM, tetti regolatori, tetti per
+  gruppo (`b43_ppr_apply_max_group`, 68 quarti di dB a una catena e 56 a due,
+  i 12 di differenza essendo `10*log10(2)`), pavimento
+  `b43_ppr_apply_min(..., INT_TO_Q52(8))`, e infine
+  `tx_power_offset[i] = max(ppr) - ppr[i]`. Il valore e' una **distanza dal
+  massimo**, non un nibble, e i dodici blocchi scritti dal vendor sono i primi
+  due gruppi del PPR -- `cck[4]` e `ofdm[8]` -- con la partizione che combacia
+  cella per cella. Il nibble diretto coincide con la differenza solo dove i
+  nibble sono quasi tutti zero, che e' esattamente l'insieme delle 12
+  configurazioni in cui la scorciatoia passa.
+
+  Ne segue che il "pavimento" e il "termine additivo" cercati qui sotto non
+  sono termini nuovi: sono l'effetto di `apply_max_group` e di `apply_min` su
+  una differenza. E i quattro CCK sono un gruppo a se' nel PPR, senza campo
+  SROM per 5 GHz nella rev 11, quindi il loro valore e' determinato da tetto e
+  pavimento e da nient'altro -- che e' la board-independence misurata su tre
+  schede.
+
+  **La catena e' verificata sui dati AC, invertendola.** Con
+  `ppr[i] = maxp5ga[sb] - 2*nib[i]` e campo `(max(ppr) - ppr[i]) / 2` -- il
+  grezzo essendo quello per 8:
+
+  | | maxp | ppr per rate | tetto | max | campo atteso | osservato |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | d6220 ch100 bw20 | 86 | 86,86,86,86,86,82,78,74 | nessuno | 86 | 0,0,0,0,0,2,4,6 | idem |
+  | agcombo ch100 bw20 | 82 | 82,82,82,82,74,74,66,66 | 74 | 82 | 4,4,4,4,4,4,8,8 | idem |
+
+  Da cui tre risultati. L'unita' e' mezzi quarti di dB. La catena e' quella del
+  PPR e non il nibble. E **il tetto non e' il 68 di phy_n**: sul d6220 nessun
+  tetto minore o uguale a 86 puo' mordere, altrimenti ch100 uscirebbe piatto,
+  mentre sull'agcombo il tetto e' 74 e morde. Due board, due tetti, nessuno dei
+  due ereditabile come costante -- il regolatorio del vendor non e' uniforme
+  fra le combinazioni.
+
+  Nota sul massimo: sull'agcombo `max = 82` non e' raggiunto dal gruppo OFDM
+  legacy dopo il tetto, quindi `max(ppr)` e' preso su **tutti** i gruppi, MCS
+  compresi, come `b43_ppr_get_max()` sull'intera struttura da 44 rate.
+
+  **Correzione: la coerenza su 52/52 annunciata prima era debole**, perche' il
+  primo inverter ricavava `max` da un'assunzione -- il rate col ppr minimo non
+  e' tagliato -- invece che dalla definizione del modello, `max = max(cp)`.
+  Erano due parametri liberi per otto punti. Con `max` vincolato al massimo del
+  solo gruppo OFDM legacy i punti che tornano sono **10 su 52**: 27 incoerenti
+  e 15 degeneri, dove degenere vuol dire che il tetto appiattisce tutti i rate
+  e i dati fissano solo `max - tetto`. `reverse-tools/ppr_invert.py` ora enumera
+  i tetti compatibili e distingue i tre casi invece di restituirne uno.
+
+  **E il confronto fra le due versioni e' il risultato che serviva**: con `max`
+  libero tornano 52 punti su 52, col massimo del gruppo ne tornano 10. Quindi i
+  dati *richiedono* che il massimo venga preso fuori dal gruppo -- non e' piu'
+  un'osservazione su un caso singolo, e' una separazione su 42 configurazioni.
+  `b43_ppr_get_max()` su tutti e sette i gruppi non e' un'opzione di
+  modellazione. **Ma costruirli non basta**, e provarlo e' stato utile: in tutti
+  e sei i campi `po` delle due board il nibble minimo e' portato da `mcs0` o il
+  campo e' uniforme, quindi il gruppo che vince il massimo e' sempre quello
+  SISO e il suo massimo e' `maxp - 2*min(nib)`, cioe' quello che si calcolava
+  gia'. Il grado di liberta' non era quale gruppo.
+
+  Il blocco e': **due incognite per configurazione, `max` e tetto, e otto
+  osservazioni che nei casi appiattiti vincolano solo la differenza.** Aggiungere
+  configurazioni non lo risolve, perche' ognuna porta le proprie due incognite:
+  serve una misura indipendente di una delle due.
+
+  E c'e': il **target di potenza per core**, registro `0x0646 + stride`, che
+  `b43_phy_ac_txpwr_target()` calcola come `lim - 6` con `lim` limitato dal
+  tetto regolatorio. E' nelle tracce, canale per canale, ed e' il tetto
+  misurato. Da la' `max` non e' piu' incognito e il tetto esce dagli otto campi.
+  **Estratto, e separa due tetti che erano confusi in uno.**
+
+  | | reg 0x0646 | lim = reg+6 | max risolto | tetto risolto |
+  | --- | --- | --- | --- | --- |
+  | d6220 ch36 bw20 | 0x38 | 62 | 72 | nessuno |
+  | d6220 ch100 bw20 | 0x4c | 82 | 86 | nessuno |
+  | agcombo ch100 bw20 | 0x4c | 82 | 82 | 74 |
+
+  Primo: il `max` dei campi e' il valore SROM **non tagliato**. Sul d6220 a
+  ch100 `maxp` e' 86 col nibble minimo a 0, e i campi richiedono 86, mentre il
+  registro da' 82, cioe' 86 gia' limitato. E' la conferma indipendente che nella
+  catena dei campi `get_max` viene prima dei tagli.
+
+  Secondo: il tetto che agisce sui campi **non e'** quello regolatorio.
+  Sull'agcombo a ch100 il registro da' `lim = 82` con `maxp = 82`, quindi il
+  regolatorio non morde, mentre i campi richiedono 74. Sono due quantita'
+  distinte: il registro porta il limite regolatorio, i campi il **tetto di
+  gruppo**, l'`apply_max_group` di phy_n -- 68 la', 74 sull'agcombo. Trattarle
+  come una sola e' la ragione per cui i residui non si chiudevano.
+
+  **Con `max` imposto dalla SROM resta una sola incognita, e tornano 45 punti su
+  52** (`reverse-tools/ppr_invert_maximposto.py`). I tetti di gruppo risolti:
+
+  | | bw20 | bw40 | bw80 |
+  | --- | --- | --- | --- |
+  | d6220 | ch104-140: 82 | ch60: 66 | ch36: 56, ch52: 62 |
+  | agcombo | ch100-140: 74 | ch36/44: 62, ch60: 66 | ch36: 62, ch52: 70, ch100: 66 |
+
+  Tutti pari e spaziati di 4; le larghezze legate hanno tetti sistematicamente
+  piu' bassi delle strette, la stessa aritmetica dei 3 dB; e il 56 del d6220 a
+  ch36 bw80 e' esattamente il tetto a due catene di phy_n.
+
+  **I 7 residui sono tutti casi in cui `max` deve essere post-taglio.** Su
+  agcombo ch36-48 bw20 i campi sono tutti zero, cioe' tutti i rate al massimo,
+  mentre `ppr` mette i rate da 24 in su piu' in basso: impossibile con
+  `M = 74` imposto, e risolvibile solo con `M = 66`, che e' il valore tagliato.
+  Sul d6220 a ch104 invece `M` e' 86, pre-taglio. Quindi l'ordine fra
+  `get_max` e `apply_max_group` non e' lo stesso nelle due situazioni.
+
+  **Check del registro fatto su tutte e 52: l'ipotesi dei due massimi non
+  regge.** Confrontando il massimo che i campi richiedono con quello della SROM
+  e con `lim = reg(0x0646) + 6`: 33 casi in cui i due candidati coincidono e
+  quindi non discriminano, 6 che seguono la SROM, 2 che seguono `lim`, e **11
+  che non seguono nessuno dei due**. In quegli undici il massimo dei campi e'
+  una terza quantita'.
+
+  **Ma il check da' un risultato piu' forte: il tetto regolatorio non agisce
+  sui campi SHM.** Sul d6220 a ch36 bw20 il registro da' `lim = 62`, cioe'
+  `maxp = 72` limitato dal regolatorio, mentre i campi richiedono `M = 72` e
+  nessun taglio. Se il regolatorio entrasse in quel percorso i campi si
+  appiattirebbero. I due percorsi divergono **prima** dello stadio regolatorio:
+  il registro di target lo applica, i blocchi per-rate no.
+
+  Resta quindi in piedi la sola ipotesi messa da parte: il massimo cade sul
+  gruppo che vince fra i sette, con tetti di gruppo diversi. Gli undici casi
+  «nessuno» sono compatibili -- su agcombo ch36-48 serve `M = 66`, che e'
+  esattamente `min(ppr)` del gruppo, cioe' tutto appiattito al tetto. Per
+  distinguerla servono davvero i sette gruppi, ed e' l'unica strada rimasta.
+
+  Ipotesi provate e cassate per i residui, per non rifarle: sottobanda indicizzata
+  per frequenza secondo `txpwr_subband()` (39/52, identico); massimo preso dal
+  campo `po` a 20 MHz invece che da quello della larghezza operativa (39/52,
+  residui diversi).
+
+  **Invertita con `max` libero su tutte e 52 le configurazioni, due board:** I nibble di `mcsbw*po` vanno letti **senza segno**: con la
+  conversione a intero con segno `0xcca88440` dell'agcombo darebbe backoff
+  negativi e il conto non chiude. Il tetto risolto per configurazione, a 20
+  MHz, dove «>=» vuol dire che non morde e si vede solo un limite inferiore:
+
+  | | ch36-48 | ch52-64 | ch100 | ch104-140 |
+  | --- | --- | --- | --- | --- |
+  | d6220 | >=72 | >=68 | >=86 | **82** |
+  | agcombo | **66** | >=74 | **74** | **74** |
+
+  Da cui: il tetto e' **per canale**, non per sottobanda -- sul d6220 a ch100
+  non morde e a ch104-140 vale 82, dentro la stessa sottobanda -- ed e'
+  dipendente dalla board. I valori sono limiti plausibili in dBm: 66, 74 e 82
+  quarti fanno 16,5 / 18,5 / 20,5 dBm, cioe' il tetto regolatorio meno il
+  guadagno d'antenna. Non e' una costante da ereditare da phy_n.
+
+  E due fenomeni che questa sezione inseguiva non esistono:
+
+  - la "soppressione" sulla sottobanda bassa dell'agcombo e' il tetto a 66 che
+    appiattisce tutti i rate: finiti tutti al tetto, `max - ppr` e' zero per
+    tutti;
+  - l'"anomalia" del d6220 a ch52-64, con l'osservato sotto il predetto, e'
+    `5gmpo = 0x11111111`: nibble tutti uguali, quindi `max` coincide con ogni
+    `ppr` e le differenze sono zero.
+
+  **`max` e' il massimo prima dei tetti, non dopo.**
+  `max = maxp5ga[sb] - 2*min(nibble)` combacia su 39 delle 52 configurazioni, e
+  su tutte quelle a 20 MHz di entrambe le board tranne agcombo ch36-48; la
+  variante col tetto applicato, `min(a, tetto)`, ne prende solo 25. Quindi
+  l'ordine nell'AC non e' quello di phy_n, dove `b43_ppr_get_max()` viene dopo
+  `apply_max_group`: qui il massimo e' quello della SROM prima del taglio. Lo
+  conferma il caso che sembrava richiedere un altro gruppo -- sul d6220 a ch104
+  `max` vale 86 mentre il gruppo OFDM e' tagliato a 82.
+
+  Dei 13 residui, **11 sono a 40 e 80 MHz**, dove e' incerta la scelta stessa
+  del campo `po` e della sottobanda: le due partizioni sono dichiarate
+  indipendenti in `src/phy_ac.c` -- `b43_phy_ac_po_band()` per canale e
+  `b43_phy_ac_txpwr_subband()` per frequenza e dipendente dalla larghezza --
+  mentre `reverse-tools/ppr_invert.py` usa la stessa per entrambe. **Provata:
+  non e' quella** -- con `maxp` indicizzato per frequenza secondo
+  `b43_phy_ac_txpwr_subband()` il conto resta 39/52, identico.
+
+  Quello che i residui dicono e' un'altra cosa. Le differenze fra risolto e
+  predetto sono `+4, +4, +4, +4, +4, +12, -2, -8, -8`: quasi tutte multipli di
+  4 quarti di dB, cioe' **1 dB esatto**, e concentrate sulle larghezze legate.
+  Un campo `po` sbagliato darebbe scarti irregolari; questo e' un termine
+  additivo in dB che entra a 40 e 80 MHz -- la stessa aritmetica dei 3 dB che
+  `phy_n` mette fra gruppi a una e due catene. Da cercare li'.
+
+  I due residui a 20 MHz sono invece agcombo ch36-48, dove il risolto e' 66,
+  cioe' esattamente il tetto: la' il tetto entra anche nel massimo, e questo
+  resta senza spiegazione.
+
+  Quanto segue resta come registro di come ci si e' arrivati.
+
+  **La regola sembrava incompleta per un pavimento.** Il testimone da usare qui e'
+  l'agcombo, wl 7.x, non il DSL, che a 6.30 e' troppo vecchio per validare una
+  formula per-rate. E l'agcombo mostra la forma esatta del difetto:
+
+  | | osservato | predetto |
+  | --- | --- | --- |
+  | agcombo ch36 bw20 | `0,0,0,0,0,0,0,0` | `0,0,0,0,2,2,4,4` |
+  | agcombo ch100 bw20 | `4,4,4,4,4,4,8,8` | `0,0,0,0,4,4,8,8` |
+
+  A ch100 l'osservato e' `max(predetto, 4)`, sul d6220 ch100 e' `max(pred, 0)` e
+  ch104-140 e' `max(pred, 2)`. Quindi il termine che mancava non e' additivo, e'
+  un **pavimento** per canale -- coerente col fatto che un limite regolatorio
+  puo' solo alzare il backoff, lo stesso argomento sui segni dei residui che il
+  commento di `b43_phy_ac_txpwr_subband()` usa. Sull'agcombo il pavimento e'
+  esatto: 0 a ch52, 4 a ch100, ch104 e ch132.
+
+  **Ma c'e' un secondo fenomeno, e non e' un pavimento**: sull'agcombo a ch36 e
+  sul d6220 a ch52-64 l'osservato sta *sotto* il predetto ed e' piatto a zero,
+  cioe' la variazione per-rate sparisce del tutto. Che non sia il campo `po` lo
+  inchioda l'agcombo: `5glpo` e `5gmpo` la' coincidono, `0x88644220`, quindi la
+  predizione a ch36 e a ch52 e' identica -- e l'osservato e' piatto a ch36 e
+  per-rate a ch52. E non e' `maxp5ga`: l'agcombo ha `{74, 74, 82, 82}`, lo
+  stesso 74 nelle due sottobande che si comportano in modo diverso. Quindi la
+  soppressione e' keyata sulla sottobanda, e serve un ingresso che non e'
+  nessuno dei due campi.
+
+  **Gli undici residui su `max`, risolti per due terzi.** Posto
+  `k = (maxp - M) / 2`, in 41 configurazioni su 52 `k` e' esattamente
+  `min(nibble)` del campo `po` della larghezza operativa. Gli altri undici si
+  dividono in due famiglie di segno opposto:
+
+  - **`M` sopra `maxp`**, cioe' `k` negativo: d6220 ch60 bw40 e ch36 bw80,
+    agcombo ch36/44 bw40 e ch36 bw80. I salti sono `+4` e `+8` quarti di dB,
+    cioe' 1 e 2 dB, e **solo sulle larghezze legate**. E' il bonus di densita'
+    spettrale: allargando la banda il totale ammesso cresce, quindi il tetto di
+    partenza sale. Il termine mancava perche' si assumeva che la larghezza
+    spingesse solo verso il basso.
+  - **`M` sotto `maxp`**: agcombo ch36-48 bw20 con `k = +4`, piu' agcombo
+    ch100 bw40 e d6220 ch100 bw40. Qui il tetto morde prima che si prenda il
+    massimo. Restano quattro configurazioni con questa forma, ed e' l'unico
+    residuo vero.
+
+  **Dove vivono le due riduzioni.** I gruppi a due catene sono popolati nella
+  tabella 0x21 -- i 24 `u32` sono 96 slot da un byte, quattro per gruppo, e i
+  quattro byte sono i modi STF SISO/CDD/STBC/SDM; leggere ogni `u32` come un
+  numero solo li nasconde. Nei gruppi popolati `CDD` e' **uguale** a `SISO`, e
+  `STBC`/`SDM` sono zero su entrambe le board.
+
+  Non vuol dire che il backoff per catena non ci sia: **sta nel target per
+  core**, non nelle distanze per rate. I target sono identici fra core -- 56/56
+  sul d6220, 56/56/56 sull'agcombo -- che e' esattamente cio' che si aspetta se
+  ogni catena prende `totale - 10*log10(N)`: la riduzione e' nel valore comune,
+  non in una differenza fra core, e sarebbe osservabile solo confrontando una
+  configurazione a una catena con una a piu' catene. Non ne abbiamo: il vendor
+  configura tutte le catene in ogni cattura, due sul d6220 e tre sull'agcombo,
+  e lo dicono i registri `0x0646`/`0x0846`/`0x0a46`.
+
+  Sulla larghezza il target **sale**: ch36 sul d6220 fa 56 a 20 MHz e 66 a 40.
+  Il limite a 5 GHz e' una densita' spettrale, quindi raddoppiando la banda il
+  totale ammesso cresce di 3 dB -- la potenza per MHz scende, quella per catena
+  sale. Le due riduzioni vanno in direzioni opposte, ed e' la ragione per cui i
+  conti sulla larghezza non tornavano assumendo il contrario.
+
+  **Correzione: la tabella 0x21 non e' invariante.** L'avevo dichiarata tale
+  guardando una board sola e i primi 16 word di 24. Su tutte e 52 le
+  configurazioni la posizione 10 vale `0x0101` su ogni segmento agcombo della
+  sottobanda alta -- ch100-140, a ogni larghezza -- e zero su tutto il resto,
+  d6220 compreso. Dipende dalla sottobanda e si vede dove i nibble SROM sono
+  grandi (`5ghpo = 0xcca88440` sull'agcombo). Quindi le tre costanti hardcodate
+  in `src/phy_ac.c` sono giuste per il d6220 e incomplete altrove, e la domanda
+  aperta nel commento -- l'asse board -- e' risolta: l'asse esiste.
+
+  Quanto segue va letto con quella correzione. **Non e' il ppr**, e ora anche
+  sull'asse board: sull'agcombo la tabella 0x21
+  vale `0x202` in 1, 5 e 6 su ogni canale, identica al d6220. Il commento in
+  `src/phy_ac.c` che dice «only the d6220 has a sweep» e' da aggiornare --
+  l'agcombo ce l'ha, ed e' quello che chiude la verifica.
+
+  **Il DSL, che per l'OFDM non fa testo,** Sulla sua unica cattura
+  completa a ch36 tutti e otto i blocchi OFDM ricevono `0x30`, mentre la sua
+  SROM (`mcsbw205glpo = 0xeca86420`, nibble `0, 2, 4, 6, 8, 10, 12, 14`)
+  predirebbe cinque valori distinti. Un valore piatto contro cinque. Le
+  possibilita' sono due: la regola dipende dalla versione del blob, 7.14 contro
+  6.30, o e' sbagliata e la corrispondenza sul d6220 va rivista. Da tenere
+  presente che delle 26 configurazioni a freddo solo quelle da ch100 in su
+  hanno nibble abbastanza vari da discriminare una mappatura: sulle altre
+  qualunque mappa da' zero.
+
+  **Provata e cassata l'ipotesi del limite UNII-1**, in entrambe le forme.
+
+  Come tetto assoluto: se mordesse un tetto regolatorio uguale per le due
+  schede -- `ccode` vuoto e regrev 0 su entrambe -- `M` sarebbe assoluto mentre
+  `ppr_cck` segue `maxp`, che differisce di 2 quarti, e i campi differirebbero
+  di 1. Sono identici, `-6` su entrambe a UNII-1 con `maxp` 72 e 74. Un tetto
+  assoluto non da' campi uguali con basi diverse: la riduzione e' **relativa** a
+  `maxp`.
+
+  Come limite di densita' (`maxp` totale, limite per MHz): darebbe 3 dB per
+  raddoppio, quindi due gradini uguali su 20/40/80. A ch36 sono `-6 -> -1 -> -1`:
+  primo gradino 2,5 dB, secondo zero. Non scala come una densita' -- e questo
+  cassa anche la lettura data al bonus di banda piu' sopra, che e' la stessa
+  idea in positivo.
+
+  Resta dai dati, senza interpretazione: una riduzione relativa a `maxp`, uguale
+  fra board a UNII-1 (-6) e UNII-2C (-1), **diversa a UNII-2A** (-3 sul d6220,
+  -1 sull'agcombo) -- che e' l'unica sottobanda in cui le due SROM hanno una
+  relazione interna diversa, `70 < 72` contro `74 = 74`.
+
+  **Il campo CCK non e' una lettura diretta del massimo locale**, e il test lo
+  falsifica: su d6220 ch36, dove `maxp` resta 72 e `M` cambia con la larghezza,
+  `ppr_cck = M - 2*campo` fa 84 a 20 MHz, 74 a 40 e 82 a 80. Ne' `ppr_cck` ne'
+  `M - maxp` sono fissi.
+
+  Ma il conto da' un fatto piu' netto. **A 40 e 80 MHz il campo e' -1 quasi
+  ovunque**, e le deviazioni stanno tutte a **20 MHz sui canali bassi**,
+  crescendo scendendo in frequenza: -1 in UNII-2C, -3 in UNII-2A, -6 in UNII-1
+  su entrambe le board -- una riduzione extra di 2,5 dB che alle larghezze
+  legate scompare. Le anomalie degli OFDM sono nella stessa regione e con lo
+  stesso segno. Due osservabili indipendenti che indicano lo stesso posto: a
+  UNII-1 e 20 MHz entra una riduzione che il modello non ha, e non e' un
+  artefatto di uno dei due conti.
+
+  **Correzione: i quattro CCK non sono board-independent.** L'avevo dedotto da
+  ch36 e ch100, che sono i due punti dove le due schede concordano. Estratti
+  tutti:
+
+  | | ch36-48 | ch52-64 | ch100+ |
+  | --- | --- | --- | --- |
+  | d6220 bw20 | 0xd0 | **0xe8** | 0xf8 |
+  | agcombo bw20 | 0xd0 | **0xf8** | 0xf8 |
+
+  Divergono su UNII-2A a tutte le larghezze -- anche 0xf0 contro 0xf8 a ch52
+  bw40 e bw80. E divergono dove divergono le SROM: `maxp5ga` e' `{72,70,86}`
+  sul d6220 e `{74,74,82}` sull'agcombo, e la sottobanda 1 e' la sola in cui il
+  d6220 ha un valore piu' basso della 0. Quindi anche i CCK dipendono dalla
+  SROM: non sono una costante, sono lo stesso conto senza il campo per-rate.
+  Tabellarli per canale e larghezza inchioderebbe un valore del d6220 su sei
+  configurazioni dell'agcombo.
+
+  **Sul PLCP il DSL conferma**: il suo campo SIGNAL da' `len = 262` contro i
+  284 del d6220, e le durate a +12 seguono. La formula regge su due board.
+
+  **Fatto: +18**, che era il gruppo A. `shm_readback_block()` indirizzava col
+  passo fisso `0x14`, che su questa board da' le celle giuste ma non emette le
+  letture del puntatore; ora passa da `b43_phy_ac_rate_shm_offset()` come il
+  vendor.
+
+  **Fatto: la scansione delle due direct-map**, sedici voci ciascuna in sola
+  lettura piu' `0x0056` che la chiude, cold01 #12245-#12309.
+
+  **Cautela sulle conclusioni tratte da un'assenza.** `b43-6362-wip`,
+  `docs/gap-inventory.md`, documenta che la object memory si scrive anche con
+  `write_objmem` e in blocco con `copyto_objmem`, che **non** passa dalle
+  varianti `*16`; e che sul blob del d6220 le `*16` esistono e sono quelle
+  agganciate, mentre `copyto_objmem`/`copyfrom_objmem` pure esistono. Quindi
+  una scrittura in blocco puo' non comparire nelle catture di questo repo. Il
+  `sel=` che si vede solo nella cattura DSL e' l'altra faccia della stessa cosa:
+  a 6.30 gli accessor sono `write_objmem` col selettore di spazio.
+
+  Le affermazioni di questa sezione che poggiano su un'assenza vanno quindi
+  lette come "non tracciato", non come "non fatto": che i blocchi CCK ricevano
+  solo +14 e niente PLCP, e che +8/+10/+12 siano solo degli OFDM. Regge meglio
+  lo shadow delle host flag, perche' la' l'assenza di letture e' corroborata da
+  evidenza positiva -- il modello predice 38 chiamate su 38 e 56 su 56.
+
+  **Il muro e' ora +14 per i quattro rate CCK**, e quelli non vengono da
+  `mcsbw*po`: valgono -6, -3, -2, -1 e -4 in ottavi a freddo e solo -1, -2, -3 a
+  caldo, sono identici fra le quattro celle -- quindi per i CCK il campo non e'
+  per-rate -- e `cckbw202gpo` e' zero. `maxp5ga0 = {72, 70, 86, 0}` non li
+  spiega: la mappa non e' monotona, 70 e' minore di 72 e da' un valore
+  maggiore. Su 5 GHz quei rate non trasmettono, ma le op vanno emesse.
+
+  **Fatto: +8, +10 e +12**, e non e' una tabella, e' un conto. Il campo SIGNAL
+  sta a +8 e +10, la durata a +12:
+
+      tmp    = len << 5
+      plcp   = nibble_rate | (tmp & 0xff), tmp >> 8, tmp >> 16
+      durata = 20 + ceil((len * 8 + 22) / NDBPS) * 4 + SIFS
+
+  che e' `brcms_c_compute_ofdm_plcp()` piu' `brcms_c_calc_frame_time()`.
+  Verificato al microsecondo su tutti e otto i rate di cold01: 420, 292, 228,
+  164, 132, 100, 84 e 80 us con len = 284 e SIFS = 16.
+
+  Quello che resta provvisorio e' `len`, non la formula: sul ferro deve venire
+  dal template della probe response, e niente ancora la fornisce. Le catture
+  danno 284 byte a 20 MHz, 285 a 40 e 286 a 80, ricavati dal campo SIGNAL. Il
+  +1 per larghezza non e' spiegato: a 20 MHz la `TPL.RAMW` misura 280 e 280 + 4
+  di FCS torna, ma a 40 MHz la `TPL.RAMW` misura 284 mentre il SIGNAL dice 285.
+
+  **Perimetro.** `0x01c0-0x01de`, `0x0200-0x021e` e `0x0056` sono passate in
+  `PHY_ANCHE`: `b43.h` le dichiara tabelle rate, del core, e lo erano finche' il
+  port non le leggeva. Attenzione al modo in cui la voce va aggiunta: toglierne
+  una parte sola fa scendere il muro posizionale, perche' il vendor legge quei
+  puntatori diciotto volte per campi diversi e il perimetro nascondeva le
+  letture dei campi non implementati. E' successo -- il muro e' tornato da
+  @10854 a @10200 -- e si e' chiuso da se' implementando il blocco intero
+  invece di ritoccare il perimetro.
+
+  Il muro apre con quattro accessi piu' due
   gruppi di lettura-riscrittura.
 
   **Fatto**, in `b43_phy_ac_shm_readback_block()`: le quattro op di apertura,

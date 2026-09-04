@@ -344,4 +344,20 @@ void bcma_chipco_regctl_maskset(struct bcma_drv_cc *cc, u32 offset,
 #define B43_MMIO_RADIO24_CONTROL  0x1F8
 #define B43_MMIO_RADIO24_DATA     0x1FA
 
+/*
+ * Celle di shared memory delle cinque word di host flag, e MACCTL: valori del
+ * b43.h del kernel, serviti qui perche' helpers_phy_ac.c ora e' nel link (le
+ * sue decisioni, non solo la sua etichetta, sono cio' che il confronto
+ * verifica).
+ */
+#define B43_SHM_SH_HOSTF1         0x005E
+#define B43_SHM_SH_HOSTF2         0x0060
+#define B43_SHM_SH_HOSTF3         0x0062
+#define B43_SHM_SH_HOSTF4         0x0078
+#define B43_SHM_SH_HOSTF5         0x00D4
+#define B43_SHM_SH_RFATT          0x0064
+#define B43_MMIO_MACCTL           0x120
+
+void b43_maskset32(struct b43_wldev *dev, u16 offset, u32 mask, u32 set);
+
 #endif /* _STUB_B43_H */
