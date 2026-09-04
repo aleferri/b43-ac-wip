@@ -18,12 +18,11 @@
 #include "main.h"
 
 /*
- * Read/modify/write of one of the five HOSTFn SHM slots.
+ * Update one of the five HOSTFn slots.
  *
- * The AC-PHY touches all five slots (0 = HOSTF1 .. 4 = HOSTF5)
- * independently. b43_hf_write() covers only the low three and treats them
- * as a single u64, which does not give the per-slot mask/set semantics
- * needed here.
+ * The word is kept in dev->phy.ac->mhfs and the cell is written only when the
+ * update changes it, which is what the stock driver does; see the comment on
+ * the field. The cell is never read back.
  *
  * The HOSTFn registers are not contiguous (HOSTF4 is +0x18 from HOSTF3,
  * HOSTF5 is +0x5c from HOSTF4), hence the lookup table.
@@ -42,14 +41,18 @@ static const u16 b43_phy_ac_hostf_regs[5] = {
 
 void b43_phy_ac_mhf_maskset(struct b43_wldev *dev, u16 slot, u16 mask, u16 val)
 {
-	u16 reg, cur;
+	struct b43_phy_ac *ac = dev->phy.ac;
+	u16 old;
 
 	if (WARN_ON(slot > 4))
 		return;
 
-	reg = b43_phy_ac_hostf_regs[slot];
-	cur = b43_shm_read16(dev, B43_SHM_SHARED, reg);
-	b43_shm_write16(dev, B43_SHM_SHARED, reg, (cur & mask) | val);
+	old = ac->mhfs[slot];
+	ac->mhfs[slot] = (old & mask) | val;
+
+	if (ac->mhf_writethrough && ac->mhfs[slot] != old)
+		b43_shm_write16(dev, B43_SHM_SHARED,
+				b43_phy_ac_hostf_regs[slot], ac->mhfs[slot]);
 }
 
 /*

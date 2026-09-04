@@ -385,6 +385,36 @@ struct b43_phy_ac {
 	 * the RX-IQ compensation write.
 	 */
 	u16 rxcal_imbalance[B43_PHY_AC_MAX_CORES][4][8];
+	/*
+	 * Shadow of the five HOSTFn shared-memory words, and whether a change
+	 * to it is written through to the cell.
+	 *
+	 * The stock driver keeps the same shadow -- its brcmsmac equivalent is
+	 * brcms_b_mhf(), which writes the cell only under
+	 *
+	 *   wlc_hw->clk && band->mhfs[idx] != save && band == wlc_hw->band
+	 *
+	 * so a call that leaves the word unchanged emits nothing. The captures
+	 * bear that out: not one read of 0x005e, 0x0060, 0x0062, 0x0078 or
+	 * 0x00d4 in either witness, and the cell written on 5 calls out of 38
+	 * on the d6220 and 4 out of 56 on the DSL, in both cases exactly the
+	 * calls that change the word.
+	 *
+	 * @mhf_writethrough stands for the clk term. It is not b43's clock
+	 * state, which is already up here: it is the point the captures put
+	 * the transition at, between the slot 4 and slot 0 writes of the
+	 * frontend GPIO block. The band term does not appear because every
+	 * call in both captures is on the operating band.
+	 */
+	u16 mhfs[5];
+	bool mhf_writethrough;
+	/*
+	 * Puntatori dei blocchi per-rate degli otto rate OFDM, presi durante la
+	 * scansione delle direct-map in set_channel(). Il vendor non li rilegge
+	 * dove costruisce la mappa dei basic rate -- quel blocco e' di sole
+	 * scritture -- quindi li tiene in cache e qui si fa lo stesso.
+	 */
+	u16 rate_ptr[8];
 };
 
 /*

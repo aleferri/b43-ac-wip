@@ -119,8 +119,25 @@ static void b43_phy_ac_op_adjust_txpower(struct b43_wldev *dev)
 static void b43_phy_ac_op_prepare_structs(struct b43_wldev *dev)
 {
 	struct b43_phy_ac *phy_ac = dev->phy.ac;
+	u16 mhfs[ARRAY_SIZE(phy_ac->mhfs)];
+	bool writethrough;
+
+	/*
+	 * b43_wireless_core_init() calls this on every ifconfig up, but the
+	 * host-flag shadow has to survive a down/up and reset only on a module
+	 * reload. The warm captures show it: their flush writes the values
+	 * accumulated by the previous cycle -- 0x0060 in HOSTF4 and 0x0088 in
+	 * HOSTF5 -- where a cold cycle flushes 0x0040 and 0x0080. So it is
+	 * carried across the reset here, and what zeroes it is the kzalloc in
+	 * op_allocate().
+	 */
+	memcpy(mhfs, phy_ac->mhfs, sizeof(mhfs));
+	writethrough = phy_ac->mhf_writethrough;
 
 	memset(phy_ac, 0, sizeof(*phy_ac));
+
+	memcpy(phy_ac->mhfs, mhfs, sizeof(mhfs));
+	phy_ac->mhf_writethrough = writethrough;
 }
 
 /* Mode-bit clears. These ops are not contiguous in the capture: they are
@@ -260,8 +277,11 @@ static void b43_phy_ac_loopback_gain_search(struct b43_wldev *dev);
 static void b43_phy_ac_pmu_req(struct b43_wldev *dev, bool on);
 static void b43_phy_ac_probe_cycle(struct b43_wldev *dev, unsigned int n_iter,
 				   bool extended_first, bool closes_sequence);
-static void b43_phy_ac_rxiqcal_measure_block(struct b43_wldev *dev);
 static void b43_phy_ac_wd_stats_clear(struct b43_wldev *dev);
+static void b43_phy_ac_wd_stats_poll_opt(struct b43_wldev *dev,
+					 bool head_sweep,
+					 unsigned int ctr32_passes);
+static unsigned int b43_phy_ac_po_band(u16 chan);
 static void b43_phy_ac_farrow_setup(struct b43_wldev *dev,
 				    struct ieee80211_channel *channel);
 
@@ -308,8 +328,80 @@ static unsigned int b43_phy_ac_bw_step(struct b43_wldev *dev)
 }
 
 /*
- * Eight shared-memory cells the stock driver reads and writes straight back
- * without changing anything: 0x099e and every 0x14 from there, up to 0x0a2a.
+ * I blocchi per-rate della shared memory, e come si arriva a un loro campo.
+ *
+ * L'indirizzo non e' una costante: si legge il puntatore del rate dalla
+ * direct-map table e si raddoppia, che e' `brcms_b_rate_shm_offset()` di
+ * brcmsmac:
+ *
+ *     blocco = 2 * shm_read(M_RT_DIRMAP_A + indice * 2)
+ *
+ * L'indice non e' il numero del rate: e' il nibble basso del campo SIGNAL del
+ * PLCP, per cui 6, 9, 12, 18, 24, 36, 48 e 54 Mbit/s stanno agli indici 11,
+ * 15, 10, 14, 9, 13, 8 e 12. Su questa board i blocchi vengono spaziati di
+ * 0x14, ma quella e' una conseguenza della tabella rate, non una regola:
+ * indirizzarli col passo fisso funziona qui e non emette le letture del
+ * puntatore, che il vendor fa.
+ *
+ * E non e' solo questione di op emesse: la tabella rate e' stato del driver,
+ * non dell'ucode -- il DSL ha i puntatori a 0x49e-0x4e4 dove questa board li ha
+ * a 0x4c6-0x50c. Col passo fisso si scrive nelle celle giuste solo finche' il
+ * rateset e' quello, e nessun gate lo direbbe: l'oracolo serve i valori
+ * catturati e il confronto non sa dove le celle *dovrebbero* stare. Quindi il
+ * puntatore va letto, non ricalcolato.
+ *
+ * Gli offset dentro il blocco sono in byte, come le M_RT_* di brcmsmac.
+ */
+#define B43_AC_RT_DIRMAP_A	0x01c0		/* M_RT_DIRMAP_A, 0xe0 * 2 */
+#define B43_AC_RT_DIRMAP_B	0x0200		/* M_RT_DIRMAP_B, 0x100 * 2 */
+#define B43_AC_RT_BBRSMAP_A	0x01e0		/* M_RT_BBRSMAP_A, 0xf0 * 2 */
+/*
+ * Il layout non e' quello di brcmsmac per tutti i campi. Il SIGNAL sta a +8 e
+ * +10 e la durata a +12, mentre brcmsmac ha PLCP_POS 10 e PRS_DUR_POS 16; il
+ * decodifica del SIGNAL lo inchioda, perche' a +10 il nibble del rate viene
+ * zero. OFDM_PCTL1 invece resta a 18 in entrambi. E +14 brcmsmac non lo ha.
+ */
+#define B43_AC_RT_PLCP		8		/* SIGNAL a +8/+10, durata a +12 */
+#define B43_AC_RT_RATE_PO	14		/* nibble di mcsbw*po, << 3 */
+#define B43_AC_RT_OFDM_PCTL1	18		/* M_RT_OFDM_PCTL1_POS */
+
+static const u8 b43_phy_ac_ofdm_dirmap[8] = { 11, 15, 10, 14, 9, 13, 8, 12 };
+
+static u16 b43_phy_ac_rate_shm_offset(struct b43_wldev *dev, unsigned int rate)
+{
+	u16 ptr = b43_shm_read16(dev, B43_SHM_SHARED, B43_AC_RT_DIRMAP_A +
+				 b43_phy_ac_ofdm_dirmap[rate] * 2);
+
+	return (u16)(2 * ptr);
+}
+
+/*
+ * Lettura e riscrittura di OFDM_PCTL1 sugli otto blocchi dei rate OFDM.
+ *
+ * E' `brcms_upd_ofdm_pctl1_table()` di brcmsmac, che itera la stessa lista
+ * esplicita di otto rate, legge `entry_ptr + M_RT_OFDM_PCTL1_POS`, ci rimette i
+ * bit di modo STF e riscrive. A una catena `hw_stf_ss_opmode` e' zero, quindi
+ * la modifica e' un no-op e la traccia mostra il valore letto tornare indietro.
+ *
+ * Il vendor la esegue due volte per attach: cold01 #12205, dentro il blocco di
+ * config MAC, e #13414, subito dopo la scrittura di MHF3 in channel_setup().
+ * Da qui le due chiamate.
+ */
+static void b43_phy_ac_ofdm_pctl1_readback(struct b43_wldev *dev)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_ofdm_dirmap); i++) {
+		u16 cell = b43_phy_ac_rate_shm_offset(dev, i) +
+			   B43_AC_RT_OFDM_PCTL1;
+		u16 cur = b43_shm_read16(dev, B43_SHM_SHARED, cell);
+
+		b43_shm_write16(dev, B43_SHM_SHARED, cell, cur);
+	}
+}
+
+/*
+ * Campo OFDM_PCTL1 dei blocchi per-rate, letto e riscritto senza cambiarlo.
  *
  * No value is written from here -- what goes back is what came out -- so there
  * is nothing to transcribe and nothing that can be wrong on a board this was
@@ -354,12 +446,311 @@ static void b43_phy_ac_shm_readback_block(struct b43_wldev *dev)
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x0010, 0x03ff);	/* SLOTT */
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x0010, 9);
 
-	for (i = 0; i < 8; i++) {
-		u16 cell = (u16)(0x099e + i * 0x14);
+	b43_phy_ac_ofdm_pctl1_readback(dev);
+}
 
-		b43_shm_write16(dev, B43_SHM_SHARED, cell,
-				b43_shm_read16(dev, B43_SHM_SHARED, cell));
+/*
+ * Parte invariante del blocco di config MAC, subito dopo i due azzeramenti.
+ *
+ * Ogni valore qui e' lo stesso su tutti e 26 i segmenti dello sweep a freddo
+ * del d6220, a ogni canale e a ogni larghezza -- classificati `invariante` da
+ * reverse-tools/decorrelate_channels.py, che sulle stesse catture non trova
+ * nemmeno una chiave dinamica. Sono trascritti: a cosa servano non e' noto.
+ *
+ * Non sono qui, e restano da fare, le due famiglie non invarianti dello stesso
+ * blocco: le quindici celle a passo 0x14 che dipendono dalla larghezza e le
+ * dodici a passo 0x1c che dipendono dalla frequenza centrale. Fuori restano
+ * anche la lettura di 0x00b0, che b43.h dichiara EXTNPHYCTL del core, e
+ * 0x05dc, che cade nel blocco KEYIDXBLOCK: di quelle due non e' stabilito chi
+ * le debba emettere.
+ */
+/*
+ * Campo a +0x0e del blocco per-rate: offset di potenza del rate, in ottavi.
+ *
+ * Per l'indirizzo vedi b43_phy_ac_rate_shm_offset(). brcmsmac scrive gli
+ * offset 10, 12 e 16 dello stesso blocco -- PLCP della probe response e durata
+ * -- e non il 14.
+ *
+ * Il valore e' una distanza dal massimo, come nel PPR di phy_n: con
+ *
+ *     ppr[i] = maxp5ga[sb] - 2 * nib[i]        (phy_n.c srom_convert)
+ *     max    = maxp5ga[sb] - 2 * min(nib)      (get_max sul PPR appena caricato)
+ *
+ * il campo vale `(max - ppr[i]) / 2`, in cui maxp5ga si cancella e resta
+ *
+ *     nib[i] - min(nib)
+ *
+ * dove nib[i] e' il nibble di mcsbw*po del MCS su cui il rate legacy ricade --
+ * 6, 9, 12 e 18 su mcs0, poi 24, 36, 48 e 54 su mcs1..4 -- e min e' preso su
+ * tutti e otto i nibble del campo della larghezza operativa. I nibble sono
+ * senza segno: con la conversione a intero con segno mcsbw205ghpo = 0xcca88440
+ * dell'agcombo darebbe backoff negativi. Il risultato va moltiplicato per 8,
+ * cioe' il campo e' in mezzi quarti di dB.
+ *
+ * Ricavato invertendo la catena sui due sweep a freddo, d6220 e agcombo, 52
+ * configurazioni: 41 tornano esatte con questa forma.
+ *
+ * TODO: le altre 11 hanno due termini che questa forma non porta, e che
+ * rompono entrambi la cancellazione di maxp5ga.
+ *
+ * Sette sono il bonus di densita' spettrale sulle larghezze legate, dove il
+ * massimo sta *sopra* maxp5ga di 1 o 2 dB: allargando il canale il totale
+ * ammesso cresce. L'incremento osservato non e' uniforme fra le due board -- 8
+ * quarti sul d6220 a ch36 bw80, 4 sull'agcombo -- quindi non si trascrive.
+ *
+ * Ipotesi non verificata: il bonus scala col numero di catene. Il d6220 ha due
+ * core e prende 8 quarti a 80 MHz, l'agcombo ne ha tre e ne prende 4; a 40 MHz
+ * sono entrambi 4. Spiegherebbe la non uniformita' invece di constatarla, ma a
+ * 80 MHz c'e' un solo punto per board.
+ *
+ * Quattro hanno il massimo *sotto* maxp5ga, cioe' il tetto di gruppo morde
+ * prima che il massimo venga preso: agcombo ch36-48 bw20 e ch100 bw40, e d6220
+ * ch100 bw40. Probabilmente e' solo un massimo piu' ristretto, ma quattro punti
+ * non bastano a distinguerlo da un tetto applicato per gruppo; il full-sweep
+ * del DSL e' il dato che serve, e ora ha senso girarlo perche' il modello non
+ * ha piu' parametri liberi.
+ *
+ * Fuori restano i quattro rate CCK, le cui celle il vendor scrive prima di
+ * queste: sono il gruppo cck[4] del PPR, senza campo SROM per 5 GHz nella rev
+ * 11, quindi il loro valore viene da tetto e pavimento e da nient'altro -- che
+ * e' la board-independence misurata su tre schede.
+ */
+/*
+ * PLCP della probe response e sua durata, per ognuno degli otto rate OFDM.
+ *
+ * Il campo SIGNAL sta a +8 e +10 come due word, la durata a +12. Nessuno dei
+ * due e' trascritto: si calcolano, ed e' lo stesso conto di
+ * brcms_c_compute_ofdm_plcp() e brcms_c_calc_frame_time().
+ *
+ *   SIGNAL:  tmp = len << 5, poi plcp[0] = nibble_rate | (tmp & 0xff),
+ *            plcp[1] = tmp >> 8, plcp[2] = tmp >> 16
+ *   durata:  20 + ceil((len * 8 + 22) / NDBPS) * 4 + SIFS
+ *
+ * Verificato su cold01 al microsecondo per tutti e otto i rate: 420, 292, 228,
+ * 164, 132, 100, 84 e 80 us con len = 284 e SIFS = 16.
+ *
+ * @len e' la lunghezza della probe response piu' l'FCS. Sul ferro va presa dal
+ * template che il core costruisce, e non c'e' ancora niente che la fornisca:
+ * qui e' quella delle catture, 284 byte a 20 MHz e un byte in piu' per ogni
+ * raddoppio della larghezza. Quel +1 per larghezza non e' spiegato -- il
+ * template a 20 MHz ne misura 280 nella TPL.RAMW, e 280 + 4 di FCS torna, ma a
+ * 40 MHz la TPL.RAMW ne misura 284 e il SIGNAL dice 285.
+ */
+/*
+ * Lunghezza della probe response piu' l'FCS, come la danno le catture: 284
+ * byte a 20 MHz e uno in piu' per ogni raddoppio. Provvisoria per definizione
+ * -- sul ferro deve venire dal template della probe response.
+ */
+static u16 b43_phy_ac_prb_rsp_len(enum nl80211_chan_width width)
+{
+	switch (width) {
+	case NL80211_CHAN_WIDTH_80:
+		return 286;
+	case NL80211_CHAN_WIDTH_40:
+		return 285;
+	default:
+		return 284;
 	}
+}
+
+static void b43_phy_ac_prb_rsp_plcp(struct b43_wldev *dev, u16 len)
+{
+	static const u16 ndbps[8] = { 24, 36, 48, 72, 96, 144, 192, 216 };
+	unsigned int i;
+	u32 tmp = (u32)(len & 0xfff) << 5;
+
+	for (i = 0; i < ARRAY_SIZE(ndbps); i++) {
+		u16 block = b43_phy_ac_rate_shm_offset(dev, i);
+		u16 nsym = DIV_ROUND_UP(len * 8 + 22, ndbps[i]);
+		u16 plcp01 = (u16)((b43_phy_ac_ofdm_dirmap[i] | (tmp & 0xff)) |
+				   ((tmp >> 8 & 0xff) << 8));
+
+		b43_shm_write16(dev, B43_SHM_SHARED,
+				block + B43_AC_RT_PLCP, plcp01);
+		b43_shm_write16(dev, B43_SHM_SHARED,
+				block + B43_AC_RT_PLCP + 2,
+				(u16)(tmp >> 16 & 0xff));
+		b43_shm_write16(dev, B43_SHM_SHARED,
+				block + B43_AC_RT_PLCP + 4,
+				(u16)(20 + nsym * 4 + 16));
+	}
+}
+
+/*
+ * I dodici rate del rateset, in ordine di bitrate crescente: e' l'ordine in cui
+ * il vendor visita i blocchi, con i CCK interlacciati fra gli OFDM e non in un
+ * gruppo a parte -- 1, 2, 5.5, 6, 9, 11, 12, 18, 24, 36, 48, 54 Mbit/s. @dirmap
+ * e' l'indice nella direct-map table, che e' il nibble basso del campo SIGNAL,
+ * e @mcs il MCS su cui il rate legacy OFDM ricade.
+ */
+struct b43_phy_ac_prb_rsp_rate {
+	u8 dirmap;
+	u8 mcs;
+	bool cck;
+};
+
+static const struct b43_phy_ac_prb_rsp_rate b43_phy_ac_prb_rsp_rates[12] = {
+	{ 10, 0, true  },	/*  1 Mbit/s */
+	{  4, 0, true  },	/*  2 */
+	{  7, 0, true  },	/*  5.5 */
+	{ 11, 0, false },	/*  6 */
+	{ 15, 0, false },	/*  9 */
+	{ 14, 0, true  },	/* 11 */
+	{ 10, 0, false },	/* 12 */
+	{ 14, 0, false },	/* 18 */
+	{  9, 1, false },	/* 24 */
+	{ 13, 2, false },	/* 36 */
+	{  8, 3, false },	/* 48 */
+	{ 12, 4, false },	/* 54 */
+};
+
+/*
+ * Il campo per i rate CCK, che nel PPR sono il gruppo cck[4].
+ *
+ * La rev 11 non ha un campo per-rate per loro su 5 GHz -- `cckbw202gpo` e'
+ * della banda 2.4 e vale zero -- quindi il valore non si deriva da mcsbw*po, e
+ * resta una tabella per sottobanda e larghezza. La tabella e' giustificata
+ * perche' non dipende dalla board:
+ *
+ *   sottobanda 0 a 20 MHz: 0xd0 su tre schede con maxp5ga diverso e di forma
+ *   diversa -- {72,70,86,0} sul d6220, {74,74,82,82} sull'agcombo,
+ *   {76,76,76,76} sul DSL, che e' piatta. Ne' il valore di maxp5ga ne' la
+ *   relazione fra sottobande adiacenti lo spostano.
+ *
+ *   sottobanda 2 e le larghezze legate: 0xf8, concordi fra d6220 e agcombo su
+ *   tutte le configurazioni dei due sweep a freddo.
+ *
+ * L'eccezione e' la sottobanda 1, e non e' nascosta: la' il d6220 da' 0xe8 a 20
+ * MHz e 0xf0 a 40 e 80 dove l'agcombo da' 0xf8, e a 40 MHz il valore cambia
+ * anche col canale, 0xe0 a ch60 su entrambe. Quella sottobanda e' anche l'unica
+ * voce di maxp5ga che in tutte e tre le SROM sia piu' bassa della precedente,
+ * 70 < 72 sul solo d6220. Che sia la causa e' plausibile e non provato, e i
+ * valori qui sono quelli del d6220: su un'altra scheda va rimisurata.
+ *
+ * TODO: chiusi i due termini aperti sotto, questo gruppo dovrebbe uscire dallo
+ * stesso conto invece che da una tabella, perche' il suo ppr non ha nibble e il
+ * campo e' la sola distanza fra il massimo e maxp5ga.
+ */
+static u16 b43_phy_ac_cck_rate_po(struct b43_phy_ac *ac)
+{
+	unsigned int sb = b43_phy_ac_po_band(ac->cal_channel);
+	bool stretto = ac->cal_width == NL80211_CHAN_WIDTH_20;
+
+	if (sb == 0)
+		return stretto ? 0x00d0 : 0x00f8;
+	if (sb == 1) {
+		if (stretto)
+			return 0x00e8;
+		if (ac->cal_width == NL80211_CHAN_WIDTH_40 &&
+		    ac->cal_channel == 60)
+			return 0x00e0;
+		return 0x00f0;
+	}
+	return 0x00f8;
+}
+
+/*
+ * Mappa BSS-basic-rate-set: per ognuno degli otto rate OFDM si scrive in
+ * M_RT_BBRSMAP_A il puntatore del blocco del proprio *basic rate*.
+ *
+ * E' `brcms_c_write_rate_shm()` di brcmsmac, che legge il puntatore del basic
+ * rate dalla direct-map e lo scrive nella basic-rate map allo slot del rate.
+ * Il basic set osservato e' {6, 12, 24} con la regola "il piu' alto minore o
+ * uguale": cold01 #13458-#13465 scrive 0x04c6 per 6 e 9, 0x04da per 12 e 18,
+ * 0x04ee per 24, 36, 48 e 54. Non c'e' niente di trascritto, i puntatori
+ * vengono dalla tabella.
+ *
+ * Le tre celle prima -- 0x0082, 0x00ba, 0x003c -- sono invarianti su tutti e 26
+ * i segmenti dello sweep a freddo; a cosa servano non e' noto. Fra loro e la
+ * mappa il vendor scrive KEYIDXBLOCK, che e' del core.
+ */
+static void b43_phy_ac_basic_rate_map(struct b43_wldev *dev)
+{
+	/* Indice, fra gli otto rate OFDM, del basic rate di ciascuno. */
+	static const u8 basic_of[8] = { 0, 0, 2, 2, 4, 4, 4, 4 };
+	unsigned int i;
+
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x0082, 0x2710);
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x00ba, 0xffff);
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x003c, 0x000a);
+
+	for (i = 0; i < ARRAY_SIZE(basic_of); i++)
+		b43_shm_write16(dev, B43_SHM_SHARED,
+				B43_AC_RT_BBRSMAP_A +
+				b43_phy_ac_ofdm_dirmap[i] * 2,
+				dev->phy.ac->rate_ptr[basic_of[i]]);
+}
+
+static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev)
+{
+	struct b43_phy_ac *ac = dev->phy.ac;
+	struct ssb_sprom *sprom = dev->dev->bus_sprom;
+	unsigned int band = b43_phy_ac_po_band(ac->cal_channel);
+	unsigned int i;
+	u8 min_nib;
+	u32 po;
+
+	po = (ac->cal_width == NL80211_CHAN_WIDTH_40)
+		? sprom->mcsbw5g_po[band].bw40
+		: sprom->mcsbw5g_po[band].bw20;
+
+	min_nib = 0xf;
+	for (i = 0; i < 8; i++)
+		min_nib = min_t(u8, min_nib, (po >> (4 * i)) & 0xf);
+
+	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_prb_rsp_rates); i++) {
+		const struct b43_phy_ac_prb_rsp_rate *r =
+			&b43_phy_ac_prb_rsp_rates[i];
+		u16 tab = r->cck ? B43_AC_RT_DIRMAP_B : B43_AC_RT_DIRMAP_A;
+		u16 ptr = b43_shm_read16(dev, B43_SHM_SHARED,
+					 tab + r->dirmap * 2);
+		u16 cell = (u16)(2 * ptr + B43_AC_RT_RATE_PO);
+		u16 val;
+
+		if (r->cck)
+			val = b43_phy_ac_cck_rate_po(ac);
+		else
+			val = (u16)((((po >> (4 * r->mcs)) & 0xf) - min_nib) * 8);
+
+		b43_shm_read16(dev, B43_SHM_SHARED, cell);
+		b43_shm_write16(dev, B43_SHM_SHARED, cell, val);
+	}
+}
+
+static void b43_phy_ac_shm_mac_config_block(struct b43_wldev *dev)
+{
+	/* 0x092c a salire, sedici word consecutive. */
+	static const u16 blocco_092c[] = {
+		0x3475, 0x3475, 0x3475, 0x217c, 0x237b, 0x217c, 0x217c, 0x217c,
+		0x3276, 0x3276, 0x3475, 0x187e, 0x217c, 0x167e, 0x1d7d, 0x1f7c,
+	};
+	/* 0x0902 a salire, sette word consecutive. */
+	static const u16 blocco_0902[] = {
+		0x41c2, 0x0000, 0x0017, 0x024b, 0x0097, 0x0500, 0x0000,
+	};
+	unsigned int i;
+
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x0020, 0x0800);
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x08ec, 0x186a);
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x0910, 0x80c3);
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x08f4, 0x80c2);
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x08f0, 0x0001);
+
+	/*
+	 * Lettura e riscrittura del valore appena letto, come il gruppo A di
+	 * shm_readback_block(). Nella cattura il valore e' zero, quindi una
+	 * scrittura del letterale 0 darebbe la stessa traccia; la forma
+	 * read-rewrite e' quella che non inventa un valore.
+	 */
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x0eec,
+			b43_shm_read16(dev, B43_SHM_SHARED, 0x0eec));
+
+	for (i = 0; i < ARRAY_SIZE(blocco_092c); i++)
+		b43_shm_write16(dev, B43_SHM_SHARED,
+				(u16)(0x092c + i * 2), blocco_092c[i]);
+	for (i = 0; i < ARRAY_SIZE(blocco_0902); i++)
+		b43_shm_write16(dev, B43_SHM_SHARED,
+				(u16)(0x0902 + i * 2), blocco_0902[i]);
 }
 
 /*
@@ -1190,8 +1581,14 @@ static void b43_phy_ac_txpwrctrl_setup(struct b43_wldev *dev, u16 freq)
 	 * regulatory limiting enter -- all three boards have an empty ccode
 	 * and regrev 0, so there is no country table in play.
 	 *
-	 * What remains unverified is the board axis: only the d6220 has a
-	 * sweep, and the other two carry different mcsbw*po.
+	 * L'asse board invece e' verificato, e non e' invariante: l'agcombo ha
+	 * uno sweep, e sui suoi segmenti della sottobanda alta -- ch100-140, a
+	 * ogni larghezza -- il payload porta anche ppr[10] = 0x00000101,
+	 * mentre il d6220 ha zero la' su tutti e 26 i segmenti. Si vede dove i
+	 * nibble della SROM sono grandi: l'agcombo ha mcsbw205ghpo = 0xcca88440
+	 * contro valori piccoli su questa board. Quindi queste tre costanti
+	 * sono giuste per il d6220 e incomplete altrove, e la tabella e'
+	 * derivata dalla SROM anche se su questa board non si muove.
 	 */
 	ppr[1] = 0x00000202;
 	ppr[5] = 0x00000202;
@@ -4309,6 +4706,7 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
 	const struct cfg80211_chan_def *chandef = &dev->wl->hw->conf.chandef;
 	enum nl80211_chan_width width = chandef->width;
 	const struct b43_phy_ac_channeltab_e_radio2069 *e2069;
+	u16 off;
 
 	/*
 	 * channel_type is the legacy HT-only description of the same thing as
@@ -4623,7 +5021,73 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
 	b43_phy_write(dev, 0x0339, 0x0fff);
 	b43_phy_ac_shm_readback_block(dev);
 	b43_phy_ac_mhf_maskset(dev, 4, (u16)~0x0008, 0x0008);
+	/*
+	 * RFATT, subito dopo il write-through di HOSTF5 che la chiamata sopra
+	 * provoca. Valore trascritto: 0x0480 su tutti e 26 i segmenti a freddo
+	 * del d6220, una volta per segmento, e lo stesso sul DSL nella stessa
+	 * posizione. Costante su canale e larghezza, quindi non c'e' una
+	 * dipendenza da derivare; a cosa serva su un AC-PHY non e' noto.
+	 */
+	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_RFATT, 0x0480);
+	/*
+	 * Scansione delle due direct-map table, sedici voci ciascuna, in sola
+	 * lettura: cold01 #12245-#12307, e la lettura di 0x0056 che la chiude.
+	 * Nessun valore da riprodurre, e cosa consumi il risultato non e' noto
+	 * -- una scansione per sapere quali blocchi per-rate esistono avrebbe
+	 * questa forma.
+	 */
+	for (off = B43_AC_RT_DIRMAP_A; off <= B43_AC_RT_DIRMAP_A + 0x1e; off += 2) {
+		u16 v = b43_shm_read16(dev, B43_SHM_SHARED, off);
+		unsigned int k;
+
+		for (k = 0; k < ARRAY_SIZE(b43_phy_ac_ofdm_dirmap); k++)
+			if (B43_AC_RT_DIRMAP_A +
+			    b43_phy_ac_ofdm_dirmap[k] * 2 == off)
+				dev->phy.ac->rate_ptr[k] = v;
+	}
+	for (off = B43_AC_RT_DIRMAP_B; off <= B43_AC_RT_DIRMAP_B + 0x1e; off += 2)
+		b43_shm_read16(dev, B43_SHM_SHARED, off);
+	b43_shm_read16(dev, B43_SHM_SHARED, 0x0056);
+	/*
+	 * 0x10f4-0x14b2 azzerate, 480 word. Nel blob e' il caricamento di una
+	 * tabella da rodata, e la tabella e' tutta zeri: il ciclo la sostituisce
+	 * senza perdere niente. Una volta per attach e subito dopo RFATT --
+	 * cold01 #12311-#12790 -- e le stesse 480 word a zero su ogni segmento
+	 * controllato, a ogni canale e larghezza.
+	 */
+	for (off = 0x10f4; off <= 0x14b2; off += 2)
+		b43_shm_write16(dev, B43_SHM_SHARED, off, 0x0000);
+	/*
+	 * Secondo azzeramento, attaccato al primo: 68 word da 0x05e0 a 0x0666,
+	 * cold01 #12791-#12858, identiche su ogni segmento controllato. Le
+	 * prime dieci cadono nel blocco KEYIDXBLOCK che b43.h dichiara del
+	 * core, ma il vendor le scrive in questa corsa e non altrove -- ogni
+	 * cella compare una volta sola nella cattura -- quindi la corsa e'
+	 * riprodotta per intero e il perimetro di compare.py e' stato
+	 * ristretto di conseguenza.
+	 */
+	for (off = 0x05e0; off <= 0x0666; off += 2)
+		b43_shm_write16(dev, B43_SHM_SHARED, off, 0x0000);
 	b43_phy_ac_mhf_maskset(dev, 0, (u16)~0x4000, 0);
+	b43_phy_ac_shm_mac_config_block(dev);
+	/*
+	 * cold01 #12894-#12956: seconda meta' del poll con una sola passata,
+	 * senza testa, senza spazzata e senza coda.
+	 */
+	b43_phy_ac_wd_stats_poll_opt(dev, false, 1);
+	/*
+	 * cold01 #12958-#12959, invarianti su tutti e 26 i segmenti. Fra queste
+	 * e il poll sotto la cattura ha una TPL.RAMW, che e' template RAM del
+	 * core.
+	 */
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x018a, 0xffce);
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x018c, 0xffba);
+	b43_phy_ac_wd_stats_poll_opt(dev, true, 0);
+	/*
+	 * cold01 #13024-#13055, dopo la spazzata e dopo i quattro blocchi CCK
+	 * che restano da capire.
+	 */
+	b43_phy_ac_prb_rsp_rate_po(dev);
 	b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
 
@@ -4651,9 +5115,20 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
 	b43_phy_maskset(dev, 0x0678, (u16)~0x0004, 0);           /* #39186 clr bit 2 c0 */
 	b43_phy_maskset(dev, 0x0878, (u16)~0x0004, 0);           /* #39187 clr bit 2 c1 */
 	b43_phy_ac_mhf_maskset(dev, 3, (u16)~0x0040, 0x0040);    /* #39188 MHF3 set bit 6 */
+	b43_phy_ac_ofdm_pctl1_readback(dev);
+	b43_phy_ac_basic_rate_map(dev);
 	b43_maccontrol_set(dev, ~0x00100000u, 0);                /* #39189 clr bit 20 */
 	b43_maccontrol_set(dev, ~0x01c00000u, 0);                /* #39190 clr bits 22-24 */
 	b43_mac_enable(dev);                                     /* #39191 */
+	/*
+	 * Le quattro celle di PWRIND_BLKS che precedono la 0x0308 da cui
+	 * crs_note_noise() prende il campione: cold01 #13473-#13479, subito
+	 * dopo la riattivazione del MAC. Sole letture, e niente qui consuma il
+	 * valore -- a cosa servano al vendor non e' noto.
+	 */
+	for (off = 0x0300; off <= 0x0306; off += 2)
+		b43_shm_read16(dev, B43_SHM_SHARED, off);
+	b43_phy_ac_wd_stats_poll_opt(dev, true, 0);
 	/*
 	 * MHF4 bit 15: alzato al primo bring-up (attach-to-bss-up #12023),
 	 * abbassato su un channel setup successivo (ch36 #39192).
@@ -4674,6 +5149,9 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
 	b43_phy_maskset(dev, 0x0042, (u16)~0x8000, 0x8000);      /* #39197 set bit 15 */
 	b43_phy_ac_mhf_maskset(dev, 1, (u16)~0x0020, 0x0020);    /* #39198 MHF1 set bit 5 */
 	b43_mac_suspend(dev);                                    /* #39199 */
+	b43_phy_ac_wd_stats_poll_opt(dev, true, 0);
+	b43_phy_ac_prb_rsp_plcp(dev,
+			b43_phy_ac_prb_rsp_len(dev->phy.ac->cal_width));
 	b43_maccontrol_set(dev, ~0x10000000u, 0x10000000);       /* #39200 set bit 28 */
 	b43_maccontrol_set(dev, ~0x10000000u, 0);                /* #39201 clr bit 28 */
 	b43_maccontrol_set(dev, ~0x00040000u, 0x00040000);       /* #39202 set bit 18 */
@@ -5099,6 +5577,13 @@ static void b43_phy_ac_frontend_gpio_setup(struct b43_wldev *dev)
 	b43_phy_ac_mhf_maskset(dev, 4, (u16)~0x0080, 0x0080);
 	b43_maccontrol_set(dev, 0, 0x04000400);
 	b43_maccontrol_set(dev, 0, 0x04000400);
+	/*
+	 * From here on a HOSTFn change reaches the cell. Both captures put the
+	 * transition between these two calls: the slot 4 write above leaves no
+	 * OBJ.WR behind, the slot 0 write below does. See the comment on
+	 * mhf_writethrough.
+	 */
+	dev->phy.ac->mhf_writethrough = true;
 	b43_phy_ac_mhf_maskset(dev, 0, (u16)~0x0100, 0x0100);
 	b43_maccontrol_set(dev, 0, 0x04000400);
 
@@ -8547,19 +9032,6 @@ static void b43_phy_ac_measure_block(struct b43_wldev *dev)
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
 }
 
-static void b43_phy_ac_rxiqcal_measure_block(struct b43_wldev *dev)
-{
-	b43_phy_ac_measure_block(dev);
-
-	/*
-	 * MAC toggle arming the next probe cycle, two ops. Only finalize()
-	 * emits them; the periodic tick closes the block without an arm, as the
-	 * d6220 sweep's steady-state tick witnesses.
-	 */
-	b43_mac_enable(dev);
-	b43_mac_suspend(dev);
-}
-
 /*
  * Periodic watchdog. The witness is the steady-state windows of the d6220
  * sweep in router-data/d6220/full-sweep.zip; the reference tick is extracted
@@ -8670,7 +9142,25 @@ static void b43_phy_ac_wd_sample_phase(struct b43_wldev *dev)
  * sweep, two hi/lo/hi passes over the six 32-bit counters, the three counters
  * at 0x07e0, 0x07e4 and 0x07dc, the 0x07d6-0x07da group and two trailing
  * words. */
-static void b43_phy_ac_wd_stats_poll_opt(struct b43_wldev *dev, bool ctr32_pass)
+/*
+ * Poll delle statistiche SHM. Le catture mostrano tre forme, e le due varianti
+ * qui le coprono tutte:
+ *
+ *   @head_sweep, @ctr32_passes   dove
+ *   true, 2                      la forma piena, 54 letture in 0x0768-0x078a
+ *   true, 0                      sola spazzata, 18 letture: su cold01 i tre
+ *                                poll #12961, #13481 e #13540, nel path di up
+ *   false, 1                     sola seconda meta' con una passata: cold01
+ *                                #12894-#12956, dentro il blocco di config MAC
+ *
+ * Perche' le passate non ci siano sempre e' plausibile e non provato: leggono i
+ * contatori come valori a 32 bit stabili, e prima che il MAC abbia contato
+ * qualcosa non c'e' niente da leggere in quel modo. La spazzata piatta resta
+ * perche' fa parte del latch della finestra.
+ */
+static void b43_phy_ac_wd_stats_poll_opt(struct b43_wldev *dev,
+					 bool head_sweep,
+					 unsigned int ctr32_passes)
 {
 	static const u16 head[4] = { 0x010e, 0x0158, 0x010c, 0x015e };
 	static const u16 ctr32[6] = {
@@ -8679,27 +9169,17 @@ static void b43_phy_ac_wd_stats_poll_opt(struct b43_wldev *dev, bool ctr32_pass)
 	unsigned int i, pass;
 	u16 off;
 
-	for (i = 0; i < ARRAY_SIZE(head); i++)
-		b43_shm_read16(dev, B43_SHM_SHARED, head[i]);
-	for (off = 0x0768; off <= 0x078a; off += 2)
-		b43_shm_read16(dev, B43_SHM_SHARED, off);
+	if (head_sweep) {
+		for (i = 0; i < ARRAY_SIZE(head); i++)
+			b43_shm_read16(dev, B43_SHM_SHARED, head[i]);
+		for (off = 0x0768; off <= 0x078a; off += 2)
+			b43_shm_read16(dev, B43_SHM_SHARED, off);
+	}
 
-	/*
-	 * Le due passate hi/lo/hi sui contatori a 32 bit non ci sono sempre.
-	 * Su cold01 i primi tre poll -- #12961, #13481 e #13540, dentro il
-	 * blocco di config MAC del core -- hanno la sola spazzata: 18 letture
-	 * in 0x0768-0x078a contro le 54 della forma piena. Dal poll della fase
-	 * probe in avanti sono tutte piene.
-	 *
-	 * Il senso e' plausibile e non provato: le due passate leggono i
-	 * contatori come valori a 32 bit stabili, e prima che il MAC abbia
-	 * contato qualcosa non c'e' niente da leggere in quel modo. La
-	 * spazzata piatta resta perche' fa parte del latch della finestra.
-	 */
-	if (!ctr32_pass)
+	if (!ctr32_passes)
 		return;
 
-	for (pass = 0; pass < 2; pass++)
+	for (pass = 0; pass < ctr32_passes; pass++)
 		for (i = 0; i < ARRAY_SIZE(ctr32); i++)
 			b43_phy_ac_wd_shm_read32x3(dev, ctr32[i]);
 
@@ -8734,7 +9214,7 @@ static void b43_phy_ac_wd_stats_tail(struct b43_wldev *dev)
 
 static void b43_phy_ac_wd_stats_poll(struct b43_wldev *dev)
 {
-	b43_phy_ac_wd_stats_poll_opt(dev, true);
+	b43_phy_ac_wd_stats_poll_opt(dev, true, 2);
 }
 
 void b43_phy_ac_watchdog(struct b43_wldev *dev, bool noise_cal)
@@ -9023,7 +9503,7 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 
 			if (b43_phy_ac_watchdog_on_tick(ac, tick)) {
 				b43_mac_suspend(dev);
-				b43_phy_ac_rxiqcal_measure_block(dev);
+				b43_phy_ac_measure_block(dev);
 				b43_mac_enable(dev);
 			}
 
@@ -9048,7 +9528,7 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 		if (b43_phy_ac_watchdog_on_tick(ac, ticks)) {
 			b43_phy_ac_wd_stats_poll(dev);
 			b43_mac_suspend(dev);
-			b43_phy_ac_rxiqcal_measure_block(dev);
+			b43_phy_ac_measure_block(dev);
 			b43_mac_enable(dev);
 			b43_phy_ac_wd_stats_tail(dev);
 		}
@@ -9465,7 +9945,6 @@ static void b43_phy_ac_farrow_setup(struct b43_wldev *dev,
 	const struct b43_phy_ac_farrow_mode *m = &b43_phy_ac_farrow_mode_20_40;
 	const struct cfg80211_chan_def *chandef = &dev->wl->hw->conf.chandef;
 	enum nl80211_chan_width width = chandef->width;
-	u16 chipid = dev->dev->chip_id;
 	unsigned int freq;
 	u32 ratio, dphase;
 
@@ -9473,14 +9952,6 @@ static void b43_phy_ac_farrow_setup(struct b43_wldev *dev,
 			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
 			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
 			   B43_PHY_AC_STATE_CCA_RESET);
-
-	/* Only the 4352 and 4360 family is handled, as in farrow_setup_acphy. */
-	switch (chipid) {
-	case 0x4360: case 0x4352: case 0xa9c4: case 0xaa06:
-		break;
-	default:
-		return;
-	}
 
 	/* The 2.4 GHz branch programs different registers entirely. */
 	if (b43_current_band(dev->wl) != NL80211_BAND_5GHZ)

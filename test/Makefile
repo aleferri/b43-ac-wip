@@ -62,7 +62,8 @@ SCRATCH_SRCS_MIN := \
 SCRATCH_SRCS_FULL := \
     $(SCRATCH_SRCS_MIN) \
     $(SCRATCH)/phy_ac.c \
-    $(SCRATCH)/radio_2069.c
+    $(SCRATCH)/radio_2069.c \
+    $(SCRATCH)/helpers_phy_ac.c
 
 SRCS := $(SCRATCH_SRCS_FULL) wrap.c main.c
 OBJS := $(patsubst %.c,build/%.o,$(notdir $(SRCS)))

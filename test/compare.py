@@ -226,14 +226,16 @@ CORE_SHM = [
     (0x01c0, 0x023e, "tabelle rate: OFDMDIRECT/BASIC, CCKDIRECT/BASIC"),
     (0x0242, 0x02be, "EDCFQ, code 1..3"),
     (0x0318, 0x05d3, "TKIPTSCTTAK, 50 voci da 14 byte"),
-    (0x05d4, 0x05f2, "KEYIDXBLOCK"),
+    (0x05d4, 0x05de, "KEYIDXBLOCK, la parte che il port non scrive"),
 ]
 
 # Celle che erano in CORE_SHM e sono state TOLTE perche' il port le scrive:
 # 0x0010 SLOTT, 0x0016 WLCOREREV, 0x001c BTSFOFF, 0x003c DEFAULTIV,
 # 0x0044/0x0046 SFFBLIM/LFFBLIM, 0x005c ANTSWAP, 0x005e-0x0062 HOSTF1-3,
 # 0x0064 RFATT, 0x0078 HOSTF4, 0x0080 MAXBFRAMES, 0x00c0/0x00c2 MACHW,
-# 0x00d4 HOSTF5, 0x0240 EDCFQ base, 0x05f4 PSM.
+# 0x00d4 HOSTF5, 0x0240 EDCFQ base, 0x05f4 PSM,
+# 0x05e0-0x05f2 la coda di KEYIDXBLOCK, che il port azzera nella corsa
+# 0x05e0-0x0666 di set_channel.
 #
 # Vanno tolte, non e' facoltativo: il perimetro scarta op dal solo lato vendor,
 # quindi una cella che il port emette e il perimetro scarta diventa
@@ -254,6 +256,13 @@ PHY_ANCHE = [
     (0x008c, 0x008c, "JSSIAUX per b43.h; la legge wd_stats_tail()"),
     (0x00a0, 0x00a0, "CHAN per b43.h; e' B43_SHM_AC_CHANSPEC in "
                      "src/phy_ac.h, e write_chanspec() la scrive"),
+    (0x01c0, 0x01de, "DIRMAP_A: la scansione di set_channel la legge tutta, "
+                     "e prb_rsp_rate_po() ne usa otto voci per calcolare "
+                     "2*voce+offset"),
+    (0x0200, 0x021e, "DIRMAP_B: letta dalla scansione, e il ciclo dei dodici "
+                     "rate ne usa quattro voci per i blocchi CCK"),
+    (0x01e0, 0x01fe, "BBRSMAP_A: la scrive b43_phy_ac_basic_rate_map()"),
+    (0x0056, 0x0056, "chiude la scansione delle direct-map table"),
 ]
 
 # Op che il vendor emette e che NESSUN codice b43 puo' emettere, perche'

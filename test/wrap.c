@@ -999,6 +999,16 @@ void __wrap_b43_maccontrol_set(struct b43_wldev *dev, u32 mask, u32 set)
 }
 
 /*
+ * Accessor del core che il corpo di b43_maccontrol_set() usa. Nell'harness
+ * quel corpo non gira mai -- il --wrap sopra intercetta la chiamata -- ma
+ * helpers_phy_ac.c ora e' nel link e il simbolo va risolto.
+ */
+void b43_maskset32(struct b43_wldev *dev, u16 offset, u32 mask, u32 set)
+{
+	(void)dev; (void)offset; (void)mask; (void)set;
+}
+
+/*
  * b43_mac_suspend/enable in-tree sono annidabili: tengono dev->mac_suspended e
  * toccano MACCTL solo sulle transizioni 0->1 e 1->0. E' il modello fedele, ed e'
  * il DEFAULT: AC_MAC_REFCOUNT=0 torna a una MAC.MCTRL per chiamata.
@@ -1112,8 +1122,8 @@ void __wrap_b43_mac_phy_clock_set(struct b43_wldev *dev, bool on)
  * Differisce da b43_hf_write mainline (che ha signature `u64 value` e
  * supporta solo 3 slot). Vedi test/stubs/b43.h per la motivazione.
  */
-/* Celle di shared memory delle cinque word di host flag. */
-static const u16 mhf_shm_cell[5] = { 0x005e, 0x0060, 0x0062, 0x0078, 0x00d4 };
+void __real_b43_phy_ac_mhf_maskset(struct b43_wldev *dev,
+				   u16 slot, u16 mask, u16 val);
 
 void __wrap_b43_phy_ac_mhf_maskset(struct b43_wldev *dev,
 				   u16 slot, u16 mask, u16 val)
@@ -1122,30 +1132,12 @@ void __wrap_b43_phy_ac_mhf_maskset(struct b43_wldev *dev,
 		slot, val, (u16)~mask);
 
 	/*
-	 * TODO -- REGOLA CUCITA SU UN CASO SINGOLO, DA SOSTITUIRE.
-	 *
-	 * Nelle catture la chiamata e' a volte seguita dalla scrittura della
-	 * cella HOSTF corrispondente e a volte no: su cold01 la hanno #623,
-	 * #12242, #13525, #13530 e #13535, non la hanno #469, #470, #593,
-	 * #594, #620 e #13409, e i valori di queste ultime ricompaiono al
-	 * flush di #689-#690. I valori sono accumuli coerenti -- slot 4 fa
-	 * 0x80 -> 0x88 -> 0x8088, slot 3 fa 0x40 -> 0x60 -- quindi la funzione
-	 * del vendor tiene un valore in cache e scrive la cella solo in certe
-	 * condizioni.
-	 *
-	 * L'ipotesi e' che scriva quando il quinto argomento della sua firma,
-	 * `bands`, combacia con la banda corrente. NON E' STABILITO: quel
-	 * campo non era catturato, e l'hook ora lo prende via nargx.
-	 *
-	 * Nel frattempo qui c'e' la condizione minima che fa combaciare il solo
-	 * caso che blocca il confronto posizionale, e vale 10144 posizioni
-	 * (@52 -> @10196). Non e' un modello: e' un tappo. Alla prossima
-	 * cattura con `bands` va sostituita dalla condizione vera, e se invece
-	 * si scoprisse che la scrittura e' una hf_write separata del driver
-	 * allora non va qui affatto ma in src/, insieme al resto.
+	 * La decisione di scrivere la cella sta nella funzione vera, che tiene
+	 * lo shadow delle cinque word: qui si emette solo il record MAC.MHF,
+	 * che e' il livello a cui l'hook del vendor traccia la chiamata. La
+	 * OBJ.WR, quando c'e', esce da b43_shm_write16 come nel driver.
 	 */
-	if (slot == 0 && val == 0x0100)
-		b43_shm_write16(dev, B43_SHM_SHARED, mhf_shm_cell[slot], val);
+	__real_b43_phy_ac_mhf_maskset(dev, slot, mask, val);
 }
 
 void __wrap_b43_phyop_switch_analog_generic(struct b43_wldev *dev, bool on)
