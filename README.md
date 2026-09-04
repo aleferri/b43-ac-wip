@@ -24,8 +24,45 @@ OEM. Le code-path sono rifatte con dispatch chip-aware
 
 ## Obiettivo MVP
 
-Probe + `ifconfig wlan1 up` + scan passivo + associate su AP 5 GHz ch 36
-+ 6 Mbit OFDM 1×1. Out of scope MVP: HT/VHT, MIMO, 40/80 MHz, 2.4 GHz.
+**Configurazione completa di ogni pezzo hardware, senza tralasciare niente, e
+beacon in aria su tutte le bande e frequenze 5 GHz.**
+
+Non e' un obiettivo ambizioso per scelta, e' l'unico possibile con questo
+metodo. Lavorando per confronto di tracce non esiste uno step intermedio utile:
+ritagliare un sottoinsieme -- "solo associate a ch36 a 6 Mbit" -- richiederebbe
+di bisecare la sequenza e di aver capito comunque *tutto* per sapere cosa si
+puo' togliere senza rompere il resto. Il costo di capire tutto lo si paga in
+ogni caso, quindi il traguardo e' la configurazione integrale.
+
+Ne segue il criterio per decidere se un blocco va implementato: **non "serve ad
+associare" ma "il vendor lo emette"**. Le fasi da AP -- beacon, template della
+probe response, SSID in shared memory -- sono dentro lo scopo, perche' il
+beacon in aria e' parte del traguardo.
+
+Fuori scopo, e sono gli step successivi: la trasmissione e ricezione effettiva
+di dati, e i 2.4 GHz.
+
+**Priorita': il primo setup a freddo.** Lo switch a caldo e' *don't care*
+finche' il freddo non e' confermato funzionante -- non fuori scopo, solo non
+prioritario, e appena il freddo funziona torna subito lo step "ora deve
+funzionare anche a caldo". Da cui tre conseguenze pratiche, che sono regole di
+lavoro e non di scopo:
+
+- **non si toglie niente.** I rami `FIRST_BRINGUP` in `src/` e la leva
+  `AC_FIRST_INIT` nell'harness restano: servono di nuovo allo step successivo, e
+  sono l'unica traccia di cosa fa il caldo;
+- **`op_switch_channel` non rifiuta** una seconda chiamata. Un rifiuto sarebbe
+  una restrizione di scopo, e lo scopo non e' restretto;
+- **dove il caldo divergerebbe dal freddo, si implementa il freddo e si annota
+  il caldo.** Vale per i valori CCK dei blocchi per-rate, per il conteggio dei
+  poll a spazzata sola e per il massimo della catena PPR, che a caldo danno
+  numeri diversi: la divergenza va registrata, non risolta ora.
+
+Le catture a caldo restano invece **strumento di analisi** anche mentre non sono
+un target: sono l'unico dataset con due cicli per configurazione, quindi il solo
+in cui `reverse-tools/decorrelate_channels.py` possa rilevare la categoria
+`dinamico`. E' come si e' stabilito che le celle del gruppo B sono una funzione
+di canale e larghezza e non una misura.
 
 ## Stato corrente
 
@@ -37,8 +74,8 @@ dove si documenta come si produce un numero citabile.
 Su `cold01-ch36-bw20`, il segmento di riferimento:
 
 ```
-grezzo: 27759/29030 = 95.62%
-        259 col valore sbagliato, 753 op di wl mancanti, 0 op del port di troppo
+grezzo: 27840/29030 = 95.90%
+        259 col valore sbagliato, 672 op di wl mancanti, 0 op del port di troppo
 ```
 
 Il denominatore e' l'unione dei due flussi, quindi fa 100% solo se il port
@@ -209,3 +246,5 @@ Per navigare la documentazione tecnica: [`docs/INDEX.md`](docs/INDEX.md).
 - **Co-load con wl0 N-PHY integrato**: probe di entrambi i PHY già
   osservato nei log di bring-up (`b43-phy2` N, `b43-phy3` AC); il resto è
   testabile solo a bring-up completo.
+- **Trasmissione e ricezione dati** e **2.4 GHz**: i due step che seguono il
+  traguardo MVP, non varianti di esso.

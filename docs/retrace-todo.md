@@ -56,6 +56,46 @@ il residuo di 1 LSB sul coefficiente `b` della RX IQ, e il guard di canale
 scavalcato da `CONFIG_B43_PHY_AC_ANY_CHANNEL`, che elenca quali tabelle sono
 fittate su ch36 a 20 MHz e non hanno prove altrove.
 
+## Da dove ripartire
+
+Stato: `6c79334`, gate a freddo su `cold01` a **27840/29030 = 95.90%** con 259
+valori sbagliati, 672 op mancanti e **zero op del port di troppo**; gate
+periodico a `MATCH`. Prima divergenza posizionale a `@11823`.
+
+**Il residuo e' quasi tutto ripetizione di funzioni gia' implementate**, non
+blocchi nuovi. Il conteggio per indirizzo:
+
+| indirizzo | mancante | cos'e' |
+| --- | --- | --- |
+| `0x0994`, `0x0996`, `0x0998` e le celle sorelle | 9 volte | la passata del PLCP: il vendor la esegue 10 volte, il port 1 |
+| `0x01d6`, `0x01de`, `0x01d4`, ... | 10 volte | le letture del puntatore delle stesse 10 passate |
+| famiglia `0x02xx` | 76 op | parametri EDCF e dintorni |
+| `0x0160-0x017e` | 16 op | passate ripetute della config BSS |
+
+Le dieci passate del PLCP stanno a `#13627` (l'unica emessa), poi `#14130`,
+`#14209`, `#14288`, `#14367`, e cinque nella regione dei tick del watchdog --
+`#30767`, `#30837`, `#31208`, `#34905`, `#35167`.
+
+**Il prossimo passo e' il posizionamento della seconda passata**, `#14130`, e va
+fatto con la mappa indice-funzione, non con l'ancoraggio da solo.
+
+Trappola dello strumento: gli indici `port[...]` che l'ancoraggio restituisce
+sono nella vista di `cmp_skip`, dopo l'offset di allineamento e le liste
+solo-port. Leggerli come posizione nel flusso mette il blocco dove l'LCS ha
+gia' consumato le controparti, e il sintomo e' op di troppo che appaiono con le
+mancanti che non scendono. La mappa giusta la da' un run con
+`AC_FN_MARKERS=1` indicizzato come `fns[keep[i]]`, non `fns[i]`.
+
+Da tenere presente prima di emettere qualsiasi cosa in quella regione: il
+blocco EDCF `0x0260-0x027e` e i parametri `0x0240-0x025e` sono dichiarati del
+core in `CORE_SHM`, quindi il perimetro li scarta dal lato vendor ed emetterli
+produce solo inserzioni. Verificato.
+
+E in `test/main.c` sono gia' pronte, non chiamate, `emit_core_bss_ssid()` e
+`emit_core_bss_config1()`: la seconda passata della config BSS, che differisce
+dalla prima per `BTL1` (`0x001a`) invece di `BTL0` e per una sola scrittura di
+`0x00cc` invece di due.
+
 ## Punti aperti
 
 - **Il poll delle statistiche ha due forme; il parametro c'e', il chiamante
@@ -170,17 +210,12 @@ fittate su ch36 a 20 MHz e non hanno prove altrove.
   caldo hanno anch'essi 3, 3 e 4 poll a spazzata sola, quindi il vendor li
   emette anche sui bring-up successivi.
 
-  Effetto misurato, con i due gate canonici (periodico a `MATCH`):
+  I tre poll a spazzata sola vanno emessi incondizionati, non sotto
+  `FIRST_BRINGUP`: i segmenti `up` dello sweep a caldo ne hanno 3, 3 e 4,
+  quindi il vendor li emette anche sui bring-up successivi.
 
-  | segmento | prima | dopo |
-  | --- | --- | --- |
-  | cold01 ch36 bw20 | 91.05% -- 428 / 1673 / 93 | **92.67%** -- 306 / 1518 / **0** |
-  | cold02 ch40 bw20 | 89.61% -- 441 / 2127 / 109 | **91.29%** -- 320 / 1956 / **0** |
-  | cold03 ch44 bw20 | 88.37% -- 396 / 2172 / 422 | **91.56%** -- 339 / 1714 / **28** |
-  | cold05 ch52 bw20 | 62.35% -- 115 / 2668 / 4990 | **67.76%** -- 97 / 1986 / **4370** |
-
-  Le ultime 4 op di troppo di cold01 erano un bracket MAC duplicato, non un
-  poll: `b43_phy_ac_rxiqcal_measure_block()` chiudeva il blocco con
+  Il bracket MAC va aperto una volta sola:
+  `b43_phy_ac_rxiqcal_measure_block()` chiudeva il blocco con
   `mac_enable` + `mac_suspend` -- dichiarati "arm del probe cycle successivo"
   -- mentre entrambi i chiamanti lo circondavano gia' con
   `mac_suspend`/`mac_enable`. Il port emetteva quindi `enable, suspend, enable`
@@ -239,6 +274,48 @@ fittate su ch36 a 20 MHz e non hanno prove altrove.
   `INVISIBILI`, che esisteva solo per le AMT e le scartava da entrambi i lati,
   e' stata rimossa: diceva "nessuna cattura puo' contenerle", che e' falso --
   una cattura con l'hook le contiene.
+
+- **Il muro a `@11375` e' un confine di responsabilita', non un'op mancante.**
+  Da cold01 #13593 il vendor emette configurazione BSS dentro il channel setup:
+  `0x0160-0x0166` contiene l'SSID (`test-ap` in ASCII), `0x0018` e `0x004a` sono
+  le lunghezze dei template, con le `TPL.RAMW` di `0x0200` e `0x0700` accanto.
+
+  **Non vanno dichiarate in `CORE_SHM`.** Il criterio non e' "concettualmente
+  del core" ma "il core le emette, e nel punto giusto", e qui:
+
+  - `0x0018` e' `B43_SHM_SH_BTL0` e `0x004a` e' `B43_SHM_SH_PRTLEN` in `b43.h`,
+    e b43 le scrive -- ma dal percorso dei template, quando mac80211 aggiorna il
+    beacon, non dentro il channel setup;
+  - l'SSID a `0x0160` non ha simbolo in `b43.h`: b43 non lo scrive in shared
+    memory affatto, in AP mode sta nel template beacon.
+
+  Escluderle nasconderebbe uno sfasamento reale e non farebbe avanzare il
+  posizionale di un'op, perche' b43 le emette in un altro momento. Quindi da
+  qui in avanti il posizionale non chiede altre op del PHY: chiede che l'ordine
+  del core combaci -- la stessa classe dei tre poll di up in cima a questo
+  documento.
+
+  **E sono dentro lo scopo**, benche' siano fasi da AP: il traguardo e' la
+  configurazione completa piu' il beacon in aria, quindi beacon, template della
+  probe response e SSID vanno emessi. Il vincolo di posizione e' reale e non
+  arbitrario: il MAC e' sospeso da #13539 fino all'enable di #13670, e tutta
+  questa configurazione cade dentro quella finestra -- l'ucode legge SSID, PLCP
+  e lunghezze quando trasmette, quindi devono essere a posto prima che il MAC
+  riparta.
+
+  b43 ha la finestra giusta: `b43_op_config()` gira interamente fra
+  `b43_mac_suspend()` e `out_mac_enable`, e dopo il ritorno di
+  `b43_switch_channel()` fa ancora i limiti di retry e la potenza. Il posto e'
+  quello. Ostacolo noto: `b43_update_templates()` e' solo la meta' superiore --
+  chiede il beacon a mac80211 e rinvia le scritture all'IRQ, perche' scrivere
+  mentre il firmware trasmette manderebbe fuori un beacon invalido. Con il MAC
+  sospeso quel rischio non c'e', quindi serve la meta' inferiore sincrona
+  (`b43_upload_beacon0/1` piu' l'equivalente per la probe response), con i flag
+  `beaconN_uploaded` gestiti in modo esplicito e non azzerati a mano.
+
+  Guadagno collaterale: il `len` provvisorio di `b43_phy_ac_prb_rsp_plcp()`
+  viene da `0x004a`, che il core scrive con la lunghezza del template. Su
+  hardware si legge da la' invece di essere una costante per larghezza.
 
 - **Il blocco di config MAC dopo l'init radio: aperto per un pezzo.** Il muro
   del posizionale e' questo blocco su tutti e 26 i segmenti, ma non allo stesso
@@ -308,7 +385,9 @@ fittate su ch36 a 20 MHz e non hanno prove altrove.
   giusto da se': `mount_board()` azzera `g_ac` a ogni processo, cioe' un modulo
   ricaricato.
 
-  **Trappola per il confronto a caldo, da chiudere prima di usarlo.** Ogni
+  **Trappola per il confronto a caldo, da chiudere quando il caldo tornera' un
+  target.** Il caldo e' don't care finche' il primo setup a freddo non e'
+  confermato; niente da togliere nel frattempo, vedi il README. Ogni
   invocazione dell'harness e' un processo nuovo, quindi lo shadow parte sempre
   a zero: un flusso `switch_channel` o `up` confrontato con un segmento dello
   sweep a caldo emetterebbe i write-through del blocco GPIO frontend, che la
@@ -462,14 +541,13 @@ fittate su ch36 a 20 MHz e non hanno prove altrove.
   legacy dopo il tetto, quindi `max(ppr)` e' preso su **tutti** i gruppi, MCS
   compresi, come `b43_ppr_get_max()` sull'intera struttura da 44 rate.
 
-  **Correzione: la coerenza su 52/52 annunciata prima era debole**, perche' il
-  primo inverter ricavava `max` da un'assunzione -- il rate col ppr minimo non
-  e' tagliato -- invece che dalla definizione del modello, `max = max(cp)`.
-  Erano due parametri liberi per otto punti. Con `max` vincolato al massimo del
-  solo gruppo OFDM legacy i punti che tornano sono **10 su 52**: 27 incoerenti
-  e 15 degeneri, dove degenere vuol dire che il tetto appiattisce tutti i rate
-  e i dati fissano solo `max - tetto`. `reverse-tools/ppr_invert.py` ora enumera
-  i tetti compatibili e distingue i tre casi invece di restituirne uno.
+  **`max` non e' vincolabile al massimo del solo gruppo OFDM legacy**: cosi'
+  tornano 10 punti su 52, con 27 incoerenti e 15 degeneri -- degenere vuol dire
+  che il tetto appiattisce tutti i rate e i dati fissano solo `max - tetto`.
+  L'inverter va usato con `max` libero, e `reverse-tools/ppr_invert.py` enumera
+  i tetti compatibili distinguendo i tre casi invece di restituirne uno: un
+  inverter che ricavi `max` da un'assunzione ha due parametri liberi per otto
+  punti e da' una coerenza vacua.
 
   **E il confronto fra le due versioni e' il risultato che serviva**: con `max`
   libero tornano 52 punti su 52, col massimo del gruppo ne tornano 10. Quindi i
@@ -608,8 +686,6 @@ fittate su ch36 a 20 MHz e non hanno prove altrove.
   cioe' esattamente il tetto: la' il tetto entra anche nel massimo, e questo
   resta senza spiegazione.
 
-  Quanto segue resta come registro di come ci si e' arrivati.
-
   **La regola sembrava incompleta per un pavimento.** Il testimone da usare qui e'
   l'agcombo, wl 7.x, non il DSL, che a 6.30 e' troppo vecchio per validare una
   formula per-rate. E l'agcombo mostra la forma esatta del difetto:
@@ -673,8 +749,8 @@ fittate su ch36 a 20 MHz e non hanno prove altrove.
   sale. Le due riduzioni vanno in direzioni opposte, ed e' la ragione per cui i
   conti sulla larghezza non tornavano assumendo il contrario.
 
-  **Correzione: la tabella 0x21 non e' invariante.** L'avevo dichiarata tale
-  guardando una board sola e i primi 16 word di 24. Su tutte e 52 le
+  **La tabella 0x21 non e' invariante**, e per vederlo servono entrambe le
+  board e tutti e 24 i word del payload. Su tutte e 52 le
   configurazioni la posizione 10 vale `0x0101` su ogni segmento agcombo della
   sottobanda alta -- ch100-140, a ogni larghezza -- e zero su tutto il resto,
   d6220 compreso. Dipende dalla sottobanda e si vede dove i nibble SROM sono
@@ -682,8 +758,7 @@ fittate su ch36 a 20 MHz e non hanno prove altrove.
   in `src/phy_ac.c` sono giuste per il d6220 e incomplete altrove, e la domanda
   aperta nel commento -- l'asse board -- e' risolta: l'asse esiste.
 
-  Quanto segue va letto con quella correzione. **Non e' il ppr**, e ora anche
-  sull'asse board: sull'agcombo la tabella 0x21
+  **Non e' il ppr**, e nemmeno sull'asse board: sull'agcombo la tabella 0x21
   vale `0x202` in 1, 5 e 6 su ogni canale, identica al d6220. Il commento in
   `src/phy_ac.c` che dice «only the d6220 has a sweep» e' da aggiornare --
   l'agcombo ce l'ha, ed e' quello che chiude la verifica.
@@ -698,7 +773,8 @@ fittate su ch36 a 20 MHz e non hanno prove altrove.
   hanno nibble abbastanza vari da discriminare una mappatura: sulle altre
   qualunque mappa da' zero.
 
-  **Provata e cassata l'ipotesi del limite UNII-1**, in entrambe le forme.
+  **Il limite UNII-1 e' escluso in entrambe le forme**, e va escluso perche' e'
+  l'ipotesi che viene naturale.
 
   Come tetto assoluto: se mordesse un tetto regolatorio uguale per le due
   schede -- `ccode` vuoto e regrev 0 su entrambe -- `M` sarebbe assoluto mentre
@@ -732,9 +808,8 @@ fittate su ch36 a 20 MHz e non hanno prove altrove.
   UNII-1 e 20 MHz entra una riduzione che il modello non ha, e non e' un
   artefatto di uno dei due conti.
 
-  **Correzione: i quattro CCK non sono board-independent.** L'avevo dedotto da
-  ch36 e ch100, che sono i due punti dove le due schede concordano. Estratti
-  tutti:
+  **I quattro CCK non sono board-independent**, e ch36 e ch100 non lo mostrano
+  perche' sono i due punti in cui le due schede concordano. Estratti tutti:
 
   | | ch36-48 | ch52-64 | ch100+ |
   | --- | --- | --- | --- |

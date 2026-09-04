@@ -539,6 +539,16 @@ void b43_phy_ac_rxiq_apply_coefficients(struct b43_wldev *dev);
 void b43_phy_ac_radio_iqcal_teardown(struct b43_wldev *dev);
 void b43_phy_ac_rxiq_teardown_apply_defaults(struct b43_wldev *dev);
 void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev);
+/*
+ * L'enable del MAC e le calibrazioni post-canale le invoca il chiamante di
+ * op_switch_channel, come in b43 fa il core dopo b43_switch_channel(): tenerle
+ * in coda alla callback impedirebbe di inserire fra le due fasi del setup la
+ * configurazione BSS che il core scrive.
+ */
+void b43_phy_ac_channel_setup_tail(struct b43_wldev *dev,
+				   struct ieee80211_channel *channel);
+void b43_phy_ac_prb_rsp_plcp_pass(struct b43_wldev *dev);
+void b43_phy_ac_set_channel_calibrations(struct b43_wldev *dev);
 
 /*
  * One AFE cal iteration: arm a command on 0x0380, wait on the busy bit, read
