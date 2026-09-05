@@ -725,6 +725,7 @@ static void run_rfkill(void)
 
 static void emit_core_bss_config(void);
 static void emit_core_bss_config1(void);
+static void emit_core_conf_tx_passes(void);
 
 static void run_switch_channel(void)
 {
@@ -1163,6 +1164,8 @@ static void run_switch_channel(void)
 	 */
 	emit_core_bss_config();
 	b43_phy_ac_channel_setup_tail(&g_wldev, &g_chan);
+	emit_core_conf_tx_passes();
+	b43_phy_ac_channel_setup_tail2(&g_wldev);
 	b43_mac_enable(&g_wldev);
 	if (r == 0)
 		b43_phy_ac_set_channel_calibrations(&g_wldev);
@@ -1319,18 +1322,16 @@ static void emit_core_shm_chipinit(const struct board_profile *p)
 }
 
 /*
- * La coda comune alle due passate della config BSS: TIMBPOS, la lunghezza del
- * template beacon (@btl, 0x0018 per il primo e 0x001a per il secondo), PRTLEN,
- * l'SSID `test-ap` con gli zeri fino a 0x017e, e PRSSIDLEN.
+ * Il template probe response: PRTLEN, l'SSID `test-ap` con gli zeri fino a
+ * 0x017e, e PRSSIDLEN. E' la parte che il vendor ripete in tutte e quattro le
+ * passate conf_tx, cold01 #14189, #14268 e #14347 oltre alla prima.
  */
-static void emit_core_bss_ssid(u16 btl)
+static void emit_core_prb_rsp_template(void)
 {
 	static const u16 ssid[] = { 0x6574, 0x7473, 0x612d, 0x0070 };
 	unsigned int i;
 	u16 off;
 
-	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x001e, 0x0043);
-	b43_shm_write16(&g_wldev, B43_SHM_SHARED, btl, 0x012a);
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x004a, 0x0118);
 
 	for (i = 0; i < ARRAY_SIZE(ssid); i++)
@@ -1340,6 +1341,18 @@ static void emit_core_bss_ssid(u16 btl)
 		b43_shm_write16(&g_wldev, B43_SHM_SHARED, off, 0x0000);
 
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x0048, 0x0007);
+}
+
+/*
+ * La coda comune alle due passate che caricano un template beacon: TIMBPOS, la
+ * lunghezza del template (@btl, 0x0018 per il primo e 0x001a per il secondo) e
+ * poi il probe response.
+ */
+static void emit_core_bss_ssid(u16 btl)
+{
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x001e, 0x0043);
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, btl, 0x012a);
+	emit_core_prb_rsp_template();
 }
 
 /*
@@ -1383,6 +1396,12 @@ static void emit_core_bss_config(void)
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00d0, 0x0000);
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x001c, 0x003a);
 	emit_core_bss_ssid(0x0018);
+	/*
+	 * I PLCP chiudono ogni caricamento di template, questo compreso:
+	 * cold01 li mette a #13625, subito dopo PRSSIDLEN, e poi di nuovo in
+	 * fondo a ognuna delle quattro passate conf_tx.
+	 */
+	b43_phy_ac_prb_rsp_plcp_pass(&g_wldev);
 }
 
 /*
@@ -1397,6 +1416,103 @@ static void emit_core_bss_config1(void)
 
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00cc, cc);
 	emit_core_bss_ssid(0x001a);
+}
+
+/*
+ * Parametri EDCF di una coda di accesso, cold01 #14085-#14102 e i tre blocchi
+ * gemelli a #14170, #14249 e #14328.
+ *
+ * Otto parole per coda piu' otto zeri fino a +0x1e, precedute dalla lettura
+ * della cella di stato a +0x0e. Il layout e' quello di
+ * b43_qos_params_upload(): TXOP, CWMIN, CWMAX, CWCUR, AIFS, BSLOTS, REGGAP,
+ * STATUS.
+ *
+ * I valori sono i default EDCA -- TXOP 3008 e 1504 us per video e voce e zero
+ * per best effort e background, CWMIN 15/15/7/3, AIFS 3/7/1/1 -- e REGGAP e'
+ * AIFS + BSLOTS su tutte e quattro. BSLOTS e' il backoff estratto a caso e
+ * quindi non si deriva: sono quelli della cattura, e su un'altra cattura
+ * saranno altri.
+ *
+ * L'ordine delle code e' quello che il vendor emette, non 0..3.
+ */
+struct edcf_queue {
+	u16 base;
+	u16 txop;
+	u16 cwmin;
+	u16 cwmax;
+	u16 aifs;
+	u16 bslots;
+};
+
+static const struct edcf_queue edcf_queues[] = {
+	{ 0x0260, 0x0000, 15,   63, 3, 9 },	/* best effort */
+	{ 0x0240, 0x0000, 15, 1023, 7, 0 },	/* background */
+	{ 0x0280, 0x0bc0,  7,   15, 1, 2 },	/* video */
+	{ 0x02a0, 0x05e0,  3,    7, 1, 0 },	/* voce */
+};
+
+static void emit_core_edcf_queue(const struct edcf_queue *q)
+{
+	u16 off;
+
+	b43_shm_read16(&g_wldev, B43_SHM_SHARED, (u16)(q->base + 0x0e));
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, (u16)(q->base + 0x00), q->txop);
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, (u16)(q->base + 0x02), q->cwmin);
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, (u16)(q->base + 0x04), q->cwmax);
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, (u16)(q->base + 0x06), q->cwmin);
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, (u16)(q->base + 0x08), q->aifs);
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, (u16)(q->base + 0x0a), q->bslots);
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, (u16)(q->base + 0x0c),
+			(u16)(q->aifs + q->bslots));
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, (u16)(q->base + 0x0e), 0x0100);
+	for (off = 0x10; off <= 0x1e; off += 2)
+		b43_shm_write16(&g_wldev, B43_SHM_SHARED,
+				(u16)(q->base + off), 0x0000);
+}
+
+/*
+ * Una passata conf_tx, cold01 #14083-#14167 e le tre gemelle.
+ *
+ * Sta fra le due meta' della coda del setup di canale, dentro la sua parentesi
+ * enable/suspend: i parametri della coda, il template, e i PLCP degli otto
+ * rate che il PHY calcola dalla lunghezza del probe response. La prima passata
+ * carica anche il secondo template beacon; le altre tre ripetono solo il probe
+ * response.
+ */
+static void emit_core_conf_tx_pass(unsigned int n)
+{
+	/*
+	 * L'enable e il suspend sono un impulso e stanno prima del carico, non
+	 * intorno: cold01 #14083-#14084 e poi #14085 che apre i parametri
+	 * della coda. Provato ad avvolgere il carico e il posizionale si
+	 * ferma la', a @11822, con il vendor sul suspend e il port sulla
+	 * lettura dei parametri.
+	 */
+	b43_mac_enable(&g_wldev);
+	b43_mac_suspend(&g_wldev);
+	emit_core_edcf_queue(&edcf_queues[n]);
+	if (n == 0)
+		emit_core_bss_config1();
+	else
+		emit_core_prb_rsp_template();
+	b43_phy_ac_prb_rsp_plcp_pass(&g_wldev);
+}
+
+static void emit_core_conf_tx_passes(void)
+{
+	unsigned int q;
+
+	for (q = 0; q < ARRAY_SIZE(edcf_queues); q++)
+		emit_core_conf_tx_pass(q);
+
+	/*
+	 * Un quinto impulso, questo senza carico, prima che la coda del setup
+	 * riprenda: cold01 lo mette subito prima del peek su PHY 0x019e della
+	 * seconda meta'. E' l'impulso che il ciclo di channel_setup_tail
+	 * contava insieme agli altri quattro.
+	 */
+	b43_mac_enable(&g_wldev);
+	b43_mac_suspend(&g_wldev);
 }
 
 static void emit_core_amt(const struct board_profile *p)

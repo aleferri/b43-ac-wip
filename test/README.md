@@ -49,12 +49,15 @@ di ventimila e' quello, e `gates.sh` lo dice da se'.
 **Ricompilare senza `AC_ANY_CHANNEL=1` prima di chiudere**, o il gate di
 riferimento gira su un binario che difende meno.
 
-### 3. I due gate, che sono la verifica canonica
+### 3. I tre gate, che sono la verifica canonica
 
 ```sh
 ./gates.sh                                             # cold01 ch36 bw20
 ./gates.sh /tmp/cold/segmenti/cold05-ch52-bw20.txt     # un altro segmento
 ./gates.sh /tmp/cold/segmenti/cold[0-9][0-9]-ch*.txt   # tutti e 26
+
+unzip -d /tmp/hot ../router-data/d6220/hot-sweep.zip
+./gates-caldo.sh                                       # tre segmenti up
 
 AC_READ_ORACLE=../router-data/d6220/wl-diag-wl1-steady-tick-ch36-bw20.txt \
     ./ac_trace periodic d6220 > /tmp/p.out
@@ -67,6 +70,19 @@ python3 compare.py \
 op PHY dell'attach, ricava la schedule dei tick con `probe_schedule.py`, lancia
 il flow `full` con l'oracolo di lettura e chiama `cmp_skip.py` e `compare.py`.
 Non serve rifarne i passi a mano, e farlo a mano sbaglia la finestra.
+
+**Il gate a freddo non copre il caldo, e la differenza non e' di grado.** Lo
+sweep a freddo e' tutto primo bring-up -- un modulo ricaricato per canale --
+quindi ogni predicato che distingue il primo bring-up dai successivi e'
+invisibile la': un termine mancante vale lo stesso su tutti e 26 i segmenti e
+i punteggi tornano. E' quello che e' successo a `may_calibrate_tx()`, che
+guardava solo `center_freq <= 5250`: a freddo tutto in ordine, e sui segmenti
+`up` sopra i 5250 il port stava al 35% invece che all'80%.
+
+`gates-caldo.sh` usa il flow `up` con `AC_FIRST_INIT=0` e i suoi tre segmenti
+di default sono scelti per cogliere proprio quel caso: uno sotto i 5250 MHz e
+due sopra. Se un predicato confonde le due condizioni, il primo resta fermo e
+gli altri due crollano.
 
 Il gate periodico va rilanciato a **ogni** modifica: e' l'unico confronto
 posizione-per-posizione che sta a `MATCH`, quindi e' il rilevatore di
@@ -131,11 +147,16 @@ Il metodo trova solo le fasi che hanno un testimone esclusivo: una fase che
 condivide tutti i suoi registri con altre non si vede cosi', e va detto invece
 di concludere che non c'e'.
 
-## Le tre liste di eccezione, e perche' esistono
+## Le liste di eccezione, e perche' esistono
 
 Stanno in `compare.py`, ognuna con la ragione voce per voce. Sono l'unico posto
 dove si dichiara che un'op non conta, e ogni voce e' un pezzo di obiettivo
 sospeso: vanno tenute corte e argomentate.
+
+Tre scartano op, e due dichiarano che il **valore** di una cella non si
+confronta come sta scritto: `VAL_NONDET` per i valori che nessun codice puo'
+prevedere, `VAL_TOLLERANZA` per quelli che il port calcola e sbaglia
+nell'ultimo bit.
 
 ### `SOLO_PORT` — op del port che l'oracolo non puo' contenere
 
@@ -150,6 +171,36 @@ fare per la sua struttura dove wl ne fa una diversa, che e' permanente, e un'op
 giusta la cui controparte esiste ma non e' stata catturata, che e' temporanea
 per definizione e si chiude con una ricattura. Tutto il resto e' il port che fa
 qualcosa di troppo, e si corregge nel driver, non nella lista.
+
+### `VAL_NONDET` — celle il cui valore non e' prevedibile
+
+Oggi due: **BSLOTS** e **REGGAP** dei quattro blocchi EDCFQ. BSLOTS e' il
+backoff estratto a caso all'inizio del contention window -- misurato su 26
+segmenti e quattro code, cade uniformemente in `[0, CWMIN]` -- e REGGAP e'
+`AIFS + BSLOTS`, verificato su tutti e 104 i punti. Si confrontano indirizzo,
+classe e posizione, non il valore.
+
+Il criterio per entrare qui e' stretto: il valore deve essere **nondeterministico
+per costruzione**, non solo sconosciuto. Una cella di cui non si e' capito il
+valore va nel driver con un `b43_phy_ac_todo()`, non qui.
+
+### `VAL_TOLLERANZA` — celle il cui valore si confronta con uno scarto
+
+Oggi una: **PHY `0x?a1`**, il coefficiente `b` della correzione RX IQ, con
+tolleranza di 4 LSB su 10 bit in complemento a due. Il port riproduce
+esattamente gli accumulatori e il coefficiente `a`, e sbaglia `b` di un LSB su
+parte dei casi.
+
+Non e' la regola di arrotondamento, e la prova e' nel commento della lista: su
+venti punti la scelta del vendor rispetta la soglia di mezzo LSB su
+quattordici, e le eccezioni stanno tutte entro 0.1 dalla soglia. Nessuna soglia
+le separa, quindi l'errore e' nel valore sotto radice e non nel modo di
+arrotondarlo.
+
+**La tolleranza vale per il gate posizionale e non per il punteggio**, ed e'
+voluto: `cmp_skip.py` continua a contare quelle op fra i valori sbagliati,
+cosi' il residuo resta visibile invece di sparire, mentre la contiguita' non si
+ferma su un LSB di calibrazione.
 
 ### `SOLO_VENDOR` — op che nessun codice b43 puo' emettere
 

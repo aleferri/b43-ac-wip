@@ -132,18 +132,27 @@ struct ieee80211_channel;
 #define B43_PHY_AC_MAX_CORES		3
 
 /*
- * Per-core RX-IQ accumulators. The solve sums the two most recent estimate
- * rounds; with only one round the coefficients do not match, which is how that
- * was established. The reads of 0x?c0-0x?c5 happen inside the measurement,
- * which runs several times, and the values are kept here because the solve
- * lives in a different function.
+ * Quante passate di misura la finestra tiene: due fino a 40 MHz, sei a 80 sul
+ * d6220 e sette su agcombo. Otto copre il caso osservato piu' ampio.
  */
+#define B43_PHY_AC_IQ_ROUNDS	8
+
+/*
+ * Per-core RX-IQ accumulators. The solve averages the measurement passes; with
+ * only one the coefficients do not match, which is how that was established.
+ * The reads of 0x?c0-0x?c5 happen inside the measurement, which runs several
+ * times, and the values are kept here because the solve lives in a different
+ * function.
+ */
+
 struct b43_phy_ac_iq_acc {
-	/* Sliding window over the last two rounds; [0] is the most recent. */
-	u32 ii[2];
-	u32 qq[2];
-	s32 iq[2];
+	/* Finestra scorrevole sulle passate; [0] e' la piu' recente. */
+	u32 ii[B43_PHY_AC_IQ_ROUNDS];
+	u32 qq[B43_PHY_AC_IQ_ROUNDS];
+	s32 iq[B43_PHY_AC_IQ_ROUNDS];
+	/* Passate di misura nella finestra; la ricerca in loopback non conta. */
 	unsigned int rounds;
+	bool measuring;
 	/* The solved coefficients, computed once and reapplied: the stock driver
 	 * rewrites the same values on the second apply rather than recomputing
 	 * them. */
@@ -531,8 +540,7 @@ void b43_phy_ac_iqcal_apply_second_stage(struct b43_wldev *dev);
 void b43_phy_ac_rxgain_config_readback(struct b43_wldev *dev);
 void b43_phy_ac_rxgain_config_apply(struct b43_wldev *dev);
 void b43_phy_ac_radio_iqcal_config(struct b43_wldev *dev);
-void b43_phy_ac_rxiqcal_dds_seed_second_tone(struct b43_wldev *dev);
-void b43_phy_ac_rxiqcal_dds_seed_third_tone(struct b43_wldev *dev);
+void b43_phy_ac_rxiqcal_dds_seed_tone(struct b43_wldev *dev, int step);
 void b43_phy_ac_iqcal_meas_post_dds_apply(struct b43_wldev *dev);
 void b43_phy_ac_iqcal_meas_post_dds_apply_v2(struct b43_wldev *dev);
 void b43_phy_ac_rxiq_apply_coefficients(struct b43_wldev *dev);
@@ -545,6 +553,7 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev);
  * in coda alla callback impedirebbe di inserire fra le due fasi del setup la
  * configurazione BSS che il core scrive.
  */
+void b43_phy_ac_channel_setup_tail2(struct b43_wldev *dev);
 void b43_phy_ac_channel_setup_tail(struct b43_wldev *dev,
 				   struct ieee80211_channel *channel);
 void b43_phy_ac_prb_rsp_plcp_pass(struct b43_wldev *dev);

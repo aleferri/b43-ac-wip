@@ -85,14 +85,19 @@ del codice da scrivere, un gate da mettere — e stanno in
 [`docs/retrace-todo.md`](docs/retrace-todo.md). Sul segmento di riferimento la
 terza voce e' a zero; resta aperta sui canali sopra i 5250 MHz.
 
-Sui 26 segmenti dello sweep a freddo il punteggio parte da ~95% sui canali
-UNII-1 a 20 MHz e scende sui canali alti e larghi. L'intervallo pieno e' da
-rimisurare: dopo la chiusura dei poll di up sono stati rifatti solo quattro
-segmenti (ch36, ch40, ch44 e ch52 a 20 MHz), gli altri 22 portano ancora i
-numeri precedenti. La differenza fra canali non e'
-qualita' del port su quei canali: sopra i 5250 MHz il driver stock **salta**
-alcune calibrazioni che trasmettono, il port ne esegue ancora una parte, e le
-op di troppo pesano. Cinque fasi sono gia' gatate, il resto e' tracciato.
+Tutti e 26 i segmenti dello sweep a freddo sono misurati sullo stesso albero, e
+si dividono in due famiglie che il punteggio separa da se':
+
+| famiglia | segmenti | grezzo | di troppo |
+|---|---|---|---|
+| centro banda ≤ 5250 MHz | 7 (ch36-48) | 84.31% – 95.90% | 0 – 96 |
+| centro banda > 5250 MHz | 19 (da ch52) | 51.35% – 71.91% | 4340 – 11945 |
+
+Sopra i 5250 MHz il driver stock esegue un attach diverso, non un attach
+ridotto: ~20.3k op contro le 35k-51k dei canali bassi. La differenza non e'
+qualita' del port su quei canali, ed e' la voce "op di troppo" a pesare. Il
+dettaglio per segmento e la struttura di quella differenza stanno in
+[`docs/retrace-todo.md`](docs/retrace-todo.md).
 
 Il secondo gate e' il tick del watchdog periodico contro l'oracolo a regime, e
 sta a **`MATCH`** — confronto posizione-per-posizione, nessuna eccezione. E'
@@ -102,14 +107,10 @@ modifica.
 L'estrattore SROM rev 11 passa l'harness userspace su tutti i vettori: 77/0
 (DSL), 74/0 (D6220), 75/0 (agcombo).
 
-Su hardware il driver **non completa ancora `ifconfig up`**. L'unico run in
-repo ([`bring-up-logs/`](bring-up-logs/)) e' sul DSL-3580L: probe, load
-firmware 784.2, `op_init` e il load delle tabelle passano; `switch_channel`
-parte, arriva alla scrittura della tabella txgain `id=0x20` e si ferma li'.
-Diagnosi corrente: mancano dei delay prima di quella scrittura. Attenzione,
-quel log precede la risoluzione della famiglia LPF — emette una diagnostica
-`f_predicted/f_actual` che nei sorgenti non esiste piu' — quindi non fotografa
-il codice attuale. Serve un run nuovo.
+Su hardware il driver **non completa ancora `ifconfig up`**, e non c'e' nessun
+run recente: l'ultimo era sul DSL-3580L e precedeva la risoluzione della
+famiglia LPF, quindi non fotografava piu' il codice. Serve un run nuovo prima
+di poter dire dove si ferma oggi.
 
 Cosa il confronto copre e cosa no: le op di tabella sono tracciate come
 marcatore `TBL.WR id/off/len` **seguito dalle write dei singoli word** sul data
@@ -223,15 +224,16 @@ Compilare con `B43_DEBUG=y` per i log `b43dbg` di ogni fase.
 src/                     — sorgenti driver (fonte di verità, target: drivers/net/wireless/broadcom/b43/)
 test/                    — harness userspace di verifica trace op-per-op
 patches/                 — serie patch rigenerabile dai sorgenti
-docs/                    — documentazione tecnica (INDEX.md dentro)
+docs/                    — documentazione tecnica
 sprom-rev11/             — patch SROM rev 11 + harness userspace
 reverse-tools/           — script Python (correlatore, estrattori, generatori) + tool C on-device
 router-data/             — dump NVRAM/SROM/wl-diag per board (DSL, D6220, agcombo)
-bring-up-logs/           — log runtime del driver portato (b43 open)
 scripts/                 — helper (es. conversione patch per OpenWrt)
 ```
 
-Per navigare la documentazione tecnica: [`docs/INDEX.md`](docs/INDEX.md).
+I due documenti da cui partire sono [`docs/driver-status.md`](docs/driver-status.md)
+per cosa funziona e [`docs/retrace-todo.md`](docs/retrace-todo.md) per cosa
+manca; gli altri file di `docs/` sono le analisi che quelli citano.
 
 ## Post-MVP
 
