@@ -653,6 +653,9 @@ static const struct b43_phy_ac_table_desc b43_phy_ac_tables_rev0[] = {
 /* Init */
 
 /* TODO: calibrate. */
+/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   1272-4987]
+ */
 void b43_phy_ac_tables_init(struct b43_wldev *dev)
 {
 	B43_AC_FN();

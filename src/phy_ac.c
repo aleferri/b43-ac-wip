@@ -24,9 +24,9 @@
  *
  * The #NNNNN indices in the comments are episode positions in a reference
  * capture. An index alone does not identify one: the index spaces of the
- * captures overlap, so reverse-tools/check_trace_refs.py resolves most bare
+ * captures overlap, so `reverse-tools/anchors.py resolve` resolves most bare
  * indices to several different ops. Check a reference with
- * reverse-tools/check_ref_spans.py before relying on it.
+ * `reverse-tools/anchors.py span` before relying on it.
  */
 
 #include <linux/slab.h>
@@ -142,6 +142,11 @@ static void b43_phy_ac_op_prepare_structs(struct b43_wldev *dev)
 
 /* Mode-bit clears. These ops are not contiguous in the capture: they are
  * spread through the radio and rfkill bring-up window, tagged per sequence. */
+/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   1252-1271]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   618-637]
+ */
 static void b43_phy_ac_mode_init(struct b43_wldev *dev)
 {
 	B43_AC_FN();
@@ -179,6 +184,10 @@ static void b43_phy_ac_mode_init(struct b43_wldev *dev)
  * Initial ADC gain words. Both the value pair and the number of passes
  * follow the bring-up phase, not the chip. adc_reset() later rewrites
  * 0x03ac and 0x032c.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   4988-5006]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   638-676]
  */
 static void b43_phy_ac_init_regs(struct b43_wldev *dev)
 {
@@ -295,6 +304,14 @@ static void b43_phy_ac_farrow_setup(struct b43_wldev *dev,
  *   hold = false clears it, dropping the bracket, that is an RX arm
  * Do not inline this into other functions; always call it by name, or the
  * op order stops matching.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   5014-5017, 11403-11406, 11436-11439, 12186-12189, 14971-14974,
+ *   15721-15724, 15747-15750, 16497-16500, 16535-16538, 22896-22899,
+ *   22937-22940, 27686-27689, 27700-27703, 30648-30651]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   684-687, 7075-7078, 7124-7127, 7874-7877, 10385-10388, 11135-11138,
+ *   11161-11164, 11911-11914, 11949-11952, 18024-18027, 18065-18068,
+ *   22898-22901, 22912-22915, 25930-25933]
  */
 static void b43_phy_ac_adc_hold(struct b43_wldev *dev, bool hold)
 {
@@ -767,6 +784,12 @@ void b43_phy_ac_prb_rsp_plcp_pass(struct b43_wldev *dev)
  *
  * Sostituisce le due funzioni che portavano il "secondo" e il "terzo" tono
  * trascritti: sono lo stesso periodo ai passi +1 e -1.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   28360-28446, 28732-28818, 29108-29194, 29433-29519, 29656-29742,
+ *   29958-30044]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   23572-23658, 23944-24030, 24320-24406, 24645-24731, 24868-24954,
+ *   25292-25378]
  */
 void b43_phy_ac_rxiqcal_dds_seed_tone(struct b43_wldev *dev, int step)
 {
@@ -854,6 +877,16 @@ static void b43_phy_ac_shm_mac_config_block(struct b43_wldev *dev)
 /*
  * CLASSCTL write with a status_mask update: no peek and no clip detect. The
  * capture has two cases of an isolated write with no preceding peek.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   11402-11402, 11435-11435, 12185-12185, 14970-14970, 15720-15720,
+ *   15746-15746, 16496-16496, 16534-16534, 16549-16549, 22892-22892,
+ *   22895-22895, 22936-22936, 22951-22951, 27682-27682, 27685-27685,
+ *   27699-27699, 30647-30647]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   7074-7074, 7123-7123, 7873-7873, 10384-10384, 11134-11134, 11160-11160,
+ *   11910-11910, 11948-11948, 11963-11963, 18020-18020, 18023-18023,
+ *   18064-18064, 18079-18079, 22894-22894, 22897-22897, 22911-22911,
+ *   25929-25929]
  */
 static void b43_phy_ac_classctl_write(struct b43_wldev *dev, bool arm)
 {
@@ -928,6 +961,11 @@ static unsigned int b43_phy_ac_idle_tssi_passes(struct b43_wldev *dev)
 	return dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_80 ? 256 : 1;
 }
 
+/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   11446-12192, 14981-15727, 15757-16503]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   7134-7880, 10395-11141, 11171-11917]
+ */
 static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 {
 	B43_AC_FN();
@@ -988,6 +1026,12 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 	u16 idle_tssi = 0;
 	u16 rr_4e = 0, rr_66 = 0, rr_24e = 0, rr_366 = 0;
 
+	/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+	 *   11446-11520, 14981-15055, 15757-15831]
+	 * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+	 *   7134-7208, 10395-10469, 11171-11245]
+	 */
+	B43_AC_BLOCK("tssi_path_enable");
 	/* Abilitazione del path TSSI per catena, #38268-#38273. */
 	{
 		unsigned int c;
@@ -1022,6 +1066,12 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 	b43_radio_maskset(dev, 0x021f, (u16)~0x0004, 0);
 	b43_radio_maskset(dev, 0x0370, (u16)~(0x0100), (0x0100));
 	b43_phy_read(dev, 0x0401);
+	/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+	 *   11522-12192, 15057-15727, 15833-16503]
+	 * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+	 *   7210-7880, 10471-11141, 11247-11917]
+	 */
+	B43_AC_BLOCK("rf_seq_mode_percore");
 	/* The per-core fields of RF_SEQ_MODE are coremask and coremask << 12,
 	 * not constants: 0x0003/0x3000 on a 2x2, 0x0007/0x7000 on a 3x3. */
 	b43_phy_maskset(dev, 0x0401, (u16)~0x0007, dev->phy.ac->coremask);
@@ -1690,6 +1740,11 @@ static void b43_phy_ac_est_pwr_lut(struct b43_wldev *dev, unsigned int core,
 	}
 }
 
+/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   13072-13404, 13746-14078]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   8766-9098, 9376-9708]
+ */
 static void b43_phy_ac_txpwrctrl_setup(struct b43_wldev *dev, u16 freq)
 {
 	B43_AC_FN();
@@ -2037,6 +2092,10 @@ static const u16 b43_acphy_txgain_epa_5g_2069rev4[128][3] = {
  * no footprint of its own in the capture. It is the only knob on the
  * operating index and runs last, so do not hand-edit the adc_reset()
  * constants instead.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   22770-22841, 27560-27631]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   17898-17969, 22772-22843]
  */
 void b43_phy_ac_txpwr_by_index(struct b43_wldev *dev, u8 idx)
 {
@@ -2124,6 +2183,10 @@ void b43_phy_ac_txpwr_by_index(struct b43_wldev *dev, u8 idx)
  *
  * Returns true if the sequence completed within the spin window, false on
  * timeout. Non-static: shared by other PHY units.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   30615-30625]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   25897-25907]
  */
 bool
 b43_phy_ac_force_rf_sequence(struct b43_wldev *dev, u16 rf_seq, u16 gate)
@@ -2166,6 +2229,22 @@ b43_phy_ac_force_rf_sequence(struct b43_wldev *dev, u16 rf_seq, u16 gate)
  *
  * For the hard variant, which does force the clock and is used by
  * channel_switch_prep(), see b43_phy_ac_reset_cca().
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   11398-11399, 11444-11445, 11709-11710, 11795-11796, 12038-12039,
+ *   12124-12125, 14979-14980, 15244-15245, 15330-15331, 15573-15574,
+ *   15659-15660, 15755-15756, 16020-16021, 16106-16107, 16349-16350,
+ *   16435-16436, 16543-16544, 19695-19696, 22876-22877, 22945-22946,
+ *   24485-24486, 27666-27667, 27708-27709, 28465-28466, 28577-28578,
+ *   28837-28838, 28953-28954, 29213-29214, 29329-29330, 29538-29539,
+ *   29654-29655, 29761-29762, 29956-29957, 30063-30064, 30380-30381]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   7070-7071, 7132-7133, 7397-7398, 7483-7484, 7726-7727, 7812-7813,
+ *   10393-10394, 10658-10659, 10744-10745, 10987-10988, 11073-11074,
+ *   11169-11170, 11434-11435, 11520-11521, 11763-11764, 11849-11850,
+ *   11957-11958, 14823-14824, 18004-18005, 18073-18074, 19697-19698,
+ *   22878-22879, 22920-22921, 23677-23678, 23789-23790, 24049-24050,
+ *   24165-24166, 24425-24426, 24541-24542, 24750-24751, 24866-24867,
+ *   24973-24974, 25290-25291, 25397-25398, 25662-25663]
  */
 static void b43_phy_ac_cca_pulse(struct b43_wldev *dev)
 {
@@ -2185,6 +2264,10 @@ static void b43_phy_ac_cca_pulse(struct b43_wldev *dev)
  * Reset the CCA (Clear Channel Assessment) state machine.
  *
  * Stage 1 pulses BBCFG bit 0x4000 with the PHY clock forced.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   5022-5023, 5146-5147, 11235-11236]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   692-693, 816-817, 6905-6906]
  */
 void
 b43_phy_ac_reset_cca(struct b43_wldev *dev)
@@ -2248,6 +2331,14 @@ u16 b43_phy_ac_classifier(struct b43_wldev *dev, u16 mask, u16 val)
  * Clip detector enable/disable, per core. On phy rev 1 this is a single bit
  * (0x4000) of the gain-control word at 0x06d4 + core*0x200: cleared to enable,
  * set to freeze it during a channel reconfigure.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   5018-5020, 11407-11409, 11440-11442, 12190-12192, 14975-14977,
+ *   15725-15727, 15751-15753, 16501-16503, 16539-16541, 22900-22902,
+ *   22941-22943, 27690-27692, 27704-27706, 30652-30654]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   688-690, 7079-7081, 7128-7130, 7878-7880, 10389-10391, 11139-11141,
+ *   11165-11167, 11915-11917, 11953-11955, 18028-18030, 18069-18071,
+ *   22902-22904, 22916-22918, 25934-25936]
  */
 static void b43_phy_ac_clip_det(struct b43_wldev *dev, bool enable)
 {
@@ -2290,6 +2381,10 @@ static void b43_phy_ac_clip_det(struct b43_wldev *dev, bool enable)
  *
  * TODO: the 0x05f4 written to 0x0140 is pinned to ch36. If it has to vary per
  * channel it must come from the channel table or from a computation.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   5007-5023]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   677-693]
  */
 static void b43_phy_ac_channel_switch_prep(struct b43_wldev *dev)
 {
@@ -2353,6 +2448,11 @@ static void b43_phy_ac_channel_switch_prep(struct b43_wldev *dev)
 /* Forward declaration; run_rfseq_cmd() is defined later in this file. */
 static void b43_phy_ac_run_rfseq_cmd(struct b43_wldev *dev, u16 cmd_bit);
 
+/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   6907-6946]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   2577-2616]
+ */
 static void b43_phy_ac_rxcore_setstate(struct b43_wldev *dev, u8 coremask)
 {
 	B43_AC_FN();
@@ -2532,6 +2632,11 @@ static const u32 b43_acphy_txv_for_spexp[243] = {
  */
 
 /* Tabella di controllo FEM: blocco 32B su tbl id 0xa, off 0/0x20/0x40. */
+/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   5272-5386]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   942-1056]
+ */
 static void b43_phy_ac_set_regtbl_on_femctrl(struct b43_wldev *dev)
 {
 	B43_AC_FN();
@@ -2595,6 +2700,10 @@ static void b43_phy_ac_set_regtbl_on_femctrl(struct b43_wldev *dev)
  * hi = base | (cap<<1). The cap comes from rccal in op_init, so it is a
  * per-unit analog measurement and not a constant. Bases, the formula and the
  * verification on the three boards are in docs/txlpf-formula.md.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   5390-5857, 7270-7321]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   1060-1527, 2940-2991]
  */
 static void b43_phy_ac_set_analog_tx_lpf_locked(struct b43_wldev *dev,
 						u16 stages,
@@ -2669,6 +2778,10 @@ static void b43_phy_ac_set_analog_tx_lpf(struct b43_wldev *dev, u16 stages,
  * execution and once on the second, consistent with a wait-for-done loop.
  *
  * cmd_bit is OR-ed into 0x0402; 0x0001 then 0x0002 are the observed values.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   6919-6931, 6932-6942]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   2589-2601, 2602-2612]
  */
 static void b43_phy_ac_run_rfseq_cmd(struct b43_wldev *dev, u16 cmd_bit)
 {
@@ -2757,6 +2870,10 @@ static void b43_phy_ac_chanspec_tail(struct b43_wldev *dev);
  *   - 0x0160 and 0x0401 bits 0-2: 0x03 at 20 MHz, 0x01 at 40 and 80
  *   - 0x0401 bits 4-6: 0x30 on the 2069, 0x10 on the 2069 ac
  * TODO: parametrise by bandwidth and chip once the rest is understood.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   6905-6950]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   2575-2620]
  */
 static void b43_phy_ac_post_rfseq_misc_setup(struct b43_wldev *dev)
 {
@@ -2805,6 +2922,10 @@ static void b43_phy_ac_post_rfseq_misc_setup(struct b43_wldev *dev)
  *   2. Per core, seven masksets: 0x001a three times, the shared 0x054b, then
  *      0x0017, 0x001f and 0x0170, all with a +0x200 stride. 0x054b is shared
  *      between cores by byte: core 0 takes the high byte, core 1 the low one.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   7090-7157]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   2760-2827]
  */
 static void b43_phy_ac_radio_percore_setup_1(struct b43_wldev *dev)
 {
@@ -2878,6 +2999,11 @@ static unsigned int b43_phy_ac_bw_mhz(struct b43_wldev *dev)
 	}
 }
 
+/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   7220-7269]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   2890-2939]
+ */
 static void b43_phy_ac_coeff_bank_init_bw20_5g(struct b43_wldev *dev)
 {
 	B43_AC_FN();
@@ -3062,6 +3188,10 @@ static void b43_phy_ac_coeff_bank_init_bw20_5g(struct b43_wldev *dev)
  * derived, and the two identical pairs (1000/1000 and 500/500) look more like
  * settle windows than gain codes. 0x0554 and 0x0555 are adjusted later by the
  * periodic watchdog; see b43_phy_ac_op_recalc_txpower().
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   1202-1214, 5253-5268]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   568-580, 923-938]
  */
 static void b43_phy_ac_set_pdet_on_reset(struct b43_wldev *dev, bool full)
 {
@@ -3090,6 +3220,11 @@ static void b43_phy_ac_set_pdet_on_reset(struct b43_wldev *dev, bool full)
 	b43_phy_write(dev, 0x035a, 0x0064);
 }
 
+/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   5253-6264]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   923-1934]
+ */
 static void b43_phy_ac_analog_on_reset(struct b43_wldev *dev, u16 *saved_outer_out)
 {
 	B43_AC_FN();
@@ -3223,6 +3358,11 @@ static void b43_phy_ac_analog_on_reset(struct b43_wldev *dev, u16 *saved_outer_o
 	}
 }
 
+/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   6265-6903]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   1935-2573]
+ */
 static void b43_phy_ac_rfseq_tbl_init(struct b43_wldev *dev)
 {
 	B43_AC_FN();
@@ -3255,6 +3395,10 @@ static void b43_phy_ac_rfseq_tbl_init(struct b43_wldev *dev)
  * Reset-time PHY register block (phy rev 1, the only verified rev). The
  * backplane MAC-PHY clock enable maps to b43_mac_phy_clock_set; the CCA reset
  * maps to b43_phy_ac_reset_cca, called mid-sequence.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   5128-5158]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   798-828]
  */
 static void b43_phy_ac_set_reg_on_reset(struct b43_wldev *dev)
 {
@@ -3322,6 +3466,11 @@ static void b43_phy_ac_set_reg_on_reset(struct b43_wldev *dev)
 	 */
 }
 
+/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   5128-7533]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   798-3203]
+ */
 static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
 				     const struct b43_phy_ac_channeltab_e_radio2069 *e,
 				     struct ieee80211_channel *new_channel)
@@ -3740,6 +3889,11 @@ static u16 b43_phy_ac_tbl11_fill(u16 freq)
 
 /*
  * Per-channel table loads (radio_rev 4, 5 GHz): twin coeff 0x00ec-0x00f5 + tbl 0x11 (464w) + tbl 0x0b/0x15 + coppia per-core 0x44/0x45 (broadcast a num_cores). */
+/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   7534-10317]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   3204-5987]
+ */
 static void b43_phy_ac_chan_tables(struct b43_wldev *dev)
 {
 	B43_AC_FN();
@@ -3783,6 +3937,10 @@ static void b43_phy_ac_chan_tables(struct b43_wldev *dev)
  * {4, 6, 8}; on a bonded channel both are written as zeroes, which disables
  * it. Constant across every channel of each width in the cold sweep, so this
  * follows the bandwidth and not the channel.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   7323-7338]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   2993-3008]
  */
 static void b43_phy_ac_rx_evm_shaping_override(struct b43_wldev *dev)
 {
@@ -3813,6 +3971,10 @@ static void b43_phy_ac_rx_evm_shaping_override(struct b43_wldev *dev)
  *
  * The meaning is unknown -- 0x06dc-0x06e5 and 0x06ee have no public vendor
  * naming -- but the per-core shape suggests RX gain or RSSI programming.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   11060-11101, 11113-11154, 11166-11207]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   6730-6771, 6783-6824, 6836-6877]
  */
 static void
 b43_phy_ac_post_noise_shaping_rx_regprog_core(struct b43_wldev *dev,
@@ -3871,6 +4033,10 @@ b43_phy_ac_post_noise_shaping_rx_regprog_core(struct b43_wldev *dev,
  * 0x06ee plus stride. radio_maskset() expands to MOD + RD + WR with the value
  * from the mirror, which radio_2069_channel_setup() has already populated:
  * an active core gives 0x73bf/0x4181, an inactive one 0x7380/0x4180.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   11102-11112, 11155-11165, 11208-11218]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   6772-6782, 6825-6835, 6878-6888]
  */
 static void
 b43_phy_ac_post_noise_shaping_core_transition(struct b43_wldev *dev,
@@ -3907,6 +4073,10 @@ b43_phy_ac_post_noise_shaping_core_transition(struct b43_wldev *dev,
  * identified. The per-core stride and the active/inactive radio values
  * suggest per-channel RX gain or RSSI programming; rename this once that is
  * established.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   11058-11218]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   6728-6888]
  */
 static void b43_phy_ac_post_noise_shaping_rx_regprog(struct b43_wldev *dev)
 {
@@ -4004,6 +4174,10 @@ static void b43_phy_ac_rx_gain_regs_program(struct b43_wldev *dev,
  * Tail of switch_channel: program the RX gain-control block of every
  * populated chain. Called after both txpwrctrl_setup() passes, with the gate
  * released to RX_OFDM and CLIP_ALL_DIS clear.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   14412-14521]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   9826-9935]
  */
 static void b43_phy_ac_rxgainctrl_regs(struct b43_wldev *dev)
 {
@@ -4039,6 +4213,11 @@ static const u16 b43_phy_ac_adc_hi[8] = { 0x33a, 0x33b, 0x33e, 0x33f,
 static const u16 b43_phy_ac_adc_lo[8] = { 0x33c, 0x33d, 0x340, 0x341,
 					  0x344, 0x345, 0x348, 0x349 }; /* = 0x032c */
 
+/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   11299-11388]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   6969-7058]
+ */
 static void b43_phy_ac_adc_reset(struct b43_wldev *dev)
 {
 	B43_AC_FN();
@@ -4122,6 +4301,10 @@ static void b43_phy_ac_adc_reset(struct b43_wldev *dev)
  * core: quello e' la fase PHY che nella cattura cade *dopo* la config BSS del
  * core, ed e' quello che in b43 spetta a b43_phy_txpower_check() chiamata da
  * b43_op_config().
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   11389-11445]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   7059-7133]
  */
 static void b43_phy_ac_txpwrctrl_enable(struct b43_wldev *dev)
 {
@@ -4265,6 +4448,11 @@ static const u16 b43_phy_ac_crs_regs[8] = {
 	0x0327, 0x0333,
 };
 
+/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   7501-7508, 30902-30909]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   3171-3178, 26062-26069]
+ */
 static void b43_phy_ac_crs_regs_write(struct b43_wldev *dev, u16 val)
 {
 	B43_AC_FN();
@@ -4415,6 +4603,9 @@ enum b43_phy_ac_crs_site {
 	B43_PHY_AC_CRS_SITE_FINALIZE = 1,
 };
 
+/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   7509-7516, 30910-30917]
+ */
 static void b43_phy_ac_prog_bank_0910(struct b43_wldev *dev, u16 crs,
 				      enum b43_phy_ac_crs_site site)
 {
@@ -4488,6 +4679,10 @@ static void b43_phy_ac_prog_bank_0910(struct b43_wldev *dev, u16 crs,
  *   0x0070 set 0xe000                       — top-3 gain enable bits
  *   0x0644 / 0x0844 set 0x14 mask 0x7f      — per-core AFE gain word
  *   0x0678 / 0x0878 clr bit 2               — per-core AFE bypass
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   30728-30732, 36462-36466]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   26010-26014, 29004-29008]
  */
 static void b43_phy_ac_afe_gain_regs_reemit(struct b43_wldev *dev)
 {
@@ -4503,6 +4698,10 @@ static void b43_phy_ac_afe_gain_regs_reemit(struct b43_wldev *dev)
  * Arm the tone generator: peek 0x0393, write @arm_val to 0x0394, write
  * 0x8000 to 0x0393. Observed with arm_val 0x0110 for the global arm, 0x0111
  * for core 1, and 0x0110 | core in the idle_tssi_meas iterations.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   33068-33071, 33200-33203, 35714-35717, 35846-35849]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   27464-27467, 27596-27599]
  */
 static void b43_phy_ac_arm_tone_gen(struct b43_wldev *dev, u16 arm_val)
 {
@@ -4529,6 +4728,10 @@ static void b43_phy_ac_arm_tone_gen(struct b43_wldev *dev, u16 arm_val)
  *   8. peek and relock the outer gate, closing the tail for chan_tables()
  *
  * TODO: parametrise the 0x00ec-0x00f5 values by bandwidth and band.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   7495-7533]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   3165-3203]
  */
 static void b43_phy_ac_chanspec_tail(struct b43_wldev *dev)
 {
@@ -4624,6 +4827,10 @@ static void b43_phy_ac_chanspec_tail(struct b43_wldev *dev)
  *
  * Uses rxgains_5gl, U-NII-1, consistent with the ch36 target. 5gm and 5gh
  * will need a per-sub-band selection.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   10578-10621, 10738-10781, 10898-10941]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   6248-6291, 6408-6451, 6568-6611]
  */
 static void b43_phy_ac_rxgain_init(struct b43_wldev *dev, unsigned int core)
 {
@@ -4920,6 +5127,11 @@ static bool b43_phy_ac_config_validated(struct b43_wldev *dev, u16 chan,
 	return false;
 }
 
+/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   5007-13592]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   677-9281]
+ */
 static int b43_phy_ac_set_channel(struct b43_wldev *dev,
 				  struct ieee80211_channel *channel,
 				  enum nl80211_channel_type channel_type)
@@ -5420,6 +5632,10 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
  * valori del prologo di set_channel che questa meta' usava, per cui il taglio
  * non porta stato implicito. Un taglio che ne lasciasse compilerebbe senza un
  * warning e sbaglierebbe i valori a runtime.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   13665-14082]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   9295-9714]
  */
 void b43_phy_ac_channel_setup_tail(struct b43_wldev *dev,
 				   struct ieee80211_channel *channel)
@@ -5490,6 +5706,10 @@ void b43_phy_ac_channel_setup_tail(struct b43_wldev *dev,
  * giro e' un blocco di parametri EDCF, il template probe response, l'SSID e i
  * PLCP degli otto rate. La parentesi e' del core come il carico, quindi qui
  * non c'e' nessun ciclo: c'e' solo il punto in cui la coda riprende.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   14407-14966]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   9821-10380]
  */
 void b43_phy_ac_channel_setup_tail2(struct b43_wldev *dev)
 {
@@ -5619,6 +5839,10 @@ static void b43_phy_ac_probe_cores(struct b43_wldev *dev)
  * pdet is the 11-write short form (no 0x0358 trio, which is set_channel-only).
  * Per core: PHY 0x0X29/0x0X21 bit 12, RAD 0x0X33 nibble -> 0x4000. Closes
  * with PHY 0x01b0 bit 15.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   1202-1234]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   568-600]
  */
 static void b43_phy_ac_pre_init_frontend(struct b43_wldev *dev)
 {
@@ -5673,6 +5897,11 @@ static void b43_phy_ac_mhf_config(struct b43_wldev *dev)
 	b43_phy_ac_mhf_bringup_clears(dev);
 }
 
+/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   1202-5006]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   568-676]
+ */
 static int b43_phy_ac_op_init(struct b43_wldev *dev)
 {
 	B43_AC_FN();
@@ -5798,6 +6027,10 @@ enum b43_phy_ac_afe_mode {
  * B43_PHY_AC_AFE_DOWN parks the front-end. Kept as one named operation so
  * the enable point is explicit and callers pick a mode rather than
  * open-coding register writes.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   554-561, 573-580, 36531-36538]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   29073-29080]
  */
 static void b43_phy_ac_enable_afe(struct b43_wldev *dev,
 				  enum b43_phy_ac_afe_mode mode)
@@ -5862,6 +6095,9 @@ static void b43_phy_ac_pmu_req(struct b43_wldev *dev, bool on)
 		dev->phy.ac->status_mask &= ~B43_PHY_AC_STATE_PMU_REQ;
 }
 
+/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   584-645]
+ */
 static void b43_phy_ac_frontend_gpio_setup(struct b43_wldev *dev)
 {
 	struct bcma_drv_cc *cc = &dev->dev->bdev->bus->drv_cc;
@@ -5937,6 +6173,9 @@ static void b43_phy_ac_frontend_gpio_setup(struct b43_wldev *dev)
 	 */
 }
 
+/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   528-583]
+ */
 static void b43_phy_ac_switch_analog_once(struct b43_wldev *dev, bool on)
 {
 	B43_AC_FN();
@@ -6072,6 +6311,11 @@ static void b43_phy_ac_op_switch_analog(struct b43_wldev *dev, bool on)
 		b43_phy_ac_frontend_gpio_setup(dev);
 }
 
+/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   691-1201]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   72-567]
+ */
 static void b43_phy_ac_op_software_rfkill(struct b43_wldev *dev, bool blocked)
 {
 	B43_AC_FN();
@@ -6144,6 +6388,10 @@ static void b43_phy_ac_op_software_rfkill(struct b43_wldev *dev, bool blocked)
  *   3. clip_det(false): three MODs setting bit 14 of 0x?d4, clip disable
  *   4. write 0x0339 = 0, disabling the RX-IQ cal accumulator
  *   5. cca_pulse: set then clear bit 14 of 0x0001
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   14968-14980, 15744-15756, 16532-16544]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   10382-10394, 11158-11170, 11946-11958]
  */
 static void b43_phy_ac_rxcal_a1_restore(struct b43_wldev *dev)
 {
@@ -6189,6 +6437,10 @@ void b43_phy_ac_post_cal_finalize(struct b43_wldev *dev)
  *
  * TODO: establish where iteration 3 ends and what follows -- further
  * iterations, or the RX-IQ compensation write-back.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   15728-16503]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   11142-11917]
  */
 void b43_phy_ac_post_cal_finalize_iter3(struct b43_wldev *dev)
 {
@@ -6370,6 +6622,10 @@ static const struct b43_ac_b2j_op b43_phy_ac_b2j_ops[] = {
  *   B2i, 15 ops: peek the gain registers, a pre-write readback of
  *                0x0720-0x073c
  *   B2j, 56 ops: coefficient write-back, from b43_phy_ac_b2j_ops
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   16631-16725, 16726-16820]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   12045-12139, 12140-12234]
  */
 static void b43_phy_ac_rxiqcal_apply_body_core(struct b43_wldev *dev,
 					       u16 core_off)
@@ -6449,6 +6705,10 @@ static void b43_phy_ac_rxiqcal_apply_body_core(struct b43_wldev *dev,
  *
  * TODO: computing the coefficients at runtime from rxcal_imbalance is still
  * pending.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   16504-16973]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   11918-12387]
  */
 void b43_phy_ac_rxiqcal_apply(struct b43_wldev *dev)
 {
@@ -6656,6 +6916,10 @@ void b43_phy_ac_rxiqcal_apply(struct b43_wldev *dev)
  * TODO: the three groups are fixed because the 0x000c overrides are global
  * even when the coremask excludes a chain. To be checked against a capture
  * from a different chip.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   16974-17422]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   12388-12836]
  */
 void b43_phy_ac_post_rxiqcal_stage2(struct b43_wldev *dev)
 {
@@ -6840,6 +7104,19 @@ static void b43_phy_ac_afe_res_store(struct b43_wldev *dev, u16 off,
 	}
 }
 
+/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   17423-17530, 17531-17628, 17629-17719, 17720-17855, 17856-17966,
+ *   17967-17998, 18219-18318, 18319-18414, 18415-18507, 18508-18641,
+ *   18642-18676, 18677-18722, 18943-19050, 19051-19148, 19149-19241,
+ *   19242-19377, 19378-19496, 19497-19556, 23753-23847, 23848-23974,
+ *   24195-24237, 24238-24286, 24287-24327, 24328-24448]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   12837-12942, 12943-13040, 13041-13135, 13136-13267, 13268-13348,
+ *   13349-13418, 13639-13716, 13717-13768, 13769-13859, 13860-13995,
+ *   13996-14118, 14119-14210, 14211-14318, 14319-14362, 14363-14437,
+ *   14438-14535, 14536-14622, 14623-14684, 18881-18975, 18976-19098,
+ *   19319-19411, 19412-19490, 19491-19565, 19566-19660]
+ */
 void b43_phy_ac_rxcal_afe_iter(struct b43_wldev *dev,
 			       u16 cmd, u16 core_off,
 			       const u16 *pre_clear_offs, u8 n_pre_clear,
@@ -6900,6 +7177,10 @@ void b43_phy_ac_rxcal_afe_iter(struct b43_wldev *dev,
  * iteration's main result, emit N pairs of fast table writes interleaved
  * between cores 0 and 1, with a 0x20 offset stride. The 0x019e gate is locked
  * and unlocked externally, by the preamble and epilogue.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   17999-18218, 18723-18942]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   13419-13638]
  */
 static void b43_phy_ac_rxcal_afe_commit_batch(struct b43_wldev *dev,
 					      u16 base_c0, u16 base_c1,
@@ -6923,6 +7204,11 @@ static void b43_phy_ac_rxcal_afe_commit_batch(struct b43_wldev *dev,
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
 }
 
+/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   17423-19694]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   12837-14822]
+ */
 void b43_phy_ac_rxcal_afe_calibrate(struct b43_wldev *dev)
 {
 	B43_AC_FN();
@@ -7197,6 +7483,11 @@ static u16 b43_phy_ac_iqlo_step_down(u16 v)
 	return (u16)((((v >> 8) - 2) & 0xff) << 8 | (((v & 0xff) - 10) & 0xff));
 }
 
+/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   19695-22769]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   14823-17897]
+ */
 void b43_phy_ac_rxcal_afe_finalize_gain_luts(struct b43_wldev *dev)
 {
 	B43_AC_FN();
@@ -7264,6 +7555,10 @@ void b43_phy_ac_rxcal_afe_finalize_gain_luts(struct b43_wldev *dev)
  *
  * TODO: whether the vendor also emits core 2 on a three-chain board is
  * unknown; no capture shows it.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   22842-22877, 27632-27667]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   17970-18005, 22844-22879]
  */
 void b43_phy_ac_rxgain_defaults_pulse(struct b43_wldev *dev)
 {
@@ -7316,6 +7611,10 @@ void b43_phy_ac_rxgain_defaults_pulse(struct b43_wldev *dev)
  *
  * SALAME: what the bits touched on 0x02ed/f1/f5/f9 mean, and what the closing
  * pulse of bit 14 of 0x0001 does, are not identified.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   22878-23027, 27668-27709]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   18006-18155, 22880-22921]
  */
 void b43_phy_ac_radio_chain_range_setup(struct b43_wldev *dev, bool with_tune)
 {
@@ -7447,6 +7746,12 @@ void b43_phy_ac_radio_chain_range_setup(struct b43_wldev *dev, bool with_tune)
  * SALAME: the reverse pass overwrites values the forward pass has just
  * written. The pattern is deterministic and identical at every occurrence,
  * but the capture does not say why it exists.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   16824-16847, 23226-23249, 28483-28506, 28855-28878, 29231-29254,
+ *   29556-29579, 29779-29802, 30081-30104, 33044-33067, 35690-35713]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   12238-12261, 18354-18377, 23695-23718, 24067-24090, 24443-24466,
+ *   24768-24791, 24991-25014, 25415-25438, 27440-27463]
  */
 static void b43_phy_ac_rxgain_perchan_tail(struct b43_wldev *dev)
 {
@@ -7483,6 +7788,11 @@ static void b43_phy_ac_rxgain_perchan_tail(struct b43_wldev *dev)
 	}
 }
 
+/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   23028-23249]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   18156-18377]
+ */
 void b43_phy_ac_rxgain_perchan_config(struct b43_wldev *dev)
 {
 	B43_AC_FN();
@@ -7614,6 +7924,10 @@ void b43_phy_ac_rxgain_perchan_config(struct b43_wldev *dev)
  * RX-IQ compensation on the TX side: rewrite the TX gain code, in table
  * 0x0007, the same area txpwr_by_index() uses, and the baseband multiplier,
  * per chain. The batches are labelled in the body.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   23250-23377]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   18378-18505]
  */
 void b43_phy_ac_rxiqcal_apply_tx_gain_bbmult(struct b43_wldev *dev)
 {
@@ -7688,6 +8002,10 @@ void b43_phy_ac_rxiqcal_apply_tx_gain_bbmult(struct b43_wldev *dev)
 /*
  * RX-IQ DDS/NCO seed (vendor #46451-#46561, fase E block 2, 111 op).
  * Vedi commento in phy_ac.h per struttura dettagliata.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   23378-23492]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   18506-18620]
  */
 void b43_phy_ac_rxiqcal_dds_seed(struct b43_wldev *dev)
 {
@@ -7724,6 +8042,10 @@ void b43_phy_ac_rxiqcal_dds_seed(struct b43_wldev *dev)
 /*
  * RX-IQ prep second iteration (vendor #46562-#46777, 216 op).
  * Vedi commento in phy_ac.h per struttura completa.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   23493-23752]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   18621-18880]
  */
 void b43_phy_ac_rxiqcal_prep_second_iter(struct b43_wldev *dev)
 {
@@ -7806,6 +8128,10 @@ void b43_phy_ac_rxiqcal_prep_second_iter(struct b43_wldev *dev)
 /*
  * RX-IQ measurement iters (vendor #46778-#47296, gruppo 4, 519 op).
  * Vedi commento in phy_ac.h per struttura e op count per iter.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   23753-24448]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   18881-19660]
  */
 void b43_phy_ac_rxiqcal_run_meas_iters(struct b43_wldev *dev)
 {
@@ -7896,6 +8222,10 @@ void b43_phy_ac_rxiqcal_run_meas_iters(struct b43_wldev *dev)
 /*
  * RX-IQ post-measurement apply (vendor #47297-#47328, fase F seg A, 32 op).
  * Vedi commento in phy_ac.h per struttura.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   24449-24487]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   19661-19699]
  */
 void b43_phy_ac_rxiqcal_apply_tx_bbmult_kick(struct b43_wldev *dev)
 {
@@ -7943,6 +8273,10 @@ void b43_phy_ac_rxiqcal_apply_tx_bbmult_kick(struct b43_wldev *dev)
 /*
  * Reset tabelle di coefficienti (vendor #47329-#50016, 2688 op).
  * Vedi commento in phy_ac.h.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   24488-27559]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   19700-22771]
  */
 void b43_phy_ac_iqcal_coeff_tables_reset(struct b43_wldev *dev)
 {
@@ -7967,6 +8301,10 @@ void b43_phy_ac_iqcal_coeff_tables_reset(struct b43_wldev *dev)
 /*
  * IQ-cal secondary stage apply (vendor #50152-#50198, 47 op).
  * Vedi commento in phy_ac.h per struttura.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   27710-27768]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   22922-22980]
  */
 void b43_phy_ac_iqcal_apply_second_stage(struct b43_wldev *dev)
 {
@@ -8030,6 +8368,10 @@ void b43_phy_ac_iqcal_apply_second_stage(struct b43_wldev *dev)
 /*
  * RX-gain config readback (vendor #50199-#50292, 94 op).
  * Vedi commento in phy_ac.h per struttura.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   27769-27930]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   22981-23142]
  */
 void b43_phy_ac_rxgain_config_readback(struct b43_wldev *dev)
 {
@@ -8085,6 +8427,10 @@ void b43_phy_ac_rxgain_config_readback(struct b43_wldev *dev)
 /*
  * RX-gain config apply (vendor #50293-#50438, 146 op).
  * Vedi commento in phy_ac.h per struttura.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   27932-28084]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   23144-23296]
  */
 void b43_phy_ac_rxgain_config_apply(struct b43_wldev *dev)
 {
@@ -8178,6 +8524,10 @@ void b43_phy_ac_rxgain_config_apply(struct b43_wldev *dev)
 /*
  * Radio 2069 IQ-cal config per-core (vendor #50439-#50522, 84 op).
  * Vedi commento in phy_ac.h per struttura.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   28085-28200]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   23297-23412]
  */
 void b43_phy_ac_radio_iqcal_config(struct b43_wldev *dev)
 {
@@ -8233,6 +8583,10 @@ void b43_phy_ac_radio_iqcal_config(struct b43_wldev *dev)
 /*
  * Gain control final apply (vendor #50523-#50651, 129 op).
  * Vedi commento in phy_ac.h per struttura.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   28201-28359, 28579-28731, 28955-29107, 29331-29432]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   23413-23571, 23791-23943, 24167-24319, 24543-24644]
  */
 void b43_phy_ac_gainctrl_final_apply(struct b43_wldev *dev,
 				     bool with_peek_preamble,
@@ -8380,6 +8734,10 @@ static void iqcal_meas_wait(struct b43_wldev *dev)
 /*
  * IQ-cal measurement + apply post second DDS (vendor #50738-#50836, 99 op).
  * Vedi commento in phy_ac.h per struttura completa.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   28447-28578, 28819-28954, 29195-29330, 29520-29655]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   23659-23790, 24031-24166, 24407-24542, 24732-24867]
  */
 void b43_phy_ac_iqcal_meas_post_dds_apply(struct b43_wldev *dev)
 {
@@ -8542,6 +8900,10 @@ static bool b43_phy_ac_loopback_step(struct b43_wldev *dev, unsigned int core,
  * and the search converges on the same indices: on the d6220 ch36 BW20 gate
  * it reproduces {4,4,4} {2,2,1} {1,1,0} {0,0}. The cap on rounds is a safety
  * budget, not an observed limit -- the most seen is 4.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   28201-29655]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   23413-24867]
  */
 static void b43_phy_ac_loopback_gain_search(struct b43_wldev *dev)
 {
@@ -8650,6 +9012,10 @@ static void meas_v2_peek_c0_c5(struct b43_wldev *dev, unsigned int core)
 /*
  * IQ-cal measurement variante v2 (vendor #51814-#51956, 143 op).
  * Vedi commento in phy_ac.h.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   29743-29957, 30045-30381]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   24955-25291, 25379-25663]
  */
 void b43_phy_ac_iqcal_meas_post_dds_apply_v2(struct b43_wldev *dev)
 {
@@ -8845,6 +9211,10 @@ static void b43_phy_ac_iq_solve(struct b43_phy_ac_iq_acc *acc,
  * against the d6220 attach-to-bss-up capture -- core 0 gives a = -17, b = 77
  * (0x3ef and 0x04d), core 1 gives a = -44, b = 59 (0x3d4 and 0x03b) --
  * identical to what the stock driver writes.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   30382-30384]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   25664-25667]
  */
 void b43_phy_ac_rxiq_apply_coefficients(struct b43_wldev *dev)
 {
@@ -8878,6 +9248,10 @@ void b43_phy_ac_rxiq_apply_coefficients(struct b43_wldev *dev)
 /*
  * Radio 2069 IQ-cal teardown (vendor #52256-#52267, 12 op).
  * Vedi commento in phy_ac.h.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   30386-30397]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   25668-25679]
  */
 void b43_phy_ac_radio_iqcal_teardown(struct b43_wldev *dev)
 {
@@ -8905,6 +9279,10 @@ void b43_phy_ac_radio_iqcal_teardown(struct b43_wldev *dev)
 /*
  * RXIQ cal teardown + apply defaults (vendor #52268-#52452, 185 op).
  * Vedi commento in phy_ac.h per struttura.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   30398-30613]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   25680-25895]
  */
 void b43_phy_ac_rxiq_teardown_apply_defaults(struct b43_wldev *dev)
 {
@@ -9156,6 +9534,10 @@ static void b43_phy_ac_probe_cycle(struct b43_wldev *dev, unsigned int n_iter,
  * enabled -- with the MAC suspended. The block toggles the MAC internally
  * during the polls and ends with it suspended; the outer framing belongs to
  * the callers.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   32820-33379, 35466-36025]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   27216-27775, 28667-28667]
  */
 static void b43_phy_ac_measure_block(struct b43_wldev *dev)
 {
@@ -9601,6 +9983,9 @@ static void b43_phy_ac_wd_stats_poll(struct b43_wldev *dev)
 	b43_phy_ac_wd_stats_poll_opt(dev, true, 2);
 }
 
+/* [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   29136-29140]
+ */
 void b43_phy_ac_watchdog(struct b43_wldev *dev, bool noise_cal)
 {
 	B43_AC_FN();
@@ -9662,6 +10047,10 @@ static bool b43_phy_ac_watchdog_on_tick(const struct b43_phy_ac *ac,
 /*
  * RXIQ cal finalize (vendor #52453-#55154, ~2700 op).
  * Vedi commento in phy_ac.h.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   30614-36542]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   25896-29084]
  */
 void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 {
@@ -10326,6 +10715,11 @@ static const struct b43_phy_ac_farrow_mode b43_phy_ac_farrow_mode_80 = {
 	.div = 45, .dphase_num = 0xb40000000ull, .mu = 0x0084, .cfg = 0x0b40,
 };
 
+/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   7444-7458]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   3114-3128]
+ */
 static void b43_phy_ac_farrow_setup(struct b43_wldev *dev,
 				    struct ieee80211_channel *channel)
 {

@@ -2,8 +2,8 @@
 
 La localizzazione per-funzione ora non usa più i fingerprint indovinati dai
 sorgenti: l'harness marca ogni funzione con `B43_AC_FN()` (attivo con
-`AC_FN_MARKERS=1`), quindi `localize_functions.py <generated> <trace>` e
-`coverage_by_function.py` hanno confini esatti. La copertura si misura contro
+`AC_FN_MARKERS=1`), quindi `fn_map.py span` e `fn_map.py coverage` hanno
+confini esatti. La copertura si misura contro
 la cattura **grezza** (come `compare.py`), non contro il collassato.
 
 ## Stato copertura bring-up (rfkill + op_init), per sequenza
@@ -19,9 +19,9 @@ la cattura **grezza** (come `compare.py`), non contro il collassato.
 
 La localizzazione per-funzione nelle catture non e' piu' annotata nei sorgenti:
 era una tabella generata, incolonnata a mano nei commenti e mezza vuota
-("n/l" su un lato). Si rigenera con `reverse-tools/localize_functions.py`, che
-la ricava dalle fingerprint del sorgente corrente invece di fidarsi di un
-commento che nessuno riallinea.
+("n/l" su un lato). Si rigenera con `reverse-tools/fn_map.py fingerprints`,
+che la ricava dalle fingerprint del sorgente corrente invece di fidarsi di
+un commento che nessuno riallinea.
 
 d6220 e agcombo: bring-up radio coperto integralmente, gap 0%. Le divergenze
 sono tutte sul DSL (wl 6.30).
@@ -70,7 +70,7 @@ un'osservazione**: lo strumento non lo vedeva. La seconda e' che una cattura
 rimossa non e' un oracolo, quindi quegli ancoraggi non si "risolvono" andando a
 ripescarla, si riancorano a una cattura presente o si cancellano.
 
-`reverse-tools/verifica_ancoraggi.py` fa il controllo per tutti. Risolve i
+`reverse-tools/anchors.py class` fa il controllo per tutti. Risolve i
 `RETVAL` sulla lettura che li precede, accetta una `PHY` dove il codice scrive
 una tabella -- il marcatore `TBL` e le op sulla porta dati stanno allo stesso
 indice -- e segnala gli ancoraggi che in nessuna cattura presente cadono sulla
@@ -1222,7 +1222,7 @@ dalla prima per `BTL1` (`0x001a`) invece di `BTL0` e per una sola scrittura di
   come una sola e' la ragione per cui i residui non si chiudevano.
 
   **Con `max` imposto dalla SROM resta una sola incognita, e tornano 45 punti su
-  52** (`reverse-tools/ppr_invert_maximposto.py`). I tetti di gruppo risolti:
+  52** (`reverse-tools/ppr_invert.py --model srom`). I tetti di gruppo risolti:
 
   | | bw20 | bw40 | bw80 |
   | --- | --- | --- | --- |
@@ -1611,7 +1611,7 @@ dalla prima per `BTL1` (`0x001a`) invece di `BTL0` e per una sola scrittura di
   e' il passo dopo. Il controesempio e' `idle_tssi_meas`: RAD `0x004e`, PHY
   `0x0012` e `0x0845` sono solo suoi e sono tutti a zero sopra i 5250 MHz,
   mentre la fase la' gira. Percio' il criterio applicato e' **ogni** indirizzo
-  della fase, con `fase_assente.py`, e per le fasi che lavorano attraverso una
+  della fase, con `phase_absent.py`, e per le fasi che lavorano attraverso una
   porta dati l'identita' e' la tabella e non l'indirizzo -- ogni scrittura di
   tabella si presenta come una scrittura su PHY `0x000f`. Scartate proprio
   cosi', dopo che il solo testimone le dava candidate:
@@ -1651,7 +1651,7 @@ dalla prima per `BTL1` (`0x001a`) invece di `BTL0` e per una sola scrittura di
   con due maskset. Lo stesso errore aveva assegnato la tabella `0x000e` a
   `post_rxiqcal_stage2` come testimone esclusivo: con la pila quella funzione
   ne emette 1 accesso su 8, gli altri 7 sono le tre `dds_seed`.
-  `reverse-tools/fase_assente.py` e `witness_scan.py` tengono la pila.
+  `reverse-tools/phase_absent.py` tiene la pila, in entrambi i modi.
 
   Con l'attribuzione giusta, l'eccesso a ch52 dopo il gate delle fasi del
   tono e' 3450 op e ha una voce dominante:
@@ -2321,8 +2321,8 @@ segmenti dove il bring-up si ferma dopo lo spegnimento e segmenti dove arriva
 all'accensione. Le dipendenze reali dal solo canale sono **`PHY.WR 0x0727` e
 `0x0927`** (per-core, stride 0x200) con valore binario 0 oppure 4.
 
-Questo conferma in modo indipendente la nota del vecchio
-`decorrelate_channel_bw.py`, che su 4 sole trace d6220 diceva "la variabile
+Questo conferma in modo indipendente la nota della versione precedente del
+decorrelatore, limitata a 4 trace d6220, che diceva "la variabile
 indipendente reale e' la freq centrale, per questo solo-canale esce vuoto".
 
 ### Le dipendenze dalla larghezza si calcolano, non si tabellano
@@ -2540,7 +2540,7 @@ gia' fatto.
 Una costante trascritta da cattura e una derivata dall'SROM sono
 indistinguibili nel sorgente: entrambe sono letterali. La differenza si vede
 solo su un'altra board -- cioe' quando e' tardi.
-`reverse-tools/find_srom_backed_consts.py`
+`reverse-tools/srom.py literals`
 cerca la sovrapposizione in anticipo: ogni letterale del driver che coincide con
 un valore dichiarato dall'SROM della board di riferimento e' un candidato.
 

@@ -595,8 +595,8 @@ void b43_maccontrol_set(struct b43_wldev *dev, u32 mask, u32 set);
 /*
  * Function-boundary markers for the userspace test harness. B43_AC_FN() at the
  * top of a function makes the harness bracket the ops that follow with the
- * function name, so localize_functions.py can segment the generated trace by
- * exact boundaries instead of guessing fingerprints from source. The exit
+ * function name, so fn_map.py can segment the generated trace by exact
+ * boundaries instead of guessing fingerprints from source. The exit
  * marker is emitted automatically on scope exit (any return) via GCC's
  * cleanup attribute, so nested calls nest correctly. No-op in the kernel
  * build; the harness defines B43_AC_FN_TRACE and provides the hooks, which
@@ -611,6 +611,29 @@ static inline void b43_ac_fn_cleanup(const char *const *fn) { b43_ac_fn_leave(*f
 	b43_ac_fn_enter(__func__)
 #else
 #define B43_AC_FN() do { } while (0)
+#endif
+
+/*
+ * Block markers, for when a function is too coarse. A function-level
+ * [capture-ref: ...] marker collapses every stretch of the capture a long
+ * function accounts for into one interval, and set_channel() alone covers
+ * about forty distinct sections. B43_AC_BLOCK("name") names the section that
+ * starts there, so anchors.py can write a marker for it: the granularity is
+ * chosen per case, by hand, where a section is worth locating -- not per op,
+ * which would be unreadable, and not automatically, which would guess.
+ *
+ * Unlike B43_AC_FN this is a POINT marker, with no closing counterpart, and
+ * deliberately so: the sections worth naming are stretches of straight-line
+ * code delimited by comments, not braced blocks, and requiring a scope would
+ * mean restructuring the function to annotate it. A block runs until the next
+ * block marker, or until the enclosing function returns -- which the tools
+ * close for it, so nothing has to be kept balanced by hand.
+ */
+#ifdef B43_AC_FN_TRACE
+void b43_ac_block_mark(const char *name);
+#define B43_AC_BLOCK(name) b43_ac_block_mark(name)
+#else
+#define B43_AC_BLOCK(name) do { (void)sizeof(name); } while (0)
 #endif
 
 #endif /* B43_PHY_AC_H_ */

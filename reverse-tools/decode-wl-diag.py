@@ -90,7 +90,8 @@ OBJ      = {24, 25}
 # valore NON c'e' -- sta in un buffer del chiamante -- e non e' una read con
 # RETVAL: non va in READS, o compare.py lo vedrebbe come val=UNDEFINED, cioe'
 # un wildcard che combacia con tutto. Il SELETTORE e' il 5o argomento e arriva
-# in un record ARGX come a5: dopo merge_retvals.py la riga lo porta in coda.
+# in un record ARGX come a5: dopo `trace_filter.py --retvals` la riga lo
+# porta in coda.
 OBJ_BULK = {41, 42}
 # Address match: il record porta il solo indice (a1). AMT.WR porta anche a3.
 ADDRMATCH = {43, 44, 45}

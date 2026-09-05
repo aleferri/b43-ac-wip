@@ -1,5 +1,5 @@
 /*
- * Read plan per PHY 0x0270, generato da reverse-tools/gen_readplan.py.
+ * Read plan per PHY 0x0270, generato da `reverse-tools/reads.py plan`.
  * Non modificare a mano: rigenerare dalle catture (vedi test/README.md).
  *
  * I valori sono quelli che il tracer vendor ha registrato, nell'ordine in

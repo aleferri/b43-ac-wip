@@ -35,7 +35,7 @@ mismatch di compare.py sono quindi due specie di segnale: valori
 diversi e micro-ordine diverso. I residui restano ispezionabili a
 parte.
 
-Entrambi gli input vanno prima passati da collapse_trace.py: le op di
+Entrambi gli input vanno prima passati da `trace_filter.py --collapse`: le op di
 meccanismo del port tabelle dipendono da come il driver carica le tabelle
 e accoppiarle non ha senso. Il tool avvisa se ne vede.
 
@@ -188,7 +188,7 @@ def main():
                       any(p in op for p in PORT_ADDRS))
         if leak:
             print(f"avviso: {leak} op di meccanismo tabelle in {name} -- "
-                  f"passa l'input da collapse_trace.py", file=sys.stderr)
+                  f"passa l'input da trace_filter.py --collapse", file=sys.stderr)
 
     RK = [coarse_key(op) for _, op in ref]
     VK = [coarse_key(op) for _, op in ven]
