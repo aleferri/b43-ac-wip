@@ -23,38 +23,105 @@ Ordine tipico: decodifica → fold RETVAL → collapse → (reorder) → confron
   si puo' passare su tutto.
 - **decode-wl-diag.py** — decodifica i record binari (28 B BE) emessi dal
   modulo `wl-diag` in righe testuali (`PHY.WR addr=.. val=..`, ecc.).
-- **merge_retvals.py** — ripiega le righe `RETVAL` nella op di lettura che le
-  precede, così ogni `RD` porta il suo valore.
-- **fold_mod_reads.py** — ripiega la read-implicita di ogni `MOD` (RMW).
-- **collapse_trace.py** — rimuove il meccanismo raw delle table-op, lasciando le
-  `TBL.*` compatte. Prerequisito di `reorder_trace` e `macro_order_map`.
-  ATTENZIONE: per il confronto op-per-op col port usare il trace **grezzo**,
-  non il collassato (vedi sotto).
+- **trace_filter.py** — toglie da una traccia gli artefatti della
+  strumentazione: tre filtri componibili, applicati in un ordine fisso perche'
+  e' l'unico che funziona (prima i valori, poi le op che li portano).
+  - `--retvals` ripiega le righe `RETVAL` e `ARGX` nella op che le precede,
+    cosi' ogni `RD` porta il suo valore. **Senza questo ogni lettura ha
+    `val=UNDEFINED`**, e dimenticarlo e' l'errore piu' facile da fare: una
+    `grep 'val=0x...'` su un file non ripiegato non trova nessuna lettura e
+    sembra che l'op non ci sia.
+  - `--mod-reads` toglie la lettura interna di ogni `MOD` (la RMW che
+    `phy_reg_mod` fa da se'), che e' puro artefatto e in un confronto
+    posizionale e' un falso mismatch. Non nasconde ne' il meccanismo delle
+    tabelle ne' i valori.
+  - `--collapse` toglie le op sulle porte delle tabelle (0x00d id, 0x00e
+    offset, 0x00f/0x010/0x011 dati, 0x019e gate) lasciando la sola
+    intestazione `TBL`. Prerequisito di `reorder_trace` e `macro_order_map`.
+    ATTENZIONE: nasconde anche i valori, quindi una divergenza vera sparisce
+    con loro. Per il confronto op-per-op col port si usa la traccia
+    **grezza**, non la collassata.
 - **reorder_trace.py** — riordina una traccia sull'ordine di un'altra, per
   allineare due catture.
 - **compare.py** (in `test/`) — **il confronto canonico**: match posizionale per
-  sequenza tra l'output dell'harness e la cattura vendor grezza. È la misura di
-  correttezza del port (gate di regressione: `switch_channel d6220` = 22268/22268).
+  sequenza tra l'output dell'harness e la cattura vendor grezza. Non si lancia a
+  mano: `test/gates.sh` ricava la finestra e la schedule dei tick dal segmento e
+  chiama lui e `cmp_skip.py`. Il numero corrente sta in `README.md`, che e'
+  l'unico posto dove va aggiornato.
 
 ## Analisi
 
-- **localize_functions.py** — localizza le funzioni del driver in una traccia.
-  Modo nuovo (preferito): `localize_functions.py <harness_con_marcatori> <trace>`
-  usa i confini esatti emessi da `B43_AC_FN()` (harness con `AC_FN_MARKERS=1`).
-  Modo vecchio (fallback): un solo trace, fingerprint indovinati dai sorgenti.
-- **coverage_by_function.py** — copertura per-sequenza di un flow (rfkill,
-  op_init, …) contro la cattura vendor **grezza**, con i gap tra funzioni.
-  Le funzioni che scrivono tabelle vanno confrontate per contenuto, non per
-  sequenza (il vendor intercala le `TBL` in ordine diverso).
+- **tracelib.py** — non e' un tool, e' la libreria che gli altri importano:
+  parsing delle righe vendor e port, normalizzazione delle op, attribuzione di
+  ogni op alla funzione piu' interna tramite la pila dei marcatori, calcolo
+  degli span, scoperta delle catture (zip compresi, con la sintassi
+  `archivio.zip!interno.txt`). Normalizzazione e attribuzione stanno qui e non
+  nei chiamanti perche' sono la *definizione* di "la stessa op" e "questa op e'
+  di questa funzione": due tool che le implementano in modo diverso danno due
+  risposte diverse alla stessa domanda.
+- **fn_map.py** — dove cade ogni funzione del port dentro una cattura, in tre
+  modi di forza crescente. `coverage` conta le op ritrovate per funzione e
+  mostra i **gap**, cioe' le op vendor che nessuna funzione copre; `span` da'
+  l'intervallo di episodi di cui ogni funzione rende conto, allineando le due
+  sequenze per intero, e vale solo se il port riproduce quella cattura;
+  `fingerprints` ricava le sequenze dai letterali nei sorgenti invece che dai
+  marcatori, e serve quando l'harness non puo' riprodurre la cattura (altra
+  board, altra build del blob). La cattura va passata **grezza**, non
+  collassata. Le funzioni che scrivono tabelle vanno confrontate per contenuto,
+  non per sequenza (il vendor intercala le `TBL` in ordine diverso) e qui
+  appaiono con una copertura bassa che non e' un difetto del port.
+  Il `--gap` di `coverage` decide cosa significa il risultato e sbaglia in due
+  versi: troppo stretto non chiude una fase intercalata, troppo largo raccoglie
+  op sparse per tutta la cattura e il punteggio sale fino a non voler dire
+  niente. Il conteggio va letto insieme all'intervallo che lo accompagna.
+- **anchors.py** — i riferimenti `#NNNN` nei commenti: `resolve` dice quali
+  catture contengono quell'indice, `class` se l'op a quell'indice e' della
+  classe che il codice emette li' (un ancoraggio confermato dalla classe non e'
+  necessariamente giusto, ma uno smentito e' sbagliato di sicuro), `span` se
+  l'indice cade nell'intervallo che la funzione copre davvero -- ed e' l'unico
+  dei tre che identifica *quale* cattura, cioe' l'informazione che
+  all'ancoraggio manca. Esce con stato 1 quando qualcosa non si risolve, quindi
+  e' usabile come gate prima di un commit.
+- **phase_absent.py** — quali fasi il vendor non esegue oltre una soglia, che e'
+  cio' che decide cosa gatare. Confronta quante volte il vendor tocca gli
+  indirizzi di ogni fase sotto e sopra la soglia. Il default guarda **tutti**
+  gli indirizzi propri della fase; `--witness-only` ne guarda uno solo, quello
+  esclusivo, e risponde a una domanda piu' debole: i tre registri esclusivi di
+  `idle_tssi_meas` sono a zero sopra i 5250 MHz mentre la fase gira, quindi un
+  testimone esclusivo a zero prova assente il **registro**, non la fase.
 - **find_readback_hardcodes.py** — trova registri che il vendor legge ma il
   port hardcoda un literal invece di derivarli (dà `<vendor_trace> <harness>`).
 - **macro_order_map.py** — mappa l'ordine macro delle fasi confrontando due
   trace collassati (`<harness.collapsed> <vendor.collapsed>`).
-- **decorrelate_channel_bw.py** — decorrela le scritture deterministiche tra più
-  catture canale/BW (utile per la generalizzazione BW).
-- **diff_traces.py** / **verify_nvram_consumption.py** — coppia NVRAM:
-  scoperta delle dipendenze NVRAM (differenziale tra board) e verifica mirata
-  dei SROM input che il driver consuma.
+- **decorrelate_channels.py** — decorrela le scritture rispetto a canale e
+  larghezza su N segmenti, classificando ogni chiave in invariante,
+  solo-canale, solo-larghezza o dipendente da entrambi.
+- **srom.py** — quali valori che il driver scrive sono dati di board e non
+  codice, con tre metodi. `literals` cerca le costanti del driver che
+  coincidono con un valore dichiarato dalla SROM (con `--canonical`, il
+  `bcmsrom_tbl.h` di Broadcom decide se il campo esiste davvero o se il match
+  era fortuna). `correlate` confronta due catture e legge cosa *cambia*, che
+  e' l'unico modo utile visto che ogni valore SROM viene trasformato prima di
+  essere scritto. `verify` prende i quattro input che il port legge davvero da
+  `bus_sprom`, applica la trasformazione del consumatore e cerca il risultato
+  nella finestra della funzione che lo consuma. Le catture si passano come
+  argomenti.
+- **reads.py** — le letture che il port scarta, nei tre stadi della stessa
+  indagine. `risk` dice quali hanno un valore che **varia** fra le catture: una
+  costante e' al massimo fragile, una che varia e' un bug in attesa di un'altra
+  board, perche' il port non sta imparando niente e ogni scrittura che ne
+  dipende e' trascritta invece che derivata. `intent` dice cosa il driver stock
+  ne **fa** -- ciclo di campionamento, poll, read-modify-write, read-to-clear,
+  probe -- perche' "letta per l'ordine sul bus" non e' una spiegazione, e' cio'
+  che resta quando nessuno l'ha ricavata. `plan` emette il piano di lettura in
+  C per un registro, che serve ai flow che girano senza `AC_READ_ORACLE`.
+- **sweep_report.py** — un rapporto su uno sweep, in due modi. `score` da' una
+  riga per canale ed e' il segnale grosso: dice quali canali si sono mossi.
+  `regdiff` dice quali registri il port scrive in modo diverso, aggregato su
+  tutti i canali, ed e' quello che dice cosa e' sbagliato davvero oggi.
+  ATTENZIONE: il denominatore di `score` sono le sole op del vendor, mentre
+  `test/cmp_skip.py` usa l'unione dei due flussi e penalizza le op in piu'.
+  **I due numeri non sono confrontabili** e quello citabile e' di `cmp_skip`.
 - **annotate_enables.py** / **dataflow.py** — utility di debug (stato enable
   riga-per-riga; data-flow attraverso le table read).
 
@@ -72,14 +139,28 @@ Ordine tipico: decodifica → fold RETVAL → collapse → (reorder) → confron
   che nessuna manomissione della struct del PHY riprodurrebbe: azzerare il byte
   della cal lascerebbe come sono i flag 250 ("phy_init fatto") e 249 (POR).
   Procedura in `wl-diag/README.md`.
-- **split_by_mark.py** — taglia una traccia sui record **MARK**, un file per
-  etichetta. I MARK li inietta chi cattura (`echo "ch36 bw20" > /proc/wl_diag`)
-  e `wl_diag` ai bordi di ogni caricamento del bersaglio, quindi il confine e'
-  scritto nella traccia e i nomi vengono dalle etichette.
-- **split_by_chanspec.py** — la controparte per gli sweep a caldo di
-  `capture_plan.sh`, che non hanno MARK: taglia sui **salti temporali** (soglia
-  1.03 s) perche' i record `CHANSPEC` sono in ritardo di un ciclo e ne arriva
-  uno solo per fase, e prende i nomi dall'ordine della fase.
+- **split_trace.py** — taglia una traccia in un segmento per configurazione.
+  Il criterio del confine si sceglie con `--on`, e quale sia quello giusto
+  dipende da come la cattura e' stata presa:
+  - `--on mark` sui record **MARK**, che li inietta chi cattura (`echo "ch36
+    bw20" > /proc/wl_diag`) e `wl_diag` ai bordi di ogni caricamento del
+    bersaglio: il confine e' scritto nella traccia e i nomi vengono dalle
+    etichette. E' il criterio dello sweep a freddo di `cold_capture.sh`.
+  - `--on chanspec` sulla scrittura del chanspec in shared memory. E' il
+    criterio con cui sono stati prodotti i segmenti dentro `hot-sweep.zip`, e
+    l'unico che li riproduce. Attenzione a cosa comporta: dentro un ciclo il
+    chanspec cade dopo la testa del ciclo, quindi quella testa finisce in coda
+    al segmento precedente.
+  - `--on gaps` sui **salti temporali** (soglia 1.03 s), per una traccia che
+    non porta ne' MARK ne' chanspec. Taglia piu' avanti di `chanspec` e tiene
+    la testa del ciclo col ciclo, che e' il verso giusto, ma non riproduce lo
+    split pubblicato negli archivi. Il gap da solo non basta e per questo il
+    criterio non e' solo una soglia: mentre l'interfaccia e' su, un
+    campionamento periodico lascia buchi di ~1.00 s indistinguibili per durata,
+    e li si riconosce perche' hanno la **stessa** op ai due lati.
+
+  I nomi dei file prodotti (`00-init-parziale.txt`, `00-scartati.txt`) sono
+  quelli pubblicati dentro gli archivi: sono dati, non codice.
 - **audit_hooks.py** — dato un `wl.ko` e `wl-diag/wl_diag.c`, dice per ogni hook
   se il simbolo **esiste** in quella build, se il prologo e' **agganciabile** col
   detour a 4 parole (o a 2 con `.shortj`) e quanti **siti di chiamata indiretta**
@@ -104,3 +185,22 @@ Leggono l'ELF via `pyelftools` (`pip install -r requirements.txt`).
   e dumpa le 25 tabelle init come array C (ha generato `tables_phy_ac.c`).
 - **extract_acphy_txgain.py** — le tabelle `acphy_txgain_*` orfane (band-specific).
 - **extract_chan_tuning_2069rev4.py** — `chan_tuning_2069rev4` (DSL, radio rev4).
+- **cmp_funcs.py** — confronta i corpi delle funzioni omonime di due o piu'
+  build di `wl`, a due livelli: identiche byte per byte, e identiche a meno
+  delle **costanti**. Il secondo livello e' il punto: in un file REL l'addendo
+  delle rilocazioni sta dentro l'istruzione, quindi senza azzerare l'immediato
+  a 16 bit delle I-type e il target a 26 delle J-type ogni differenza di layout
+  conta come differenza di codice. Con due build da' le funzioni divergenti una
+  per una; con piu' di due, la matrice a coppie con anche la sovrapposizione
+  dei nomi (jaccard), che e' quello che dice se due build sono lo stesso driver
+  prima che valga la pena confrontare i corpi. Confronta solo le funzioni
+  presenti in entrambe **e di pari dimensione**: dimensione diversa vuol dire
+  codice diverso e non c'e' niente da confrontare.
+- **ppr_invert.py** — inverte la catena PPR su un segmento, sotto due modelli
+  del massimo di riferimento, che vanno lanciati entrambi perche' quale valga
+  e' cio' che i dati devono decidere. `--model capped` prende `M = max(cp)`, il
+  massimo **dopo** il taglio: allora M non e' un'incognita libera e si enumera
+  il solo tetto, tenendo ogni valore che riproduce gli otto campi. `--model
+  srom` prende `M` dalla SROM, non tagliato: allora `cp` segue
+  dall'osservazione e il tetto segue da `cp`, in forma chiusa e senza
+  enumerazione. Nessuno dei due e' un raffinamento dell'altro.

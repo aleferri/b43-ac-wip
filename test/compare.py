@@ -539,7 +539,8 @@ def ops_equal(v: str, t: str) -> bool:
     Le catture prodotte senza "capture ret val" loggano ogni read come
     val=UNDEFINED: la' il valore non e' confrontabile e va ignorato, mentre
     indirizzo e classe di op restano vincolanti. Sulle catture con i RETVAL
-    ripiegati (merge_retvals.py) il valore c'e' e viene confrontato."""
+    ripiegati (`trace_filter.py --retvals`) il valore c'e' e viene
+    confrontato."""
     # Le op read-modify-write di bcma (PMU.RC, GPIO.*) portano nel trace vendor
     # il valore riletto dopo la modifica; gli stub bcma dell'harness non
     # modellano quel readback, quindi il suffisso non e' confrontabile.

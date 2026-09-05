@@ -62,7 +62,7 @@ non necessariamente un punto in cui il driver legge il campo NVRAM.
 Dettagli e note di derivazione: est_pwr e max index in
 [`txlpf-formula.md`](txlpf-formula.md) e nel corpo di
 `b43_phy_ac_txpwrctrl_setup`; verificatori in
-`../reverse-tools/verify_nvram_consumption.py` e `../reverse-tools/diff_traces.py`.
+`../reverse-tools/srom.py verify` e `../reverse-tools/srom.py correlate`.
 
 ## Dettaglio per famiglia
 

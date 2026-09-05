@@ -28,7 +28,7 @@ attach a freddo isolato: 18 canali a 20 MHz, 7 a 40, 3 a 80. I segmenti sono
 
     unzip -d /tmp/cold router-data/d6220/cold-sweep.zip
 
-`split_by_mark.py` serve solo per rifare la divisione da capo su una cattura
+`split_trace.py --on mark` serve solo per rifare la divisione da capo su una cattura
 nuova. Sulla traccia in archivio e' deterministico: rilanciarlo su
 `00-traccia-intera.txt` riproduce `segmenti/` bit per bit.
 

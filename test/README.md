@@ -28,7 +28,7 @@ grezze: le letture hanno `val=UNDEFINED` e il valore sta nella riga `RETVAL`
 successiva. **Prima di usarle per una grep sui valori** vanno ripiegate:
 
 ```sh
-python3 ../reverse-tools/merge_retvals.py \
+python3 ../reverse-tools/trace_filter.py --retvals \
     /tmp/cold/segmenti/cold01-ch36-bw20.txt /tmp/m01
 ```
 
@@ -51,13 +51,17 @@ riferimento gira su un binario che difende meno.
 
 ### 3. I tre gate, che sono la verifica canonica
 
+`gates.sh` copre entrambe le condizioni: `--cold` (il default) e `--hot`.
+`--hot --flow switch_channel DIR` da' invece una riga per canale su una
+directory di segmenti.
+
 ```sh
 ./gates.sh                                             # cold01 ch36 bw20
 ./gates.sh /tmp/cold/segmenti/cold05-ch52-bw20.txt     # un altro segmento
 ./gates.sh /tmp/cold/segmenti/cold[0-9][0-9]-ch*.txt   # tutti e 26
 
 unzip -d /tmp/hot ../router-data/d6220/hot-sweep.zip
-./gates-caldo.sh                                       # tre segmenti up
+./gates.sh --hot                                       # tre segmenti up
 
 AC_READ_ORACLE=../router-data/d6220/wl-diag-wl1-steady-tick-ch36-bw20.txt \
     ./ac_trace periodic d6220 > /tmp/p.out
@@ -79,7 +83,7 @@ i punteggi tornano. E' quello che e' successo a `may_calibrate_tx()`, che
 guardava solo `center_freq <= 5250`: a freddo tutto in ordine, e sui segmenti
 `up` sopra i 5250 il port stava al 35% invece che all'80%.
 
-`gates-caldo.sh` usa il flow `up` con `AC_FIRST_INIT=0` e i suoi tre segmenti
+`gates.sh --hot` usa il flow `up` con `AC_FIRST_INIT=0` e i suoi tre segmenti
 di default sono scelti per cogliere proprio quel caso: uno sotto i 5250 MHz e
 due sopra. Se un predicato confonde le due condizioni, il primo resta fermo e
 gli altri due crollano.
@@ -309,7 +313,7 @@ overrun che ha girato piu' del previsto.
 
 ```sh
 AC_FN_MARKERS=1 ./ac_trace full d6220 > /tmp/annotato.txt
-python3 ../reverse-tools/coverage_by_function.py /tmp/annotato.txt \
+python3 ../reverse-tools/fn_map.py coverage /tmp/annotato.txt \
     /tmp/cold/segmenti/cold01-ch36-bw20.txt
 ```
 

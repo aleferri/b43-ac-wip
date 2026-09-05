@@ -298,7 +298,7 @@ static u32 emit(u8 op, u32 addr, u32 val, u32 aux)
  * l'impacchettamento a mano e non distingue le due versioni. Dodici caratteri
  * per record, big-endian esplicito, eccedenza tagliata.
  *
- * Sono il confine su cui taglia split_by_mark.py: senza, uno sweep non ha
+ * Sono il confine su cui taglia `split_trace.py --on mark`: senza, uno sweep non ha
  * segmenti e il caldo/freddo non si divide. */
 static u32 pack4(const char *p)
 {

@@ -24,9 +24,9 @@
  *
  * The #NNNNN indices in the comments are episode positions in a reference
  * capture. An index alone does not identify one: the index spaces of the
- * captures overlap, so reverse-tools/check_trace_refs.py resolves most bare
+ * captures overlap, so `reverse-tools/anchors.py resolve` resolves most bare
  * indices to several different ops. Check a reference with
- * reverse-tools/check_ref_spans.py before relying on it.
+ * `reverse-tools/anchors.py span` before relying on it.
  */
 
 #include <linux/slab.h>

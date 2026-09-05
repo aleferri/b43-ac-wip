@@ -1,6 +1,6 @@
 #!/bin/sh
 # Piano di cattura: sweep di canali e larghezze, da splittare a posteriori sui
-# record CHANSPEC con reverse-tools/split_by_chanspec.py.
+# record CHANSPEC con `reverse-tools/split_trace.py --on chanspec`.
 #
 # Presupposti:
 #   - wl_diag.ko armato (arm=1) e listener TCP attivo sull'host;

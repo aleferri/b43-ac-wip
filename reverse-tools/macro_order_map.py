@@ -49,7 +49,8 @@ def squash(seq,eps):
     return O,E
 if len(sys.argv) < 3:
     sys.exit("usage: macro_order_map.py <harness.collapsed> <vendor.collapsed>\n"
-             "  entrambi gli input vanno prima passati da collapse_trace.py")
+             "  entrambi gli input vanno prima passati da\n"
+             "  trace_filter.py --collapse")
 R,_=parse(sys.argv[1]); R,_=squash(R,[None]*len(R))
 V,VE=parse(sys.argv[2]); V,VE=squash(V,VE)
 RK=[ck(o) for o in R]; VK=[ck(o) for o in V]; Rn=[re.sub(r'\s+',' ',o) for o in R]

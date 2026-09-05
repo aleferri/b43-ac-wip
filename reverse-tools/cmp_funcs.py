@@ -1,21 +1,32 @@
 #!/usr/bin/env python3
-"""Confronta le funzioni omonime di due ELF MIPS32 a due livelli.
+"""Compare the function bodies of two or more MIPS32 ELF builds of wl.
 
-  byte       : identiche byte per byte
-  a-costanti : stesse istruzioni con costanti diverse. Si azzera l'immediato a
-               16 bit delle I-type e il target a 26 delle J-type. In un file REL
-               l'addendo delle rilocazioni sta dentro l'istruzione, quindi senza
-               questo passaggio ogni differenza di layout conta come differenza
-               di codice.
+Two levels of sameness, and the second one is the point of the tool:
 
-Confronta solo le funzioni comuni E di pari dimensione: dimensione diversa vuol
-dire codice diverso e non c'e' niente da confrontare.
+  byte        identical byte for byte
+  constants   same instructions with different constants. The 16-bit
+              immediate of the I-types and the 26-bit target of the J-types
+              are zeroed. In a REL file the relocation addend lives inside the
+              instruction, so without this step every difference of layout
+              counts as a difference of code.
 
-Uso: cmp_funcs.py A.o B.o [--filtro sottostringa]
+Only the functions present in both AND of equal size are compared: a
+different size means different code, and there is nothing to compare.
+
+With two builds it reports the differing functions one by one; with more, a
+pairwise matrix with the name overlap (jaccard) as well, which is what says
+whether two builds are the same driver at all before the bodies are worth
+comparing.
+
+Usage:
+  cmp_funcs.py A.o B.o [--filter substring]
+  cmp_funcs.py label=A.o label=B.o label=C.o [...] [--filter substring]
 """
 import argparse
+import itertools
 import re
 import subprocess
+import sys
 
 I_TYPE = set(range(0x04, 0x10)) | set(range(0x20, 0x30)) | {
     0x30, 0x31, 0x32, 0x33, 0x35, 0x36, 0x37,
@@ -24,16 +35,26 @@ I_TYPE = set(range(0x04, 0x10)) | set(range(0x20, 0x30)) | {
 J_TYPE = {0x02, 0x03}
 
 
-def load(path, filtro):
-    out = subprocess.run(['readelf', '-SW', path], capture_output=True, text=True).stdout
+def load(path, filter_):
+    """{function name: body bytes} for the FUNC symbols matching the filter.
+
+    The body is read from the file at the section offset, so it works on a REL
+    object that was never linked: the symbol address is relative to its
+    section, and the section header gives both the virtual address and the
+    file offset to translate it.
+    """
+    out = subprocess.run(['readelf', '-SW', path],
+                         capture_output=True, text=True).stdout
     sec = {}
-    for m in re.finditer(r'\[\s*(\d+)\]\s+\S+\s+\S+\s+([0-9a-f]+)\s+([0-9a-f]+)', out):
+    for m in re.finditer(
+            r'\[\s*(\d+)\]\s+\S+\s+\S+\s+([0-9a-f]+)\s+([0-9a-f]+)', out):
         sec[int(m.group(1))] = (int(m.group(2), 16), int(m.group(3), 16))
     data = open(path, 'rb').read()
     fn = {}
-    for l in subprocess.run(['readelf', '-sW', path], capture_output=True, text=True).stdout.splitlines():
+    for l in subprocess.run(['readelf', '-sW', path],
+                            capture_output=True, text=True).stdout.splitlines():
         c = l.split()
-        if len(c) < 8 or c[3] != 'FUNC' or filtro not in c[7]:
+        if len(c) < 8 or c[3] != 'FUNC' or filter_ not in c[7]:
             continue
         try:
             addr, size, shndx = int(c[1], 16), int(c[2]), int(c[6])
@@ -49,6 +70,7 @@ def load(path, filtro):
 
 
 def shapes(b):
+    """The instruction words with the constants masked out."""
     out = []
     for i in range(0, len(b) - 3, 4):
         w = int.from_bytes(b[i:i + 4], 'big')
@@ -58,27 +80,65 @@ def shapes(b):
     return out
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument('a')
-    ap.add_argument('b')
-    ap.add_argument('--filtro', default='acphy')
-    args = ap.parse_args()
-
-    A, B = load(args.a, args.filtro), load(args.b, args.filtro)
+def classify(A, B):
+    """(common, equal size, byte-identical, same-up-to-constants, other)."""
     common = sorted(set(A) & set(B))
     same = [k for k in common if len(A[k]) == len(B[k])]
     ident = [k for k in same if A[k] == B[k]]
-    modk = [k for k in same if A[k] != B[k] and shapes(A[k]) == shapes(B[k])]
+    modk = [k for k in same
+            if A[k] != B[k] and shapes(A[k]) == shapes(B[k])]
     other = [k for k in same if k not in ident and k not in modk]
+    return common, same, ident, modk, other
 
-    print(f"comuni {len(common)}, di pari dimensione {len(same)}")
-    print(f"  byte identiche               {len(ident)}")
-    print(f"  identiche a meno di costanti {len(modk)}")
-    print(f"  istruzioni diverse           {len(other)}")
+
+def pair_report(A, B):
+    common, same, ident, modk, other = classify(A, B)
+    print(f"common {len(common)}, of equal size {len(same)}")
+    print(f"  byte identical               {len(ident)}")
+    print(f"  identical up to constants    {len(modk)}")
+    print(f"  different instructions       {len(other)}")
     for k in other:
         n = sum(1 for x, y in zip(shapes(A[k]), shapes(B[k])) if x != y)
-        print(f"      {k}  ({n} istruzioni diverse su {len(A[k]) // 4})")
+        print(f"      {k}  ({n} differing instructions of {len(A[k]) // 4})")
+
+
+def matrix_report(builds):
+    print(f"\n{'pair':46} {'jaccard':>8} {'eq size':>9} {'identical':>10} "
+          f"{'up to const':>12}")
+    for a, b in itertools.combinations(builds, 2):
+        A, B = builds[a], builds[b]
+        common, same, ident, modk, _ = classify(A, B)
+        jac = len(common) / len(set(A) | set(B))
+        pc = 100.0 * (len(ident) + len(modk)) / len(same) if same else 0
+        print(f"{a + ' <-> ' + b:46} {jac:8.3f} {len(same):9} {len(ident):10} "
+              f"{len(ident) + len(modk):6} {pc:4.0f}%")
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('files', nargs='+', metavar='[label=]file')
+    ap.add_argument('--filter', dest='filter_', default='acphy',
+                    help="only symbols whose name contains this (default "
+                         "'acphy'); pass '' for every FUNC symbol")
+    args = ap.parse_args()
+
+    builds = {}
+    for arg in args.files:
+        label, _, path = arg.rpartition('=')
+        path = path or arg
+        label = label or path
+        builds[label] = load(path, args.filter_)
+        print(f"  {label:22} {len(builds[label])} functions")
+
+    if len(builds) < 2:
+        sys.exit("at least two builds are needed")
+    if len(builds) == 2:
+        (A, B) = builds.values()
+        pair_report(A, B)
+    else:
+        matrix_report(builds)
 
 
 if __name__ == '__main__':

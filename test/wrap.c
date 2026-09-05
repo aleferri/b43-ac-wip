@@ -176,8 +176,8 @@ static FILE *trace(void)
  * Function-boundary markers (see B43_AC_FN in phy_ac.h). Emit into the same
  * trace stream, in order, only when AC_FN_MARKERS is set in the environment;
  * otherwise silent, so the default trace matches the vendor capture for
- * compare.py. Enter/leave nest, so localize_functions.py can attribute each op
- * to the innermost active function.
+ * compare.py. Enter/leave nest, so fn_map.py can attribute each op to the
+ * innermost active function.
  */
 static int b43_ac_fn_enabled(void)
 {
@@ -207,7 +207,8 @@ void b43_test_trace_to(FILE *f) { trace_stream = f; }
  * Invece di read plan scritti a mano, i valori di ritorno possono venire dalla
  * cattura vendor: la N-esima lettura di un indirizzo restituisce la N-esima
  * lettura di quello stesso indirizzo nella cattura, in ordine di episodio.
- * Si attiva con AC_READ_ORACLE=<cattura passata per merge_retvals.py>, e
+ * Si attiva con AC_READ_ORACLE=<cattura passata per `trace_filter.py
+ * --retvals`>, e
  * AC_READ_ORACLE_FROM=<episodio> limita il caricamento alla fase che il flow
  * copre. Serve: le code sono per indirizzo e in ordine, quindi caricare tutta
  * la cattura per un flow che ne esegue una fetta fa consumare valori di letture
