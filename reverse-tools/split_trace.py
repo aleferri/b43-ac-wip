@@ -251,7 +251,7 @@ def write_segments(segments, outdir, prefix):
     # EVERYTHING is written before anything is printed: with SIGPIPE at
     # SIG_DFL a `| head` kills the process at the first print, and printing
     # inside the loop would end with the first files written and the others
-    # not -- silently. It has happened.
+    # not, silently.
     written = []
     for name, lines in segments:
         dest = os.path.join(outdir, prefix + name if prefix else name)

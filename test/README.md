@@ -79,9 +79,9 @@ Non serve rifarne i passi a mano, e farlo a mano sbaglia la finestra.
 sweep a freddo e' tutto primo bring-up -- un modulo ricaricato per canale --
 quindi ogni predicato che distingue il primo bring-up dai successivi e'
 invisibile la': un termine mancante vale lo stesso su tutti e 26 i segmenti e
-i punteggi tornano. E' quello che e' successo a `may_calibrate_tx()`, che
-guardava solo `center_freq <= 5250`: a freddo tutto in ordine, e sui segmenti
-`up` sopra i 5250 il port stava al 35% invece che all'80%.
+i punteggi tornano. Un predicato come quello di `may_calibrate_tx()`, che
+guarda solo `center_freq <= 5250`, a freddo non si distingue da uno corretto,
+e sui segmenti `up` sopra i 5250 fa la differenza fra l'80% e il 35%.
 
 `gates.sh --hot` usa il flow `up` con `AC_FIRST_INIT=0` e i suoi tre segmenti
 di default sono scelti per cogliere proprio quel caso: uno sotto i 5250 MHz e
@@ -226,7 +226,7 @@ degenere, perche' farebbe salire il punteggio quando si toglie codice.
 Va **ristretta ogni volta che il port impara a scrivere una cella**: il
 perimetro scarta dal solo lato vendor, quindi una cella che il port emette e il
 perimetro scarta diventa un'inserzione senza controparte e rompe il confronto
-posizionale. E' successo.
+posizionale.
 
 ## Come funziona l'harness
 

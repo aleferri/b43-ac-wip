@@ -277,10 +277,10 @@ costruito. C'e' -> e' costruito ma non viene raggiunto, e il sospetto e' il pool
 di `wl_diag_enter_ret`, che restituisce `orig_ra` in silenzio quando le entry
 sono esaurite.
 
-**E' successo per davvero**, causa: tre campi di stato (`use_bp`, `use_sites`,
-`bp_stub`) inseriti nella `struct hook` **fra `shortj` e `retcap`**. La tabella
-usa inizializzatori posizionali, quindi il `true` destinato a `retcap` finiva in
-`use_bp` e `retcap` restava falso per ogni hook. I campi nuovi ora stanno in
+La causa e' la `struct hook`: la tabella usa inizializzatori posizionali,
+quindi un campo inserito **fra `shortj` e `retcap`** sposta il `true`
+destinato a `retcap` su quel campo, e `retcap` resta falso per ogni hook.
+I campi nuovi stanno in
 coda, e gli inizializzatori usano la forma designata (`.retcap = true`) che e'
 immune al riordino.
 
@@ -676,9 +676,9 @@ dmesg | tail                      # "wl_diag: ARMATO (N hook) -> /dev/wl_diag"
 
 ### 4. Niente da creare: il buffer e' in /proc/wl_diag
 
-Appare al caricamento del modulo. Prima era un misc device a minor dinamico e
-bisognava leggere il minor da `/proc/misc` e fare `mknod` a ogni `insmod`, con
-il
+Appare al caricamento del modulo. Un misc device a minor dinamico
+richiederebbe di leggere il minor da `/proc/misc` e fare `mknod` a ogni
+`insmod`, con il
 rootfs spesso read-only e il nodo da mettere in `/tmp`.
 
 `proc_create` ha la stessa firma su 2.6.30 e 3.4 e prende `file_operations`,

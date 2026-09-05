@@ -114,13 +114,11 @@ normalize_op = tracelib.norm
 # Il denominatore del punteggio e' l'unione: tutte le op di wl piu' quelle che
 # il port emette e wl no. Fa 100% solo se i due flussi coincidono.
 #
-# Prima il denominatore erano le sole op di wl, e le inserzioni del port erano
-# gratis. Non lo sono: il driver deve emettere le op di wl, non le sue, e un
-# accesso di troppo a un registro e' un difetto quanto uno mancante -- puo'
-# lasciare l'hardware in uno stato che il driver stock non produce mai. Con la
-# vecchia metrica togliere 6000 op spurie dal port non muoveva il numero di
-# un'unita', il che rendeva invisibile l'unico tipo di progresso che quel giorno
-# si stava facendo.
+# Le inserzioni del port NON sono gratis: il driver deve emettere le op di wl,
+# non le sue, e un accesso di troppo a un registro e' un difetto quanto uno
+# mancante -- puo' lasciare l'hardware in uno stato che il driver stock non
+# produce mai. Col denominatore sulle sole op di wl, togliere 6000 op spurie
+# dal port non muove il numero di un'unita', e il progresso resta invisibile.
 #
 # Le op che il port emette legittimamente e wl non ha vanno in SOLO_PORT, con
 # la ragione scritta. La lista e' vuota di proposito.
@@ -208,8 +206,8 @@ CORE_SHM = [
 # Vanno tolte, non e' facoltativo: il perimetro scarta op dal solo lato vendor,
 # quindi una cella che il port emette e il perimetro scarta diventa
 # un'inserzione senza controparte e rompe il confronto posizionale a quel
-# punto. E' successo -- il posizionale e' rimasto a @66 mentre l'LCS saliva --
-# ed e' la ragione per cui questa lista va ristretta ogni volta che il port
+# punto -- il posizionale si blocca su una divergenza mentre l'LCS sale, che
+# e' il sintomo. Per questo la lista va ristretta ogni volta che il port
 # impara a scrivere una cella.
 
 # Celle che b43.h nomina come del MAC ma che il PHY AC usa davvero, con la
@@ -431,10 +429,10 @@ VAL_NONDET = [
 # LA SOGLIA E' LA MISURA DEL RESIDUO, NON UNA FRANCHIGIA DI COMODO, e va
 # rifatta a ogni cambio del modello di solve. Se e' piu' larga del residuo
 # smette di coprire l'ultimo bit e diventa una fascia dove un errore
-# strutturale si nasconde: e' successo con la soglia precedente a +-4, che era
-# larga il doppio della differenza fra sommare gli accumulatori e mediare i
-# coefficienti -- cioe' fra il modello sbagliato e quello giusto -- e l'ha
-# tenuta invisibile al posizionale per un giro.
+# strutturale si nasconde: una soglia a +-4 e' larga il doppio della
+# differenza fra sommare gli accumulatori e mediare i coefficienti -- cioe'
+# fra il modello sbagliato e quello giusto -- e la terrebbe invisibile al
+# confronto posizionale.
 #
 # Misura corrente, 144 scritture reali del port contro il vendor su tutti e 26
 # i segmenti a freddo e tutti e 52 gli up a caldo:

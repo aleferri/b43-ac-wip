@@ -23,8 +23,8 @@ agcombo_phytable_5gl.txt   wl -i wl1 phytable 0x{44,45} {0..41} 8 +
 esercitato su BCM4360 (`0x4360`, agcombo) oltre a BCM4352-family
 (`0x43b3`, DSL-3580L + D6220), entrambi sromrev 11 / r2069 rev 1 /
 subband5gver 0x4. Il dispatch chip-aware del reverse tooling
-(`reverse-output/by-chip/`) aveva già `{4352, 4360, default}` come
-target — ora ognuno ha un dump di campo associato.
+(`reverse-output/by-chip/`) ha `{4352, 4360, default}` come target, e ognuno
+ha un dump di campo associato.
 
 **Triplet rxgain default radio-side.** I tre chain leggono triplet
 identico per tutte e tre le sub-band 5g (5gl `(3,6,1)`, 5gm `(7,15,1)`,
@@ -58,7 +58,7 @@ chip-specific.
 `Chanspec set to 0xd064` con `ccode=""` e `regrev=0`. Sul DSL-3580L
 sotto firmware OEM 6.30, lo stesso comando con `-i wl1` accetta almeno
 UNII-1 a 20 e 80 MHz (`5g36/20`, `5g36/80`, `5g40/80` tutti `Chanspec
-set` puliti); la sessione precedente di `Bad Channel` sul DSL era
-artefatto di `wl chanspec` senza `-i wl1`, che agisce sul core 2.4 GHz
+set` puliti). Un `Bad Channel` sul DSL e' artefatto di `wl chanspec`
+senza `-i wl1`, che agisce sul core 2.4 GHz
 `wl0` (band-locked). UNII-2/2e/3 sul DSL non è stato testato con la
 forma corretta — ma per il bring-up MVP non interessa.

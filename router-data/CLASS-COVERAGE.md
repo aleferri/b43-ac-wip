@@ -5,8 +5,9 @@ tutte le stesse classi di op**. Una cattura presa prima che un hook esistesse
 non contiene quelle op, e questo non dice niente sul driver.
 
 Regola: **un'assenza vale come prova solo se la classe e' tracciata in quella
-cattura.** Dedurre da un'assenza in una cattura incompleta ha prodotto tre
-conclusioni sbagliate — la collocazione del chanspec `OBJ.WR 0x00a0`, la natura
+cattura.** Dedurre da un'assenza in una cattura incompleta porta a conclusioni
+sbagliate: sono in questa condizione la collocazione del chanspec
+`OBJ.WR 0x00a0`, la natura
 delle scritture probe-response `0x0180-0x0186`, e il rifiuto del campione di
 rumore `OBJ.RD 0x0308` davanti al blocco E.
 
@@ -83,9 +84,7 @@ zero: quello che serve e' cambiare l'hook, non il decode.
 ## Rimosse
 
 Diciassette catture non tracciavano `OBJ`, `TPL` e `CAL`. Sono state
-cancellate: restano in git, e non vanno reintrodotte come riferimento. Fra
-queste le due su cui girava la coppia di gate precedente,
-`attach-to-bss-up-ch36-bw20` e `down-to-bss-ch36-bw20`.
+cancellate: restano in git, e non vanno reintrodotte come riferimento.
 
 ## Senza `CAL`
 

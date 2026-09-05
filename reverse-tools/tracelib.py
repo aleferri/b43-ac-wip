@@ -11,8 +11,7 @@ Three formats pass through here:
 Op normalization and attribution to functions are not details of one tool:
 they are the definition of what "the same op" and "this op belongs to this
 function" mean. Two tools implementing them differently give two answers to
-the same question, which has happened, so they live here and not in the
-callers.
+the same question, so they live here and not in the callers.
 """
 import collections
 import difflib
