@@ -10,7 +10,8 @@ nell'ordine giusto.
 
 Gli oracoli sono le catture in `router-data/`. La cattura di riferimento è
 `d6220/wl-diag-wl1-attach-to-bss-up-ch36-bw20.txt`: parte da episodio 1, ha i
-valori di ritorno (`RETVAL`, da ripiegare con `reverse-tools/merge_retvals.py`)
+valori di ritorno (`RETVAL`, da ripiegare con
+`reverse-tools/trace_filter.py --retvals`)
 ed è sul chip di target. Le catture `down→bss` restano utili per la fase di
 bring-up successivo, che è una fase distinta — vedi *Fasi* sotto.
 

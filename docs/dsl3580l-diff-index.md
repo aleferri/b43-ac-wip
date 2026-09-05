@@ -92,7 +92,7 @@ conteggi gonfi = slittamento, **non** differenze reali.
 
 ## Riproducibilità
 
-`reverse-tools/collapse_trace.py` sulle tre tracce, poi
+`reverse-tools/trace_filter.py --collapse` sulle tre tracce, poi
 `reverse-tools/macro_order_map.py <harness.collapsed> <vendor.collapsed>`
 (firme di fase = mappa macro). I conteggi sono
 del segmento collassato; le righe [CHIP] sono multiset di chiavi strutturali

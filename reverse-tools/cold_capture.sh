@@ -26,7 +26,7 @@
 # sull'host:
 #     ncat -l 5555 | python3 decode-wl-diag.py | tee cold.txt
 # a fine corsa:
-#     python3 reverse-tools/split_by_mark.py cold.txt split/
+#     python3 reverse-tools/split_trace.py --on mark cold.txt split/
 #
 # I confini fra i cicli sono record MARK dentro la traccia, scritti da qui con
 # `echo "ch36 bw20" > /proc/wl_diag`; wl_diag aggiunge "mod COMING"/"mod GOING"
@@ -289,4 +289,5 @@ done
 
 marca "fine corsa"
 echo ""
-echo "fatto. Taglia la traccia con: python3 split_by_mark.py <trace> split/"
+echo "fatto. Taglia la traccia con:"
+echo "  python3 split_trace.py --on mark <trace> split/ --bringup-only"

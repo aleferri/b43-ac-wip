@@ -119,7 +119,7 @@ poll non limitato del driver.
 ## Copertura del bring-up (rfkill + op_init)
 
 L'harness marca ogni funzione con `B43_AC_FN()` (attivo con `AC_FN_MARKERS=1`,
-altrimenti il trace resta pulito per `compare.py`); `coverage_by_function.py`
+altrimenti il trace resta pulito per `compare.py`); `fn_map.py coverage`
 misura la copertura per-sequenza contro la cattura grezza. Risultato: bring-up
 radio coperto al 100% su d6220 e agcombo. Le divergenze note (tutte sul DSL
 wl 6.30: prefregs −2 scritture, afe_lpf_stage, rccal ~84%) sono in

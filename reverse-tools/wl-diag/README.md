@@ -74,7 +74,7 @@ viene saltato e la cattura esce senza quella classe di op.
 ### Run unica su piu' canali
 
 `reverse-tools/capture_plan.sh` fa lo sweep, e
-`reverse-tools/split_by_chanspec.py` taglia la traccia decodificata in un file
+`reverse-tools/split_trace.py` taglia la traccia decodificata in un file
 per chanspec:
 
 Le fasi sono **separate**, perche' una run intera produce troppi byte per
@@ -85,7 +85,7 @@ sh capture_plan.sh 20a          # sul device, con arm=1
 sh capture_plan.sh 20b
 sh capture_plan.sh 40
 sh capture_plan.sh 80
-python3 reverse-tools/split_by_chanspec.py trace-20a.txt split/
+python3 reverse-tools/split_trace.py --on gaps trace-20a.txt split/
 ```
 
 A 40 e 80 MHz il **comando** vuole il canale basso del blocco (`5g36/40`, non
@@ -101,7 +101,7 @@ come confine:
   anche `wlc_phy_chanspec_set_acphy`.
 - ne arriva **uno solo per fase**, o zero.
 
-Percio' `split_by_chanspec.py` taglia sui **salti temporali** e prende i nomi
+Percio' `split_trace.py --on gaps` taglia sui **salti temporali** e prende i nomi
 dall'ordine della fase, riportando i `CHANSPEC` trovati per verifica. Soglia di
 default 1.03 s: lo `sleep 1` fra i cicli lascia 1.06 s, mentre il campionamento
 periodico del rumore lascia buchi di 1.00 s esatti fra due `OBJ.RD`, e per
@@ -312,7 +312,7 @@ Cosa si guadagna rispetto allo sweep a caldo di `capture_plan.sh`:
 - **c'e' anche l'attach**, perche' gli hook sono in piedi dal `COMING`, cioe'
   prima di `mod->init` e quindi prima del probe PCI. Non serve il remove/rescan
   del device, che riusciva circa una volta su due;
-- il taglio a posteriori e' deterministico: `split_by_mark.py` sui record MARK,
+- il taglio a posteriori e' deterministico: `split_trace.py --on mark` sui record MARK,
   non l'euristica dei salti temporali;
 - la fifo e' meno sotto pressione: il lettore resta aperto per tutta la corsa e
   non c'e' un `insmod` di mezzo, quindi `skipphyrd` si puo' lasciare vuoto e i
@@ -494,7 +494,7 @@ enum, con lo stesso valore.
 Entrambi i tracer emettono i `MARK` -- l'etichetta di ciclo da
 `echo "ch36 bw20" > /proc/wl_diag`, piu' `mod COMING` e `mod GOING` sulle
 notifiche di modulo -- quindi una traccia si taglia in segmenti con
-`split_by_mark.py`.
+`split_trace.py --on mark`.
 
 E entrambi riarmano: `COMING` rifa' il piano e applica le patch, `GOING`
 ripristina, senza eccezioni. Serve per la cattura a freddo, dove ogni ciclo e'
@@ -591,8 +591,8 @@ Dodici caratteri, impacchettati big-endian nei tre campi `u32` del record.
 caricamento del bersaglio. Il record entra in coda come tutti gli altri, quindi
 e' **ordinato con le op che lo circondano** e non con l'orologio di chi scrive.
 
-`reverse-tools/split_by_mark.py` taglia sui MARK e prende i nomi dalle
-etichette. E' la differenza con `split_by_chanspec.py`, che per uno sweep a
+`reverse-tools/split_trace.py --on mark` taglia sui MARK e prende i nomi dalle
+etichette. E' la differenza con `--on gaps`, che per uno sweep a
 caldo deve tagliare sui salti temporali con soglia 1.03 s perche' i record
 `CHANSPEC` arrivano in ritardo di un ciclo e uno solo per fase.
 

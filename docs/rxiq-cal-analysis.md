@@ -154,7 +154,7 @@ su un chip poco squilibrato.
 
 Cattura: `router-data/agcombo/agcombo-wl1-4360-rescan-to-bss-ch36.txt`
 (wl-diag "capture ret val", 6453 RETVAL), mergiata con
-`reverse-tools/merge_retvals.py`. Finestra cal: #29788–#32120.
+`reverse-tools/trace_filter.py --retvals`. Finestra cal: #29788–#32120.
 Board agcombo = BCM4360 3x3: terza catena (registri 0x0aXX/0x0bXX)
 attiva, a differenza di DSL-3580L/D6220.
 

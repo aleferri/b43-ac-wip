@@ -25,22 +25,16 @@ test's PHY.MOD lines diff cleanly.
 import re
 import sys
 import argparse
+import os
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                os.pardir, 'reverse-tools'))
+import tracelib  # noqa: E402
 
 VENDOR_LINE = re.compile(
     r'^\s*[0-9.]+\s+#\d+\s+cpu\d+\s+(.+?)\s*(?:;.*)?$'
 )
 TEST_LINE = re.compile(r'^cpu\d+\s+(.+?)\s*$')
-
-# Vendor uses PHY.OR (set-in) and PHY.AND (clear-in) alongside PHY.MOD.
-# Both are folded to the PHY.MOD single-op form that the wrapper emits:
-#   phy_set(X) → PHY.MOD val=X mask=0
-#   phy_mask(K) → PHY.MOD val=K mask=0    (K = ~clr in kernel terms)
-# PHY.OR line looks like "PHY.OR ... val=<current_or_or_in> (set X)":
-#   the (set X) group gives the OR-in bits directly → val=X mask=0.
-# PHY.AND line "PHY.AND ... val=<masked> (clr X)": clr X gives the
-# bits to clear → val=~X (the kmask) mask=0.
-PHY_OR  = re.compile(r'^PHY\.OR\s+addr=(0x[0-9a-f]+)\s+val=0x[0-9a-f]+\s*\(set\s+(0x[0-9a-f]+)\)')
-PHY_AND = re.compile(r'^PHY\.AND\s+addr=(0x[0-9a-f]+)\s+val=0x[0-9a-f]+\s*\(clr\s+(0x[0-9a-f]+)\)')
 
 # Op di alto livello e loro "ombra" a livello di core register: il tracer
 # vendor logga entrambe, l'harness (come il driver) solo la prima. Le ombre sono
@@ -105,40 +99,14 @@ def drop_shadow_ops(ops):
         out.append(op)
     return out
 
-HEXNUM = re.compile(r'\b(0x[0-9a-fA-F]+)\b')
-
-WS = re.compile(r'\s+')
-
-def canon_ws(op: str) -> str:
-    """Collassa lo spazio bianco: la spaziatura fra mnemonico e operandi non e'
-    informazione, e i due lati la formattano diversamente."""
-    return WS.sub(' ', op).strip()
-
-def canon_values(op: str) -> str:
-    """Porta ogni letterale esadecimale a una forma canonica senza zeri di
-    riempimento.
-
-    Il tracer vendor stampa i valori di ritorno a 32 bit (val=0x00000000) mentre
-    l'harness li stampa a 16 (val=0x0000): sono lo stesso numero e il confronto
-    non deve dipendere dalla larghezza del campo. Gli indirizzi passano per la
-    stessa normalizzazione, che e' innocua perche' entrambi i lati la ricevono."""
-    return HEXNUM.sub(lambda m: '0x%x' % int(m.group(1), 16), op)
-
-def normalize_op(op: str) -> str:
-    m = PHY_OR.match(op)
-    if m:
-        addr, setbits = m.groups()
-        return canon_ws(canon_values(
-            f"PHY.MOD  addr={addr} val={setbits} mask=0x0000"))
-    m = PHY_AND.match(op)
-    if m:
-        addr, clrbits = m.groups()
-        return canon_ws(canon_values(
-            f"PHY.MOD  addr={addr} val=0x{(~int(clrbits, 16)) & 0xffff:04x} mask=0x0000"))
-    # L'harness nomina l'abilitazione GPIO come il simbolo bcma
-    # (bcma_chipco_gpio_outen), il tracer vendor come il registro (OE).
-    op = re.sub(r'^GPIO\.OUTEN\b', 'GPIO.OE', op)
-    return canon_ws(canon_values(op))
+# La normalizzazione delle op sta in reverse-tools/tracelib.py, e non qui,
+# perche' e' la definizione di "la stessa op": gli spazi, la larghezza dei
+# letterali, il fold di PHY.AND/PHY.OR sulla forma PHY.MOD che il wrapper
+# emette, e il nome dell'abilitazione GPIO -- che l'harness prende dal simbolo
+# bcma (bcma_chipco_gpio_outen) e il tracer vendor dal registro (OE). Ogni tool
+# che confronta i due lati deve usare la stessa, o due tool danno due risposte
+# diverse alla stessa domanda.
+normalize_op = tracelib.norm
 
 # ---------------------------------------------------------------------------
 # LA METRICA PENALIZZA LE OP IN PIU'
@@ -539,7 +507,8 @@ def ops_equal(v: str, t: str) -> bool:
     Le catture prodotte senza "capture ret val" loggano ogni read come
     val=UNDEFINED: la' il valore non e' confrontabile e va ignorato, mentre
     indirizzo e classe di op restano vincolanti. Sulle catture con i RETVAL
-    ripiegati (merge_retvals.py) il valore c'e' e viene confrontato."""
+    ripiegati (`trace_filter.py --retvals`) il valore c'e' e viene
+    confrontato."""
     # Le op read-modify-write di bcma (PMU.RC, GPIO.*) portano nel trace vendor
     # il valore riletto dopo la modifica; gli stub bcma dell'harness non
     # modellano quel readback, quindi il suffisso non e' confrontabile.

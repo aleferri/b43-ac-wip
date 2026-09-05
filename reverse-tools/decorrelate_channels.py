@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Decorrela le scritture rispetto a canale e larghezza, su N segmenti.
 
-Prende i segmenti prodotti da split_by_chanspec.py, ognuno etichettato con
+Prende i segmenti prodotti da `split_trace.py --on chanspec` (o --on gaps),
+ognuno etichettato con
 (canale, larghezza), e per ogni chiave (op, addr) confronta la SEQUENZA di
 valori scritti fra segmenti. Classifica in:
 
