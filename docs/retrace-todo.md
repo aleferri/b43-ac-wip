@@ -56,14 +56,653 @@ il residuo di 1 LSB sul coefficiente `b` della RX IQ, e il guard di canale
 scavalcato da `CONFIG_B43_PHY_AC_ANY_CHANNEL`, che elenca quali tabelle sono
 fittate su ch36 a 20 MHz e non hanno prove altrove.
 
+## L'oracolo cieco, e perche' gli ancoraggi vanno verificati
+
+I commenti dei sorgenti citano l'indice dell'op nella cattura da cui la
+sequenza e' stata trascritta. Quelli di `channel_setup_tail` nella banda
+`#39189`-`#39554` puntavano a `router-data/d6220/wl-diag-wl1-attach-to-bss-ch36.txt`,
+**rimossa nel commit `b6c6942`**, e quella cattura non registrava nessuna op
+`OBJ` ne' `TPL`: solo PHY, RAD, TBL, `MAC.MCTRL`, `MAC.MHF`, GPIO e PMU.
+
+Le conseguenze sono due e vanno tenute separate. La prima e' che l'ordine del
+lavoro di shared memory dedotto da la' **non e' mai stato vincolato da
+un'osservazione**: lo strumento non lo vedeva. La seconda e' che una cattura
+rimossa non e' un oracolo, quindi quegli ancoraggi non si "risolvono" andando a
+ripescarla, si riancorano a una cattura presente o si cancellano.
+
+`reverse-tools/verifica_ancoraggi.py` fa il controllo per tutti. Risolve i
+`RETVAL` sulla lettura che li precede, accetta una `PHY` dove il codice scrive
+una tabella -- il marcatore `TBL` e le op sulla porta dati stanno allo stesso
+indice -- e segnala gli ancoraggi che in nessuna cattura presente cadono sulla
+classe di op che il codice emette li'. Al primo giro: 20 orfani in `phy_ac.c`,
+3 in `radio_2069.c`, zero in `rxiqcal_phy_ac.c` e `tables_phy_ac.c`. Le sette
+parentesi maccontrol della coda sono riancorate a `cold01 #13665-#13672`, dove
+combaciano op per op e maschera per maschera. **Restano 11 orfani in
+`phy_ac.c`** -- `#39189`-`#39199`, `#39545`, `#39554`, `#12375`, `#30919` -- e
+3 in `radio_2069.c`.
+
+### Le "5 pulses" sono quattro conf_tx
+
+Il ciclo di `channel_setup_tail` commentato "5 pulses mac wake/suspend" e' la
+cosa piu' sbagliata che l'oracolo cieco ha lasciato. `cold01` mette quelle
+parentesi a `#14083`, `#14168`, `#14247` e `#14326`: **quattro**, separate da
+~79 op, e ognuna ha dentro un carico.
+
+Il carico di ogni giro:
+
+| | |
+| --- | --- |
+| blocco EDCF, una coda diversa a ogni giro | `0x0260-0x027e`, poi `0x0240-0x025e`, `0x0280-0x029e`, `0x02a0-0x02be` -- ognuno letto nella cella di coda e riscritto per intero, 16 parole |
+| template probe response | `TPL.RAMW 0x0700` e `0x004a` (PRTLEN) |
+| SSID | `0x0160-0x017e`, con `0x0048` (PRSSIDLEN) |
+| PLCP degli otto rate | otto terzetti `OBJ.RD 0x01dX` + tre `OBJ.WR` a `0x0994+n` |
+
+Il primo giro ha in piu' `0x00cc` due volte, `0x001e` (TIMBPOS), `TPL.RAMW
+0x0480` e `0x001a` (BTL1). E' la forma di quattro `conf_tx` di mac80211, una
+per coda, che arrivano dopo il setup di canale.
+
+Il conteggio non si corregge da solo, ed e' misurato: portarlo a quattro senza
+il carico fa scendere `cold01` da 27840/29030 a 27838, con due mancanti in
+piu', perche' l'LCS appaiava la quinta coppia a una parentesi altrove. Il
+numero di parentesi diventa misurabile solo quando ognuna ha dentro la sua
+passata.
+
+Da qui il muro a `@11823` si spiega: e' `OBJ.RD 0x00cc`, l'inizio della prima
+di quelle quattro passate, e nel port non c'e' niente. `emit_core_bss_config1()`
+in `test/main.c` ne implementa un pezzo, ed e' **codice morto**, dichiarata e
+definita e mai chiamata. `b43_phy_ac_prb_rsp_plcp()` emette i terzetti PLCP
+dalla testa della coda PHY, dove l'oracolo cieco permetteva di metterla, mentre
+la cattura viva li mette in coda a ogni passata: sono 16 occorrenze in
+`cold01` contro le 6 del port.
+
+## La parola su shm 0x00b8
+
+Una scrittura sola, `OBJ.WR 0x00b8 = 0x7148`, fra il clear della finestra
+statistiche e il `mac_suspend` di `post_cal_finalize_iter3()`. Non emetterla
+teneva il muro posizionale di `cold01` a `@13093`; emetterla lo porta a
+`@15943`, cioe' **2850 op contigue per una op**. Vale la pena sapere perche' una
+sola op pesi cosi': il grezzo non si muove -- resta 96.84% -- perche' le op che
+seguono erano gia' appaiate dall'LCS, solo fuori posizione. E' la misura di
+quanto le due metriche dicano cose diverse.
+
+Cosa e' stabilito sul valore:
+
+- **0x7148 su 111 scritture su 111**: 7 nello sweep a freddo del d6220, 104 in
+  quello a caldo, 7 su agcombo. Non dipende da canale, larghezza, chip ne'
+  primo bring-up, e non e' un contatore -- sette attach diversi lo scrivono
+  identico;
+- non e' letto da nessuna parte nella traccia e non compare nell'NVRAM, quindi
+  non e' la copia di qualcosa;
+- le tre letture che precedono sempre il blocco -- PHY `0x0070`, `0x0640` e
+  `0x0840` -- **non** lo determinano: sul DSL la stessa terna precede valori
+  diversi;
+- sul DSL, che gira wl 6.30 e non e' un oracolo, la cella prende `0x1130` in
+  regime piu' `0x003c`, `0x012c`, `0x060e` e `0x251c` una volta ciascuno. Il
+  discriminante sembra la versione del blob e non l'hardware;
+- `b43.h` non nomina la cella. Come intero e' 28998, e sul DSL 4400: nessuna
+  delle letture come rate, durata o lunghezza di frame regge su tutti i valori.
+
+Nel percorso a freddo la scrittura c'e' solo sotto i 5250 MHz, ma non e' un
+gate di frequenza: nello sweep a caldo il vendor la emette a ogni canale,
+ch52 e ch100 compresi. La ragione e' che sopra i 5250 il vendor non fa il
+clear della finestra dentro `post_cal_finalize_iter3()` -- 19 scritture di
+`0x0308` contro 20 -- quindi la scrittura non e' assente per se': manca il
+blocco che la contiene. Non e' gatata proprio per questo: erediterebbe un
+gate che non le appartiene, e la op di troppo che lascia sui 19 segmenti alti
+e' una sola, parte del surplus di quella fase.
+
+## BSLOTS e REGGAP: due celle che nessun codice puo' prevedere
+
+Il muro di `cold02`, `cold03` e `cold04` stava a `~@11830` su `OBJ.WR 0x026a`,
+cioe' BSLOTS del blocco EDCFQ best effort: il vendor ne scrive 2 dove il port
+scrive 9. Non e' un difetto del port. **BSLOTS e' il backoff estratto a caso
+all'inizio del contention window**, e la misura su tutti e 26 i segmenti e
+tutte e quattro le code, 104 punti, lo mostra senza margine:
+
+| coda | CWMIN | valori osservati |
+| --- | --- | --- |
+| best effort | 15 | 0, 2, 3, 4, 5, 8, 9, 10, 11, 12, 14, 15 |
+| background | 15 | 0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14 |
+| video | 7 | 0, 1, 2, 4, 5, 6, 7 |
+| voce | 3 | 0, 1, 2, 3 |
+
+Uniforme in `[0, CWMIN]` su ognuna. E **`REGGAP = AIFS + BSLOTS` regge su tutti
+e 104 i punti**, quindi la seconda cella non e' indipendente: e' la prima piu'
+una costante nota.
+
+Percio' le due celle sono dichiarate in `VAL_NONDET` in `test/compare.py`, dove
+si confrontano indirizzo, classe e posizione ma non il valore. Non e' una
+scorciatoia per nascondere un difetto: pretendere quel valore vorrebbe dire
+indovinare un numero casuale, e la relazione di REGGAP e' la prova che il resto
+del blocco e' capito. Sposta i muri di `cold03` a `@15887` e di `cold04` a
+`@15801`, 4055 e 3970 op contigue.
+
+### Quel che resta su cold02
+
+`cold02` si e' mosso poco, da `@11828` a `@11981`, e la ragione e' diversa: su
+quel segmento il vendor fa **piu' caricamenti di template** degli altri. Il
+censimento delle celle del percorso beacon:
+
+| segmento | `0x004a` | `0x00cc` | `0x0018` | `0x001a` |
+| --- | --- | --- | --- | --- |
+| cold01 ch36 | 10 | 21 | 5 | 3 |
+| cold03 ch44 | 12 | 25 | 6 | 4 |
+| cold02 ch40 | 16 | 37 | 9 | 7 |
+| cold04 ch48 | 18 | 37 | 9 | 7 |
+| cold17 ch36 bw40 | 21 | 45 | 11 | 9 |
+| i 19 da ch52 | 7 | -- | -- | -- |
+
+Sui 19 alti sono sempre esattamente 7. Sui sette bassi variano, e in ogni riga
+`0x0018` e' `0x001a` piu' due. I **primi cinque** caricamenti hanno invece la
+stessa forma su ogni segmento -- uno per la config BSS piu' i quattro delle
+passate conf_tx, con la stessa spaziatura -- e sono quelli che il port emette;
+gli altri stanno molto piu' avanti, nella fase periodica. La durata delle
+catture e' la stessa a meno di due secondi, quindi non e' il tempo trascorso a
+spiegare la differenza. Cosa la spieghi non e' stabilito, ed e' il prossimo
+punto da caratterizzare per la contiguita' dei tre segmenti che restano
+indietro.
+
+## idle_tssi_meas, e il rilascio che non e' parte della misura
+
+Il muro dei 19 segmenti alti a `@9609` era causato da **591 op di troppo del
+port prima di quel punto, 563 delle quali di `idle_tssi_meas`**: una fase su
+quattro spiegava il 95%.
+
+La fase e' assente per intero sopra i 5250 MHz al primo bring-up, e la conta
+del suo apritore lo dice esatta:
+
+| `RAD 0x0548` | vendor | port | di cui la fase |
+| --- | --- | --- | --- |
+| ch36 | 18 | 18 | 9 |
+| ch52 | **9** | 18 | 9 |
+
+I 9 che restano sopra la soglia vengono da `radio_2069_pwron` (6) e
+`radio_percore_setup_1` (3), che girano da entrambe le parti. Confermano
+`RAD 0x004e`, `0x0166`, `0x024e`, `0x0366` (30 sotto, 0 sopra) e `PHY 0x0747`,
+`0x0732`, `0x0733` con i mirror a `+0x200` (20 sotto, 0 sopra).
+
+**Ma il gate secco rompe la macchina a stati del port**, e vale saperlo perche'
+e' il tipo di errore che il punteggio non mostra: il flow si ferma con
+`txpwrctrl_setup precondition failed status=0x0878 want=0x000c` e il port emette
+11244 op invece di 18786. La causa e' che la fase chiude con
+`rx_gate_with_adc_hold(dev, false)`, e quel rilascio porta la transizione
+`RX_WAITED | RX_OFDM` che la fase dopo pretende.
+
+Il rilascio **non e' parte della misura**: e' la restituzione di un gate che il
+chiamante ha armato. E la cattura lo conferma -- `PHY 0x0140` fa 37 accessi a
+ch36 e **5** a ch52, non zero, mentre la chiusura della misura vera,
+`PHY.WR 0x0401 = 0x7733`, fa 4 accessi a ch36 e **zero** a ch52. Il corpo
+sparisce, il rilascio resta. Quindi il gate copre il corpo e lascia fuori il
+rilascio.
+
+I 19 segmenti passano da 74.9-75.6% a **83.0-84.1%**, e i due a 80 MHz da 53.5%
+a 83.3%. Le op di troppo scendono da ~3730 a 1950 e i valori sbagliati da
+~100-340 a 46-129. Le 591 op di troppo prima del muro diventano **22**:
+`adc_hold` 8, `clip_det` 6, `txpwrctrl_enable` 2, `classctl_write` 2,
+`cca_pulse` 2, e due singole.
+
+### Perche' il posizionale resta a @9609
+
+Il grezzo sale di otto punti e il muro non si muove, ed e' istruttivo. Le tre
+invocazioni saltate emettono **tre** coppie RD+WR su `0x0140`, mentre il vendor
+a ch52 ne ha una piu' una `MOD` altrove. Condizionare il rilascio al gate
+armato -- `RX_WAITED` senza `RX_OFDM` -- e' stato provato e non cambia niente,
+quindi il gate viene riarmato fra le invocazioni e tutti e tre i rilasci sono
+legittimi come tali: e' la loro **forma** a non tornare, non il fatto che ci
+siano. Il prossimo passo su quella famiglia e' quella forma, non altre fasi.
+
+## Il payload TX IQ/LO: due campi da 8 bit, non una parola
+
+La prima divergenza di `cold01` era `PHY.WR 0x000f val=0xff02` contro `0x0002`,
+cioe' il payload che `rxcal_afe_finalize_gain_luts()` scrive nelle tabelle
+`0x0042`/`0x0062`/`0x0082`. Il sito scrive 128 offset per tre core con valori
+uniformi per core e uno scalino a 0x21, e quella **struttura e' giusta**: sono
+i valori a essere sbagliati.
+
+Le due passate sulle tre tabelle, estratte dalla cattura:
+
+| | 0x42 | 0x62 | 0x82 off 0x00-0x20 | 0x82 off 0x21-0x7f |
+| --- | --- | --- | --- | --- |
+| vendor, 1ª passata | `0xff02` | `0x0200` | `0x16e6` | `0x14dc` |
+| port, prima | `0x0002` | `0x0200` | `0x0962` | `0x0758` |
+| vendor e port, 2ª passata | `0x0000` | `0x0000` | `0xf8fc` | `0xf6f2` |
+
+La seconda passata, l'azzeramento di `iqcal_coeff_tables_reset()`, combaciava
+gia'. La prima aveva tre valori su quattro sbagliati, e i valori che il port
+portava non corrispondono a nessuna delle catture presenti.
+
+### La relazione, che e' una derivazione
+
+Le due voci della `0x0082` **non sono indipendenti**. La parola e' due campi da
+8 bit, e fra la voce degli offset bassi e quella degli alti la differenza e'
+`(-2, -10)` per campo:
+
+| segmento | off 0x00-0x20 | off 0x21-0x7f | delta per byte |
+| --- | --- | --- | --- |
+| cold01 ch36 bw20 | `(22, 230)` | `(20, 220)` | `(2, 10)` |
+| cold02 ch40 bw20 | `(254, 42)` | `(252, 32)` | `(2, 10)` |
+| cold03 ch44 bw20 | `(29, 31)` | `(27, 21)` | `(2, 10)` |
+| cold04 ch48 bw20 | `(212, 16)` | `(210, 6)` | `(2, 10)` |
+| cold17 ch36 bw40 | `(223, 244)` | `(221, 234)` | `(2, 10)` |
+| cold18 ch44 bw40 | `(40, 65)` | `(38, 55)` | `(2, 10)` |
+| cold24 ch36 bw80 | `(33, 2)` | `(31, 248)` | `(2, 10)` |
+| coppia del bring-up successivo | `(171, 208)` | `(169, 198)` | `(2, 10)` |
+
+Otto punti su otto, quattro canali, tre larghezze e le due condizioni di
+bring-up. **La sottrazione va fatta per campo**: a 80 MHz il byte basso passa
+da `0x02` a `0xf8`, e in aritmetica a 16 bit il prestito darebbe `0x010a`
+invece di `0x020a`. E' proprio quel punto ad avere fatto vedere che i campi
+sono due. Ora il driver tiene una parola e ricava l'altra.
+
+### Che sia stato accumulato, adesso e' misurato
+
+La voce della `0x0042` sui sette segmenti che eseguono la fase: `0xff02`,
+`0xfd02`, `0xfe02`, `0xfe01`, `0x0202`, `0x0101`, `0xffff`. E sullo **stesso**
+ch36 a 20, 40 e 80 MHz: `0xff02`, `0x0202`, `0xffff`. Non c'e' dipendenza dal
+canale da cercare, e il `b43_phy_ac_todo()` sul sito resta giusto. Anche la
+`0x0062`, che il port dava costante a `0x0200`, varia: `0xfd02` su cold04,
+`0x02ff` su cold17, `0x0202` su cold18, `0x0101` su cold24.
+
+I valori nel driver sono ora quelli di `cold01`, che e' il segmento di
+riferimento del gate: restano un fit su una corsa di una board, ma di una
+corsa che sta nel repo, invece di venire da una cattura non identificata. Sugli
+altri canali sono sbagliati e lo saranno finche' la calibrazione non gira.
+
+`cold01` passa da 96.84% a **98.59%**, i valori sbagliati da 259 a **3**, le
+regioni da 296 a 40, e il posizionale da `@15943` a `@24865` -- **8922 op
+contigue in piu'**. Gli altri 25 segmenti non si muovono, perche' il fit e' su
+questo. La divergenza che resta a `@24865` e' `PHY.WR 0x06a1 val=0x51` contro
+`0x50`: e' il residuo di 1 LSB sul coefficiente `b` della RX IQ, il secondo dei
+tre avvisi del driver.
+
+## Il coefficiente b della RX IQ: non e' l'arrotondamento
+
+Il port riproduce esattamente gli accumulatori e il coefficiente `a` -- `a`
+combacia su tutti i punti misurati -- e sbaglia `b` di un LSB su parte dei
+casi. La formula e' `b = sqrt(qq*2^20/ii - a^2) - 2^10` e l'ultimo passo e'
+l'arrotondamento della radice, quindi la tentazione e' cercarlo la'.
+
+**Non e' la' e la prova e' negativa.** Venti punti, presi da sette segmenti a
+freddo del d6220 e cinque di agcombo, con la parte frazionaria della radice
+esatta e la scelta del vendor:
+
+| frazione | vendor | | frazione | vendor |
+| --- | --- | --- | --- | --- |
+| 0.0118 | per difetto | | 0.4849 | **per eccesso** |
+| 0.0337 | per difetto | | 0.4883 | **per difetto** |
+| 0.1403 | per difetto | | 0.5179 | **per difetto** |
+| 0.1594 | per difetto | | 0.6530 | per eccesso |
+| 0.1663 | per difetto | | 0.7125 | per eccesso |
+| 0.1802 | **per eccesso** | | 0.7295 | per eccesso |
+| 0.3391 | per difetto | | 0.7926 | per eccesso |
+| 0.4297 | **per eccesso** | | 0.8086 | per eccesso |
+| 0.4361 | **per eccesso** | | 0.8929 | per eccesso |
+| 0.4836 | **per eccesso** | | 0.9986 | per eccesso |
+
+Nessuna soglia separa queste venti: 0.4849 va per eccesso e 0.4883 per
+difetto. La soglia di mezzo LSB, che e' quella che il driver usa, ne prende
+quattordici su venti, e **tutte le eccezioni stanno entro 0.1 dalla soglia**
+tranne 0.1802. Quindi l'errore e' nel valore sotto radice -- circa lo 0.02%,
+abbastanza da far ribaltare i casi al limite -- e non nel modo di
+arrotondarlo. Spostare la soglia a 0.4 ne prenderebbe diciassette su venti, ma
+sarebbe un fit su questi dati e nasconderebbe l'errore vero.
+
+Ricerca fatta e chiusa: nessuna combinazione dei sei peek per catena -- tutte
+le 63 sottoinsiemi -- da' contemporaneamente il valore di `a` e quello di `b`
+del vendor, e nessuna variante di `v` (divisione troncata, `a` non quantizzato,
+`a^2` non sottratto) porta la radice al valore che serve. Il difetto sta piu' a
+monte del solve.
+
+Quindi la cella entra in `VAL_TOLLERANZA` con 4 LSB su 10 bit: gli scarti
+osservati sono di 1 LSB tranne uno di 3 su agcombo. E' una calibrazione, e un
+LSB su dieci bit di reiezione d'immagine e' una radio infinitesimamente meno
+buona, non un difetto funzionale -- il driver deve ancora funzionare.
+
+**La tolleranza vale per il gate posizionale e non per il punteggio**, ed e'
+voluto: `cmp_skip.py` continua a contare quelle op fra i valori sbagliati, cosi'
+il residuo resta visibile nei tre valori sbagliati di `cold01` invece di
+sparire, mentre la contiguita' non si ferma su un LSB. Il posizionale passa da
+`@24865` a `@25157`, e la divergenza dopo e' `OBJ.WR 0x0300`, la finestra
+statistiche in shared memory.
+
+## Il residuo sul coefficiente b della RX IQ: non e' la radice
+
+L'ipotesi naturale, viste le due divergenze da un LSB, e' che la radice del blob
+sia approssimata a tabelle invece che esatta. **Verificata e negativa**, e da
+due lati indipendenti.
+
+**Il primo: l'implementazione di Broadcom.** `brcmsmac` porta lo stesso
+algoritmo in `wlc_phy_calc_rx_iq_comp_nphy()`, e la radice la' e' `int_sqrt`
+liscia: un floor, nessuna tabella, nessuna interpolazione, e nemmeno
+l'arrotondamento che il port fa. La libreria `phy_qmath.c` non ha una radice
+affatto. Non c'e' una tabella da cercare.
+
+**Il secondo: la soglia non regge.** Spostando la soglia di arrotondamento
+della radice, con tutto il resto uguale:
+
+| soglia | esatti | bassi di 1 | alti di 1 |
+| --- | --- | --- | --- |
+| 0.40 | 96 | 38 | 10 |
+| 0.50 (attuale) | 84 | 54 | 6 |
+| 0.76 | 72 | 72 | 0 |
+| 0.98 | 46 | 94 | 0 |
+
+Il massimo e' 96 su 148. Una soglia sbagliata darebbe un errore di **un segno
+solo**, e invece qui scambia i bassi con gli alti: il difetto sta a monte della
+radice.
+
+### Il residuo vero, misurato
+
+148 punti, cioe' ogni scrittura di `0x?a1` appaiata ai due round di
+accumulatori che la precedono, sui sette segmenti a freddo che eseguono la fase
+e sui ventisei `up` a caldo:
+
+| errore su b | punti |
+| --- | --- |
+| 0 | 84 |
+| −1 | 54 |
+| +1 | 6 |
+| −6, −13 | 4 (i due core a 80 MHz, contati due volte) |
+
+Quindi il driver **non** e' "bit-esatto sull'attach e un LSB a caldo", come
+diceva: e' esatto sul 57% dei punti, 20 su 28 a freddo e 64 su 120 a caldo, con
+un bias verso il basso. Il commento nel sorgente e il testo del
+`b43_phy_ac_todo()` sono corretti di conseguenza.
+
+Su `cold01` core 0 servono **+156 sotto la radice su 1.219.765**, 1,3 parti su
+10.000; su `cold02` core 0 servono **+37**, 3 parti su 100.000. Deltà diverse
+di un fattore quattro, quindi non e' un offset costante.
+
+### Era una media, ma sui coefficienti
+
+La composizione dei round e' il punto, e non nel modo che sembrava. Mediare gli
+**accumulatori** invece di sommarli non cambia nulla -- il rapporto `qq/ii` e'
+invariante di scala e la troncatura vale una parte su 33 milioni: 84 esatti in
+entrambi i casi. Mediare i **coefficienti**, cioe' risolvere i due round uno
+per uno e arrotondare `b` a intero prima di fare la media, cambia tutto:
+
+| gruppo | punti | somma accumulatori | media dei b |
+| --- | --- | --- | --- |
+| freddo core 0 | 14 | 8 | **12** |
+| freddo core 1 | 14 | **12** | 6 |
+| caldo core 0 | 60 | 32 | **56** |
+| caldo core 1 | 60 | **32** | 30 |
+| **core 0** | **74** | **40** | **68 (92%)** |
+| **core 1** | **74** | **44** | **36** |
+
+Sul core 0 sono 68 su 74, e non e' un parametro accordato: la scelta e' fra due
+modi di comporre i round, non fra due costanti. La distanza fra i `b` dei due
+round va da 0 a 7, quindi la media non e' un altro nome per il massimo; sugli
+8 eventi in cui i due round concordano il modello e' esatto 8 su 8.
+
+Due cose provate e cassate. Tenere la precisione frazionaria nella radice per
+round e mediare dopo riporta al risultato della somma -- con 4 o 5 bit
+frazionari si torna a 84 -- quindi e' **l'arrotondamento a intero prima della
+media** a fare la differenza. E l'insieme dei round e' quello giusto: mediare
+su tre, quattro, cinque o sei, o su una coppia piu' arretrata, peggiora
+entrambi i core (18/74 e 22/74 su tre round).
+
+Il coefficiente `a` invece viene dalla somma: 142 punti su 148, contro i 116
+della media per round. Quindi i due coefficienti si compongono in modo diverso,
+che e' strano e resta senza spiegazione.
+
+### agcombo scioglie il dubbio: non e' una regola per core
+
+Sul d6220 il core 1 non era descritto da nessuno dei due modelli, e le due
+letture possibili erano "il core di indice 1" o "l'ultimo core abilitato" --
+che su una board a due catene sono la stessa cosa. **agcombo ha tre catene e le
+separa**, e la calibrazione e' la stessa.
+
+Senza i segmenti a 80 MHz:
+
+| board | core | somma | media |
+| --- | --- | --- | --- |
+| agcombo | 0 | 6/12 | **12/12** |
+| agcombo | 1 | 4/12 | **10/12** |
+| agcombo | 2 | 8/12 | **12/12** |
+| d6220 | 0 | 40/72 | **68/72** |
+| d6220 | 1 | **44/72** | 36/72 |
+
+Su agcombo **la media vince su tutte e tre le catene, l'ultima compresa**:
+34 su 36. Quindi non e' "il core 1" e non e' "l'ultimo core": la regola e'
+uniforme, e il residuo del core 1 del d6220 e' una anomalia di quella
+combinazione, non una struttura. Insieme, senza bw80, sono 138 punti su 180 con
+la media contro 102 con la somma.
+
+La firma dell'errore lo conferma. Il core 0 del d6220 con la media fa 68 esatti
+e 4 bassi di uno, e il core 1 di agcombo 10 esatti e 2 alti di uno: residui
+piccoli e di un segno. Il core 1 del d6220 fa 36 esatti, 16 bassi e 20 alti,
+cioe' e' **centrato ma disperso** -- non un bias da correggere, un rumore che
+un altro modello dovrebbe spiegare.
+
+Percio' la media e' applicata a tutti i core. Il prezzo e' che su `cold01` il
+core 1 passa da esatto a un LSB alto, `0x38` contro `0x37`, mentre il core 0
+passa da sbagliato a esatto: il posizionale del segmento di riferimento avanza
+comunque, ma di due op sole, da `@24865` a `@24867`: le altre 290 fino a
+`@25157` sono la tolleranza di `VAL_TOLLERANZA`, non questa modifica -- un
+errore di attribuzione che era stato scritto qui e va corretto. Il valore vero
+della media sta altrove: i tre gate a caldo salgono di 0.02 e sui 26
+segmenti a freddo il bilancio e' +0.01 su uno e -0.01 su due.
+
+### Gli 80 MHz: il port fa due passate di misura dove il vendor ne fa sei
+
+Sui dieci eventi a 80 MHz nessuno dei due modelli prendeva un punto, con errori
+`-13`, `-6`, `-3`, `+3`, `+4`. La causa e' trovata, e non e' l'aritmetica.
+
+**Le letture degli accumulatori non sono tutte passate di misura.** Le prime
+appartengono alla ricerca di guadagno in loopback, e si riconoscono perche'
+sono le uniche precedute da un incremento di PHY `0x0b22`
+(`gainctrl_final_apply`, che solo `loopback_gain_search` chiama). Contandole
+cosi':
+
+| segmento | letture | ricerca in loopback | passate di misura |
+| --- | --- | --- | --- |
+| d6220 ch36 bw20 | 6 | 3 | 3 |
+| d6220 ch36 bw80 | 9 | 3 | **6** |
+| agcombo ch36 bw20 | 6 | 4 | 2 |
+| agcombo ch36 bw80 | 10 | 3 | **7** |
+
+**Il port ne fa due a ogni larghezza**: su `cold24` emette 5 letture contro le 9
+del vendor. Le quattro passate mancanti sono anche una fetta delle op mancanti
+di quel segmento, e la tabella del tono `0x000e` lo conferma da un'altra
+direzione -- 11 caricamenti nel vendor a 80 MHz contro gli 8 a 20.
+
+E la media su piu' di due passate e' un **arrotondamento per eccesso**. La
+proprietà che lo rende verificabile senza rischi: su due valori il ceiling e il
+round-half-up **coincidono**, quindi a 20 e 40 MHz non cambia nulla, 69 punti su
+90 in entrambi i casi.
+
+| modello | 20/40 MHz | 80 MHz |
+| --- | --- | --- |
+| ultime 2 passate, round (attuale) | 69/90 | 0/5 |
+| ultime 2 passate, ceil | 69/90 | 0/5 |
+| tutte le passate di misura, round | 26/90 | 2/5 |
+| **tutte le passate di misura, ceil** | 35/90 | **4/5** |
+
+A 80 MHz passa da 0 a 4 su 5 -- `cold24` entrambi i core esatti, `cold25` due
+core su tre -- e l'unico residuo e' `cold25` core 0 a un LSB alto.
+
+### I sei toni sono lo stesso periodo a passi diversi
+
+La struttura del blocco e' `gain tono acc` finche' la ricerca converge, poi
+`tono acc` per ogni passata di misura, poi la scrittura dei coefficienti. **Il
+totale e' 6 fino a 40 MHz su entrambe le board e su ogni segmento**, e a 80 MHz
+e' 9 sul d6220 e 10 su agcombo.
+
+E i toni non sono trascrizioni nuove. Il periodo e' sempre lo stesso 20 voci, e
+ogni caricamento lo campiona a un passo:
+
+| passata | passo |
+| --- | --- |
+| ricerca in loopback, tutti i round | +1 |
+| 1ª di misura | +1 |
+| 2ª | −1 |
+| 3ª | +3 |
+| 4ª | −3 |
+| 5ª | +4 |
+| 6ª | −4 |
+
+Verificato sulle 160 voci di ognuno degli undici caricamenti di `cold24`. I due
+toni che il driver portava trascritti -- il "secondo" e il "terzo", con il
+commento "il primo con le posizioni 1..19 in ordine inverso" -- sono i passi
++1 e −1 dello stesso periodo, e le quattro tabelle in piu' che servivano a 80
+MHz non vanno trascritte: si generano. Il passo e' la frequenza del tono in
+unita' di rate/20, quindi la sequenza e' un rastrello: una coppia sopra e sotto
+la portante fino a 40 MHz, tre coppie a 80, dove la banda da coprire e' quattro
+volte.
+
+### Il risultato
+
+Le due modifiche insieme -- sei passate a 80 MHz, e la media per eccesso su
+tutte le passate di misura con il flag che le separa dalla ricerca:
+
+- le letture degli accumulatori su `cold24` passano da 5 a **9 contro 9**;
+- i coefficienti a 80 MHz diventano **esatti su entrambi i core**, `0x4d` e
+  `0x39` contro i `0x47` e `0x2c` di prima;
+- `cold24` passa da 89.20% a **94.01%**, con le op mancanti da 3034 a **1152**
+  e i valori sbagliati da 627 a 619.
+
+Nessun altro dei 26 segmenti si muove, i tre gate a caldo non si muovono e il
+periodico resta `MATCH`: la media per eccesso su due valori coincide con il
+round-half-up, quindi fino a 40 MHz e' la stessa aritmetica.
+
+Un inciampo da ricordare: `-((-b) / n)` e' un ceiling in Python e un **floor**
+in C, dove la divisione tronca verso zero. La prima stesura lo usava e dava
+`0x4c` invece di `0x4d`; la forma giusta e' `(b + n - 1) / n`.
+
+Il muro di `cold24` resta a `@13470`, quindi le 1152 op mancanti che restano
+sono altrove e prima di quel punto.
+
+### Dove pesa: la forma della divisione
+
+`brcmsmac` non divide per `ii`. Normalizza `qq` al bit 30 -- `qq << (31 - nbits(qq))`
+-- e sposta `ii` di `nbits(qq) - 11`, quindi **tronca il divisore**: con gli
+accumulatori di `cold01` core 0 il divisore diventa 1008 invece di 1008.4, lo
+0.04%, che e' piu' del difetto da spiegare.
+
+Confronto sui 148 punti, con `esatto` = la divisione a 64 bit che il port fa
+oggi e `norm=N` = la forma normalizzata al bit N:
+
+| modello | freddo | caldo | totale |
+| --- | --- | --- | --- |
+| esatto, arrotondato (attuale) | 20/28 | 64/120 | 84 |
+| esatto, floor | 14/28 | 32/120 | 46 |
+| norm=31, arrotondato (forma brcmsmac) | 16/28 | 80/120 | **96** |
+| norm=31, floor (brcmsmac letterale) | 18/28 | 54/120 | 72 |
+| norm=32, arrotondato | 22/28 | 74/120 | **96** |
+
+Le due migliori pareggiano a 96 e **nessuna domina**: `norm=31` e' meglio a
+caldo e peggio a freddo, `norm=32` il contrario. Il codice non e' stato
+cambiato per questo -- non c'e' un vincitore -- ma la direzione e' segnata: il
+quoziente si forma con una normalizzazione, e quale sia va deciso con un
+oracolo che mostri il valore intermedio, non con i coefficienti finali.
+
+## La tolleranza su b: la soglia e' la misura del residuo
+
+`VAL_TOLLERANZA` in `test/compare.py` confronta `PHY 0x?a1` con una soglia
+invece che per uguaglianza, e la soglia era `+-4` LSB. Era **quattro volte il
+residuo vero**, e questo e' costato un giro: la differenza fra sommare gli
+accumulatori e mediare i coefficienti -- cioe' fra il modello sbagliato e
+quello giusto -- vale 1 LSB a 20 e 40 MHz, e a `+-4` il gate posizionale la
+ingoiava. E' venuta fuori solo perche' a 80 MHz sforava, 6 e 13 LSB.
+
+La regola che ne segue: **una tolleranza va dimensionata sul residuo del
+modello che si crede corretto, non sul residuo che si sopporta.** Se e' piu'
+larga smette di coprire l'ultimo bit e diventa una fascia dove un errore
+strutturale si nasconde.
+
+Misura corrente, **144 scritture reali del port contro il vendor** su tutti e
+26 i segmenti a freddo e tutti e 52 gli `up` a caldo:
+
+| gruppo | -1 | 0 | +1 |
+| --- | --- | --- | --- |
+| freddo bw20 | 0 | 30 | 2 |
+| freddo bw40 | 0 | 13 | 1 |
+| freddo bw80 | 0 | 6 | 0 |
+| caldo bw20 | 11 | 46 | 7 |
+| caldo bw40 | 1 | 13 | 2 |
+| caldo bw80 | 0 | 6 | 6 |
+| **totale** | **12** | **114** | **18** |
+
+**Massimo `|residuo|` = 1**, quindi la soglia scende a `+-1`. E **simmetrica**,
+non per prudenza: a freddo il residuo e' solo `+1`, a caldo e' bilaterale, e
+dedurla dal solo sweep a freddo la farebbe scrivere asimmetrica rompendo dodici
+punti a caldo.
+
+Dei 30 residui non nulli, **25 sono sulla catena 1 e 5 sulla catena 0**: il
+debito e' quasi tutto la', coerente con il residuo del core 1 del d6220 che
+agcombo ha mostrato non essere una regola per catena. La catena 2 non compare
+in nessuna cattura del d6220, quindi la sua voce nella lista non e' mai stata
+esercitata ed e' dichiarata senza copertura.
+
+Stringere da `+-4` a `+-1` **non muove nessun gate**: `cold01` resta a
+`@25157`, `cold24` a `@13470`, i tre a caldo a 78.05, 80.91 e 78.79%, il
+periodico a `MATCH`. Cioe' i tre LSB in piu' erano pura franchigia.
+
+Sul lato radio la franchigia residua e' innocua: un LSB e' 1/1024 del guadagno
+nominale, 0.0085 dB, che impone un tetto alla reiezione d'immagine attorno ai
+66 dB contro i 30-45 dB che l'hardware limita comunque. Il rischio della
+tolleranza non e' mai stato in aria, era di nascondere un modello sbagliato.
+
 ## Da dove ripartire
 
-Stato: `6c79334`, gate a freddo su `cold01` a **27840/29030 = 95.90%** con 259
-valori sbagliati, 672 op mancanti e **zero op del port di troppo**; gate
-periodico a `MATCH`. Prima divergenza posizionale a `@11823`.
+Stato: sorgenti a `83d1fea`, gate a freddo su `cold01` a
+**27840/29030 = 95.90%** con 259 valori sbagliati, 672 op mancanti e **zero op
+del port di troppo**; gate periodico a `MATCH`. Prima divergenza posizionale a
+`@11823`.
 
-**Il residuo e' quasi tutto ripetizione di funzioni gia' implementate**, non
-blocchi nuovi. Il conteggio per indirizzo:
+### Lo sweep a freddo intero, sullo stesso albero
+
+Tutti e 26 i segmenti, non un campione, e le due famiglie escono dal punteggio
+da se':
+
+| segmento | grezzo | val. sbagliato | mancanti | di troppo | posizionale |
+| --- | --- | --- | --- | --- | --- |
+| cold01 ch36 bw20 | 27840/29030 = 95.90% | 259 | 672 | 0 | `@11823` |
+| cold02 ch40 bw20 | 28093/29737 = 94.47% | 267 | 1110 | 0 | `@11822` |
+| cold03 ch44 bw20 | 27142/28608 = 94.88% | 285 | 868 | 28 | `@11826` |
+| cold04 ch48 bw20 | 26872/29006 = 92.64% | 424 | 1216 | 70 | `@11825` |
+| cold18 ch44 bw40 | 27128/29589 = 91.68% | 528 | 1329 | 76 | `@10943` |
+| cold17 ch36 bw40 | 27751/30338 = 91.47% | 554 | 1391 | 88 | `@10947` |
+| cold24 ch36 bw80 | 35387/39965 = 88.54% | 622 | 3307 | 27 | `@13470` |
+| i 19 da ch52 in su | 52.54% – 74.23% | 94 – 328 | 1065 – 1245 | 3703 – 11308 | `@9600` – `@9623` |
+
+I 19 segmenti sopra i 5250 MHz sono fra loro quasi identici: 73.5-74.2% a 20 e
+40 MHz, 52.5% a 80 MHz, con la voce "di troppo" a ~3730 nel primo caso e 11308
+nel secondo. Non c'e' una gradazione per canale dentro la famiglia, e questo e'
+il segno che la causa e' una sola.
+
+### Il tetto: quanto di quel che manca e' del PHY
+
+Il denominatore e' l'unione, quindi 100% vuol dire che b43 emette anche le op
+del core. Le mancanti di `cold01`, per classe:
+
+| classe | mancanti | di chi e' |
+| --- | --- | --- |
+| `OBJ.WR` | 514 | shared memory del MAC, `main.c` |
+| `OBJ.RD` | 116 | idem |
+| `TPL.RAMW` | 19 | template RAM, core |
+| `MAC.MCTRL` | 18 | core |
+| `OTP.*`, `SROMCTL.RD`, `CAL.INIT` | 4 | codice srom di bcma |
+| `MAC.MHF.RD` | 1 | `b43_hf_read()`, core |
+
+**Zero op del PHY.** Tutte e 672 sono del core, e i 259 valori sbagliati sono
+tutti `PHY.WR`. Quindi sul segmento di riferimento il tetto raggiungibile
+lavorando su `src/` e' 28099/29030 = **96.79%**, e lo si toccherebbe derivando
+il payload TX IQ/LO; il 3.21% che resta non e' debito del PHY ed e' il blocco
+di config MAC/ucode che questo documento ha piu' avanti.
+
+La composizione cambia per famiglia, e va guardata prima di scegliere il
+lavoro:
+
+| segmento | mancanti del core | mancanti del PHY | di troppo |
+| --- | --- | --- | --- |
+| cold01 ch36 bw20 | 672 | 0 | 0 |
+| cold05 ch52 bw20 | 779 | 360 (`PHY.RD` 343, `PHY.MOD` 17) | 3733 |
+| cold24 ch36 bw80 | 1421 | 3574 (`PHY.WR` 3175, `PHY.RD` 249, `PHY.MOD` 150) | 27 |
+
+**Il residuo dei segmenti a 20 MHz e' quasi tutto ripetizione di funzioni
+gia' implementate**, non blocchi nuovi. Il conteggio per indirizzo su `cold01`:
 
 | indirizzo | mancante | cos'e' |
 | --- | --- | --- |
@@ -154,14 +793,13 @@ dalla prima per `BTL1` (`0x001a`) invece di `BTL0` e per una sola scrittura di
 
   | segmento | grezzo | valore sbagliato | mancanti | di troppo |
   | --- | --- | --- | --- | --- |
-  | cold01 ch36 bw20 | 92.67% | 306 | 1518 | 0 |
-  | cold05 ch52 bw20 | 67.76% | 97 | 1986 | **4370** |
+  | cold01 ch36 bw20 | 95.90% | 259 | 672 | 0 |
+  | cold05 ch52 bw20 | 71.91% | 99 | 1140 | **4370** |
 
   Su cold01 le op di troppo sono ormai zero: erano l'ombra dei tre poll di up
   e un bracket MAC duplicato, entrambi chiusi sotto. Dei valori sbagliati, il payload TX IQ/LO
   resta il debito dominante. Sulla forma corta invece le op di troppo sono
-  reali e sono la voce dominante -- il port esegue fasi di calibrazione che il
-  vendor la' non esegue.
+  reali e sono la voce dominante.
 
   **Le 93 di cold01 erano l'ombra di tre poll mancanti nel path di up, e sono
   chiuse.** Escono tutte da `b43_phy_ac_rxiqcal_finalize` (attribuzione con
@@ -210,10 +848,6 @@ dalla prima per `BTL1` (`0x001a`) invece di `BTL0` e per una sola scrittura di
   caldo hanno anch'essi 3, 3 e 4 poll a spazzata sola, quindi il vendor li
   emette anche sui bring-up successivi.
 
-  I tre poll a spazzata sola vanno emessi incondizionati, non sotto
-  `FIRST_BRINGUP`: i segmenti `up` dello sweep a caldo ne hanno 3, 3 e 4,
-  quindi il vendor li emette anche sui bring-up successivi.
-
   Il bracket MAC va aperto una volta sola:
   `b43_phy_ac_rxiqcal_measure_block()` chiudeva il blocco con
   `mac_enable` + `mac_suspend` -- dichiarati "arm del probe cycle successivo"
@@ -225,31 +859,29 @@ dalla prima per `BTL1` (`0x001a`) invece di `BTL0` e per una sola scrittura di
   chiamanti chiamano il blocco direttamente. Il tick periodico non passava da
   quel wrapper, e infatti resta a `MATCH`.
 
-  Restano 28 op di troppo su cold03, che ha 5 poll a spazzata sola contro i 3
-  emessi: e' la prima cosa da guardare la'. Le 4370 di cold05 sono l'altra
-  causa, le calibrazioni che il vendor salta sopra i 5250 MHz. I 22 segmenti
-  non rimisurati vanno rifatti prima di citare l'intervallo dello sweep.
-
   Nota per chi tornera' qui: `PERIMETER` e' la leva sbagliata per questa
   famiglia di celle. Il port emette `0x0768-0x078a` nei suoi poll, quindi
   scartarle dal lato vendor lascerebbe venti cicli senza controparte -- il caso
   che `test/README.md` avverte di non creare.
 
-  Il conteggio dei poll a spazzata sola **non** spiega le op di troppo sugli
-  altri segmenti, e la verifica lo esclude:
+  **Il numero di poll a spazzata sola non spiega niente, perche' non varia**, e
+  il censimento su tutti e 26 i segmenti lo chiude: la sequenza delle forme e'
+  sempre `18, 18, 18`, poi 18-21 poll da 54 letture, poi **uno** da 57. Tre
+  corti e un lungo su ognuno dei 26, senza forme intermedie e senza eccezioni,
+  a ogni canale e a ogni larghezza. Il conteggio si rifa' con
 
-  | segmento | solo-spazzata | di troppo |
-  | --- | --- | --- |
-  | cold01 ch36 bw20 | 3 | 93 |
-  | cold02 ch40 bw20 | 3 | 109 |
-  | cold03 ch44 bw20 | 5 | 422 |
-  | cold04 ch48 bw20 | 8 | 559 |
-  | cold05 ch52 bw20 | 4 | 4990 |
-  | cold26 ch100 bw80 | 4 | 12565 |
+      per ogni poll, che apre su 0x010e: quante RD in 0x0768-0x078a
+      prima del poll successivo
 
-  Sui quattro UNII-1 a 20 MHz la scala e' monotona, sopra i 5250 MHz la voce e'
-  dominata dalle calibrazioni che il vendor salta e il port esegue: sono due
-  cause distinte sotto la stessa etichetta.
+  Una versione precedente di questa sezione dava 5 poll corti su cold03, 8 su
+  cold04 e 4 su cold05, e ne concludeva che le op di troppo residue di quei
+  segmenti fossero poll non emessi. Quei conteggi non si riproducono: sono 3
+  ovunque. Le 28 op di troppo di cold03, le 70 di cold04 e le 84-96 dei due
+  bw40 sono quindi ancora da attribuire, e non e' qui che vanno cercate.
+
+  Resta invece aperto, e ora si sa che e' universale, il poll da 57 letture:
+  tre in piu' della forma piena, cioe' la lunghezza di una lettura `hi/lo/hi`,
+  quindi un contatore in piu' letto una volta. Uno per segmento su tutti e 26.
 
   `SOLO_PORT` in `compare.py` e' la lista delle op del port che l'oracolo non
   puo' contenere. Ci sta una voce, `AMT.*`: il port scrive la address match
@@ -948,17 +1580,109 @@ dalla prima per `BTL1` (`0x001a`) invece di `BTL0` e per una sola scrittura di
   availability check non e' finito non puo' eseguirle. Non e' una prova: lo
   stesso confine e' anche "la seconda sottobanda dei 5 GHz".
 
-  **Da fare: dove cade il confine dentro il resto del blocco.** Dietro il
-  predicato ci sono solo le fasi provate assenti; le altre di
-  `set_channel_calibrations()` girano su entrambi i lati per quanto e' stato
-  controllato, ma il metodo usato -- cercare un registro emesso da una sola
-  funzione -- trova solo le fasi che ne hanno uno. Una fase saltata che
-  condivide tutti i suoi registri con altre non si vede cosi'. Restano ~1100 op
-  di scarto fra port e vendor a ch52, e sono probabilmente la'.
+  **Le cinque fasi sono gatate e i testimoni lo confermano a ch52**, port e
+  vendor entrambi a zero su `0x0380`, `0x0b22` e le tabelle `0x42`/`0x62`/
+  `0x82`. Non e' li' che sta il residuo.
 
-  Nota che nessuna di queste tre muove il punteggio o il posizionale: stanno
-  oltre il muro a `~@9600` e l'LCS non penalizza le inserzioni. Togliere op che
-  non ci dovevano essere e' giusto per il driver, non per il numero.
+  **Sopra i 5250 MHz il driver stock non fa un attach ridotto: ne fa uno
+  diverso.** Il conteggio per indirizzo, che non dipende dall'allineamento e
+  quindi resta valido oltre il muro posizionale, su tutti e 26 i segmenti
+  partiziona senza una sola eccezione:
+
+  | | 7 segmenti ch36-48 | 19 segmenti da ch52 |
+  | --- | --- | --- |
+  | op totali del vendor | 35350 – 50755 | 20175 – 20393 |
+  | `PHY.RD 0x0251` | 0 | 134 (135 su ch104/108/60bw40, 108 su ch136) |
+  | `PHY.RD 0x0252` | 1 | 135 (idem +1) |
+  | `TBL.WR id=0x000c` | 429 – 439 | **8** |
+  | `MAC.MCTRL` | 135 – 167 | 353 – 403 |
+
+  **Le nove fasi dietro `may_calibrate_tx()`.** Le quattro aggiunte dopo le
+  cinque originali sono `radio_iqcal_config` e `radio_iqcal_teardown`, la
+  catena di semina del tono (`rxiqcal_dds_seed` e le due varianti tone) e
+  `iqcal_meas_post_dds_apply_v2`, cioe' tutto quello che pilota il generatore
+  di tono. Le prove per ognuna sono nel commento al predicato in
+  `src/phy_ac.c` e nel messaggio del commit; il caso piu' netto sono i dodici
+  registri radio di `radio_iqcal_config`, tutti e dodici a zero sopra la
+  soglia contro 3-21 accessi ciascuno sotto, senza un indirizzo condiviso.
+
+  **Un testimone esclusivo a zero prova assente il registro, non la fase.** La
+  §6 di `test/README.md` dice come si trova un testimone e non dice questo, che
+  e' il passo dopo. Il controesempio e' `idle_tssi_meas`: RAD `0x004e`, PHY
+  `0x0012` e `0x0845` sono solo suoi e sono tutti a zero sopra i 5250 MHz,
+  mentre la fase la' gira. Percio' il criterio applicato e' **ogni** indirizzo
+  della fase, con `fase_assente.py`, e per le fasi che lavorano attraverso una
+  porta dati l'identita' e' la tabella e non l'indirizzo -- ogni scrittura di
+  tabella si presenta come una scrittura su PHY `0x000f`. Scartate proprio
+  cosi', dopo che il solo testimone le dava candidate:
+  `post_cal_finalize_iter3` (2 indirizzi a zero su 10, e la sua finestra
+  statistiche `0x0308-0x0312` fa 38 accessi sopra contro 40 sotto),
+  `iqcal_apply_second_stage` (1 su 12) e `rxiqcal_apply_tx_bbmult_kick`, che ha
+  i suoi tre registri PHY a zero ma le sue quattro scritture sulla tabella
+  `0x000c` presenti una volta -- sono quattro delle otto superstiti.
+
+
+  Tre fatti distinti, e vanno tenuti distinti:
+
+  1. **`0x0251`/`0x0252` sono un blocco che il vendor esegue solo sopra i 5250
+     MHz e che il port non ha affatto** -- 134 e 135 letture, zero nel port a
+     qualunque canale. Non e' una fase da gatare: e' ~269 op di debito, e sta
+     dal lato delle mancanti, non delle di troppo.
+  2. **La tabella `0x000c` scende da ~431 scritture a esattamente 8.** Il port
+     ne emette 188 piu' 42 letture. Le tre cifre otto su diciannove segmenti
+     dicono che quel programming a ch52 e' un residuo minimo e non una versione
+     ridotta, quindi va trovato quale sito emette quelle otto e gatato tutto il
+     resto.
+  3. **Il vendor emette 2,7 volte le `MAC.MCTRL`** -- ~399 contro ~147 -- e il
+     port ne emette 115 a ogni canale. Un bracket suspend/enable per fase
+     spiegherebbe la scala, ma quale fase le porti non e' stabilito.
+
+  Al netto, a ch52 il port emette 19144 op contro le 15848 del vendor nella
+  finestra; a ch36 ne emette 606 in meno e la sola classe in eccesso e'
+  `AMT.WR`, che e' in `SOLO_PORT`. L'eccesso e' quindi tutto della famiglia
+  alta.
+
+  **Trappola dei marcatori, da non ripetere.** `AC_FN_MARKERS=1` emette una
+  coppia -- `----FN:x----` in entrata e `----/FN:x----` in uscita -- e le
+  coppie annidano. Leggere solo l'entrata attribuisce al chiamato tutto cio'
+  che il chiamante emette dopo il ritorno, e il sintomo e' plausibile: una
+  versione precedente di questa sezione dava `cca_pulse` come emittente di
+  1091 op di troppo, mentre quella funzione tocca un registro solo, `BBCFG`,
+  con due maskset. Lo stesso errore aveva assegnato la tabella `0x000e` a
+  `post_rxiqcal_stage2` come testimone esclusivo: con la pila quella funzione
+  ne emette 1 accesso su 8, gli altri 7 sono le tre `dds_seed`.
+  `reverse-tools/fase_assente.py` e `witness_scan.py` tengono la pila.
+
+  Con l'attribuzione giusta, l'eccesso a ch52 dopo il gate delle fasi del
+  tono e' 3450 op e ha una voce dominante:
+
+  | funzione | op | cosa e' |
+  | --- | --- | --- |
+  | `idle_tssi_meas` | 1557 | forma ridotta, vedi sotto |
+  | `rxiqcal_prep_second_iter` | 178 | |
+  | `rxgain_perchan_config` | 164 | |
+  | `rxiq_teardown_apply_defaults` | 163 | |
+  | `rxiqcal_apply_body_core` | 158 | |
+  | il resto | ~1230 | ventina di fasi sotto le 160 op |
+
+  Nessuna di queste e' candidata al gate: sono forme ridotte. `idle_tssi_meas`
+  e' quella misurata: 20 dei suoi indirizzi vanno a zero sopra la soglia -- RAD
+  `0x004e`, `0x0166`, `0x024e`, `0x0366`, PHY `0x0460`, `0x0747`, `0x0732`,
+  `0x0733` e i mirror -- mentre `0x0393` fa 18 accessi contro 42 e `0x0394` 12
+  contro 30, quindi la fase gira ridotta. Il vendor la apre in **tre gruppi di
+  sei** a ch52 e sette gruppi di sei a ch36; il port emette otto per chiamata a
+  ogni canale. Quale sia il ramo che non gira non e' stabilito, e inventarlo
+  significa scrivere una configurazione RF non osservata.
+
+  Cautela sulle attribuzioni: passano dall'LCS, e a ch52 il muro e' a `@9609`,
+  quindi da la' in avanti un blocco emesso nel posto sbagliato conta come di
+  troppo di qua e mancante di la'. I conteggi per indirizzo della tabella sopra
+  non hanno quel problema; l'attribuzione per funzione dice dove guardare, non
+  quanto pesa.
+
+  Nota che togliere queste op non muove il punteggio dei sette segmenti bassi:
+  stanno oltre il muro a `~@9600` e l'LCS non penalizza le inserzioni. Muove il
+  punteggio dei diciannove, dove la voce e' dominante.
 
 - **La forma corta salta la sequenza classctl + clip-hold.** Dove la forma
   lunga ha `PHY.WR 0x0339 = 0x0fff` e poi il blocco di config MAC, la corta va

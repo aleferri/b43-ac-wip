@@ -279,7 +279,7 @@ def main():
 
     def canon(o):
         o = C.RET_SUFFIX.sub('', o)
-        if 'val=UNDEFINED' in o:
+        if 'val=UNDEFINED' in o or C.val_nondet(o):
             o = C.VAL_TOK.sub('val=*', o, count=1)
         return o
 
