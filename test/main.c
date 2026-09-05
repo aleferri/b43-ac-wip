@@ -6,7 +6,7 @@
  *
  * Usage:
  *   ./ac_trace [flow] [board]
- *     flow  = rxiq_est_debug (default) | rxiq_comp | rxiqcal | op_init |
+ *     flow  = full (default) | rxiq_est_debug | rxiq_comp | op_init |
  *             rfkill | switch_channel
  *     board = d6220 (default) | agcombo | dsl
  *
@@ -817,10 +817,11 @@ static void run_switch_channel(void)
 	 * ch36 sono 18, con pattern [2,1,2,2,2,2,2,2,2,2,1,2,2,2,2,2,2,1] -- il
 	 * plan lo riproduce per intero.
 	 *
-	 * Il plan precedente aveva tre valori tarati sulla lettura opposta (attesa
-	 * del bit che si alza); dalla terza invocazione in poi cadeva sul mirror,
-	 * che restituisce 0, e il gate non lo intercettava perche' la cattura ch36
-	 * ha i valori di lettura a UNDEFINED e il confronto li ignora.
+	 * Un plan tarato sulla lettura opposta -- l'attesa del bit che si alza --
+	 * si esaurisce e dalla terza invocazione cade sul mirror, che restituisce
+	 * 0. Il gate NON lo intercetta: la cattura ch36 ha i valori di lettura a
+	 * UNDEFINED e il confronto li ignora, quindi un plan sbagliato qui non si
+	 * vede dal punteggio.
 	 */
 	{
 		static const u16 rfseq_done_poll[] = {
@@ -1570,7 +1571,7 @@ static void run_full(void)
 
 int main(int argc, char **argv)
 {
-	const char *flow  = (argc > 1) ? argv[1] : "rxiq_est_debug";
+	const char *flow  = (argc > 1) ? argv[1] : "full";
 	const char *board = (argc > 2) ? argv[2] : "d6220";
 
 	const struct board_profile *p = &PROFILE_D6220;
@@ -1737,10 +1738,6 @@ int main(int argc, char **argv)
 
 		int r = b43_phy_ac_rx_iq_comp_update(&g_wldev, 0x07);
 		fprintf(stderr, "test: rx_iq_comp_update returned %d\n", r);
-	} else if (!strcmp(flow, "rxiqcal")) {
-		register_rxiq_read_plans();
-		int r = b43_phy_ac_rxiqcal(&g_wldev, 0);
-		fprintf(stderr, "test: rxiqcal returned %d\n", r);
 	} else if (!strcmp(flow, "op_init")) {
 		run_op_init();
 	} else if (!strcmp(flow, "up")) {

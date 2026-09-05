@@ -21,11 +21,11 @@
  *     hill-climb, and the measurement gain is never altered: the gain
  *     registers are only saved and restored around the measurement.
  *
- * Not filled in: rxcal_phy_setup, radio_setup and cleanup, some 300 RMW ops
- * to be done in pieces checked against the correlator.
- *
- * b43_phy_ac_rxiqcal() returns -EOPNOTSUPP while REGMAP_FILLED is 0 and has
- * no callers: the RX-IQ path in use is the transcribed one in phy_ac.c. See
+ * The RX-IQ path in use is the transcribed one in phy_ac.c, orchestrated by
+ * b43_phy_ac_set_channel_calibrations(). What lives here are the leaves that
+ * path shares -- rxcal_radio_setup, rxcal_tone_setup/arm, rxcal_gainctrl,
+ * rxcal_cleanup, rxcal_radio_cleanup, rx_iq_comp_update -- plus the
+ * estimation used by the rxiq_est_debug flow. See
  * docs/rxiq-cal-analysis.md.
  */
 #include <linux/kernel.h>	/* int_sqrt */
@@ -56,11 +56,7 @@ struct b43_phy_ac_iq_comp {
  */
 #define B43_PHY_AC_MIN_RXIQ_PWR		0x100
 #define B43_PHY_AC_RXIQ_CAL_RETRY	2
-
 #define B43_PHY_AC_RXCAL_NUM_SAMPS	1024	/* 0x400 in the capture */
-
-/* Set to 1 once the hardware stubs below are filled in from a capture. */
-#define B43_PHY_AC_RXIQCAL_REGMAP_FILLED	0
 
 /*
  * RX-IQ correlator registers, confirmed against the capture (the
@@ -181,13 +177,6 @@ static void b43_phy_ac_rxiq_coeffs(struct b43_wldev *dev, u8 write,
 	}
 }
 
-/* PHY-side setup of the measurement loopback, after
- * wlc_phy_rxcal_physetup_nphy. */
-static void b43_phy_ac_rxcal_phy_setup(struct b43_wldev *dev, u8 rx_core)
-{
-	/* TODO: the PHY loopback sequence is not transcribed yet. */
-}
-
 /*
  * PHY-side setup of the calibration tone generator, run once before rxcal
  * rather than per core. 26 ops:
@@ -217,11 +206,11 @@ void b43_phy_ac_rxcal_tone_setup(struct b43_wldev *dev)
 	u8 mask = dev->phy.ac->coremask;
 	int i;
 
-	b43_phy_read_log(dev, 0x019e);                       /* #39709 */
-	b43_phy_read_log(dev, 0x040f);                       /* #39710 */
-	b43_phy_maskset(dev, 0x040f, (u16)~0x0200, 0);       /* #39711 clr bit 9 */
-	b43_phy_read_log(dev, 0x0394);                       /* #39712 */
-	b43_phy_read_log(dev, 0x0393);                       /* #39713 */
+	b43_phy_read_log(dev, 0x019e);
+	b43_phy_read_log(dev, 0x040f);
+	b43_phy_maskset(dev, 0x040f, (u16)~0x0200, 0);       /* clr bit 9 */
+	b43_phy_read_log(dev, 0x0394);
+	b43_phy_read_log(dev, 0x0393);
 
 	/* Pass 1: forward core, forward reg */
 	for (c = 0; c < num_cores; c++) {
@@ -393,17 +382,17 @@ void b43_phy_ac_rxcal_gainctrl(struct b43_wldev *dev, u8 rx_core)
 static void b43_phy_ac_tx_tone(struct b43_wldev *dev, u32 freq_hz, u16 amp)
 {
 	B43_AC_FN();
-	b43_phy_mask(dev, 0x0471, (u16)~0x0001);	/* #82499 and 0xfffe */
-	b43_phy_write(dev, 0x0463, 0x0027);		/* #82500 */
-	b43_phy_write(dev, 0x0461, 0xffff);		/* #82501 */
-	b43_phy_write(dev, 0x0462, 0x003c);		/* #82502 */
-	b43_phy_set(dev, 0x0400, 0x0001);		/* #82504 or */
-	b43_phy_mask(dev, 0x0460, (u16)~0x0004);	/* #82505 and 0xfffb */
-	b43_phy_mask(dev, 0x0460, (u16)~0x0001);	/* #82506 and 0xfffe */
-	b43_phy_mask(dev, 0x0382, (u16)~0xc000);	/* #82507 and 0x3fff */
-	b43_phy_set(dev, 0x0460, 0x0001);		/* #82508 or */
-	udelay(1);					/* #82510 */
-	b43_phy_write(dev, 0x0400, 0x0000);		/* #82512 */
+	b43_phy_mask(dev, 0x0471, (u16)~0x0001);	/* and 0xfffe */
+	b43_phy_write(dev, 0x0463, 0x0027);
+	b43_phy_write(dev, 0x0461, 0xffff);
+	b43_phy_write(dev, 0x0462, 0x003c);
+	b43_phy_set(dev, 0x0400, 0x0001);		/* or */
+	b43_phy_mask(dev, 0x0460, (u16)~0x0004);	/* and 0xfffb */
+	b43_phy_mask(dev, 0x0460, (u16)~0x0001);	/* and 0xfffe */
+	b43_phy_mask(dev, 0x0382, (u16)~0xc000);	/* and 0x3fff */
+	b43_phy_set(dev, 0x0460, 0x0001);		/* or */
+	udelay(1);
+	b43_phy_write(dev, 0x0400, 0x0000);
 	(void)freq_hz;
 	(void)amp;
 }
@@ -413,8 +402,8 @@ static void b43_phy_ac_tx_tone(struct b43_wldev *dev, u32 freq_hz, u16 amp)
 static void b43_phy_ac_stopplayback(struct b43_wldev *dev)
 {
 	B43_AC_FN();
-	b43_phy_set(dev, 0x0460, 0x0002);		/* #82558 or */
-	b43_phy_mask(dev, 0x0460, (u16)~0x0004);	/* #82559 and 0xfffb */
+	b43_phy_set(dev, 0x0460, 0x0002);		/* or */
+	b43_phy_mask(dev, 0x0460, (u16)~0x0004);	/* and 0xfffb */
 }
 
 /*
@@ -481,7 +470,7 @@ static const u8 rxiq_tone_modes_c2[]  = { 4, 1, 0, 0 };
 /*
  * Per-core tone engine: program frequency, max amplitude, and tone-enable.
  * Registers at 0x0730/0x0731/0x0734 + core * 0x200. Additionally set the
- * three AFE override bits in 0x0722 + core * 0x200 (trace #50529-50531).
+ * three AFE override bits in 0x0722 + core * 0x200.
  */
 static void b43_phy_ac_rxiq_set_tone(struct b43_wldev *dev, u8 core,
 				     u16 freq, u16 fmax, u8 tone_mode)
@@ -499,7 +488,7 @@ static void b43_phy_ac_rxiq_set_tone(struct b43_wldev *dev, u8 core,
 
 /*
  * Gain override: apply the measurement gain on <core>, then micro-settle.
- * Two-step write sequence from trace (#50767-50784): first the "armed"
+ * Two-step write sequence from the trace: first the "armed"
  * values (0x00fa / 0x01d3 / 0x07e6), then the settled values (0x007a /
  * 0x01d3 / 0x07e2). The read-before-write is a save — we skip it here
  * because the caller saves and restores the registers.
@@ -512,7 +501,7 @@ static void b43_phy_ac_rxiq_apply_gain(struct b43_wldev *dev, u8 core)
 	b43_phy_write(dev, 0x0739 + s, 0x00fa);
 	b43_phy_write(dev, 0x073a + s, 0x01d3);
 	b43_phy_write(dev, 0x0725 + s, 0x07e6);
-	/* micro-settle: same sequence both cores, trace #50779-50784 */
+	/* micro-settle: same sequence both cores */
 	b43_phy_write(dev, 0x0725 + s, 0x07e2);
 	b43_phy_write(dev, 0x073a + s, 0x01d3);
 	b43_phy_write(dev, 0x0739 + s, 0x007a);
@@ -520,14 +509,13 @@ static void b43_phy_ac_rxiq_apply_gain(struct b43_wldev *dev, u8 core)
 
 /*
  * Debug-only RX-IQ estimation: runs the 4-tone-mode measurement sequence
- * observed in the ch36 trace (#50526-51118) and prints the raw accumulator
+ * observed in the ch36 trace and prints the raw accumulator
  * values. This does NOT compute or apply compensation coefficients — it
  * only reads what the hardware reports, so the results can validate (or
  * falsify) the register-map and accumulator-layout assumptions.
  *
- * Call point: after txpwr_by_index, before rxgainctrl_regs in set_channel
- * (trace #50523 sits between the txpwr tail at ~#50128 and the rxgainctrl
- * block at ~#52337).
+ * Call point: after txpwr_by_index, before rxgainctrl_regs in set_channel:
+ * in the trace it sits between the txpwr tail and the rxgainctrl block.
  */
 void b43_phy_ac_rxiq_est_debug(struct b43_wldev *dev)
 {
@@ -600,7 +588,7 @@ void b43_phy_ac_rxiq_est_debug(struct b43_wldev *dev)
 	b43_phy_mask(dev, 0x0211, (u16)~0x0001);
 	b43_phy_mask(dev, 0x040f, (u16)~0x0200);
 
-	/* CCA reset pulse (trace #50752-50753). */
+	/* CCA reset pulse. */
 	b43_phy_set(dev, B43_PHY_AC_BBCFG, B43_PHY_AC_BBCFG_RSTCCA);
 	dev->phy.ac->status_mask |= B43_PHY_AC_STATE_CCA_RESET;
 	b43_phy_mask(dev, B43_PHY_AC_BBCFG, (u16)~B43_PHY_AC_BBCFG_RSTCCA);
@@ -610,9 +598,9 @@ void b43_phy_ac_rxiq_est_debug(struct b43_wldev *dev)
 	b43_phy_ac_tx_tone(dev, 0, 0);
 
 	/*
-	 * Apply gain override on all present cores. Vendor arms all 3 (core 2
-	 * included, see #50784 WR 0x0b39/b3a/b25); we did not before, and the
-	 * estimator polled the status of an un-armed core and timed out.
+	 * Apply gain override on all present cores. The vendor arms all 3, core
+	 * 2 included (WR 0x0b39/b3a/b25). Arming fewer leaves the estimator
+	 * polling the status of an un-armed core until it times out.
 	 */
 	for (core = 0; core < num_cores; core++)
 		b43_phy_ac_rxiq_apply_gain(dev, core);
@@ -702,6 +690,7 @@ void b43_phy_ac_rxiq_est_debug(struct b43_wldev *dev)
  */
 int b43_phy_ac_rx_iq_comp_update(struct b43_wldev *dev, u8 core_mask)
 {
+	B43_AC_FN();
 	struct b43_phy_ac_iq_est est[3], est2[3];
 	struct b43_phy_ac_iq_comp old_comp, new_comp;
 	unsigned int core;
@@ -775,77 +764,5 @@ retry_cal:
 	}
 
 	b43_phy_ac_rxiq_coeffs(dev, 1, &new_comp);
-	return 0;
-}
-
-/* The orchestrator: structure only, the stubs above are not filled in. */
-
-/*
- * cal_type 0 or 2 selects RX-IQ, 1 or 2 the RC-cal LPF, which is a separate
- * path and not handled here. The skeleton follows
- * wlc_phy_cal_rxiq_nphy_rev3: quiesce, save the gain bank, then per core
- * {phy and radio setup; if IQ: gainctrl, tone, measure and solve, stop;
- * cleanup; RESET2RX}, then restore.
- */
-int b43_phy_ac_rxiqcal(struct b43_wldev *dev, u8 cal_type)
-{
-	B43_AC_FN();
-	u16 orig_bbcfg;
-	u16 gain_save[3];
-	unsigned int rx_core;
-	u8 coremask = dev->phy.ac->coremask;
-
-	/* Not filled in: no silicon access while the stubs are empty. */
-	if (!B43_PHY_AC_RXIQCAL_REGMAP_FILLED)
-		return -EOPNOTSUPP;
-
-	/* Quiesce the PHY: clear 0x01 bit 15 and stay in carrier search. */
-	orig_bbcfg = b43_phy_read_log(dev, B43_PHY_AC_BBCFG);
-	b43_phy_mask(dev, B43_PHY_AC_BBCFG, (u16)~0x8000);
-	dev->phy.ac->status_mask &= ~B43_PHY_AC_STATE_PHY_RUN;
-
-	/* Save the RF-seq gain bank, N-PHY table RFSEQ offset 0x110.
-	 * TODO: the AC-PHY table id and offset still come from a capture. */
-	b43_actab_read_bulk(dev, 7 /* TODO id */, 0x110 /* TODO off */,
-			    16, dev->phy.ac->num_cores, gain_save);
-
-	for (rx_core = 0; rx_core < dev->phy.ac->num_cores; rx_core++) {
-		bool active = (coremask >> rx_core) & 1;
-
-		b43_phy_ac_rxcal_phy_setup(dev, rx_core);
-		b43_phy_ac_rxcal_radio_setup(dev, rx_core);
-
-		if (active && (cal_type == 0 || cal_type == 2)) {
-			b43_phy_ac_rxcal_gainctrl(dev, rx_core);
-			b43_phy_ac_tx_tone(dev, 4000000 /* TODO freq */,
-					   0 /* TODO amp */);
-			b43_phy_ac_rx_iq_comp_update(dev, (u8)(1 << rx_core));
-			b43_phy_ac_stopplayback(dev);
-		}
-
-		/* cal_type 1 and 2, the RC-cal LPF, is a separate path and is
-		 * not ported. */
-
-		b43_phy_ac_rxcal_cleanup(dev, rx_core);
-		b43_phy_ac_force_rf_sequence(dev, B43_PHY_AC_RF_SEQ_RST2RX,
-					     B43_PHY_AC_RF_SEQ_OVERRIDE_GATE);
-	}
-
-	/* Restore the gain bank, BBCFG and CCA, then a closing RESET2RX. */
-	b43_actab_write_bulk(dev, 7 /* TODO id */, 0x110 /* TODO off */,
-			     16, dev->phy.ac->num_cores, gain_save);
-	b43_phy_write(dev, B43_PHY_AC_BBCFG, orig_bbcfg);
-	/* Mirror BBCFG bit 15 (PHY_RUN) and bit 14 (CCA_RESET) from the
-	 * restored value: the write is atomic on both. */
-	dev->phy.ac->status_mask = (dev->phy.ac->status_mask &
-				    ~(B43_PHY_AC_STATE_PHY_RUN | B43_PHY_AC_STATE_CCA_RESET)) |
-				   ((orig_bbcfg & 0x8000) ? B43_PHY_AC_STATE_PHY_RUN : 0) |
-				   ((orig_bbcfg & 0x4000) ? B43_PHY_AC_STATE_CCA_RESET : 0);
-	b43_phy_ac_reset_cca(dev);
-	b43_phy_ac_force_rf_sequence(dev, B43_PHY_AC_RF_SEQ_RST2RX,
-				     B43_PHY_AC_RF_SEQ_OVERRIDE_GATE);
-
-	b43dbg(dev->wl, "phy-ac: rxiqcal skeleton (cal_type %u) -- register map not filled in\n",
-	       (unsigned int)cal_type);
 	return 0;
 }

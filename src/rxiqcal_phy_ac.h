@@ -8,7 +8,6 @@ struct b43_wldev;
  * Generic RX-IQ solver. Returns -EOPNOTSUPP while the register map is not
  * filled in, and has no callers yet. Rationale in rxiqcal_phy_ac.c.
  */
-int b43_phy_ac_rxiqcal(struct b43_wldev *dev, u8 cal_type);
 
 /*
  * Measure -- two rounds of 0x4000 samples, summed -- and program the RX-IQ
