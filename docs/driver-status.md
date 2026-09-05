@@ -109,12 +109,12 @@ verifica in `txlpf-formula.md`):
 
 Verificate sui tre board (d6220/DSL/agcombo).
 
-## Poll senza budget — corretto
+## Poll con budget
 
-`b43_phy_ac_rxcal_afe_iter` aveva un `while (phy_read(0x0380) & 0x8000)` senza
-uscita: hang del kernel se il bit busy non si libera. Ora ha un budget finito
-(1000×udelay(1)) con `b43err` non fatale, come `force_rf_sequence`. Era l'unico
-poll non limitato del driver.
+`b43_phy_ac_rxcal_afe_iter` attende il bit busy di `0x0380` con un budget
+finito (1000×udelay(1)) e un `b43err` non fatale, come `force_rf_sequence`.
+Un `while` senza uscita la' e' un hang del kernel se il bit non si libera:
+nessun poll del driver e' senza limite.
 
 ## Copertura del bring-up (rfkill + op_init)
 

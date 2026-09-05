@@ -10,7 +10,7 @@ data tables. No logic is taken from it.
 
 ## What the register is
 
-Not a "max index", which is what the port used to call it. The vendor names
+Not a "max index", despite the name inviting that reading. The vendor names
 the function that writes it `set_target`, and it takes the value as an
 argument: it is the **TX power target** in quarter-dBm. The ceiling lives
 elsewhere, at `0xb46`, written by the power-control enable path.

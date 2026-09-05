@@ -199,9 +199,8 @@ python3 compare.py \
 
 Le catture in `router-data/*/` sono lo sweep a freddo e quello a caldo negli
 zip, piu' l'oracolo del tick a regime e i dump statici (NVRAM, SROM, tabelle
-PHY, revinfo). Le catture singole di attach citate nelle versioni precedenti di
-questo file non esistono piu': sono state sostituite dai segmenti degli sweep,
-che coprono ogni canale e larghezza invece di uno.
+PHY, revinfo). I segmenti degli sweep sono l'unica fonte di attach: coprono
+ogni canale e larghezza invece di uno.
 
 ## Build e test su hardware
 

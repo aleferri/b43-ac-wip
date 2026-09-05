@@ -19,12 +19,12 @@
 # --hot
 #   The `up` segments of the hot sweep. Every predicate that tells a first
 #   bring-up from a later one is invisible in the cold sweep -- it reads the
-#   same on all 26 segments -- and a missing term does not show. That is
-#   exactly what happened to b43_phy_ac_may_calibrate_tx(), which only looked
-#   at center_freq <= 5250: cold the scores added up, and on the up segments
-#   above 5250 the port sat at 35% instead of 80%. Forty-five points on half
-#   the driver that nobody was measuring. The three default segments are
-#   chosen to catch that case: one below 5250 MHz and two above. If a
+#   same on all 26 segments -- and a missing term does not show. A predicate
+#   like the one in b43_phy_ac_may_calibrate_tx(), which only looks at
+#   center_freq <= 5250, makes the cold scores add up while the up segments
+#   above 5250 sit at 35% instead of 80%: forty-five points on half the
+#   driver, invisible to the cold gate. The three default segments are
+#   chosen to catch that: one below 5250 MHz and two above. If a
 #   predicate confuses the two conditions, the first stays put and the other
 #   two collapse.
 #

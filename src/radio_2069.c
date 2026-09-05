@@ -866,8 +866,8 @@ static u16 r2069_pick_value(const struct b43_phy_ac_channeltab_e_radio2069 *e,
 /*
  * Per-core AFE + radio-LPF stage setup, run at the tail of the channel setup.
  *
- * Reconstructed from wl-diag-d6220 down->bss-up #51609-51677 and #51893-51965.
- * Both occurrences share this exact per-core body and differ only in the
+ * Reconstructed from the two occurrences in the d6220 bring-up. Both share
+ * this exact per-core body and differ only in the
  * 0x0728 field 0x3800 (0x0800 vs 0x0000, here 'afe_728') and in a caller-side
  * preamble (0x08ea write / 0x02d1-2 mods) that is NOT part of this helper.
  * The radio 0x0049 writes read back 0x0030 / 0x0000 in the trace: those are the
@@ -876,8 +876,8 @@ static u16 r2069_pick_value(const struct b43_phy_ac_channeltab_e_radio2069 *e,
  * present cores are powered at channel-setup time, like the reset-time blocks),
  * not the antenna coremask. Exact purpose unverified; named for its registers.
  * Call site (verified by fingerprint segmentation): op_software_rfkill, right
- * after b43_radio_2069_rccal -- #51609-51677, immediately following the
- * 0x08ea RCCAL_EN cleanup (#51606) and before the op_init set_pdet (#51679).
+ * after b43_radio_2069_rccal, immediately following the 0x08ea RCCAL_EN
+ * cleanup and before the op_init set_pdet.
  * afe_728 = 0x0800 in the ch36/5GHz capture. A second call with afe_728=0x0000
  * is also observed in the same bring-up; its exact position is not yet pinned,
  * so only the 0x0800 call is wired here.
@@ -1046,7 +1046,7 @@ void b43_radio_2069_channel_setup(struct b43_wldev *dev,
 
 /* Per-core RC-trim apply bases, OR'd with (core << 9). */
 #define R2069_RCCAL_P1_A	0x126	/* pass 1, field [4:0] = code */
-#define R2069_RCCAL_P1_B	0x043	/* pass 1, field [4:0] = code (trace #51527: 0x043/0x243/0x443, not 0x04a) */
+#define R2069_RCCAL_P1_B	0x043	/* pass 1, field [4:0] = code; the trace has 0x043/0x243/0x443, not 0x04a */
 #define R2069_RCCAL_P2_A	0x11d	/* pass 2, clear bit 0x4 */
 #define R2069_RCCAL_P2_B	0x171	/* pass 2, set bit 0x2000 */
 
@@ -1176,7 +1176,7 @@ static void b43_r2069_rccal_apply_fixed(struct b43_wldev *dev)
 }
 
 /* Pass 2 disarm: clear the P2_B measurement-enable bit after the engine
- * has run and dacbuf_cap has been read. d6220 ch36 #32718-32726. */
+ * has run and dacbuf_cap has been read. */
 static void b43_r2069_rccal_disarm_p2b(struct b43_wldev *dev)
 {
 	unsigned int core;
@@ -1230,13 +1230,13 @@ void b43_radio_2069_rccal(struct b43_wldev *dev)
 				b43_r2069_rccal_apply_code(dev);
 			}
 		}
-		/* Stop: clear start after the result readout (vendor #51478). */
+		/* Stop: clear start after the result readout. */
 		r2069_mod(dev, R2069_RCCAL_CFG, 0x0001, 0x0000);
 	}
 
 	/*
 	 * Last pass (dacbuf cap): the engine runs with P2_A/P2_B armed,
-	 * then the measurement-enable bit in P2_B is cleared. d6220 ch36 #32671-32729.
+	 * then the measurement-enable bit in P2_B is cleared.
 	 */
 	b43_r2069_rccal_setup(dev, pass);
 	b43_r2069_rccal_apply_fixed(dev);
@@ -1252,8 +1252,8 @@ void b43_radio_2069_rccal(struct b43_wldev *dev)
 /*
  * Per-core analog-front-end calibration for the 2069 radio.
  *
- * Two passes over the active chains, faithful to the d6220 down-to-bss-up
- * capture (#56954-57000): arm every core (route the PHY in, gate the cal
+ * Two passes over the active chains, faithful to the d6220 bring-up
+ * capture: arm every core (route the PHY in, gate the cal
  * clock off), settle, then launch every core (gate the clock on, set the
  * AFE_CAL_CTRL enable nibble over the bandwidth-dependent config, poll
  * done/valid,
@@ -1309,10 +1309,10 @@ void b43_radio_2069_afecal(struct b43_wldev *dev)
 
 		/*
 		 * Clock un-gate is the AFE_CAL_CLK[12] bit toggled by the two
-		 * r2069_mod above (off in pass 1, on here); trace #56962/70
-		 * (off) and #56974/86 (on) confirm it, so no extra gating is
-		 * needed. The blob then does a bare readback of AFE_CAL_CTRL
-		 * (#56977 core0, #56989 core1) before writing the enable word:
+		 * r2069_mod above (off in pass 1, on here); the trace confirms
+		 * it, so no extra gating is needed. The blob then does a bare
+		 * readback of AFE_CAL_CTRL, once per core, before writing the
+		 * enable word:
 		 * the value isn't used for the write (which is absolute,
 		 * CFG|0x000f, not a RMW), but we route it through _log so the
 		 * real pre-enable CTRL state is captured on hardware -- the
@@ -1460,7 +1460,7 @@ void b43_radio_2069_init(struct b43_wldev *dev)
 	u16 saved_728;
 
 	saved_728 = b43_phy_read_log(dev, 0x0728);
-	b43_phy_read_log(dev, 0x0408);	/* #51263: base letta prima delle write sotto; loggata per HW (write assoluta) */
+	b43_phy_read_log(dev, 0x0408);	/* base letta prima delle write sotto; loggata per HW (write assoluta) */
 
 	/* --- Prologo: PHY register writes --- */
 	b43_phy_write(dev, 0x0415, 0x0000);
@@ -1472,12 +1472,12 @@ void b43_radio_2069_init(struct b43_wldev *dev)
 
 	/* 0x728 &= 0x7e7f (clears 0x8000/0x0100/0x0080); wl7 writes 0x720 = 0x03ff. */
 	b43_phy_write(dev, 0x0728, saved_728 & 0x7e7f);
-	b43_phy_read_log(dev, 0x0720);	/* #51271: base loggata per HW; write sotto assoluta */
+	b43_phy_read_log(dev, 0x0720);	/* base loggata per HW; write sotto assoluta */
 	b43_phy_write(dev, 0x0720, 0x03ff);
 	b43_phy_write(dev, B43_PHY_AC_RFCTL_CMD, 0x0c00);
 
 	b43_phy_write(dev, B43_PHY_AC_RFCTL_CMD, 0x0c01);
-	/* #51275: hold armed 1032us for the RF/analog lock to complete. */
+	/* Hold armed 1032us for the RF/analog lock to complete. */
 	udelay(1032);
 	b43_phy_write(dev, B43_PHY_AC_RFCTL_CMD, 0x0c00);
 
@@ -1561,9 +1561,9 @@ void b43_radio_2069_pwron(struct b43_wldev *dev)
 	udelay(10);
 
 	/*
-	 * Power-on readback (#51420-51421): the blob reads 0x040b twice right
+	 * Power-on readback: the blob reads 0x040b twice right
 	 * after the kick+udelay. The register is HW-updated during the wait --
-	 * the later mask writes back 0x0168 (#51433), i.e. 0x040b had risen to
+	 * the later mask writes back 0x0168, i.e. 0x040b had risen to
 	 * 0x0169 on its own. Whether the pair is a done/valid poll or a
 	 * settle/flush is not decidable from the trace (values UNDEFINED); log
 	 * it so a live boot can tell us, then act on it.
@@ -1576,7 +1576,7 @@ void b43_radio_2069_pwron(struct b43_wldev *dev)
 	b43_radio_mask(dev,  0x08ea, ~0x0080);
 	b43_radio_mask(dev,  0x040b, ~0x0001);
 
-	/* pwron tail (#51434-51439), dropped by the read-less attach port */
+	/* pwron tail, dropped by the read-less attach port */
 	b43_radio_set(dev,     0x08ea, 0x0080);
 	b43_radio_maskset(dev, 0x08ed, (u16)~0x0600, 0x0400);
 
