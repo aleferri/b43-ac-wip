@@ -76,6 +76,13 @@ struct cfg80211_chan_def {
 	int center_freq2;
 };
 
+/*
+ * Subset of the cfg80211 channel flags. Only the one the PHY reads is here.
+ * IEEE80211_CHAN_RADAR is set by cfg80211 from the wiphy's regulatory domain,
+ * on the sub-bands where radar detection is required.
+ */
+#define IEEE80211_CHAN_RADAR	(1 << 3)
+
 struct ieee80211_channel {
 	int band;
 	u16 center_freq;
@@ -196,6 +203,8 @@ struct b43_bus_dev {
 /*
  * Radio version constants (only the bits the code compares are used).
  */
+#define B43_PHYTYPE_AC		0x0b
+
 struct b43_phy {
 	/*
 	 * Larghezza e canale correnti. In b43 li punta b43_phy_init() alla
@@ -205,6 +214,11 @@ struct b43_phy {
 	 * cosi' il codice del PHY vede lo stesso oggetto.
 	 */
 	const struct cfg80211_chan_def *chandef;
+	/*
+	 * Tipo e revisione del PHY, che b43 pubblica in shared memory per
+	 * l'ucode; vedi b43_phy_ac_shm_readback_block().
+	 */
+	u8  type;
 	u8  rev;
 	u16 radio_ver;
 	u8  radio_rev;

@@ -1,0 +1,108 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alessandro Ferri <aleferri@example.invalid>
+Date: Sun, 7 Sep 2026 00:30:00 +0200
+Subject: [PATCH 13/13] b43: relocate the key index block on ucode42
+
+b43.h marks B43_SHM_SH_KEYIDXBLOCK with "(v4 firmware)", and on the microcode
+the AC cores load it is somewhere else. Writing it at 0x05D4 corrupts the PHY.
+
+key_write() does two things: an index/algorithm word at KEYIDXBLOCK + kidx*2,
+and the key material at dev->ktp + index*B43_SEC_KEYSIZE. The second is
+self-locating -- b43_security_init() reads KTP from shared memory first -- and
+is correct as it stands. The first is a hardcoded 0x05D4, and b43_clear_keys()
+runs it 54 times at attach, from b43_security_init(), before any key exists.
+That reaches 0x0640.
+
+On a BCM4352 with ucode42 the block starts at 0x05E0, and 0x05D4 is not key
+state at all:
+
+  0x05d4, 0x05da, 0x05dc   the transmit chain mask. 0x3 on a 2x2 board and 0x7
+                           on a 3x3 one, which is how they were identified; the
+                           AC PHY writes them four times during channel setup.
+  0x05d6, 0x05d8           two more cells of the same block.
+  0x05e0 + kidx*2          the index block.
+
+A hot capture of a BCM4352 running WPA2 pins both the offset and the encoding.
+Two keys are installed, and each write of the index word sits immediately
+before the eight words of its key:
+
+  OBJ.WR 0x05e2 = 0x0015    OBJ.WR ktp+0x10 ... (8 words)
+  OBJ.WR 0x05e8 = 0x0045    OBJ.WR ktp+0x40 ... (8 words)
+
+0x05e2 is 0x05E0 + 1*2 and the key lands at ktp + 1*16, so kidx 1; 0x05e8 is
+0x05E0 + 4*2 and ktp + 4*16, so kidx 4. Which is a group slot and the first
+pairwise slot, B43_NR_GROUP_KEYS being 4 -- a GTK and a PTK.
+
+The values say the encoding did not change: (1 << 4) | 5 is 0x15 and
+(4 << 4) | 5 is 0x45, so it is still ((kidx << 4) | algorithm), exactly what
+key_write() computes. Only the base moved. Algorithm 5 is past the end of the
+enum in b43.h, where AES is 3 and WEP104 is 4, so the cipher numbering on this
+microcode still needs mapping -- but that is an enum, and it does not affect
+where the word goes.
+
+The condition is the microcode identity rather than the PHY type, because the
+shared-memory layout belongs to the microcode, and b43 has the precedent:
+b43_new_kidx_api() in xmit.h keys off dev->fw.rev for this same family of
+cells. b43_request_firmware() already picks "ucode42" for core revision 42 with
+an AC PHY, so the test names the same thing the firmware selection does.
+
+ucode40, the other AC entry, has no capture behind it and is left out
+deliberately: it will need the same treatment.
+
+The TKIP phase-1 cache at B43_SHM_SH_TKIPTSCTTAK is the other cell b43.h marks
+for the v4 layout, and it very likely moved too -- the index block moved by
+0x0c and the cache ends where the index block used to start. No capture
+exercises it, since it is only reached with modparam_hwtkip, so it is left
+alone here.
+
+Signed-off-by: Alessandro Ferri <aleferri@example.invalid>
+---
+ drivers/net/wireless/broadcom/b43/main.c |  4 +++-
+ drivers/net/wireless/broadcom/b43/xmit.h | 20 ++++++++++++++++++++
+ 2 files changed, 23 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/broadcom/b43/xmit.h b/drivers/net/wireless/broadcom/b43/xmit.h
+--- a/drivers/net/wireless/broadcom/b43/xmit.h
++++ b/drivers/net/wireless/broadcom/b43/xmit.h
+@@ -374,6 +374,26 @@ static inline int b43_new_kidx_api(struct b43_wldev *dev)
+ 	return (dev->fw.rev >= 351);
+ }
++
++/* Base of the key index/algorithm block in shared memory.
++ *
++ * B43_SHM_SH_KEYIDXBLOCK is the v4 firmware layout, as b43.h says. On the
++ * microcode the AC cores load the block starts at 0x05E0, and 0x05D4 holds PHY
++ * state -- the transmit chain mask -- so writing there breaks the transmit
++ * path silently.
++ *
++ * Keyed on the microcode identity, not the PHY type: the layout is the
++ * microcode's. b43_request_firmware() selects "ucode42" for core revision 42
++ * with an AC PHY, and this is the same test. ucode40 is the other AC entry and
++ * no capture covers it; it almost certainly needs this too.
++ */
++static inline u16 b43_shm_sh_keyidxblock(struct b43_wldev *dev)
++{
++	if (dev->phy.type == B43_PHYTYPE_AC && dev->dev->core_rev == 42)
++		return 0x05E0;
++	return B43_SHM_SH_KEYIDXBLOCK;
++}
++
+ static inline u8 b43_kidx_to_fw(struct b43_wldev *dev, u8 raw_kidx)
+ {
+ 	u8 firmware_kidx;
+diff --git a/drivers/net/wireless/broadcom/b43/main.c b/drivers/net/wireless/broadcom/b43/main.c
+--- a/drivers/net/wireless/broadcom/b43/main.c
++++ b/drivers/net/wireless/broadcom/b43/main.c
+@@ -812,9 +812,11 @@ static void key_write(struct b43_wldev *dev,
+ 	u16 kidx;
+ 
+ 	/* Key index/algo block */
+ 	kidx = b43_kidx_to_fw(dev, index);
+ 	value = ((kidx << 4) | algorithm);
+-	b43_shm_write16(dev, B43_SHM_SHARED,
+-			B43_SHM_SH_KEYIDXBLOCK + (kidx * 2), value);
++	b43_shm_write16(dev, B43_SHM_SHARED,
++			b43_shm_sh_keyidxblock(dev) + (kidx * 2), value);
+ 
+ 	/* Write the key to the Key Table Pointer offset */
+ 	offset = dev->ktp + (index * B43_SEC_KEYSIZE);

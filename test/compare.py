@@ -169,16 +169,21 @@ CORE_SHM = [
     (0x0040, 0x0042, "UCODESTAT/FWCAPA"),
     (0x0048, 0x0048, "PRSSIDLEN"),
     (0x004a, 0x004c, "PRTLEN/NOSLPZNATDTIM"),
-    (0x0050, 0x0056, "PHYVER/PHYTYPE/BEACPHYCTL/KTP"),
+    (0x0054, 0x0056, "BEACPHYCTL/KTP. PHYVER (0x0050) e PHYTYPE (0x0052) "
+                     "sono uscite dal perimetro: le scrive ora il port da "
+                     "phy.rev e phy.type in shm_readback_block(), che e' "
+                     "dove la cattura le mette"),
     (0x0058, 0x0058, "TSSI_CCK, la meta' che il port non scrive: la 0x005a "
                      "la scrive channel_setup()"),
     (0x0066, 0x0066, "RADAR"),
     (0x0068, 0x006a, "BT_BASE0 / TSSI_OFDM_A, 32 bit"),
     (0x006e, 0x006e, "PHYTXNOI"),
     (0x0070, 0x0072, "TSSI_OFDM_G / RFRXSP1, 32 bit"),
-    (0x0074, 0x0074, "PRMAXTIME"),
     (0x0088, 0x008a, "JSSI0/JSSI1"),
-    (0x0094, 0x009e, "SPUWKUP/PRETBTT/SIZE01..SIZE67"),
+    (0x0098, 0x009e, "SIZE01..SIZE67. SPUWKUP (0x0094) e PRETBTT (0x0096) "
+                     "sono uscite dal perimetro: le scrive ora il port, la "
+                     "prima come membro AC della famiglia per-PHY di "
+                     "brcmsmac e la seconda col valore di questo core"),
     (0x00a8, 0x00a8, "MCASTCOOKIE"),
     (0x00b0, 0x00b0, "EXTNPHYCTL"),
     (0x00b6, 0x00b6, "BCN_LI"),
@@ -191,7 +196,14 @@ CORE_SHM = [
     (0x0188, 0x0188, "PRPHYCTL"),
     (0x01c0, 0x023e, "tabelle rate: OFDMDIRECT/BASIC, CCKDIRECT/BASIC"),
     (0x0318, 0x05d3, "TKIPTSCTTAK, 50 voci da 14 byte"),
-    (0x05d4, 0x05de, "KEYIDXBLOCK, la parte che il port non scrive"),
+    (0x05d6, 0x05d8, "le due celle del blocco 0x05d4-0x05dc di cui non e' "
+                     "derivata la maschera parziale: al primo bring-up sotto "
+                     "i 5250 MHz dipendono da larghezza e numero di catene. "
+                     "Le altre tre le scrive ora il port da coremask, vedi "
+                     "b43_phy_ac_chainmask_block()"),
+    (0x05dc, 0x05de, "0x05dc, scritta una volta sola e fuori dalle quattro "
+                     "occorrenze del blocco: porta lo stesso coremask ma non "
+                     "e' stabilito da dove"),
 ]
 
 # Celle che erano in CORE_SHM e sono state TOLTE perche' il port le scrive:
@@ -260,7 +272,30 @@ PHY_ANCHE = [
 #            la larghezza sta in phy.chandef, che b43_phy_init() punta prima di
 #            switch_analog e di b43_software_rfkill: e' gia' impostata quando il
 #            PHY arriva qui, e non c'e' nulla da scrivere.
-SOLO_VENDOR = (r'^MAC\.BW\b',)
+#   probe response offload   PRTLEN (0x004a), PRSSID (0x0160-0x017e),
+#            PRSSIDLEN (0x0048), le temporizzazioni 0x0180-0x0186 e la word di
+#            template RAM 0x0700. b43 non fa rispondere il firmware ai probe:
+#            scrive PRMAXTIME=1 in b43_wireless_core_init() (main.c:4918) con il
+#            commento che un MaxTime di un microsecondo fa sempre scattare il
+#            timeout, "so we never send any probe resp". Coerentemente le tre
+#            celle del template sono definite in b43.h e mai scritte -- zero usi
+#            di PRSSID, PRSSIDLEN e PRTLEN in main.c -- e 0x0180-0x0186 non sono
+#            nemmeno nominate. Le probe response le costruisce mac80211 in
+#            software, quindi non c'e' niente da emettere e l'AP resta
+#            scopribile.
+#            SCELTA DEL WIP, NON UN LIMITE: l'offload si salta per ora. Quando
+#            verra' implementato -- il TODO post-WIP in docs/retrace-todo.md --
+#            questa voce va togliata e il confronto diventa piu' severo, che e'
+#            il verso giusto. Nota che PRMAXTIME (0x0074) NON e' qui: il vendor
+#            la scrive una volta con 0, b43 due volte (0 in b43_chip_init poi 1),
+#            quindi la' c'e' una controparte e una divergenza di valore, non
+#            un'assenza.
+SOLO_VENDOR = (
+    r'^MAC\.BW\b',
+    r'^OBJ\.WR addr=0x(?:48|4a|18[0246])(?: |$)',
+    r'^OBJ\.WR addr=0x1(?:6[02468ace]|7[02468ace])(?: |$)',
+    r'^TPL\.RAMW addr=0x700(?: |$)',
+)
 
 # Op che il PORT emette e che il vendor legittimamente non ha. Si scartano dal
 # solo lato test, e servono perche' il punteggio penalizza le op in piu': senza
@@ -308,11 +343,17 @@ PERIMETER = [
                 "blocco sopra per il criterio e per il motivo per cui non si "
                 "usa la raggiungibilita' da src/."),
 
-    dict(pattern=r'^TPL\.RAMW\b',
-         motivo="template RAM: i template dei frame, che b43 scrive in "
-                "b43_write_template_common() e in "
-                "b43_write_mac_bssid_templates(). Il PHY "
-                "non ne tocca nessuna cella."),
+    dict(pattern=r'^TPL\.RAMW addr=0x48\b',
+         motivo="template RAM, la cella 0x0048, che resta di altri. Le altre "
+                "sono uscite dal perimetro: il port scrive 0x0200 e 0x0480 "
+                "dai doppioni emit_core_bss_ssid() e 0x0700 da "
+                "emit_core_prb_rsp_template(), che sono il codice di main.c "
+                "del kernel rispecchiato nell'harness. Questa no: le sue due "
+                "occorrenze, a #12960 e #13584, non cadono a un confine che "
+                "l'harness controlli -- la prima segue la coppia 0x018a/0x018c "
+                "che emette src/, la seconda la spazzata dei contatori -- "
+                "quindi non c'e' un posto dove metterla senza spezzare una "
+                "funzione del PHY. Il PHY non tocca template RAM."),
 
     dict(pattern=r'^MAC\.MHF\.RD\b',
          motivo="lettura nuda delle host flags. Il PHY non le legge mai da "

@@ -646,10 +646,11 @@ tolleranza non e' mai stato in aria, era di nascondere un modello sbagliato.
 
 ## Da dove ripartire
 
-Stato: sorgenti a `83d1fea`, gate a freddo su `cold01` a
-**27840/29030 = 95.90%** con 259 valori sbagliati, 672 op mancanti e **zero op
-del port di troppo**; gate periodico a `MATCH`. Prima divergenza posizionale a
-`@11823`.
+Stato: gate a freddo su `cold01` a **28338/28577 = 99.16%** con 3 valori
+sbagliati, 233 op mancanti e **zero op del port di troppo**; gate periodico a
+`MATCH`. Prima divergenza posizionale a `@25075`. Il salto da 98.80% viene per
+tre quarti dall'offload della probe response dichiarato fuori scopo, non da
+lavoro sul port: vedi il TODO post-WIP piu' sotto.
 
 ### Lo sweep a freddo intero, sullo stesso albero
 
@@ -658,19 +659,68 @@ da se':
 
 | segmento | grezzo | val. sbagliato | mancanti | di troppo | posizionale |
 | --- | --- | --- | --- | --- | --- |
-| cold01 ch36 bw20 | 27840/29030 = 95.90% | 259 | 672 | 0 | `@11823` |
-| cold02 ch40 bw20 | 28093/29737 = 94.47% | 267 | 1110 | 0 | `@11822` |
-| cold03 ch44 bw20 | 27142/28608 = 94.88% | 285 | 868 | 28 | `@11826` |
-| cold04 ch48 bw20 | 26872/29006 = 92.64% | 424 | 1216 | 70 | `@11825` |
-| cold18 ch44 bw40 | 27128/29589 = 91.68% | 528 | 1329 | 76 | `@10943` |
-| cold17 ch36 bw40 | 27751/30338 = 91.47% | 554 | 1391 | 88 | `@10947` |
-| cold24 ch36 bw80 | 35387/39965 = 88.54% | 622 | 3307 | 27 | `@13470` |
-| i 19 da ch52 in su | 52.54% – 74.23% | 94 – 328 | 1065 – 1245 | 3703 – 11308 | `@9600` – `@9623` |
+| cold01 ch36 bw20 | 98.75% | 3 | 355 | 0 | `@25157` |
+| cold02 ch40 bw20 | 95.55% | 265 | 793 | 0 | `@11981` |
+| cold03 ch44 bw20 | 95.97% | 287 | 551 | 28 | `@15887` |
+| cold04 ch48 bw20 | 93.74% | 424 | 899 | 70 | `@15801` |
+| cold18 ch44 bw40 | 92.71% | 535 | 1012 | 76 | `@10943` |
+| cold17 ch36 bw40 | 92.46% | 563 | 1074 | 88 | `@10947` |
+| cold24 ch36 bw80 | 94.07% | 628 | 1108 | 4 | `@13470` |
+| i 19 da ch52 in su | 83.86% – 85.03% | 46 – 138 | 749 – 877 | **1804** | `@9600` – `@9623` |
 
-I 19 segmenti sopra i 5250 MHz sono fra loro quasi identici: 73.5-74.2% a 20 e
-40 MHz, 52.5% a 80 MHz, con la voce "di troppo" a ~3730 nel primo caso e 11308
-nel secondo. Non c'e' una gradazione per canale dentro la famiglia, e questo e'
-il segno che la causa e' una sola.
+I 19 segmenti sopra i 5250 MHz sono fra loro quasi identici, e la voce "di
+troppo" vale **esattamente 1804 su diciotto di essi** (1832 su `cold15`). Non
+c'e' una gradazione per canale dentro la famiglia: un numero costante e' il
+segno che la causa e' una sola.
+
+### Quanto del denominatore non e' del driver
+
+Da misurare prima di scegliere il lavoro, perche' cambia il tetto e non solo il
+punteggio. Le ricariche del template beacon e della probe response sono un
+blocco di forma fissa -- `0x00cc` letta e riscritta, `0x001e`, la `TPL.RAMW`
+del beacon, `BTL0`/`BTL1`, il suspend del MAC, `TPL.RAMW 0x0700`, `PRTLEN`,
+l'SSID `0x0160-0x017e`, `PRSSIDLEN`, poi una passata del PLCP -- e ognuna vale
+**57 op esatte**. Il conteggio delle passate, testimone `TPL.RAMW 0x0700`:
+
+| passate | segmenti |
+| --- | --- |
+| 7 | i 19 sopra i 5250 MHz, meno `cold15` |
+| 10, 11, 12, 16, 18, 20, 21 | `cold01`, `cold15`, `cold03`, `cold02`, `cold04`, `cold18`, `cold17`/`cold24` |
+
+Sullo stesso albero, quindi non e' il driver a deciderlo. Non correla con la
+durata -- tutti i segmenti stanno fra 33.0 e 38.9 s, e `cold05` a 34.9 s ne ha
+7 mentre `cold17` a 38.9 s ne ha 21 -- e non e' un orologio come la scadenza
+della fase probe: su `cold01` le cinque tardive distano 1.53, 1.31, 2.35,
+**16.38** e 1.31 s. E' il numero di volte che lo stack sopra ha ripubblicato il
+beacon durante la cattura. Il port ne emette 5, che sono quelle ancorate a
+`b43_op_config()` e alle passate `conf_tx`.
+
+Costo, e quota delle mancanti che ne dipende:
+
+| segmento | costo passate | mancanti | quota |
+| --- | --- | --- | --- |
+| cold01 | 285 | 355 | 80% |
+| cold02 | 627 | 793 | 79% |
+| cold03 | 399 | 551 | 72% |
+| cold04 | 741 | 899 | 82% |
+| cold17 | 912 | 1074 | 85% |
+| i 19 da ch52 | 114 | 749 – 877 | 13-15% |
+
+Il controllo che rende la conclusione utilizzabile e' il contrasto con una fase
+vicina: `prb_rsp_rate_po` (testimone `OBJ.RD 0x099a`) sta a **3 passate su
+tutti e 26 i segmenti a freddo e tutti e 52 quelli `up` dello sweep a caldo**,
+e `OBJ.WR 0x00ce` a 4 su tutti e 78. Stesso vicinato nella traccia, esito
+opposto. Quindi il criterio esiste ed e' il conteggio fra segmenti: sotto quel
+test le passate di template sono stimolo, `rate_po` e' struttura -- ed e' su
+quella prova che la terza passata di `rate_po` e' stata scritta.
+
+Conseguenza sul tetto: finche' `grezzo` tiene nel denominatore ripetizioni
+decise dall'host, il 100% non e' una soglia raggiungibile. Serve una categoria
+dichiarata, e non e' nessuna delle due esistenti -- non `SOLO_VENDOR`, perche'
+b43 quelle op le emette davvero da `b43_update_templates()`, e non `PERIMETER`,
+perche' non sono di altri. Il meccanismo di `cmp_skip.py` oggi salta op
+singole; qui serve saltare un **blocco** con un conteggio, e il criterio
+d'ingresso e' quello misurato sopra.
 
 ### Il tetto: quanto di quel che manca e' del PHY
 
@@ -679,44 +729,240 @@ del core. Le mancanti di `cold01`, per classe:
 
 | classe | mancanti | di chi e' |
 | --- | --- | --- |
-| `OBJ.WR` | 514 | shared memory del MAC, `main.c` |
-| `OBJ.RD` | 116 | idem |
+| `OBJ.WR` | 262 | shared memory del MAC, `main.c` |
+| `OBJ.RD` | 51 | idem |
 | `TPL.RAMW` | 19 | template RAM, core |
 | `MAC.MCTRL` | 18 | core |
 | `OTP.*`, `SROMCTL.RD`, `CAL.INIT` | 4 | codice srom di bcma |
 | `MAC.MHF.RD` | 1 | `b43_hf_read()`, core |
 
-**Zero op del PHY.** Tutte e 672 sono del core, e i 259 valori sbagliati sono
-tutti `PHY.WR`. Quindi sul segmento di riferimento il tetto raggiungibile
-lavorando su `src/` e' 28099/29030 = **96.79%**, e lo si toccherebbe derivando
-il payload TX IQ/LO; il 3.21% che resta non e' debito del PHY ed e' il blocco
-di config MAC/ucode che questo documento ha piu' avanti.
+**Zero op del PHY**, e i 3 valori sbagliati sono tutti `PHY.WR`. Tutte e 355
+sono del core, e si spaccano in due meta' che sono due lavori diversi: **285**
+sono le cinque ricariche di template della sezione sopra, che nessun codice
+del driver puo' emettere nel numero giusto, e **70** sono debito vero. Quindi
+sul segmento di riferimento il tetto raggiungibile modellando il blocco di
+config MAC/ucode e' 28483/28774 = **98.99%**, non il 100%.
+
+Le 70, per gruppo, con lo stato di ciascuno:
+
+| op | cosa e' | perche' non e' ancora emessa |
+| --- | --- | --- |
+| 9 | `0x05d6`, `0x05d8` (4 occorrenze) e `0x05dc` | non e' `KEYIDXBLOCK` e non e' del core: vedi sotto. Le altre tre celle del blocco le scrive ora `src/`; queste due mancano della maschera parziale, e `0x05dc` di un'origine |
+| 19 | `TPL.RAMW` | 7 sono raggiungibili (`0x0200` in `emit_core_bss_config`, `0x0480` in `emit_core_bss_config1`, `0x0700` nelle 5 passate precoci) ma l'harness **non ha un emettitore `TPL.RAMW`**, e la regola di `PERIMETER` va **ristretta al solo `0x0048`**, non rimossa: rimuoverla scopre `#12960` e riporta il muro posizionale indietro di 18000 op |
+| 18 | `MAC.MCTRL` | 13 nette delle passate, sparse |
+| 7 | `0x0180`-`0x0186` | temporizzazioni probe response, `#1248-1251` e `#10319-10321`. `CORE_SHM` dice che b43 non le scrive mai |
+| 4 | `0x0300`-`0x0306` = `0x2637` | dentro la regione stimolo |
+| 4 | `OTP`/`SROMCTL`/`CAL.INIT` | bcma, fuori da `src/`, gia' scartate dal perimetro |
+| ~15 | one-shot del core init | `0x26`, `0x50`, `0x52`, `0x74`, `0x94`, `0x96`, `0xa4`, `0xb4`, `0xd6`, `0xb0`, la terza coppia `0x0`/`0x2` a `#13468`, `MAC.MHF.RD`. Ognuno un piazzamento a se' |
+
+Nota d'ordine: il muro posizionale a `@25157` **e'** l'inizio della prima
+ricarica tardiva. Finche' quel blocco non ha una categoria, nessuna delle 70
+sposta il posizionale di un'op -- alzano solo il grezzo.
 
 La composizione cambia per famiglia, e va guardata prima di scegliere il
 lavoro:
 
-| segmento | mancanti del core | mancanti del PHY | di troppo |
+| segmento | grezzo | mancanti | di cui passate | di troppo |
+| --- | --- | --- | --- | --- |
+| cold01 ch36 bw20 | 98.75% | 355 | 285 | 0 |
+| cold05 ch52 bw20 | 85.03% | 749 | 114 | **1804** |
+| cold24 ch36 bw80 | 94.07% | 1108 | 912 | 4 |
+
+Sotto i 5250 MHz il residuo e' quasi tutto ripetizione di stimolo; sopra i 5250
+e' l'opposto -- le passate valgono 114 op su 749 e il peso sta tutto nelle 1804
+del port di troppo. **Sono due lavori diversi e la famiglia alta e' quella con
+i punti.**
+
+Sulla famiglia alta, cosa si sa ora.
+
+**Il poll e' identificato, la fase no.** Il vendor esegue un blocco di **4 op
+esatte** -- `MAC.MCTRL val=0x0 mask=0x1`, `PHY.RD 0x0251`, `PHY.RD 0x0252`,
+`MAC.MCTRL val=0x1 mask=0x1` -- ripetuto 134 volte su 22.6 s, cadenza misurata
+151-152 ms in 131 intervalli su 133, con un solo salto iniziale di 2.6 s. 112
+dei 133 intervalli distano **4 op**: le iterazioni sono contigue nel flusso,
+cioe' fra due scatti il driver non fa nient'altro. Zero occorrenze sui 7
+segmenti a 5250 MHz o meno, 134 su tutti e 19 quelli sopra (135 su tre, 108 su
+`cold15`), indipendente dalla larghezza. Valgono 268 delle ~800 mancanti di
+quei segmenti, piu' le `MAC.MCTRL` delle parentesi.
+
+Il fatto che orienta tutto il resto: `PHY.RD 0x0251` e `0x0252` sono **le sole
+due identita' che il percorso a ch52 tocca e quello a ch36 no**. Sugli altri
+179 indirizzi il rapporto e' invertito -- ch36 li tocca, ch52 no. L'attach
+sopra i 5250 e' percio' un **sottoinsieme stretto** di quello sotto, piu'
+questo poll: non c'e' un percorso alternativo da scrivere, c'e' del lavoro da
+non fare e due registri da leggere periodicamente.
+
+La cattura si comporta come deve se e' il CAC: il poll parte 12.2 s dentro il
+segmento, subito dopo l'attach, e l'ultima iterazione cade **80 ms prima della
+fine della cattura**. Non si ferma mai. Il CAC dura 60 s e il segmento 34.9,
+quindi la finestra finisce a controllo in corso -- ed e' per questo che le
+calibrazioni non ricompaiono piu' tardi nel segmento: non perche' il canale le
+proibisca per sempre, ma perche' il controllo non fa in tempo a finire.
+
+**SALAME** su quali registri siano: che `0x0251`/`0x0252` siano il rivelatore
+radar e' nostra e non verificata -- regge su `0x02e4`, che la regola `agcombo`
+di `cmp_skip.py` gia' associa a `wlc_phy_radar_detect_on_off_cfg_acphy` e che
+viene modificato subito prima della prima iterazione, ma `0x02e4` compare una
+volta anche a ch36 e da solo non discrimina. Che il **motivo** del salto sia il
+CAC invece non e' un'ipotesi sulla cattura: e' la regola, e la cattura la
+conferma. Vedi il commento di `may_calibrate_tx()`.
+
+### Chi possiede il CAC, e perche' cambia il denominatore
+
+Il predicato di `may_calibrate_tx()` non e' piu' una soglia dedotta dallo
+sweep. Le sotto-bande che portano il dovere radar le da'
+`IEEE80211_CHAN_RADAR`, sullo stesso `ieee80211_channel` da cui questo codice
+gia' legge `hw_value` e `center_freq`; lo stato del controllo lo da'
+`ac->cac_pending`, che e' quello che mac80211 comunica al driver. Non
+`ieee80211_channel.dfs_state`, che darebbe la stessa risposta ma facendo
+leggere al driver una macchina a stati che non possiede e da cui non viene
+notificato. Sui 78 segmenti catturati il risultato e'
+identico op per op -- tutti i gate restano dove erano, `cold01` a 98.75%,
+`09-up-ch52-bw20` a 80.91%, periodico `MATCH` -- perche' entrambi gli sweep si
+fermano a ch140 e la' soglia e regola coincidono. Divergono su U-NII-3: a
+ch149-165 (5745-5825 MHz) non c'e' dovere radar, la soglia sopprimeva le
+calibrazioni e la regola le fa girare. Verificato sul port: `PHY 0x0380` fa 0
+accessi a ch52 e ch140, e 791 a ch149, ch157 e ch165 come a ch36. Nessuna
+cattura puo' arbitrare quel caso, che e' la ragione per prendere la regola
+dalla spec e non dallo sweep.
+
+Ne segue una cosa che riguarda il punteggio, non il codice. Il CAC non e' del
+driver: lo guida mac80211, per conto di cfg80211 e su richiesta di un AP in
+userspace, e al driver chiede la rilevazione radar attraverso
+`.start_radar_detection` -- chiamata con l'hardware **gia'** sintonizzato, che
+e' esattamente la finestra in cui queste calibrazioni devono star fuori. Ed e'
+il produttore che oggi manca: b43 non dichiara rilevazione radar, quindi
+mac80211 non ci porta su un canale radar in AP per niente, e `cac_pending` non
+ha nessuno che lo scriva a parte il flow. Quindi
+**il poll da 4 op non e' parte dell'attach**: e' il work item della rilevazione
+che gira durante il controllo, e non deve essere emesso da `switch_channel`. Le
+sue 268 op non sono debito dell'attach, sono una funzionalita' assente, e
+l'harness non ha un punto d'ingresso dove metterle. Quando ce l'avra' quelle
+op escono dal denominatore del gate a freddo invece di entrare nel numeratore.
+
+E in senso opposto: quando il produttore esistera', hostapd finira' il CAC
+**prima** di far salire l'AP, quindi al bring-up `cac_pending` sara' falso dove
+le catture a freddo lo hanno vero, e le calibrazioni girerebbero. La forma che il gate a freddo premia sopra i 5250 -- calibrazioni
+saltate -- b43 la riprodurra' solo perche' l'harness dichiara il CAC non
+fatto, che e' vero per un modulo appena caricato ma non e' la sequenza che
+hostapd produce. Stessa regola, proprietario diverso: `AC_DFS_CAC_DONE`
+esiste per esercitare l'altro caso.
+
+**Cosa il vendor non esegue sopra la soglia.** La calibrazione RX IQ, e non in
+forma ridotta: `PHY.RD 0x0380`, il comando del generatore di tono, fa 289-954
+accessi sotto i 5250 e **zero** sopra; `PHY.RD 0x0270` fra 95 e 187 sotto e
+**zero** sopra; su tutti e 26 i segmenti e per tutte e tre le larghezze. Sulle
+celle di guadagno lo stesso: `TBL.WR id=0x07 off=0x100` 11 volte sotto e **1**
+sopra, `TBL.WR id=0x0c off=0x63` 43-45 sotto e **1** sopra. La singola passata
+che sopravvive e' `b43_phy_ac_rxiq_teardown_apply_defaults()`, la cui forma
+combacia con il blocco del vendor a `#155558` e seguenti.
+
+### Il blocco 0x05d4-0x05dc non e' KEYIDXBLOCK
+
+`b43.h:281` chiama `0x05D4` KEYIDXBLOCK e il commento aggiunge `(v4 firmware)`.
+Sul core AC quell'offset e' altro, e ci sono tre prove indipendenti.
+
+La codifica non torna. `key_write()` in `main.c:826` scrive
+`value = ((kidx << 4) | algorithm)` in `KEYIDXBLOCK + kidx*2`, quindi lo slot a
+`+2` avrebbe valore almeno `0x10` e quello a `+6` almeno `0x30`. La cattura
+scrive `0x05d6=1`, `0x05d8=1`, `0x05da=3`: **nibble alto a zero su tutti e
+quattro gli slot**. E la catena di chiamata parte da `b43_op_set_key()`
+(`main.c:4248`), non dall'init, mentre le catture a freddo sono prese prima di
+qualsiasi associazione. Nella stessa direzione: `BT_BASE0`/`BT_BASE1` di `b43.h`
+sono `0x0068`/`0x0468` e la cattura carica i template beacon a `0x0200`/`0x0480`
+-- il layout della shared memory dell'AC non e' quello del firmware v4.
+
+**Il valore e' la maschera delle catene**, e la seconda board lo dimostra. Su
+D6220, che ha `txchain=rxchain=3`, le celle `0x05d4`, `0x05da` e `0x05dc`
+portano `0x3`; sull'agcombo, che ha `7`, portano `0x7`. Su tutti e 26 i segmenti
+a freddo di entrambe. Due conteggi di catene diversi, due valori diversi, sempre
+uguali a `coremask`: derivato, non trascritto -- il driver la maschera la ha
+gia'. Le scrive `b43_phy_ac_chainmask_block()`, a tutti e quattro i siti, e il
+perimetro e' stato ristretto a `0x05d6`-`0x05d8` nello stesso passo.
+
+**Le due celle in mezzo restano.** Portano la stessa maschera in ogni caso
+tranne uno -- primo bring-up sotto i 5250 MHz -- dove prendono una maschera
+parziale:
+
+| `coremask` | bw20 | bw40 | bw80 |
 | --- | --- | --- | --- |
-| cold01 ch36 bw20 | 672 | 0 | 0 |
-| cold05 ch52 bw20 | 779 | 360 (`PHY.RD` 343, `PHY.MOD` 17) | 3733 |
-| cold24 ch36 bw80 | 1421 | 3574 (`PHY.WR` 3175, `PHY.RD` 249, `PHY.MOD` 150) | 27 |
+| `0x3` (2x2) | 1, 1 | 1, 3 | 3, 3 |
+| `0x7` (3x3) | 1, 5 | 5, 5 | 5, 7 |
 
-**Il residuo dei segmenti a 20 MHz e' quasi tutto ripetizione di funzioni
-gia' implementate**, non blocchi nuovi. Il conteggio per indirizzo su `cold01`:
+Piu' un'anomalia: la **terza** delle quattro occorrenze porta sempre la maschera
+piena, su entrambe le board e a ogni larghezza. E' quella preceduta da
+`MAC.MCTRL val=0x00100000` (set), dove le altre lo hanno a zero.
 
-| indirizzo | mancante | cos'e' |
-| --- | --- | --- |
-| `0x0994`, `0x0996`, `0x0998` e le celle sorelle | 9 volte | la passata del PLCP: il vendor la esegue 10 volte, il port 1 |
-| `0x01d6`, `0x01de`, `0x01d4`, ... | 10 volte | le letture del puntatore delle stesse 10 passate |
-| famiglia `0x02xx` | 76 op | parametri EDCF e dintorni |
-| `0x0160-0x017e` | 16 op | passate ripetute della config BSS |
+Che le altre tre righe siano piene lo confermano tre insiemi indipendenti: i 19
+segmenti d6220 sopra i 5250, i 12 dell'agcombo sopra i 5250, i 52 a caldo, e il
+`down->up` del DSL-3580L a ch36 -- board diversa e driver **6.30.102.7** invece
+di 7.14.89.
 
-Le dieci passate del PLCP stanno a `#13627` (l'unica emessa), poi `#14130`,
-`#14209`, `#14288`, `#14367`, e cinque nella regione dei tick del watchdog --
-`#30767`, `#30837`, `#31208`, `#34905`, `#35167`.
+Una formula che copre tutte e sei le configurazioni esiste: con `L` la lista
+crescente delle maschere usate (`[1,3]` e `[1,5,7]`) e
+`m = indice_bw + (n_catene - 2)`, la coppia e' `(L[m/2], L[(m+1)/2])`. La
+riproduce riga per riga, e non la scrivo: richiede `L`, e il termine intermedio
+di `L` sulla board a tre catene e' `5` = catene 0 e 2, salta la 1, e di quello
+non ho una ragione. Sei punti con una lista non spiegata e un offset legato al
+numero di catene sono un'interpolazione.
 
-**Il prossimo passo e' il posizionamento della seconda passata**, `#14130`, e va
-fatto con la mappa indice-funzione, non con l'ancoraggio da solo.
+Perche' non emetterle comunque come `coremask`: sarebbero giuste su 20 segmenti
+su 26 e sbagliate sui 6 a banda bassa e primo bring-up -- fra cui `ch36 bw20`,
+che e' la configurazione validata, quella che gira su hardware. Scrivere una
+maschera di catene sbagliata proprio la' e' il posto peggiore in cui sbagliare.
+
+Nota di metodo, pagata: emettere **parte** di un blocco contiguo costa il
+posizionale. Con solo `0x05d4`/`0x05da` ai tre siti su quattro, il muro e'
+tornato da `@25164` a `@10896`, perche' il perimetro non nascondeva piu' la
+prima occorrenza e il port non la emetteva. Il blocco va emesso a tutti i siti
+o a nessuno.
+
+**Chiuso:** `b43_phy_ac_rxgain_config_apply()`, 146 op, e' ora dietro
+`may_calibrate_tx()`. Testimoni esclusivi `PHY 0x0724` e `PHY 0x0736`, dieci
+accessi a ch36 e zero dal 52 in su su tutti e 22 i segmenti; e dieci anche su
+`09-up-ch52-bw20` e `19-up-ch104-bw20`, che conferma il secondo termine del
+predicato e non la sola soglia. I 19 segmenti passano da 83.2-84.3% a
+**83.9-85.0%**, le op di troppo da 1950 a 1804, ch36 non si muove e il gate
+periodico resta `MATCH`.
+
+**Aperto, e la difficolta' e' misurata.** Nessun'altra fase candidata passa il
+test di `may_calibrate_tx()`. Applicato per funzione a ch52 -- tutte le
+identita' della fase a zero nel vendor, con la tabella come identita' per il
+lavoro che passa dalla porta dati -- non ne passa nessuna:
+`rxiqcal_apply_body_core` ha 44 identita' a zero e 117 presenti,
+`rxgain_perchan_config` 44 e 120, `rxgain_defaults_pulse` 18 e 50. E il test
+piu' forte, il testimone esclusivo, per queste non e' nemmeno applicabile:
+**non hanno una sola identita' che nessun'altra funzione del port emetta**,
+perche' lavorano attraverso la porta di tabella e i banchi per-core condivisi.
+`PHY.MOD 0x0723` e `0x0923` stanno a zero nel vendor a ch52 e a 17 ciascuno nel
+port, ma sono emessi da tre funzioni diverse, quindi provano assenti i registri
+e non la fase -- il controesempio di `idle_tssi_meas` descritto nel commento di
+`may_calibrate_tx()`, nella stessa forma.
+
+Il residuo non e' percio' "altre fasi da mettere dietro lo stesso gate". Il
+port e il vendor eseguono le stesse fasi sopra la soglia, con **molteplicita'
+diversa**: le due funzioni sopra emettono a ch52 esattamente quello che
+emettono a ch36 -- 12 e 12 accessi su `0x0723`/`0x0923` -- mentre il vendor
+sopra non ne emette nessuno. Il gate va dentro il corpo, e per metterlo serve
+una prova che oggi non c'e'. Il posto dove cercarla e' la scomposizione per
+offset qui sotto, che ha ch36 come controllo perfetto.
+
+- Delle 1804 op di troppo, 66 sono le `AMT.WR` dichiarate `SOLO_PORT` e **149
+  sono tutte tabella `0x7` e `0xc` con `len=1`**, piu' 6 letture su `0x20`:
+  `+67 TBL.WR 0xc`, `+36 TBL.WR 0x7`, `+20 TBL.RD 0x7`, `+10 TBL.RD 0xc`, e
+  **zero mancanti** su quelle tabelle. Sono due loop che a ch52 girano piu'
+  volte di quanto il vendor faccia. Il resto (~1700) e' la famiglia
+  `0x7xx`/`0x9xx` per-core: il port emette `0x723`, `0x923`, `0x735`, `0x93e`
+  dove a ch52 il vendor non li tocca affatto, mentre a ch36 il conteggio
+  combacia op per op. La forma del problema e' quella -- fasi condizionate alla
+  banda nel vendor e non nel port, o condizionate solo in parte.
+
+Metodo: il conteggio per (classe, indirizzo) e' ordine-indipendente e non si
+fa ingannare dal disallineamento dell'LCS, che sui segmenti alti spalma il
+difetto su venti funzioni e non dice niente. L'attribuzione per funzione con
+`AC_FN_MARKERS=1` va usata solo con testimoni **esclusivi** di una funzione:
+sulle porte di tabella (`0xd`/`0xe`/`0xf`) e su `0x19e`, che tutte le fasi
+toccano, non conclude.
 
 Trappola dello strumento: gli indici `port[...]` che l'ancoraggio restituisce
 sono nella vista di `cmp_skip`, dopo l'offset di allineamento e le liste
@@ -730,10 +976,226 @@ blocco EDCF `0x0260-0x027e` e i parametri `0x0240-0x025e` sono dichiarati del
 core in `CORE_SHM`, quindi il perimetro li scarta dal lato vendor ed emetterli
 produce solo inserzioni. Verificato.
 
-E in `test/main.c` sono gia' pronte, non chiamate, `emit_core_bss_ssid()` e
-`emit_core_bss_config1()`: la seconda passata della config BSS, che differisce
-dalla prima per `BTL1` (`0x001a`) invece di `BTL0` e per una sola scrittura di
-`0x00cc` invece di due.
+Per chi scrive la regola a blocchi: le cinque passate tardive si distinguono da
+quelle che il port emette **per struttura e non per posizione**, e questo e' il
+punto che rende la regola dichiarabile. Le tardive portano un
+`MAC.MCTRL val=0x0 mask=0x1` fra la scrittura di `BTL0`/`BTL1` e la
+`TPL.RAMW 0x0700`; le due precoci ancorate a `b43_op_config()` no, e le tre
+`conf_tx` non hanno nemmeno il prologo del beacon. Le due varianti tardive
+alternano `TPL.RAMW 0x0200` + `BTL0` e `TPL.RAMW 0x0480` + `BTL1`, cioe'
+`b43_upload_beacon0()` e `b43_upload_beacon1()`, sempre partendo e finendo su
+beacon0 -- la serie ha percio' lunghezza dispari, e infatti i conteggi
+osservati sono 7, 9, 11, 15 sui segmenti a 20 MHz.
+
+Attenzione a un dettaglio dell'ordine: `apply_skips()` scorre il flusso vendor
+in avanti e salta le prime `max` occorrenze. Una regola che matcha tutte e
+dieci le passate ne salterebbe le prime cinque, che sono proprio quelle che il
+port emette, e le cinque emesse diventerebbero op di troppo. Il discriminante
+del `MAC.MCTRL` interno serve esattamente a questo.
+
+## La mappa di shared memory di b43.h e' quella del firmware v4
+
+`b43.h:281` marca `KEYIDXBLOCK` con `(v4 firmware)`, e non e' l'unica cella in
+quelle condizioni. L'audit incrociato -- ogni `B43_SHM_SH_*` di `b43.h` contro
+gli accessi della cattura `cold01` -- separa le celle che tornano da quelle che
+no.
+
+**Tornano, e con prove indipendenti dal nome.** `PHYTYPE` (0x0052) porta `0x0b`,
+che e' `B43_PHYTYPE_AC`; `PHYVER` (0x0050) porta 1. `SFFBLIM` (0x0044) e
+`LFFBLIM` (0x0046) portano 3 e 2, **gli stessi valori che b43 scrive**
+(`main.c:4911-4912`). `PRSSIDLEN` (0x0048) porta 7 e `PRSSID` (0x0160) porta
+`test-ap` -- sette caratteri. `MACHW_L`/`MACHW_H`, `UCODEREV`, `UCODEPATCH`,
+`WLCOREREV`, `TIMBPOS`, `BTL0`/`BTL1`, `PRMAXTIME`, `SPUWKUP`, `PRETBTT`,
+`CHAN`, `KTP`, `UCODESTAT`, le cinque `HOSTF` e le tabelle rate/EDCF: tutte
+coerenti. La mappa e' giusta in larga parte.
+
+**Non tornano, e vanno gatate.** In ordine di gravita':
+
+| cella | b43.h | sull'AC | conseguenza |
+| --- | --- | --- | --- |
+| `KEYIDXBLOCK` 0x05D4 | indice/algoritmo chiave, 54 slot fino a 0x0640 | 0x05d4/0x05da/0x05dc sono la maschera di catene; 0x05e0-0x0666 e' la corsa di azzeramento del PHY (`phy_ac.c:5554`) | **`b43_security_init()` -> `b43_clear_keys()` gira all'attach (`main.c:4957`) senza nessuna chiave e riscrive 54 word la sopra.** Si porta via la configurazione delle catene |
+| `PSM` 0x05F4 | PSM transmitter address match (rev < 5) | dentro la stessa corsa 0x05e0-0x0666 | idem, se qualcuno la scrive |
+| `TKIPTSCTTAK` 0x0318 | cache TKIP fase 1, 50 voci da 14 byte, arriva a 0x05d3 | zona senza evidenza nella cattura, ma stessa assunzione di layout | 700 byte in un posto non verificato. Solo con `modparam_hwtkip` |
+| `BT_BASE0` 0x0068 / `BT_BASE1` 0x0468 | basi dei template beacon in template RAM | la cattura carica i beacon a **0x0200** e **0x0480** | template scritti nel posto sbagliato |
+
+Il tavolo delle chiavi invece si autolocalizza: `dev->ktp` viene letto a runtime
+da `KTP` (0x0056), e la cattura quella lettura la fa. Sono **hardcoded** solo
+l'index block e la cache TKIP.
+
+Nota anche il verso opposto: la cattura legge in continuo 0x0768-0x078a, i
+contatori delle statistiche, che `b43.h` non nomina affatto, e `b43.h` nomina
+0x0700-0x070e come `NPHY_TXIQW*`/`NPHY_TXPWR_INDX*` mentre la cattura non li
+tocca. La shared memory dell'AC ha contenuto per cui non ci sono nomi.
+
+### Come gatare
+
+L'asse causale e' l'**ucode**, non il PHY: il layout e' del firmware, e b43 il
+precedente lo ha gia' -- `b43_new_kidx_api()` in `xmit.h:372` gira su
+`dev->fw.rev >= 351` per esattamente questa famiglia di celle. Il tipo di PHY e'
+un buon proxy, disponibile prima che il firmware sia caricato e senza ambiguita'
+qui (AC-PHY implica il core nuovo implica l'ucode nuovo), ed e' l'asse che
+useremo; ma il motivo per cui la mappa cambia va scritto per quello che e'.
+
+Forma: un accessore per cella invece di una costante, cosi' lo sbaglio sta in un
+posto solo -- `b43_shm_sh_keyidxblock(dev)`, `b43_shm_tplram_bt_base(dev, n)` --
+e i siti di chiamata non cambiano.
+
+### Le tre celle del core init che si sono chiuse, e le due che no
+
+Chiuse, e non trascritte: `PHYTYPE` (0x0052) e `PHYVER` (0x0050) le scrive ora
+il port da `phy.type` e `phy.rev` in `shm_readback_block()`, che e' dove la
+cattura le mette; b43 le scrive da se' a `main.c:4932-4933` con quegli stessi
+due campi, e la cattura porta `0x0b` = `B43_PHYTYPE_AC` e `1`. `PRMAXTIME`
+(0x0074) la scrive `txpwrctrl_setup()` con **0**, che e' il valore di
+`b43_chip_init()` (`main.c:3307`). Perimetro ristretto nello stesso passo:
+`(0x0050, 0x0056)` diventa `(0x0054, 0x0056)` e la voce di `0x0074` sparisce.
+
+Chiuse anche `SPUWKUP` (0x0094) e `PRETBTT` (0x0096), e il posto dove guardare
+non era b43: era **brcmsmac**, il softmac Broadcom aperto nello stesso albero.
+`d11.h` conferma le due celle -- `M_SYNTHPU_DLY` e' `0x4a*2` = 0x94 e
+`M_PRETBTT` e' `0x4b*2` = 0x96 -- e da la' viene la struttura.
+
+`SPUWKUP` e' una **costante per tipo di PHY**, non un valore da indovinare:
+`brcms_b_upd_synthpu()` ne sceglie una di quattro, 3700 per A-PHY, 1050 per
+B-PHY, 2048 per N-PHY rev>=3, 300 per LCN. Il 512 della cattura e' il membro AC
+della stessa famiglia, e va letto come il 2048 dell'N-PHY: una costante per PHY.
+b43 qui sbaglia due volte -- applica il valore B-PHY a tutto e aggiunge un caso
+adhoc/idle a 500 che in brcmsmac non esiste.
+
+`PRETBTT`: brcmsmac la definisce e **non la scrive mai**, quindi lascia il
+default dell'hardware; b43 scrive 250 in AP e 2 in adhoc, e la cattura porta 2
+pur essendo in AP. Lo split 250/2 di b43 e' logica dei core vecchi: qui il
+beacon lo costruisce l'ucode dal template in template RAM -- il carico che
+`emit_core_bss_ssid()` rispecchia -- quindi l'host non ha niente da preparare e
+il preavviso lungo non serve. Il 2 e' il valore di questo core, non il ramo
+adhoc.
+
+Lezione di metodo: per le celle del core, prima di dichiarare una costante non
+derivabile, guardare brcmsmac. b43 e' il driver in cui stiamo scrivendo, ma non
+e' la fonte piu' vicina all'hardware -- brcmsmac condivide con `wl` la
+generazione di ucode e le mappe di shared memory, e le costanti stanno la'.
+
+### L'index block e' a 0x05E0, e la codifica non e' cambiata
+
+Trovato: fra le 54 catture con `KTP` leggibile, due dello sweep a caldo --
+`02-up-ch36-bw20` e `03-up-ch40-bw20` -- installano chiavi vere. Sono le sole
+con scritture non-zero nel tavolo. La sequenza fissa offset e codifica insieme:
+
+```
+OBJ.WR 0x05e2 = 0x0015    poi 8 word a ktp+0x10
+OBJ.WR 0x05e8 = 0x0045    poi 8 word a ktp+0x40
+```
+
+`0x05e2` = `0x05E0 + 1*2` con la chiave a `ktp + 1*16`, quindi kidx **1**;
+`0x05e8` = `0x05E0 + 4*2` con la chiave a `ktp + 4*16`, quindi kidx **4**. Slot
+di gruppo e primo pairwise (`B43_NR_GROUP_KEYS` = 4): GTK e PTK.
+
+E i valori dicono che la codifica e' identica a quella di b43:
+`(1 << 4) | 5` = `0x15` e `(4 << 4) | 5` = `0x45`, cioe'
+`((kidx << 4) | algorithm)`. **Si e' spostata solo la base.** L'algoritmo 5 e'
+oltre la fine dell'enum di `b43.h` -- AES e' 3, WEP104 e' 4 -- quindi la
+numerazione dei cifrari su questo ucode resta da mappare, ma e' un enum e non
+cambia dove va la word. E' `patches/0013`.
+
+### E la corsa 0x05e0-0x0666 non e' stato del PHY
+
+Segue da sopra, e va nel verso opposto all'errore trovato prima: `src/` emette
+`0x05e0`-`0x0666` come corsa di azzeramento del PHY, e invece **e' l'index
+block che viene pulito**. Nella cattura a freddo le due meta' di
+`b43_clear_keys()` stanno in fila -- 432 word di materiale a zero da `0x10f4`
+(#12311-#12742), poi 68 word da `0x05e0` (#12791-#12858). 54 slot arriverebbero
+a `0x064a` e la corsa va a `0x0666`, quindi 14 word in coda restano da
+identificare.
+
+Spostarla in `test/main.c` non si puo': `wl` la esegue **dentro** la regione di
+channel setup, dove b43 la farebbe in `b43_wireless_core_init()`. E' una
+divergenza di posizione, non un doppione da spostare, e resta bloccata dallo
+stesso punto d'inserzione che manca a tutto il resto. Per ora e' corretto il
+commento, cosi' nessuno la legge come stato del PHY.
+
+### Il tavolo delle chiavi c'e', ed e' meta' di key_write()
+
+`key_write()` (`main.c:826`) fa due cose, e solo una e' sbagliata.
+
+L'index block a `KEYIDXBLOCK + kidx*2` e' hardcoded, e `b43_clear_keys()` lo
+gira 54 volte all'attach: arriva a 0x0640, cioe' sulla maschera di catene e
+dentro la corsa di azzeramento del PHY.
+
+Il materiale della chiave invece va a `dev->ktp + index*B43_SEC_KEYSIZE`, e
+`dev->ktp` lo legge `b43_security_init()` da `KTP` a runtime. **Quel pezzo e'
+gia' giusto**, e la cattura lo dimostra riga per riga: `KTP` letta a `#577719`
+vale `0x087a`, quindi `dev->ktp` = `0x10f4`, e da la' partono **432 word tutte a
+zero**, 432 indirizzi distinti a passo 2 -- 54 slot da 16 byte, esattamente il
+ciclo di `key_write()` con `algorithm = NONE`. Nel segmento non c'e' **nessuna**
+scrittura con un valore `(kidx<<4)|algo`.
+
+Quindi `wl` su ucode42 fa la pulizia e durante la pulizia non scrive nessun
+index block. La correzione dell'attach e' completa e provata: togliere le due
+righe dell'index block e lasciare il resto. E' `patches/0013`.
+
+La cattura con la chiave e' poi stata trovata (sezione sopra), quindi anche il
+percorso `set_key` e' chiuso a meno dell'enum dei cifrari.
+
+L'asse del gate e' l'identita' dell'**ucode**, come chiesto: `ucode42` esiste
+gia' in b43, `b43_request_firmware()` lo seleziona a `main.c:2309` per core
+revision 42 con PHY AC, e la cattura porta `WLCOREREV` = `0x2a` = 42. Il test in
+`patches/0013` nomina la stessa cosa che nomina la selezione del firmware.
+`ucode40`, l'altra voce AC, non ha catture dietro ed e' lasciata fuori di
+proposito.
+
+**E niente di tutto questo lo verifica un gate.** Sono modifiche a `main.c` e
+`b43.h` del kernel, che l'harness non compila: vanno nella serie `patches/` e
+restano senza copertura finche' l'harness non modella il blocco di config
+MAC/ucode. Scriverle e' giusto, chiamarle verificate no.
+
+## TODO post-WIP: offload della probe response in hardware
+
+Saltato per il WIP, e la voce di `SOLO_VENDOR` in `test/compare.py` lo dichiara.
+Qui c'e' cosa serve per riprenderlo, perche' la voce va togliata insieme.
+
+**Cosa fa b43 oggi.** Non fa rispondere il firmware ai probe: scrive
+`PRMAXTIME=1` in `b43_wireless_core_init()` (`main.c:4918`), col commento che un
+MaxTime di un microsecondo fa sempre scattare il timeout, *"so we never send any
+probe resp"*. Coerentemente le tre celle del template -- `PRSSID` (0x0160),
+`PRSSIDLEN` (0x0048), `PRTLEN` (0x004a) -- sono **definite in `b43.h` e mai
+scritte**: zero usi in `main.c`. Le temporizzazioni `0x0180`-`0x0186` non sono
+nemmeno nominate. Le probe response le costruisce mac80211 in software, quindi
+l'AP resta scopribile: si paga in CPU e latenza sotto tempesta di probe, mai in
+funzionalita'.
+
+Nota che `b43_chip_init()` (`main.c:3307`) scrive prima `PRMAXTIME=0` con un
+`FIXME` -- *"has to be set by ioctl probably"* -- e la 4918 lo riporta a 1.
+Nessuno in b43 ha mai deciso davvero, e il vendor scrive 0, cioe' timeout
+infinito.
+
+**Cosa serve per implementarlo.**
+
+1. `PRMAXTIME=0` invece di 1, cioe' rimuovere la scrittura di
+   `b43_wireless_core_init()` e lasciare quella di `b43_chip_init()`. Attenzione:
+   il vendor la scrive **una volta sola**, b43 due. Con l'offload attivo b43
+   emette una op in piu' senza controparte, e va guardata prima di dichiararla
+   `SOLO_PORT`.
+2. Un `b43_write_probe_resp_template()` in `main.c` del kernel, sul modello di
+   `b43_write_beacon_template()`, con la word di template RAM a **0x0700**. Non
+   nell'harness: il doppione in `test/main.c` e' stato rimosso proprio perche'
+   stava modellando `wl` invece di rispecchiare `main.c`.
+3. Le quattro temporizzazioni `0x0180`-`0x0186`. Il vendor le scrive due volte,
+   a `#1248-1251` (quattro celle) e `#10319-10321` (tre, senza `0x0184`). La
+   prima cade **dentro** `b43_phy_ac_op_init()`, fra `bcma_chipco_gpio_control()`
+   e `b43_phy_ac_mode_init()`, quindi non a un confine che l'harness controlli:
+   servira' un punto d'inserzione o una funzione del core chiamata da la'.
+4. Togliere la voce da `SOLO_VENDOR`. Il confronto diventa piu' severo, che e'
+   il verso giusto.
+
+**E attenzione a come il punteggio si e' mosso.** Dichiarare l'offload fuori
+scopo ha fatto **salire** `cold01` da 98.80% a 99.15%, non scendere: le 197 op
+del vendor escono dal denominatore e le 95 del port dal numeratore, quindi il
+denominatore perde piu' del numeratore. Il numero e' salito perche' l'obiettivo
+si e' rimpicciolito, non perche' il port sia migliorato. E' esattamente il
+rischio che il commento di `SOLO_VENDOR` mette in guardia -- "ogni voce e' un
+pezzo di obiettivo dichiarato irraggiungibile" -- e qui non e' irraggiungibile,
+e' rinviato. Il confronto onesto e' contro il 98.80% di prima, non contro il
+99.15% di dopo.
 
 ## Punti aperti
 
@@ -756,9 +1218,12 @@ dalla prima per `BTL1` (`0x001a`) invece di `BTL0` e per una sola scrittura di
   niente da leggere in quel modo. La spazzata piatta resta perche' fa parte del
   latch della finestra.
 
-  Da guardare: il poll con 57 letture, tre in piu' della forma piena. Tre e' la
-  lunghezza di una lettura `hi/lo/hi`, quindi e' un contatore in piu' letto una
-  volta -- quale, non lo so.
+  Il poll con 57 letture, tre in piu' della forma piena, era un contatore in
+  piu' letto una volta: e' `0x077c`, letto `hi/lo/hi` da solo dopo il latch di
+  chiusura e fuori da ogni spazzata, fra le due letture di `UCODESTAT` che sono
+  del core. Lo emette ora `b43_phy_ac_rxiqcal_finalize()`, e su `cold01` i
+  conteggi di `0x077c` e `0x077e` combaciano op per op (66 e 109). La stessa
+  tripletta c'e' identica sul segmento a caldo, a `#28587-#28591`.
 
 - **Il punteggio ora penalizza le op in piu', e il quadro cambia.** Il
   denominatore e' l'unione dei due flussi, non le sole op di wl: fa 100% solo
@@ -793,8 +1258,8 @@ dalla prima per `BTL1` (`0x001a`) invece di `BTL0` e per una sola scrittura di
 
   | segmento | grezzo | valore sbagliato | mancanti | di troppo |
   | --- | --- | --- | --- | --- |
-  | cold01 ch36 bw20 | 95.90% | 259 | 672 | 0 |
-  | cold05 ch52 bw20 | 71.91% | 99 | 1140 | **4370** |
+  | cold01 ch36 bw20 | 98.75% | 3 | 355 | 0 |
+  | cold05 ch52 bw20 | 85.03% | 48 | 749 | **1804** |
 
   Su cold01 le op di troppo sono ormai zero: erano l'ombra dei tre poll di up
   e un bracket MAC duplicato, entrambi chiusi sotto. Dei valori sbagliati, il payload TX IQ/LO
