@@ -306,6 +306,26 @@ struct b43_phy_ac {
 	 */
 	u16 last_cal_channel;
 	/*
+	 * Whether a channel availability check is still outstanding on the
+	 * current channel. Only meaningful where IEEE80211_CHAN_RADAR is set;
+	 * see b43_phy_ac_may_calibrate_tx().
+	 *
+	 * It is state of the DFS check, and the check is not this driver's --
+	 * mac80211 drives it. The producer is the .start_radar_detection
+	 * callback, which mac80211 invokes after tuning the hardware and
+	 * before the check runs, and the clear is the CAC_FINISHED event.
+	 * Neither exists yet: b43 advertises no radar detection, so mac80211
+	 * will not bring an AP up on such a channel at all. Until they do,
+	 * this is set by whoever drives the flow, and a freshly loaded module
+	 * has by definition passed no check.
+	 *
+	 * Read from cfg80211's ieee80211_channel.dfs_state instead and the
+	 * answer would be the same, but the driver would be reaching into a
+	 * state machine it neither owns nor is notified by. The flag it does
+	 * get told about is this one.
+	 */
+	bool cac_pending;
+	/*
 	 * Deadline of the probe/measure phase, in 1-second ticks, and the two
 	 * ticks the periodic watchdog lands on within it (0xffff for none).
 	 * Both stand in for a clock the trace harness does not have; see

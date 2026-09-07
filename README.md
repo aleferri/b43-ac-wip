@@ -74,8 +74,8 @@ dove si documenta come si produce un numero citabile.
 Su `cold01-ch36-bw20`, il segmento di riferimento:
 
 ```
-grezzo: 27840/29030 = 95.90%
-        259 col valore sbagliato, 672 op di wl mancanti, 0 op del port di troppo
+grezzo: 28338/28577 = 99.16%
+        3 col valore sbagliato, 233 op di wl mancanti, 0 op del port di troppo
 ```
 
 Il denominatore e' l'unione dei due flussi, quindi fa 100% solo se il port
@@ -90,14 +90,27 @@ si dividono in due famiglie che il punteggio separa da se':
 
 | famiglia | segmenti | grezzo | di troppo |
 |---|---|---|---|
-| centro banda ≤ 5250 MHz | 7 (ch36-48) | 84.31% – 95.90% | 0 – 96 |
-| centro banda > 5250 MHz | 19 (da ch52) | 51.35% – 71.91% | 4340 – 11945 |
+| centro banda ≤ 5250 MHz | 7 (ch36-48) | 93.50% – 99.16% | 0 – 88 |
+| centro banda > 5250 MHz | 19 (da ch52) | 85.27% – 86.4% | 1804 |
 
 Sopra i 5250 MHz il driver stock esegue un attach diverso, non un attach
-ridotto: ~20.3k op contro le 35k-51k dei canali bassi. La differenza non e'
-qualita' del port su quei canali, ed e' la voce "op di troppo" a pesare. Il
-dettaglio per segmento e la struttura di quella differenza stanno in
+ridotto: ~16k op contro le ~29k dei canali bassi. La differenza non e' qualita'
+del port su quei canali, ed e' la voce "op di troppo" a pesare — 1804 op su
+tutti e 19 i segmenti tranne uno, quindi una causa sola: sopra la soglia il
+vendor non esegue la calibrazione RX IQ, e il port ne esegue ancora dei pezzi. Il dettaglio per
+segmento e la struttura di quella differenza stanno in
 [`docs/retrace-todo.md`](docs/retrace-todo.md).
+
+Una parte del denominatore non e' raggiungibile da nessun codice del driver, e
+il conto va tenuto separato: le ricariche del template beacon e della probe
+response sono blocchi da 57 op che il vendor ripete **da 7 a 21 volte** sui 26
+segmenti dello stesso albero, senza correlazione con la durata (33-39 s in
+tutti). Il numero lo decide lo stack sopra, non il driver. Valgono il 72-85%
+delle op mancanti di ogni segmento sotto i 5250 MHz e il 13-15% di quelle
+sopra.
+Il criterio che le separa dal debito vero e' il conteggio fra segmenti: una
+fase come `prb_rsp_rate_po` sta a 3 passate su tutti e 26 i segmenti a freddo e
+tutti e 52 quelli a caldo, e quella e' struttura.
 
 Il secondo gate e' il tick del watchdog periodico contro l'oracolo a regime, e
 sta a **`MATCH`** — confronto posizione-per-posizione, nessuna eccezione. E'

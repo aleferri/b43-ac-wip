@@ -358,6 +358,45 @@ static void mount_board(const struct board_profile *p)
 	g_chan.center_freq = 5000 + 5 * g_chan.hw_value;
 
 	/*
+	 * Radar-detection requirement, as cfg80211 would set it from the
+	 * regulatory domain. The sub-bands are the ones the spec fixes, not
+	 * something read off the captures: U-NII-1 (5150-5250) and U-NII-3
+	 * (5725-5850) carry no radar duty, U-NII-2A (5250-5350) and U-NII-2C
+	 * (5470-5725) do.
+	 *
+	 * Both sweeps stop at ch140 (5700 MHz), so they contain no U-NII-3
+	 * channel and cannot distinguish this from a plain "above 5250"
+	 * threshold. Which is the reason to take it from the spec: the
+	 * threshold happens to agree on the sixteen channels that were
+	 * captured, and disagrees on channels 149-165, where it would suppress
+	 * calibrations that are allowed to run.
+	 */
+	if ((g_chan.center_freq > 5250 && g_chan.center_freq <= 5350) ||
+	    (g_chan.center_freq > 5470 && g_chan.center_freq <= 5725))
+		g_chan.flags |= IEEE80211_CHAN_RADAR;
+
+	/*
+	 * Whether the channel availability check is still outstanding. On
+	 * hardware this comes from mac80211, through the radar-detection
+	 * callback b43 does not have yet; here the flow says it, and the
+	 * default follows from what the flow is. A freshly inserted module has
+	 * passed no check, which is the cold sweep; the hot sweep is a channel
+	 * switch on a device that had already been operating there, so its
+	 * check had completed.
+	 *
+	 * AC_DFS_CAC_DONE overrides it, for a cold flow on a channel whose
+	 * check some earlier owner had already passed -- which is what an AP
+	 * bring-up under hostapd actually looks like.
+	 */
+	{
+		const char *e = getenv("AC_DFS_CAC_DONE");
+		const char *fi = getenv("AC_FIRST_INIT");
+		bool first = !(fi && !strcmp(fi, "0"));
+
+		g_ac.cac_pending = e ? (strtoul(e, NULL, 0) == 0) : first;
+	}
+
+	/*
 	 * Regulatory ceiling for the channel, in dBm, as cfg80211 would supply
 	 * it. The captures were taken on a system whose ceiling does not bind
 	 * -- ch100 receives 86 quarter-dBm, above the 84 a 21 dBm limit would
@@ -428,6 +467,7 @@ static void mount_board(const struct board_profile *p)
 	memset(&g_wldev, 0, sizeof(g_wldev));
 	g_wldev.dev = &g_bus_dev;
 	g_wldev.wl  = &g_wl;
+	g_wldev.phy.type       = B43_PHYTYPE_AC;
 	g_wldev.phy.rev        = p->phy_rev;
 	g_wldev.phy.radio_ver  = p->radio_ver;
 	g_wldev.phy.radio_rev  = p->radio_rev;
@@ -1327,33 +1367,36 @@ static void emit_core_shm_chipinit(const struct board_profile *p)
  * 0x017e, e PRSSIDLEN. E' la parte che il vendor ripete in tutte e quattro le
  * passate conf_tx, cold01 #14189, #14268 e #14347 oltre alla prima.
  */
-static void emit_core_prb_rsp_template(void)
-{
-	static const u16 ssid[] = { 0x6574, 0x7473, 0x612d, 0x0070 };
-	unsigned int i;
-	u16 off;
-
-	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x004a, 0x0118);
-
-	for (i = 0; i < ARRAY_SIZE(ssid); i++)
-		b43_shm_write16(&g_wldev, B43_SHM_SHARED,
-				(u16)(0x0160 + i * 2), ssid[i]);
-	for (off = 0x0168; off <= 0x017e; off += 2)
-		b43_shm_write16(&g_wldev, B43_SHM_SHARED, off, 0x0000);
-
-	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x0048, 0x0007);
-}
+/*
+ * Il template della probe response NON si carica: b43 non fa rispondere il
+ * firmware ai probe -- PRMAXTIME=1 in b43_wireless_core_init(), main.c:4918 --
+ * e coerentemente non scrive nessuna delle tre celle del template. Le op del
+ * vendor su PRTLEN, PRSSID, PRSSIDLEN, sulle temporizzazioni 0x0180-0x0186 e
+ * sulla word 0x0700 di template RAM stanno in SOLO_VENDOR di compare.py.
+ *
+ * E' una scelta del WIP, non un limite: il TODO post-WIP sta in
+ * docs/retrace-todo.md. Quando l'offload verra' implementato questo doppione
+ * torna, la voce di SOLO_VENDOR va togliata, e il carico va scritto in
+ * main.c del kernel -- non qui.
+ */
 
 /*
- * La coda comune alle due passate che caricano un template beacon: TIMBPOS, la
- * lunghezza del template (@btl, 0x0018 per il primo e 0x001a per il secondo) e
- * poi il probe response.
+ * La coda comune alle due passate che caricano un template beacon: TIMBPOS, il
+ * template in template RAM e la sua lunghezza (@btl, 0x0018 per il primo e
+ * 0x001a per il secondo). I template beacon b43 li fa: b43_upload_beacon0() e
+ * b43_upload_beacon1() passano da b43_write_template_common().
  */
 static void emit_core_bss_ssid(u16 btl)
 {
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x001e, 0x0043);
+	/*
+	 * L'offset del template segue la cella della lunghezza: BTL0 carica
+	 * beacon0 a 0x0200, BTL1 carica beacon1 a 0x0480. Non sono le costanti
+	 * BT_BASE0/BT_BASE1 di b43.h, che valgono 0x0068 e 0x0468: il layout
+	 * della template RAM dell'AC non e' quello del firmware v4.
+	 */
+	b43_test_tplram_write16(btl == 0x0018 ? 0x0200 : 0x0480, 0x012c);
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, btl, 0x012a);
-	emit_core_prb_rsp_template();
 }
 
 /*
@@ -1494,8 +1537,6 @@ static void emit_core_conf_tx_pass(unsigned int n)
 	emit_core_edcf_queue(&edcf_queues[n]);
 	if (n == 0)
 		emit_core_bss_config1();
-	else
-		emit_core_prb_rsp_template();
 	b43_phy_ac_prb_rsp_plcp_pass(&g_wldev);
 }
 

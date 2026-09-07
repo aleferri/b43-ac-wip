@@ -1190,6 +1190,22 @@ void b43_shm_write16(struct b43_wldev *dev, u16 routing, u16 offset, u16 val)
 	fprintf(trace(), "cpu1 OBJ.WR   addr=0x%04x val=0x%04x\n", offset, val);
 }
 
+/* ============ template RAM (TPL) ============
+ *
+ * b43 scrive i template dei frame da b43_write_template_common() e
+ * b43_write_mac_bssid_templates(), che passano dalla coppia
+ * B43_MMIO_TMPLT_CTL/TMPLT_DATA; il tracer del vendor aggancia la' ed emette
+ * una TPL.RAMW per word.
+ *
+ * Qui c'e' solo l'emissione. Quali word scrivere lo decidono i doppioni del
+ * core in main.c, perche' quel codice sta in main.c del kernel e l'harness non
+ * lo compila -- come per emit_core_shm_macaddr() e le altre.
+ */
+void b43_test_tplram_write16(u16 offset, u16 val)
+{
+	fprintf(trace(), "cpu1 TPL.RAMW addr=0x%04x val=0x%04x\n", offset, val);
+}
+
 /* ============ address match table ============
  *
  * Un record per riga, che e' la granularita' del tracer: il suo hook su

@@ -41,6 +41,13 @@ u16 b43_test_mirror_phy_get(u16 reg);
 void b43_test_trace_to(FILE *f);
 
 /*
+ * Emette una TPL.RAMW, la classe con cui il tracer del vendor riporta una word
+ * scritta in template RAM. Serve ai doppioni del core in main.c: il PHY non
+ * tocca nessuna cella di template RAM.
+ */
+void b43_test_tplram_write16(u16 offset, u16 val);
+
+/*
  * Riepilogo del read oracle (AC_READ_ORACLE): quante letture sono state
  * servite dalla cattura e quali code non sono state consumate del tutto.
  */

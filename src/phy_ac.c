@@ -543,6 +543,21 @@ static void b43_phy_ac_shm_readback_block(struct b43_wldev *dev)
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x0010, 0x03ff);	/* SLOTT */
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x0010, 9);
 
+	/*
+	 * PHYTYPE e PHYVER, che l'ucode legge per sapere con cosa sta parlando.
+	 * I valori non sono trascritti: b43 li scrive da se' in
+	 * b43_wireless_core_init() (main.c:4932-4933) come phy->type e
+	 * phy->rev, e la cattura porta 0x0b -- che e' B43_PHYTYPE_AC -- e 1,
+	 * che e' la rev del PHY di questa board.
+	 *
+	 * b43 li scrive al core init e la cattura li mette qui, in mezzo a
+	 * questa corsa: e' la stessa situazione delle prime dieci celle di
+	 * 0x05e0-0x0666 piu' sotto, e si risolve nello stesso modo -- le
+	 * scrive il port e il perimetro si restringe.
+	 */
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x0052, dev->phy.type);
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x0050, dev->phy.rev);
+
 	b43_phy_ac_ofdm_pctl1_readback(dev);
 }
 
@@ -807,10 +822,33 @@ void b43_phy_ac_rxiqcal_dds_seed_tone(struct b43_wldev *dev, int step)
 	b43_phy_ac_tone_table_write(dev, b43_phy_ac_tone_period, step);
 }
 
+/*
+ * Le tre celle invarianti del blocco 0x05d4-0x05dc, che b43.h chiama
+ * KEYIDXBLOCK per il firmware v4 e che sul core AC sono altro.
+ *
+ * Il valore e' la maschera delle catene: 0x3 sulla D6220, che ha
+ * txchain=rxchain=3, e 0x7 sull'agcombo, che ha 7. Verificato sui 26 segmenti a
+ * freddo di ognuna delle due board -- due conteggi di catene diversi, due
+ * valori diversi, sempre uguali a coremask -- quindi e' derivato e non
+ * trascritto: il driver la maschera la ha gia' in ac->coremask.
+ *
+ * Le due celle in mezzo, 0x05d6 e 0x05d8, portano la stessa maschera in ogni
+ * caso tranne uno: al primo bring-up sotto i 5250 MHz prendono una maschera
+ * parziale che dipende dalla larghezza e dal numero di catene. Quella non e'
+ * derivata e resta fuori -- vedi docs/retrace-todo.md.
+ */
+static void b43_phy_ac_chainmask_block(struct b43_wldev *dev)
+{
+	u16 mask = dev->phy.ac->coremask;
+
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x05d4, mask);
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x05da, mask);
+}
+
 /* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
- *   13009-13068, 13683-13742]
+ *   13009-13068, 13683-13742, 36065-36124]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
- *   8703-8762, 9313-9372]
+ *   8703-8762, 9313-9372, 28607-28634]
  */
 static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev)
 {
@@ -4886,52 +4924,56 @@ static void b43_phy_ac_rxgain_init(struct b43_wldev *dev, unsigned int core)
 /*
  * Whether the calibrations that transmit may run on this channel.
  *
- * Above 5250 MHz the captures do not run them at all. Two phases are absent
- * outright, and the evidence is the same on every segment: not one access to
- * the command register 0x0380 and not one to 0x0b22 on any of the nineteen
- * segments from channel 52 up, against 313 to 978 and nine respectively on
- * every segment from 48 down. It is not a shorter run, it is nothing, and it
- * is most of the difference between a 36k-operation attach and a 20k one.
+ * The condition is regulatory, not empirical. These calibrations drive the
+ * tone generator: they transmit. On a channel where radar detection is
+ * required, transmission is not allowed until the channel availability check
+ * has completed, so they cannot run.
  *
- * 5250 MHz is where the regulatory domains put the DFS boundary, and these
- * calibrations transmit -- they drive the tone generator and poll for the
- * result. A radio that may not transmit until the channel availability check
- * has finished cannot run them, which is a reason for the split rather than
- * just a line that happens to fit. Not proof, though: the same boundary is
- * also "the second 5 GHz sub-band", and the captures do not separate the two.
+ * Which sub-bands carry the duty is not this driver's to decide: it is in
+ * IEEE80211_CHAN_RADAR, which the regulatory domain sets, on the same
+ * ieee80211_channel this code already reads hw_value and center_freq from.
+ * Whether the check has completed is mac80211's, and mac80211 tells the driver
+ * -- see the note on ac->cac_pending in phy_ac.h for the producer, and for why
+ * this does not read cfg80211's dfs_state directly even though it would give
+ * the same answer.
  *
- * Only phases proven absent in full are behind this, and "in full" is the part
- * that needs care: a register that a phase is the only one to touch, at zero
- * above the boundary, proves the register absent and not the phase. The
- * counterexample is idle_tssi_meas, whose exclusive registers -- radio 0x004e,
- * PHY 0x0012 and 0x0845 -- are all at zero above 5250 while the phase itself
- * plainly runs there, 192 reads of 0x0013 against 198 below. So the test is
- * every address the phase emits, not one witness; where a phase does its work
- * through a data port the discriminating identity is the table, since every
- * table write looks like a write to PHY 0x000f. Which phases fail the test and
- * why is in docs/retrace-todo.md.
+ * The captures confirm it and did not supply it, which is worth keeping
+ * straight because the two answers differ. Below the boundary: PHY 0x0380, the
+ * tone generator's command register, takes 313 to 978 accesses on every
+ * segment from channel 48 down and radio 0x0b22 nine. Above it, on all
+ * nineteen segments from channel 52 up, not one access to either. It is not a
+ * shorter run, it is nothing, and it is most of the difference between a
+ * 29k-operation attach and a 16k one. In the hot sweep those same phases run
+ * above the boundary too, at every channel -- on 09-up-ch52-bw20 and
+ * 19-up-ch104-bw20 exactly as on 01-up-ch36-bw20 -- because there the CAC had
+ * long completed.
+ *
+ * Where the two answers part company is U-NII-3. Both sweeps stop at ch140,
+ * 5700 MHz, so every captured channel that carries the radar duty is above
+ * 5250 and every one that does not is below: a plain threshold at 5250 fits
+ * the data exactly. It is still the wrong rule, because 5725-5850 carries no
+ * radar duty either, and a threshold would suppress on channels 149-165
+ * calibrations that are allowed to run there. No capture can arbitrate that,
+ * which is the reason to take the rule from the spec instead of from the
+ * sweep.
+ *
+ * One thing this does not settle: who owns the CAC. Here mac80211 does, on
+ * cfg80211's behalf and at a userspace AP's request, and it hands the driver
+ * the channel before the check rather than after -- .start_radar_detection is
+ * called with the hardware already tuned, which is exactly the window these
+ * calibrations must sit out. wl runs its own check inside the attach instead,
+ * which is why the captures show them skipped at all. Same rule, different
+ * owner, and the difference shows up in what b43 will do on hardware: by the
+ * time an AP bring-up arrives the check has finished, so the calibrations will
+ * run where the cold captures have them absent. See docs/retrace-todo.md.
  */
 static bool b43_phy_ac_may_calibrate_tx(struct b43_wldev *dev)
 {
-	if (dev->phy.chandef->chan->center_freq <= 5250)
+	const struct ieee80211_channel *chan = dev->phy.chandef->chan;
+
+	if (!(chan->flags & IEEE80211_CHAN_RADAR))
 		return true;
-	/*
-	 * Sopra i 5250 MHz il salto vale solo al primo bring-up, e questo
-	 * termine mancava.
-	 *
-	 * Lo sweep a freddo, che e' tutto primo bring-up, non poteva mostrarlo:
-	 * la' i testimoni sono a zero sopra la soglia e la soglia sola bastava.
-	 * Nello sweep a caldo il vendor esegue quelle stesse fasi anche sopra,
-	 * a ogni canale -- su 09-up-ch52-bw20 e 19-up-ch104-bw20 esattamente
-	 * come su 01-up-ch36-bw20: RAD 0x0020 tre volte, PHY 0x0380 fra 733 e
-	 * 946, la tabella 0x000e otto volte, PHY 0x0270 fra 107 e 201.
-	 *
-	 * Torna con la ragione fisica: quelle calibrazioni trasmettono, e
-	 * finche' il channel availability check non e' finito la radio non puo'
-	 * farlo. A un bring-up successivo sullo stesso canale il CAC e' gia'
-	 * passato.
-	 */
-	return !(dev->phy.ac->status_mask & B43_PHY_AC_STATE_FIRST_BRINGUP);
+	return !dev->phy.ac->cac_pending;
 }
 
 /* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
@@ -5022,7 +5064,22 @@ void b43_phy_ac_set_channel_calibrations(struct b43_wldev *dev)
 	b43_phy_ac_radio_chain_range_setup(dev, false);
 	b43_phy_ac_iqcal_apply_second_stage(dev);
 	b43_phy_ac_rxgain_config_readback(dev);
-	b43_phy_ac_rxgain_config_apply(dev);
+	/*
+	 * Assente sopra i 5250 MHz al primo bring-up, e il test e' quello che
+	 * il commento di may_calibrate_tx() prescrive: due registri che nessuna
+	 * altra fase tocca, `PHY 0x0724` e `PHY 0x0736`, dieci accessi ciascuno
+	 * a ch36 e **zero** dal canale 52 in su su tutti e ventidue i segmenti,
+	 * per ogni larghezza. Nessun indirizzo condiviso, quindi la fase e'
+	 * assente e non solo i registri.
+	 *
+	 * Lo sweep a caldo separa i due termini del predicato invece di lasciare
+	 * la sola soglia: su 09-up-ch52-bw20 e 19-up-ch104-bw20 i due registri
+	 * fanno dieci accessi come su 01-up-ch36-bw20, quindi sopra la soglia il
+	 * salto vale al primo bring-up e non oltre -- come per le altre fasi
+	 * dietro questo gate.
+	 */
+	if (b43_phy_ac_may_calibrate_tx(dev))
+		b43_phy_ac_rxgain_config_apply(dev);
 	/*
 	 * Configurazione IQ-cal della radio. E' il caso piu' netto del gruppo:
 	 * la fase tocca dodici registri radio -- 0x0020-0x0023, 0x003a, 0x003d
@@ -5476,6 +5533,19 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
 	 */
 	b43_phy_write(dev, 0x0339, 0x0fff);
 	b43_phy_ac_shm_readback_block(dev);
+	/*
+	 * SPUWKUP, il pre-wakeup del sintetizzatore in microsecondi. La cella e'
+	 * M_SYNTHPU_DLY, 0x4a*2, e la costante e' per tipo di PHY: brcmsmac ne
+	 * porta quattro -- 3700 per A-PHY, 1050 per B-PHY, 2048 per N-PHY rev>=3,
+	 * 300 per LCN -- e le sceglie in brcms_b_upd_synthpu(). 512 e' il membro
+	 * AC della stessa famiglia, ed e' cosi' che va letto: non un numero
+	 * trascritto ma una costante per PHY, come il 2048 dell'N-PHY.
+	 *
+	 * b43 qui sbaglia due volte: applica il valore B-PHY a tutto
+	 * (b43_set_synth_pu_delay(), 1050) e aggiunge un caso adhoc/idle a 500
+	 * che in brcmsmac non esiste. Vedi il TODO nella serie patches/.
+	 */
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x0094, 512);
 	b43_phy_ac_mhf_maskset(dev, 4, (u16)~0x0008, 0x0008);
 	/*
 	 * RFATT, subito dopo il write-through di HOSTF5 che la chiamata sopra
@@ -5558,6 +5628,7 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
 	 * After the sweep and after the four CCK blocks that are still not
 	 * understood.
 	 */
+	b43_phy_ac_chainmask_block(dev);
 	b43_phy_ac_prb_rsp_rate_po(dev);
 	b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
@@ -5589,12 +5660,21 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
 	b43_phy_ac_ofdm_pctl1_readback(dev);
 	/*
 	 * Invariant across all 26 segments; what they are for is unknown.
-	 * Between these and the map the vendor writes KEYIDXBLOCK, which is the
-	 * core's. Only the first of the map's two passes carries them.
+	 * Only the first of the map's two passes carries them.
 	 */
+	/*
+	 * PRMAXTIME a zero, cioe' timeout infinito per la probe response del
+	 * firmware. Non e' un valore trascritto: e' quello che b43 scrive in
+	 * b43_chip_init() (main.c:3307). b43 poi lo riporta a 1 in
+	 * b43_wireless_core_init() per spegnere l'offload, e quel secondo
+	 * write la cattura non lo ha -- vedi il TODO post-WIP sull'offload in
+	 * docs/retrace-todo.md.
+	 */
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x0074, 0x0000);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x0082, 0x2710);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00ba, 0xffff);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x003c, 0x000a);
+	b43_phy_ac_chainmask_block(dev);
 	b43_phy_ac_basic_rate_map(dev);
 	b43_maccontrol_set(dev, ~0x00100000u, 0);                /* clr bit 20 */
 	b43_maccontrol_set(dev, ~0x01c00000u, 0);                /* clr bits 22-24 */
@@ -5682,6 +5762,20 @@ void b43_phy_ac_channel_setup_tail(struct b43_wldev *dev,
 	b43_maccontrol_set(dev, ~0x10000000u, 0);                /* clr bit 28 */
 	b43_maccontrol_set(dev, ~0x00040000u, 0x00040000);       /* set bit 18 */
 	b43_maccontrol_set(dev, ~0x48020000u, 0x00020000);       /* clr30 set17 clr22-24 */
+
+	/*
+	 * PRETBTT, il preavviso in microsecondi rispetto al TBTT. La cella e'
+	 * M_PRETBTT, 0x4b*2. brcmsmac la definisce e non la scrive mai, quindi
+	 * lascia il default dell'hardware; b43 la scrive con 250 in AP e 2 in
+	 * adhoc (b43_set_pretbtt()), e la cattura porta 2 pur essendo in AP.
+	 *
+	 * Lo split 250/2 di b43 e' logica dei core vecchi. Qui il beacon lo
+	 * costruisce l'ucode dal template in template RAM, che e' il carico che
+	 * emit_core_bss_ssid() rispecchia, quindi l'host non ha niente da
+	 * preparare e il preavviso lungo non serve. Il 2 lo si emette percio'
+	 * come valore di questo core, non come il ramo adhoc di b43.
+	 */
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x0096, 2);
 	b43_mac_enable(dev);
 	b43_maccontrol_set(dev, ~0x00100000u, 0x00100000);       /* set bit 20 */
 	b43_mac_suspend(dev);
@@ -5700,10 +5794,8 @@ void b43_phy_ac_channel_setup_tail(struct b43_wldev *dev,
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00ce, 0x0000);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00d0, 0x0000);
 
-	/*
-	 * Second pass of the twelve-rate loop. Between the cells above and this
-	 * one the vendor writes KEYIDXBLOCK, which is the core's.
-	 */
+	/* Second pass of the twelve-rate loop. */
+	b43_phy_ac_chainmask_block(dev);
 	b43_phy_ac_prb_rsp_rate_po(dev);
 	b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);                               /* peek */
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);      /* relock */
@@ -9580,7 +9672,7 @@ static void b43_phy_ac_probe_cycle(struct b43_wldev *dev, unsigned int n_iter,
  * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
  *   32820-33379, 35466-36025]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
- *   27216-27775, 28667-28667]
+ *   27216-27775]
  */
 static void b43_phy_ac_measure_block(struct b43_wldev *dev)
 {
@@ -10372,6 +10464,38 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 
 		ac->last_cal_channel = ac->cal_channel;
 	}
+
+	/*
+	 * A seventh 32-bit counter, read on its own after the closing latch and
+	 * outside every sweep: one hi/lo/hi on 0x077c, bracketed by two reads of
+	 * UCODESTAT that are the core's. It is already in the ctr32[] list of the
+	 * statistics poll, so the read itself is the poll's shape; what is
+	 * separate is this one occurrence, which no poll accounts for.
+	 */
+	b43_phy_ac_wd_shm_read32x3(dev, 0x077c);
+
+	/*
+	 * Third and last pass of the twelve-rate loop, with the same shm
+	 * prologue as the second one: the double rewrite of 0x00cc and the two
+	 * zeroes on 0x00ce/0x00d0, poi il blocco delle maschere di catena.
+	 *
+	 * The count is an invariant of the hardware and not of this capture: all
+	 * 26 cold segments and all 52 up segments of the hot sweep have exactly
+	 * three passes and four writes of 0x00ce, on every channel and every
+	 * bandwidth. That is what separates this pass from the beacon template
+	 * reloads a few thousand ops earlier, whose count runs from 7 to 21 over
+	 * the same 26 segments because the host decides it.
+	 */
+	{
+		u16 cc = b43_shm_read16(dev, B43_SHM_SHARED, 0x00cc);
+
+		b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
+		b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
+	}
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x00ce, 0x0000);
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x00d0, 0x0000);
+	b43_phy_ac_chainmask_block(dev);
+	b43_phy_ac_prb_rsp_rate_po(dev);
 
 	/*
 	 * Post-probe final AFE configuration, 16 ops, closing the calibration:
