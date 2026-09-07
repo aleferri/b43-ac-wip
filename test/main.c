@@ -55,7 +55,7 @@ struct board_profile {
 	 * Drives the per-core max TX index (maxp5ga[grp] - margin). */
 	u8 maxp5ga[3][4];
 	/* mcsbw{20,40}5g{l,m,h}po, NVRAM. Index 0 = 5gl, 1 = 5gm, 2 = 5gh. */
-	u32 mcsbw5g_po[3][2];
+	u32 mcsbw5g_po[3][3];	/* [sotto-banda][bw20, bw40, bw80] */
 	/* rxgains_5gl per-core (3 core). NVRAM keys rxgains5gelnagaina{0,1,2}
 	 * e rxgains5gtrisoa{0,1,2}. Usati per computare hdr = (elnagain+3)<<1
 	 * e gainctx = ((triso+4)<<1)+2 nel body Phase 3 di noise-shaping. */
@@ -125,9 +125,10 @@ static const struct board_profile PROFILE_D6220 = {
 		{ 76, 76, 76, 76 },
 		},
 .mcsbw5g_po = {
-		{ 0x20000000, 0x21000000 },
-		{ 0x11111111, 0x10000000 },
-		{ 0x98764200, 0x98764200 },
+		/* mcsbw{20,40,80}5g{l,m,h}po di wl1_nvram.txt */
+		{ 0x20000000, 0x21000000, 0x32222222 },
+		{ 0x11111111, 0x10000000, 0x22222222 },
+		{ 0x98764200, 0x98764200, 0xa8764222 },
 	},
 };
 
@@ -161,9 +162,14 @@ static const struct board_profile PROFILE_AGCOMBO = {
 		{ 74, 74, 82, 82 },
 		},
 .mcsbw5g_po = {
-		{ 0x88644220, 0x88644220 },
-		{ 0x88644220, 0x88644220 },
-		{ 0xcca88440, 0xcca88440 },
+		/*
+		 * mcsbw{20,40,80}5g{l,m,h}po di agcombo_nvram.txt, che li porta
+		 * in esadecimale. Su questa board le tre larghezze hanno la
+		 * stessa word: 5gl e 5gm a 0x88644220, 5gh a 0xcca88440.
+		 */
+		{ 0x88644220, 0x88644220, 0x88644220 },
+		{ 0x88644220, 0x88644220, 0x88644220 },
+		{ 0xcca88440, 0xcca88440, 0xcca88440 },
 	},
 };
 
@@ -202,9 +208,14 @@ static const struct board_profile PROFILE_DSL = {
 		{ 76, 76, 76, 76 },
 		},
 .mcsbw5g_po = {
-		{ 0xeca86420, 0xeca86420 },
-		{ 0xcca86420, 0xcca86420 },
-		{ 0xcca86420, 0xcca86420 },
+		/*
+		 * mcsbw{20,40,80}5g{l,m,h}po di wl1_nvram.txt, che li porta in
+		 * decimale. Come sull'agcombo le tre larghezze hanno la stessa
+		 * word; 5gm e 5gh coincidono anche fra loro.
+		 */
+		{ 0xeca86420, 0xeca86420, 0xeca86420 },
+		{ 0xcca86420, 0xcca86420, 0xcca86420 },
+		{ 0xcca86420, 0xcca86420, 0xcca86420 },
 	},
 };
 
@@ -324,8 +335,23 @@ static void mount_board(const struct board_profile *p)
 		memcpy(g_sprom.core_pwr_info[c].maxp5ga, p->maxp5ga[c],
 		       sizeof(g_sprom.core_pwr_info[c].maxp5ga));
 	for (unsigned int b = 0; b < 3; b++) {
-		g_sprom.mcsbw5g_po[b].bw20 = p->mcsbw5g_po[b][0];
-		g_sprom.mcsbw5g_po[b].bw40 = p->mcsbw5g_po[b][1];
+		u32 *dst[3][3] = {
+			{ &g_sprom.mcsbw205glpo, &g_sprom.mcsbw405glpo,
+			  &g_sprom.mcsbw805glpo },
+			{ &g_sprom.mcsbw205gmpo, &g_sprom.mcsbw405gmpo,
+			  &g_sprom.mcsbw805gmpo },
+			{ &g_sprom.mcsbw205ghpo, &g_sprom.mcsbw405ghpo,
+			  &g_sprom.mcsbw805ghpo },
+		};
+		unsigned int w;
+
+		/*
+		 * Il profilo sta al posto di bcma: sull'hardware li riempie
+		 * bcma_sprom_extract_r11() di patches/0001, dai word 176/178/180
+		 * e dai due blocchi successivi a passo 8.
+		 */
+		for (w = 0; w < 3; w++)
+			*dst[b][w] = p->mcsbw5g_po[b][w];
 	}
 
 	g_bcma_dev.bus = &g_bcma_bus;
@@ -544,6 +570,30 @@ static void mount_board(const struct board_profile *p)
 			g_ac.probe_watchdog_tick[0] = (u16)strtoul(w, &end, 10);
 			g_ac.probe_watchdog_tick[1] = *end == ','
 				? (u16)strtoul(end + 1, NULL, 10) : 0xffff;
+		}
+	}
+
+	/*
+	 * Ricariche del template beacon dentro la fase probe, nella forma
+	 * <prima>:<tick>,<tick>,.. che reverse-tools/beacon_reloads.py legge
+	 * dalla cattura. Senza la variabile non se ne emette nessuna: il
+	 * conteggio e' dello stack sopra e non ha un default sensato.
+	 */
+	{
+		const char *e = getenv("AC_BEACON_RELOADS");
+		char *end;
+
+		if (e) {
+			g_ac.beacon_reload_pre = (u16)strtoul(e, &end, 10);
+			if (*end == ':')
+				end++;
+			while (*end && g_ac.beacon_reload_n <
+					ARRAY_SIZE(g_ac.beacon_reload_tick)) {
+				g_ac.beacon_reload_tick[g_ac.beacon_reload_n++]
+					= (u16)strtoul(end, &end, 10);
+				if (*end == ',')
+					end++;
+			}
 		}
 	}
 
@@ -1386,6 +1436,61 @@ static void emit_core_shm_chipinit(const struct board_profile *p)
  * 0x001a per il secondo). I template beacon b43 li fa: b43_upload_beacon0() e
  * b43_upload_beacon1() passano da b43_write_template_common().
  */
+/*
+ * Lunghezza del template beacon. Cresce di un byte per passo di larghezza --
+ * 0x012a a 20 MHz, 0x012b a 40, 0x012c a 80 su tutti i segmenti -- perche'
+ * l'elemento VHT operation cambia. La word scritta in template RAM invece e'
+ * 0x012c fissa, a ogni larghezza.
+ */
+static u16 beacon_tpl_len(void)
+{
+	enum nl80211_chan_width w = g_wldev.phy.chandef->width;
+
+	return (u16)(0x012a + (w == NL80211_CHAN_WIDTH_80 ? 2 :
+			       w == NL80211_CHAN_WIDTH_40 ? 1 : 0));
+}
+
+/*
+ * b43_update_templates() del core, per la fase probe. Le celle della probe
+ * response non ci sono: b43 non fa l'offload, e stanno in SOLO_VENDOR di
+ * compare.py -- vedi il TODO post-WIP.
+ */
+void b43_ac_beacon_reload(struct b43_wldev *dev, unsigned int which)
+{
+	u16 btl = (which & 1) ? 0x001a : 0x0018;
+
+	/*
+	 * Testa della prima ricarica tardiva e solo di quella: quattro celle a
+	 * 0x2637, una volta in tutto il segmento.
+	 */
+	if (which == 0) {
+		u16 off;
+
+		for (off = 0x0300; off <= 0x0306; off += 2)
+			b43_shm_write16(dev, B43_SHM_SHARED, off, 0x2637);
+	}
+
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc,
+			b43_shm_read16(dev, B43_SHM_SHARED, 0x00cc));
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x001e, 0x0043);
+	b43_test_tplram_write16(btl == 0x0018 ? 0x0200 : 0x0480, 0x012c);
+	b43_shm_write16(dev, B43_SHM_SHARED, btl, beacon_tpl_len());
+
+	b43_mac_suspend(dev);
+	b43_phy_ac_prb_rsp_plcp_pass(dev);
+	b43_mac_enable(dev);
+
+	/*
+	 * Coda della prima ricarica e solo di quella, come la testa: tre celle
+	 * a zero, una volta in tutto il segmento.
+	 */
+	if (which == 0) {
+		b43_shm_write16(dev, B43_SHM_SHARED, 0x00a4, 0x0000);
+		b43_shm_write16(dev, B43_SHM_SHARED, 0x00b4, 0x0000);
+		b43_shm_write16(dev, B43_SHM_SHARED, 0x00d6, 0x0000);
+	}
+}
+
 static void emit_core_bss_ssid(u16 btl)
 {
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x001e, 0x0043);
@@ -1396,7 +1501,7 @@ static void emit_core_bss_ssid(u16 btl)
 	 * della template RAM dell'AC non e' quello del firmware v4.
 	 */
 	b43_test_tplram_write16(btl == 0x0018 ? 0x0200 : 0x0480, 0x012c);
-	b43_shm_write16(&g_wldev, B43_SHM_SHARED, btl, 0x012a);
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, btl, beacon_tpl_len());
 }
 
 /*

@@ -150,11 +150,6 @@ struct ssb_sprom_core_pwr_info {
  * band in the real layout (20/40/80/160 MHz); only the two the TX power
  * derivation consumes are mirrored here.
  */
-struct ssb_sprom_mcsbw_po {
-	u32 bw20;
-	u32 bw40;
-};
-
 struct ssb_sprom_rxgains {
 	u8 elnagain[3];
 	u8 triso[3];
@@ -167,8 +162,14 @@ struct ssb_sprom_rxgains {
  * we hold only the fields the scratch code reads.
  */
 struct ssb_sprom {
-	/* Per-band rev-11 power offsets: index 0 = 5gl, 1 = 5gm, 2 = 5gh. */
-	struct ssb_sprom_mcsbw_po mcsbw5g_po[3];
+	/*
+	 * Offset di potenza per-rate a 5 GHz, per sotto-banda e larghezza.
+	 * Nomi e forma sono quelli che patches/0001 aggiunge a
+	 * include/linux/ssb/ssb.h -- campi piatti, non un array di struct.
+	 */
+	u32 mcsbw205glpo, mcsbw405glpo, mcsbw805glpo;
+	u32 mcsbw205gmpo, mcsbw405gmpo, mcsbw805gmpo;
+	u32 mcsbw205ghpo, mcsbw405ghpo, mcsbw805ghpo;
 	/* Antenna gain per band, quarter-dB, SROM ag0/ag1. Index 1 is 5 GHz. */
 	s8 antenna_gain_qdb[2];
 

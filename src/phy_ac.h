@@ -334,6 +334,24 @@ struct b43_phy_ac {
 	u16 probe_ticks;
 	u16 probe_watchdog_tick[2];
 	/*
+	 * Ricariche del template beacon che cadono dentro la fase probe. Lo
+	 * stack sopra il driver ripubblica il beacon quando vuole, e quante
+	 * volte lo faccia non e' del driver: sui 26 segmenti a freddo dello
+	 * stesso albero il conteggio va da 7 a 21, senza relazione con la
+	 * durata. Quindi vengono dal chiamante come @probe_ticks, e per la
+	 * stessa ragione -- l'harness non ha lo stack sopra di se'.
+	 *
+	 * @beacon_reload_pre sono quelle che cadono prima che la fase parta,
+	 * @beacon_reload_tick i tick su cui cadono le altre -- una ricarica sta
+	 * dentro il tick il cui gruppo probe la segue, perche' il gruppo chiude
+	 * il tick, e possono ripetersi sullo stesso tick.
+	 * reverse-tools/beacon_reloads.py li legge dalla cattura.
+	 */
+	u16 beacon_reload_pre;
+	u16 beacon_reload_tick[24];
+	u8  beacon_reload_n;
+	u8  beacon_reload_done;
+	/*
 	 * Count of calibration cycles this session, gating the cold bump in
 	 * recalc_txpower()'s crsmin path: the blob bumps the ladder for the
 	 * first two calibrations. It appears to saturate at two.
@@ -607,6 +625,20 @@ void b43_phy_ac_gainctrl_final_apply(struct b43_wldev *dev,
  * phy_ac.c.
  */
 void b43_phy_ac_watchdog(struct b43_wldev *dev, bool noise_cal);
+
+/*
+ * Ricarica del template beacon, cioe' b43_update_templates() del core: TIMBPOS,
+ * il template in template RAM, la lunghezza in BTL0 o BTL1, e la passata sul
+ * PLCP della probe response. @which alterna beacon0 e beacon1 e la serie parte
+ * da beacon0.
+ *
+ * Non e' codice del PHY e il PHY non decide di ricaricare un beacon: nel driver
+ * la chiama mac80211 quando il beacon cambia. Che la chiami la fase probe e' lo
+ * stesso compromesso di @probe_watchdog_tick -- un evento asincrono che cade
+ * dentro un ciclo che l'harness non puo' interrompere. Il TODO per rimetterla
+ * al suo posto e' in docs/retrace-todo.md.
+ */
+void b43_ac_beacon_reload(struct b43_wldev *dev, unsigned int which);
 
 /* Helper trasversali al confine MAC/PHY; razionale in helpers_phy_ac.c. */
 void b43_phy_ac_mhf_maskset(struct b43_wldev *dev, u16 slot, u16 mask, u16 val);

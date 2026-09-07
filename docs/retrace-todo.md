@@ -646,9 +646,10 @@ tolleranza non e' mai stato in aria, era di nascondere un modello sbagliato.
 
 ## Da dove ripartire
 
-Stato: gate a freddo su `cold01` a **28338/28577 = 99.16%** con 3 valori
-sbagliati, 233 op mancanti e **zero op del port di troppo**; gate periodico a
-`MATCH`. Prima divergenza posizionale a `@25075`. Il salto da 98.80% viene per
+Stato: gate a freddo su `cold01` a **28549/28577 = 99.90%** con 3 valori
+sbagliati, 22 op mancanti e **zero op del port di troppo**; dentro il perimetro
+zero mancanti e zero di troppo. Gate periodico a `MATCH`. Prima divergenza
+posizionale a **`@28506`**, ed e' un valore, non un buco. Il salto da 98.80% viene per
 tre quarti dall'offload della probe response dichiarato fuori scopo, non da
 lavoro sul port: vedi il TODO post-WIP piu' sotto.
 
@@ -1196,6 +1197,312 @@ rischio che il commento di `SOLO_VENDOR` mette in guardia -- "ogni voce e' un
 pezzo di obiettivo dichiarato irraggiungibile" -- e qui non e' irraggiungibile,
 e' rinviato. Il confronto onesto e' contro il 98.80% di prima, non contro il
 99.15% di dopo.
+
+## I tre valori che restano su ch36, misurati
+
+Il progressivo su `cold01` arriva a `@28506` e il grezzo a 99.90%, con **zero op
+mancanti e zero di troppo dentro il perimetro**. Restano tre divergenze, tutte
+di valore, e nessuna e' un bug: sono due derivazioni aperte.
+
+### `PHY 0x08a1`, due occorrenze: vendor 0x37, port 0x38
+
+E' il coefficiente `b` del core 1 della RX IQ, da `b43_phy_ac_iq_solve()`. Gli
+altri tre coefficienti combaciano -- `0x06a0`, `0x06a1`, `0x08a0` -- quindi il
+solver e' giusto e sbaglia di uno solo qui.
+
+Il commento di `iq_solve()` ha gia' la misura, su 148 punti: comporre i round
+con la somma degli accumulatori da' 40/74 sul core 0 e 44/74 sul core 1, la
+media dei `b` risolti da' 68/74 e 36/74. **Nessuno dei due e' esatto**, e il
+codice usa il migliore per core. Questa divergenza e' uno dei residui di quella
+scelta, non un errore da correggere: chiuderla vuol dire trovare il terzo
+modello, non ritentare i due gia' misurati.
+
+Per riferimento, i quattro coefficienti a freddo:
+
+| segmento | 0x06a0 | 0x06a1 | 0x08a0 | 0x08a1 |
+| --- | --- | --- | --- | --- |
+| ch36 bw20 | 0x03ef | 0x0051 | 0x03d9 | 0x0037 |
+| ch40 bw20 | 0x03ee | 0x0050 | 0x03d9 | 0x003c |
+| ch44 bw20 | 0x03f1 | 0x0050 | 0x03da | 0x0037 |
+| ch48 bw20 | 0x03f6 | 0x004f | 0x03da | 0x003a |
+| ch36 bw40 | 0x03f3 | 0x004d | 0x03dc | 0x003b |
+| ch36 bw80 | 0x03f5 | 0x004d | 0x03dd | 0x0039 |
+
+### `TBL 0xc` offset 0x62: vendor 0xff02, port 0x0002
+
+Qui il commento in `src/` era **falso** e l'ho corretto: diceva che 0x62 e 0x66
+sono costanti a 0x0002 e 0x0200. Non lo sono. Alla terza applicazione:
+
+| segmento | 0x62 | 0x66 |
+| --- | --- | --- |
+| ch36 bw20 | 0xff02 | 0x0200 |
+| ch40 bw20 | 0xfe01 | 0xfd02 |
+| ch48 bw20 | 0xfe01 | 0xfd02 |
+| ch36 bw40 | 0x0202 | 0x02ff |
+| ch36 bw80 | 0xffff | 0x0101 |
+
+`0x0200` su ch36 bw20 combacia per caso; `0x0002` e' sbagliato su ogni
+segmento. Letti come coppie di byte con segno sono correzioni piccole -- ch36
+bw20 da' (-1, +2) e (+2, 0) -- una per core, terzo word del blocco dopo i due
+di `afe_res_cal`. Formula non trovata.
+
+## Il muro di ch36 bw40, e la forma del target di potenza
+
+`@10952`, ed e' un valore: `PHY.MOD 0x0846`/`0x0646`, vendor `0x42`, port
+`0x38`. Misurato su tutte le occorrenze e tutte le famiglie:
+
+| | occ1 | occ2 | occ3 |
+| --- | --- | --- | --- |
+| ch36-48 bw20 | 0x38 | 0x38 | 0x38 |
+| ch36/44 bw40 | 0x42 | **0x3e** | 0x42 |
+| ch36 bw80 | 0x42 | **0x3e** | 0x42 |
+| da ch52, bw40 e bw80 | 0x40 | 0x40 | 0x40 |
+
+Due cose separate, e la tabella le distingue:
+
+1. **La base** dipende da banda e larghezza: 0x38 a bw20 sotto i 5250, 0x42 a
+   bw40 e bw80 sotto, 0x40 sopra. Il port scrive 0x38 sempre. E' la derivazione
+   di `ppr[]` da `mcsbw*po`, gia' nella lista delle aperte, e trascrivere tre
+   valori non e' derivarla.
+2. **La riduzione di 4 sull'occorrenza centrale** compare solo a bw40 e bw80
+   sotto i 5250. Sopra i 5250 le tre occorrenze sono uguali, coerente col fatto
+   che la' le calibrazioni non girano: l'occorrenza centrale e' quella dentro la
+   calibrazione, e a bw20 la riduzione e' zero.
+
+Il secondo punto e' strutturale e si puo' chiudere prima del primo -- ma da solo
+non muove il muro, perche' il muro batte sulla base.
+
+## txpwr_target(): il modello e' esatto, ed e' il percorso a freddo che manca
+
+Lo studio di funzione fatto sui soli segmenti a freddo diceva 74/104 e concludeva
+che mancasse lo stadio regolamentare. Sbagliato, e il controllo che lo smonta e'
+lo sweep a caldo.
+
+### Il target di potenza e' ad anello aperto
+
+Le 52 catture a caldo sono in coppia per configurazione, e le due copie di ogni
+coppia danno **valori identici**; le tre occorrenze del registro dentro ogni
+segmento a caldo sono identiche fra loro. Niente varia da una sessione
+all'altra, quindi non c'e' nessun anello chiuso su TSSI a monte di questo
+registro: e' una funzione dei soli ingressi statici.
+
+### E su quel percorso il modello fa 26/26
+
+Confrontato con lo sweep a caldo, `maxp5ga[grp] - 2*nib(po) - 6` con la
+correzione `-2` del primo blocco e' **esatto su tutte e 26 le configurazioni**,
+a una condizione: **a 80 MHz si prendono gli offset a 20 MHz**, non quelli a 80.
+Coi nibble di `bw80` fa 23/26, e le tre che sbaglia sono esattamente le tre
+configurazioni a 80 MHz -- ch36, ch52 e ch100, tutte e tre rimesse a posto dal
+ramo a 20.
+
+Il che chiude una decisione rimasta aperta due volte. Il commento originale
+diceva «80 MHz takes the 20 MHz offsets» e l'avevo scavalcato perche'
+`mcsbw805g*po` esiste in NVRAM; esistere non vuol dire essere l'ingresso di
+questo consumatore, e lo sweep a caldo lo dimostra 26 a 23. La tabella di
+selezione ha ora la terza colonna che punta all'indice 0.
+
+### Quindi il tetto che avevo derivato non e' regolamentare
+
+Un limite regolamentare si applica a ogni sessione. Il caldo e' spiegato per
+intero **senza nessun tetto**, quindi i tetti "board-indipendenti" che avevo
+ricavato -- 62 su U-NII-1, 82 su ch100, 66 su ch60-bw40, 74 su ch100-bw40 --
+erano un artefatto di aver guardato solo il freddo. Su U-NII-1 il valore a
+freddo e' 56 su entrambe le board perche' e' un clamp a una costante, e una
+costante e' board-indipendente per costruzione: non perche' venga dal
+regolamento.
+
+### Cosa manca davvero: il percorso a freddo
+
+Differenza modello-meno-freddo, per configurazione:
+
+| | bw20 | bw40 | bw80 |
+| --- | --- | --- | --- |
+| ch36 | +10 | -2 / +2 / -2 | 0 / +4 / 0 |
+| ch40 | +10 | | |
+| ch44, ch48 | +8 | 0 / +4 / 0 | |
+| ch52-64 | 0 | -2 | -2 |
+| ch100 | +4 | +12 | +4 |
+| ch104-140 | 0 | 0 | 0 |
+
+Tre cose che una singola "riduzione a freddo" non spiega:
+
+1. A bw40 e bw80 il freddo sta a volte **sopra** il modello (-2), non sotto.
+   Sui blocchi primi -- ch36 e ch52 a 40 MHz -- il freddo vale
+   `maxp - 6` senza la correzione `-2`, mentre il caldo la applica. Cioe' la
+   correzione del primo blocco **c'e' a caldo e non a freddo**.
+2. A bw40 e bw80 il freddo porta **tre valori diversi** nello stesso segmento,
+   con la seconda occorrenza 4 sotto le altre due. A bw20 le tre sono uguali.
+3. `ch100 bw40` a freddo sta 12 sotto e non rientra in nessuno degli schemi.
+
+Il clamp `first_bu ? min(0x38, lim) : lim` di `phy_ac.c` sta in piedi come
+impalcatura proprio per questo, ed e' anche il motivo per cui togliendolo il
+muro di `cold01` tornava indietro: il valore a freddo su U-NII-1 e' davvero 56,
+solo non per la ragione scritta.
+
+Il prossimo passo e' caratterizzare il freddo, e il segnale nuovo e' la seconda
+occorrenza: e' l'unica differenza **dentro** un segmento, quindi non puo' venire
+da SROM, canale o larghezza, che nel segmento non cambiano.
+
+## Lo stadio che manca e' quello regolamentare
+
+Il residuo piu' grosso ha una firma che esclude la SROM. Su U-NII-1 a 20 MHz --
+ch36, 40, 44, 48, dodici osservazioni fra le due board -- il valore misurato e'
+**56 su entrambe**, mentre il modello da' 66 sulla d6220 e 68 sull'agcombo:
+
+| board | maxp5ga[0] | modello | wl |
+| --- | --- | --- | --- |
+| d6220 | 72 | 66 | **56** |
+| agcombo | 74 | 68 | **56** |
+
+Due board con `maxp5ga` diverso e `mcsbw*po` diverso che producono lo stesso
+numero: quel numero non puo' venire dalla SROM. E' il tetto regolamentare, cioe'
+esattamente lo stadio che il commento di `txpwr_target()` dichiara di non
+applicare -- «The regulatory stage is not applied». Un `ceil = 62` prima del
+margine di 6 riproduce tutte e dodici.
+
+Torna anche con la fisica: 56 quarter-dBm sono 14 dBm, U-NII-1 e' la sotto-banda
+col limite piu' basso, e a 40 e 80 MHz il valore misurato sale (66 sulla d6220)
+perche' il limite e' di densita' spettrale e la potenza totale cresce con la
+larghezza. A quelle larghezze il tetto non lega piu' e vince la SROM.
+
+E questo riabilita la costante `0x38` del clamp a `phy_ac.c:10610`, che il
+commento chiamava «scaffolding read off one board»: **non e' impalcatura**, 0x38
+= 56 e' il valore regolamentare di U-NII-1 a 20 MHz, verificato su due board. Il
+difetto e' che il clamp lo applica a ogni primo bring-up invece di condizionarlo
+a banda e larghezza, e cosi' schiaccia anche 40 e 80 MHz dove il tetto non lega.
+
+**Dove va il fix.** `b43_phy_ac_reg_ceiling()` esiste gia' e legge
+`chan->max_power`, che e' dove cfg80211 mette il tetto del regulatory domain.
+Quindi non serve inventare una tabella: serve che l'harness fornisca il tetto
+per sotto-banda invece del default permissivo che ha adesso, e che il clamp a
+0x38 sparisca a favore di `ceil`. E' la stessa forma del lavoro su
+`IEEE80211_CHAN_RADAR`: la regola sta in cfg80211, il driver la legge.
+
+### Il campo bw80 non decide questo registro
+
+Le sei osservazioni a 80 MHz, coi nibble di `bw80` contro quelli di `bw20`:
+
+| board | ch | wl | con bw80 | con bw20 |
+| --- | --- | --- | --- | --- |
+| agcombo | 36, 52, 100 | 68, 68, 76 | 68, 68, 76 | 68, 68, 76 |
+| d6220 | 36 | 66 | 62 | **66** |
+| d6220 | 52 | 64 | 60 | 62 |
+| d6220 | 100 | 76 | **76** | 80 |
+
+Quattro su sei per ognuna delle due scelte, e ch52 sbagliata in entrambe. E il
+motivo per cui le sei osservazioni non discriminano e' che **su due delle tre
+board le tre larghezze hanno la stessa word**:
+
+| board | 5gl | 5gm | 5gh | bw20 = bw40 = bw80? |
+| --- | --- | --- | --- | --- |
+| d6220 | 0x20000000 / 0x21000000 / 0x32222222 | ... | ... | **no** |
+| agcombo | 0x88644220 su tutte e tre | idem | 0xcca88440 su tutte e tre | si |
+| dsl3580l | 0xeca86420 su tutte e tre | 0xcca86420 | 0xcca86420 | si |
+
+Solo la d6220 ha `bw80` diversa, quindi l'unica evidenza utile sono le sue tre
+osservazioni a 80 MHz -- e quelle fanno 1 su 3 coi nibble di `bw80` (ch100) e
+1 su 3 con quelli di `bw20` (ch36), con ch52 sbagliata in entrambe. Il campo
+esiste in NVRAM su tutte e tre le board ed e' letto, ma **non e' lui a decidere
+questo registro**, e con questi dati non lo si puo' nemmeno mettere alla prova.
+
+Il ramo a 80 MHz resta comunque quello di `bw80`, e la ragione e' la direzione
+dell'errore, non il punteggio: con `bw80` la d6220 esce **sotto** il vendor (62
+contro 66), con `bw20` esce **sopra** (80 contro 76). Uscire sopra spinge il PA
+oltre quello per cui la board e' caratterizzata; uscire sotto costa portata. A
+parita' di 4/6 si sceglie il lato sicuro.
+
+## Nota di metodo: la serie patches/ e' parte dell'albero, non un allegato
+
+Ho passato un turno a scrivere una patch bcma per estrarre `mcsbw{20,40,80}5g*po`
+dalla SROM, dopo aver controllato `drivers/bcma/sprom.c` e
+`include/linux/ssb/ssb.h` **di mainline** e avere concluso che quei campi non
+esistessero. Esistono: li aggiunge `patches/0001`, che e' esattamente "ssb:
+bcma: add SPROM revision 11 extraction" e porta
+`bcma_sprom_extract_r11()` con tutti e nove gli offset, piu' quelli a 160 MHz,
+`maxp5ga[4]`, `pa5ga[12]`, i quattro `rxgains_*`, il blocco FEM/PA,
+`subband5gver` e `pdoffset40ma`.
+
+Il che rende falso anche l'audit che avevo scritto qui: non c'erano venti campi
+scoperti, era coperto tutto tranne la forma.
+
+Una cosa utile e' rimasta. Gli offset che avevo ricavato cercando le word note
+dentro `wl1_srom_raw.txt` delle due board -- `0x0160`, `0x0164`, `0x0168`, poi
+`0x0170`/`0x0174`/`0x0178` e `0x0180`/`0x0184`/`0x0188` -- **coincidono uno per
+uno** con quelli che la 0001 prende dalla tabella del parser bcmdhd. Due strade
+indipendenti, stesso risultato: il metodo "cerca la word nota nel dump e
+verifica su due board" e' valido, e la tabella della 0001 e' confermata dai dump
+in `router-data/`.
+
+E una divergenza c'era per davvero, nella forma: lo stub dichiarava un
+`struct ssb_sprom_mcsbw_po mcsbw5g_po[3]` inventato qui, mentre la 0001 aggiunge
+nove campi piatti. Il PHY leggeva `sprom->mcsbw5g_po[band].bw40`, che contro la
+struct vera non compila. Ora c'e' `b43_phy_ac_mcsbw5g_po(sprom, band, width)`
+che seleziona il campo piatto, e lo stub porta gli stessi nove nomi della 0001.
+
+Regola che ne segue: prima di dire che un campo, un valore o un offset manca,
+guardare in `patches/`. Il perimetro del port e' `src/` **piu'** la serie, e
+mainline da sola non e' il riferimento.
+
+## Le tre scritture di 0x0646 sono tre giri, e il -4 del secondo ha un ingresso
+
+Misurato su `cold17` (ch36 bw40), dove il pattern e' visibile:
+
+```
+#400437   0x0646 = 0x42        ->  TBL 0x40 len=128   (LUT est_pwr)
+#400704                            TBL 0x21 len=24    (ppr)
+#401111   0x0646 = 0x3e  (-4)  ->  TBL 0x40 len=128
+#404880                            --- calibrazione, tono 0x0380 ---
+#424205   0x0646 = 0x42        ->  TBL 0x40 len=128
+```
+
+Tre giri distinti di `txpwrctrl_setup`, ognuno con la propria LUT. I giri 1 e 2
+sono **entrambi prima** della calibrazione, a 569 op di distanza, e in mezzo c'e'
+il caricamento di `ppr`. Non e' quindi un bump su `cal_cycles`: e' un
+abbassamento temporaneo per il secondo giro, ripristinato al terzo.
+
+### La LUT est_pwr non dipende dal target
+
+I tre payload di `TBL 0x40 off=0 len=128` sono **identici byte per byte** in
+tutti e tre i giri, nonostante il target differisca di 4. Quindi la funzione di
+trasferimento e' della sola caratterizzazione del PA, non del target -- e questo
+semplifica il lavoro sulla LUT: un payload per sotto-banda di `pa5ga`, senza
+dipendenza dal punto di lavoro. Il primo campione e' `5d 5d 5d 5d ...`, min 21,
+max 93.
+
+### E il -4 e' 2 * l'offset ppr
+
+Il payload di `ppr` (`TBL 0x21 len=24`) e' `0 514 0 0 0 514 514 0 ...`, identico
+su **tutti** i segmenti e tutte le larghezze -- che conferma quanto il commento
+di `txpwr_target()` gia' diceva, e cioe' che `ppr` non porta informazione di
+larghezza. `514` e' `0x0202`, cioe' due byte da 2, uno per core.
+
+Quel 2 e' in mezzi dB, il registro e' in quarti: `2 * 2 = 4`, lo stesso fattore
+che il modello usa gia' per i nibble. Quindi il secondo giro scrive
+`base - 2*max(ppr)`, cioe' il target del rate **peggiore** invece del massimo,
+mentre il primo e il terzo scrivono il massimo. Non e' una costante scelta: e'
+il contenuto della tabella caricata fra i due giri.
+
+### Dove si applica, e dove no
+
+| configurazione | tre giri |
+| --- | --- |
+| freddo, ch36/ch44, bw40 e bw80 | `base`, **`base-4`**, `base` |
+| freddo, ch52 e oltre, bw40 e bw80 | tutti uguali |
+| freddo, bw20 | tutti uguali (il clamp a 56 li schiaccia) |
+| caldo, ogni configurazione | tutti uguali |
+
+Il che chiude la differenza bw20/bw40 che sembrava un fenomeno a se': non lo
+era, era lo stesso pattern mascherato dal clamp. Sopra i 5250 non compare, e la'
+le calibrazioni non girano; ma a caldo le calibrazioni girano e il -4 non
+compare, quindi non e' "quando la calibrazione gira" -- e' il percorso a freddo
+sotto i 5250.
+
+### Cosa resta da capire
+
+Perche' il secondo giro prenda il rate peggiore invece del massimo, e perche'
+solo la'. E la correzione `-2` del primo blocco, che a caldo si applica e a
+freddo no. Sono le due ultime differenze fra il modello e le catture su questo
+registro: il resto e' esatto, 26/26 sul caldo.
 
 ## Punti aperti
 
