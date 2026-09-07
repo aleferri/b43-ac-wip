@@ -55,6 +55,48 @@ static u16 mirror_radio[MIRROR_RADIO_SZ];
 static u16 mirror_mmio[MIRROR_MMIO_SZ];
 static u32 pll_vals[8];
 
+/*
+ * Table cells as the port has written them, keyed (id, offset). A table read
+ * that neither the oracle nor a plan serves comes from here: the data port
+ * alone cannot stand in for it, because every cell goes through the same
+ * port and its last word is whatever cell was touched last, not the one
+ * being read. Cells of 48-bit tables are not mirrored.
+ */
+#define TBL_MIRROR_IDS   0x100
+#define TBL_MIRROR_OFFS  0x800
+struct tbl_cell {
+	u16 lo, hi;
+	bool valid;
+};
+static struct tbl_cell tbl_mirror[TBL_MIRROR_IDS][TBL_MIRROR_OFFS];
+/* Backing store for the plan that hands the mirrored cells to the port. */
+static u16 tbl_mirror_lo[TBL_MIRROR_OFFS], tbl_mirror_hi[TBL_MIRROR_OFFS];
+
+static void tbl_mirror_store(u16 id, u16 offset, u8 width, size_t len,
+			     const void *data)
+{
+	size_t i;
+
+	if (id >= TBL_MIRROR_IDS || width == 48)
+		return;
+	for (i = 0; i < len && offset + i < TBL_MIRROR_OFFS; i++) {
+		struct tbl_cell *c = &tbl_mirror[id][offset + i];
+		u32 v = 0;
+
+		if (data) {
+			switch (width) {
+			case 8:  v = ((const u8 *)data)[i]; break;
+			case 16: v = ((const u16 *)data)[i]; break;
+			case 32: v = ((const u32 *)data)[i]; break;
+			}
+		}
+		c->lo = (u16)v;
+		c->hi = (u16)(v >> 16);
+		c->valid = true;
+	}
+}
+
+
 /* ============ read plans ============
  *
  * A read plan for one address is a fixed-length array of return values
@@ -119,6 +161,39 @@ void b43_test_plan_radio_reads(u16 addr, const u16 *results, int cap)
 void b43_test_plan_mmio_reads(u16 addr, const u16 *results, int cap)
 { plan_add(mmio_plans, &mmio_plans_n, addr, results, cap); }
 
+/*
+ * Whether every cell of the run is mirrored; if so, queue them on the data
+ * port(s) the read will use, as plans, so that they rank below the oracle
+ * and above the last-word fallback.
+ */
+static bool tbl_mirror_serve(u16 id, u16 offset, u8 width, size_t len)
+{
+	size_t i;
+
+	if (id >= TBL_MIRROR_IDS || width == 48 ||
+	    offset + len > TBL_MIRROR_OFFS)
+		return false;
+	for (i = 0; i < len; i++)
+		if (!tbl_mirror[id][offset + i].valid)
+			return false;
+	for (i = 0; i < len; i++) {
+		tbl_mirror_lo[i] = tbl_mirror[id][offset + i].lo;
+		tbl_mirror_hi[i] = tbl_mirror[id][offset + i].hi;
+	}
+	if (width == 32) {
+		plan_add(phy_plans, &phy_plans_n, B43_PHY_AC_TABLE_DATA_LO,
+			 tbl_mirror_lo, (int)len);
+		plan_add(phy_plans, &phy_plans_n, B43_PHY_AC_TABLE_DATA_HI,
+			 tbl_mirror_hi, (int)len);
+	} else {
+		plan_add(phy_plans, &phy_plans_n,
+			 id == 0x20 ? B43_PHY_AC_TABLE_DATA_2
+				    : B43_PHY_AC_TABLE_DATA_LO,
+			 tbl_mirror_lo, (int)len);
+	}
+	return true;
+}
+
 void b43_test_plans_reset(void)
 {
 	memset(phy_plans, 0, sizeof(phy_plans));
@@ -129,6 +204,7 @@ void b43_test_plans_reset(void)
 	memset(mirror_radio, 0, sizeof(mirror_radio));
 	memset(mirror_mmio, 0, sizeof(mirror_mmio));
 	memset(pll_vals, 0, sizeof(pll_vals));
+	memset(tbl_mirror, 0, sizeof(tbl_mirror));
 }
 
 void b43_test_mirror_radio_set(u16 reg, u16 val)
@@ -736,6 +812,7 @@ void __wrap_b43_actab_write_bulk(struct b43_wldev *dev,
 {
 	fprintf(trace(), "cpu1 TBL.WR   id=0x%04x off=0x%04x len=%zu\n",
 		id, offset, len);
+	tbl_mirror_store(id, offset, width, len, data);
 	__real_b43_actab_write_bulk(dev, id, offset, width, len, data);
 }
 
@@ -744,6 +821,7 @@ void __wrap_b43_actab_zerofill(struct b43_wldev *dev,
 {
 	fprintf(trace(), "cpu1 TBL.WR   id=0x%04x off=0x%04x len=%zu\n",
 		id, offset, len);
+	tbl_mirror_store(id, offset, width, len, NULL);
 	__real_b43_actab_zerofill(dev, id, offset, width, len);
 }
 
@@ -753,6 +831,7 @@ void __wrap_b43_actab_write_bulk_locked(struct b43_wldev *dev,
 {
 	fprintf(trace(), "cpu1 TBL.WR   id=0x%04x off=0x%04x len=%zu\n",
 		id, offset, len);
+	tbl_mirror_store(id, offset, width, len, data);
 	__real_b43_actab_write_bulk_locked(dev, id, offset, width, len, data);
 }
 
@@ -761,6 +840,7 @@ void __wrap_b43_actab_zerofill_locked(struct b43_wldev *dev,
 {
 	fprintf(trace(), "cpu1 TBL.WR   id=0x%04x off=0x%04x len=%zu\n",
 		id, offset, len);
+	tbl_mirror_store(id, offset, width, len, NULL);
 	__real_b43_actab_zerofill_locked(dev, id, offset, width, len);
 }
 
@@ -780,6 +860,7 @@ void __wrap_b43_actab_write_bulk_reopen(struct b43_wldev *dev,
 {
 	fprintf(trace(), "cpu1 TBL.WR   id=0x%04x off=0x%04x len=%zu\n",
 		id, offset, len);
+	tbl_mirror_store(id, offset, width, len, data);
 	__real_b43_actab_write_bulk_reopen(dev, id, offset, width, len, data);
 }
 
@@ -798,6 +879,7 @@ void __wrap_b43_actab_write_bulk_scoped(struct b43_wldev *dev,
 {
 	fprintf(trace(), "cpu1 TBL.WR   id=0x%04x off=0x%04x len=%zu\n",
 		id, offset, len);
+	tbl_mirror_store(id, offset, width, len, data);
 	__real_b43_actab_write_bulk_scoped(dev, id, offset, width, len, data);
 }
 
@@ -923,6 +1005,8 @@ void __wrap_b43_actab_read_bulk(struct b43_wldev *dev,
 
 	if (tv)
 		plan_add(phy_plans, &phy_plans_n, 0x000f, tv, (int)len);
+	else
+		tbl_mirror_serve(id, offset, width, len);
 
 	fprintf(trace(), "cpu1 TBL.RD   id=0x%04x off=0x%04x len=%zu\n",
 		id, offset, len);
@@ -957,6 +1041,7 @@ void __wrap_b43_actab_write_r11(struct b43_wldev *dev,
 		fprintf(trace(),
 			"cpu1 TBL.WR   id=0x%04x off=0x%04x len=1\n",
 			id, (u16)(offset + i));
+		tbl_mirror_store(id, (u16)(offset + i), 16, 1, &data[i]);
 		__real_b43_actab_write_r11(dev, id, (u16)(offset + i), 1,
 					   &data[i]);
 	}
@@ -975,6 +1060,7 @@ void __wrap_b43_actab_fill_r11(struct b43_wldev *dev,
 		fprintf(trace(),
 			"cpu1 TBL.WR   id=0x%04x off=0x%04x len=1\n",
 			id, (u16)(offset + i));
+		tbl_mirror_store(id, (u16)(offset + i), 16, 1, &val);
 		__real_b43_actab_fill_r11(dev, id, (u16)(offset + i), 1, val);
 	}
 }

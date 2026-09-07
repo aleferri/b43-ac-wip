@@ -360,7 +360,7 @@ buona, non un difetto funzionale -- il driver deve ancora funzionare.
 
 **La tolleranza vale per il gate posizionale e non per il punteggio**, ed e'
 voluto: `cmp_skip.py` continua a contare quelle op fra i valori sbagliati, cosi'
-il residuo resta visibile nei tre valori sbagliati di `cold01` invece di
+il residuo resta visibile nei valori sbagliati di `cold01` invece di
 sparire, mentre la contiguita' non si ferma su un LSB. Il posizionale passa da
 `@24865` a `@25157`, e la divergenza dopo e' `OBJ.WR 0x0300`, la finestra
 statistiche in shared memory.
@@ -636,7 +636,7 @@ in nessuna cattura del d6220, quindi la sua voce nella lista non e' mai stata
 esercitata ed e' dichiarata senza copertura.
 
 Stringere da `+-4` a `+-1` **non muove nessun gate**: `cold01` resta a
-`@25157`, `cold24` a `@13470`, i tre a caldo a 78.05, 80.91 e 78.79%, il
+`@25157`, `cold24` a `@13470`, i tre a caldo (misurati allora a 78.05, 80.91 e 78.79%), il
 periodico a `MATCH`. Cioe' i tre LSB in piu' erano pura franchigia.
 
 Sul lato radio la franchigia residua e' innocua: un LSB e' 1/1024 del guadagno
@@ -646,12 +646,13 @@ tolleranza non e' mai stato in aria, era di nascondere un modello sbagliato.
 
 ## Da dove ripartire
 
-Stato: gate a freddo su `cold01` a **28549/28577 = 99.90%** con 3 valori
+Stato: gate a freddo su `cold01` a **28550/28576 = 99.91%** con 2 valori
 sbagliati, 22 op mancanti e **zero op del port di troppo**; dentro il perimetro
-zero mancanti e zero di troppo. Gate periodico a `MATCH`. Prima divergenza
-posizionale a **`@28506`**, ed e' un valore, non un buco. Il salto da 98.80% viene per
-tre quarti dall'offload della probe response dichiarato fuori scopo, non da
-lavoro sul port: vedi il TODO post-WIP piu' sotto.
+zero mancanti e zero di troppo. Gate periodico a `MATCH`. `compare.py` sul
+perimetro non ha piu' divergenze: i due valori restanti sono le due
+occorrenze di `PHY 0x08a1`, che `VAL_TOLLERANZA` copre. Il salto da 98.80%
+viene per tre quarti dall'offload della probe response dichiarato fuori
+scopo, non da lavoro sul port: vedi il TODO post-WIP piu' sotto.
 
 ### Lo sweep a freddo intero, sullo stesso albero
 
@@ -737,7 +738,7 @@ del core. Le mancanti di `cold01`, per classe:
 | `OTP.*`, `SROMCTL.RD`, `CAL.INIT` | 4 | codice srom di bcma |
 | `MAC.MHF.RD` | 1 | `b43_hf_read()`, core |
 
-**Zero op del PHY**, e i 3 valori sbagliati sono tutti `PHY.WR`. Tutte e 355
+**Zero op del PHY**, e i valori sbagliati sono tutti `PHY.WR`. Tutte e 355
 sono del core, e si spaccano in due meta' che sono due lavori diversi: **285**
 sono le cinque ricariche di template della sezione sopra, che nessun codice
 del driver puo' emettere nel numero giusto, e **70** sono debito vero. Quindi
@@ -1198,11 +1199,11 @@ pezzo di obiettivo dichiarato irraggiungibile" -- e qui non e' irraggiungibile,
 e' rinviato. Il confronto onesto e' contro il 98.80% di prima, non contro il
 99.15% di dopo.
 
-## I tre valori che restano su ch36, misurati
+## I due valori che restano su ch36, misurati
 
-Il progressivo su `cold01` arriva a `@28506` e il grezzo a 99.90%, con **zero op
-mancanti e zero di troppo dentro il perimetro**. Restano tre divergenze, tutte
-di valore, e nessuna e' un bug: sono due derivazioni aperte.
+Il grezzo su `cold01` e' a 99.91%, con **zero op mancanti e zero di troppo
+dentro il perimetro**. Restano due divergenze, la stessa cella su due core, e
+non sono un bug: sono una derivazione aperta.
 
 ### `PHY 0x08a1`, due occorrenze: vendor 0x37, port 0x38
 
@@ -1228,23 +1229,51 @@ Per riferimento, i quattro coefficienti a freddo:
 | ch36 bw40 | 0x03f3 | 0x004d | 0x03dc | 0x003b |
 | ch36 bw80 | 0x03f5 | 0x004d | 0x03dd | 0x0039 |
 
-### `TBL 0xc` offset 0x62: vendor 0xff02, port 0x0002
+### `TBL 0xc` offset 0x62 e 0x66: chiuso, era un save/restore
 
-Qui il commento in `src/` era **falso** e l'ho corretto: diceva che 0x62 e 0x66
-sono costanti a 0x0002 e 0x0200. Non lo sono. Alla terza applicazione:
+La tabella `0x0c` e' la IQLOCAL. A `0x60 + 4*core` stanno i coefficienti TX
+IQ `{a, b}` e a `0x62 + 4*core` il word della LO leakage, due byte con segno.
+Il valore di `0x62`/`0x66` che il port scriveva come costante non aveva una
+formula da trovare: **il vendor lo legge e lo riscrive**. Su `cold01` il blocco
+D di `rxiqcal_finalize()` legge `0x60`, `0x62`, `0x64`, `0x66` (`#30664-#30713`)
+e la coda dello stesso finalize riscrive parola per parola cio' che ha letto
+(`#36474-#36512`). La forma e' la stessa su ogni segmento che esegue la fase --
+zero-init, risultato della cal, readback, rewrite del readback -- verificata
+su `cold01`, `cold02`, `cold17` e su `01-up-ch36-bw20`:
 
-| segmento | 0x62 | 0x66 |
-| --- | --- | --- |
-| ch36 bw20 | 0xff02 | 0x0200 |
-| ch40 bw20 | 0xfe01 | 0xfd02 |
-| ch48 bw20 | 0xfe01 | 0xfd02 |
-| ch36 bw40 | 0x0202 | 0x02ff |
-| ch36 bw80 | 0xffff | 0x0101 |
+| segmento | zero-init | cal | readback | rewrite |
+| --- | --- | --- | --- | --- |
+| ch36 bw20 | 0x0000 | 0xff02 | 0xff02 | 0xff02 |
+| ch40 bw20 | 0x0000 | 0xfd02 | 0xfd02 | 0xfd02 |
+| ch36 bw40 | 0x0000 | 0x0202 | 0x0202 | 0x0202 |
+| up ch36 bw20 | 0x0000 | 0xff01 | 0xff01 | 0xff01 |
 
-`0x0200` su ch36 bw20 combacia per caso; `0x0002` e' sbagliato su ogni
-segmento. Letti come coppie di byte con segno sono correzioni piccole -- ch36
-bw20 da' (-1, +2) e (+2, 0) -- una per core, terzo word del blocco dopo i due
-di `afe_res_cal`. Formula non trovata.
+Il port faceva la lettura e la buttava in un `discard16`. Ora `rxiqcal_finalize()`
+tiene le tre parole per core lette nel blocco D e le riscrive nella coda,
+come fa gia' per i registri LO DAC `0x?002-0x?005`. Nessun valore trascritto:
+sul ferro e' quello che sta in tabella al momento del salvataggio.
+
+A caldo il rewrite resta sbagliato -- `0xfe02` contro `0xff01` -- perche' e'
+sbagliato il risultato della cal che viene salvato, non il salvataggio: quel
+debito sta nella prima applicazione, il sito con il `b43_phy_ac_todo()` sui
+coefficienti TX IQ/LO scritti da tabella.
+
+### L'harness non modellava la memoria delle tabelle
+
+La stessa lettura, nel flow a caldo, tornava `0xacdc`: la coda dell'oracolo
+sulla porta dati `0x000f` e' esaurita la' (1280 code esaurite su
+`01-up-ch36-bw20`) e il fallback era `mirror_phy[0x000f]`, cioe' l'ultima
+parola passata dalla porta -- la scrittura di `0x5f` che precede il blocco D.
+Ogni cella passa dalla stessa porta, quindi l'ultima parola della porta non e'
+la cella che si sta leggendo.
+
+`test/wrap.c` porta ora un mirror per cella, chiavato `(id, offset)`,
+aggiornato da ogni wrap di scrittura e servito alle letture come plan sulla
+porta dati: sotto l'oracolo, sopra il fallback. Con questo i tre gate a caldo
+salgono da 78.47 / 81.38 / 79.25% a **81.92 / 84.92 / 82.72%**, perche' ogni
+read-modify-write su cella di tabella a caldo partiva da garbage. Sul freddo
+non muove niente oltre il restore qui sopra -- la' l'oracolo era in sincrono
+-- e il periodico resta `MATCH`.
 
 ## Il muro di ch36 bw40, e la forma del target di potenza
 

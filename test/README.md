@@ -236,6 +236,10 @@ posizionale.
   con `-Wl,--wrap=<sym>`. La lista e' in `Makefile`, variabile `WRAP_SYMS`.
 - **`wrap.c`** fornisce `__wrap_<sym>`: emette una riga wl-diag, aggiorna un
   mirror di memoria in-process per le write, e ritorna il valore per le read.
+  Le letture vengono servite in quest'ordine: oracolo (`AC_READ_ORACLE`),
+  plan registrato, mirror. Le celle di tabella hanno un mirror proprio,
+  chiavato `(id, offset)`, perche' passano tutte dalla stessa porta dati e il
+  mirror della porta non puo' rappresentarle.
 - **`main.c`** monta un `struct b43_wldev` fittizio col profilo di board
   (D6220 2x2, DSL-3580L 2x2, agcombo 3x3), registra i read plan e chiama uno
   dei flow.

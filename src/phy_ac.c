@@ -10262,6 +10262,12 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 	/* LO DAC readback, 0x?002-0x?005 in block D, rewritten at the end. */
 	u16 lo_dac[2][4];
 	/*
+	 * TX IQ/LO coefficients of the IQLOCAL table (0x000c), per core at
+	 * 0x60 + 4*core: {a, b} at +0/+1 and the LO leakage word at +2, two
+	 * signed bytes. Saved in block D, restored in the tail.
+	 */
+	u16 txiqlo_coef[2][3];
+	/*
 	 * Called with the MAC suspended, from set_channel_calibrations() after
 	 * rxiq_teardown_apply_defaults(). The classifier is in RX_WAITED and
 	 * clip detect is disabled on every core: the canonical calibration
@@ -10318,13 +10324,12 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 	b43_phy_write(dev, 0x0339, 0x0fff);
 
 	/*
-	 * Block D, 49 ops: a table write at offset 0x5f, pairs of table reads
-	 * per core, four radio reads and two peeks of 0x?a0/0x?a1 -- the
-	 * readback of each core's RX-IQ corrector state.
+	 * Block D, 49 ops: a table write at offset 0x5f, then per core the
+	 * save of the TX IQ/LO coefficients, four radio reads and two peeks
+	 * of 0x?a0/0x?a1 -- the readback of the core's RX-IQ corrector state.
 	 */
 	{
 		static const u16 tbl_5f_val = 0xacdc;
-		u16 discard16[2];
 		unsigned int c;
 
 		/* TBL.WR id=0x000c off=0x005f len=1 val=0xacdc (7 op) */
@@ -10337,13 +10342,13 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 			/* TBL.RD off=0x60+c*4 len=2 (8 op) */
 			b43_actab_read_bulk(dev, 0x000c,
 					    (u16)(0x0060 + c * 4),
-					    16, 2, discard16);
+					    16, 2, &txiqlo_coef[c][0]);
 			/* MOD unlock esplicito (fine scope actab_read_bulk) */
 			b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
 			/* TBL.RD off=0x62+c*4 len=1 (7 op) */
 			b43_actab_read_bulk(dev, 0x000c,
 					    (u16)(0x0062 + c * 4),
-					    16, 1, discard16);
+					    16, 1, &txiqlo_coef[c][2]);
 			b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
 
 			/*
@@ -10742,34 +10747,15 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 	b43_mac_suspend(dev);
 
 	/*
-	 * Per-core coefficient write; core 0 uses radio 0x0002-0x0005.
-	 *
-	 * ATTENZIONE, le celle 0x62 e 0x66 NON sono costanti: qui portano
-	 * 0x0002 e 0x0200 e la coppia giusta dipende da canale e larghezza.
-	 * Misurata sui segmenti a freddo, alla terza applicazione:
-	 *
-	 *   ch36 bw20   0x62=0xff02  0x66=0x0200
-	 *   ch40 bw20   0x62=0xfe01  0x66=0xfd02
-	 *   ch48 bw20   0x62=0xfe01  0x66=0xfd02
-	 *   ch36 bw40   0x62=0x0202  0x66=0x02ff
-	 *   ch36 bw80   0x62=0xffff  0x66=0x0101
-	 *
-	 * Letti come coppie di byte con segno sono correzioni piccole -- ch36
-	 * bw20 da' (-1, +2) e (+2, 0) -- una per core, e sono il terzo word del
-	 * blocco per core dopo i due di afe_res_cal. La formula non c'e'
-	 * ancora: 0x0200 su ch36 bw20 combacia per caso, e 0x0002 e' sbagliato
-	 * su ogni segmento. Vedi docs/retrace-todo.md. Cells 0x60/0x61 and 0x64/0x65 are the AFE cal's pass-1
-	 * results and flow from afe_res_cal: the attach path gives
-	 * (0x0066, 0x000e) and a later switch (0x0069, 0x000e). The readback of
-	 * the 0x8056 iteration already carries the right value for the phase.
+	 * Per core: restore of the TX IQ/LO coefficients saved in block D,
+	 * {a, b} at 0x60 + 4*core and the LO leakage word at 0x62 + 4*core,
+	 * then the LO DAC registers and the solved RX-IQ coefficients. Core 0
+	 * uses radio 0x0002-0x0005, core 1 0x0202-0x0205.
 	 */
-	{
-		const u16 tbl_c_62 = 0x0002;
-
-		b43_actab_write_bulk_scoped(dev, 0x000c, 0x0060, 16, 2,
-					    dev->phy.ac->afe_res_cal[0].v);
-		b43_actab_write_bulk_scoped(dev, 0x000c, 0x0062, 16, 1, &tbl_c_62);
-	}
+	b43_actab_write_bulk_scoped(dev, 0x000c, 0x0060, 16, 2,
+				    &txiqlo_coef[0][0]);
+	b43_actab_write_bulk_scoped(dev, 0x000c, 0x0062, 16, 1,
+				    &txiqlo_coef[0][2]);
 	b43_radio_write(dev, 0x0002, lo_dac[0][0]);
 	b43_radio_write(dev, 0x0003, lo_dac[0][1]);
 	b43_radio_write(dev, 0x0004, lo_dac[0][2]);
@@ -10786,15 +10772,10 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 		b43_phy_write(dev, 0x06a1, (u16)(b & 0x03ff));
 	}
 
-	/* Core 1 (RAD.WR 0x0202-0x0205): come il core 0, risultato pass 1
-	 * (attach 0x0027/0x0003, switch 0x0026/0x0004). */
-	{
-		const u16 tbl_c_66 = 0x0200;
-
-		b43_actab_write_bulk_scoped(dev, 0x000c, 0x0064, 16, 2,
-					    dev->phy.ac->afe_res_cal[2].v);
-		b43_actab_write_bulk_scoped(dev, 0x000c, 0x0066, 16, 1, &tbl_c_66);
-	}
+	b43_actab_write_bulk_scoped(dev, 0x000c, 0x0064, 16, 2,
+				    &txiqlo_coef[1][0]);
+	b43_actab_write_bulk_scoped(dev, 0x000c, 0x0066, 16, 1,
+				    &txiqlo_coef[1][2]);
 	b43_radio_write(dev, 0x0202, lo_dac[1][0]);
 	b43_radio_write(dev, 0x0203, lo_dac[1][1]);
 	b43_radio_write(dev, 0x0204, lo_dac[1][2]);
