@@ -74,8 +74,8 @@ dove si documenta come si produce un numero citabile.
 Su `cold01-ch36-bw20`, il segmento di riferimento:
 
 ```
-grezzo: 28549/28577 = 99.90%
-        3 col valore sbagliato, 22 op di wl mancanti, 0 op del port di troppo
+grezzo: 28550/28576 = 99.91%
+        2 col valore sbagliato, 22 op di wl mancanti, 0 op del port di troppo
 ```
 
 Il denominatore e' l'unione dei due flussi, quindi fa 100% solo se il port
@@ -90,7 +90,7 @@ si dividono in due famiglie che il punteggio separa da se':
 
 | famiglia | segmenti | grezzo | di troppo |
 |---|---|---|---|
-| centro banda ≤ 5250 MHz | 7 (ch36-48) | 93.79% – 99.90% | 0 – 88 |
+| centro banda ≤ 5250 MHz | 7 (ch36-48) | 93.79% – 99.91% | 0 – 88 |
 | centro banda > 5250 MHz | 19 (da ch52) | 85.78% – 87% | 1804 |
 
 Sopra i 5250 MHz il driver stock esegue un attach diverso, non un attach
