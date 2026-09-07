@@ -166,6 +166,11 @@ PY
 	sched=$(python3 "$HERE/../reverse-tools/probe_schedule.py" \
 		/tmp/gate.merged --sh 2>/dev/null || true)
 
+	# How many times the stack above republished the beacon, and on which
+	# ticks. Same reason as the schedule above. See beacon_reloads.py.
+	sched="$sched $(python3 "$HERE/../reverse-tools/beacon_reloads.py" \
+		/tmp/gate.merged --sh 2>/dev/null || true)"
+
 	# MAC.BW is written only by the first segment of each bandwidth: the
 	# others inherit it. The segment knows by itself whether it has it.
 	if grep -q ' MAC\.BW' /tmp/gate.merged; then

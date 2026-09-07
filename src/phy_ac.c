@@ -291,7 +291,11 @@ static void b43_phy_ac_wd_stats_clear(struct b43_wldev *dev);
 static bool b43_phy_ac_may_calibrate_tx(struct b43_wldev *dev);
 static void b43_phy_ac_wd_stats_poll_opt(struct b43_wldev *dev,
 					 bool head_sweep,
-					 unsigned int ctr32_passes);
+					 unsigned int ctr32_passes,
+					 bool ctr32_tail);
+static u32 b43_phy_ac_mcsbw5g_po(const struct ssb_sprom *sprom,
+				 unsigned int band,
+				 enum nl80211_chan_width width);
 static unsigned int b43_phy_ac_po_band(u16 chan);
 static void b43_phy_ac_farrow_setup(struct b43_wldev *dev,
 				    struct ieee80211_channel *channel);
@@ -860,9 +864,7 @@ static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev)
 	u8 min_nib;
 	u32 po;
 
-	po = (ac->cal_width == NL80211_CHAN_WIDTH_40)
-		? sprom->mcsbw5g_po[band].bw40
-		: sprom->mcsbw5g_po[band].bw20;
+	po = b43_phy_ac_mcsbw5g_po(sprom, band, ac->cal_width);
 
 	min_nib = 0xf;
 	for (i = 0; i < 8; i++)
@@ -1636,6 +1638,38 @@ static unsigned int b43_phy_ac_po_band(u16 chan)
 }
 
 /*
+ * Offset di potenza per-rate della sotto-banda @band alla larghezza corrente.
+ *
+ * La SROM rev 11 ne porta uno per ognuna delle nove combinazioni, e bcma li
+ * estrae in campi piatti; qui si scelgono per indice invece di ripetere il
+ * ternario a ogni chiamante.
+ */
+static u32 b43_phy_ac_mcsbw5g_po(const struct ssb_sprom *sprom,
+				 unsigned int band,
+				 enum nl80211_chan_width width)
+{
+	/*
+	 * A 80 MHz si prendono gli offset a 20, non quelli a 80: e' la terza
+	 * colonna della tabella a puntare all'indice 0. Deciso dallo sweep a
+	 * caldo, dove il modello fa 26/26 esatte coi nibble a 20 e 23/26 con
+	 * quelli a 80 -- e le tre che sbaglia sono esattamente le tre
+	 * configurazioni a 80 MHz. Il massimo e' su ogni rate e i rate a 20
+	 * restano popolati a qualunque larghezza, quindi portano il nibble piu'
+	 * piccolo e vincono.
+	 */
+	static const u8 sel[3][3] = { { 0, 1, 0 }, { 3, 4, 3 }, { 6, 7, 6 } };
+	const u32 po[9] = {
+		sprom->mcsbw205glpo, sprom->mcsbw405glpo, sprom->mcsbw805glpo,
+		sprom->mcsbw205gmpo, sprom->mcsbw405gmpo, sprom->mcsbw805gmpo,
+		sprom->mcsbw205ghpo, sprom->mcsbw405ghpo, sprom->mcsbw805ghpo,
+	};
+	unsigned int w = (width == NL80211_CHAN_WIDTH_80) ? 2
+		       : (width == NL80211_CHAN_WIDTH_40) ? 1 : 0;
+
+	return po[sel[band % 3][w]];
+}
+
+/*
  * Per-core TX power target, in quarter-dBm, for register 0x0646 + core stride.
  *
  * This is the reduction brcmsmac performs in wlc_phy_txpower_recalc_target():
@@ -1652,10 +1686,13 @@ static unsigned int b43_phy_ac_po_band(u16 chan)
  * from; brcmsmac's QDB() factor of 4 converts the whole-dB SROM and
  * regulatory values.
  *
- * The regulatory stage is not applied. All four 5 GHz rules in brcmsmac's
- * world regdomain cap at 21 dBm, so QDB(21) = 84, and the captures show 86
- * reaching the register on ch100 -- the ceiling does not bind on these
- * boards, whose ccode is empty and regrev 0.
+ * Lo stadio regolamentare NON e' applicato, e questo e' il difetto principale
+ * del modello. Su U-NII-1 a 20 MHz il registro porta 56 su **entrambe** le
+ * board, con maxp5ga 72 e 74: un valore identico a fronte di SROM diverse non
+ * puo' venire dalla SROM, ed e' il tetto regolamentare. Un ceil di 62 prima del
+ * margine riproduce tutte e dodici quelle osservazioni. A 40 e 80 MHz il tetto
+ * non lega piu' -- il limite e' di densita' spettrale -- e vince la SROM.
+ * Lo studio completo, 104 osservazioni, e' in docs/retrace-todo.md.
  *
  * Verified against the d6220 sweep and the agcombo captures: exact on all 17
  * observations at 20 MHz and all 4 at 80 MHz. 40 MHz is 5 of 8, and is why
@@ -1711,14 +1748,15 @@ static u16 b43_phy_ac_txpwr_target(struct b43_wldev *dev, unsigned int core)
 	unsigned int j;
 
 	/*
-	 * 80 MHz takes the 20 MHz offsets. The maximum is over every rate,
-	 * and the 20 MHz rates stay populated whatever the operating width,
-	 * so they carry the smallest nibble and win; the sweep's 80 MHz
-	 * configurations agree with the 20 MHz ones channel for channel.
+	 * mcsbw805g{l,m,h}po esiste in NVRAM ed e' letta qui, ma non decide
+	 * questo registro: sulle sei osservazioni a 80 MHz i nibble di bw80 e
+	 * quelli di bw20 fanno 4 su 6 entrambi, e ch52 sbaglia in tutti i casi.
+	 * Il ramo resta su bw80 per la direzione dell'errore -- con bw80 la
+	 * d6220 esce sotto il vendor, con bw20 esce sopra, e uscire sopra
+	 * spinge il PA oltre la caratterizzazione della board.
+	 * Vedi lo studio di funzione in docs/retrace-todo.md.
 	 */
-	po = (ac->cal_width == NL80211_CHAN_WIDTH_40)
-		? sprom->mcsbw5g_po[band].bw40
-		: sprom->mcsbw5g_po[band].bw20;
+	po = b43_phy_ac_mcsbw5g_po(sprom, band, ac->cal_width);
 
 	nib = 0xf;
 	for (j = 0; j < 8; j++)
@@ -5616,14 +5654,14 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
 	 * Second half of the poll with a single pass: no head, no sweep and no
 	 * tail.
 	 */
-	b43_phy_ac_wd_stats_poll_opt(dev, false, 1);
+	b43_phy_ac_wd_stats_poll_opt(dev, false, 1, true);
 	/*
 	 * Invariant across all 26 segments. Between these and the poll below,
 	 * the capture has a TPL.RAMW, which is the core's template RAM.
 	 */
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x018a, 0xffce);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x018c, 0xffba);
-	b43_phy_ac_wd_stats_poll_opt(dev, true, 0);
+	b43_phy_ac_wd_stats_poll_opt(dev, true, 0, true);
 	/*
 	 * After the sweep and after the four CCK blocks that are still not
 	 * understood.
@@ -5687,7 +5725,7 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
 	 */
 	for (off = 0x0300; off <= 0x0306; off += 2)
 		b43_shm_read16(dev, B43_SHM_SHARED, off);
-	b43_phy_ac_wd_stats_poll_opt(dev, true, 0);
+	b43_phy_ac_wd_stats_poll_opt(dev, true, 0, true);
 	/*
 	 * MHF4 bit 15: alzato al primo bring-up,
 	 * abbassato su un channel setup successivo.
@@ -5722,7 +5760,7 @@ static int b43_phy_ac_set_channel(struct b43_wldev *dev,
 	b43_phy_maskset(dev, 0x0042, (u16)~0x8000, 0x8000);      /* set bit 15 */
 	b43_phy_ac_mhf_maskset(dev, 1, (u16)~0x0020, 0x0020);    /* MHF1 set bit 5 */
 	b43_mac_suspend(dev);
-	b43_phy_ac_wd_stats_poll_opt(dev, true, 0);
+	b43_phy_ac_wd_stats_poll_opt(dev, true, 0, true);
 	b43_phy_ac_basic_rate_map(dev);
 
 	/*
@@ -10001,7 +10039,7 @@ static void b43_phy_ac_wd_stats_clear(struct b43_wldev *dev)
  *   34567-34601, 34762-34796, 35024-35058, 35286-35320]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   26290-26473, 26660-26668, 26835-27070, 27793-27827, 27988-28022,
- *   28183-28217, 28384-28418, 28596-28596]
+ *   28183-28217, 28384-28418]
  */
 static void b43_phy_ac_wd_sample_phase_opt(struct b43_wldev *dev, bool peek,
 					   bool arm_tone)
@@ -10081,7 +10119,8 @@ static void b43_phy_ac_wd_sample_phase(struct b43_wldev *dev)
  */
 static void b43_phy_ac_wd_stats_poll_opt(struct b43_wldev *dev,
 					 bool head_sweep,
-					 unsigned int ctr32_passes)
+					 unsigned int ctr32_passes,
+					 bool ctr32_tail)
 {
 	B43_AC_FN();
 	static const u16 head[4] = { 0x010e, 0x0158, 0x010c, 0x015e };
@@ -10104,6 +10143,15 @@ static void b43_phy_ac_wd_stats_poll_opt(struct b43_wldev *dev,
 	for (pass = 0; pass < ctr32_passes; pass++)
 		for (i = 0; i < ARRAY_SIZE(ctr32); i++)
 			b43_phy_ac_wd_shm_read32x3(dev, ctr32[i]);
+
+	/*
+	 * @ctr32_tail chiude la spazzata coi tre contatori fuori lista. Sta
+	 * dietro un flag perche' una ricarica del beacon puo' cadere fra le due
+	 * passate: il chiamante spezza la spazzata in due e la coda va solo
+	 * sulla seconda meta'.
+	 */
+	if (!ctr32_tail)
+		return;
 
 	b43_phy_ac_wd_shm_read32x3(dev, 0x07e0);
 	b43_phy_ac_wd_shm_read32x3(dev, 0x07e4);
@@ -10136,7 +10184,7 @@ static void b43_phy_ac_wd_stats_tail(struct b43_wldev *dev)
 
 static void b43_phy_ac_wd_stats_poll(struct b43_wldev *dev)
 {
-	b43_phy_ac_wd_stats_poll_opt(dev, true, 2);
+	b43_phy_ac_wd_stats_poll_opt(dev, true, 2, true);
 }
 
 /* [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -10332,6 +10380,24 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 
 	b43_mac_enable(dev);
 	b43_phy_ac_mhf_maskset(dev, 0, (u16)~0x4000, 0);
+
+	/*
+	 * Le ricariche del beacon che cadono prima che la fase probe parta.
+	 * Sono le due coppie suspend/enable a 1.37 e 1.29 s dall'MHF che il
+	 * commento qui sotto dava per rumore del contesto up: non lo sono, e
+	 * la forma lo dice -- ognuna porta TIMBPOS, il template in template
+	 * RAM, la lunghezza in BTL0 o BTL1 e una passata sul PLCP, con il
+	 * suspend fra la lunghezza e il template. Quante siano lo dice il
+	 * chiamante, vedi ac->beacon_reload_pre.
+	 */
+	{
+		struct b43_phy_ac *ac = dev->phy.ac;
+		unsigned int i;
+
+		for (i = 0; i < ac->beacon_reload_pre; i++)
+			b43_ac_beacon_reload(dev, ac->beacon_reload_done++);
+	}
+
 	/*
 	 * Between the MHF and the first GPIO write, the attach capture shows
 	 * two suspend/enable pairs that are NOT structure to reproduce. The
@@ -10343,6 +10409,13 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 	 */
 	bcma_chipco_gpio_out(&dev->dev->bdev->bus->drv_cc, 0x0004, 0x0004);
 	bcma_chipco_gpio_out(&dev->dev->bdev->bus->drv_cc, 0x0400, 0x0000);
+
+	/*
+	 * Una cella a 0xffff, una volta sola in tutto il segmento, fra le due
+	 * GPIO e il latch della finestra. b43.h non la nomina e a cosa serva
+	 * non si sa; la posizione e' invariante.
+	 */
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x0026, 0xffff);
 
 	/*
 	 * Latch the ucode statistics here, ahead of block E, so the CRS value
@@ -10425,10 +10498,34 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 	{
 		struct b43_phy_ac *ac = dev->phy.ac;
 		unsigned int ticks = ac->probe_ticks;
-		unsigned int tick;
+		unsigned int tick, i;
 
 		for (tick = 0; tick < ticks; tick++) {
-			b43_phy_ac_wd_stats_poll(dev);
+			unsigned int reloads = 0;
+
+			for (i = 0; i < ac->beacon_reload_n; i++)
+				if (ac->beacon_reload_tick[i] == tick)
+					reloads++;
+
+			/*
+			 * Una ricarica cade fra le due passate della spazzata
+			 * dei contatori, non fra un blocco e l'altro: nella
+			 * cattura la prima passata si chiude sul sesto
+			 * contatore e la ricarica parte subito dopo. Quindi il
+			 * poll si spezza in due meta' e le ricariche del tick
+			 * stanno in mezzo.
+			 */
+			if (reloads) {
+				b43_phy_ac_wd_stats_poll_opt(dev, true, 1,
+							     false);
+				while (reloads--)
+					b43_ac_beacon_reload(dev,
+						ac->beacon_reload_done++);
+				b43_phy_ac_wd_stats_poll_opt(dev, false, 1,
+							     true);
+			} else {
+				b43_phy_ac_wd_stats_poll(dev);
+			}
 
 			if (b43_phy_ac_watchdog_on_tick(ac, tick)) {
 				b43_mac_suspend(dev);
@@ -10486,6 +10583,13 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 	 * reloads a few thousand ops earlier, whose count runs from 7 to 21 over
 	 * the same 26 segments because the host decides it.
 	 */
+	/*
+	 * Il bracket di maccontrol che apre il blocco: clear del bit 20 e poi
+	 * la sospensione. Al secondo sito il bit lo si alza, qui lo si
+	 * abbassa.
+	 */
+	b43_maccontrol_set(dev, (u32)~0x00100000u, 0x00000000);
+	b43_mac_suspend(dev);
 	{
 		u16 cc = b43_shm_read16(dev, B43_SHM_SHARED, 0x00cc);
 
@@ -10640,9 +10744,21 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 	/*
 	 * Per-core coefficient write; core 0 uses radio 0x0002-0x0005.
 	 *
-	 * Cells 0x62 and 0x66 hold 0x0002 and 0x0200 in both d6220 captures
-	 * that record read values, so they are constants and do not depend on
-	 * the phase. Cells 0x60/0x61 and 0x64/0x65 are the AFE cal's pass-1
+	 * ATTENZIONE, le celle 0x62 e 0x66 NON sono costanti: qui portano
+	 * 0x0002 e 0x0200 e la coppia giusta dipende da canale e larghezza.
+	 * Misurata sui segmenti a freddo, alla terza applicazione:
+	 *
+	 *   ch36 bw20   0x62=0xff02  0x66=0x0200
+	 *   ch40 bw20   0x62=0xfe01  0x66=0xfd02
+	 *   ch48 bw20   0x62=0xfe01  0x66=0xfd02
+	 *   ch36 bw40   0x62=0x0202  0x66=0x02ff
+	 *   ch36 bw80   0x62=0xffff  0x66=0x0101
+	 *
+	 * Letti come coppie di byte con segno sono correzioni piccole -- ch36
+	 * bw20 da' (-1, +2) e (+2, 0) -- una per core, e sono il terzo word del
+	 * blocco per core dopo i due di afe_res_cal. La formula non c'e'
+	 * ancora: 0x0200 su ch36 bw20 combacia per caso, e 0x0002 e' sbagliato
+	 * su ogni segmento. Vedi docs/retrace-todo.md. Cells 0x60/0x61 and 0x64/0x65 are the AFE cal's pass-1
 	 * results and flow from afe_res_cal: the attach path gives
 	 * (0x0066, 0x000e) and a later switch (0x0069, 0x000e). The readback of
 	 * the 0x8056 iteration already carries the right value for the phase.
