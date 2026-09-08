@@ -11,7 +11,7 @@ succede e cosa il vendor fa con quel valore.
 
 Due strumenti, incrociati:
 
-- `reverse-tools/read_census.py` legge la cattura vendor ripiegata (con i
+- `reverse-tools/reads.py consumers` legge la cattura vendor ripiegata (con i
   retval) e per ogni lettura cerca la scrittura che ne consuma il valore nelle
   600 op successive: lo stesso valore scritto altrove (**copy**), la stessa
   cella riscritta uguale (**rmw(=)**, cioe' save/restore) o con una relazione

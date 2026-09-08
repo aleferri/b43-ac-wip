@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Which of the vendor's consumed reads does the port actually consume?
 
-For every read that read_census.py marks as copy or rmw in the vendor trace,
+For every read that `reads.py consumers` marks as copy or rmw in the vendor trace,
 run the cold flow with that read perturbed (one bit flipped in the value the
 oracle hands out) and see whether the port's emitted ops change. CONSUMED if
 they do; DISCARDED if the port reads the cell and writes a constant. The
@@ -9,7 +9,7 @@ DISCARDED rows with a copy/rmw relation are reads whose value the vendor uses
 and the port throws away.
 
 Usage, from test/ after ./gates.sh has left /tmp/gate.merged:
-    python3 ../reverse-tools/read_census.py /tmp/gate.merged > census.txt
+    python3 ../reverse-tools/reads.py consumers /tmp/gate.merged > census.txt
     python3 read_perturb.py census.txt /tmp/gate.merged | sort
 """
 import subprocess, re, sys, os
