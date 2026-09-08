@@ -65,6 +65,7 @@ diff --git a/drivers/net/wireless/broadcom/b43/xmit.h b/drivers/net/wireless/bro
 --- a/drivers/net/wireless/broadcom/b43/xmit.h
 +++ b/drivers/net/wireless/broadcom/b43/xmit.h
 @@ -374,6 +374,26 @@ static inline int b43_new_kidx_api(struct b43_wldev *dev)
+ {
  	return (dev->fw.rev >= 351);
  }
 +
