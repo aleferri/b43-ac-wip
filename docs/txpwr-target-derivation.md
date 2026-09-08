@@ -243,9 +243,9 @@ scrutiny as the driver.
   from the prefregs block and `0x0000` in channel setup. Fixed by locating the
   channel-setup burst by its ordered register signature.
 - Adding `b43_actab_fill_r11()` without adding it to the harness `--wrap` list
-  dropped 448 `TBL.WR` labels per channel, taking gate 1 from 100% to 98.21%
-  and gate 2 from 2 mismatches to 15827. A new driver helper needs a line in
-  the harness or the gate lies loudly.
+  dropped 448 `TBL.WR` labels per channel, taking the cold gate from 100% to
+  98.21% and the positional comparison from 2 mismatches to 15827. A new
+  driver helper needs a line in the harness or the gate lies loudly.
 - Dropping the `mask=0x00ff` filter from a verification grep read
   `RAD.WR 0x0646` instead, scoring 0/26 against correct code.
 

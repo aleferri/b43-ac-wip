@@ -95,9 +95,9 @@ regressioni piu' sensibile che ci sia.
 ### 4. Leggere il punteggio
 
 ```
-grezzo          : 26670/29292 = 91.05%   439 regioni
-                  428 col valore sbagliato, 1673 op di wl mancanti,
-                  93 op del port di troppo
+grezzo          : 28552/28574 = 99.92%   15 regioni
+                  0 col valore sbagliato, 22 op di wl mancanti,
+                  0 op del port di troppo
 nel perimetro   : ...
 ```
 

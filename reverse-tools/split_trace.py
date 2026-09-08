@@ -144,10 +144,13 @@ def filter_bringup(segments):
     `ch36 bw20` appears three times before an attach gets all the way through.
 
     The criterion is the presence of RAD ops, not of PHY ops, and the
-    difference matters: the d6220's interrupted insmod emits ten PHY writes
+    difference matters: the interrupted insmod emits ten PHY writes
     (0xa5-0xa7, 0x8f, 0x78) but zero RAD, while every real cycle has about
-    1710 of them. Those PHY writes belong to the core, not to the PHY driver.
-    A size threshold would not do either: it would be chosen by eye.
+    1710 of them. Those writes are wl0's N-PHY attach, not our core's:
+    b43/phy_n.h names them AFECTL_OVER, AFECTL_OVER1, AFECTL_C1, AFECTL_C2
+    and RFCTL_CMD, none of them in phy_common.h, and the clr 0x0400 on 0x78
+    is RFCTL_CMD_CHIP0PU -- wl0 powering its radio down after attach. A size
+    threshold would not do either: it would be chosen by eye.
     """
     good, dropped = [], []
     for name, lines in segments:

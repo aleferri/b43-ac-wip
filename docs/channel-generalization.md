@@ -105,7 +105,7 @@ Il loop iniziale su reg `0x0413` (probabile radio calibration loop
 convergente) fa 1-3 iterazioni in più su ch36/bw40 rispetto a ch44. Cioè
 il vendor implementa un test-of-convergence e loopa finché non stabilizza.
 
-Impatto: ~5 op su 22268 (trascurabile). Prima del bring-up si può
+Impatto: ~5 op sulle ~28500 del segmento (trascurabile). Prima del bring-up si può
 ignorare; dopo il primo funzionamento si può indagare quale bit indica
 convergenza e sostituire il loop hardcoded con un `do { ... } while
 (!converged);`.
