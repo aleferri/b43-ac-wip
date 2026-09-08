@@ -139,8 +139,10 @@ su un chip poco squilibrato.
 
 ## 7. Cosa resta aperto
 
-1. Riempire `rxcal_phy_setup` / `radio_setup` / `cleanup` (~300 op di RMW) a
-   pezzi verificati col correlatore.
+1. Riempire `rxcal_radio_setup` / `rxcal_cleanup` / `rxcal_radio_cleanup`
+   (~300 op di RMW) a pezzi verificati col correlatore. Sono chiamate da
+   `channel_setup_tail2()`, quindi quello che non emettono manca al path
+   vivo.
 2. Determinare lo scopo dello sweep tone-mode. I coefficienti **non** ne
    dipendono numericamente -- li riproducono le sole misure di precisione -- ma
    il driver stock lo esegue sempre. Ipotesi: sanity check o warm-up; per
@@ -237,9 +239,9 @@ dedicato.
 ## 10. Stato reale del port: la calibrazione e' un replay
 
 Il solve dei coefficienti esiste e la sua matematica e' verificata bit-exact
-(`b43_phy_ac_rx_iq_comp_update`), ma **non viene mai invocato**: zero marker
-`FN` nel flow completo. L'unico chiamante e' `b43_phy_ac_rxiqcal()`, che ritorna
-subito perche' il suo register-map non e' compilato.
+(`b43_phy_ac_rx_iq_comp_update`), ma **non viene mai invocato dal driver**:
+zero marker `FN` nel flow completo. L'unico chiamante e' il flow `rxiq_comp`
+dell'harness, che lo esercita da solo; nel path vivo non e' wirato.
 
 I coefficienti che il port scrive sono costanti:
 
@@ -283,8 +285,8 @@ gate: sostituisce due costanti con un calcolo che, sugli stessi ingressi,
 produce le stesse uscite -- e che a differenza delle costanti funziona anche su
 un'altra sessione.
 
-Il register-map che manca a `b43_phy_ac_rxiqcal()` resta l'unico ostacolo al
-percorso completo, ma non serve per questo passo: gli accumulatori sono gia'
+Il register-map che manca agli stub di setup e cleanup resta l'unico ostacolo
+al percorso completo, ma non serve per questo passo: gli accumulatori sono gia'
 letti da `iqcal_meas_post_dds_apply_v2` subito prima di
 `rxiq_apply_coefficients`, che e' dove stanno le costanti.
 

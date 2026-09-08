@@ -23,13 +23,14 @@ Ogni flow va confrontato con la cattura della **sua** fase. Il flow `full`
 esegue un primo bring-up, `switch_channel` con `AC_FIRST_INIT=0` un bring-up
 successivo: scambiarli produce divergenze che non sono bug del driver.
 
-| gate | oracolo | atteso |
+| gate | oracolo | come si lancia |
 |---|---|---|
-| flow `full` (primo bring-up) | `attach-to-bss-up-ch36-bw20` + oracolo, range `50:30172` | prima divergenza @23951 su 25013; con `cmp_skip` 25003/25003 = 100.00% |
-| flow `switch_channel` con `AC_FIRST_INIT=0` (bring-up successivo) | `down-to-bss-ch36-bw20` + oracolo da `#653`, range `653:26671` | 21005/21007 = 99.99% (cmp_skip); residuo: coefficiente RXIQ `b` a ±1 LSB, 2 op |
-| `tables_init` | `attach-to-bss-up`, primo bring-up | 3714/3714, zero gap |
-| `rfkill` d6220 e agcombo | `down-to-bss` | 100% per funzione, zero gap |
-| `init_regs` primo bring-up | `attach-to-bss-up` | 17/17 |
+| primo bring-up (flow `full`, `AC_FIRST_INIT=1`) | un segmento di `cold-sweep.zip` | `test/gates.sh` |
+| bring-up successivo (flow `up`, `AC_FIRST_INIT=0`) | un segmento `-up-` di `hot-sweep.zip` | `test/gates.sh --hot` |
+| tick periodico | `wl-diag-wl1-steady-tick-ch36-bw20.txt` | vedi `test/README.md` |
+
+I numeri correnti stanno in `README.md`, che e' l'unico posto dove vanno
+aggiornati: duplicarli qui li fa invecchiare a ogni movimento del gate.
 | `init_regs` bring-up successivo | `d6220/down-to-bss-ch36-bw20`, `agcombo/down-to-bss-ch36` | 33/33 su entrambe |
 | SROM rev 11 | `sprom-rev11/harness` | 77/74/75 PASS, 0 FAIL |
 | build | `-O2 -Wall -Wextra` | zero warning |

@@ -81,8 +81,10 @@ struct b43_phy_ac_iq_comp {
  * rxcal_gainctrl and its step helper, rxcal_apply_gain, tx_tone,
  * stopplayback.
  *
- * Still stubs: rxcal_phy_setup, rxcal_radio_setup, rxcal_cleanup and
- * rxcal_radio_cleanup, some 300 RMW ops to be done in verified pieces.
+ * Still stubs: rxcal_radio_setup, rxcal_cleanup and rxcal_radio_cleanup,
+ * some 300 RMW ops to be done in verified pieces. They are called from
+ * channel_setup_tail2() in phy_ac.c, so what they do not emit is missing
+ * from the live path.
  */
 
 /*

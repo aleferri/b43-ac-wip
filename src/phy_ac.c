@@ -9346,7 +9346,7 @@ static void b43_phy_ac_iq_solve(struct b43_phy_ac_iq_acc *acc,
  * (0x3ef and 0x04d), core 1 gives a = -44, b = 59 (0x3d4 and 0x03b) --
  * identical to what the stock driver writes.
  * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
- *   30382-30384]
+ *   30382-30385]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   25664-25667]
  */
