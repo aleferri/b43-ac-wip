@@ -120,14 +120,19 @@ Ordine tipico: decodifica → fold RETVAL → collapse → (reorder) → confron
   `bus_sprom`, applica la trasformazione del consumatore e cerca il risultato
   nella finestra della funzione che lo consuma. Le catture si passano come
   argomenti.
-- **reads.py** — le letture che il port scarta, nei tre stadi della stessa
+- **reads.py** — le letture che il port scarta, nei quattro stadi della stessa
   indagine. `risk` dice quali hanno un valore che **varia** fra le catture: una
   costante e' al massimo fragile, una che varia e' un bug in attesa di un'altra
   board, perche' il port non sta imparando niente e ogni scrittura che ne
   dipende e' trascritta invece che derivata. `intent` dice cosa il driver stock
   ne **fa** -- ciclo di campionamento, poll, read-modify-write, read-to-clear,
   probe -- perche' "letta per l'ordine sul bus" non e' una spiegazione, e' cio'
-  che resta quando nessuno l'ha ricavata. `plan` emette il piano di lettura in
+  che resta quando nessuno l'ha ricavata. `consumers` dice quale scrittura
+  **consuma** il valore di ogni lettura -- copia, read-modify-write, poll, o
+  nessuna (`unused`) -- e segue il valore invece di classificare per forma,
+  quindi nomina la scrittura invece di indovinarne la sagoma; `intent` resta
+  per i casi in cui il valore non e' inseguibile e per il read-to-clear, che
+  una ricerca sul valore non vede. `plan` emette il piano di lettura in
   C per un registro, che serve ai flow che girano senza `AC_READ_ORACLE`.
 - **sweep_report.py** — un rapporto su uno sweep, in due modi. `score` da' una
   riga per canale ed e' il segnale grosso: dice quali canali si sono mossi.
