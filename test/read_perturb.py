@@ -1,0 +1,40 @@
+#!/usr/bin/env python3
+"""Which of the vendor's consumed reads does the port actually consume?
+
+For every read that read_census.py marks as copy or rmw in the vendor trace,
+run the cold flow with that read perturbed (one bit flipped in the value the
+oracle hands out) and see whether the port's emitted ops change. CONSUMED if
+they do; DISCARDED if the port reads the cell and writes a constant. The
+DISCARDED rows with a copy/rmw relation are reads whose value the vendor uses
+and the port throws away.
+
+Usage, from test/ after ./gates.sh has left /tmp/gate.merged:
+    python3 ../reverse-tools/read_census.py /tmp/gate.merged > census.txt
+    python3 read_perturb.py census.txt /tmp/gate.merged | sort
+"""
+import subprocess, re, sys, os
+from collections import defaultdict
+# candidates: every read key in the census
+cands=[]
+for l in open(sys.argv[1]):
+    m=re.match(r'(PHY|RAD|OBJ) 0x([0-9a-f]+)\s+n=\s*(\d+)\s+(.*?)\s+e\.g\.',l)
+    t=re.match(r'TBL 0x([0-9a-f]+)\[0x([0-9a-f]+)\]\s+n=\s*(\d+)\s+(.*?)\s+e\.g\.',l)
+    if m: cands.append((m.group(1), int(m.group(2),16), None, m.group(4)))
+    elif t: cands.append(('TBL', int(t.group(2),16), int(t.group(1),16), t.group(4)))
+env0=dict(os.environ, AC_CHANNEL='36', AC_BW='20', AC_MAC_WIDTH='0', AC_FIRST_INIT='1', AC_READ_ORACLE=sys.argv[2], AC_READ_ORACLE_FROM='528')
+def run(env):
+    r=subprocess.run(['./ac_trace','full','d6220'],env=env,capture_output=True,text=True)
+    # drop the read lines themselves (perturbed value shows there trivially)
+    return [l for l in r.stdout.split('\n') if '.RD ' not in l]
+base=run(env0)
+print(len(cands),'candidates', file=sys.stderr)
+for cls,addr,tid,kinds in cands:
+    if 'copy' not in kinds and 'rmw' not in kinds: continue
+    env=dict(env0, AC_READ_PERTURB=hex(addr), AC_READ_PERTURB_MASK='0x0001')
+    if cls=='TBL': env['AC_READ_PERTURB_KIND']=f'tbl:{tid:#x}'
+    elif cls=='RAD': env['AC_READ_PERTURB_KIND']='radio'
+    elif cls=='OBJ': env['AC_READ_PERTURB_KIND']='obj'
+    out=run(env)
+    changed=sum(1 for a,b in zip(base,out) if a!=b)+abs(len(base)-len(out))
+    key=f"TBL 0x{tid:04x}[0x{addr:04x}]" if cls=='TBL' else f"{cls} 0x{addr:04x}"
+    print(f"{'CONSUMED' if changed else 'DISCARDED'}  {key:22s} changed_lines={changed:4d}  vendor: {kinds}")

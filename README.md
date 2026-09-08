@@ -74,8 +74,8 @@ dove si documenta come si produce un numero citabile.
 Su `cold01-ch36-bw20`, il segmento di riferimento:
 
 ```
-grezzo: 28550/28576 = 99.91%
-        2 col valore sbagliato, 22 op di wl mancanti, 0 op del port di troppo
+grezzo: 28552/28574 = 99.92%
+        0 col valore sbagliato, 22 op di wl mancanti, 0 op del port di troppo
 ```
 
 Il denominatore e' l'unione dei due flussi, quindi fa 100% solo se il port
@@ -83,14 +83,16 @@ emette esattamente le op del driver stock: ne' meno, ne' di piu', ne' con
 valori diversi. Le tre voci sono tre lavori distinti — una formula da trovare,
 del codice da scrivere, un gate da mettere — e stanno in
 [`docs/retrace-todo.md`](docs/retrace-todo.md). Sul segmento di riferimento la
-terza voce e' a zero; resta aperta sui canali sopra i 5250 MHz.
+prima e la terza voce sono a zero, e le 22 della seconda sono tutte op del
+core o di bcma, fuori da `src/`; la terza resta aperta sui canali sopra i
+5250 MHz.
 
 Tutti e 26 i segmenti dello sweep a freddo sono misurati sullo stesso albero, e
 si dividono in due famiglie che il punteggio separa da se':
 
 | famiglia | segmenti | grezzo | di troppo |
 |---|---|---|---|
-| centro banda ≤ 5250 MHz | 7 (ch36-48) | 93.79% – 99.91% | 0 – 88 |
+| centro banda ≤ 5250 MHz | 7 (ch36-48) | 93.79% – 99.92% | 0 – 88 |
 | centro banda > 5250 MHz | 19 (da ch52) | 85.78% – 87% | 1804 |
 
 Sopra i 5250 MHz il driver stock esegue un attach diverso, non un attach

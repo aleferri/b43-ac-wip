@@ -51,8 +51,8 @@ globale perche' quale punto si e' toccato e' l'informazione utile. Non e'
 accadono per costruzione, e il messaggio serve a chi legge un dmesg dopo che
 qualcosa non ha funzionato.
 
-Oggi sono tre: i coefficienti TX IQ/LO scritti da tabella invece che calcolati,
-il residuo di 1 LSB sul coefficiente `b` della RX IQ, e il guard di canale
+Oggi sono due: il residuo per banda sul coefficiente `b` della RX IQ del core
+1, e il guard di canale
 scavalcato da `CONFIG_B43_PHY_AC_ANY_CHANNEL`, che elenca quali tabelle sono
 fittate su ch36 a 20 MHz e non hanno prove altrove.
 
@@ -294,26 +294,50 @@ da `0x02` a `0xf8`, e in aritmetica a 16 bit il prestito darebbe `0x010a`
 invece di `0x020a`. E' proprio quel punto ad avere fatto vedere che i campi
 sono due. Ora il driver tiene una parola e ricava l'altra.
 
-### Che sia stato accumulato, adesso e' misurato
+### Le LUT 0x42/0x62/0x82 sono il risultato della cal LO, per indice
 
 La voce della `0x0042` sui sette segmenti che eseguono la fase: `0xff02`,
-`0xfd02`, `0xfe02`, `0xfe01`, `0x0202`, `0x0101`, `0xffff`. E sullo **stesso**
-ch36 a 20, 40 e 80 MHz: `0xff02`, `0x0202`, `0xffff`. Non c'e' dipendenza dal
-canale da cercare, e il `b43_phy_ac_todo()` sul sito resta giusto. Anche la
-`0x0062`, che il port dava costante a `0x0200`, varia: `0xfd02` su cold04,
-`0x02ff` su cold17, `0x0202` su cold18, `0x0101` su cold24.
+`0xfd02`, `0xfe02`, `0xfe01`, `0x0202`, `0x0101`, `0xffff`. Non c'e' dipendenza
+dal canale da cercare perche' non e' una funzione del canale: **e' la parola
+di LO leakage che la cal TX IQ/LO ha appena prodotto per quel core**, cioe'
+cio' che `rxcal_afe_calibrate()` ha scritto in IQLOCAL `0x62 + 4*core`, copiata
+su tutti i 128 indici di potenza. Le tabelle `0x42/0x62/0x82` sono le LOFT
+LUT del tx power control, una voce per indice, e il vendor le riempie con la
+stessa parola perche' non ha una misura per indice.
 
-I valori nel driver sono ora quelli di `cold01`, che e' il segmento di
-riferimento del gate: restano un fit su una corsa di una board, ma di una
-corsa che sta nel repo, invece di venire da una cattura non identificata. Sugli
-altri canali sono sbagliati e lo saranno finche' la calibrazione non gira.
+Verifica su cold01 e sul flow a caldo `01-up-ch36-bw20`:
+
+| | IQLOCAL 0x62 | LUT 0x42 | IQLOCAL 0x66 | LUT 0x62 | IQLOCAL 0x6a | LUT 0x82 |
+| --- | --- | --- | --- | --- | --- | --- |
+| cold01 | 0xff02 | 0xff02 | 0x0200 | 0x0200 | 0x1eea | 0x16e6 / 0x14dc |
+| 01-up | 0xff01 | 0xff01 | 0x0201 | 0x0201 | 0x93f1 | 0x8bed / 0x89e3 |
+
+Il core 2 e' la stessa relazione con una **base** sotto: la LUT vale la parola
+LO piu' la base per campo, e la base e' quella che `iqcal_coeff_tables_reset()`
+scrive dopo -- zero per i core 0 e 1, `(-8, -4)` fino all'indice 0x20 e
+`(-10, -14)` da 0x21 per il core 2. Il passo `(-2, -10)` fra le due voci e' il
+passo della base, non della cal. L'agcombo, che la terza catena la ha, dice
+che la base e' del core e non della board: la' la parola LO del core 2 e'
+`0xff00` su cold01 e la LUT `0xf7fc/0xf5f2`, `0x0000` su cold18 e la LUT
+`0xf8fc/0xf6f2`, `0xfe02` sul flow a caldo ch36 e la LUT `0xf6fe/0xf4f4` --
+sempre parola piu' base, voce per voce. Perche' solo il core 2 abbia una
+base, e perche' scatti a 0x21, non ha prove: resta una costante con un SALAME.
+
+Il driver ora ricava le tre LUT da `afe_res[1]`, `[3]`, `[5]`: niente valore
+trascritto, e il `b43_phy_ac_todo()` che dichiarava i coefficienti "scritti da
+tabella" e' tolto. Sul ferro la parola viene dalla cal della stessa corsa; nel
+harness viene dall'oracolo, e con l'oracolo per cella (sotto) e' giusta anche
+a caldo, dove prima il LUT usciva `0xfe02` contro `0xff01`.
+
+Il paragrafo che segue e' quello del passo precedente, quando i valori erano
+ancora quelli di `cold01` trascritti.
 
 `cold01` passa da 96.84% a **98.59%**, i valori sbagliati da 259 a **3**, le
 regioni da 296 a 40, e il posizionale da `@15943` a `@24865` -- **8922 op
 contigue in piu'**. Gli altri 25 segmenti non si muovono, perche' il fit e' su
 questo. La divergenza che resta a `@24865` e' `PHY.WR 0x06a1 val=0x51` contro
-`0x50`: e' il residuo di 1 LSB sul coefficiente `b` della RX IQ, il secondo dei
-tre avvisi del driver.
+`0x50`: era il residuo sul coefficiente `b` della RX IQ, chiuso piu' sotto con la
+media per tono.
 
 ## Il coefficiente b della RX IQ: non e' l'arrotondamento
 
@@ -646,13 +670,14 @@ tolleranza non e' mai stato in aria, era di nascondere un modello sbagliato.
 
 ## Da dove ripartire
 
-Stato: gate a freddo su `cold01` a **28550/28576 = 99.91%** con 2 valori
-sbagliati, 22 op mancanti e **zero op del port di troppo**; dentro il perimetro
-zero mancanti e zero di troppo. Gate periodico a `MATCH`. `compare.py` sul
-perimetro non ha piu' divergenze: i due valori restanti sono le due
-occorrenze di `PHY 0x08a1`, che `VAL_TOLLERANZA` copre. Il salto da 98.80%
-viene per tre quarti dall'offload della probe response dichiarato fuori
-scopo, non da lavoro sul port: vedi il TODO post-WIP piu' sotto.
+Stato: gate a freddo su `cold01` a **28552/28574 = 99.92%** con **zero valori
+sbagliati**, 22 op mancanti e zero op del port di troppo. Le 22 sono tutte
+del core o di bcma (OTP/SROMCTL/`CAL.INIT`, `0x0184`, `0x00b0`, `0x05dc`,
+`TPL.RAMW 0x48`, le coppie `0x05d6/0x05d8`, `OBJ.RD 0x0/0x2`, `MAC.MHF.RD`,
+`OBJ.RD 0x40`): dentro il perimetro `compare.py` stampa `MATCH`. Gate
+periodico a `MATCH`. Il salto da 98.80% viene per tre quarti dall'offload
+della probe response dichiarato fuori scopo, non da lavoro sul port: vedi il
+TODO post-WIP piu' sotto.
 
 ### Lo sweep a freddo intero, sullo stesso albero
 
@@ -1199,35 +1224,60 @@ pezzo di obiettivo dichiarato irraggiungibile" -- e qui non e' irraggiungibile,
 e' rinviato. Il confronto onesto e' contro il 98.80% di prima, non contro il
 99.15% di dopo.
 
-## I due valori che restano su ch36, misurati
+## Gli ultimi due valori di ch36: chiusi
 
-Il grezzo su `cold01` e' a 99.91%, con **zero op mancanti e zero di troppo
-dentro il perimetro**. Restano due divergenze, la stessa cella su due core, e
-non sono un bug: sono una derivazione aperta.
+### `PHY 0x08a1`: il coefficiente e' la media per tono, non la somma degli accumulatori
 
-### `PHY 0x08a1`, due occorrenze: vendor 0x37, port 0x38
+Le due occorrenze di `0x08a1` su `cold01` -- vendor 0x37, port 0x38 -- erano
+il coefficiente `b` del core 1 della RX IQ, e il solver le sbagliava perche'
+componeva i round nel modo sbagliato. I round di misura sono **toni**: due a
+20 e 40 MHz, a `+f` e `-f`, sei a 80 MHz. Quello che si misura su un tono
+porta la parte dipendente dalla frequenza dello sbilanciamento; quello che va
+in `0x?a0`/`0x?a1` e' la parte indipendente, cioe' la **media sui toni dei
+coefficienti per tono**. Sommare gli accumulatori pesa ogni tono con la sua
+potenza, e a 80 MHz -- dove il roll-off rende le potenze diverse e le `a` per
+tono distano decine di unita', (-5, -16, -4, -18, -2, -19) su `cold24` --
+esce un'unita' fuori. E' lo stesso motivo per cui la "media dei `b`" del
+modello precedente batteva la somma senza che si sapesse perche'.
 
-E' il coefficiente `b` del core 1 della RX IQ, da `b43_phy_ac_iq_solve()`. Gli
-altri tre coefficienti combaciano -- `0x06a0`, `0x06a1`, `0x08a0` -- quindi il
-solver e' giusto e sbaglia di uno solo qui.
+I punti sono ora estratti da tutti i segmenti che eseguono la fase, 7 a
+freddo e 52 a caldo, con `reverse-tools/rxiq_points.py`: 118 scritture di
+`0x?a1`, ognuna con i suoi round. Il tono corto (0x0272 = 0x400 campioni, un
+sedicesimo della potenza) e i round della ricerca in loopback (preceduti da
+`0x0b22`) non sono misure e restano fuori. Il risultato:
 
-Il commento di `iq_solve()` ha gia' la misura, su 148 punti: comporre i round
-con la somma degli accumulatori da' 40/74 sul core 0 e 44/74 sul core 1, la
-media dei `b` risolti da' 68/74 e 36/74. **Nessuno dei due e' esatto**, e il
-codice usa il migliore per core. Questa divergenza e' uno dei residui di quella
-scelta, non un errore da correggere: chiuderla vuol dire trovare il terzo
-modello, non ritentare i due gia' misurati.
+| modello | a esatta | b esatta | entrambe |
+| --- | --- | --- | --- |
+| somma degli accumulatori (prima) | 108/118 | 86/118 | 80/118 |
+| media per tono (ora) | **117/118** | **90/118** | **89/118** |
 
-Per riferimento, i quattro coefficienti a freddo:
+Le dieci `a` che la somma sbagliava sono tutte a 80 MHz. Il residuo su `a` e'
+un punto solo, `13-up-ch60-bw20` core 0: le due `a` per tono valgono -4.592 e
+-14.380, la media -9.486, il vendor scrive -10. Nessun arrotondamento della
+media lo da', e arrotondare prima i due toni (-5, -14) e mediare con il mezzo
+lontano da zero lo da' ma rompe trenta casi di mezzo esatto altrove, dove il
+vendor arrotonda verso lo zero. Va lasciato come anomalia di un punto.
 
-| segmento | 0x06a0 | 0x06a1 | 0x08a0 | 0x08a1 |
-| --- | --- | --- | --- | --- |
-| ch36 bw20 | 0x03ef | 0x0051 | 0x03d9 | 0x0037 |
-| ch40 bw20 | 0x03ee | 0x0050 | 0x03d9 | 0x003c |
-| ch44 bw20 | 0x03f1 | 0x0050 | 0x03da | 0x0037 |
-| ch48 bw20 | 0x03f6 | 0x004f | 0x03da | 0x003a |
-| ch36 bw40 | 0x03f3 | 0x004d | 0x03dc | 0x003b |
-| ch36 bw80 | 0x03f5 | 0x004d | 0x03dd | 0x0039 |
+Su `b` la forma per tono e' `b_r + 1 = 2^10 * sqrt(qq*ii - iq^2) / ii`, cioe'
+la stessa di prima con la `a_r` **esatta** sotto radice invece di quella
+arrotondata a Q10: su `cold01` core 1 il secondo tono sta a 57.49, e con la
+`a_r` arrotondata passava a 57.50 e saliva a 58. E' quel mezzo LSB a fare il
+`0x38` contro `0x37`. La media dei `b_r` e' arrotondata al mezzo in su, che su
+due toni coincide con il ceiling che c'era.
+
+Il core 0 del d6220 e' a 56/59, con tre punti bassi di uno. Il core 1 resta a
+34/59 con un residuo simmetrico, 13 bassi e 12 alti, e il residuo **segue la
+banda**: rispetto a qualunque funzione di questi sei accumulatori il vendor
+esce circa 0.7 LSB piu' alto da ch100 in su che sotto i 5250 MHz, sul core 1
+soltanto. Non e' il peso di `a^2` sotto radice, non e' la scelta di `a` (per
+tono, media, o dell'altro core), non e' la forma della media (aritmetica sui
+`b`, sulle potenze `qq/ii`, sui guadagni): provate tutte, la deviazione per
+banda non si muove. `rxgainerr5ga*` in NVRAM e' `31,31,31,31` su tutte le
+bande, quindi non e' nemmeno quello. Su agcombo la media e' pulita su tutte e
+tre le catene, quindi non e' una regola per catena: manca un ingresso che non
+sta negli accumulatori, e il `b43_phy_ac_todo()` al sito di scrittura resta
+per questo. `VAL_TOLLERANZA` a `+-1` su `0x?a1` resta anch'essa: su `cold01`
+non serve piu', sugli altri segmenti copre esattamente questo residuo.
 
 ### `TBL 0xc` offset 0x62 e 0x66: chiuso, era un save/restore
 
@@ -1267,12 +1317,22 @@ parola passata dalla porta -- la scrittura di `0x5f` che precede il blocco D.
 Ogni cella passa dalla stessa porta, quindi l'ultima parola della porta non e'
 la cella che si sta leggendo.
 
-`test/wrap.c` porta ora un mirror per cella, chiavato `(id, offset)`,
-aggiornato da ogni wrap di scrittura e servito alle letture come plan sulla
-porta dati: sotto l'oracolo, sopra il fallback. Con questo i tre gate a caldo
-salgono da 78.47 / 81.38 / 79.25% a **81.92 / 84.92 / 82.72%**, perche' ogni
-read-modify-write su cella di tabella a caldo partiva da garbage. Sul freddo
-non muove niente oltre il restore qui sopra -- la' l'oracolo era in sincrono
+`test/wrap.c` porta ora due cose:
+
+- un **mirror per cella**, chiavato `(id, offset)`, aggiornato da ogni wrap di
+  scrittura;
+- un **oracolo per cella**: le parole sotto un marker `TBL.RD` della cattura
+  vanno in una coda per `(id, offset)` e non nella coda piatta della porta,
+  cosi' una lettura trova il suo valore anche quando i flow divergono
+  altrove. Sta sopra i plan scritti a mano (che portano i valori di una
+  corsa sola) e sopra il mirror.
+
+Ordine di servizio di una lettura di tabella: oracolo per cella, plan a mano,
+mirror per cella, fallback della porta. Con questo i tre gate a caldo salgono
+da 78.47 / 81.38 / 79.25% a **86.26 / 89.50 / 86.14%**, e le regioni su
+`01-up` da 930 a 469: prima i readback della cal a caldo venivano dai plan a
+mano, cioe' dai valori di `cold01`, ed ogni derivata -- LUT LOFT comprese --
+usciva sbagliata. Sul freddo non muove niente -- la' l'oracolo era in sincrono
 -- e il periodico resta `MATCH`.
 
 ## Il muro di ch36 bw40, e la forma del target di potenza

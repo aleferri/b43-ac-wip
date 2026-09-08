@@ -194,6 +194,7 @@ static bool tbl_mirror_serve(u16 id, u16 offset, u8 width, size_t len)
 	return true;
 }
 
+
 void b43_test_plans_reset(void)
 {
 	memset(phy_plans, 0, sizeof(phy_plans));
@@ -343,6 +344,27 @@ static void oracle_push(struct oracle_q *tbl, unsigned addr, unsigned val)
 	q->v[q->n++] = (u16)val;
 }
 
+/*
+ * Table reads keyed by (id, offset). The data port is one address for every
+ * cell, so a per-address queue on it only stays in step while the port's
+ * table reads are exactly the vendor's; keyed by cell, a read finds its value
+ * even when the flows diverge elsewhere. The words under a TBL.RD marker go
+ * here and not into oracle_phy[data port].
+ */
+static struct oracle_q *oracle_tbl[TBL_MIRROR_IDS];
+
+static void oracle_tbl_push(unsigned id, unsigned off, unsigned val)
+{
+	if (id >= TBL_MIRROR_IDS || off >= TBL_MIRROR_OFFS)
+		return;
+	if (!oracle_tbl[id]) {
+		oracle_tbl[id] = calloc(TBL_MIRROR_OFFS, sizeof(**oracle_tbl));
+		if (!oracle_tbl[id])
+			return;
+	}
+	oracle_push(oracle_tbl[id], off, val);
+}
+
 static void oracle_init(void)
 {
 	static int tried;
@@ -368,6 +390,8 @@ static void oracle_init(void)
 		fprintf(stderr, "wrap: oracle: cannot open %s\n", path);
 		return;
 	}
+	unsigned tbl_id = 0, tbl_off = 0, tbl_len = 0, tbl_words = 0;
+
 	while (fgets(line, sizeof(line), f)) {
 		unsigned addr, val;
 		char *p;
@@ -395,10 +419,35 @@ static void oracle_init(void)
 				continue;
 		}
 
-		if ((p = strstr(line, "PHY.RD")) != NULL) {
+		if ((p = strstr(line, "TBL.RD")) != NULL) {
+			if (sscanf(p, "TBL.RD id=%x off=%x len=%u",
+				   &tbl_id, &tbl_off, &tbl_len) == 3)
+				tbl_words = 0;
+			else
+				tbl_len = 0;
+		} else if ((p = strstr(line, "PHY.RD")) != NULL) {
 			if (sscanf(p, "PHY.RD %*[^=]=%x %*[^=]=%x",
-				   &addr, &val) == 2)
+				   &addr, &val) != 2)
+				continue;
+			if (tbl_len && addr == B43_PHY_AC_TABLE_DATA_HI &&
+			    tbl_words) {
+				/* HI half of a 32-bit cell: same cell as the LO. */
+				oracle_tbl_push(tbl_id, tbl_off + tbl_words - 1, val);
+			} else if (tbl_len && tbl_words < tbl_len &&
+				   (addr == B43_PHY_AC_TABLE_DATA_LO ||
+				    addr == B43_PHY_AC_TABLE_DATA_2)) {
+				oracle_tbl_push(tbl_id, tbl_off + tbl_words++, val);
+			} else {
+				/*
+				 * Any other read -- the gate peek inside a
+				 * folded table read included -- leaves the
+				 * marker in force until its words are in.
+				 */
+				if (addr == B43_PHY_AC_TABLE_DATA_LO ||
+				    addr == B43_PHY_AC_TABLE_DATA_2)
+					tbl_len = 0;
 				oracle_push(oracle_phy, addr, val);
+			}
 		} else if ((p = strstr(line, "RAD.RD")) != NULL) {
 			if (sscanf(p, "RAD.RD %*[^=]=%x %*[^=]=%x",
 				   &addr, &val) == 2)
@@ -440,6 +489,7 @@ static int perturb_addr_valid;
 static unsigned perturb_addr;
 static u16 perturb_mask = 1;
 static struct oracle_q *perturb_tbl;
+static unsigned perturb_tbl_id = ~0u;
 
 static void perturb_init(void)
 {
@@ -457,8 +507,14 @@ static void perturb_init(void)
 	if (m)
 		perturb_mask = (u16)strtoul(m, NULL, 0);
 	k = getenv("AC_READ_PERTURB_KIND");
-	perturb_tbl = (k && !strcmp(k, "radio")) ? oracle_rad
-		    : (k && !strcmp(k, "obj")) ? oracle_obj : oracle_phy;
+	if (k && !strncmp(k, "tbl:", 4)) {
+		/* AC_READ_PERTURB_KIND=tbl:<id>, AC_READ_PERTURB=<offset> */
+		perturb_tbl_id = (unsigned)strtoul(k + 4, NULL, 0);
+		perturb_tbl = NULL;
+	} else {
+		perturb_tbl = (k && !strcmp(k, "radio")) ? oracle_rad
+			    : (k && !strcmp(k, "obj")) ? oracle_obj : oracle_phy;
+	}
 	perturb_addr_valid = 1;
 }
 
@@ -532,6 +588,54 @@ void b43_test_oracle_report(void)
 }
 
 /* ============ PHY register accessors ============ */
+
+/*
+ * Keyed table oracle: every cell of the run must have a queued value. Served
+ * as a plan on the data port(s), like the mirror; it ranks above it.
+ */
+static bool tbl_oracle_serve(u16 id, u16 offset, u8 width, size_t len)
+{
+	size_t i;
+
+	oracle_init();
+	perturb_init();
+	if (!oracle_on || id >= TBL_MIRROR_IDS || width == 48 ||
+	    offset + len > TBL_MIRROR_OFFS || !oracle_tbl[id])
+		return false;
+	for (i = 0; i < len; i++) {
+		struct oracle_q *q = &oracle_tbl[id][offset + i];
+		unsigned need = width == 32 ? 2 : 1;
+
+		if (q->n - q->iter < (int)need) {
+			if (q->n)
+				oracle_miss_exhausted++;
+			return false;
+		}
+	}
+	for (i = 0; i < len; i++) {
+		struct oracle_q *q = &oracle_tbl[id][offset + i];
+
+		tbl_mirror_lo[i] = q->v[q->iter++];
+		if (width == 32)
+			tbl_mirror_hi[i] = q->v[q->iter++];
+		if (perturb_addr_valid && id == perturb_tbl_id &&
+		    offset + i == perturb_addr)
+			tbl_mirror_lo[i] ^= perturb_mask;
+		oracle_hits++;
+	}
+	if (width == 32) {
+		plan_add(phy_plans, &phy_plans_n, B43_PHY_AC_TABLE_DATA_LO,
+			 tbl_mirror_lo, (int)len);
+		plan_add(phy_plans, &phy_plans_n, B43_PHY_AC_TABLE_DATA_HI,
+			 tbl_mirror_hi, (int)len);
+	} else {
+		plan_add(phy_plans, &phy_plans_n,
+			 id == 0x20 ? B43_PHY_AC_TABLE_DATA_2
+				    : B43_PHY_AC_TABLE_DATA_LO,
+			 tbl_mirror_lo, (int)len);
+	}
+	return true;
+}
 
 u16 __wrap_b43_phy_read(struct b43_wldev *dev, u16 reg)
 {
@@ -1001,12 +1105,19 @@ void __wrap_b43_actab_read_bulk(struct b43_wldev *dev,
 				size_t len, void *data)
 {
 	int pre = txlpf_prestate(id, offset);
-	const u16 *tv = tbl_plan_take(id, offset, len);
 
-	if (tv)
-		plan_add(phy_plans, &phy_plans_n, 0x000f, tv, (int)len);
-	else
-		tbl_mirror_serve(id, offset, width, len);
+	/*
+	 * The capture's own value first; the hand-written plans are for flows
+	 * that run without an oracle, and carry the values of one run.
+	 */
+	if (!tbl_oracle_serve(id, offset, width, len)) {
+		const u16 *tv = tbl_plan_take(id, offset, len);
+
+		if (tv)
+			plan_add(phy_plans, &phy_plans_n, 0x000f, tv, (int)len);
+		else
+			tbl_mirror_serve(id, offset, width, len);
+	}
 
 	fprintf(trace(), "cpu1 TBL.RD   id=0x%04x off=0x%04x len=%zu\n",
 		id, offset, len);
