@@ -200,7 +200,7 @@ index 7fee9afa9..05d738534 100644
  };
  
  struct ssb_sprom {
-@@ -192,6 +205,43 @@ struct ssb_sprom {
+@@ -192,6 +205,44 @@ struct ssb_sprom {
  	u16 legofdm40duppo;
  	u8 sar2g;
  	u8 sar5g;
@@ -213,6 +213,7 @@ index 7fee9afa9..05d738534 100644
 +	struct ssb_sprom_rxgains rxgains_5gm;
 +	struct ssb_sprom_rxgains rxgains_5gh;
 +	u8 subband5gver;
++	s8 antenna_gain_qdb[2];	/* Antenna gain in quarter dB, per band */
 +	u16 dot11agofdmhrbw202gpo;
 +	u16 ofdmlrbw202gpo;
 +	u32 mcsbw805glpo;
