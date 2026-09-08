@@ -67,8 +67,8 @@ di canale e larghezza e non una misura.
 ## Stato corrente
 
 Il numero di riferimento viene dal gate a freddo, che si lancia con
-`test/gates.sh`. La procedura esatta, con le trappole, sta in
-[`test/README.md`](test/README.md) e **non va reinventata**: e' l'unico posto
+`test/unit/gates.sh`. La procedura esatta, con le trappole, sta in
+[`test/unit/README.md`](test/unit/README.md) e **non va reinventata**: e' l'unico posto
 dove si documenta come si produce un numero citabile.
 
 Su `cold01-ch36-bw20`, il segmento di riferimento:
@@ -185,7 +185,16 @@ Mappa file sorgente → patch: [`docs/driver-status.md`](docs/driver-status.md).
 
 ### Bug aperti
 
-Nessuno al momento.
+- **`do_full_init` non distingue freddo e caldo su b43.** `b43_phy_exit()`
+  (`phy_common.c:130`) lo rimette a `true` a ogni `ifconfig down`, quindi i
+  commenti di `src/phy_ac.c` che lo citano come discriminante "cold attach
+  only" affermano una cosa falsa sul path vero. La correzione dipende da una
+  decisione sul caldo, che qui e' fuori priorita'. Trovato dalla suite di
+  integrazione.
+- **Il terzo `PHY.MOD 0x02e4`.** Sui canali sopra i 5250 MHz il vendor scrive
+  quel campo tre volte; il port ne emette due. La terza sta a offset +13668
+  dalla prima su tutti i segmenti alti, nella coda del channel setup a MAC
+  abilitato. Nessun sito del port la emette.
 
 Nota per chi legge il descrittore: `est_pwr_lut_core*` e
 `papd_comp_rfpwr_tbl_core*` condividono id e offset **per costruzione**. Il
@@ -195,22 +204,30 @@ sequenza di init (agcombo attach `#1345` e `#2899`). Non è un bug e non va
 
 ## Verifica riproducibile
 
-La procedura sta in [`test/README.md`](test/README.md), in sei passi. Qui solo
+La procedura sta in [`test/unit/README.md`](test/unit/README.md), in sei passi. Qui solo
 i due gate, per averli a portata:
 
 ```sh
-cd test
-unzip -d /tmp/cold ../router-data/d6220/cold-sweep.zip
+cd test/unit
+unzip -d /tmp/cold ../../router-data/d6220/cold-sweep.zip
 make
 ./gates.sh                                    # cold a freddo: grezzo + prima divergenza
 ./gates.sh /tmp/cold/segmenti/cold*.txt       # tutti e 26
 
-AC_READ_ORACLE=../router-data/d6220/wl-diag-wl1-steady-tick-ch36-bw20.txt \
+AC_READ_ORACLE=../../router-data/d6220/wl-diag-wl1-steady-tick-ch36-bw20.txt \
     ./ac_trace periodic d6220 > /tmp/p.out
 python3 compare.py \
-    ../router-data/d6220/wl-diag-wl1-steady-tick-ch36-bw20.txt /tmp/p.out
+    ../../router-data/d6220/wl-diag-wl1-steady-tick-ch36-bw20.txt /tmp/p.out
 # MATCH
 ```
+
+La seconda suite, `test/integration/`, compila b43 **intero** con il port
+dentro contro gli header kernel veri, e lo esegue: oggi `b43_bcma_probe`
+ritorna 0 e l'attach si chiude in 68 op. Non e' un punteggio, e' un ordine di
+eventi che non si legge -- ed e' cosi' che si sono trovati i due difetti di
+`switch_analog` e di `do_full_init` che `test/unit` non poteva vedere. Come si
+lancia sta in
+[`test/integration/README.md`](test/integration/README.md).
 
 Le catture in `router-data/*/` sono lo sweep a freddo e quello a caldo negli
 zip, piu' l'oracolo del tick a regime e i dump statici (NVRAM, SROM, tabelle

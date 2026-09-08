@@ -6254,6 +6254,38 @@ static void b43_phy_ac_pmu_req(struct b43_wldev *dev, bool on)
 		dev->phy.ac->status_mask &= ~B43_PHY_AC_STATE_PMU_REQ;
 }
 
+/*
+ * Whether the cold preamble is due on this entry into switch_analog().
+ *
+ * b43 calls switch_analog(dev, true) from four sites: the attach reset
+ * (main.c:5650, right after b43_phy_allocate() has made phy->ops non-NULL),
+ * the core-init reset (4956), b43_chip_init() (3402) and b43_phy_init()
+ * (phy_common.c:97). The vendor emits the preamble once per bring-up, so
+ * three of the four entries must do nothing but the analog bank.
+ *
+ * The discriminant is the channel. b43 only has one from b43_phy_init()
+ * onwards -- that function points phy->chandef at the hardware config on the
+ * line before it calls switch_analog(), and nobody sets it earlier: on a first
+ * bring-up b43_op_config() has not run yet. So the first entry that has a
+ * channel is the one the preamble belongs to, and the state bit keeps the
+ * later entries out. op_prepare_structs() clears it, which b43 calls once per
+ * ifconfig up.
+ *
+ * On a cold bring-up that selects the b43_phy_init() entry, on a warm one the
+ * b43_chip_init() entry, and those are the same position in the op stream:
+ * b43_phy_init() emits nothing between the two.
+ */
+static bool b43_phy_ac_cold_preamble_due(struct b43_wldev *dev)
+{
+	if (!dev->phy.do_full_init)
+		return false;
+	if (dev->phy.ac->status_mask & B43_PHY_AC_STATE_COLD_PREAMBLE)
+		return false;
+	if (!dev->phy.chandef || !dev->phy.chandef->chan)
+		return false;
+	return true;
+}
+
 /* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
  *   584-645]
  */
@@ -6334,7 +6366,8 @@ static void b43_phy_ac_frontend_gpio_setup(struct b43_wldev *dev)
 /* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
  *   528-583]
  */
-static void b43_phy_ac_switch_analog_once(struct b43_wldev *dev, bool on)
+static void b43_phy_ac_switch_analog_once(struct b43_wldev *dev, bool on,
+					  bool cold)
 {
 	B43_AC_FN();
 	u16 saved_417, saved_416;
@@ -6384,15 +6417,16 @@ static void b43_phy_ac_switch_analog_once(struct b43_wldev *dev, bool on)
 	 * attach-to-bss-up #81, agcombo attach #27 -- same value on both chips,
 	 * so it is the phase that selects it, not the chip).
 	 *
-	 * On a later bring-up the d6220 does not touch 0x02e4 at all, hence the
-	 * do_full_init gate. The DSL (wl 6.30) writes 0x0800 there on its
-	 * down->up instead: a version divergence, tracked in retrace-todo.md,
-	 * not reproduced here.
+	 * On a later bring-up the d6220 does not touch 0x02e4 at all. Which
+	 * entry is the cold one is the caller's decision, see
+	 * b43_phy_ac_cold_preamble_due(). The DSL (wl 6.30) writes 0x0800 there
+	 * on its down->up instead: a version divergence, tracked in
+	 * retrace-todo.md, not reproduced here.
 	 *
 	 * Unrelated to the 0x0800 that set_channel writes on the 4360 -- that
 	 * one lands after init_regs and no 4352 witness emits it.
 	 */
-	if (!on || !dev->phy.do_full_init)
+	if (!cold)
 		return;
 
 	b43_phy_maskset(dev, 0x02e4, (u16)~0x3f00, 0x0f00);
@@ -6439,10 +6473,12 @@ static void b43_phy_ac_switch_analog_once(struct b43_wldev *dev, bool on)
  */
 static void b43_phy_ac_op_switch_analog(struct b43_wldev *dev, bool on)
 {
-	B43_AC_FN();
-	b43_phy_ac_switch_analog_once(dev, on);
+	bool cold = on && b43_phy_ac_cold_preamble_due(dev);
 
-	if (on && dev->phy.do_full_init && dev->dev->chip_id == 0x4360) {
+	B43_AC_FN();
+	b43_phy_ac_switch_analog_once(dev, on, cold);
+
+	if (cold && dev->dev->chip_id == 0x4360) {
 		/*
 		 * TODO: between the two entries the stock driver emits nine bus
 		 * ops -- two GPIO reads, SI.COREREG offset 0x80, PMU.PLL 0x2 and
@@ -6459,7 +6495,7 @@ static void b43_phy_ac_op_switch_analog(struct b43_wldev *dev, bool on)
 		 * bcma_chipco_pll_read() exists. Until then the two entries stay
 		 * 13 ops apart.
 		 */
-		b43_phy_ac_switch_analog_once(dev, on);
+		b43_phy_ac_switch_analog_once(dev, on, cold);
 	}
 
 	/*
@@ -6468,8 +6504,11 @@ static void b43_phy_ac_op_switch_analog(struct b43_wldev *dev, bool on)
 	 * the second entry. On the 4352, which enters once, the distinction is
 	 * invisible.
 	 */
-	if (on)
-		b43_phy_ac_frontend_gpio_setup(dev);
+	if (!cold)
+		return;
+
+	b43_phy_ac_frontend_gpio_setup(dev);
+	dev->phy.ac->status_mask |= B43_PHY_AC_STATE_COLD_PREAMBLE;
 }
 
 /* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
@@ -9697,7 +9736,7 @@ static void b43_phy_ac_measure_block(struct b43_wldev *dev)
 	 * vendor's written values therefore requires the read plan for radio
 	 * 0x0017, 0x0024 and 0x0161 to be pre-programmed -- those are the
 	 * hardware-sticky values whose bits a previous write of 0 does not
-	 * clear. The plans live in test/main.c.
+	 * clear. The plans live in test/unit/main.c.
 	 *
 	 * SALAME: reading this as TX AFE cal setup is ours. It is clearly a
 	 * radio reconfiguration with a read-modify-verify-write pattern, but
@@ -10331,7 +10370,7 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 	 * from a different CPU, so they are MAC activity
 	 * interleaved by the up context during a wait -- the same species as
 	 * the probe-pacing pairs. The warm path does not have them. They are
-	 * declared in test/cmp_skip.py rather than emitted.
+	 * declared in test/unit/cmp_skip.py rather than emitted.
 	 */
 	bcma_chipco_gpio_out(&dev->dev->bdev->bus->drv_cc, 0x0004, 0x0004);
 	bcma_chipco_gpio_out(&dev->dev->bdev->bus->drv_cc, 0x0400, 0x0000);

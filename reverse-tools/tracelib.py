@@ -24,7 +24,7 @@ import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "src")
-TEST = os.path.join(ROOT, "test")
+TEST = os.path.join(ROOT, "test", "unit")
 DATA = os.path.join(ROOT, "router-data")
 
 RE_VENDOR = re.compile(r"^\s*([\d.]+)\s+#(\d+)\s+cpu\d+\s+(.*?)\s*$")
@@ -334,7 +334,7 @@ def captures(include_zips=True):
 def run_port(flow, board, env=None, markers=True):
     """Run the harness and return its stdout.
 
-    The harness must run with cwd=test/ because the board profiles read the
+    The harness must run with cwd=test/unit/ because the board profiles read the
     dumps from router-data/ by relative path.
     """
     e = dict(os.environ)

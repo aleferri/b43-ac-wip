@@ -1,0 +1,348 @@
+# test/ — harness di verifica su trace
+
+Compila il driver AC-PHY di `../../src/` in userspace e produce una trace nel
+formato di `wl-diag`, da confrontare contro le catture del vendor in
+`../../router-data/`. Non modifica nessun file di `src/`.
+
+## Obiettivo
+
+Che b43 emetta, una per una e nello stesso ordine, tutte le operazioni che il
+driver stock emette su un attach a freddo: senza op mancanti, senza op di
+troppo e senza valori sbagliati. Il punteggio dice quanto manca, il debito
+residuo con il perche' di ogni pezzo sta in `../../docs/retrace-todo.md`.
+
+## La procedura, che e' una sola
+
+**Non inventarne altre.** Ogni comando qui sotto e' quello con cui il repo
+produce i numeri che cita; le varianti ad hoc danno risultati non
+confrontabili.
+
+### 1. Preparare le catture
+
+```sh
+unzip -d /tmp/cold ../../router-data/d6220/cold-sweep.zip
+```
+
+I 26 segmenti stanno in `/tmp/cold/segmenti/coldNN-chC-bwB.txt`.
+
+Ogni segmento contiene **due** attach, non uno: `wl` al caricamento fa
+l'attach di tutti i core, quindi la testa ha prima wl0 -- l'N-PHY 2.4 GHz --
+e poi wl1, che e' l'AC. Sono 46 op, fra la prima e la seconda coppia
+`OTP.RDR`/`OTP.INIT`, e vanno via:
+
+```sh
+python3 ../../reverse-tools/strip_other_core.py \
+    /tmp/cold/segmenti/cold01-ch36-bw20.txt /tmp/cold01-pulito.txt
+```
+
+Il confronto quel prefisso lo salta gia', perche' parte dalla prima `PHY.RD
+0x0739` dell'attach AC. Serve all'**oracolo**, che parte dall'insmod per
+coprire l'OTP e il probe dei core e cosi' si mangia anche le letture di wl0:
+le code per (classe, indirizzo) risultano sfasate e il port legge la shared
+memory dell'altro core. Sulle celle `0x0000`/`0x0002` -- `UCODEREV` e
+`UCODEPATCH` -- e' visibile, perche' il self-test di
+`b43_validate_chipaccess` lo eseguono entrambi i core.
+`gates.sh` lo fa da se'; a mano va fatto.
+
+Poi sono catture grezze: le letture hanno `val=UNDEFINED` e il valore sta
+nella riga `RETVAL` successiva. **Prima di usarle per una grep sui valori**
+vanno ripiegate:
+
+```sh
+python3 ../../reverse-tools/trace_filter.py --retvals \
+    /tmp/cold/segmenti/cold01-ch36-bw20.txt /tmp/m01
+```
+
+Dimenticarlo e' l'errore piu' facile da fare: una `grep 'val=0x...'` su un file
+non ripiegato non trova nessuna lettura e sembra che l'op non ci sia.
+
+### 2. Compilare
+
+```sh
+make                     # ch36 BW20, la configurazione validata
+make AC_ANY_CHANNEL=1    # per ogni altro canale o larghezza
+```
+
+Il guard di `set_channel()` rifiuta tutto cio' che non e' fra le configurazioni
+validate, salvo il secondo build. Se il port emette poche migliaia di op invece
+di ventimila e' quello, e `gates.sh` lo dice da se'.
+
+**Ricompilare senza `AC_ANY_CHANNEL=1` prima di chiudere**, o il gate di
+riferimento gira su un binario che difende meno.
+
+### 3. I tre gate, che sono la verifica canonica
+
+`gates.sh` copre entrambe le condizioni: `--cold` (il default) e `--hot`.
+`--hot --flow switch_channel DIR` da' invece una riga per canale su una
+directory di segmenti.
+
+```sh
+./gates.sh                                             # cold01 ch36 bw20
+./gates.sh /tmp/cold/segmenti/cold05-ch52-bw20.txt     # un altro segmento
+./gates.sh /tmp/cold/segmenti/cold[0-9][0-9]-ch*.txt   # tutti e 26
+
+unzip -d /tmp/hot ../../router-data/d6220/hot-sweep.zip
+./gates.sh --hot                                       # tre segmenti up
+
+AC_READ_ORACLE=../../router-data/d6220/wl-diag-wl1-steady-tick-ch36-bw20.txt \
+    ./ac_trace periodic d6220 > /tmp/p.out
+python3 compare.py \
+    ../../router-data/d6220/wl-diag-wl1-steady-tick-ch36-bw20.txt /tmp/p.out
+# deve stampare MATCH
+```
+
+`gates.sh` fa tutto da se': ripiega la cattura, ricava la finestra dalla prima
+op PHY dell'attach, ricava la schedule dei tick con `probe_schedule.py`, lancia
+il flow `full` con l'oracolo di lettura e chiama `cmp_skip.py` e `compare.py`.
+Non serve rifarne i passi a mano, e farlo a mano sbaglia la finestra.
+
+**Il gate a freddo non copre il caldo, e la differenza non e' di grado.** Lo
+sweep a freddo e' tutto primo bring-up -- un modulo ricaricato per canale --
+quindi ogni predicato che distingue il primo bring-up dai successivi e'
+invisibile la': un termine mancante vale lo stesso su tutti e 26 i segmenti e
+i punteggi tornano. Un predicato come quello di `may_calibrate_tx()`, che
+guarda solo `center_freq <= 5250`, a freddo non si distingue da uno corretto,
+e sui segmenti `up` sopra i 5250 fa la differenza fra l'80% e il 35%.
+
+`gates.sh --hot` usa il flow `up` con `AC_FIRST_INIT=0` e i suoi tre segmenti
+di default sono scelti per cogliere proprio quel caso: uno sotto i 5250 MHz e
+due sopra. Se un predicato confonde le due condizioni, il primo resta fermo e
+gli altri due crollano.
+
+Il gate periodico va rilanciato a **ogni** modifica: e' l'unico confronto
+posizione-per-posizione che sta a `MATCH`, quindi e' il rilevatore di
+regressioni piu' sensibile che ci sia.
+
+### 4. Leggere il punteggio
+
+```
+grezzo          : 28552/28574 = 99.92%   15 regioni
+                  0 col valore sbagliato, 22 op di wl mancanti,
+                  0 op del port di troppo
+nel perimetro   : ...
+```
+
+Il denominatore di **`grezzo`** e' l'unione dei due flussi: fa 100% solo se
+coincidono. Le tre voci sono tre lavori diversi e non vanno sommate a occhio:
+
+- **valore sbagliato** — registro giusto, numero no: c'e' una formula da
+  trovare;
+- **op di wl mancanti** — c'e' codice da scrivere;
+- **op del port di troppo** — c'e' un gate da mettere, o una fase che sul
+  vendor non gira.
+
+**`nel perimetro`** toglie le op di codice fuori da `src/` e serve a navigare,
+non a dare un punteggio. Il numero da citare e' `grezzo`.
+
+### 5. Trovare la prossima divergenza
+
+```sh
+python3 compare.py /tmp/m01 /tmp/gate.full --range 528:36542 --auto-align
+```
+
+`compare.py` e' posizione-per-posizione e si ferma alla prima divergenza col
+contesto: e' lo strumento per navigare. `gates.sh` lo lancia da se' e stampa il
+primo `@N`. Un'op mancante sfasa tutto quello che segue, quindi `@N` dice dove
+guardare, non quante cose sono rotte.
+
+Per capire **chi** emette un'op nel port:
+
+```sh
+AC_FN_MARKERS=1 AC_CHANNEL=36 AC_BW=20 AC_FIRST_INIT=1 ./ac_trace full d6220
+```
+
+annota l'output con `----FN:nome----`.
+
+Attenzione ai file temporanei: `gates.sh` scrive sempre in `/tmp/gate.merged` e
+`/tmp/gate.full`. Analizzarli dopo aver lanciato il gate su **un altro**
+segmento significa leggere i file del segmento sbagliato.
+
+### 6. Prima di dire che una fase e' assente nel vendor
+
+Serve un **testimone**: un registro o una tabella che nel port solo quella
+funzione tocca. Si conta su tutti i segmenti, non su uno:
+
+```sh
+for s in /tmp/cold/segmenti/cold[0-9][0-9]-ch*.txt; do
+    printf '%-24s %s\n' "$(basename $s)" "$(grep -c 'addr=0x0380' $s)"
+done
+```
+
+Il metodo trova solo le fasi che hanno un testimone esclusivo: una fase che
+condivide tutti i suoi registri con altre non si vede cosi', e va detto invece
+di concludere che non c'e'.
+
+## Le liste di eccezione, e perche' esistono
+
+Stanno in `compare.py`, ognuna con la ragione voce per voce. Sono l'unico posto
+dove si dichiara che un'op non conta, e ogni voce e' un pezzo di obiettivo
+sospeso: vanno tenute corte e argomentate.
+
+Tre scartano op, e due dichiarano che il **valore** di una cella non si
+confronta come sta scritto: `VAL_NONDET` per i valori che nessun codice puo'
+prevedere, `VAL_TOLLERANZA` per quelli che il port calcola e sbaglia
+nell'ultimo bit.
+
+### `SOLO_PORT` — op del port che l'oracolo non puo' contenere
+
+Oggi una voce: **`AMT.*`**, la address match table. Il port la scrive per via di
+`patches/0011`, ricavata dalla cattura a freddo del DSL-3580L; le catture del
+d6220 non la hanno perche' l'hook su `wlc_bmac_write_amt` e' stato aggiunto
+dopo che sono state prese. **Non e' un'op di troppo: e' un'op giusta senza
+oracolo**, e ci resta finche' non c'e' un retrace del d6220 con quell'hook.
+
+I casi legittimi per questa lista sono due e vanno distinti: un'op che b43 deve
+fare per la sua struttura dove wl ne fa una diversa, che e' permanente, e un'op
+giusta la cui controparte esiste ma non e' stata catturata, che e' temporanea
+per definizione e si chiude con una ricattura. Tutto il resto e' il port che fa
+qualcosa di troppo, e si corregge nel driver, non nella lista.
+
+### `VAL_NONDET` — celle il cui valore non e' prevedibile
+
+Oggi due: **BSLOTS** e **REGGAP** dei quattro blocchi EDCFQ. BSLOTS e' il
+backoff estratto a caso all'inizio del contention window -- misurato su 26
+segmenti e quattro code, cade uniformemente in `[0, CWMIN]` -- e REGGAP e'
+`AIFS + BSLOTS`, verificato su tutti e 104 i punti. Si confrontano indirizzo,
+classe e posizione, non il valore.
+
+Il criterio per entrare qui e' stretto: il valore deve essere **nondeterministico
+per costruzione**, non solo sconosciuto. Una cella di cui non si e' capito il
+valore va nel driver con un `b43_phy_ac_todo()`, non qui.
+
+### `VAL_TOLLERANZA` — celle il cui valore si confronta con uno scarto
+
+Oggi una: **PHY `0x?a1`**, il coefficiente `b` della correzione RX IQ, con
+tolleranza di 4 LSB su 10 bit in complemento a due. Il port riproduce
+esattamente gli accumulatori e il coefficiente `a`, e sbaglia `b` di un LSB su
+parte dei casi del core 1.
+
+Non e' la regola di arrotondamento, e la prova e' nel commento della lista: su
+venti punti la scelta del vendor rispetta la soglia di mezzo LSB su
+quattordici, e le eccezioni stanno tutte entro 0.1 dalla soglia. Nessuna soglia
+le separa, quindi l'errore e' nel valore sotto radice e non nel modo di
+arrotondarlo.
+
+**La tolleranza vale per il gate posizionale e non per il punteggio**, ed e'
+voluto: `cmp_skip.py` continua a contare quelle op fra i valori sbagliati,
+cosi' il residuo resta visibile invece di sparire, mentre la contiguita' non si
+ferma su un LSB di calibrazione.
+
+### `SOLO_VENDOR` — op che nessun codice b43 puo' emettere
+
+Oggi una voce: **`MAC.BW`**, l'hook su `wlc_bmac_bw_set`. Il suo equivalente
+GPL in brcmsmac fa `pi->bw = bw` e nient'altro, piu' un reset e un init del
+PHY; in b43 la larghezza sta in `phy.chandef`, che `b43_phy_init()` imposta
+prima che il PHY arrivi la', e non c'e' nessun registro da scrivere. E' un
+confine di funzione che b43 non ha.
+
+Ogni voce qui dichiara un pezzo di obiettivo **irraggiungibile**, quindi serve
+la prova che non ci sia niente da emettere, non l'impressione.
+
+### `PERIMETER` — op di codice fuori da `src/`
+
+Shared memory del MAC, template RAM, OTP, SROM. Il criterio e' l'appartenenza
+dimostrata da `b43.h`, **non** la raggiungibilita' da `src/`: quest'ultima e'
+degenere, perche' farebbe salire il punteggio quando si toglie codice.
+
+Va **ristretta ogni volta che il port impara a scrivere una cella**: il
+perimetro scarta dal solo lato vendor, quindi una cella che il port emette e il
+perimetro scarta diventa un'inserzione senza controparte e rompe il confronto
+posizionale.
+
+## Come funziona l'harness
+
+- **Nessun `#ifdef` nei sorgenti di `src/`.** Ogni accessor hardware
+  (`b43_phy_read/write/mask/maskset`, `b43_radio_*`, `b43_read16`,
+  `b43_write16`, `b43_actab_*`, `b43_mac_*`, `bcma_*`) e' intercettato al linker
+  con `-Wl,--wrap=<sym>`. La lista e' in `Makefile`, variabile `WRAP_SYMS`.
+- **`wrap.c`** fornisce `__wrap_<sym>`: emette una riga wl-diag, aggiorna un
+  mirror di memoria in-process per le write, e ritorna il valore per le read.
+  Le letture vengono servite in quest'ordine: oracolo (`AC_READ_ORACLE`),
+  plan registrato, mirror. Le celle di tabella hanno oracolo e mirror propri,
+  chiavati `(id, offset)`, perche' passano tutte dalla stessa porta dati e una
+  coda per indirizzo su quella porta resta in passo solo finche' le letture
+  del port sono esattamente quelle del vendor; per le tabelle l'oracolo per
+  cella sta sopra i plan scritti a mano.
+- **`main.c`** monta un `struct b43_wldev` fittizio col profilo di board
+  (D6220 2x2, DSL-3580L 2x2, agcombo 3x3), registra i read plan e chiama uno
+  dei flow.
+- **`stubs/`** ha i minimi header kernel e b43 per compilare `src/` senza il
+  tree del kernel.
+- **`test_harness.h`** e' l'API del framework, inclusa solo da `main.c` e
+  `wrap.c`. Il codice di `src/` non vede il framework.
+
+### Flow
+
+| flow | cosa fa |
+|---|---|
+| `full` | l'attach completo: e' quello da usare contro un segmento a freddo |
+| `periodic` | un tick del watchdog, contro l'oracolo steady-tick |
+| `switch_channel` | il cambio di canale a caldo, contro un segmento dello sweep a caldo |
+| `up`, `down`, `op_init` | pezzi, per lavoro mirato |
+
+Un segmento a freddo e' un ciclo `up` intero, e il flow da usarci e' `full`,
+non `switch_channel`.
+
+### Doppioni del core in `main.c`
+
+Alcune op che il vendor emette stanno in codice del core (`main.c` del kernel),
+che l'harness non compila. Dove servono al confronto sono rispecchiate in
+`main.c` del test — `emit_core_shm_chipinit()`, `emit_core_hostflags()`,
+`emit_core_shm_macaddr()`, `emit_core_amt()` — con i valori presi dalla patch
+corrispondente, cosi' che se la patch cambia il doppione diventa sbagliato e il
+confronto lo dice.
+
+**L'ordine conta piu' del valore**: una sola inversione fa scartare l'op dal
+confronto. Su cold01 l'ordine e' AMT `#443`, chip init `#649-#658`, MAC in
+shared memory `#661-#663`, host flag `#686-#690`, chanspec `#691`.
+
+## Read plans
+
+Per le letture che il driver consuma, l'harness serve valori scriptati invece
+del mirror. Due modi:
+
+- `AC_READ_ORACLE=<cattura>` — i valori vengono dalla cattura stessa,
+  nell'ordine in cui compaiono. E' il modo canonico ed e' quello che `gates.sh`
+  usa; `AC_READ_ORACLE_FROM=<episodio>` sposta il punto di partenza.
+- `b43_test_plan_phy_reads()` e simili in `main.c`, per casi mirati.
+
+A fine run, su stderr, l'oracolo stampa una riga come:
+
+```
+oracle: 6830 hit, 0 indirizzi senza voce, 0 code esaurite;
+        339 indirizzi noti, 102 non consumati del tutto
+```
+
+Le due che devono essere **zero** sono `indirizzi senza voce` (il port ha letto
+un indirizzo che la cattura non ha) e `code esaurite` (il port ha letto lo
+stesso indirizzo piu' volte di quante la cattura lo abbia). Entrambe
+invalidano il confronto da quel punto in avanti.
+
+`non consumati del tutto` **non** deve essere zero e non e' un difetto:
+l'oracolo carica ogni indirizzo che la cattura legge, compresi quelli che
+legge il core, e il port non li tocca. Sulla corsa canonica di cold01 sono 102.
+
+I read plan espliciti, quelli registrati in `main.c`, devono invece mostrare
+`iter=N/N`: la' un underrun vuol dire che il flow e' terminato in anticipo e un
+overrun che ha girato piu' del previsto.
+
+## Cosa l'harness NON simula
+
+- **Hardware dinamico**: una read ritorna l'ultimo write o il valore
+  dell'oracolo. Non ci sono bit read-only che rispondono a stimoli.
+- **Timing**: `udelay`/`msleep` sono no-op. L'ordine e' preservato, le finestre
+  reali no.
+- **Race col MAC**: le `b43_mac_*` sono no-op.
+- **Scheduling**: single-threaded, e la colonna `cpuN` della cattura e' quindi
+  normalizzata via.
+
+## Copertura per funzione
+
+```sh
+AC_FN_MARKERS=1 ./ac_trace full d6220 > /tmp/annotato.txt
+python3 ../../reverse-tools/fn_map.py coverage /tmp/annotato.txt \
+    /tmp/cold/segmenti/cold01-ch36-bw20.txt
+```
+
+La copertura si misura contro la cattura **grezza**, non ripiegata: i marcatori
+si allineano agli episodi.

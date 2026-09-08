@@ -18,7 +18,7 @@ Due strumenti, incrociati:
   additiva o di bit (**rmw(+k)**, **rmw(xor k)**), oppure una rilettura senza
   scrittura in mezzo (**poll**). Il resto e' **unused**. Valori banali
   (0, 1, 0xffff) non fanno da traccia.
-- `test/read_perturb.py` fa girare il flow a freddo con una lettura per volta
+- `test/unit/read_perturb.py` fa girare il flow a freddo con una lettura per volta
   perturbata di un bit nell'oracolo, celle di tabella comprese
   (`AC_READ_PERTURB_KIND=tbl:<id>`), e guarda se le op emesse cambiano.
   **CONSUMED** se cambiano, **DISCARDED** se no.

@@ -17,7 +17,7 @@ bring-up successivo, che è una fase distinta — vedi *Fasi* sotto.
 
 ## Gate attivi
 
-Da tenere verdi a ogni modifica. Comandi in `README.md` e `test/README.md`.
+Da tenere verdi a ogni modifica. Comandi in `README.md` e `test/unit/README.md`.
 
 Ogni flow va confrontato con la cattura della **sua** fase. Il flow `full`
 esegue un primo bring-up, `switch_channel` con `AC_FIRST_INIT=0` un bring-up
@@ -25,9 +25,9 @@ successivo: scambiarli produce divergenze che non sono bug del driver.
 
 | gate | oracolo | come si lancia |
 |---|---|---|
-| primo bring-up (flow `full`, `AC_FIRST_INIT=1`) | un segmento di `cold-sweep.zip` | `test/gates.sh` |
-| bring-up successivo (flow `up`, `AC_FIRST_INIT=0`) | un segmento `-up-` di `hot-sweep.zip` | `test/gates.sh --hot` |
-| tick periodico | `wl-diag-wl1-steady-tick-ch36-bw20.txt` | vedi `test/README.md` |
+| primo bring-up (flow `full`, `AC_FIRST_INIT=1`) | un segmento di `cold-sweep.zip` | `test/unit/gates.sh` |
+| bring-up successivo (flow `up`, `AC_FIRST_INIT=0`) | un segmento `-up-` di `hot-sweep.zip` | `test/unit/gates.sh --hot` |
+| tick periodico | `wl-diag-wl1-steady-tick-ch36-bw20.txt` | vedi `test/unit/README.md` |
 
 I numeri correnti stanno in `README.md`, che e' l'unico posto dove vanno
 aggiornati: duplicarli qui li fa invecchiare a ogni movimento del gate.

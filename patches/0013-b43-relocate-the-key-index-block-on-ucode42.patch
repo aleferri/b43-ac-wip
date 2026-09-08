@@ -57,9 +57,9 @@ alone here.
 
 Signed-off-by: Alessandro Ferri <aleferri@example.invalid>
 ---
- drivers/net/wireless/broadcom/b43/main.c |  4 +++-
+ drivers/net/wireless/broadcom/b43/main.c |  4 ++--
  drivers/net/wireless/broadcom/b43/xmit.h | 20 ++++++++++++++++++++
- 2 files changed, 23 insertions(+), 1 deletion(-)
+ 2 files changed, 22 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/net/wireless/broadcom/b43/xmit.h b/drivers/net/wireless/broadcom/b43/xmit.h
 --- a/drivers/net/wireless/broadcom/b43/xmit.h
@@ -94,7 +94,7 @@ diff --git a/drivers/net/wireless/broadcom/b43/xmit.h b/drivers/net/wireless/bro
 diff --git a/drivers/net/wireless/broadcom/b43/main.c b/drivers/net/wireless/broadcom/b43/main.c
 --- a/drivers/net/wireless/broadcom/b43/main.c
 +++ b/drivers/net/wireless/broadcom/b43/main.c
-@@ -812,9 +812,11 @@ static void key_write(struct b43_wldev *dev,
+@@ -812,10 +812,10 @@ static void key_write(struct b43_wldev *dev,
  	u16 kidx;
  
  	/* Key index/algo block */

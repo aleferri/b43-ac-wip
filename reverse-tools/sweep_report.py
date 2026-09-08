@@ -12,7 +12,7 @@ sweep in sequence:
             opposed to what a single-channel decorrelation suggests might be.
 
 WARNING about the score: the denominator here is the vendor ops alone, while
-test/cmp_skip.py uses the union of the two streams and so penalizes the ops
+test/unit/cmp_skip.py uses the union of the two streams and so penalizes the ops
 the port emits and the vendor does not. **The two numbers are not
 comparable**, and the citable one is cmp_skip's. This score exists to compare
 channels against each other, not to be quoted.
@@ -20,7 +20,7 @@ channels against each other, not to be quoted.
 The restricted score drops the op classes the port does not implement or the
 harness does not model, so that a per-channel regression is not buried under a
 constant offset that is the same on every channel. That list is this tool's
-own and is NOT the perimeter of test/compare.py, which is built on a different
+own and is NOT the perimeter of test/unit/compare.py, which is built on a different
 criterion (what the harness cannot emit, with the proof written next to each
 entry). Do not read one as the other.
 
@@ -61,7 +61,7 @@ def load_ops(path, vendor):
 # ---------------------------------------------------------------------------
 
 def matched_in_order(a, b):
-    """Ops matched in order, the same measure as test/cmp_skip.py."""
+    """Ops matched in order, the same measure as test/unit/cmp_skip.py."""
     sm = difflib.SequenceMatcher(a=a, b=b, autojunk=False)
     return sum(n for _, _, n in sm.get_matching_blocks())
 

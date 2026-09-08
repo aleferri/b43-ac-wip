@@ -35,7 +35,7 @@ SAME op on either side of the hole; a real boundary has a change of context.
 The names of the files produced are the ones already published inside the
 archives -- `00-init-parziale.txt`, `00-scartati.txt` -- and are data, not
 code: renaming them would break the reproduction of a published split and the
-default segment names in test/gates.sh.
+default segment names in test/unit/gates.sh.
 
 Usage:
   split_trace.py --on mark     trace.txt dir/ [--prefix cold] [--bringup-only]

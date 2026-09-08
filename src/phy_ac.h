@@ -120,6 +120,13 @@ struct ieee80211_channel;
  * for the MAC.
  */
 #define B43_PHY_AC_STATE_PMU_REQ	0x0400
+/*
+ * The cold preamble -- the 0x02e4 field, the mode-bit clears, the second AFE
+ * copy and the front-end GPIO block -- has been emitted for this core init.
+ * b43 calls switch_analog() from four sites and the vendor emits the preamble
+ * once; see b43_phy_ac_cold_preamble_due().
+ */
+#define B43_PHY_AC_STATE_COLD_PREAMBLE	0x1000
 #define B43_PHY_AC_STATE_FAULTED	0x8000	/* sticky: a precondition failed */
 
 /* Per-device PHY state. */
