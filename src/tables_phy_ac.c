@@ -1144,7 +1144,7 @@ void b43_actab_write_r11(struct b43_wldev *dev,
 	 * actab_write_bulk() does; it reselects id and offset for every cell.
 	 * Five ops per cell over 464 cells, so 2320 ops.
 	 *
-	 * The TBL.WR label comes from the tracer's wrap; see test/wrap.c.
+	 * The TBL.WR label comes from the tracer's wrap; see test/unit/wrap.c.
 	 */
 	for (i = 0; i < len; i++) {
 		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);

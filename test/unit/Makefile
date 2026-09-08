@@ -10,7 +10,7 @@
 #   make trace    run it (D6220 rxiq_est_debug) and dump to trace.out
 #   make clean
 
-SCRATCH := ../src
+SCRATCH := ../../src
 STUBS   := stubs
 
 # We include our stubs FIRST (via -I) so kernel headers <linux/*.h> and

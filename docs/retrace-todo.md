@@ -109,7 +109,7 @@ passata.
 
 Da qui il muro a `@11823` si spiega: e' `OBJ.RD 0x00cc`, l'inizio della prima
 di quelle quattro passate, e nel port non c'e' niente. `emit_core_bss_config1()`
-in `test/main.c` ne implementa un pezzo, ed e' **codice morto**, dichiarata e
+in `test/unit/main.c` ne implementa un pezzo, ed e' **codice morto**, dichiarata e
 definita e mai chiamata. `b43_phy_ac_prb_rsp_plcp()` emette i terzetti PLCP
 dalla testa della coda PHY, dove l'oracolo cieco permetteva di metterla, mentre
 la cattura viva li mette in coda a ogni passata: sono 16 occorrenze in
@@ -170,7 +170,7 @@ Uniforme in `[0, CWMIN]` su ognuna. E **`REGGAP = AIFS + BSLOTS` regge su tutti
 e 104 i punti**, quindi la seconda cella non e' indipendente: e' la prima piu'
 una costante nota.
 
-Percio' le due celle sono dichiarate in `VAL_NONDET` in `test/compare.py`, dove
+Percio' le due celle sono dichiarate in `VAL_NONDET` in `test/unit/compare.py`, dove
 si confrontano indirizzo, classe e posizione ma non il valore. Non e' una
 scorciatoia per nascondere un difetto: pretendere quel valore vorrebbe dire
 indovinare un numero casuale, e la relazione di REGGAP e' la prova che il resto
@@ -623,7 +623,7 @@ oracolo che mostri il valore intermedio, non con i coefficienti finali.
 
 ## La tolleranza su b: la soglia e' la misura del residuo
 
-`VAL_TOLLERANZA` in `test/compare.py` confronta `PHY 0x?a1` con una soglia
+`VAL_TOLLERANZA` in `test/unit/compare.py` confronta `PHY 0x?a1` con una soglia
 invece che per uguaglianza, e la soglia era `+-4` LSB. Era **quattro volte il
 residuo vero**, e questo e' costato un giro: la differenza fra sommare gli
 accumulatori e mediare i coefficienti -- cioe' fra il modello sbagliato e
@@ -1134,7 +1134,7 @@ block che viene pulito**. Nella cattura a freddo le due meta' di
 a `0x064a` e la corsa va a `0x0666`, quindi 14 word in coda restano da
 identificare.
 
-Spostarla in `test/main.c` non si puo': `wl` la esegue **dentro** la regione di
+Spostarla in `test/unit/main.c` non si puo': `wl` la esegue **dentro** la regione di
 channel setup, dove b43 la farebbe in `b43_wireless_core_init()`. E' una
 divergenza di posizione, non un doppione da spostare, e resta bloccata dallo
 stesso punto d'inserzione che manca a tutto il resto. Per ora e' corretto il
@@ -1177,7 +1177,7 @@ MAC/ucode. Scriverle e' giusto, chiamarle verificate no.
 
 ## TODO post-WIP: offload della probe response in hardware
 
-Saltato per il WIP, e la voce di `SOLO_VENDOR` in `test/compare.py` lo dichiara.
+Saltato per il WIP, e la voce di `SOLO_VENDOR` in `test/unit/compare.py` lo dichiara.
 Qui c'e' cosa serve per riprenderlo, perche' la voce va togliata insieme.
 
 **Cosa fa b43 oggi.** Non fa rispondere il firmware ai probe: scrive
@@ -1204,7 +1204,7 @@ infinito.
    `SOLO_PORT`.
 2. Un `b43_write_probe_resp_template()` in `main.c` del kernel, sul modello di
    `b43_write_beacon_template()`, con la word di template RAM a **0x0700**. Non
-   nell'harness: il doppione in `test/main.c` e' stato rimosso proprio perche'
+   nell'harness: il doppione in `test/unit/main.c` e' stato rimosso proprio perche'
    stava modellando `wl` invece di rispecchiare `main.c`.
 3. Le quattro temporizzazioni `0x0180`-`0x0186`. Il vendor le scrive due volte,
    a `#1248-1251` (quattro celle) e `#10319-10321` (tre, senza `0x0184`). La
@@ -1317,7 +1317,7 @@ parola passata dalla porta -- la scrittura di `0x5f` che precede il blocco D.
 Ogni cella passa dalla stessa porta, quindi l'ultima parola della porta non e'
 la cella che si sta leggendo.
 
-`test/wrap.c` porta ora due cose:
+`test/unit/wrap.c` porta ora due cose:
 
 - un **mirror per cella**, chiavato `(id, offset)`, aggiornato da ogni wrap di
   scrittura;
@@ -1723,7 +1723,7 @@ registro: il resto e' esatto, 26/26 sul caldo.
   Nota per chi tornera' qui: `PERIMETER` e' la leva sbagliata per questa
   famiglia di celle. Il port emette `0x0768-0x078a` nei suoi poll, quindi
   scartarle dal lato vendor lascerebbe venti cicli senza controparte -- il caso
-  che `test/README.md` avverte di non creare.
+  che `test/unit/README.md` avverte di non creare.
 
   **Il numero di poll a spazzata sola non spiega niente, perche' non varia**, e
   il censimento su tutti e 26 i segmenti lo chiude: la sequenza delle forme e'
@@ -1908,7 +1908,7 @@ registro: il resto e' esatto, 26/26 sul caldo.
   le scrive in quella corsa e non altrove -- ogni cella compare una volta sola
   nella cattura -- quindi la corsa e' riprodotta per intero e la voce
   `CORE_SHM` e' stata ristretta a `0x05d4-0x05de`, come la regola di
-  `test/README.md` prescrive quando il port impara a scrivere una cella.
+  `test/unit/README.md` prescrive quando il port impara a scrivere una cella.
 
   **Il muro ora e' `0x0020 = 0x0800` seguito da `0x08ec-0x0a8e`**, e cambia
   natura: quei blocchi portano valori, non zeri. Decorrelati con
@@ -2468,7 +2468,7 @@ registro: il resto e' esatto, 26/26 sul caldo.
   soglia contro 3-21 accessi ciascuno sotto, senza un indirizzo condiviso.
 
   **Un testimone esclusivo a zero prova assente il registro, non la fase.** La
-  §6 di `test/README.md` dice come si trova un testimone e non dice questo, che
+  §6 di `test/unit/README.md` dice come si trova un testimone e non dice questo, che
   e' il passo dopo. Il controesempio e' `idle_tssi_meas`: RAD `0x004e`, PHY
   `0x0012` e `0x0845` sono solo suoi e sono tutti a zero sopra i 5250 MHz,
   mentre la fase la' gira. Percio' il criterio applicato e' **ogni** indirizzo
@@ -2654,10 +2654,16 @@ registro: il resto e' esatto, 26/26 sul caldo.
   radio che e' quell'init.
 
   In b43 la larghezza sta in `phy.chandef`, che `b43_phy_init()` punta prima di
-  `switch_analog()` e di `b43_software_rfkill()` -- cioe' prima di dove il PHY
-  scrive il chanspec -- e che `b43_op_config()` ripunta a ogni cambio di
+  chiamare `switch_analog()` e `b43_software_rfkill()` -- cioe' prima di dove il
+  PHY scrive il chanspec -- e che `b43_op_config()` ripunta a ogni cambio di
   canale. `b43_is_40mhz()` legge da la'. E' gia' impostata, e non c'e' nulla da
   scrivere.
+
+  Vale per `write_chanspec`, che gira da `software_rfkill`, e **non** in
+  generale: `switch_analog` ha altri tre siti di chiamata --- `main.c:5650`,
+  `4956`, `3402` --- che precedono `b43_phy_init()`, e la' `phy.chandef` e'
+  nullo. E' il difetto che la suite di integrazione ha trovato in
+  `frontend_gpio_setup`; vedi `test/integration/README.md`.
 
   Cosa e' rimasto: `b43_phy_ac_write_chanspec()` ora legge `dev->phy.chandef`
   invece di frugare in `dev->wl->hw->conf.chandef`, che e' l'idioma di b43 e la
@@ -2686,7 +2692,7 @@ registro: il resto e' esatto, 26/26 sul caldo.
   half-word che ne escono per un MAC noto sono le stesse che `wl` scrive nella
   copia in shared memory della voce qui sotto.
 
-  Nell'harness il doppione e' `emit_core_amt()` in `test/main.c`, che emette
+  Nell'harness il doppione e' `emit_core_amt()` in `test/unit/main.c`, che emette
   **un record per riga** -- la granularita' del tracer, il cui hook da'
   `AMT.WR idx=` e non le due word sottostanti, che il vendor scrive sulla
   coppia objaddr/objdata per una via che nessun accessor agganciato copre.
@@ -2718,7 +2724,7 @@ registro: il resto e' esatto, 26/26 sul caldo.
   `b43_shm_macaddr_set()` accanto alla scrittura MACFILTER in
   `b43_upload_card_macaddress()`, gatata su `B43_PHYTYPE_AC`, con
   `B43_SHM_SH_AC_MACADDR` in `b43.h`; il doppione nell'harness e'
-  `emit_core_shm_macaddr()` in `test/main.c`, col MAC nel profilo di board. La
+  `emit_core_shm_macaddr()` in `test/unit/main.c`, col MAC nel profilo di board. La
   scrittura e' additiva e non disturba la porta MACFILTER.
 
   Aperto: se all'ucode serva, e in che rapporto stia con la voce sopra. Nella
@@ -2768,7 +2774,7 @@ registro: il resto e' esatto, 26/26 sul caldo.
   sbagliato.
 
   Il blocco di chip init e le host flag sono ora modellati nell'harness --
-  `emit_core_shm_chipinit()` e `emit_core_hostflags()` in `test/main.c`, con
+  `emit_core_shm_chipinit()` e `emit_core_hostflags()` in `test/unit/main.c`, con
   `core_rev` e `mac_hw_cap` nel profilo di board -- e portano da 92.5654% a
   92.6002%. Appaiate: `MAXBFRAMES`, `ANTSWAP`, `WLCOREREV`, `MACHW_L`/`H`,
   `BTSFOFF`, `SFFBLIM`, `LFFBLIM`, `HOSTF1`/`2`/`3`.

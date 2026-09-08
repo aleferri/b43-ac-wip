@@ -45,7 +45,7 @@ Ordine tipico: decodifica → fold RETVAL → collapse → (reorder) → confron
   allineare due catture.
 - **compare.py** (in `test/`) — **il confronto canonico**: match posizionale per
   sequenza tra l'output dell'harness e la cattura vendor grezza. Non si lancia a
-  mano: `test/gates.sh` ricava la finestra e la schedule dei tick dal segmento e
+  mano: `test/unit/gates.sh` ricava la finestra e la schedule dei tick dal segmento e
   chiama lui e `cmp_skip.py`. Il numero corrente sta in `README.md`, che e'
   l'unico posto dove va aggiornato.
 
@@ -139,7 +139,7 @@ Ordine tipico: decodifica → fold RETVAL → collapse → (reorder) → confron
   `regdiff` dice quali registri il port scrive in modo diverso, aggregato su
   tutti i canali, ed e' quello che dice cosa e' sbagliato davvero oggi.
   ATTENZIONE: il denominatore di `score` sono le sole op del vendor, mentre
-  `test/cmp_skip.py` usa l'unione dei due flussi e penalizza le op in piu'.
+  `test/unit/cmp_skip.py` usa l'unione dei due flussi e penalizza le op in piu'.
   **I due numeri non sono confrontabili** e quello citabile e' di `cmp_skip`.
 - **annotate_enables.py** / **dataflow.py** — utility di debug (stato enable
   riga-per-riga; data-flow attraverso le table read).

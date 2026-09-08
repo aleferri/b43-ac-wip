@@ -1,4 +1,4 @@
-From 8a8f409475d31241636d7f7ee68e31fd1752a4b2 Mon Sep 17 00:00:00 2001
+From 7873eeccef4da4e81bcd4f3cba6274aeb564753c Mon Sep 17 00:00:00 2001
 From: c <c@l>
 Date: Tue, 8 Sep 2026 14:29:02 +0000
 Subject: [PATCH] b43: AC-PHY bring-up from the reverse-engineered port
@@ -10,24 +10,24 @@ table accessors and the RX-IQ calibration.
 Regenerated from src/ rather than maintained by hand, so it cannot drift out
 of sync with the tree the unit suite measures.
 ---
- b43/Makefile         |     4 +-
- b43/helpers_phy_ac.c |    66 +
- b43/phy_ac.c         | 10960 ++++++++++++++++++++++++++++++++++++++++-
- b43/phy_ac.h         |   676 +++
- b43/radio_2069.c     |  1585 ++++++
- b43/radio_2069.h     |    47 +
- b43/rxiqcal_phy_ac.c |   770 +++
- b43/rxiqcal_phy_ac.h |    60 +
- b43/tables_phy_ac.c  |  1168 +++++
- b43/tables_phy_ac.h  |    79 +
- 10 files changed, 15391 insertions(+), 24 deletions(-)
- create mode 100644 b43/helpers_phy_ac.c
- create mode 100644 b43/radio_2069.c
- create mode 100644 b43/radio_2069.h
- create mode 100644 b43/rxiqcal_phy_ac.c
- create mode 100644 b43/rxiqcal_phy_ac.h
- create mode 100644 b43/tables_phy_ac.c
- create mode 100644 b43/tables_phy_ac.h
+ drivers/net/wireless/broadcom/b43/Makefile    |     4 +-
+ .../wireless/broadcom/b43/helpers_phy_ac.c    |    66 +
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 10999 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.h    |   683 +
+ .../net/wireless/broadcom/b43/radio_2069.c    |  1585 +++
+ .../net/wireless/broadcom/b43/radio_2069.h    |    47 +
+ .../wireless/broadcom/b43/rxiqcal_phy_ac.c    |   770 ++
+ .../wireless/broadcom/b43/rxiqcal_phy_ac.h    |    60 +
+ .../net/wireless/broadcom/b43/tables_phy_ac.c |  1168 ++
+ .../net/wireless/broadcom/b43/tables_phy_ac.h |    79 +
+ 10 files changed, 15437 insertions(+), 24 deletions(-)
+ create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
+ create mode 100644 drivers/net/wireless/broadcom/b43/radio_2069.c
+ create mode 100644 drivers/net/wireless/broadcom/b43/radio_2069.h
+ create mode 100644 drivers/net/wireless/broadcom/b43/rxiqcal_phy_ac.c
+ create mode 100644 drivers/net/wireless/broadcom/b43/rxiqcal_phy_ac.h
+ create mode 100644 drivers/net/wireless/broadcom/b43/tables_phy_ac.c
+ create mode 100644 drivers/net/wireless/broadcom/b43/tables_phy_ac.h
 
 diff --git a/drivers/net/wireless/broadcom/b43/Makefile b/drivers/net/wireless/broadcom/b43/Makefile
 index 54f92ce..bbc2a8d 100644
@@ -117,7 +117,7 @@ index 0000000..5d18443
 +	b43_maskset32(dev, B43_MMIO_MACCTL, mask, set);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index 756cd44..90c2b40 100644
+index 756cd44..3214f02 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -1,23 +1,50 @@
@@ -178,7 +178,7 @@ index 756cd44..90c2b40 100644
  	if (!phy_ac)
  		return -ENOMEM;
  	dev->phy.ac = phy_ac;
-@@ -62,27 +89,10914 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -62,27 +89,10953 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -6363,6 +6363,38 @@ index 756cd44..90c2b40 100644
 +		dev->phy.ac->status_mask &= ~B43_PHY_AC_STATE_PMU_REQ;
 +}
 +
++/*
++ * Whether the cold preamble is due on this entry into switch_analog().
++ *
++ * b43 calls switch_analog(dev, true) from four sites: the attach reset
++ * (main.c:5650, right after b43_phy_allocate() has made phy->ops non-NULL),
++ * the core-init reset (4956), b43_chip_init() (3402) and b43_phy_init()
++ * (phy_common.c:97). The vendor emits the preamble once per bring-up, so
++ * three of the four entries must do nothing but the analog bank.
++ *
++ * The discriminant is the channel. b43 only has one from b43_phy_init()
++ * onwards -- that function points phy->chandef at the hardware config on the
++ * line before it calls switch_analog(), and nobody sets it earlier: on a first
++ * bring-up b43_op_config() has not run yet. So the first entry that has a
++ * channel is the one the preamble belongs to, and the state bit keeps the
++ * later entries out. op_prepare_structs() clears it, which b43 calls once per
++ * ifconfig up.
++ *
++ * On a cold bring-up that selects the b43_phy_init() entry, on a warm one the
++ * b43_chip_init() entry, and those are the same position in the op stream:
++ * b43_phy_init() emits nothing between the two.
++ */
++static bool b43_phy_ac_cold_preamble_due(struct b43_wldev *dev)
++{
++	if (!dev->phy.do_full_init)
++		return false;
++	if (dev->phy.ac->status_mask & B43_PHY_AC_STATE_COLD_PREAMBLE)
++		return false;
++	if (!dev->phy.chandef || !dev->phy.chandef->chan)
++		return false;
++	return true;
++}
++
 +/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
 + *   584-645]
 + */
@@ -6443,7 +6475,8 @@ index 756cd44..90c2b40 100644
 +/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
 + *   528-583]
 + */
-+static void b43_phy_ac_switch_analog_once(struct b43_wldev *dev, bool on)
++static void b43_phy_ac_switch_analog_once(struct b43_wldev *dev, bool on,
++					  bool cold)
 +{
 +	B43_AC_FN();
 +	u16 saved_417, saved_416;
@@ -6493,15 +6526,16 @@ index 756cd44..90c2b40 100644
 +	 * attach-to-bss-up #81, agcombo attach #27 -- same value on both chips,
 +	 * so it is the phase that selects it, not the chip).
 +	 *
-+	 * On a later bring-up the d6220 does not touch 0x02e4 at all, hence the
-+	 * do_full_init gate. The DSL (wl 6.30) writes 0x0800 there on its
-+	 * down->up instead: a version divergence, tracked in retrace-todo.md,
-+	 * not reproduced here.
++	 * On a later bring-up the d6220 does not touch 0x02e4 at all. Which
++	 * entry is the cold one is the caller's decision, see
++	 * b43_phy_ac_cold_preamble_due(). The DSL (wl 6.30) writes 0x0800 there
++	 * on its down->up instead: a version divergence, tracked in
++	 * retrace-todo.md, not reproduced here.
 +	 *
 +	 * Unrelated to the 0x0800 that set_channel writes on the 4360 -- that
 +	 * one lands after init_regs and no 4352 witness emits it.
 +	 */
-+	if (!on || !dev->phy.do_full_init)
++	if (!cold)
 +		return;
 +
 +	b43_phy_maskset(dev, 0x02e4, (u16)~0x3f00, 0x0f00);
@@ -6548,10 +6582,12 @@ index 756cd44..90c2b40 100644
 + */
 +static void b43_phy_ac_op_switch_analog(struct b43_wldev *dev, bool on)
 +{
-+	B43_AC_FN();
-+	b43_phy_ac_switch_analog_once(dev, on);
++	bool cold = on && b43_phy_ac_cold_preamble_due(dev);
 +
-+	if (on && dev->phy.do_full_init && dev->dev->chip_id == 0x4360) {
++	B43_AC_FN();
++	b43_phy_ac_switch_analog_once(dev, on, cold);
++
++	if (cold && dev->dev->chip_id == 0x4360) {
 +		/*
 +		 * TODO: between the two entries the stock driver emits nine bus
 +		 * ops -- two GPIO reads, SI.COREREG offset 0x80, PMU.PLL 0x2 and
@@ -6568,7 +6604,7 @@ index 756cd44..90c2b40 100644
 +		 * bcma_chipco_pll_read() exists. Until then the two entries stay
 +		 * 13 ops apart.
 +		 */
-+		b43_phy_ac_switch_analog_once(dev, on);
++		b43_phy_ac_switch_analog_once(dev, on, cold);
 +	}
 +
 +	/*
@@ -6577,8 +6613,11 @@ index 756cd44..90c2b40 100644
 +	 * the second entry. On the 4352, which enters once, the distinction is
 +	 * invisible.
 +	 */
-+	if (on)
-+		b43_phy_ac_frontend_gpio_setup(dev);
++	if (!cold)
++		return;
++
++	b43_phy_ac_frontend_gpio_setup(dev);
++	dev->phy.ac->status_mask |= B43_PHY_AC_STATE_COLD_PREAMBLE;
 +}
 +
 +/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
@@ -11110,7 +11149,7 @@ index 756cd44..90c2b40 100644
 +	(void)b43_phy_ac_farrow_vals_432x_media_a1;
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.h b/drivers/net/wireless/broadcom/b43/phy_ac.h
-index 02eb6c0..6bdbae5 100644
+index 02eb6c0..3db402e 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.h
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.h
 @@ -4,6 +4,11 @@
@@ -11172,7 +11211,7 @@ index 02eb6c0..6bdbae5 100644
  #define B43_PHY_AC_C1_CLIP			0x6d4
  #define  B43_PHY_AC_C1_CLIP_DIS			0x4000
  #define B43_PHY_AC_C2_CLIP			0x8d4
-@@ -31,9 +65,651 @@
+@@ -31,9 +65,658 @@
  #define B43_PHY_AC_C3_CLIP			0xad4
  #define  B43_PHY_AC_C3_CLIP_DIS			0x4000
  
@@ -11231,6 +11270,13 @@ index 02eb6c0..6bdbae5 100644
 + * for the MAC.
 + */
 +#define B43_PHY_AC_STATE_PMU_REQ	0x0400
++/*
++ * The cold preamble -- the 0x02e4 field, the mode-bit clears, the second AFE
++ * copy and the front-end GPIO block -- has been emitted for this core init.
++ * b43 calls switch_analog() from four sites and the vendor emits the preamble
++ * once; see b43_phy_ac_cold_preamble_due().
++ */
++#define B43_PHY_AC_STATE_COLD_PREAMBLE	0x1000
 +#define B43_PHY_AC_STATE_FAULTED	0x8000	/* sticky: a precondition failed */
 +
 +/* Per-device PHY state. */

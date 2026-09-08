@@ -207,7 +207,7 @@ first.
 
 ## Why the read-perturbation test could not find it
 
-`test/consumed_reads.sh` perturbs the oracle's value for one address and asks
+`test/unit/consumed_reads.sh` perturbs the oracle's value for one address and asks
 whether the emitted trace changes. It reported 0x0012 as consumed, correctly,
 and would have reported any dependent write as tracking it. It could not
 report this bug, because at 20 MHz -- the only width the gate covers -- the

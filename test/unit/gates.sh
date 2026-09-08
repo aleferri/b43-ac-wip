@@ -41,8 +41,10 @@
 #   from    the attach's first PHY op, the first of the ten save reads that
 #           open switch_analog_once(). The comparison starts here. It must not
 #           be hooked to the AFE bank (PHY.WR 0x173e), which comes after those
-#           ten reads, and it must not be "any first PHY op": before it the
-#           core writes PHY registers of its own (cold03 #452, PHY.WR 0xa6).
+#           ten reads, and it must not be "any first PHY op": before it wl0's
+#           attach writes the N-PHY's own registers (cold03 #452, PHY.WR 0xa6,
+#           which b43/phy_n.h calls AFECTL_C1). Those are the other core's,
+#           not the b43 core's, and strip_other_core.py removes them.
 #   oracle  cold: the insmod, so the per-address queues also cover the OTP and
 #           the core probe. Hot: the window start, because there is no insmod
 #           to start from -- the OTPs and the core probe are outside the
@@ -128,11 +130,23 @@ for seg in $SEGS; do
 	# produced wrong conclusions about the chanspec, the probe-response
 	# writes and the noise sample.
 	[ "$COND" = cold ] &&
-		python3 "$HERE/../reverse-tools/check_class_coverage.py" \
+		python3 "$HERE/../../reverse-tools/check_class_coverage.py" \
 			--require "$seg"
 
-	python3 "$HERE/../reverse-tools/trace_filter.py" --retvals "$seg" \
-		/tmp/gate.merged >/dev/null 2>&1 || cp "$seg" /tmp/gate.merged
+	# L'attach dell'altro core esce prima di piegare le letture, o la
+	# finestra dell'oracolo -- che parte dall'insmod per coprire l'OTP e il
+	# probe dei core -- si mangia anche le sue, e le code per (classe,
+	# indirizzo) servono al driver sotto esame la shared memory di wl0.
+	# Sulle celle 0x0000/0x0002 e' visibile: il self-test di
+	# b43_validate_chipaccess lo eseguono entrambi i core. Il taglio e' un
+	# no-op per il punteggio del PHY -- nel prefisso non c'e' una sola
+	# PHY.RD o RAD.RD -- e serve all'oracolo, non al confronto.
+	python3 "$HERE/../../reverse-tools/strip_other_core.py" "$seg" \
+		/tmp/gate.seg 2>/dev/null || cp "$seg" /tmp/gate.seg
+
+	python3 "$HERE/../../reverse-tools/trace_filter.py" --retvals \
+		/tmp/gate.seg /tmp/gate.merged >/dev/null 2>&1 ||
+		cp /tmp/gate.seg /tmp/gate.merged
 
 	eval "$(python3 - /tmp/gate.merged "$FLOW" <<'PY'
 import re, sys
@@ -163,12 +177,12 @@ PY
 
 	# The probe phase deadline and the watchdog tick are clocks, and the
 	# clock is in the segment's timestamps. See probe_schedule.py.
-	sched=$(python3 "$HERE/../reverse-tools/probe_schedule.py" \
+	sched=$(python3 "$HERE/../../reverse-tools/probe_schedule.py" \
 		/tmp/gate.merged --sh 2>/dev/null || true)
 
 	# How many times the stack above republished the beacon, and on which
 	# ticks. Same reason as the schedule above. See beacon_reloads.py.
-	sched="$sched $(python3 "$HERE/../reverse-tools/beacon_reloads.py" \
+	sched="$sched $(python3 "$HERE/../../reverse-tools/beacon_reloads.py" \
 		/tmp/gate.merged --sh 2>/dev/null || true)"
 
 	# MAC.BW is written only by the first segment of each bandwidth: the
@@ -214,7 +228,7 @@ PY
 	fi
 
 	if [ "$TABLE" = 1 ]; then
-		python3 "$HERE/../reverse-tools/sweep_report.py" score \
+		python3 "$HERE/../../reverse-tools/sweep_report.py" score \
 			/tmp/gate.merged /tmp/gate.full "$ch"
 		continue
 	fi
