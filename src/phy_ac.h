@@ -363,6 +363,30 @@ struct b43_phy_ac {
 	/* Salvati da rxcal_radio_setup, riscritti da rxcal_radio_cleanup. */
 	u16 rxcal_radio_saved[B43_PHY_AC_MAX_CORES][7];
 	/*
+	 * TX baseband multiplier, IQLOCAL 0x63 + 4*core mirrored at 0x73 +
+	 * 4*core. The vendor never invents it: bbmult_cal[core] is the entry
+	 * of GAINCTRLBBMULT (table 0x20) read for the TX cal, bbmult_meas the
+	 * entry at index 0 read for the RX-IQ measurement, bbmult_saved[core]
+	 * the cell as read before a cal and written back after it.
+	 */
+	u16 bbmult_cal[B43_PHY_AC_MAX_CORES];
+	u16 bbmult_meas;
+	u16 bbmult_saved[B43_PHY_AC_MAX_CORES];
+	/*
+	 * The fourteen RX gain-control registers of each core that
+	 * rx_gain_regs_program() reads before driving them, in
+	 * b43_phy_ac_rxgain_regs[] order, written back by measure_block().
+	 */
+	u16 rxgain_saved[B43_PHY_AC_MAX_CORES][14];
+	/*
+	 * The RX gain configuration of each core across the RX-IQ cal: the
+	 * 25 registers of b43_phy_ac_rxgain_cfg_regs[] plus 0x073e, and the
+	 * three RFSEQ gain rows 0x0100/0x0103/0x0106 + core, read by
+	 * rxgain_config_readback(), written back by rxiq_teardown_apply_defaults().
+	 */
+	u16 rxgain_cfg_saved[B43_PHY_AC_MAX_CORES][26];
+	u16 rfseq_gain_saved[B43_PHY_AC_MAX_CORES][3];
+	/*
 	 * Results of the AFE cal's commit iterations, indexed by write offset.
 	 * The tail of rxcal_afe_calibrate() duplicates them per antenna.
 	 */

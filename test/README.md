@@ -193,7 +193,7 @@ valore va nel driver con un `b43_phy_ac_todo()`, non qui.
 Oggi una: **PHY `0x?a1`**, il coefficiente `b` della correzione RX IQ, con
 tolleranza di 4 LSB su 10 bit in complemento a due. Il port riproduce
 esattamente gli accumulatori e il coefficiente `a`, e sbaglia `b` di un LSB su
-parte dei casi.
+parte dei casi del core 1.
 
 Non e' la regola di arrotondamento, e la prova e' nel commento della lista: su
 venti punti la scelta del vendor rispetta la soglia di mezzo LSB su
@@ -237,9 +237,11 @@ posizionale.
 - **`wrap.c`** fornisce `__wrap_<sym>`: emette una riga wl-diag, aggiorna un
   mirror di memoria in-process per le write, e ritorna il valore per le read.
   Le letture vengono servite in quest'ordine: oracolo (`AC_READ_ORACLE`),
-  plan registrato, mirror. Le celle di tabella hanno un mirror proprio,
-  chiavato `(id, offset)`, perche' passano tutte dalla stessa porta dati e il
-  mirror della porta non puo' rappresentarle.
+  plan registrato, mirror. Le celle di tabella hanno oracolo e mirror propri,
+  chiavati `(id, offset)`, perche' passano tutte dalla stessa porta dati e una
+  coda per indirizzo su quella porta resta in passo solo finche' le letture
+  del port sono esattamente quelle del vendor; per le tabelle l'oracolo per
+  cella sta sopra i plan scritti a mano.
 - **`main.c`** monta un `struct b43_wldev` fittizio col profilo di board
   (D6220 2x2, DSL-3580L 2x2, agcombo 3x3), registra i read plan e chiama uno
   dei flow.
