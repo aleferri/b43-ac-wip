@@ -686,19 +686,353 @@ da se':
 
 | segmento | grezzo | val. sbagliato | mancanti | di troppo | posizionale |
 | --- | --- | --- | --- | --- | --- |
-| cold01 ch36 bw20 | 98.75% | 3 | 355 | 0 | `@25157` |
-| cold02 ch40 bw20 | 95.55% | 265 | 793 | 0 | `@11981` |
-| cold03 ch44 bw20 | 95.97% | 287 | 551 | 28 | `@15887` |
-| cold04 ch48 bw20 | 93.74% | 424 | 899 | 70 | `@15801` |
-| cold18 ch44 bw40 | 92.71% | 535 | 1012 | 76 | `@10943` |
-| cold17 ch36 bw40 | 92.46% | 563 | 1074 | 88 | `@10947` |
-| cold24 ch36 bw80 | 94.07% | 628 | 1108 | 4 | `@13470` |
-| i 19 da ch52 in su | 83.86% – 85.03% | 46 – 138 | 749 – 877 | **1804** | `@9600` – `@9623` |
+| cold01 ch36 bw20 | 99.92% | 0 | 22 | 0 | `MATCH` |
+| cold24 ch36 bw80 | 98.23% | 139 | 274 | 141 | `@13475` |
+| cold02 ch40 bw20 | 98.46% | 8 | 274 | 162 | `@11940` |
+| cold03 ch44 bw20 | 98.42% | 30 | 230 | 156 | `@25117` |
+| cold04 ch48 bw20 | 97.72% | 38 | 303 | 271 | `@25008` |
+| cold18 ch44 bw40 | 97.01% | 104 | 341 | 318 | `@10948` |
+| cold17 ch36 bw40 | 96.55% | 130 | 392 | 377 | `@10952` |
+| i 19 da ch52 in su | 84.66% – 85.78% | 46 – 131 | 587 – 678 | **1808** | `@9600` – `@9623` |
 
 I 19 segmenti sopra i 5250 MHz sono fra loro quasi identici, e la voce "di
-troppo" vale **esattamente 1804 su diciotto di essi** (1832 su `cold15`). Non
+troppo" vale **esattamente 1808 su diciotto di essi** (1933 su `cold15`). Non
 c'e' una gradazione per canale dentro la famiglia: un numero costante e' il
 segno che la causa e' una sola.
+
+Nella famiglia bassa la voce "di troppo" **non** e' debito per-canale, e su
+`cold04` e' misurata: la differenza fra i due flussi come multiinsieme, sulla
+finestra di confronto, e' di 62 op sole -- cinque giri in piu' del latch
+`0x0308-0x0314`, `OBJ.RD 0x008c` compreso -- contro le 271 che il conteggio
+posizionale attribuisce. Le altre ~209 sono le stesse op in un altro posto,
+sfasate da quei cinque giri. La causa sta sotto.
+
+### Il latch della finestra di rumore non cade su ogni tick
+
+Misurato su `cold04`, dove e' la causa delle 271 op di troppo, e poi contato su
+tutti e 78 i segmenti. I tick si delimitano sul mode change `PHY.MOD 0x0520`;
+il tick 0 non conta, e' la coda della calibrazione e porta le ricariche che
+precedono la fase.
+
+Su `cold04`, per tick:
+
+| testimone | cosa conta | vendor | port |
+| --- | --- | --- | --- |
+| `PHY.MOD 0x0520` | i tick della fase | 18 | 18 |
+| `OBJ.WR 0x0018`/`0x001a` | le ricariche del beacon | 9 + 7 | 9 + 7 |
+| `OBJ.RD 0x0772` | le passate della spazzata dei contatori | 5 per tick | 5 per tick |
+| `OBJ.RD 0x0308` | i giri del latch della finestra | **14** | **18** |
+
+Tick, ricariche e spazzata tornano; la sola voce che non torna e' il latch, che
+il loop emette su ogni tick tranne il primo e che il vendor salta sui tick 1, 5,
+9, 13 e 15. Sono 14 op per giro, cioe' le 62 op di troppo del multiinsieme.
+
+**Non e' un poll, e la traccia lo esclude.** La finestra `0x0308-0x0314` non
+viene attesa: si legge e si azzera -- sette letture e sei clear -- e non c'e'
+nessun valore atteso da raggiungere. Soprattutto, nel tick che salta il latch
+non c'e' nessuna lettura in piu' che possa fare da condizione: le ultime op
+prima del punto in cui il latch cadrebbe sono `OBJ.RD 0x015a` e `OBJ.RD 0x014e`,
+le stesse dei tick che latchano, e `OBJ.RD 0x008c` compare solo quando il latch
+c'e' -- e' la prima op del blocco, non un test che lo precede. Un predicato sul
+valore letto non e' esprimibile: non c'e' niente da cui dipendere.
+
+**L'unico invariante, su 78 segmenti.** Il latch viene saltato **solo** su un
+tick che porta una ricarica del beacon. I 635 tick senza ricarica -- 403 a
+freddo, 232 a caldo -- latchano tutti.
+
+| | tick con ricarica | di cui saltano il latch |
+| --- | --- | --- |
+| 26 segmenti a freddo | 71 | **20** |
+| 52 segmenti `up` a caldo | 216 | **0** |
+
+**Il buffer del beacon non c'entra.** Su `cold04` la corrispondenza col `BTL1`
+e' esatta, 5 su 5, ma sui 26 segmenti a freddo fa 26 `BTL1` con latch contro 7
+senza, e 25 `BTL0` con latch contro 13 senza. Nessun segnale: su `cold04` il
+`BTL` alterna in fase col salto, e la fase non e' la causa.
+
+**Il caldo non e' un controesempio: la ricarica e' di un altro tipo.** La
+ricarica esiste in due forme, e le distingue il `MAC.MCTRL` di sospensione
+subito dopo la scrittura di `BTL0`/`BTL1` -- e' la stessa distinzione che
+`beacon_reloads.py` usa per selezionarle.
+
+| | tick con ricarica | forma `susp` | forma senza susp | salti |
+| --- | --- | --- | --- | --- |
+| 26 segmenti a freddo | 71 | 71 | 0 | 20 |
+| 52 segmenti `up` a caldo | 216 | 2 | 214 | 0 |
+
+Il caldo quindi non contiene la condizione: dei suoi 216 tick con ricarica solo
+due portano la forma che a freddo e' l'unica. Zero salti su due casi non dice
+niente, e il confronto freddo/caldo su questa voce confrontava due cose
+diverse.
+
+**Ristretto alla forma `susp`, il salto alterna dentro la sequenza -- in cinque
+segmenti su otto.** Sui tick consecutivi che portano una ricarica il primo
+latcha, il secondo no, il terzo si':
+
+| segmento | tick con ricarica (T = latch, F = salto) | alterna |
+| --- | --- | --- |
+| `cold03` | 1T, 6T 7F, 13T 14F | si |
+| `cold04` | 1F, 4T 5F, 8T 9F, 12T 13F, 14T 15F, 16T | si |
+| `cold15` | 8T 9F, 15T 16F | si |
+| `cold17` | 1T 2F, 4T 5F, 7T 8F, 9T 10F, 11T 12F, 13T 14F, 19T 20T | si |
+| `cold18` | 1T 2F, 3T 4F, 5T, 7T, 9T, 12T 13F, 14T 15F, 16T 17F | si |
+| `cold01` | 1T, 17T 18T | **no** |
+| `cold02` | 1T, 4T 5T, 9T 10T, 14T 15T, 18T 19T | **no** |
+| `cold24` | 1T 2T, 4T 5T 6T 7T 8T, 11T 12T, 14T 15T 16T 17T | **no** |
+
+Dentro un segmento la regola non ha eccezioni salvo due, ai bordi: `cold04`
+tick 1, il primo tick della fase, e `cold17` tick 20, l'ultimo della scadenza.
+Fra segmenti invece si spacca in due, e `cold02` ha esattamente la struttura di
+`cold04` -- coppie di tick con ricarica ogni quattro tick, forma `susp`,
+campioni nello stesso intervallo 1143-1439 contro 1078-1298 -- e non salta un
+solo latch. Non separano: canale (ch44, ch48, ch136, ch36, ch44 contro ch36,
+ch40, ch36), larghezza (BW20 e BW40 da un lato, BW20 e BW80 dall'altro),
+cadenza delle ricariche, valore del campione, ne' il tempo che resta nel tick
+dopo la ricarica (0-3 ms in tutti e 71, sotto la risoluzione della traccia).
+
+**Il controllo sull'indice CRS non e' eseguibile a freddo, ed e' una proprieta'
+dello sweep.** L'idea era incrociare i salti col caso `nessun campione` della
+regola del ladder CRS. Non si puo': su `cold04` le sedici scritture del banco
+`0x0910-0x0913` finiscono a `#139344` e il primo mode change della fase probe e'
+a `#139592`, quindi **il banco e' scritto prima che la fase cominci**; i 13
+campioni latchati durante la fase non vengono consumati da nessuno, perche' il
+segmento finisce con un rmmod. Il `nessun campione` della regola e' un ciclo
+intero senza campione, non un tick saltato dentro la fase. Per vedere una
+conseguenza servirebbe una cattura in cui la fase probe precede una scrittura
+del banco, cioe' due cicli nello stesso caricamento: lo sweep a caldo li ha, ma
+la' la condizione non c'e'.
+
+**Dove sta il tick nel port, che e' meta' del motivo per cui la regola non si
+trovava.** La fase probe e' emessa da dentro `op_switch_channel`:
+`op_switch_channel` -> `set_channel_calibrations()` -> `rxiqcal_finalize()`, e
+li' c'e' un loop di 18-21 iterazioni che riemette i pezzi del watchdog. In wl
+non esiste nessuna fase probe: quello che la traccia mostra e' il watchdog che
+scatta 18-20 volte mentre il tracer era ancora acceso. Cercare la regola del
+latch come schedule sull'indice di quel loop e' quindi cercarla su un indice che
+il vendor non ha -- ed e' coerente col fatto che l'alternanza torni dentro un
+segmento e che le due eccezioni cadano sul primo tick e sull'ultimo, cioe' dove
+il loop comincia e finisce.
+
+Il corpo del tick era scritto **tre volte**: in `b43_phy_ac_watchdog()`, nel
+corpo del loop e nel tick di chiusura, in due rotazioni diverse. Ora e' uno,
+`b43_phy_ac_wd_body(dev, reloads, noise_cal, tail)`, e la rotazione resta al
+sito di chiamata: il watchdog a regime mette la fase di campionamento prima, il
+loop dopo, il tick di chiusura non la ha. Le op emesse non cambiano -- la
+traccia di `cold01` e' identica byte per byte -- e i gate non si muovono:
+`28552/28574`, periodico `MATCH`, i tre a caldo a 86.04/89.28/85.93.
+
+**La fase e' inerte in un driver vero.** Il loop e il tick di chiusura girano
+solo se il chiamante ha chiesto una scadenza: `probe_ticks` a zero -- e in b43
+nessuno lo imposta -- e la fase non emette niente, i giri del watchdog arrivano
+da `op_pwork_15sec()` dove devono. Serviva un termine in piu' sul tick di
+chiusura, perche' `probe_watchdog_tick[0]` azzerato combacia col tick 0 e senza
+guardia un driver vero emetteva un corpo li'. La differenza sul ferro non e'
+cosmetica: venti latch-and-clear consecutivi dentro un cambio di canale
+azzerano venti volte l'accumulatore del rumore, che e' l'ingresso dell'indice
+CRS, in un tempo in cui non ha potuto riempirsi.
+
+**Il tick di chiusura c'era in tutti i segmenti e il port lo emetteva in
+meta'.** Trovato guardando cosa segue l'ultimo mode change della fase, che e' la
+domanda che nasce dal chiedersi se il loop sia l'ultima cosa di
+`rxiqcal_finalize()` -- non lo e': dopo il blocco ci sono ancora ~240 righe.
+
+| testimone dopo l'ultimo mode change | 26 a freddo | 52 `up` a caldo |
+| --- | --- | --- |
+| il poll (`OBJ.RD 0x0768`) | 26 su 26 | 52 su 52 |
+| il latch (`OBJ.RD 0x0308`) | 24 su 26 (`cold17`, `cold18` no) | 52 su 52 |
+| il measure block (`0x0725`) | 13 su 26 | 3 su 52 |
+
+Il poll e il latch sono struttura, il measure block e' condizionato -- e la
+condizione e' esatta sui 26: compare quando la scadenza e' 19, cioe' quando
+`probe_watchdog_tick` la contiene, e non compare quando e' 18, 20 o 21. Il port
+invece condizionava **tutto** il corpo di chiusura al measure block, quindi sui
+13 segmenti con scadenza diversa da 19 non emetteva niente dove il vendor
+emette poll e latch. Sui gate a freddo la correzione recupera **1024 op
+mancanti** contro 16 di troppo (le 8+8 del latch che `cold17` e `cold18` non
+hanno):
+
+| famiglia | grezzo prima | grezzo dopo |
+| --- | --- | --- |
+| ≤ 5250 MHz | 96.55% - 99.92% | 96.76% - 99.92% |
+| > 5250 MHz | 84.66% - 85.78% | 84.92% - 85.84% |
+
+`cold01` non si muove, ed e' il punto: la' la scadenza e' 19, quindi il ramo
+sbagliato non veniva mai preso e il difetto era invisibile al gate di
+riferimento.
+
+**Un sintomo aperto a caldo, da non confondere con questo.** Sui tre gate a
+caldo la correzione da' +0.37, 0 e **-0.35**: su `19-up-ch104-bw20` le op
+mancanti non scendono (297 prima e dopo) e quelle di troppo salgono di 80.
+Vuol dire che il poll di chiusura del vendor era **gia'** appaiato a qualcosa
+che il flow `up` emetteva, e ora il port ne emette due dove il vendor ne ha uno.
+Il poll di troppo nel flow `up` e' un difetto preesistente che questa
+correzione ha reso visibile, non un effetto suo: i candidati sono le quattro
+`wd_stats_poll_opt()` fuori dal watchdog (`phy_ac.c:5654`, `:5661`, `:5725`,
+`:5760`).
+
+**Debito che resta.** La forma giusta e' che la fase non stia nell'albero di
+chiamata di `switch_channel` per niente: N chiamate del watchdog da sopra --
+`pwork` sul ferro, il flow dell'harness in prova. Cosa lo blocca oggi, e adesso
+e' misurato: la finestra dell'oracolo del tick a regime **apre a metà ciclo**,
+sul `sample_phase` (`#27036`, `MAC.MCTRL` di sospensione e i peek TSSI), e
+chiude sul latch. `b43_phy_ac_watchdog()` ha quella rotazione perche' e' stata
+scritta per quella finestra, mentre la fase emette `corpo, sample`: N chiamate
+del watchdog darebbero `sample, corpo` e ruoterebbero di un gruppo l'intero
+flusso della fase, spostando il gate a freddo. La rotazione semanticamente
+giusta e' quella della fase -- si legge la finestra e la si azzera subito dopo,
+con un secondo di accumulo prima del latch successivo, mentre nella rotazione
+dell'oracolo la clear precede di 4 ms il latch dello stesso giro. Quindi il
+passo che sblocca e' ritagliare la finestra dell'oracolo sul poll invece che sul
+`sample_phase`: e' una scelta di estrazione, non un cambio di cattura, e va
+fatta prima di spostare il loop.
+
+**Conseguenza pratica: sul latch non si tocca niente.** Un tick per latch e' la
+forma giusta per 21 segmenti a freddo su 26 e per tutti e 52 a caldo. La voce
+"di troppo" dei cinque segmenti che alternano e' contabilizzata qui invece di
+essere letta come debito del port. Un parametro che passi la lista dei tick col
+latch alzerebbe il punteggio su cinque segmenti senza modellare niente, e
+coprirebbe l'unico posto dove questa differenza si vede.
+
+La domanda aperta e' una sola e va posta cosi': **cosa fa alternare
+`cold03/04/15/17/18` e non `cold01/02/24`**, a parita' di forma della ricarica,
+di struttura delle sequenze e di intervallo dei campioni. Le due eccezioni ai
+bordi -- primo tick della fase e ultimo della scadenza -- vanno spiegate dalla
+stessa regola o dichiarate separate.
+
+**Un difetto trovato per strada, da tenere separato da questo.** Sui segmenti a
+caldo `beacon_reloads.py` restituisce `AC_BEACON_RELOADS=0:` perche' filtra la
+sola forma `susp`, che la' non c'e': il port non emette nessuna ricarica dove il
+vendor ne emette 214 su 52 segmenti. Le parti fuori perimetro di quel blocco
+(PRSSID, PRSSIDLEN, PRTLEN, `TPL.RAMW 0x0700`) non pesano sul punteggio, ma
+`0x00cc`, `0x001e`, la `TPL.RAMW` del beacon e `BTL0`/`BTL1` si', ed e' un pezzo
+dei punteggi a caldo fermi a 86-89%. Il filtro sulla forma `susp` va rivisto per
+il caldo: la forma senza sospensione e' quella normale la'.
+
+### Audit: cosa resta di estraneo dentro `switch_channel`, e cosa non ha piu' un chiamante
+
+Fatto col metodo che ha funzionato per la coda: gli stacchi di tempo dentro il
+segmento. Su `cold04`, mappa degli eventi:
+
+| t | op | evento | chi lo emette |
+| --- | --- | --- | --- |
+| 858.59-858.67 | ~150 | preambolo analogico, `afe_arm`, `PMU.RC`, MHF | `phy_ops->switch_analog`, dal core |
+| *stacco 2260 ms* | | | |
+| 860.93-861.09 | 11384 | MACCTL e GPIO del core, rfkill, `op_init`, `set_channel` | `op_switch_channel` e il core |
+| 861.79-865.71 | ~800 | 5 ricariche beacon e i blocchi SHM rate/EDCF, con attese di ~650 ms fra loro | `channel_setup_tail`, `conf_tx`, `tail2` |
+| 865.71-869.84 | ~16000 | le calibrazioni post-channel | `set_channel_calibrations` |
+| 869.84-889.99 | ~4500 | 18 giri di watchdog piu' la chiusura | fase probe, dentro `rxiqcal_finalize` |
+| *stacco 457 ms* | | | |
+| 890.45-890.47 | 460 | bss-up | `b43_phy_ac_bss_up()` |
+
+**Dentro `op_switch_channel` non resta niente di estraneo.** La sua regione --
+`#109336`-`#122340` -- e' un burst continuo di 11384 op in **156 ms**, e lo
+stacco interno piu' grande e' di 19 ms: nessun evento di altri e' interlacciato
+la' dentro. Il preambolo analogico e' separato da 2.26 s e sta gia' fuori, nel
+callback che il core chiama.
+
+**Il problema e' l'inverso, e piu' grosso.** Quattro blocchi non hanno **nessun
+chiamante in `src/`**: li chiama solo `main.c` dell'harness.
+
+| funzione | chiamanti in `src/` | chiamanti nell'harness |
+| --- | --- | --- |
+| `b43_phy_ac_channel_setup_tail()` | 0 | 1 |
+| `b43_phy_ac_channel_setup_tail2()` | 0 | 1 |
+| `b43_phy_ac_set_channel_calibrations()` | 0 | 1 |
+| `b43_phy_ac_bss_up()` | 0 | 1 |
+
+`bss_up` e' appena stata portata fuori e il suo hook e' una decisione aperta,
+ma le altre tre erano cosi' da prima. Vuol dire che **sul ferro le
+calibrazioni post-channel non girano affatto**: `op_switch_channel` fa il
+channel setup e ritorna, e tutto quello che nella cattura sta fra 861.8 e
+890.5 -- code del channel setup, calibrazioni, fase probe, bss-up -- esiste solo
+perche' l'harness lo chiama. Il punteggio del gate non lo vede, per costruzione:
+l'harness sta in piedi da se'.
+
+Non e' un difetto di posizionamento come la fase probe, e' codice non collegato.
+Va deciso hook per hook, e la suite di integrazione -- che compila b43 intero ed
+esegue il probe -- e' lo strumento che lo misura, perche' e' l'unica che vede
+cosa il driver chiama davvero. Il suo esito attuale, un attach che si chiude in
+68 op, e' coerente con questo quadro.
+
+### La coda di `rxiqcal_finalize()`: classificata
+
+Il loop della fase probe **non e' l'ultima cosa** della funzione: dopo di esso
+ci sono ancora ~240 righe di codice e 541 op nella cattura. E la coda non e'
+un blocco unico: su `cold04` si spezza in due in modo netto.
+
+| blocco | t | op | cosa e' |
+| --- | --- | --- | --- |
+| A | 889.992-889.993 | 81 | il tick di chiusura del watchdog: poll e latch |
+| -- | *gap di 457 ms* | | |
+| B | 890.450-890.469 | 460 | un evento solo, 19 ms |
+
+Il blocco B, per sotto-blocchi, con l'attribuzione che danno i marcatori del
+port (`AC_FN_MARKERS=1`):
+
+| t | op | port | categoria |
+| --- | --- | --- | --- |
+| 890.450-890.463 | 47 | `prb_rsp_rate_po`, chainmask, terza passata dei dodici rate | potenza per-rate in shared memory |
+| 890.464-890.467 | 306 | `txpwr_target` x2, `afe_gain_regs_reemit` | LUT est_pwr, potenza TX |
+| 890.468 (#144562-144615) | 54 | restore TX IQ/LO e coefficienti RX-IQ | **l'unico pezzo che e' davvero un cal finalize** |
+| 890.468 (#144616-144626) | 11 | MAC enable/suspend, GPIO `0x0004` clr e `0x0400` set, MACCTL `0x04000400` | frontend MAC/GPIO |
+| 890.469 (#144627-144637) | 11 | `afe_arm(AFE_ON, 0, 1)` | **`switch_analog(on)`** |
+| 890.469 (#144638-144642) | 5 | `pmu_req(dev, true)` | rilascio PMU |
+
+**La coda contiene un `switch_analog(on)`.** Le op `#144627-144634` sono il
+banco AFE sulla pagina di override `0x17xx`, poi `PHY.MOD 0x0408` con
+`mask=0x0002` a zero e `PHY.WR 0x0417=0x0000`, `PHY.WR 0x0416=0x0001`: e'
+esattamente `b43_phy_ac_switch_analog_once()` meno le dieci letture di
+salvataggio, coi valori del restore cablati. Il commento di quella funzione lo
+diceva gia' -- *"the bss-up copy of this unit in op_switch_channel can hardcode
+them"* -- ma la copia era open-coded.
+
+E' struttura, non un caso di `cold04`: nella coda di **26 segmenti a freddo su
+26** e di **51 a caldo su 52** c'e' esattamente un banco AFE (`PHY.WR 0x173e`),
+un `PHY.MOD 0x0408`, un `PHY.WR 0x0417` e il `PMU.RC`.
+
+L'unita' era scritta **tre volte** in `src/`: all'ingresso di
+`switch_analog_once()`, nella sua coda a freddo, e qui. Ora e' una,
+`b43_phy_ac_afe_arm(dev, mode, v417, v416)`, e i tre siti si distinguono solo
+per i valori della coppia. Traccia di `cold01` identica byte per byte, gate
+`28552/28574`, periodico `MATCH`.
+
+**Cosa segue dalla classificazione.** Di sette blocchi uno solo appartiene a un
+cal finalize. Gli altri sei sono, in ordine: un giro di watchdog (A), tre pezzi
+di bss-up (potenza per-rate, potenza TX, frontend MAC/GPIO), un callback che in
+b43 e' `phy_ops->switch_analog` e che il core chiama da altri quattro siti, e il
+rilascio PMU che fa coppia con la richiesta del preambolo a freddo. Il gap di
+457 ms fra A e B dice che B non e' la coda della calibrazione ma un evento
+successivo: il tempo dice quello che l'ordine delle op da sole non poteva dire.
+
+**Portata fuori.** Il blocco B e' ora `b43_phy_ac_bss_up()`, e
+`rxiqcal_finalize()` finisce dopo la fase probe. Lo stato che il blocco consuma
+-- il readback dei LO DAC e i coefficienti TX IQ/LO salvati nel blocco D -- era
+locale a `rxiqcal_finalize()` e sta in `@lo_dac` e `@txiqlo_coef` nello stato
+del PHY, come gia' fanno `rxgain_saved` e compagnia. Traccia di `cold01`
+identica byte per byte, gate `28552/28574`, periodico `MATCH`, e i punteggi
+degli altri canali fermi (97.97 su `cold04`, 85.78 su `cold05`, 96.76 su
+`cold17`, 98.44 su `cold24`, 86.41/89.28/85.58 a caldo).
+
+Il taglio e' netto sul confine che il tempo indica: la prima op del blocco B e'
+la terna `hi/lo/hi` sul settimo contatore `0x077c`, che sta a t=890.451 e non a
+889.993 con la chiusura del watchdog -- l'`OBJ.RD 0x0040` che la incornicia nei
+due lati e' `UCODESTAT`, del core, e il port non la emette.
+
+**Chi la chiama.** In `src/` nessuno, e non e' una dimenticanza: quale hook di
+b43 regga ogni pezzo e' la decisione aperta. Nell'harness la chiama
+`run_switch_channel()` subito dopo `set_channel_calibrations()`, per la stessa
+ragione per cui chiama `emit_core_bss_config()` e le passate di `conf_tx`:
+quello e' lo stack sopra il driver e l'harness deve sostituirlo.
+
+Conseguenza da tenere presente: **finche' nessun hook e' cablato, sul ferro quel
+blocco non viene emesso.** Prima veniva emesso dentro `switch_channel`, cioe' al
+momento sbagliato; ora non viene emesso affatto. I due candidati che la tabella
+sopra rende ovvi sono `phy_ops->recalc_txpower` per i due pezzi di potenza
+(b43 lo chiama da `b43_phy_txpower_check()`, che gira dopo `switch_channel`) e
+il percorso `switch_analog`/rfkill per l'arm analogico e il PMU. Il write-back
+dei coefficienti e il frontend MAC/GPIO non hanno un hook ovvio e vanno decisi
+guardando da dove il vendor li emette in una cattura che contenga due bss-up
+distinti.
 
 ### Quanto del denominatore non e' del driver
 
@@ -3101,9 +3435,21 @@ inaffidabile
 
 ## Doppia programmazione dell'analogico durante l'attach
 
-Osservata sull'agcombo e assente sul d6220, **ma il discriminante non e'
-stabilito**. Il gate in `b43_phy_ac_op_switch_analog` e' su `chip_id` perche' e'
-l'unica variabile che distingue i due testimoni, non perche' sia dimostrato.
+Osservata sull'agcombo e assente sul d6220 **nel preambolo**, e il discriminante
+non e' stabilito.
+
+Il conteggio per segmento va tenuto separato da quello del preambolo, perche'
+l'unita' analogica compare anche altrove e per un po' non la si e' contata: il
+testimone `PHY.WR 0x1725 = 0x1fff` sta **tre volte in tutti e 26 i segmenti a
+freddo** -- due nel preambolo, la coppia di cui parla questa sezione, e una nel
+bss-up in coda -- e **una sola volta nei 52 segmenti `up` a caldo**, quella del
+bss-up. Quindi "assente sul d6220" vale per la seconda entrata del preambolo,
+non per l'attach: anche il d6220 rientra nell'arm analogico, venti secondi
+dopo, ed e' l'occorrenza che stava sepolta in `rxiqcal_finalize()` e che ora e'
+in `b43_phy_ac_bss_up()` con le altre due dietro `b43_phy_ac_afe_arm()`.
+
+Il gate in `b43_phy_ac_op_switch_analog` e' su `chip_id` perche' e' l'unica
+variabile che distingue i due testimoni, non perche' sia dimostrato.
 
 Cosa si sa:
 
@@ -3251,7 +3597,7 @@ su una board che nessuno di noi ha in mano.
 
 ### Comportamento: si programma solo la configurazione da cui i valori vengono
 
-`b43_phy_ac_set_channel` ora rifiuta tutto cio' che non e' **ch36 BW20 su chip
+`b43_phy_ac_op_switch_channel` ora rifiuta tutto cio' che non e' **ch36 BW20 su chip
 4352 o 4360**, con `-EOPNOTSUPP` e un warning che dice il perche'. Prima il
 filtro era la tabella dei canali, che accetta tutto il 5 GHz: sintonizzare ch100
 faceva scrivere le costanti di ch36.

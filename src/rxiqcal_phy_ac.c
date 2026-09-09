@@ -516,7 +516,7 @@ static void b43_phy_ac_rxiq_apply_gain(struct b43_wldev *dev, u8 core)
  * only reads what the hardware reports, so the results can validate (or
  * falsify) the register-map and accumulator-layout assumptions.
  *
- * Call point: after txpwr_by_index, before rxgainctrl_regs in set_channel:
+ * Call point: after txpwr_by_index, before rxgainctrl_regs in op_switch_channel:
  * in the trace it sits between the txpwr tail and the rxgainctrl block.
  */
 void b43_phy_ac_rxiq_est_debug(struct b43_wldev *dev)

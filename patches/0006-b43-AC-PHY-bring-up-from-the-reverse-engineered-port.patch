@@ -1,4 +1,4 @@
-From 7873eeccef4da4e81bcd4f3cba6274aeb564753c Mon Sep 17 00:00:00 2001
+From 16ccd939df2a47d4b1956b768e46cb568c6868c1 Mon Sep 17 00:00:00 2001
 From: c <c@l>
 Date: Tue, 8 Sep 2026 14:29:02 +0000
 Subject: [PATCH] b43: AC-PHY bring-up from the reverse-engineered port
@@ -12,15 +12,15 @@ of sync with the tree the unit suite measures.
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     4 +-
  .../wireless/broadcom/b43/helpers_phy_ac.c    |    66 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 10999 +++++++++++++++-
- drivers/net/wireless/broadcom/b43/phy_ac.h    |   683 +
- .../net/wireless/broadcom/b43/radio_2069.c    |  1585 +++
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 11044 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.h    |   704 +
+ .../net/wireless/broadcom/b43/radio_2069.c    |  1559 +++
  .../net/wireless/broadcom/b43/radio_2069.h    |    47 +
  .../wireless/broadcom/b43/rxiqcal_phy_ac.c    |   770 ++
  .../wireless/broadcom/b43/rxiqcal_phy_ac.h    |    60 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1168 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    79 +
- 10 files changed, 15437 insertions(+), 24 deletions(-)
+ 10 files changed, 15477 insertions(+), 24 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/radio_2069.c
  create mode 100644 drivers/net/wireless/broadcom/b43/radio_2069.h
@@ -117,7 +117,7 @@ index 0000000..5d18443
 +	b43_maskset32(dev, B43_MMIO_MACCTL, mask, set);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index 756cd44..3214f02 100644
+index 756cd44..ab74b84 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -1,23 +1,50 @@
@@ -178,7 +178,7 @@ index 756cd44..3214f02 100644
  	if (!phy_ac)
  		return -ENOMEM;
  	dev->phy.ac = phy_ac;
-@@ -62,27 +89,10953 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -62,27 +89,10998 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -242,14 +242,10 @@ index 756cd44..3214f02 100644
 - **************************************************/
 +/* Mode-bit clears. These ops are not contiguous in the capture: they are
 + * spread through the radio and rfkill bring-up window, tagged per sequence. */
-+/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
-+ *   1252-1271]
-+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
-+ *   618-637]
-+ */
-+static void b43_phy_ac_mode_init(struct b43_wldev *dev)
-+{
-+	B43_AC_FN();
++enum b43_phy_ac_afe_mode {
++	B43_PHY_AC_AFE_DOWN,	/* front-end parked (RF blocked / pre-init) */
++	B43_PHY_AC_AFE_ON,	/* front-end armed for RX/TX (bss-up) */
++};
  
 -const struct b43_phy_operations b43_phyops_ac = {
 -	.allocate		= b43_phy_ac_op_allocate,
@@ -260,6 +256,18 @@ index 756cd44..3214f02 100644
 -	.get_default_chan	= b43_phy_ac_op_get_default_chan,
 -	.recalc_txpower		= b43_phy_ac_op_recalc_txpower,
 -	.adjust_txpower		= b43_phy_ac_op_adjust_txpower,
++static void b43_phy_ac_enable_afe(struct b43_wldev *dev,
++				  enum b43_phy_ac_afe_mode mode);
++
++/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
++ *   1252-1271]
++ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
++ *   618-637]
++ */
++static void b43_phy_ac_mode_init(struct b43_wldev *dev)
++{
++	B43_AC_FN();
++
 +	b43_phy_write(dev, 0x0410, 0x0077);
 +
 +	/* 0x17xx-page clears */
@@ -273,10 +281,16 @@ index 756cd44..3214f02 100644
 +	b43_phy_write(dev, 0x1727, 0x0000);
 +	b43_phy_write(dev, 0x1750, 0x0000);
 +
-+	b43_phy_write(dev, 0x1728, 0x0080);
-+	b43_phy_write(dev, 0x1720, 0x0180);
-+	b43_phy_write(dev, 0x1729, 0x0000);
-+	b43_phy_write(dev, 0x1721, 0x5000);
++	/*
++	 * Parking the front end: the same four writes b43_phy_ac_enable_afe()
++	 * emits for AFE_DOWN, and it goes through it so that @status_mask
++	 * follows the hardware. Open-coded here the registers went down and the
++	 * mirror stayed at AFE_ON, which is the bit
++	 * b43_phy_ac_channel_setup()'s precondition forbids: the whole-b43 run
++	 * of test/integration failed there while test/unit could not see it,
++	 * because that harness derives the state from the registers.
++	 */
++	b43_phy_ac_enable_afe(dev, B43_PHY_AC_AFE_DOWN);
 +
 +	/*
 +	 * RMW pairs: read the base-page register, OR in the bit, write to the
@@ -2012,7 +2026,7 @@ index 756cd44..3214f02 100644
 +
 +	/*
 +	 * The idle-TSSI base index is not touched here: it is written by
-+	 * b43_phy_ac_idle_tssi_meas(), which set_channel() calls before this
++	 * b43_phy_ac_idle_tssi_meas(), which op_switch_channel() calls before this
 +	 * function, matching the position seen in the capture some 240 ops
 +	 * before this block.
 +	 */
@@ -3014,7 +3028,7 @@ index 756cd44..3214f02 100644
 + * the bonded span.
 + *
 + * The values come from phy.chandef and not from the cal_* fields, which
-+ * set_channel() fills: the vendor writes the chanspec at the head of the RF
++ * op_switch_channel() fills: the vendor writes the chanspec at the head of the RF
 + * bring-up, before any channel setup has run, so at that point cal_* are still
 + * from the previous cycle or zero.
 + *
@@ -4787,7 +4801,7 @@ index 756cd44..3214f02 100644
 + * configuration.
 + *
 + * Scaffolding: these are transcribed thresholds, not derived values. Off
-+ * ch36 they are wrong CCA thresholds, and the filter in set_channel() is
++ * ch36 they are wrong CCA thresholds, and the filter in op_switch_channel() is
 + * what keeps the code from getting there.
 + *
 + * TODO: the rule for the ladder index, and the transformation that produces
@@ -5121,16 +5135,16 @@ index 756cd44..3214f02 100644
 +}
 +
 +/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
-+ *   14968-36542]
++ *   14968-36041]
 + * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
-+ *   10382-29084]
++ *   10382-28591]
 + */
 +void b43_phy_ac_set_channel_calibrations(struct b43_wldev *dev)
 +{
 +	B43_AC_FN();
 +	/*
-+	 * Called from set_channel() after mac_enable and after the body of
-+	 * set_channel() has put the classifier in WAITED mode, that is RX_OFDM
++	 * Called after op_switch_channel()'s mac_enable and after its body has
++	 * put the classifier in WAITED mode, that is RX_OFDM
 +	 * plus RX_WAITED on a normal channel setup. The observed entry state is
 +	 * {MAC_EN | RX_OFDM | RX_WAITED}; CLIP_ALL_DIS is not set here, since
 +	 * post_cal_finalize() sets it through clip_det() and does its own
@@ -5348,535 +5362,6 @@ index 756cd44..3214f02 100644
 +	return false;
 +}
 +
-+/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
-+ *   5007-13592]
-+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
-+ *   677-9281]
-+ */
-+static int b43_phy_ac_set_channel(struct b43_wldev *dev,
-+				  struct ieee80211_channel *channel,
-+				  enum nl80211_channel_type channel_type)
-+{
-+	B43_AC_FN();
-+	struct b43_phy *phy = &dev->phy;
-+	const struct cfg80211_chan_def *chandef = &dev->wl->hw->conf.chandef;
-+	enum nl80211_chan_width width = chandef->width;
-+	const struct b43_phy_ac_channeltab_e_radio2069 *e2069;
-+	u16 off;
-+
-+	/*
-+	 * channel_type is the legacy HT-only description of the same thing as
-+	 * chandef.width, and cannot express the VHT widths. It stays in the
-+	 * signature because that is the b43 phy_ops prototype.
-+	 */
-+	(void)channel_type;
-+
-+	b43dbg(dev->wl, "phy-ac: set_channel ch%u (%u MHz) start\n",
-+	       channel->hw_value, channel->center_freq);
-+
-+	if (phy->radio_ver != 0x2069)
-+		return -ESRCH;
-+
-+	if (phy->radio_rev != 4)
-+		return -ESRCH;
-+
-+	/*
-+	 * The table is keyed on the frequency the radio is tuned to, which for
-+	 * a bonded configuration is the centre of the block and not the primary
-+	 * channel: it carries rows every 10 MHz, so 5190 and 5210 are there
-+	 * alongside 5180. Passing the primary picks the row of a 20 MHz channel
-+	 * and mistunes the synthesiser -- the cold sweep shows it on
-+	 * radio 0x08dc, which takes radio_raw[3] from this row.
-+	 */
-+	e2069 = b43_phy_ac_get_channeltab_e_r2069(dev,
-+			width == NL80211_CHAN_WIDTH_20 ? channel->center_freq
-+						       : chandef->center_freq1);
-+	if (!e2069)
-+		return -ESRCH;
-+
-+	/*
-+	 * Scaffolding, not a capability limit.
-+	 *
-+	 * Part of what the channel setup programs is not derived: the values
-+	 * were transcribed from captures and exist only to get the bring-up
-+	 * moving. Gains, TX power indices, gain-LUT defaults, tone generator
-+	 * amplitudes and thresholds are among them, and on an RF chain other
-+	 * than the one they were read from they are not slightly wrong, they
-+	 * can overdrive the PA.
-+	 *
-+	 * The channel table accepts all of 5 GHz, so it is no protection on
-+	 * its own: without this filter, tuning ch100 would write the ch36
-+	 * constants.
-+	 *
-+	 * The width is checked from chandef.width and not through
-+	 * cfg80211_get_chandef_type(): that helper only knows the HT widths
-+	 * and answers NL80211_CHAN_NO_HT for anything wider, which would let
-+	 * an 80 MHz chandef through.
-+	 *
-+	 * A configuration joins the list once a capture shows the port
-+	 * reproducing it, and the list disappears once the values are derived
-+	 * rather than transcribed.
-+	 */
-+	if (!b43_phy_ac_config_validated(dev, channel->hw_value, width)) {
-+		b43warn(dev->wl,
-+			"AC-PHY: refusing ch%u at %s: its programming has not "
-+			"been checked against a capture, and several of the "
-+			"values written are transcribed from ch36 at 20 MHz. "
-+			"Writing them here can damage the RF front-end.\n",
-+			channel->hw_value,
-+			width == NL80211_CHAN_WIDTH_80 ? "80 MHz" :
-+			width == NL80211_CHAN_WIDTH_40 ? "40 MHz" : "20 MHz");
-+		return -EOPNOTSUPP;
-+	}
-+	if (dev->dev->chip_id != 0x4352 && dev->dev->chip_id != 0x4360) {
-+		b43warn(dev->wl,
-+			"AC-PHY: chip 0x%04x non validato: nessuna cattura di riferimento, "
-+			"e i valori trascritti valgono per 4352/4360.\n",
-+			dev->dev->chip_id);
-+		return -EOPNOTSUPP;
-+	}
-+
-+	dev->phy.ac->cal_channel = channel->hw_value;
-+	dev->phy.ac->cal_width = width;
-+	dev->phy.ac->cal_freq = width == NL80211_CHAN_WIDTH_20
-+				? channel->center_freq : chandef->center_freq1;
-+
-+	/*
-+	 * The MAC is already suspended from the end of op_init(), whose tail
-+	 * b43_mac_suspend leaves bit 0 clear, so there is no mac_suspend op
-+	 * here: the vendor emits the MAC preparation sequence in op_init, and
-+	 * set_channel() is entered with the MAC suspended. status_mask already
-+	 * has MAC_EN clear at this point.
-+	 *
-+	 * No precondition on the classifier or clip detect: on the first entry
-+	 * after attach, RX_ANY and CLIP_ALL_DIS are both clear, while on a
-+	 * channel change the bits reflect the previous channel's state.
-+	 * set_channel() sets both itself further down.
-+	 */
-+	B43_PHY_AC_REQUIRE_RET(dev,
-+			       0,
-+			       B43_PHY_AC_STATE_MAC_EN | B43_PHY_AC_STATE_CCA_RESET,
-+			       -EINVAL);
-+
-+	/*
-+	 * Drop the PMU request before reconfiguring the channel, but only if it
-+	 * is raised: on the attach path the preamble has already dropped it, and
-+	 * a second clear would be one op too many.
-+	 */
-+	if (dev->phy.ac->status_mask & B43_PHY_AC_STATE_PMU_REQ)
-+		b43_phy_ac_pmu_req(dev, false);
-+
-+	/*
-+	 * Freeze RX path before channel reconfigure: classifier WAITED-only,
-+	 * clip detectors frozen, CCA reset. In the trace this runs BEFORE
-+	 * radio_channel_setup. Everything from here through
-+	 * rx_enable runs under RX=w CLIP=111; first release is the rx_gate
-+	 * pulse in idle_tssi_meas.
-+	 */
-+	b43_phy_ac_channel_switch_prep(dev);
-+
-+	b43_radio_2069_channel_setup(dev, e2069);
-+	b43_phy_ac_channel_setup(dev, e2069, channel);
-+
-+	b43_phy_ac_chan_tables(dev);
-+
-+	/*
-+	 * Noise shaping table init. Populates the per-core
-+	 * noise variance (tbl 0x15), gain-limit (tbl 0x0b), and noise shaping
-+	 * coefficient tables (tbl 0x44/0x45 per-core, stride 0x20 on table ID).
-+	 * All write data is deterministic from the ch36 d6220 trace.
-+	 */
-+	{
-+		static const u16 nvar_data[5] = { 0x0020, 0x0021, 0x0022, 0x0023, 0x0024 };
-+		static const u16 nvar_off[3]  = { 0x0008, 0x0020, 0x0038 };
-+		static const u16 glim_a[6]    = { 0x000b, 0x000c, 0x000e, 0x0020, 0x0024, 0x0028 };
-+		static const u16 glim_b[7]    = { 0x0000, 0x0000, 0x0000, 0x0003, 0x0003, 0x0003, 0x0003 };
-+		static const u16 nshp_a8[6]   = { 0x00f9, 0x00fe, 0x0004, 0x000a, 0x0010, 0x0017 };
-+		static const u16 nshp_b8[6]   = { 0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005 };
-+		static const u16 nshp_a10[7]  = { 0x00f5, 0x00f8, 0x00fb, 0x00fe, 0x0002, 0x0005, 0x0009 };
-+		static const u16 nshp_b10[7]  = { 0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005, 0x0006 };
-+		u16 saved;
-+		unsigned int core;
-+
-+		/*
-+		 * Phase 1: gate cycle, enable, shared tables.
-+		 *
-+		 * The 0x019e gate was left locked on exit from chan_tables().
-+		 * The vendor emits an unlock and relock cycle -- a marker for the
-+		 * subsystem -- before loading the noise-shaping tables.
-+		 */
-+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0000);   /* unlock */
-+		saved = b43_phy_ac_tbl_write_lock(dev);               /* peek+relock */
-+
-+		b43_phy_read_log(dev, 0x016c);                        /* peek */
-+		b43_phy_maskset(dev, 0x016c, (u16)~0x0040, 0x0040);   /* set bit 6 */
-+
-+		/*
-+		 * Per-core nvar, three writes to table 0x15, which the vendor
-+		 * emits before table 0x0b. On the 4352 only: wl 7.14 on the 4360
-+		 * writes ta and tb directly with no staging through 0x15, and
-+		 * the agcombo capture has zero ops on table 0x15.
-+		 *
-+		 * SALAME: without a third witness -- a 4352 on 7.14, or a 4360 on
-+		 * the newer driver -- chip and version cannot be told apart here.
-+		 */
-+		if (dev->dev->chip_id != 0x4360)
-+			for (core = 0; core < dev->phy.ac->num_cores; core++)
-+				b43_actab_write_bulk(dev, 0x15, nvar_off[core], 16, 5, nvar_data);
-+
-+		/* Gain-limit (2× TBL.WR id=0x0b). */
-+		b43_actab_write_bulk(dev, 0x0b, 0x0008, 16, 6, glim_a);
-+		b43_actab_write_bulk(dev, 0x0b, 0x0010, 16, 7, glim_b);
-+
-+		/*
-+		 * Transizione Phase 1 → Phase 2: il gate resta lockato.
-+		 * Il vendor emette peek+relock (tbl_write_lock idempotente),
-+		 * NON unlock+lock — evita 1 op superflua.
-+		 */
-+		saved = b43_phy_ac_tbl_write_lock(dev);
-+
-+		for (core = 0; core < dev->phy.ac->num_cores; core++) {
-+			u16 ta = 0x44 + core * 0x20;	/* core 0=0x44, 1=0x64, 2=0x84 */
-+			u16 tb = 0x45 + core * 0x20;
-+			u16 rd6[6];
-+
-+			if (dev->dev->chip_id != 0x4360)
-+				b43_actab_read_bulk(dev, 0x15, nvar_off[core],
-+						    16, 6, rd6);
-+			b43_actab_write_bulk(dev, ta, 0x0008, 16, 6, nshp_a8);
-+			b43_actab_write_bulk(dev, tb, 0x0008, 16, 6, nshp_b8);
-+		}
-+
-+		/*
-+		 * Phase 2 to 2b transition: the vendor emits unlock, peek and
-+		 * relock, three ops, between the two -- unlike the phase 1 to 2
-+		 * transition, which has no unlock. The reason is not clear;
-+		 * possibly an intermediate gate flush after the heavy writes to
-+		 * tables 0x44 and 0x45.
-+		 */
-+		b43_phy_ac_tbl_write_unlock(dev, saved);
-+		saved = b43_phy_ac_tbl_write_lock(dev);
-+
-+		for (core = 0; core < dev->phy.ac->num_cores; core++) {
-+			u16 ta = 0x44 + core * 0x20;
-+			u16 tb = 0x45 + core * 0x20;
-+
-+			b43_actab_write_bulk(dev, ta, 0x0010, 16, 7, nshp_a10);
-+			b43_actab_write_bulk(dev, tb, 0x0010, 16, 7, nshp_b10);
-+		}
-+
-+		b43_phy_ac_tbl_write_unlock(dev, saved);
-+
-+		/*
-+		 * Phase 3: per-core commit and readback. The gate stays locked
-+		 * from the idempotent unlock of the phase 2b to 3 transition, so
-+		 * no tbl_write_lock is needed here.
-+		 *
-+		 * This iterates over every num_cores -- three on the BCM4352 --
-+		 * with no coremask filter: the vendor emits it for every PHY
-+		 * channel even on a 2x2 board, where one core is not TX-enabled.
-+		 */
-+		for (core = 0; core < dev->phy.ac->num_cores; core++) {
-+			u16 ta = (u16)(0x44 + core * 0x20);
-+			u16 tb = (u16)(0x45 + core * 0x20);
-+
-+			b43_phy_ac_rxgain_init(dev, core);
-+
-+			/* Diagnostic readbacks */
-+			{
-+				u16 rb1, rb10[10], rb8[8];
-+
-+				b43_actab_read_bulk(dev, tb, 0x0000, 16, 1, &rb1);
-+				b43_actab_read_bulk(dev, tb, 0x0020, 16, 10, rb10);
-+				b43_actab_read_bulk(dev, ta, 0x0060, 16, 8, rb8);
-+				b43_actab_read_bulk(dev, ta, 0x0070, 16, 8, rb8);
-+				b43_actab_read_bulk(dev, tb, 0x0060, 16, 8, rb8);
-+				b43_actab_read_bulk(dev, tb, 0x0070, 16, 8, rb8);
-+			}
-+		}
-+	}
-+
-+	b43_phy_ac_post_noise_shaping_rx_regprog(dev);
-+
-+	/*
-+	 * Immediately after the post-noise-shaping block: two diagnostic peeks
-+	 * and eight MODs on 0x0324, 0x0330, 0x0321, 0x032d, 0x032a, 0x0336,
-+	 * 0x0327 and 0x0333, all with 0x3600 under mask 0xff00. The pattern is
-+	 * four (base, base + 0x0c) pairs in the 0x0320-0x0340 range, probably
-+	 * per-rate TX configuration. Meaning not identified; transcribed from
-+	 * the capture.
-+	 */
-+	b43_phy_read_log(dev, 0x06dc);
-+	b43_phy_read_log(dev, 0x06dd);
-+	b43_phy_maskset(dev, 0x0324, (u16)~0xff00, 0x3600);
-+	b43_phy_maskset(dev, 0x0330, (u16)~0xff00, 0x3600);
-+	b43_phy_maskset(dev, 0x0321, (u16)~0xff00, 0x3600);
-+	b43_phy_maskset(dev, 0x032d, (u16)~0xff00, 0x3600);
-+	b43_phy_maskset(dev, 0x032a, (u16)~0xff00, 0x3600);
-+	b43_phy_maskset(dev, 0x0336, (u16)~0xff00, 0x3600);
-+	b43_phy_maskset(dev, 0x0327, (u16)~0xff00, 0x3600);
-+	b43_phy_maskset(dev, 0x0333, (u16)~0xff00, 0x3600);
-+
-+	/*
-+	 * rxgain_init() must not be called here. The stock driver does not emit
-+	 * it at this point -- noise_shaping phase 3 already emits the MOD 0x?f9
-+	 * ops of that pattern -- and it would duplicate the masksets on
-+	 * 0x0045/0x0033 plus stride that live in
-+	 * post_noise_shaping_core_transition(). It belongs to init, not to a
-+	 * channel change.
-+	 */
-+
-+	/* BW select per-core, before reset_cca/afecal. */
-+	b43_phy_write(dev, 0x0304, 0x4e51);
-+	b43_phy_write(dev, 0x0307, 0x4e51);
-+	b43_phy_write(dev, 0x030a, 0x4e51);
-+	b43_phy_write(dev, 0x030d, 0x4e51);
-+
-+	b43_phy_ac_reset_cca(dev);
-+	udelay(1);
-+
-+	b43_radio_2069_afecal(dev);
-+
-+	/*
-+	 * ADC reset (cal-time): run after afecal and
-+	 * before the idle-TSSI capture. Includes the 0x70[15:13] TX-power-
-+	 * control enable (mid-block).
-+	 */
-+	b43_phy_ac_adc_reset(dev);
-+	b43_phy_ac_txpwrctrl_enable(dev);
-+
-+	/*
-+	 * Idle-TSSI measurement, iteration 1. The REQUIRE preconditions are
-+	 * per call: iterations 2 and 3, in post_cal_finalize() and _iter3(),
-+	 * run with different MAC states.
-+	 */
-+	{
-+		B43_PHY_AC_REQUIRE_RET(dev,
-+				       B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
-+				       B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
-+				       B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN,
-+				       -EINVAL);
-+		b43_phy_ac_idle_tssi_meas(dev);
-+	}
-+
-+	/*
-+	 * Short settle before txpwrctrl reads the idle-TSSI result. The trace
-+	 * shows a ~35 ms gap here, a brief busy-wait suffices.
-+	 */
-+	udelay(35);
-+
-+	/*
-+	 * idle_tssi to txpwrctrl transition:
-+	 *   write 0x0339 = 0x0fff        RX suspend during txpwr calibration
-+	 *   MHF slot 4 set 0x0008        firmware config bit
-+	 *   MHF slot 0 clear 0x4000      firmware config bit
-+	 *   peek 0x019e
-+	 *   set bit 1 of 0x019e          relock the table-write gate
-+	 * The vendor emits no rx_gate arm here: txpwrctrl_setup() runs with the
-+	 * gate released from the idle_tssi phase.
-+	 */
-+	b43_phy_write(dev, 0x0339, 0x0fff);
-+	b43_phy_ac_shm_readback_block(dev);
-+	/*
-+	 * SPUWKUP, il pre-wakeup del sintetizzatore in microsecondi. La cella e'
-+	 * M_SYNTHPU_DLY, 0x4a*2, e la costante e' per tipo di PHY: brcmsmac ne
-+	 * porta quattro -- 3700 per A-PHY, 1050 per B-PHY, 2048 per N-PHY rev>=3,
-+	 * 300 per LCN -- e le sceglie in brcms_b_upd_synthpu(). 512 e' il membro
-+	 * AC della stessa famiglia, ed e' cosi' che va letto: non un numero
-+	 * trascritto ma una costante per PHY, come il 2048 dell'N-PHY.
-+	 *
-+	 * b43 qui sbaglia due volte: applica il valore B-PHY a tutto
-+	 * (b43_set_synth_pu_delay(), 1050) e aggiunge un caso adhoc/idle a 500
-+	 * che in brcmsmac non esiste. Vedi il TODO nella serie patches/.
-+	 */
-+	b43_shm_write16(dev, B43_SHM_SHARED, 0x0094, 512);
-+	b43_phy_ac_mhf_maskset(dev, 4, (u16)~0x0008, 0x0008);
-+	/*
-+	 * RFATT, subito dopo il write-through di HOSTF5 che la chiamata sopra
-+	 * provoca. Valore trascritto: 0x0480 su tutti e 26 i segmenti a freddo
-+	 * del d6220, una volta per segmento, e lo stesso sul DSL nella stessa
-+	 * posizione. Costante su canale e larghezza, quindi non c'e' una
-+	 * dipendenza da derivare; a cosa serva su un AC-PHY non e' noto.
-+	 */
-+	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_RFATT, 0x0480);
-+	/*
-+	 * Read-only scan of the two direct-map tables, sixteen entries each,
-+	 * closed by the read of 0x0056. No value to reproduce, and what
-+	 * consumes the result is unknown -- a scan to find out which per-rate
-+	 * blocks exist would have this shape.
-+	 */
-+	for (off = B43_AC_RT_DIRMAP_A; off <= B43_AC_RT_DIRMAP_A + 0x1e; off += 2) {
-+		u16 v = b43_shm_read16(dev, B43_SHM_SHARED, off);
-+		unsigned int k;
-+
-+		for (k = 0; k < ARRAY_SIZE(b43_phy_ac_ofdm_dirmap); k++)
-+			if (B43_AC_RT_DIRMAP_A +
-+			    b43_phy_ac_ofdm_dirmap[k] * 2 == off)
-+				dev->phy.ac->rate_ptr[k] = v;
-+	}
-+	for (off = B43_AC_RT_DIRMAP_B; off <= B43_AC_RT_DIRMAP_B + 0x1e; off += 2)
-+		b43_shm_read16(dev, B43_SHM_SHARED, off);
-+	b43_shm_read16(dev, B43_SHM_SHARED, 0x0056);
-+	/*
-+	 * 0x10f4-0x14b2 zeroed, 480 words. In the blob this is a table load
-+	 * from rodata and the table is all zeros, so the loop replaces it
-+	 * without losing anything. Once per attach, immediately after RFATT,
-+	 * and the same 480 zero words on every segment checked, at every
-+	 * channel and width.
-+	 */
-+	/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
-+	 *   12311-12790]
-+	 * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
-+	 *   7998-8477]
-+	 */
-+	B43_AC_BLOCK("shm_zero_10f4");
-+	for (off = 0x10f4; off <= 0x14b2; off += 2)
-+		b43_shm_write16(dev, B43_SHM_SHARED, off, 0x0000);
-+	/*
-+	 * Second zeroing, attached to the first: 68 words from 0x05e0 to
-+	 * 0x0666, identical on every segment checked. The first ten fall in the
-+	 * KEYIDXBLOCK block that b43.h declares the core's, but the vendor
-+	 * writes them in this run and nowhere else -- each cell appears exactly
-+	 * once in the capture -- so the run is reproduced whole and the
-+	 * perimeter of compare.py is restricted accordingly.
-+	 */
-+	/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
-+	 *   12791-12858]
-+	 * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
-+	 *   8478-8545]
-+	 */
-+	B43_AC_BLOCK("shm_zero_05e0");
-+	for (off = 0x05e0; off <= 0x0666; off += 2)
-+		b43_shm_write16(dev, B43_SHM_SHARED, off, 0x0000);
-+	/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
-+	 *   12859-13592]
-+	 * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
-+	 *   8546-9281]
-+	 */
-+	B43_AC_BLOCK("shm_mac_config");
-+	b43_phy_ac_mhf_maskset(dev, 0, (u16)~0x4000, 0);
-+	b43_phy_ac_shm_mac_config_block(dev);
-+	/*
-+	 * Second half of the poll with a single pass: no head, no sweep and no
-+	 * tail.
-+	 */
-+	b43_phy_ac_wd_stats_poll_opt(dev, false, 1, true);
-+	/*
-+	 * Invariant across all 26 segments. Between these and the poll below,
-+	 * the capture has a TPL.RAMW, which is the core's template RAM.
-+	 */
-+	b43_shm_write16(dev, B43_SHM_SHARED, 0x018a, 0xffce);
-+	b43_shm_write16(dev, B43_SHM_SHARED, 0x018c, 0xffba);
-+	b43_phy_ac_wd_stats_poll_opt(dev, true, 0, true);
-+	/*
-+	 * After the sweep and after the four CCK blocks that are still not
-+	 * understood.
-+	 */
-+	b43_phy_ac_chainmask_block(dev);
-+	b43_phy_ac_prb_rsp_rate_po(dev);
-+	b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
-+
-+	b43_phy_ac_txpwrctrl_setup(dev, channel->center_freq);
-+
-+	/*
-+	 * Transition between the first and second txpwrctrl_setup(): 27 ops that
-+	 * release the gate, enable TX power control, restore the per-core
-+	 * current index, wake the MAC so the firmware picks up the new config,
-+	 * then suspend it again.
-+	 */
-+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);           /* unlock */
-+	b43_phy_maskset(dev, 0x0070, (u16)~0xe000, 0xe000);      /* TX power ctrl enable */
-+	/*
-+	 * The gain-word pair only appears from the second bring-up on: on the
-+	 * first, the stock driver emits 0x0070 and then goes straight to
-+	 * 0x0678/0x0878, while on a later channel setup the pair is there. This
-+	 * holds for this site and for adc_reset(), but not for the tail of
-+	 * rxiqcal_finalize(), which always emits it.
-+	 */
-+	if (!(dev->phy.ac->status_mask & B43_PHY_AC_STATE_FIRST_BRINGUP)) {
-+		b43_phy_maskset(dev, 0x0644, (u16)~0x007f, 0x0014); /* c0 */
-+		b43_phy_maskset(dev, 0x0844, (u16)~0x007f, 0x0014); /* c1 */
-+	}
-+	b43_phy_maskset(dev, 0x0678, (u16)~0x0004, 0);           /* clr bit 2 c0 */
-+	b43_phy_maskset(dev, 0x0878, (u16)~0x0004, 0);           /* clr bit 2 c1 */
-+	b43_phy_ac_mhf_maskset(dev, 3, (u16)~0x0040, 0x0040);    /* MHF3 set bit 6 */
-+	b43_phy_ac_ofdm_pctl1_readback(dev);
-+	/*
-+	 * Invariant across all 26 segments; what they are for is unknown.
-+	 * Only the first of the map's two passes carries them.
-+	 */
-+	/*
-+	 * PRMAXTIME a zero, cioe' timeout infinito per la probe response del
-+	 * firmware. Non e' un valore trascritto: e' quello che b43 scrive in
-+	 * b43_chip_init() (main.c:3307). b43 poi lo riporta a 1 in
-+	 * b43_wireless_core_init() per spegnere l'offload, e quel secondo
-+	 * write la cattura non lo ha -- vedi il TODO post-WIP sull'offload in
-+	 * docs/retrace-todo.md.
-+	 */
-+	b43_shm_write16(dev, B43_SHM_SHARED, 0x0074, 0x0000);
-+	b43_shm_write16(dev, B43_SHM_SHARED, 0x0082, 0x2710);
-+	b43_shm_write16(dev, B43_SHM_SHARED, 0x00ba, 0xffff);
-+	b43_shm_write16(dev, B43_SHM_SHARED, 0x003c, 0x000a);
-+	b43_phy_ac_chainmask_block(dev);
-+	b43_phy_ac_basic_rate_map(dev);
-+	b43_maccontrol_set(dev, ~0x00100000u, 0);                /* clr bit 20 */
-+	b43_maccontrol_set(dev, ~0x01c00000u, 0);                /* clr bits 22-24 */
-+	b43_mac_enable(dev);
-+	/*
-+	 * The four PWRIND_BLKS cells preceding the 0x0308 that
-+	 * crs_note_noise() samples, read immediately after the MAC is
-+	 * re-enabled. Reads only, and nothing here consumes the value -- what
-+	 * the vendor wants them for is unknown.
-+	 */
-+	for (off = 0x0300; off <= 0x0306; off += 2)
-+		b43_shm_read16(dev, B43_SHM_SHARED, off);
-+	b43_phy_ac_wd_stats_poll_opt(dev, true, 0, true);
-+	/*
-+	 * MHF4 bit 15: alzato al primo bring-up,
-+	 * abbassato su un channel setup successivo.
-+	 */
-+	b43_phy_ac_mhf_maskset(dev, 4, (u16)~0x8000,
-+			       (dev->phy.ac->status_mask &
-+				B43_PHY_AC_STATE_FIRST_BRINGUP) ? 0x8000 : 0);
-+	/*
-+	 * MHF1 bit 0: abbassato al primo bring-up, alzato su un channel
-+	 * setup successivo -- polarita' opposta a MHF4 bit 15 sopra.
-+	 */
-+	b43_phy_ac_mhf_maskset(dev, 1, (u16)~0x0001,
-+			       (dev->phy.ac->status_mask &
-+				B43_PHY_AC_STATE_FIRST_BRINGUP) ? 0 : 0x0001);
-+	b43_mac_suspend(dev);
-+	/*
-+	 * Invariant across all 26 segments of the cold sweep; what it is for is
-+	 * unknown.
-+	 */
-+	b43_shm_write16(dev, B43_SHM_SHARED, 0x007c, 0x0320);
-+	b43_phy_ac_mhf_maskset(dev, 3, (u16)~0x0020, 0x0020);    /* MHF3 set bit 5 */
-+	b43_mac_enable(dev);
-+	/*
-+	 * Depends on the width alone -- 0x0f0f at 20 and 80 MHz, 0x0303 at 40
-+	 * -- and the two bytes are always equal, so it is one value replicated
-+	 * over two halves. That 0x0f becomes 0x03 at 40 MHz is a quarter and
-+	 * not a half, and is not explained.
-+	 */
-+	b43_shm_write16(dev, B43_SHM_SHARED, 0x005a,
-+			(dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_40)
-+				? 0x0303 : 0x0f0f);
-+	b43_phy_maskset(dev, 0x0042, (u16)~0x8000, 0x8000);      /* set bit 15 */
-+	b43_phy_ac_mhf_maskset(dev, 1, (u16)~0x0020, 0x0020);    /* MHF1 set bit 5 */
-+	b43_mac_suspend(dev);
-+	b43_phy_ac_wd_stats_poll_opt(dev, true, 0, true);
-+	b43_phy_ac_basic_rate_map(dev);
-+
-+	/*
-+	 * End of the first half. The caller invokes the rest, after the core
-+	 * has written the BSS configuration -- SSID and template lengths --
-+	 * with the MAC still suspended.
-+	 */
-+	return 0;
-+}
-+
 +/*
 + * Seconda meta' del setup di canale.
 + *
@@ -5887,7 +5372,7 @@ index 756cd44..3214f02 100644
 + * map e la prima di questa e' il PLCP, col blocco BSS del core in mezzo.
 + *
 + * Prende `channel` per parametro e ricava il resto da `dev`: sono i soli due
-+ * valori del prologo di set_channel che questa meta' usava, per cui il taglio
++ * valori del prologo di op_switch_channel che questa meta' usava, per cui il taglio
 + * non porta stato implicito. Un taglio che ne lasciasse compilerebbe senza un
 + * warning e sbaglierebbe i valori a runtime.
 + * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
@@ -6275,18 +5760,13 @@ index 756cd44..3214f02 100644
 +	/*
 +	 * No trailing mac_suspend. b43 reaches ops->init with the MAC already
 +	 * disabled, so a suspend here would not touch the hardware: it would
-+	 * only raise the refcount, and set_channel(), which b43_phy_init() calls
++	 * only raise the refcount, and op_switch_channel(), which b43_phy_init() calls
 +	 * straight afterwards, would find it at 1 instead of 0. Its 90
 +	 * suspend/enable pairs would then all become no-ops and the MAC would
 +	 * never be toggled during the calibration.
 +	 */
 +	return 0;
 +}
-+
-+enum b43_phy_ac_afe_mode {
-+	B43_PHY_AC_AFE_DOWN,	/* front-end parked (RF blocked / pre-init) */
-+	B43_PHY_AC_AFE_ON,	/* front-end armed for RX/TX (bss-up) */
-+};
 +
 +/*
 + * Program the PHY analog front-end bank (the AFE_C1 registers at +0x1000
@@ -6296,9 +5776,9 @@ index 756cd44..3214f02 100644
 + * the enable point is explicit and callers pick a mode rather than
 + * open-coding register writes.
 + * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
-+ *   554-561, 573-580, 36531-36538]
++ *   554-561, 573-580, 1262-1265, 36531-36538]
 + * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
-+ *   29073-29080]
++ *   628-631, 29073-29080]
 + */
 +static void b43_phy_ac_enable_afe(struct b43_wldev *dev,
 +				  enum b43_phy_ac_afe_mode mode)
@@ -6327,6 +5807,27 @@ index 756cd44..3214f02 100644
 +}
 +
 +/*
++ * The analog arm: the AFE bank, the chan-select bit and the 0x0417/0x0416
++ * pair, in that order.
++ *
++ * Three sites emit it and they differ only in the pair's values: the entry of
++ * b43_phy_ac_switch_analog_once() and its cold tail put back what the entry
++ * saved, while the bss-up step at the end of b43_phy_ac_rxiqcal_finalize() has
++ * no save of its own and the captures show 0x0000 and 0x0001 there -- 26 cold
++ * segments and 51 of the 52 warm ones carry exactly one AFE bank, one 0x0408
++ * and one 0x0417 in that phase.
++ */
++static void b43_phy_ac_afe_arm(struct b43_wldev *dev,
++			       enum b43_phy_ac_afe_mode mode,
++			       u16 v417, u16 v416)
++{
++	b43_phy_ac_enable_afe(dev, mode);
++	b43_phy_maskset(dev, 0x0408, (u16)~0x0002, 0);
++	b43_phy_write(dev, 0x0417, v417);
++	b43_phy_write(dev, 0x0416, v416);
++}
++
++/*
 + * Cold-bring-up frontend GPIO, bracketed by the PMU resource request. The
 + * vendor emits it between the analog preamble and the radio body: regctl
 + * bit 1 raised, a round of MHF and MACCTL, the three GPIO registers, then
@@ -6347,7 +5848,8 @@ index 756cd44..3214f02 100644
 +/*
 + * regctl 0 bit 1 is a PMU resource request. The stock driver uses it as a
 + * bracket around the channel work: raised in the attach preamble and lowered
-+ * at its end, then on a later bring-up lowered on entry to set_channel() and
++ * at its end, then on a later bring-up lowered on entry to op_switch_channel()
++ * and
 + * raised on exit. The state is tracked here because the bit cannot be read
 + * back; without tracking it, the attach path lowered it twice.
 + */
@@ -6513,12 +6015,8 @@ index 756cd44..3214f02 100644
 +	saved_417 = b43_phy_read_log(dev, 0x0417);
 +	saved_416 = b43_phy_read_log(dev, 0x0416);
 +
-+	b43_phy_ac_enable_afe(dev, on ? B43_PHY_AC_AFE_ON
-+				     : B43_PHY_AC_AFE_DOWN);
-+
-+	b43_phy_maskset(dev, 0x0408, (u16)~0x0002, 0);
-+	b43_phy_write(dev, 0x0417, saved_417);
-+	b43_phy_write(dev, 0x0416, saved_416);
++	b43_phy_ac_afe_arm(dev, on ? B43_PHY_AC_AFE_ON : B43_PHY_AC_AFE_DOWN,
++			   saved_417, saved_416);
 +
 +	/*
 +	 * Cold attach only: a 6-bit field in 0x02e4 is set right after the unit
@@ -6555,11 +6053,7 @@ index 756cd44..3214f02 100644
 +	 */
 +	b43_phy_ac_mhf_bringup_clears(dev);
 +
-+	b43_phy_ac_enable_afe(dev, B43_PHY_AC_AFE_ON);
-+	b43_phy_maskset(dev, 0x0408, (u16)~0x0002, 0);
-+	b43_phy_write(dev, 0x0417, saved_417);
-+	b43_phy_write(dev, 0x0416, saved_416);
-+
++	b43_phy_ac_afe_arm(dev, B43_PHY_AC_AFE_ON, saved_417, saved_416);
 +}
 +
 +/*
@@ -6764,7 +6258,7 @@ index 756cd44..3214f02 100644
 +	/*
 +	 * Iteration 2 to 3 transition: an RX suspend before the mac_suspend.
 +	 * It is the same write of 0x0339 = 0x0fff that closes iteration 1 in
-+	 * set_channel(), but emitted on its own here -- without the MHF and gate
++	 * op_switch_channel(), but emitted on its own here -- without the MHF and gate
 +	 * relock that follow it there, because that was a transition into
 +	 * txpwrctrl rather than into another idle_tssi iteration.
 +	 */
@@ -6807,7 +6301,7 @@ index 756cd44..3214f02 100644
 +	/*
 +	 * Ensure the MAC is suspended without nesting. The write the stock
 +	 * driver emits here is already produced by the preceding site in
-+	 * set_channel(); an unconditional suspend would write nothing but would
++	 * op_switch_channel(); an unconditional suspend would write nothing but would
 +	 * leave the refcount at 2, and from then on the enable/suspend pairs in
 +	 * rxiqcal_finalize() and probe_cycle() would toggle between 2 and 1
 +	 * without touching the hardware. This function has no closing enable:
@@ -10256,6 +9750,50 @@ index 756cd44..3214f02 100644
 +	b43_phy_ac_wd_stats_poll_opt(dev, true, 2, true);
 +}
 +
++/*
++ * The watchdog's body: statistics poll, optional measure block, latch of the
++ * SHM window.
++ *
++ * Three sites emit this sequence and they differ only in where the sampling
++ * phase goes and in whether the latch runs: b43_phy_ac_watchdog() puts the
++ * sampling phase first, the probe loop of b43_phy_ac_rxiqcal_finalize() puts
++ * it last, and the loop's closing tick has none. It is one cycle cut at two
++ * points, so the body is written once here and the rotation stays at the call
++ * site.
++ *
++ * @reloads: beacon reloads that land inside this body. They go between the two
++ *	passes of the counter sweep and not between blocks: in the capture the
++ *	first pass closes on the sixth counter and the reload starts right
++ *	after.
++ * @noise_cal: run the measure block, MAC suspended.
++ * @tail: latch the window. False only on the probe loop's first tick, where
++ *	the window was read just above -- before the CRS block -- and has not
++ *	had time to fill.
++ */
++static void b43_phy_ac_wd_body(struct b43_wldev *dev, unsigned int reloads,
++			       bool noise_cal, bool tail)
++{
++	struct b43_phy_ac *ac = dev->phy.ac;
++
++	if (reloads) {
++		b43_phy_ac_wd_stats_poll_opt(dev, true, 1, false);
++		while (reloads--)
++			b43_ac_beacon_reload(dev, ac->beacon_reload_done++);
++		b43_phy_ac_wd_stats_poll_opt(dev, false, 1, true);
++	} else {
++		b43_phy_ac_wd_stats_poll(dev);
++	}
++
++	if (noise_cal) {
++		b43_mac_suspend(dev);
++		b43_phy_ac_measure_block(dev);
++		b43_mac_enable(dev);
++	}
++
++	if (tail)
++		b43_phy_ac_wd_stats_tail(dev);
++}
++
 +/* [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
 + *   29136-29140]
 + */
@@ -10264,15 +9802,7 @@ index 756cd44..3214f02 100644
 +	B43_AC_FN();
 +
 +	b43_phy_ac_wd_sample_phase(dev);
-+	b43_phy_ac_wd_stats_poll(dev);
-+
-+	if (noise_cal) {
-+		b43_mac_suspend(dev);
-+		b43_phy_ac_measure_block(dev);
-+		b43_mac_enable(dev);
-+	}
-+
-+	b43_phy_ac_wd_stats_tail(dev);
++	b43_phy_ac_wd_body(dev, 0, noise_cal, true);
 +}
 +
 +static void b43_phy_ac_op_pwork_15sec(struct b43_wldev *dev)
@@ -10321,21 +9851,19 @@ index 756cd44..3214f02 100644
 + * RXIQ cal finalize (~2700 op).
 + * Vedi commento in phy_ac.h.
 + * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
-+ *   30614-36542]
++ *   30614-36041]
 + * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
-+ *   25896-29084]
++ *   25896-28591]
 + */
 +void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 +{
 +	B43_AC_FN();
-+	/* LO DAC readback, 0x?002-0x?005 in block D, rewritten at the end. */
-+	u16 lo_dac[2][4];
 +	/*
-+	 * TX IQ/LO coefficients of the IQLOCAL table (0x000c), per core at
-+	 * 0x60 + 4*core: {a, b} at +0/+1 and the LO leakage word at +2, two
-+	 * signed bytes. Saved in block D, restored in the tail.
++	 * Block D saves the LO DAC and the TX IQ/LO coefficients into
++	 * @lo_dac and @txiqlo_coef; b43_phy_ac_bss_up() writes them back.
 +	 */
-+	u16 txiqlo_coef[2][3];
++	u16 (*lo_dac)[4] = dev->phy.ac->lo_dac;
++	u16 (*txiqlo_coef)[3] = dev->phy.ac->txiqlo_coef;
 +	/*
 +	 * Called with the MAC suspended, from set_channel_calibrations() after
 +	 * rxiq_teardown_apply_defaults(). The classifier is in RX_WAITED and
@@ -10473,13 +10001,16 @@ index 756cd44..3214f02 100644
 +	}
 +
 +	/*
-+	 * Between the MHF and the first GPIO write, the attach capture shows
-+	 * two suspend/enable pairs that are NOT structure to reproduce. The
-+	 * timestamps say so: they sit 1.37 s and 1.29 s after the MHF and come
-+	 * from a different CPU, so they are MAC activity
-+	 * interleaved by the up context during a wait -- the same species as
-+	 * the probe-pacing pairs. The warm path does not have them. They are
-+	 * declared in test/unit/cmp_skip.py rather than emitted.
++	 * Le due coppie suspend/enable fra la MHF e la prima GPIO sono il
++	 * suspend interno delle ricariche del beacon emesse qui sopra, non
++	 * rumore del contesto up: la forma lo dice -- TIMBPOS, il template,
++	 * BTL0/BTL1 e la passata sul PLCP -- e il conteggio lo conferma. Sui
++	 * sette segmenti sotto i 5250 MHz, dove `beacon_reload_pre` copre tutte
++	 * le ricariche, le regole di cmp_skip.py che le dichiaravano rumore non
++	 * scattano piu': zero op saltate. Sui diciannove sopra la soglia ne
++	 * resta una coppia senza controparte, due op, ed e' un residuo vero:
++	 * la' il vendor ne ha una in piu' di quante `beacon_reload_pre` ne
++	 * dichiari.
 +	 */
 +	bcma_chipco_gpio_out(&dev->dev->bdev->bus->drv_cc, 0x0004, 0x0004);
 +	bcma_chipco_gpio_out(&dev->dev->bdev->bus->drv_cc, 0x0400, 0x0000);
@@ -10546,25 +10077,30 @@ index 756cd44..3214f02 100644
 +	/*
 +	 * Probe and measure sequence.
 +	 *
-+	 * Non e' una schedule: la fase corre a una scadenza di orologio ed
-+	 * emette un tick per secondo. @probe_ticks e' la scadenza e
-+	 * @probe_watchdog_tick i tick su cui cade il measure block; entrambi
-+	 * vengono dal chiamante perche' l'harness non ha un clock. In un driver
-+	 * vero la scadenza e' jiffies e il measure block appartiene al lavoro
-+	 * periodico, non a qui.
++	 * These ops are not the channel setup's: every one of them is a turn of
++	 * the periodic watchdog, which in a real driver arrives from
++	 * b43_phy_ac_op_pwork_15sec() once switch_channel() has returned. They
++	 * are here because a wl-diag capture is a flat op stream: the 18-21
++	 * turns the vendor's watchdog took while the tracer was still recording
++	 * sit right after the calibration, and the comparison needs them in
++	 * that position.
 +	 *
-+	 * Un tick e' un giro del watchdog periodico, non un blocco a se': poll
-+	 * delle statistiche, latch della finestra, peek, clear e mode change.
-+	 * Le stesse funzioni che b43_phy_ac_watchdog() chiama, nell'ordine in
-+	 * cui questa fase le emette -- il tick a regime e' lo stesso ciclo
-+	 * tagliato in un altro punto, non una sequenza diversa.
++	 * So the loop runs only when the caller asked for a deadline.
++	 * @probe_ticks is zero in a live driver -- nothing in b43 sets it --
++	 * and the phase collapses to nothing; the watchdog then latches the SHM
++	 * window once per pwork period, which is what the hardware needs. With
++	 * a deadline it emits one turn per tick, and @probe_watchdog_tick says
++	 * which of them carry the measure block: the 26 cold segments pin it to
++	 * tick 9 in all 26 and tick 19 wherever the deadline reaches, a timer
++	 * of period ten, with the warm pair 5 and 15 being the same period at
++	 * another phase. It can fall on the closing tick, past the last tick of
++	 * the phase, and then that tick carries only the poll and the block.
 +	 *
-+	 * I 26 segmenti a freddo del d6220 inchiodano il measure block: cade sul
-+	 * tick 9 in tutti e 26, e sul tick 19 in ogni segmento la cui scadenza
-+	 * arriva fin la'. Sono quindi un timer di periodo dieci, e la coppia
-+	 * delle catture a caldo -- 5 e 15 -- e' lo stesso periodo a fase
-+	 * diversa. Puo' cadere sul tick di chiusura, oltre l'ultimo tick della
-+	 * fase, e allora quel tick porta solo il poll e il blocco.
++	 * A tick is one turn of the watchdog and not a block of its own: the
++	 * statistics poll, the latch of the window, the peek, the clear and the
++	 * mode change. Same body b43_phy_ac_watchdog() runs -- see
++	 * b43_phy_ac_wd_body() -- in the rotation this phase emits it, the
++	 * steady-state tick being the same cycle cut at another point.
 +	 *
 +	 * Le irregolarita' dei primi tre tick sono in
 +	 * b43_phy_ac_wd_sample_phase_opt(), che le documenta una per una.
@@ -10581,39 +10117,9 @@ index 756cd44..3214f02 100644
 +				if (ac->beacon_reload_tick[i] == tick)
 +					reloads++;
 +
-+			/*
-+			 * Una ricarica cade fra le due passate della spazzata
-+			 * dei contatori, non fra un blocco e l'altro: nella
-+			 * cattura la prima passata si chiude sul sesto
-+			 * contatore e la ricarica parte subito dopo. Quindi il
-+			 * poll si spezza in due meta' e le ricariche del tick
-+			 * stanno in mezzo.
-+			 */
-+			if (reloads) {
-+				b43_phy_ac_wd_stats_poll_opt(dev, true, 1,
-+							     false);
-+				while (reloads--)
-+					b43_ac_beacon_reload(dev,
-+						ac->beacon_reload_done++);
-+				b43_phy_ac_wd_stats_poll_opt(dev, false, 1,
-+							     true);
-+			} else {
-+				b43_phy_ac_wd_stats_poll(dev);
-+			}
-+
-+			if (b43_phy_ac_watchdog_on_tick(ac, tick)) {
-+				b43_mac_suspend(dev);
-+				b43_phy_ac_measure_block(dev);
-+				b43_mac_enable(dev);
-+			}
-+
-+			/*
-+			 * Il primo tick non latcha: la finestra e' stata letta
-+			 * poco sopra, prima del blocco CRS, e non ha avuto il
-+			 * tempo di riempirsi.
-+			 */
-+			if (tick)
-+				b43_phy_ac_wd_stats_tail(dev);
++			b43_phy_ac_wd_body(dev, reloads,
++					   b43_phy_ac_watchdog_on_tick(ac, tick),
++					   tick != 0);
 +
 +			b43_phy_ac_wd_sample_phase_opt(dev,
 +						       tick != 1 && tick != 2,
@@ -10621,27 +10127,61 @@ index 756cd44..3214f02 100644
 +		}
 +
 +		/*
-+		 * Il tick di chiusura, quando la scadenza cade su un tick di
-+		 * misura: porta il poll, il blocco e il latch, e poi la fase
-+		 * finisce -- niente peek, clear o mode change.
++		 * Il tick di chiusura. La fase si chiude sempre con un poll e
++		 * il latch, oltre l'ultimo mode change e senza peek ne' clear:
++		 * i 26 segmenti a freddo hanno tutti e 26 quel poll e 24 su 26
++		 * anche il latch. Il measure block invece ci sta solo se la
++		 * scadenza cade su un tick di misura, e questo pure e' esatto
++		 * sui 26: compare quando la scadenza e' 19, cioe' quando
++		 * @probe_watchdog_tick la contiene, e non compare quando e' 18,
++		 * 20 o 21.
++		 *
++		 * Con @probe_ticks a zero non c'e' fase e non c'e' chiusura.
 +		 */
-+		if (b43_phy_ac_watchdog_on_tick(ac, ticks)) {
-+			b43_phy_ac_wd_stats_poll(dev);
-+			b43_mac_suspend(dev);
-+			b43_phy_ac_measure_block(dev);
-+			b43_mac_enable(dev);
-+			b43_phy_ac_wd_stats_tail(dev);
-+		}
++		if (ticks)
++			b43_phy_ac_wd_body(dev, 0,
++					   b43_phy_ac_watchdog_on_tick(ac, ticks),
++					   true);
 +
 +		ac->last_cal_channel = ac->cal_channel;
 +	}
 +
++}
++
++/*
++ * The bss-up step: what the vendor emits about half a second after the last
++ * watchdog turn of the probe phase, in one burst of ~460 op over 19 ms.
++ *
++ * It is NOT the tail of the channel setup, and the clock says so: on cold04 the
++ * calibration ends at t=869.844, the watchdog turns run to 889.993, and this
++ * block sits at 890.450-890.469, after a gap of 457 ms. Six of its seven pieces
++ * belong elsewhere -- per-rate power in shared memory, the TX power LUTs, the
++ * MAC/GPIO frontend, the analog arm that b43 reaches through
++ * phy_ops->switch_analog, and the PMU release that pairs with the cold
++ * preamble's request -- and only the coefficient write-back is cal state, which
++ * is why @lo_dac and @txiqlo_coef live in the phy state.
++ *
++ * Which b43 hook each piece hangs off is an open decision, tracked in
++ * docs/retrace-todo.md: today nothing in the driver calls this, and the trace
++ * harness calls it after switch_channel, which is where the capture puts it.
++ *
++ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
++ *   36045-36542]
++ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
++ *   28595-29084]
++ */
++void b43_phy_ac_bss_up(struct b43_wldev *dev)
++{
++	B43_AC_FN();
++	u16 (*lo_dac)[4] = dev->phy.ac->lo_dac;
++	u16 (*txiqlo_coef)[3] = dev->phy.ac->txiqlo_coef;
++
 +	/*
-+	 * A seventh 32-bit counter, read on its own after the closing latch and
-+	 * outside every sweep: one hi/lo/hi on 0x077c, bracketed by two reads of
-+	 * UCODESTAT that are the core's. It is already in the ctr32[] list of the
-+	 * statistics poll, so the read itself is the poll's shape; what is
-+	 * separate is this one occurrence, which no poll accounts for.
++	 * A seventh 32-bit counter, read on its own and outside every sweep: one
++	 * hi/lo/hi on 0x077c, bracketed by two reads of UCODESTAT that are the
++	 * core's. It is already in the ctr32[] list of the statistics poll, so
++	 * the read itself is the poll's shape; what is separate is this one
++	 * occurrence, which no poll accounts for.
 +	 */
 +	b43_phy_ac_wd_shm_read32x3(dev, 0x077c);
 +
@@ -10830,8 +10370,12 @@ index 756cd44..3214f02 100644
 +	b43_radio_write(dev, 0x0004, lo_dac[0][2]);
 +	b43_radio_write(dev, 0x0005, lo_dac[0][3]);
 +	/*
-+	 * Reapply the solved coefficients rather than recomputing them: the
-+	 * stock driver rewrites the same values as the first apply here.
++	 * The solver runs again over the same accumulators, so this writes the
++	 * same pair the first apply did. Block D peeks 0x?a0/0x?a1 just before,
++	 * and the vendor's pair here is what that peek returned -- but taking
++	 * the peek instead of solving would hide the solver's residual on
++	 * coefficient b, which the score is the only place to see. See
++	 * VAL_TOLLERANZA in test/unit/compare.py.
 +	 */
 +	{
 +		s16 a, b;
@@ -10864,13 +10408,13 @@ index 756cd44..3214f02 100644
 +	b43_mac_suspend(dev);
 +	b43_maccontrol_set(dev, 0, 0x04000400);   /* mask=~0=0xffffffff */
 +
-+	/* Arm the analog front-end for RX/TX: the bss-up radio-ON step. */
-+	b43_phy_ac_enable_afe(dev, B43_PHY_AC_AFE_ON);
-+
-+	/* Chan-select final + PMU release. */
-+	b43_phy_maskset(dev, 0x0408, (u16)~0x0002, 0);
-+	b43_phy_write(dev, 0x0417, 0x0000);
-+	b43_phy_write(dev, 0x0416, 0x0001);
++	/*
++	 * The bss-up radio-ON step: the same analog arm switch_analog() emits,
++	 * without a save of its own, then the PMU release. It is not part of
++	 * the RX-IQ finalize -- see docs/retrace-todo.md for what this tail is
++	 * made of and where each piece belongs.
++	 */
++	b43_phy_ac_afe_arm(dev, B43_PHY_AC_AFE_ON, 0x0000, 0x0001);
 +	b43_phy_ac_pmu_req(dev, true);
 +}
 +
@@ -10884,8 +10428,11 @@ index 756cd44..3214f02 100644
 +	B43_AC_FN();
 +	struct ieee80211_channel *channel = dev->wl->hw->conf.chandef.chan;
 +	enum nl80211_channel_type channel_type = cfg80211_get_chandef_type(&dev->wl->hw->conf.chandef);
-+	int entry_suspended;
-+	int ret;
++	const struct cfg80211_chan_def *chandef = &dev->wl->hw->conf.chandef;
++	enum nl80211_chan_width width = chandef->width;
++	const struct b43_phy_ac_channeltab_e_radio2069 *e2069;
++	struct b43_phy *phy = &dev->phy;
++	u16 off;
 +
 +	if (b43_current_band(dev->wl) == NL80211_BAND_2GHZ) {
 +		b43dbg(dev->wl,
@@ -10896,22 +10443,21 @@ index 756cd44..3214f02 100644
 +
 +	/*
 +	 * Unlike wl, which needs a full down and up to change channel at
-+	 * runtime, b43 keeps the MAC active between channel switches, and
-+	 * set_channel() operates with it suspended.
++	 * runtime, b43 keeps the MAC active between channel switches, and this
++	 * function operates with it suspended.
 +	 *
 +	 * Suspend only if it is not already suspended: on bring-up the MAC
 +	 * arrives disabled from the core init, and a nested suspend would raise
 +	 * the refcount without writing, turning the calibration's
-+	 * enable/suspend pairs into no-ops. entry_suspended distinguishes "this
-+	 * function suspended it" from "it was already suspended", which the
-+	 * state no longer tells apart by the end of the function.
++	 * enable/suspend pairs into no-ops. Nothing here has to undo the
++	 * suspend, so the entry state does not need remembering: the enable is
++	 * the caller's, see the end of the function.
 +	 *
 +	 * The preamble writes MACCTL through b43_maccontrol_set(), which does
 +	 * not go through the refcount: two routes to the same bit, to be
 +	 * unified.
 +	 */
-+	entry_suspended = dev->mac_suspended;
-+	if (!entry_suspended)
++	if (!dev->mac_suspended)
 +		b43_mac_suspend(dev);
 +	/*
 +	 * b43_mac_suspend() and b43_mac_enable() maintain the MAC_EN mirror.
@@ -10922,31 +10468,530 @@ index 756cd44..3214f02 100644
 +	 */
 +
 +	/* 5 GHz: the channel table is the filter (unknown channels -ESRCH). */
-+	ret = b43_phy_ac_set_channel(dev, channel, channel_type);
 +
 +	/*
-+	 * L'enable incondizionato non e' qui. Non e' il rilascio di cio' che
-+	 * questa funzione ha acquisito: e' un requisito delle calibrazioni
-+	 * post-canale, che girano a MAC attivo e lo pretendono nelle loro
-+	 * precondizioni. Siccome quelle le invoca il chiamante, l'enable tocca
-+	 * a lui -- e questo lascia libera la finestra fra le due fasi, dove il
-+	 * core scrive la configurazione BSS con il MAC ancora sospeso.
++	 * channel_type is the legacy HT-only description of the same thing as
++	 * chandef.width, and cannot express the VHT widths. It stays in the
++	 * signature because that is the b43 phy_ops prototype.
 +	 */
++	(void)channel_type;
++
++	b43dbg(dev->wl, "phy-ac: set_channel ch%u (%u MHz) start\n",
++	       channel->hw_value, channel->center_freq);
++
++	if (phy->radio_ver != 0x2069)
++		return -ESRCH;
++
++	if (phy->radio_rev != 4)
++		return -ESRCH;
 +
 +	/*
-+	 * Post-channel calibrations, which the vendor emits after the MAC.MCTRL
-+	 * enable: post_cal_finalize() for iterations 2 and 3, rxiqcal
-+	 * iterations 1 to 24, the rxcal AFE, the first and second txpwr rounds
-+	 * with their RX-IQ measurement and the gainctrl_final loop, then the
-+	 * final RX-IQ teardown.
++	 * The table is keyed on the frequency the radio is tuned to, which for
++	 * a bonded configuration is the centre of the block and not the primary
++	 * channel: it carries rows every 10 MHz, so 5190 and 5210 are there
++	 * alongside 5180. Passing the primary picks the row of a 20 MHz channel
++	 * and mistunes the synthesiser -- the cold sweep shows it on
++	 * radio 0x08dc, which takes radio_raw[3] from this row.
++	 */
++	e2069 = b43_phy_ac_get_channeltab_e_r2069(dev,
++			width == NL80211_CHAN_WIDTH_20 ? channel->center_freq
++						       : chandef->center_freq1);
++	if (!e2069)
++		return -ESRCH;
++
++	/*
++	 * Scaffolding, not a capability limit.
++	 *
++	 * Part of what the channel setup programs is not derived: the values
++	 * were transcribed from captures and exist only to get the bring-up
++	 * moving. Gains, TX power indices, gain-LUT defaults, tone generator
++	 * amplitudes and thresholds are among them, and on an RF chain other
++	 * than the one they were read from they are not slightly wrong, they
++	 * can overdrive the PA.
++	 *
++	 * The channel table accepts all of 5 GHz, so it is no protection on
++	 * its own: without this filter, tuning ch100 would write the ch36
++	 * constants.
++	 *
++	 * The width is checked from chandef.width and not through
++	 * cfg80211_get_chandef_type(): that helper only knows the HT widths
++	 * and answers NL80211_CHAN_NO_HT for anything wider, which would let
++	 * an 80 MHz chandef through.
++	 *
++	 * A configuration joins the list once a capture shows the port
++	 * reproducing it, and the list disappears once the values are derived
++	 * rather than transcribed.
++	 */
++	if (!b43_phy_ac_config_validated(dev, channel->hw_value, width)) {
++		b43warn(dev->wl,
++			"AC-PHY: refusing ch%u at %s: its programming has not "
++			"been checked against a capture, and several of the "
++			"values written are transcribed from ch36 at 20 MHz. "
++			"Writing them here can damage the RF front-end.\n",
++			channel->hw_value,
++			width == NL80211_CHAN_WIDTH_80 ? "80 MHz" :
++			width == NL80211_CHAN_WIDTH_40 ? "40 MHz" : "20 MHz");
++		return -EOPNOTSUPP;
++	}
++	if (dev->dev->chip_id != 0x4352 && dev->dev->chip_id != 0x4360) {
++		b43warn(dev->wl,
++			"AC-PHY: chip 0x%04x non validato: nessuna cattura di riferimento, "
++			"e i valori trascritti valgono per 4352/4360.\n",
++			dev->dev->chip_id);
++		return -EOPNOTSUPP;
++	}
++
++	dev->phy.ac->cal_channel = channel->hw_value;
++	dev->phy.ac->cal_width = width;
++	dev->phy.ac->cal_freq = width == NL80211_CHAN_WIDTH_20
++				? channel->center_freq : chandef->center_freq1;
++
++	/*
++	 * The MAC is already suspended from the end of op_init(), whose tail
++	 * b43_mac_suspend leaves bit 0 clear, so there is no mac_suspend op
++	 * here: the vendor emits the MAC preparation sequence in op_init, and this
++	 * function is entered with the MAC suspended. status_mask already
++	 * has MAC_EN clear at this point.
++	 *
++	 * No precondition on the classifier or clip detect: on the first entry
++	 * after attach, RX_ANY and CLIP_ALL_DIS are both clear, while on a
++	 * channel change the bits reflect the previous channel's state. Both are
++	 * set further down in this function.
++	 */
++	B43_PHY_AC_REQUIRE_RET(dev,
++			       0,
++			       B43_PHY_AC_STATE_MAC_EN | B43_PHY_AC_STATE_CCA_RESET,
++			       -EINVAL);
++
++	/*
++	 * Drop the PMU request before reconfiguring the channel, but only if it
++	 * is raised: on the attach path the preamble has already dropped it, and
++	 * a second clear would be one op too many.
++	 */
++	if (dev->phy.ac->status_mask & B43_PHY_AC_STATE_PMU_REQ)
++		b43_phy_ac_pmu_req(dev, false);
++
++	/*
++	 * Freeze RX path before channel reconfigure: classifier WAITED-only,
++	 * clip detectors frozen, CCA reset. In the trace this runs BEFORE
++	 * radio_channel_setup. Everything from here through
++	 * rx_enable runs under RX=w CLIP=111; first release is the rx_gate
++	 * pulse in idle_tssi_meas.
++	 */
++	b43_phy_ac_channel_switch_prep(dev);
++
++	b43_radio_2069_channel_setup(dev, e2069);
++	b43_phy_ac_channel_setup(dev, e2069, channel);
++
++	b43_phy_ac_chan_tables(dev);
++
++	/*
++	 * Noise shaping table init. Populates the per-core
++	 * noise variance (tbl 0x15), gain-limit (tbl 0x0b), and noise shaping
++	 * coefficient tables (tbl 0x44/0x45 per-core, stride 0x20 on table ID).
++	 * All write data is deterministic from the ch36 d6220 trace.
++	 */
++	{
++		static const u16 nvar_data[5] = { 0x0020, 0x0021, 0x0022, 0x0023, 0x0024 };
++		static const u16 nvar_off[3]  = { 0x0008, 0x0020, 0x0038 };
++		static const u16 glim_a[6]    = { 0x000b, 0x000c, 0x000e, 0x0020, 0x0024, 0x0028 };
++		static const u16 glim_b[7]    = { 0x0000, 0x0000, 0x0000, 0x0003, 0x0003, 0x0003, 0x0003 };
++		static const u16 nshp_a8[6]   = { 0x00f9, 0x00fe, 0x0004, 0x000a, 0x0010, 0x0017 };
++		static const u16 nshp_b8[6]   = { 0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005 };
++		static const u16 nshp_a10[7]  = { 0x00f5, 0x00f8, 0x00fb, 0x00fe, 0x0002, 0x0005, 0x0009 };
++		static const u16 nshp_b10[7]  = { 0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005, 0x0006 };
++		u16 saved;
++		unsigned int core;
++
++		/*
++		 * Phase 1: gate cycle, enable, shared tables.
++		 *
++		 * The 0x019e gate was left locked on exit from chan_tables().
++		 * The vendor emits an unlock and relock cycle -- a marker for the
++		 * subsystem -- before loading the noise-shaping tables.
++		 */
++		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0000);   /* unlock */
++		saved = b43_phy_ac_tbl_write_lock(dev);               /* peek+relock */
++
++		b43_phy_read_log(dev, 0x016c);                        /* peek */
++		b43_phy_maskset(dev, 0x016c, (u16)~0x0040, 0x0040);   /* set bit 6 */
++
++		/*
++		 * Per-core nvar, three writes to table 0x15, which the vendor
++		 * emits before table 0x0b. On the 4352 only: wl 7.14 on the 4360
++		 * writes ta and tb directly with no staging through 0x15, and
++		 * the agcombo capture has zero ops on table 0x15.
++		 *
++		 * SALAME: without a third witness -- a 4352 on 7.14, or a 4360 on
++		 * the newer driver -- chip and version cannot be told apart here.
++		 */
++		if (dev->dev->chip_id != 0x4360)
++			for (core = 0; core < dev->phy.ac->num_cores; core++)
++				b43_actab_write_bulk(dev, 0x15, nvar_off[core], 16, 5, nvar_data);
++
++		/* Gain-limit (2× TBL.WR id=0x0b). */
++		b43_actab_write_bulk(dev, 0x0b, 0x0008, 16, 6, glim_a);
++		b43_actab_write_bulk(dev, 0x0b, 0x0010, 16, 7, glim_b);
++
++		/*
++		 * Transizione Phase 1 → Phase 2: il gate resta lockato.
++		 * Il vendor emette peek+relock (tbl_write_lock idempotente),
++		 * NON unlock+lock — evita 1 op superflua.
++		 */
++		saved = b43_phy_ac_tbl_write_lock(dev);
++
++		for (core = 0; core < dev->phy.ac->num_cores; core++) {
++			u16 ta = 0x44 + core * 0x20;	/* core 0=0x44, 1=0x64, 2=0x84 */
++			u16 tb = 0x45 + core * 0x20;
++			u16 rd6[6];
++
++			if (dev->dev->chip_id != 0x4360)
++				b43_actab_read_bulk(dev, 0x15, nvar_off[core],
++						    16, 6, rd6);
++			b43_actab_write_bulk(dev, ta, 0x0008, 16, 6, nshp_a8);
++			b43_actab_write_bulk(dev, tb, 0x0008, 16, 6, nshp_b8);
++		}
++
++		/*
++		 * Phase 2 to 2b transition: the vendor emits unlock, peek and
++		 * relock, three ops, between the two -- unlike the phase 1 to 2
++		 * transition, which has no unlock. The reason is not clear;
++		 * possibly an intermediate gate flush after the heavy writes to
++		 * tables 0x44 and 0x45.
++		 */
++		b43_phy_ac_tbl_write_unlock(dev, saved);
++		saved = b43_phy_ac_tbl_write_lock(dev);
++
++		for (core = 0; core < dev->phy.ac->num_cores; core++) {
++			u16 ta = 0x44 + core * 0x20;
++			u16 tb = 0x45 + core * 0x20;
++
++			b43_actab_write_bulk(dev, ta, 0x0010, 16, 7, nshp_a10);
++			b43_actab_write_bulk(dev, tb, 0x0010, 16, 7, nshp_b10);
++		}
++
++		b43_phy_ac_tbl_write_unlock(dev, saved);
++
++		/*
++		 * Phase 3: per-core commit and readback. The gate stays locked
++		 * from the idempotent unlock of the phase 2b to 3 transition, so
++		 * no tbl_write_lock is needed here.
++		 *
++		 * This iterates over every num_cores -- three on the BCM4352 --
++		 * with no coremask filter: the vendor emits it for every PHY
++		 * channel even on a 2x2 board, where one core is not TX-enabled.
++		 */
++		for (core = 0; core < dev->phy.ac->num_cores; core++) {
++			u16 ta = (u16)(0x44 + core * 0x20);
++			u16 tb = (u16)(0x45 + core * 0x20);
++
++			b43_phy_ac_rxgain_init(dev, core);
++
++			/* Diagnostic readbacks */
++			{
++				u16 rb1, rb10[10], rb8[8];
++
++				b43_actab_read_bulk(dev, tb, 0x0000, 16, 1, &rb1);
++				b43_actab_read_bulk(dev, tb, 0x0020, 16, 10, rb10);
++				b43_actab_read_bulk(dev, ta, 0x0060, 16, 8, rb8);
++				b43_actab_read_bulk(dev, ta, 0x0070, 16, 8, rb8);
++				b43_actab_read_bulk(dev, tb, 0x0060, 16, 8, rb8);
++				b43_actab_read_bulk(dev, tb, 0x0070, 16, 8, rb8);
++			}
++		}
++	}
++
++	b43_phy_ac_post_noise_shaping_rx_regprog(dev);
++
++	/*
++	 * Immediately after the post-noise-shaping block: two diagnostic peeks
++	 * and eight MODs on 0x0324, 0x0330, 0x0321, 0x032d, 0x032a, 0x0336,
++	 * 0x0327 and 0x0333, all with 0x3600 under mask 0xff00. The pattern is
++	 * four (base, base + 0x0c) pairs in the 0x0320-0x0340 range, probably
++	 * per-rate TX configuration. Meaning not identified; transcribed from
++	 * the capture.
++	 */
++	b43_phy_read_log(dev, 0x06dc);
++	b43_phy_read_log(dev, 0x06dd);
++	b43_phy_maskset(dev, 0x0324, (u16)~0xff00, 0x3600);
++	b43_phy_maskset(dev, 0x0330, (u16)~0xff00, 0x3600);
++	b43_phy_maskset(dev, 0x0321, (u16)~0xff00, 0x3600);
++	b43_phy_maskset(dev, 0x032d, (u16)~0xff00, 0x3600);
++	b43_phy_maskset(dev, 0x032a, (u16)~0xff00, 0x3600);
++	b43_phy_maskset(dev, 0x0336, (u16)~0xff00, 0x3600);
++	b43_phy_maskset(dev, 0x0327, (u16)~0xff00, 0x3600);
++	b43_phy_maskset(dev, 0x0333, (u16)~0xff00, 0x3600);
++
++	/*
++	 * rxgain_init() must not be called here. The stock driver does not emit
++	 * it at this point -- noise_shaping phase 3 already emits the MOD 0x?f9
++	 * ops of that pattern -- and it would duplicate the masksets on
++	 * 0x0045/0x0033 plus stride that live in
++	 * post_noise_shaping_core_transition(). It belongs to init, not to a
++	 * channel change.
++	 */
++
++	/* BW select per-core, before reset_cca/afecal. */
++	b43_phy_write(dev, 0x0304, 0x4e51);
++	b43_phy_write(dev, 0x0307, 0x4e51);
++	b43_phy_write(dev, 0x030a, 0x4e51);
++	b43_phy_write(dev, 0x030d, 0x4e51);
++
++	b43_phy_ac_reset_cca(dev);
++	udelay(1);
++
++	b43_radio_2069_afecal(dev);
++
++	/*
++	 * ADC reset (cal-time): run after afecal and
++	 * before the idle-TSSI capture. Includes the 0x70[15:13] TX-power-
++	 * control enable (mid-block).
++	 */
++	b43_phy_ac_adc_reset(dev);
++	b43_phy_ac_txpwrctrl_enable(dev);
++
++	/*
++	 * Idle-TSSI measurement, iteration 1. The REQUIRE preconditions are
++	 * per call: iterations 2 and 3, in post_cal_finalize() and _iter3(),
++	 * run with different MAC states.
++	 */
++	{
++		B43_PHY_AC_REQUIRE_RET(dev,
++				       B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
++				       B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
++				       B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN,
++				       -EINVAL);
++		b43_phy_ac_idle_tssi_meas(dev);
++	}
++
++	/*
++	 * Short settle before txpwrctrl reads the idle-TSSI result. The trace
++	 * shows a ~35 ms gap here, a brief busy-wait suffices.
++	 */
++	udelay(35);
++
++	/*
++	 * idle_tssi to txpwrctrl transition:
++	 *   write 0x0339 = 0x0fff        RX suspend during txpwr calibration
++	 *   MHF slot 4 set 0x0008        firmware config bit
++	 *   MHF slot 0 clear 0x4000      firmware config bit
++	 *   peek 0x019e
++	 *   set bit 1 of 0x019e          relock the table-write gate
++	 * The vendor emits no rx_gate arm here: txpwrctrl_setup() runs with the
++	 * gate released from the idle_tssi phase.
++	 */
++	b43_phy_write(dev, 0x0339, 0x0fff);
++	b43_phy_ac_shm_readback_block(dev);
++	/*
++	 * SPUWKUP, il pre-wakeup del sintetizzatore in microsecondi. La cella e'
++	 * M_SYNTHPU_DLY, 0x4a*2, e la costante e' per tipo di PHY: brcmsmac ne
++	 * porta quattro -- 3700 per A-PHY, 1050 per B-PHY, 2048 per N-PHY rev>=3,
++	 * 300 per LCN -- e le sceglie in brcms_b_upd_synthpu(). 512 e' il membro
++	 * AC della stessa famiglia, ed e' cosi' che va letto: non un numero
++	 * trascritto ma una costante per PHY, come il 2048 dell'N-PHY.
++	 *
++	 * b43 qui sbaglia due volte: applica il valore B-PHY a tutto
++	 * (b43_set_synth_pu_delay(), 1050) e aggiunge un caso adhoc/idle a 500
++	 * che in brcmsmac non esiste. Vedi il TODO nella serie patches/.
++	 */
++	b43_shm_write16(dev, B43_SHM_SHARED, 0x0094, 512);
++	b43_phy_ac_mhf_maskset(dev, 4, (u16)~0x0008, 0x0008);
++	/*
++	 * RFATT, subito dopo il write-through di HOSTF5 che la chiamata sopra
++	 * provoca. Valore trascritto: 0x0480 su tutti e 26 i segmenti a freddo
++	 * del d6220, una volta per segmento, e lo stesso sul DSL nella stessa
++	 * posizione. Costante su canale e larghezza, quindi non c'e' una
++	 * dipendenza da derivare; a cosa serva su un AC-PHY non e' noto.
++	 */
++	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_RFATT, 0x0480);
++	/*
++	 * Read-only scan of the two direct-map tables, sixteen entries each,
++	 * closed by the read of 0x0056. No value to reproduce, and what
++	 * consumes the result is unknown -- a scan to find out which per-rate
++	 * blocks exist would have this shape.
++	 */
++	for (off = B43_AC_RT_DIRMAP_A; off <= B43_AC_RT_DIRMAP_A + 0x1e; off += 2) {
++		u16 v = b43_shm_read16(dev, B43_SHM_SHARED, off);
++		unsigned int k;
++
++		for (k = 0; k < ARRAY_SIZE(b43_phy_ac_ofdm_dirmap); k++)
++			if (B43_AC_RT_DIRMAP_A +
++			    b43_phy_ac_ofdm_dirmap[k] * 2 == off)
++				dev->phy.ac->rate_ptr[k] = v;
++	}
++	for (off = B43_AC_RT_DIRMAP_B; off <= B43_AC_RT_DIRMAP_B + 0x1e; off += 2)
++		b43_shm_read16(dev, B43_SHM_SHARED, off);
++	b43_shm_read16(dev, B43_SHM_SHARED, 0x0056);
++	/*
++	 * 0x10f4-0x14b2 zeroed, 480 words. In the blob this is a table load
++	 * from rodata and the table is all zeros, so the loop replaces it
++	 * without losing anything. Once per attach, immediately after RFATT,
++	 * and the same 480 zero words on every segment checked, at every
++	 * channel and width.
++	 */
++	/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
++	 *   12311-12790]
++	 * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
++	 *   7998-8477]
++	 */
++	B43_AC_BLOCK("shm_zero_10f4");
++	for (off = 0x10f4; off <= 0x14b2; off += 2)
++		b43_shm_write16(dev, B43_SHM_SHARED, off, 0x0000);
++	/*
++	 * Second zeroing, attached to the first: 68 words from 0x05e0 to
++	 * 0x0666, identical on every segment checked. The first ten fall in the
++	 * KEYIDXBLOCK block that b43.h declares the core's, but the vendor
++	 * writes them in this run and nowhere else -- each cell appears exactly
++	 * once in the capture -- so the run is reproduced whole and the
++	 * perimeter of compare.py is restricted accordingly.
++	 */
++	/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
++	 *   12791-12858]
++	 * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
++	 *   8478-8545]
++	 */
++	B43_AC_BLOCK("shm_zero_05e0");
++	for (off = 0x05e0; off <= 0x0666; off += 2)
++		b43_shm_write16(dev, B43_SHM_SHARED, off, 0x0000);
++	/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
++	 *   12859-13592]
++	 * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
++	 *   8546-9281]
++	 */
++	B43_AC_BLOCK("shm_mac_config");
++	b43_phy_ac_mhf_maskset(dev, 0, (u16)~0x4000, 0);
++	b43_phy_ac_shm_mac_config_block(dev);
++	/*
++	 * Second half of the poll with a single pass: no head, no sweep and no
++	 * tail.
++	 */
++	b43_phy_ac_wd_stats_poll_opt(dev, false, 1, true);
++	/*
++	 * Invariant across all 26 segments. Between these and the poll below,
++	 * the capture has a TPL.RAMW, which is the core's template RAM.
++	 */
++	b43_shm_write16(dev, B43_SHM_SHARED, 0x018a, 0xffce);
++	b43_shm_write16(dev, B43_SHM_SHARED, 0x018c, 0xffba);
++	b43_phy_ac_wd_stats_poll_opt(dev, true, 0, true);
++	/*
++	 * After the sweep and after the four CCK blocks that are still not
++	 * understood.
++	 */
++	b43_phy_ac_chainmask_block(dev);
++	b43_phy_ac_prb_rsp_rate_po(dev);
++	b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
++	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
++
++	b43_phy_ac_txpwrctrl_setup(dev, channel->center_freq);
++
++	/*
++	 * Transition between the first and second txpwrctrl_setup(): 27 ops that
++	 * release the gate, enable TX power control, restore the per-core
++	 * current index, wake the MAC so the firmware picks up the new config,
++	 * then suspend it again.
++	 */
++	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);           /* unlock */
++	b43_phy_maskset(dev, 0x0070, (u16)~0xe000, 0xe000);      /* TX power ctrl enable */
++	/*
++	 * The gain-word pair only appears from the second bring-up on: on the
++	 * first, the stock driver emits 0x0070 and then goes straight to
++	 * 0x0678/0x0878, while on a later channel setup the pair is there. This
++	 * holds for this site and for adc_reset(), but not for the tail of
++	 * rxiqcal_finalize(), which always emits it.
++	 */
++	if (!(dev->phy.ac->status_mask & B43_PHY_AC_STATE_FIRST_BRINGUP)) {
++		b43_phy_maskset(dev, 0x0644, (u16)~0x007f, 0x0014); /* c0 */
++		b43_phy_maskset(dev, 0x0844, (u16)~0x007f, 0x0014); /* c1 */
++	}
++	b43_phy_maskset(dev, 0x0678, (u16)~0x0004, 0);           /* clr bit 2 c0 */
++	b43_phy_maskset(dev, 0x0878, (u16)~0x0004, 0);           /* clr bit 2 c1 */
++	b43_phy_ac_mhf_maskset(dev, 3, (u16)~0x0040, 0x0040);    /* MHF3 set bit 6 */
++	b43_phy_ac_ofdm_pctl1_readback(dev);
++	/*
++	 * Invariant across all 26 segments; what they are for is unknown.
++	 * Only the first of the map's two passes carries them.
 +	 */
 +	/*
-+	 * Le calibrazioni post-canale non sono qui: le invoca il chiamante,
-+	 * come in b43 fa il core dopo il ritorno di b43_switch_channel(). Sono
-+	 * centinaia di op, e tenerle in coda a questa funzione impedisce di
-+	 * inserire fra le due fasi la configurazione BSS che il core scrive.
++	 * PRMAXTIME a zero, cioe' timeout infinito per la probe response del
++	 * firmware. Non e' un valore trascritto: e' quello che b43 scrive in
++	 * b43_chip_init() (main.c:3307). b43 poi lo riporta a 1 in
++	 * b43_wireless_core_init() per spegnere l'offload, e quel secondo
++	 * write la cattura non lo ha -- vedi il TODO post-WIP sull'offload in
++	 * docs/retrace-todo.md.
 +	 */
-+	return ret;
++	b43_shm_write16(dev, B43_SHM_SHARED, 0x0074, 0x0000);
++	b43_shm_write16(dev, B43_SHM_SHARED, 0x0082, 0x2710);
++	b43_shm_write16(dev, B43_SHM_SHARED, 0x00ba, 0xffff);
++	b43_shm_write16(dev, B43_SHM_SHARED, 0x003c, 0x000a);
++	b43_phy_ac_chainmask_block(dev);
++	b43_phy_ac_basic_rate_map(dev);
++	b43_maccontrol_set(dev, ~0x00100000u, 0);                /* clr bit 20 */
++	b43_maccontrol_set(dev, ~0x01c00000u, 0);                /* clr bits 22-24 */
++	b43_mac_enable(dev);
++	/*
++	 * The four PWRIND_BLKS cells preceding the 0x0308 that
++	 * crs_note_noise() samples, read immediately after the MAC is
++	 * re-enabled. Reads only, and nothing here consumes the value -- what
++	 * the vendor wants them for is unknown.
++	 */
++	for (off = 0x0300; off <= 0x0306; off += 2)
++		b43_shm_read16(dev, B43_SHM_SHARED, off);
++	b43_phy_ac_wd_stats_poll_opt(dev, true, 0, true);
++	/*
++	 * MHF4 bit 15: alzato al primo bring-up,
++	 * abbassato su un channel setup successivo.
++	 */
++	b43_phy_ac_mhf_maskset(dev, 4, (u16)~0x8000,
++			       (dev->phy.ac->status_mask &
++				B43_PHY_AC_STATE_FIRST_BRINGUP) ? 0x8000 : 0);
++	/*
++	 * MHF1 bit 0: abbassato al primo bring-up, alzato su un channel
++	 * setup successivo -- polarita' opposta a MHF4 bit 15 sopra.
++	 */
++	b43_phy_ac_mhf_maskset(dev, 1, (u16)~0x0001,
++			       (dev->phy.ac->status_mask &
++				B43_PHY_AC_STATE_FIRST_BRINGUP) ? 0 : 0x0001);
++	b43_mac_suspend(dev);
++	/*
++	 * Invariant across all 26 segments of the cold sweep; what it is for is
++	 * unknown.
++	 */
++	b43_shm_write16(dev, B43_SHM_SHARED, 0x007c, 0x0320);
++	b43_phy_ac_mhf_maskset(dev, 3, (u16)~0x0020, 0x0020);    /* MHF3 set bit 5 */
++	b43_mac_enable(dev);
++	/*
++	 * Depends on the width alone -- 0x0f0f at 20 and 80 MHz, 0x0303 at 40
++	 * -- and the two bytes are always equal, so it is one value replicated
++	 * over two halves. That 0x0f becomes 0x03 at 40 MHz is a quarter and
++	 * not a half, and is not explained.
++	 */
++	b43_shm_write16(dev, B43_SHM_SHARED, 0x005a,
++			(dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_40)
++				? 0x0303 : 0x0f0f);
++	b43_phy_maskset(dev, 0x0042, (u16)~0x8000, 0x8000);      /* set bit 15 */
++	b43_phy_ac_mhf_maskset(dev, 1, (u16)~0x0020, 0x0020);    /* MHF1 set bit 5 */
++	b43_mac_suspend(dev);
++	b43_phy_ac_wd_stats_poll_opt(dev, true, 0, true);
++	b43_phy_ac_basic_rate_map(dev);
++
++	/*
++	 * Two things the vendor emits after this point are the caller's and not
++	 * this function's.
++	 *
++	 * The unconditional mac_enable: it is not the release of what this
++	 * function acquired, it is a precondition of the post-channel
++	 * calibrations, which run with the MAC active and require it. Since the
++	 * caller invokes those, the enable is its business too -- and leaving
++	 * it out keeps the window between the two phases free, which is where
++	 * the core writes the BSS configuration with the MAC still suspended.
++	 *
++	 * The calibrations themselves -- post_cal_finalize() for iterations 2
++	 * and 3, the 24 rxiqcal iterations, the rxcal AFE, the two txpwr rounds
++	 * with their RX-IQ measurement and the gainctrl_final loop, the final
++	 * RX-IQ teardown: hundreds of ops, invoked by the caller the way the
++	 * core does after b43_switch_channel() returns.
++	 */
++	return 0;
 +}
 +
 +/* R/W ops */
@@ -11149,7 +11194,7 @@ index 756cd44..3214f02 100644
 +	(void)b43_phy_ac_farrow_vals_432x_media_a1;
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.h b/drivers/net/wireless/broadcom/b43/phy_ac.h
-index 02eb6c0..3db402e 100644
+index 02eb6c0..2b03f93 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.h
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.h
 @@ -4,6 +4,11 @@
@@ -11211,7 +11256,7 @@ index 02eb6c0..3db402e 100644
  #define B43_PHY_AC_C1_CLIP			0x6d4
  #define  B43_PHY_AC_C1_CLIP_DIS			0x4000
  #define B43_PHY_AC_C2_CLIP			0x8d4
-@@ -31,9 +65,658 @@
+@@ -31,9 +65,679 @@
  #define B43_PHY_AC_C3_CLIP			0xad4
  #define  B43_PHY_AC_C3_CLIP_DIS			0x4000
  
@@ -11487,6 +11532,10 @@ index 02eb6c0..3db402e 100644
 +	 * ticks the periodic watchdog lands on within it (0xffff for none).
 +	 * Both stand in for a clock the trace harness does not have; see
 +	 * b43_phy_ac_rxiqcal_finalize().
++	 *
++	 * Zero means no phase, and that is the live-driver case: nothing in b43
++	 * sets these, so switch_channel() emits no watchdog turns and the turns
++	 * arrive from b43_phy_ac_op_pwork_15sec() where they belong.
 +	 */
 +	u16 probe_ticks;
 +	u16 probe_watchdog_tick[2];
@@ -11541,6 +11590,15 @@ index 02eb6c0..3db402e 100644
 +	 * three RFSEQ gain rows 0x0100/0x0103/0x0106 + core, read by
 +	 * rxgain_config_readback(), written back by rxiq_teardown_apply_defaults().
 +	 */
++	/*
++	 * Cal state saved in block D of rxiqcal_finalize() and written back by
++	 * b43_phy_ac_bss_up(), half a second later in the captures: the LO DAC
++	 * readback of radio 0x?002-0x?005, and the TX IQ/LO coefficients of
++	 * the IQLOCAL table (0x000c) per core at 0x60 + 4*core -- {a, b} at
++	 * +0/+1 and the LO leakage word at +2, two signed bytes.
++	 */
++	u16 lo_dac[2][4];
++	u16 txiqlo_coef[2][3];
 +	u16 rxgain_cfg_saved[B43_PHY_AC_MAX_CORES][26];
 +	u16 rfseq_gain_saved[B43_PHY_AC_MAX_CORES][3];
 +	/*
@@ -11638,7 +11696,8 @@ index 02eb6c0..3db402e 100644
 +	bool mhf_writethrough;
 +	/*
 +	 * Puntatori dei blocchi per-rate degli otto rate OFDM, presi durante la
-+	 * scansione delle direct-map in set_channel(). Il vendor non li rilegge
++	 * scansione delle direct-map in op_switch_channel(). Il vendor non li
++	 * rilegge
 +	 * dove costruisce la mappa dei basic rate -- quel blocco e' di sole
 +	 * scritture -- quindi li tiene in cache e qui si fa lo stesso.
 +	 */
@@ -11767,6 +11826,13 @@ index 02eb6c0..3db402e 100644
 +void b43_phy_ac_rxiq_teardown_apply_defaults(struct b43_wldev *dev);
 +void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev);
 +/*
++ * The bss-up burst the vendor emits ~0.5 s after the probe phase: per-rate
++ * power, TX power LUTs, the cal coefficient write-back, MAC/GPIO, the analog
++ * arm and the PMU release. Not part of switch_channel; no b43 hook is wired to
++ * it yet, see the function's comment and docs/retrace-todo.md.
++ */
++void b43_phy_ac_bss_up(struct b43_wldev *dev);
++/*
 + * L'enable del MAC e le calibrazioni post-canale le invoca il chiamante di
 + * op_switch_channel, come in b43 fa il core dopo b43_switch_channel(): tenerle
 + * in coda alla callback impedirebbe di inserire fra le due fasi del setup la
@@ -11849,7 +11915,7 @@ index 02eb6c0..3db402e 100644
 +/*
 + * Block markers, for when a function is too coarse. A function-level
 + * [capture-ref: ...] marker collapses every stretch of the capture a long
-+ * function accounts for into one interval, and set_channel() alone covers
++ * function accounts for into one interval, and op_switch_channel() alone covers
 + * about forty distinct sections. B43_AC_BLOCK("name") names the section that
 + * starts there, so anchors.py can write a marker for it: the granularity is
 + * chosen per case, by hand, where a section is worth locating -- not per op,
@@ -11872,10 +11938,10 @@ index 02eb6c0..3db402e 100644
  #endif /* B43_PHY_AC_H_ */
 diff --git a/drivers/net/wireless/broadcom/b43/radio_2069.c b/drivers/net/wireless/broadcom/b43/radio_2069.c
 new file mode 100644
-index 0000000..be0fc02
+index 0000000..69debef
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/radio_2069.c
-@@ -0,0 +1,1585 @@
+@@ -0,0 +1,1559 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +/*
 + * Broadcom B43 wireless driver 2069 radio — per-channel tuning table, lookup,
@@ -12934,30 +13000,6 @@ index 0000000..be0fc02
 +#define R2069_AFE_CAL_CLK	0x121	/* [12] per-core cal clock enable */
 +#define R2069_AFE_CAL_CTRL	0x122	/* [3:0] cal-enable bits */
 +#define R2069_AFE_CAL_STAT	0x144	/* [1]=done (1st read) [0]=valid (2nd) */
-+/*
-+ * AFE_CAL_CTRL config word, over which the enable nibble 0x000f is set and
-+ * then dropped. It is NOT fixed, though it was written here as if it were: the
-+ * top bits depend on the bandwidth.
-+ *
-+ *   20 MHz  0x5830      40 MHz  0x5030      80 MHz  0x4230
-+ *
-+ * which is 0x4030 in common plus 0x1800, 0x1000 and 0x0200. What that field
-+ * selects is not known; the three values are read off the cold sweep and each
-+ * is the same on two different channels of its width, so it does not depend on
-+ * the channel.
-+ */
-+static u16 r2069_afecal_cfg(struct b43_wldev *dev)
-+{
-+	switch (dev->phy.chandef->width) {
-+	case NL80211_CHAN_WIDTH_80:
-+		return 0x4230;
-+	case NL80211_CHAN_WIDTH_40:
-+		return 0x5030;
-+	default:
-+		return 0x5830;
-+	}
-+}
-+
 +static inline void r2069_mod(struct b43_wldev *dev, u16 reg, u16 mask, u16 val)
 +{
 +	b43_radio_maskset(dev, reg, (u16)~mask, val & mask);
@@ -13131,13 +13173,17 @@ index 0000000..be0fc02
 + * Per-core analog-front-end calibration for the 2069 radio.
 + *
 + * Two passes over the active chains, faithful to the d6220 bring-up
-+ * capture: arm every core (route the PHY in, gate the cal
-+ * clock off), settle, then launch every core (gate the clock on, set the
-+ * AFE_CAL_CTRL enable nibble over the bandwidth-dependent config, poll
-+ * done/valid,
-+ * drop the nibble). Completion is two STAT reads per try -- done from the
-+ * first, valid from the second. The post-cal PHY writes are fixed constants,
-+ * not a restore of the arm-time values.
++ * capture: arm every core (save the three gain regs, route the PHY in, gate
++ * the cal clock off), settle, then launch every core (gate the clock on, set
++ * the AFE_CAL_CTRL enable nibble, poll done/valid, drop the nibble, put the
++ * gain regs back). Completion is two STAT reads per try -- done from the
++ * first, valid from the second.
++ *
++ * Both writes of AFE_CAL_CTRL come from its own readback: the vendor writes
++ * <read>|0x000f to arm and <read> to disarm. The word carries a bandwidth
++ * field in its top bits -- 0x5830 at 20 MHz, 0x5030 at 40, 0x4230 at 80 --
++ * which is why it must not be a constant, and taking it from the register
++ * needs no table.
 + * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
 + *   11237-11298]
 + * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -13147,6 +13193,7 @@ index 0000000..be0fc02
 +{
 +	B43_AC_FN();
 +	struct b43_phy_ac *ac = dev->phy.ac;
++	u16 gain_saved[B43_PHY_AC_MAX_CORES][3] = { { 0 } };
 +	unsigned int core;
 +
 +	/* Enable the shared analog cal block (same gate rccal uses). */
@@ -13161,13 +13208,14 @@ index 0000000..be0fc02
 +			continue;
 +
 +		/*
-+		 * The vendor emits three diagnostic peeks of the PHY registers
-+		 * before the arming masksets, once per core. They sample the
-+		 * pre-arm state; nothing consumes the values.
++		 * The three gain regs the arming masksets below perturb, read
++		 * once per core before touching them: pass 2 writes them back
++		 * from here. Same save/restore over the same three registers
++		 * that b43_phy_ac_idle_tssi_meas() does.
 +		 */
-+		b43_phy_read_log(dev, 0x0739 + pbase);
-+		b43_phy_read_log(dev, 0x073a + pbase);
-+		b43_phy_read_log(dev, 0x0725 + pbase);
++		gain_saved[core][0] = b43_phy_read(dev, 0x0739 + pbase);
++		gain_saved[core][1] = b43_phy_read(dev, 0x073a + pbase);
++		gain_saved[core][2] = b43_phy_read(dev, 0x0725 + pbase);
 +
 +		b43_phy_maskset(dev, 0x0739 + pbase, (u16)~0x0080, 0x0080);
 +		b43_phy_maskset(dev, 0x0725 + pbase, (u16)~0x0004, 0x0004);
@@ -13188,17 +13236,10 @@ index 0000000..be0fc02
 +		/*
 +		 * Clock un-gate is the AFE_CAL_CLK[12] bit toggled by the two
 +		 * r2069_mod above (off in pass 1, on here); the trace confirms
-+		 * it, so no extra gating is needed. The blob then does a bare
-+		 * readback of AFE_CAL_CTRL, once per core, before writing the
-+		 * enable word:
-+		 * the value isn't used for the write (which is absolute,
-+		 * CFG|0x000f, not a RMW), but we route it through _log so the
-+		 * real pre-enable CTRL state is captured on hardware -- the
-+		 * trace only has the address, the value was the hole we're
-+		 * filling. It's surfaced in the per-core b43dbg below.
++		 * it, so no extra gating is needed.
 +		 */
 +		r2069_mod(dev, R2069_AFE_CAL_CLK | rbase, 0x1000, 0x1000);
-+		ctrl = b43_radio_read_log(dev, R2069_AFE_CAL_CTRL | rbase);
++		ctrl = b43_radio_read(dev, R2069_AFE_CAL_CTRL | rbase);
 +
 +		/*
 +		 * The vendor reads STAT only after the arming write, never before:
@@ -13206,7 +13247,7 @@ index 0000000..be0fc02
 +		 * STAT reads, then the CTRL disarm write.
 +		 */
 +		b43_radio_write(dev, R2069_AFE_CAL_CTRL | rbase,
-+				r2069_afecal_cfg(dev) | 0x000f);
++				ctrl | 0x000f);
 +		post[0] = b43_radio_read_log(dev, R2069_AFE_CAL_STAT | rbase);
 +		udelay(5);
 +		post[1] = b43_radio_read_log(dev, R2069_AFE_CAL_STAT | rbase);
@@ -13216,12 +13257,11 @@ index 0000000..be0fc02
 +		       "radio 2069: afecal core %u ctrl=0x%04x stat post(0/1/10us)=0x%04x/0x%04x\n",
 +		       core, ctrl, post[0], post[1]);
 +
-+		b43_radio_write(dev, R2069_AFE_CAL_CTRL | rbase,
-+				r2069_afecal_cfg(dev));
++		b43_radio_write(dev, R2069_AFE_CAL_CTRL | rbase, ctrl);
 +
-+		b43_phy_write(dev, 0x0739 + pbase, 0x0000);
-+		b43_phy_write(dev, 0x073a + pbase, 0x0180);
-+		b43_phy_write(dev, 0x0725 + pbase, 0x0600);
++		b43_phy_write(dev, 0x0739 + pbase, gain_saved[core][0]);
++		b43_phy_write(dev, 0x073a + pbase, gain_saved[core][1]);
++		b43_phy_write(dev, 0x0725 + pbase, gain_saved[core][2]);
 +	}
 +
 +	/* Disable the cal block. */
@@ -13516,7 +13556,7 @@ index 0000000..c50ac9e
 +#endif /* B43_RADIO_2069_H_ */
 diff --git a/drivers/net/wireless/broadcom/b43/rxiqcal_phy_ac.c b/drivers/net/wireless/broadcom/b43/rxiqcal_phy_ac.c
 new file mode 100644
-index 0000000..db1a481
+index 0000000..9448c4f
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/rxiqcal_phy_ac.c
 @@ -0,0 +1,770 @@
@@ -14038,7 +14078,7 @@ index 0000000..db1a481
 + * only reads what the hardware reports, so the results can validate (or
 + * falsify) the register-map and accumulator-layout assumptions.
 + *
-+ * Call point: after txpwr_by_index, before rxgainctrl_regs in set_channel:
++ * Call point: after txpwr_by_index, before rxgainctrl_regs in op_switch_channel:
 + * in the trace it sits between the txpwr tail and the rxgainctrl block.
 + */
 +void b43_phy_ac_rxiq_est_debug(struct b43_wldev *dev)

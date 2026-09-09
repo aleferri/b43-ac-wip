@@ -177,6 +177,32 @@ comportamento meno sbagliato quando il port legge piu' del vendor. Senza
 oracolo ogni lettura e' zero e lo si dice una volta su stderr, perche' una
 traccia con letture inventate sembra buona e non e' una misura.
 
+### L'attach di wl0 va tagliato, e la suite lo rifiuta
+
+Una cattura a freddo dello sweep porta **due** attach in testa: `wl` al
+caricamento fa l'attach di tutti i core, quindi prima di wl1 -- l'AC -- c'e'
+quello di wl0, l'N-PHY a 2.4 GHz. Sono 46 op, e le toglie
+`reverse-tools/strip_other_core.py`:
+
+```sh
+python3 reverse-tools/strip_other_core.py <segmento> /tmp/seg
+python3 reverse-tools/trace_filter.py --retvals /tmp/seg /tmp/oracolo
+```
+
+Qui l'oracolo carica il file intero e non ha una finestra come
+`AC_READ_ORACLE_FROM` in `../unit`, quindi senza il taglio quelle op stanno in
+testa alle code per indirizzo e il driver sotto esame si legge lo stato
+dell'altro core. Misurato sul segmento di riferimento: `UCODEREV` (0x0000) e
+`UCODEPATCH` (0x0002), che `b43_validate_chipaccess()` legge su entrambi i
+core, tornano `0x55aa` e `0xaa55` -- i pattern del self-test di wl0 -- invece
+di `0x03a0` e `0x2715`. Quattro righe su 20866, e il resto della corsa sembra
+buono: `start: 0` in entrambi i casi.
+
+Per questo la suite **rifiuta** e non avvisa. Il testimone e' il confine che
+definisce il taglio, cioe' due coppie `OTP.RDR`/`OTP.INIT` prima della prima
+`PHY.RD 0x0739`; una cattura a caldo o l'oracolo del tick a regime non ne
+hanno nessuna e passano.
+
 ## Gli shim del kernel, fatti
 
 `kernel_shim.c`, codice utente come `trace_out.c`. Tre cose non sono no-op e
@@ -698,7 +724,8 @@ non ha `getenv`, quindi la lettura passa da `b43_test_env_long()` in
 `trace_out.c`, che e' codice utente.
 
 Fuori da ch36 BW20 serve anche `AC_ANY_CHANNEL=1` **al build**, come in
-`../unit`, perche' il guard delle configurazioni validate di `set_channel()`
+`../unit`, perche' il guard delle configurazioni validate di
+`op_switch_channel()`
 altrimenti rifiuta e la probe torna `-95` prima di emettere il bring-up:
 
 ```sh

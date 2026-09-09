@@ -72,10 +72,14 @@ KNOWN = {
              prima=r'^MAC\.MCTRL val=0x1 mask=0x1$',
              max=1, cascata=False,
              motivo="prima coppia suspend+enable fra la MHF (clr 0x4000) e la "
-                    "GPIO della finalize: #28759 arriva 1.37 s dopo la MHF e "
-                    "su un'altra cpu (cpu0 -> cpu1) -- attivita' MAC "
-                    "interlacciata dal contesto up, assente nel warm. Il port "
-                    "non la emette."),
+                    "GPIO della finalize. NON e' rumore del contesto up, come "
+                    "diceva questa voce: e' il suspend interno di una ricarica "
+                    "del beacon, e il port ne emette "
+                    "@beacon_reload_pre. Sui sette segmenti sotto i 5250 MHz "
+                    "quelle bastano e questa regola non scatta; sui diciannove "
+                    "sopra ne resta una senza controparte, due op con la voce "
+                    "sotto, e il residuo e' che la' il vendor ne ha una in piu' "
+                    "di quante il chiamante ne dichiari."),
         dict(pattern=r'^MAC\.MCTRL val=0x1 mask=0x1$',
              dopo=r'^MAC\.MCTRL val=0x0 mask=0x1$',
              dopo2=r'^MAC\.MHF addr=0x0 val=0x0 mask=0x4000$',
@@ -87,7 +91,8 @@ KNOWN = {
              ctx=[(-3, r'^MAC\.MHF addr=0x0 val=0x0 mask=0x4000$')],
              max=1, cascata=False,
              motivo="seconda coppia fra MHF e GPIO: #28761 a +1.29 s dalla "
-                    "prima, stessa evidenza."),
+                    "prima, stessa natura -- e sui 26 segmenti a freddo non "
+                    "scatta mai, perche' quella ricarica il port la emette."),
         dict(pattern=r'^MAC\.MCTRL val=0x1 mask=0x1$',
              dopo=r'^MAC\.MCTRL val=0x0 mask=0x1$',
              prima=r'^GPIO\.OUT val=0x4 mask=0x4',

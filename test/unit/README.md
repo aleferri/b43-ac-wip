@@ -63,7 +63,7 @@ make                     # ch36 BW20, la configurazione validata
 make AC_ANY_CHANNEL=1    # per ogni altro canale o larghezza
 ```
 
-Il guard di `set_channel()` rifiuta tutto cio' che non e' fra le configurazioni
+Il guard di `op_switch_channel()` rifiuta tutto cio' che non e' fra le configurazioni
 validate, salvo il secondo build. Se il port emette poche migliaia di op invece
 di ventimila e' quello, e `gates.sh` lo dice da se'.
 
@@ -292,6 +292,20 @@ che l'harness non compila. Dove servono al confronto sono rispecchiate in
 corrispondente, cosi' che se la patch cambia il doppione diventa sbagliato e il
 confronto lo dice.
 
+### Funzioni del driver che solo l'harness chiama
+
+Distinte dai doppioni sopra: non sono codice del core rispecchiato qui, sono
+funzioni di `src/` che **nessuno in `src/` chiama**. `run_switch_channel()` le
+invoca nell'ordine della cattura: `channel_setup_tail()`, le passate di
+`conf_tx`, `channel_setup_tail2()`, `set_channel_calibrations()` e
+`b43_phy_ac_bss_up()`. `op_switch_channel()` fa il channel setup e ritorna.
+
+Ne segue un limite del punteggio che va tenuto presente leggendolo: il gate
+misura che quelle funzioni **emettono** le op giuste, non che il driver le
+esegua. Su quale hook di b43 vada agganciata ognuna si decide in
+`docs/retrace-todo.md`, e lo strumento che lo misura e' `test/integration`, che
+compila b43 intero ed esegue il probe.
+
 **L'ordine conta piu' del valore**: una sola inversione fa scartare l'op dal
 confronto. Su cold01 l'ordine e' AMT `#443`, chip init `#649-#658`, MAC in
 shared memory `#661-#663`, host flag `#686-#690`, chanspec `#691`.
@@ -309,18 +323,33 @@ del mirror. Due modi:
 A fine run, su stderr, l'oracolo stampa una riga come:
 
 ```
-oracle: 6830 hit, 0 indirizzi senza voce, 0 code esaurite;
-        339 indirizzi noti, 102 non consumati del tutto
+oracle: 7158 hit, 362 indirizzi senza voce, 0 code esaurite;
+        337 indirizzi noti, 5 non consumati del tutto
 ```
 
-Le due che devono essere **zero** sono `indirizzi senza voce` (il port ha letto
-un indirizzo che la cattura non ha) e `code esaurite` (il port ha letto lo
-stesso indirizzo piu' volte di quante la cattura lo abbia). Entrambe
-invalidano il confronto da quel punto in avanti.
+`code esaurite` deve essere **zero**: vuol dire che il port ha letto lo stesso
+indirizzo piu' volte di quante la cattura lo abbia, e da quel punto in avanti
+l'oracolo serve valori di un'altra lettura.
+
+`indirizzi senza voce` conta le **letture** (non gli indirizzi) che sono cadute
+sul mirror perche' la coda per quell'indirizzo era vuota. Non e' zero e non
+deve esserlo: le parole delle tabelle non stanno nella coda della data port ma
+in un oracolo chiavato `(id, offset)`, quindi ogni lettura di `PHY 0x000f` o
+`0x0011` sotto un marcatore `TBL.RD` risulta senza voce anche quando la tabella
+e' servita. Sulla corsa canonica di cold01 sono 343 letture di `0x000f` piu' 19
+di `0x0011`, che fanno esattamente i 362 riportati. Quello che va guardato e'
+il resto: **se il numero non si spiega con la data port, il port ha letto un
+indirizzo che la cattura non ha** e il confronto e' invalido da li' in avanti.
+Il conto si fa cosi':
+
+```sh
+grep -c 'PHY\.RD   addr=0x000f' /tmp/gate.full
+grep -c 'PHY\.RD   addr=0x0011' /tmp/gate.full
+```
 
 `non consumati del tutto` **non** deve essere zero e non e' un difetto:
 l'oracolo carica ogni indirizzo che la cattura legge, compresi quelli che
-legge il core, e il port non li tocca. Sulla corsa canonica di cold01 sono 102.
+legge il core, e il port non li tocca. Sulla corsa canonica di cold01 sono 5.
 
 I read plan espliciti, quelli registrati in `main.c`, devono invece mostrare
 `iter=N/N`: la' un underrun vuol dire che il flow e' terminato in anticipo e un

@@ -337,6 +337,10 @@ struct b43_phy_ac {
 	 * ticks the periodic watchdog lands on within it (0xffff for none).
 	 * Both stand in for a clock the trace harness does not have; see
 	 * b43_phy_ac_rxiqcal_finalize().
+	 *
+	 * Zero means no phase, and that is the live-driver case: nothing in b43
+	 * sets these, so switch_channel() emits no watchdog turns and the turns
+	 * arrive from b43_phy_ac_op_pwork_15sec() where they belong.
 	 */
 	u16 probe_ticks;
 	u16 probe_watchdog_tick[2];
@@ -391,6 +395,15 @@ struct b43_phy_ac {
 	 * three RFSEQ gain rows 0x0100/0x0103/0x0106 + core, read by
 	 * rxgain_config_readback(), written back by rxiq_teardown_apply_defaults().
 	 */
+	/*
+	 * Cal state saved in block D of rxiqcal_finalize() and written back by
+	 * b43_phy_ac_bss_up(), half a second later in the captures: the LO DAC
+	 * readback of radio 0x?002-0x?005, and the TX IQ/LO coefficients of
+	 * the IQLOCAL table (0x000c) per core at 0x60 + 4*core -- {a, b} at
+	 * +0/+1 and the LO leakage word at +2, two signed bytes.
+	 */
+	u16 lo_dac[2][4];
+	u16 txiqlo_coef[2][3];
 	u16 rxgain_cfg_saved[B43_PHY_AC_MAX_CORES][26];
 	u16 rfseq_gain_saved[B43_PHY_AC_MAX_CORES][3];
 	/*
@@ -488,7 +501,8 @@ struct b43_phy_ac {
 	bool mhf_writethrough;
 	/*
 	 * Puntatori dei blocchi per-rate degli otto rate OFDM, presi durante la
-	 * scansione delle direct-map in set_channel(). Il vendor non li rilegge
+	 * scansione delle direct-map in op_switch_channel(). Il vendor non li
+	 * rilegge
 	 * dove costruisce la mappa dei basic rate -- quel blocco e' di sole
 	 * scritture -- quindi li tiene in cache e qui si fa lo stesso.
 	 */
@@ -617,6 +631,13 @@ void b43_phy_ac_radio_iqcal_teardown(struct b43_wldev *dev);
 void b43_phy_ac_rxiq_teardown_apply_defaults(struct b43_wldev *dev);
 void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev);
 /*
+ * The bss-up burst the vendor emits ~0.5 s after the probe phase: per-rate
+ * power, TX power LUTs, the cal coefficient write-back, MAC/GPIO, the analog
+ * arm and the PMU release. Not part of switch_channel; no b43 hook is wired to
+ * it yet, see the function's comment and docs/retrace-todo.md.
+ */
+void b43_phy_ac_bss_up(struct b43_wldev *dev);
+/*
  * L'enable del MAC e le calibrazioni post-canale le invoca il chiamante di
  * op_switch_channel, come in b43 fa il core dopo b43_switch_channel(): tenerle
  * in coda alla callback impedirebbe di inserire fra le due fasi del setup la
@@ -699,7 +720,7 @@ static inline void b43_ac_fn_cleanup(const char *const *fn) { b43_ac_fn_leave(*f
 /*
  * Block markers, for when a function is too coarse. A function-level
  * [capture-ref: ...] marker collapses every stretch of the capture a long
- * function accounts for into one interval, and set_channel() alone covers
+ * function accounts for into one interval, and op_switch_channel() alone covers
  * about forty distinct sections. B43_AC_BLOCK("name") names the section that
  * starts there, so anchors.py can write a marker for it: the granularity is
  * chosen per case, by hand, where a section is worth locating -- not per op,
