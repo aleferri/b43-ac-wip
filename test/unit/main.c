@@ -33,196 +33,8 @@
 
 extern enum nl80211_band b43_test_band;
 
-/* Board profile. Extend when adding more targets (DSL-3580L is identical
- * to D6220 chip-wise; agcombo needs num_cores=3, coremask=0x7). */
-struct board_profile {
-	const char *name;
-	u16 chip_id;
-	u8  radio_rev;
-	u16 radio_ver;
-	u8  phy_rev;
-	u8  num_cores;
-	u8  coremask;
-	u8  rxchain;
-	u8  subband5gver;
-	/* Word raw del blocco FEM/PA, come lette dai dump SROM. */
-	u16 fem_cfg1;
-	u16 fem_cfg2;
-	u16 tssifloor5g[4];
-	/* pa5ga per-core (3 core), 12 u16 = 4 gruppi (5g band) × 3 (a1,b0,b1).
-	 * Dal file NVRAM del router, keys pa5ga0/pa5ga1/pa5ga2. Se tutti 0,
-	 * mount_board lascia pa5ga = 0 (il caller cade sui pwrdet_def).
-	 */
-	u16 pa5ga[3][12];
-	/* maxp5ga per-core (3 core), 4 sub-band u8. NVRAM keys maxp5ga{0,1,2}.
-	 * Drives the per-core max TX index (maxp5ga[grp] - margin). */
-	u8 maxp5ga[3][4];
-	/* mcsbw{20,40}5g{l,m,h}po, NVRAM. Index 0 = 5gl, 1 = 5gm, 2 = 5gh. */
-	u32 mcsbw5g_po[3][3];	/* [sotto-banda][bw20, bw40, bw80] */
-	/* rxgains_5gl per-core (3 core). NVRAM keys rxgains5gelnagaina{0,1,2}
-	 * e rxgains5gtrisoa{0,1,2}. Usati per computare hdr = (elnagain+3)<<1
-	 * e gainctx = ((triso+4)<<1)+2 nel body Phase 3 di noise-shaping. */
-	u8 rxgains_5gl_elnagain[3];
-	u8 rxgains_5gl_triso[3];
-	/* R2069_RCCAL_E/F (radio 0x0414/0x0415) read by rccal in op_init to
-	 * derive lpf_cap = ((F-E)*193)>>8. Per-board because it is an analog
-	 * measurement, not a constant. */
-	u16 rccal_e, rccal_f;
-	/* R2069_RCCAL_G (radio 0x0416), read post-apply: dacbuf_cap =
-	 * (rccal_g & 0x03e0) >> 5. Per-board analog measurement. */
-	u16 rccal_g;
-	/* macaddr dell'NVRAM. Lo consuma emit_core_shm_macaddr(), che sta in
-	 * piedi per il core: e' dato di board, non una costante. */
-	u8 macaddr[6];
-	/* Revisione del core 802.11 e MAC_HW_CAP. Li consuma
-	 * emit_core_shm_chipinit(): b43 li scrive in shared memory al core
-	 * init, il primo da dev->dev->core_rev e il secondo da una lettura
-	 * MMIO di B43_MMIO_MAC_HW_CAP che l'harness non modella. */
-	u16 core_rev;
-	u32 mac_hw_cap;
-};
+#include "../board_profile.h"
 
-/*
- * D6220 SPROM values from router-data/d6220/wl1_nvram.txt:
- *   subband5gver=0x4
- *   pa5ga0=0xff33,0x175b,0xfd32,0xff23,0x1672,0xfd36,0xff25,0x161d,0xfd4b,0xff2d,0x16c3,0xfd3b
- *   pa5ga1=0xff2e,0x1702,0xfd39,0xff23,0x16ae,0xfd30,0xff44,0x180e,0xfd36,0xff36,0x16b0,0xfd55
- *   pa5ga2=0xff6e,0x15dc,0xfd61,0xff59,0x15be,0xfd49,0xff5d,0x15f7,0xfd4a,0xff3d,0x1560,0xfd33
- * Per ch36 (5180 MHz) con subband5gver=4 → grp=0, a1/b0/b1 = pa5ga0[0..2].
- */
-static const struct board_profile PROFILE_D6220 = {
-	.name = "d6220", .chip_id = 0x4352, .radio_rev = 4,
-	/* macaddr=00:00:00:00:00:03 (wl1_nvram.txt) */
-	.macaddr = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x03 },
-	/* WLCOREREV e MACHW_L/H come li scrive il vendor: cold01 #652-#654 */
-	.core_rev = 42, .mac_hw_cap = 0x30518c05,
-	.radio_ver = 0x2069, .phy_rev = 1,
-	.num_cores = 3, .coremask = 0x3, .rxchain = 3,
-	.subband5gver = 0x4,
-	.fem_cfg1     = 0x30a1,
-	.fem_cfg2     = 0x00a1,
-	/* word 96..99 = 0xffff, mascherate 0x03ff: campo non programmato. */
-	.tssifloor5g  = { 0x3ff, 0x3ff, 0x3ff, 0x3ff },
-	.pa5ga = {
-		{ 0xff33, 0x175b, 0xfd32, 0xff23, 0x1672, 0xfd36,
-		  0xff25, 0x161d, 0xfd4b, 0xff2d, 0x16c3, 0xfd3b },
-		{ 0xff2e, 0x1702, 0xfd39, 0xff23, 0x16ae, 0xfd30,
-		  0xff44, 0x180e, 0xfd36, 0xff36, 0x16b0, 0xfd55 },
-		{ 0xff6e, 0x15dc, 0xfd61, 0xff59, 0x15be, 0xfd49,
-		  0xff5d, 0x15f7, 0xfd4a, 0xff3d, 0x1560, 0xfd33 },
-	},
-	/* rxgains5gelnagaina{0,1,2}=3, rxgains5gtrisoa{0,1,2}=6 (NVRAM d6220). */
-	.rxgains_5gl_elnagain = { 3, 3, 3 },
-	.rxgains_5gl_triso    = { 6, 6, 6 },
-	/* No RETVAL in the d6220 capture (older tracer): the observed TXLPF
-	 * write lo=0x50db fixes cap=0xa8, hence F-E=0xdf. Absolute E is taken
-	 * as comparator-A 0x0ac7; only the difference feeds the cap. */
-	.rccal_e = 0x0ac7, .rccal_f = 0x0ba6,
-	/* No RETVAL on d6220: dacbuf_cap 0xe deduced from the observed
-	 * 0x0b2e; rccal_g chosen so (g & 0x3e0)>>5 = 0xe. */
-	.rccal_g = 0x01c0,
-	/* maxp5ga{0,1,2} (NVRAM d6220). */
-	.maxp5ga = {
-		{ 72, 70, 86, 0 },
-		{ 72, 70, 86, 0 },
-		{ 76, 76, 76, 76 },
-		},
-.mcsbw5g_po = {
-		/* mcsbw{20,40,80}5g{l,m,h}po di wl1_nvram.txt */
-		{ 0x20000000, 0x21000000, 0x32222222 },
-		{ 0x11111111, 0x10000000, 0x22222222 },
-		{ 0x98764200, 0x98764200, 0xa8764222 },
-	},
-};
-
-static const struct board_profile PROFILE_AGCOMBO = {
-	.name = "agcombo", .chip_id = 0x4360, .radio_rev = 4,
-	/* macaddr=00:c0:02:01:07:24 (agcombo_nvram.txt) */
-	.macaddr = { 0x00, 0xc0, 0x02, 0x01, 0x07, 0x24 },
-	.core_rev = 42, .mac_hw_cap = 0x30518c05,
-	/*
-	 * Blocco FEM/PA sintetizzato dalla NVRAM agcombo con le maschere
-	 * canoniche (SROM11_FEM_CFG1/2): femctrl=6 pdgain=10 tssiposslope=1,
-	 * il resto a zero -- gli stessi valori del d6220, quindi stesse word.
-	 * Il dump SROM agcombo in repo e' tutto a zero, quindi la sorgente e'
-	 * la NVRAM. Senza questo il guard su femctrl scattava e la tabella di
-	 * controllo FEM non veniva scritta su questa board.
-	 */
-	.fem_cfg1 = 0x30a1, .fem_cfg2 = 0x00a1,
-	.tssifloor5g = { 0x3ff, 0x3ff, 0x3ff, 0x3ff },
-	.radio_ver = 0x2069, .phy_rev = 1,
-	.num_cores = 3, .coremask = 0x7, .rxchain = 7,
-	/* Same 5gl values as d6220 (NVRAM agcombo). */
-	.rxgains_5gl_elnagain = { 3, 3, 3 },
-	.rxgains_5gl_triso    = { 6, 6, 6 },
-	/* Real E/F from the agcombo rescan RETVALs -> cap=0xae. */
-	.rccal_e = 0x0adc, .rccal_f = 0x0bc4,
-	.rccal_g = 0x01a8,  /* -> dacbuf_cap 0xd */
-	/* maxp5ga{0,1,2} (NVRAM agcombo). */
-	.maxp5ga = {
-		{ 74, 74, 82, 82 },
-		{ 74, 74, 82, 82 },
-		{ 74, 74, 82, 82 },
-		},
-.mcsbw5g_po = {
-		/*
-		 * mcsbw{20,40,80}5g{l,m,h}po di agcombo_nvram.txt, che li porta
-		 * in esadecimale. Su questa board le tre larghezze hanno la
-		 * stessa word: 5gl e 5gm a 0x88644220, 5gh a 0xcca88440.
-		 */
-		{ 0x88644220, 0x88644220, 0x88644220 },
-		{ 0x88644220, 0x88644220, 0x88644220 },
-		{ 0xcca88440, 0xcca88440, 0xcca88440 },
-	},
-};
-
-/*
- * DSL-3580L: BCM4352 radio (like the D6220) on a BCM6362 SoC, wl 6.30.102.7.
- * NVRAM from router-data/dsl3580l/wl1_nvram.txt: aa5g/txchain/rxchain=3
- * (coremask 0x3, two active cores like the D6220), subband5gver=0x4,
- * maxp5ga{0,1,2}=76,76,76,76, rxgains 5gl elnagain=3/triso=6, pa5ga per-core
- * below. Same chip as the D6220 but older wl, so it is the version witness.
- */
-static const struct board_profile PROFILE_DSL = {
-	.name = "dsl", .chip_id = 0x4352, .radio_rev = 4,
-	.radio_ver = 0x2069, .phy_rev = 1,
-	.num_cores = 3, .coremask = 0x3, .rxchain = 3,
-	.subband5gver = 0x4,
-	.fem_cfg1     = 0x30a1,
-	.fem_cfg2     = 0x00a1,
-	/* word 96..99 = 0xffff, mascherate 0x03ff: campo non programmato. */
-	.tssifloor5g  = { 0x3ff, 0x3ff, 0x3ff, 0x3ff },
-	.pa5ga = {
-		{ 0xff4d, 0x1690, 0xfd24, 0xff59, 0x1710, 0xfd28,
-		  0xff52, 0x16fd, 0xfd27, 0xff55, 0x1711, 0xfd20 },
-		{ 0xff3f, 0x1607, 0xfd1f, 0xff42, 0x1690, 0xfd21,
-		  0xff55, 0x1772, 0xfd1e, 0xff5d, 0x178d, 0xfd1e },
-		{ 0xff5a, 0x1729, 0xfd25, 0xff62, 0x175c, 0xfd30,
-		  0xff48, 0x1720, 0xfd15, 0xff54, 0x1741, 0xfd21 },
-	},
-	.rxgains_5gl_elnagain = { 3, 3, 3 },
-	.rxgains_5gl_triso    = { 6, 6, 6 },
-	/* Real E/F from the DSL down-to-bss RETVALs -> cap=0xb6 (lo=0x6cdb). */
-	.rccal_e = 0x0b39, .rccal_f = 0x0c2b,
-	.rccal_g = 0x0186,  /* -> dacbuf_cap 0xc */
-	.maxp5ga = {
-		{ 76, 76, 76, 76 },
-		{ 76, 76, 76, 76 },
-		{ 76, 76, 76, 76 },
-		},
-.mcsbw5g_po = {
-		/*
-		 * mcsbw{20,40,80}5g{l,m,h}po di wl1_nvram.txt, che li porta in
-		 * decimale. Come sull'agcombo le tre larghezze hanno la stessa
-		 * word; 5gm e 5gh coincidono anche fra loro.
-		 */
-		{ 0xeca86420, 0xeca86420, 0xeca86420 },
-		{ 0xcca86420, 0xcca86420, 0xcca86420 },
-		{ 0xcca86420, 0xcca86420, 0xcca86420 },
-	},
-};
-
-/* One-shot mock storage. Lives for the whole run. */
 static struct b43_phy_ac       g_ac;
 static struct b43_wl           g_wl;
 static struct ieee80211_hw     g_hw;
@@ -269,6 +81,7 @@ static void plan_rxiq_poll(const char *board, bool first_init)
 }
 
 /* Profilo montato, per i pochi punti che servono a modellare il core. */
+
 static const struct board_profile *g_profile;
 
 static void mount_board(const struct board_profile *p)
@@ -299,63 +112,7 @@ static void mount_board(const struct board_profile *p)
 		g_ac.lpf_cap1 = cap;
 	}
 
-	memset(&g_sprom, 0, sizeof(g_sprom));
-	g_sprom.rxchain = p->rxchain;
-	g_sprom.subband = 0;
-	g_sprom.subband5gver = p->subband5gver;
-	/*
-	 * Decodifica del blocco FEM/PA dalle word raw, con le stesse maschere
-	 * che bcma_sprom_extract_r11 usa (SROM11_FEM_CFG1/2, offset 0x0AA/0x0AC).
-	 * Prima questo harness portava femctrl come valore cotto a 6: una
-	 * finzione che mascherava il fatto che nessuno lo popolava davvero.
-	 */
-	{
-		u16 c1 = p->fem_cfg1, c2 = p->fem_cfg2;
-
-		g_sprom.tssiposslope2g = c1 & 0x0001;
-		g_sprom.epagain2g      = (c1 & 0x000e) >> 1;
-		g_sprom.pdgain2g       = (c1 & 0x01f0) >> 4;
-		g_sprom.tworangetssi2g = (c1 & 0x0200) >> 9;
-		g_sprom.papdcap2g      = (c1 & 0x0400) >> 10;
-		g_sprom.femctrl        = (c1 & 0xf800) >> 11;
-		g_sprom.tssiposslope5g = c2 & 0x0001;
-		g_sprom.epagain5g      = (c2 & 0x000e) >> 1;
-		g_sprom.pdgain5g       = (c2 & 0x01f0) >> 4;
-		g_sprom.tworangetssi5g = (c2 & 0x0200) >> 9;
-		g_sprom.papdcap5g      = (c2 & 0x0400) >> 10;
-		g_sprom.gainctrlsph    = (c2 & 0xf800) >> 11;
-	}
-	memcpy(g_sprom.tssifloor5g, p->tssifloor5g,
-	       sizeof(g_sprom.tssifloor5g));
-	memcpy(g_sprom.rxgains_5gl.elnagain, p->rxgains_5gl_elnagain,
-	       sizeof(g_sprom.rxgains_5gl.elnagain));
-	memcpy(g_sprom.rxgains_5gl.triso, p->rxgains_5gl_triso,
-	       sizeof(g_sprom.rxgains_5gl.triso));
-	for (unsigned int c = 0; c < 3; c++)
-		memcpy(g_sprom.core_pwr_info[c].pa5ga, p->pa5ga[c],
-		       sizeof(g_sprom.core_pwr_info[c].pa5ga));
-	for (unsigned int c = 0; c < 3; c++)
-		memcpy(g_sprom.core_pwr_info[c].maxp5ga, p->maxp5ga[c],
-		       sizeof(g_sprom.core_pwr_info[c].maxp5ga));
-	for (unsigned int b = 0; b < 3; b++) {
-		u32 *dst[3][3] = {
-			{ &g_sprom.mcsbw205glpo, &g_sprom.mcsbw405glpo,
-			  &g_sprom.mcsbw805glpo },
-			{ &g_sprom.mcsbw205gmpo, &g_sprom.mcsbw405gmpo,
-			  &g_sprom.mcsbw805gmpo },
-			{ &g_sprom.mcsbw205ghpo, &g_sprom.mcsbw405ghpo,
-			  &g_sprom.mcsbw805ghpo },
-		};
-		unsigned int w;
-
-		/*
-		 * Il profilo sta al posto di bcma: sull'hardware li riempie
-		 * bcma_sprom_extract_r11() di patches/0001, dai word 176/178/180
-		 * e dai due blocchi successivi a passo 8.
-		 */
-		for (w = 0; w < 3; w++)
-			*dst[b][w] = p->mcsbw5g_po[b][w];
-	}
+	board_profile_to_sprom(p, &g_sprom);
 
 	g_bcma_dev.bus = &g_bcma_bus;
 	g_bus_dev.bus_type = B43_BUS_BCMA;
@@ -1705,6 +1462,41 @@ static void run_full(void)
 	 * all'ordinamento della testa dell'attach, cioe' alla doppia
 	 * programmazione dell'analogico di docs/retrace-todo.md.
 	 */
+	/*
+	 * Le tre entrate che b43 fa prima di b43_phy_init(): il reset
+	 * dell'attach (main.c:1455 da 5650), la coda dell'attach (5664) e il
+	 * reset del core-init (1455 da 4956). Nessuna e' quella fredda -- il
+	 * preambolo lo porta l'entrata di b43_phy_init() -- e nessuna deve
+	 * emettere niente: nella cattura il banco AFE_ON compare tre volte in
+	 * tutto (#557, #576 nel preambolo e #36534 nel bss-up) e il banco
+	 * AFE_DOWN una sola, a #1262, che e' mode_init.
+	 *
+	 * Stanno qui perche' senza di loro il difetto non era visibile:
+	 * l'harness chiamava switch_analog una volta sola, la fredda, e la
+	 * traccia tornava mentre b43 intero emetteva 62 op in piu' e svuotava
+	 * le code dell'oracolo sui dieci registri di salvataggio prima che il
+	 * preambolo vero le usasse. Se una di queste tre ricomincia a emettere,
+	 * il confronto lo dice subito.
+	 */
+	{
+		const struct cfg80211_chan_def *saved = g_wldev.phy.chandef;
+
+		/*
+		 * Senza canale, come le vede b43: phy->chandef lo assegna
+		 * b43_phy_init() (phy_common.c:93) sulla riga prima della sua
+		 * switch_analog, e nessuno prima. Il preambolo pesca proprio
+		 * quello per riconoscere l'entrata giusta, quindi tenerlo
+		 * assegnato qui faceva cadere il preambolo sulla prima entrata
+		 * e non sulla quarta.
+		 */
+		g_wldev.phy.chandef = NULL;
+		b43_phyops_ac.switch_analog(&g_wldev, true);
+		b43_phyops_ac.switch_analog(&g_wldev, false);
+		b43_phyops_ac.switch_analog(&g_wldev, true);
+		g_wldev.phy.chandef = saved;
+	}
+
+	/* L'entrata di b43_phy_init(), quella che porta il preambolo. */
 	b43_phyops_ac.switch_analog(&g_wldev, true);
 	/*
 	 * L'ordine e' quello della traccia, e conta piu' dei valori: una sola
@@ -1735,9 +1527,7 @@ int main(int argc, char **argv)
 	const char *flow  = (argc > 1) ? argv[1] : "full";
 	const char *board = (argc > 2) ? argv[2] : "d6220";
 
-	const struct board_profile *p = &PROFILE_D6220;
-	if (!strcmp(board, "agcombo")) p = &PROFILE_AGCOMBO;
-	else if (!strcmp(board, "dsl")) p = &PROFILE_DSL;
+	const struct board_profile *p = board_profile_lookup(board);
 
 	fprintf(stderr, "test: board=%s flow=%s\n", p->name, flow);
 	mount_board(p);
@@ -2042,20 +1832,50 @@ int main(int argc, char **argv)
 		 * sono "a freddo" e scrivono la ladder bumped (+4); dalla
 		 * terza il bump sparisce. Atteso, ch36 BW20 (idx 1 -> 48):
 		 * cold 52 (=0x34, il valore d'attach osservato), poi 48 (=0x30).
+		 *
+		 * Il ciclo 1 calcola la stessa soglia del ciclo 0, e l'hook
+		 * deve saltare la scrittura invece di riemettere gli otto
+		 * registri: e' quello che fa il vendor, che riscrive solo
+		 * quando l'indice della scala si muove. Leggere il mirror non
+		 * lo distinguerebbe -- il valore e' lo stesso in entrambi i
+		 * casi -- quindi prima di quel ciclo si semina un sentinella e
+		 * si controlla che resti.
 		 */
-		static const u8 want[3] = { 0x34, 0x34, 0x30 };
+		static const u8 want[3] = { 0x34, 0xff, 0x30 };
 		unsigned int k;
 		int fails = 0;
 
+		/*
+		 * Lo stato che la catena avrebbe lasciato, e che questo flow non
+		 * produce: sono le due cose che AC_CRS_INDEX e AC_CRS_SUBBAND
+		 * seminano per gli altri flow. Il canale c'e' -- lo imposta il
+		 * preambolo -- ma il sub-band in forza parte dalla sentinella
+		 * 0xff, che e' come dire "mai visto" e forza il riazzeramento
+		 * dell'indice al primo giro, e l'indice lo muove il campione di
+		 * rumore, che latcha il watchdog: questo flow non lo fa girare.
+		 * Senza i due, la catena girava sull'indice 0 e il self-test
+		 * falliva tutti e tre i cicli, misurando il primo scalino della
+		 * scala mentre le attese sono quelle del secondo.
+		 *
+		 * Zero e' il gruppo pa5g di ch36 con subband5gver=4, cioe' il
+		 * sub-band che il channel setup avrebbe lasciato in forza.
+		 */
+		g_ac.crs_subband = 0;
+		g_ac.crs_index = 1;
 		g_ac.cal_cycles = 0;
+
 		for (k = 0; k < 3; k++) {
 			u8 got;
+
+			if (k == 1)
+				b43_test_mirror_phy_set(0x0324, 0x00ff);
 
 			b43_phyops_ac.recalc_txpower(&g_wldev, false);
 			got = b43_test_mirror_phy_get(0x0324) & 0xff;
 			fprintf(stderr,
-				"crsmin: ciclo %u  CRS byte-basso=0x%02x atteso=0x%02x  %s\n",
-				k, got, want[k], got == want[k] ? "OK" : "FAIL");
+				"crsmin: ciclo %u  CRS byte-basso=0x%02x atteso=0x%02x  %s%s\n",
+				k, got, want[k], got == want[k] ? "OK" : "FAIL",
+				k == 1 ? "  (sentinella: nessuna scrittura)" : "");
 			if (got != want[k])
 				fails++;
 		}

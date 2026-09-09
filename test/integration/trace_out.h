@@ -32,6 +32,7 @@ u32  b43_trace_read_raw(u16 off, int width);
  * subsystem_stub.c la usa per il canale e la larghezza. Accetta decimale e
  * 0x...; se la variabile manca o non e' un numero ritorna `def`.
  */
+const char *b43_test_env(const char *name);
 long b43_test_env_long(const char *name, long def);
 
 /* Una riga di diagnostica della suite su stderr, con un solo intero. */

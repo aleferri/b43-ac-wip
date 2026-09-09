@@ -41,7 +41,8 @@ KFLAGS := -nostdinc -I$(CURDIR)/$(UP) $(KINC) -D__KERNEL__ -DMODULE -DKBUILD_MOD
           $(if $(AC_ANY_CHANNEL),-DCONFIG_B43_PHY_AC_ANY_CHANNEL=1) \
           -O2 -fno-strict-aliasing -fno-common -std=gnu11 -w \
           -Werror=implicit-function-declaration \
-          -include $(CURDIR)/compat.h
+          -include $(CURDIR)/compat.h \
+          -DB43_AC_FN_TRACE
 
 # Build per il backtrace: -O2 resta, perche' lo chiedono gli header; -fno-inline
 # -g tengono i frame, cosi' gdb dice in quale funzione di b43 la probe muore
@@ -65,6 +66,16 @@ USER := trace_out.c kernel_shim.c
 UFLAGS := -O2 -Wall -std=gnu11
 ifeq ($(DEBUG),1)
 UFLAGS += -g
+
+# ASAN=1 (con DEBUG=1): il sanitizer sulle due meta', kernel e userspace. Serve
+# a far dire *chi* corrompe la memoria; gli alias __hwasan_* stanno in
+# kernel_shim.c, perche' gli header del kernel rimappano memcpy e memset
+# quando vedono __SANITIZE_ADDRESS__.
+ifeq ($(ASAN),1)
+KFLAGS += -fsanitize=address
+UFLAGS += -fsanitize=address
+LDEXTRA := -fsanitize=address
+endif
 endif
 
 # Cio' che trace_out.c chiede a libc: si risolve al link finale, quindi va
@@ -109,7 +120,7 @@ link:
 
 # Traguardo 4: l'eseguibile, e la traccia.
 b43-trace: link
-	@gcc -o b43-trace b43_partial.o
+	@gcc -o b43-trace b43_partial.o $(LDEXTRA)
 	@echo "  $$(ls -la b43-trace | awk '{print $$5}') byte"
 
 # La traccia. Senza oracolo ogni lettura e' zero e NON e' una misura: si passa

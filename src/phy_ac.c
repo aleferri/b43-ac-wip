@@ -4563,6 +4563,8 @@ static void b43_phy_ac_crs_regs_write(struct b43_wldev *dev, u16 val)
 	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_crs_regs); i++)
 		b43_phy_maskset(dev, b43_phy_ac_crs_regs[i],
 				(u16)~0x00ff, val);
+
+	dev->phy.ac->crs_low = val;
 }
 
 /*
@@ -4670,10 +4672,29 @@ b43_phy_ac_op_recalc_txpower(struct b43_wldev *dev, bool ignore_tssi)
 
 	idx = b43_phy_ac_crs_index(dev);
 	crs = b43_phy_ac_crs_min_pwr(bw_idx, idx, cold);
-	b43_phy_ac_crs_regs_write(dev, crs);
 
 	if (dev->phy.ac->cal_cycles < 2)
 		dev->phy.ac->cal_cycles++;
+
+	/*
+	 * Solo se la soglia cambia. Il core chiama questo hook da
+	 * b43_op_config() a ogni cambio di configurazione e da
+	 * b43_periodic_every60sec() ogni minuto, mentre il vendor riscrive la
+	 * soglia solo quando l'indice della scala si muove: su 76 dei 78
+	 * segmenti degli sweep le scritture CRS sono esattamente due, quelle
+	 * di chanspec_tail() e del blocco E di rxiqcal_finalize(), e nessuna
+	 * cade nei 9-20 s di tick del watchdog che seguono. I due segmenti che
+	 * ne hanno una terza -- cold09 e 03-up -- la fanno quando il campione
+	 * di rumore attraversa la soglia della scala, non a cadenza.
+	 *
+	 * Senza questo confronto ogni chiamata riscriveva gli otto registri,
+	 * ed e' un ricalcolo che decide: `DONE` significa che non c'e' altro
+	 * da fare, e qui non c'e'.
+	 */
+	if (crs == dev->phy.ac->crs_low)
+		return B43_TXPWR_RES_DONE;
+
+	b43_phy_ac_crs_regs_write(dev, crs);
 
 	return B43_TXPWR_RES_DONE;
 }
@@ -5873,6 +5894,41 @@ static void b43_phy_ac_switch_analog_once(struct b43_wldev *dev, bool on,
 {
 	B43_AC_FN();
 	u16 saved_417, saved_416;
+
+	/*
+	 * Un'accensione che non e' quella fredda non emette niente. b43 chiama
+	 * switch_analog(dev, true) da tre siti prima di b43_phy_init() -- il
+	 * reset dell'attach, quello del core-init e b43_chip_init() -- e il
+	 * vendor su tutti e tre non emette nulla: nella cattura a freddo il
+	 * banco AFE_ON compare **tre volte in tutto**, due nel preambolo a
+	 * freddo (#557 e #576, la doppia entrata) e una nel bss-up (#36534),
+	 * e mai altrove.
+	 *
+	 * Emetterlo comunque costava 22 op per entrata che il vendor non ha, e
+	 * peggio: ogni entrata rilegge i dieci registri di salvataggio, quindi
+	 * nella corsa di b43 intero quelle letture arrivavano quattro volte
+	 * dove il vendor le fa una, svuotando le code dell'oracolo prima che
+	 * il preambolo vero le usasse.
+	 *
+	 * Nemmeno lo spegnimento, prima che il preambolo sia passato: il banco
+	 * AFE_DOWN nella cattura compare **una volta sola**, a #1262, e non e'
+	 * di qui -- e' b43_phy_ac_mode_init(). Quello che il port emetteva a
+	 * fine attach, dal switch_analog(dev, false) di
+	 * b43_wireless_core_attach(), sono altre 18 op che il vendor non ha.
+	 *
+	 * Quindi emette solo l'entrata fredda, spegnimento compreso. Lo sweep a
+	 * freddo e' 26 cicli di insmod, wl up, wl down, rmmod, e i teardown ci
+	 * sono tutti: fra l'ultima op del PHY e il marcatore `mod GOING`, su
+	 * **27 rmmod su 27**, ci sono zero op PHY, RAD o TBL -- solo GPIO e
+	 * SI.COREREG. Il banco AFE_DOWN nella traccia intera compare 26 volte,
+	 * una per ciclo, e sono le 26 di b43_phy_ac_mode_init(). Quindi
+	 * b43_wireless_core_exit() non tocca il front end e non deve toccarlo.
+	 *
+	 * Non si distingue con COLD_PREAMBLE, e comunque non serve: dentro una
+	 * salita ci sono entrate `on == true` sia prima sia dopo il preambolo.
+	 */
+	if (!cold)
+		return;
 
 	/*
 	 * The generic b43_phyop_switch_analog_generic writes B43_MMIO_PHY0
