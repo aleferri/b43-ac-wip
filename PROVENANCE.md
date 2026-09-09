@@ -15,3 +15,18 @@ firmware release Netgear per il D6220, firmware V1.0.0.76, archivio
 `D6220-V1.0.0.76_GPL_Src_full.zip` nella collezione GPL Netgear su Internet
 Archive (mirror del download center ufficiale `downloads.netgear.com/files/GDC`):
 https://archive.org/download/netgearfirmwaresgpl/D6220-V1.0.0.76_GPL_Src_full.zip
+
+## AGSOT — `wl.ko` da `AGSOT_1_0_8.img`
+
+Modulo `wl` estratto dall'immagine firmware `AGSOT_1_0_8.img`, board Sercomm,
+senza rapporto con Netgear né con D-Link. È il terzo ramo di blob su cui è
+verificata la tabella TX-gain: il simbolo `acphy_txgain_epa_5g_2069rev4`
+combacia 128 voci su 128 con quello del D6220 (7.14.89), mentre il ramo 6.30
+del DSL diverge dall'indice 31 in poi. Due board fisicamente indipendenti che
+portano lo stesso valore è ciò che esclude la calibrazione per-board — vedi
+`b43_acphy_txgain_epa_5g_2069rev4` in `src/phy_ac.c`.
+
+TODO: origine e mirror dell'immagine, e la revisione del driver `wl` che
+contiene. A differenza dei due blob sopra, questa voce non porta un modo di
+riottenere il file, quindi la verifica 128/128 non è oggi riproducibile da
+questo albero.
