@@ -6,13 +6,16 @@
  *
  * Usage:
  *   ./ac_trace [flow] [board]
- *     flow  = full (default) | rxiq_est_debug | rxiq_comp | op_init |
- *             rfkill | switch_channel
+ *     flow  = full (default) | up | down | switch_channel | periodic |
+ *             op_init | rfkill | crsmin | rxiq_est_debug | rxiq_comp
  *     board = d6220 (default) | agcombo | dsl
  *
- * switch_channel drives the whole b43_phy_ac_op_switch_channel pipeline and
- * is the broadest flow (~22k HW ops on d6220 ch36); the others exercise
- * narrower slices. The full scratch driver (phy_ac.c + radio_2069.c +
+ * `full` is the broadest flow, ~28k HW ops on d6220 ch36: the analog preamble,
+ * rfkill, op_init, then everything run_switch_channel() drives -- the channel
+ * setup of b43_phy_ac_op_switch_channel(), the core's BSS configuration, the
+ * second half of the setup, the post-channel calibrations and the bss-up
+ * burst. `switch_channel` alone models a runtime channel change and the others
+ * exercise narrower slices. The full scratch driver (phy_ac.c + radio_2069.c +
  * rxiqcal_phy_ac.c + tables_phy_ac.c) links and runs; see the Makefile
  * SCRATCH_SRCS_FULL list.
  */
@@ -1260,6 +1263,18 @@ static void run_switch_channel(void)
 	b43_mac_enable(&g_wldev);
 	if (r == 0)
 		b43_phy_ac_set_channel_calibrations(&g_wldev);
+
+	/*
+	 * Then the bss-up burst, which in the captures lands about half a
+	 * second after the last watchdog turn of the probe phase and is not
+	 * part of the channel setup. No b43 hook is wired to it yet, so it is
+	 * called from here for the same reason emit_core_bss_config() and the
+	 * conf_tx passes are: this is the stack above the driver, and the
+	 * harness has to stand in for it.
+	 */
+	if (r == 0)
+		b43_phy_ac_bss_up(&g_wldev);
+
 	fprintf(stderr, "test: switch_channel returned %d\n", r);
 }
 

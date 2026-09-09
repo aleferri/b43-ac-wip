@@ -19,15 +19,37 @@ Due strumenti, incrociati:
   scrittura in mezzo (**poll**). Il resto e' **unused**. Valori banali
   (0, 1, 0xffff) non fanno da traccia.
 - `test/unit/read_perturb.py` fa girare il flow a freddo con una lettura per volta
-  perturbata di un bit nell'oracolo, celle di tabella comprese
+  perturbata nell'oracolo, celle di tabella comprese
   (`AC_READ_PERTURB_KIND=tbl:<id>`), e guarda se le op emesse cambiano.
-  **CONSUMED** se cambiano, **DISCARDED** se no.
+  **CONSUMED** se cambiano, **DISCARDED** se no. Le maschere si passano con
+  `MASKS`, e **una sola maschera non basta**: un bit che il consumatore
+  scarta e' invisibile, quindi il default a `0x0001` sotto-riporta il consumo.
+  Con le dieci maschere di `MASKS` venti letture passano da DISCARDED a
+  CONSUMED -- fra cui `PHY 0x0012`, consumato come `read >> 2`, e i quattordici
+  registri radio con relazione `rmw(=)` o `xor`.
 
 Su `cold01`: 448 indirizzi letti, 305 con una relazione nel vendor; di questi
-il port ne consuma 142 e ne scarta 163. Le righe qui sotto sono gli scartati
-con una relazione che non e' solo `poll` o `mod` (le `PHY.MOD` sono RMW che
-l'harness non legge, quindi il test non le vede: non sono un difetto). Le
-`OBJ` sono la shared memory del MAC, fuori dal PHY, e stanno in coda.
+il port ne consuma **224** e ne scarta **81**. Il verdetto non dipende dalla
+finestra dell'oracolo: con partenza all'insmod (`#424`) o all'inizio del
+confronto (`#528`) i conteggi sono identici.
+
+Le righe qui sotto sono gli scartati con una relazione che non e' solo `poll` o
+`mod` (le `PHY.MOD` sono RMW che l'harness non legge, quindi il test non le
+vede: non sono un difetto). Le `OBJ` sono la shared memory del MAC, fuori dal
+PHY, e stanno in coda.
+
+### Due limiti del perturbatore, da tenere presenti leggendo i verdetti
+
+- **E' per indirizzo, non per sito.** Un registro consumato da una funzione e
+  scartato da un'altra risulta CONSUMED, e il secondo sito resta invisibile.
+  Il caso trovato cosi' e' `b43_radio_2069_afecal()`, che salvava la terna
+  `0x0739/0x073a/0x0725` e la riscriveva costante mentre gli altri siti degli
+  stessi registri la consumavano. Per trovarne altri serve il conteggio delle
+  letture per funzione (`AC_FN_MARKERS=1`), non il verdetto per indirizzo.
+- **Un campo riscritto per intero non e' perturbabile.** Se l'RMW del vendor
+  copre tutti i bit della parola letta, nessuna maschera arriva all'uscita e la
+  lettura resta DISCARDED per costruzione. E' il caso della parola alta del
+  TX-LPF (`0x07[0x0362-0x037a]`), che il codice consuma davvero.
 
 ## Le famiglie, per pericolo
 
@@ -116,6 +138,16 @@ Le righe con `--` non hanno un sito trovato per indirizzo letterale: la
 lettura e' emessa con offset calcolato (`0x0720 + stride`), va cercata per
 funzione.
 
+**Chiusa anche la terza sequenza sulla stessa terna**: `b43_radio_2069_afecal()`
+legge `0x0739/0x073a/0x0725` per core nel primo giro, le due masksets di arming
+ne alzano `0x0080` e `0x0004`, e il secondo giro le riscrive dal salvataggio
+(`gain_saved[core][3]`, locale alla funzione perche' i due giri stanno la'
+dentro). Il perturbatore non poteva dirlo: gli altri siti della terna la
+consumavano gia', quindi l'indirizzo risultava CONSUMED con questo sito ancora
+a costanti. Sui 26 segmenti a freddo e sui 52 a caldo i valori letti sono
+sempre `0x0000/0x0180/0x0600`, cioe' esattamente le costanti che c'erano: il
+confronto non si muove, cambia solo che ora il valore viene dal registro.
+
 ### 3. RFSEQ, tabella `0x07`: chiusa, in tre modi diversi
 
 | lettura vendor | cosa ne fa | esito |
@@ -148,22 +180,38 @@ toccare il codice: tre erano copie, quattro coincidenze di valore.
 
 Perturbatore: CONSUMED su `0x0601`, `0x06d8`, `0x06dc/0x08dc/0x0adc`.
 
-### 5. Da guardare, relazione incerta
+### 5. AFE cal del radio: chiusa
+
+| lettura vendor | cosa ne fa | esito |
+| --- | --- | --- |
+| RAD `0x0122` (+stride `0x0322/0x0522`) | `WR <letto> \| 0x000f` per armare, `WR <letto>` per disarmare | il port scriveva un `switch` sulla larghezza (`0x5830/0x5030/0x4230`) con il campo alto ricavato dallo sweep e il commento che diceva di non sapere cosa selezionasse. Ora entrambe le scritture vengono dal readback: niente tabella, niente campo da spiegare |
+
+Il verdetto passa a CONSUMED su `0x0122` e `0x0322` con ogni maschera provata,
+il gate su `cold01` resta `28552/28574` e il periodico resta `MATCH`. Sui
+segmenti a 40 e 80 MHz il valore letto e' quello che il `switch` restituiva,
+quindi il punteggio non si muove nemmeno la': quello che cambia e' che la
+larghezza non entra piu' nel calcolo, e il campo alto arriva dal ferro anche su
+una board dove non vale quei tre valori.
+
+### 6. Da guardare, relazione incerta
+
+Il set di maschere ha chiuso da se' meta' di questa sezione: `PHY 0x0012`,
+`0x0401`, `0x06c1`, `0x06c3`, `0x08c1`, `0x08c5`, `RAD 0x0043/0x0243/0x0443`,
+`0x0065/0x0265/0x0465`, `0x0127/0x0327/0x0527`, `0x040b`, `0x0548`, `0x08d0` e
+`TBL 0x07[0x006a]/[0x03fa]` sono CONSUMED, cioe' il port li consumava gia' e il
+perturbatore a un bit non lo vedeva. Restano:
 
 - PHY `0x0393` `xor 0x8000` ×18, `0x0394` `+0x105/+0x106` ×9: sono i registri
   della potenza per indice; la relazione additiva puo' essere una coincidenza
   fra valori piccoli. Il port li scrive costanti.
 - PHY `0x0550` riscritto `xor 0x0dd1` ×1, save/restore ×1.
-- RAD `0x0020/0x0022/0x003a/0x0065/0x0127` e i loro stride `0x02xx/0x04xx`:
-  save/restore ×1 ciascuno. RAD `0x0043` (+stride) `+5`, RAD `0x0122`
-  `xor 0x000f`, RAD `0x0548` `xor 1` ×3.
-- PHY `0x0012` -> `TBL 0x0c[0x04]` ×1, `0x06c1/0x06c3/0x08c1/0x08c5` ->
-  `0x0734/0x0462/0x08a1`: quasi certamente rumore del confronto per valore
-  (valori piccoli, una sola occorrenza). Gli accumulatori `0x?c0-0x?c5` sono
-  consumati dal solver; il test li segna DISCARDED perche' un bit basso di
-  `ii_hi` non sposta il risultato arrotondato.
+- RAD `0x0020/0x0022/0x003a` e i loro stride `0x02xx/0x04xx`: save/restore ×1
+  ciascuno, e solo sui sette segmenti lunghi.
+- PHY `0x0070` `mod 0xe000`, `0x016c` `mod 0x0040`, `0x03a9` `mod 0x007f`,
+  `0x040f` `mod 0x0200` ×12, `0x0678/0x0878/0x0a78` `mod 0x0001`: RMW che nel
+  port sono `PHY.MOD`, quindi non perturbabili. Vanno guardati per sito.
 
-### 6. OBJ, shared memory del MAC
+### 7. OBJ, shared memory del MAC
 
 - `OBJ 0x0314` -> `OBJ 0x00cc` ×10 (valore `0x0045`).
 - `OBJ 0x030a/0x030e/0x0310/0x0312` save/restore ×19; `0x0308/0x030c`
@@ -177,9 +225,63 @@ Sono la finestra `0x0308-0x0314` del rumore e le celle di rate/power del
 MAC; il port ne rilegge alcune (`phy_ac.c:9959`, `:10106`) e ne scrive
 costanti. Fuori dal perimetro del PHY, ma la stessa natura.
 
+## Ordine di lavoro: quali costanti sono gia' sbagliate altrove
+
+Uno scartato e' innocuo finche' il valore che il port ha cablato e' lo stesso su
+tutte le configurazioni, quindi il primo filtro e' la varianza: il valore che il
+vendor legge, sui 26 segmenti a freddo, per ogni chiave scartata. Ma **la
+varianza da sola produce falsi positivi**, e il secondo filtro non e'
+sostituibile: bisogna guardare il sito del port. Le tre forme che la varianza
+non distingue sono
+
+- il port scrive una **costante** dove il vendor scrive una funzione del letto:
+  e' il debito vero;
+- il port scrive un valore che **deriva** da SROM, larghezza o canale, e la
+  lettura del vendor e' un peek prima della propria scrittura calcolata: non c'e'
+  niente da chiudere, anche se il valore varia;
+- la scrittura che segue e' una `MOD`, che sul ferro preserva i bit non
+  toccati: la lettura non ha nessun consumatore.
+
+Delle sei chiavi che variano fra segmenti a valore stabile, l'audit per sito ne
+ha promossa una sola:
+
+| chiave | valori sui 26 | sito del port | verdetto |
+| --- | --- | --- | --- |
+| `RAD 0x0122` (+stride) | `0x4230/0x5030/0x5830` | `b43_radio_2069_afecal()` | costante da tabella BW: **chiusa**, vedi famiglia 5 |
+| `PHY 0x06a1` (7 lunghi) | `0x004d/0x4f/0x50/0x51` | blocco D di `post_cal_finalize` | readback della **propria** scrittura: il primo apply scrive il coefficiente e il peek lo rilegge. La `copy -> OBJ 0x0a24` del censimento e' una coincidenza di valore -- `0x0a24` vale `0x0050` sia prima sia dopo la lettura. Non si chiude, e non va chiusa: prendere il letto per il secondo apply farebbe sparire dal punteggio il residuo del solver, che e' l'unico posto dove si vede |
+| `PHY 0x0070` | `0x0100/0xe500` | blocco E | peek, e le nove op che seguono sono tutte `PHY.MOD`: sul ferro preservano i bit non toccati, quindi non c'e' un valore da consumare |
+| `OBJ 0x099a`..`0x09fe`, `0x0a12/0x0a26` | 4-5 valori | `b43_phy_ac_prb_rsp_rate_po()` | il port calcola il valore da `mcsbw5g_po` dello SROM; la lettura e' il peek che il vendor fa prima. `rmw(=)` e' la coincidenza fra il calcolato e il letto a regime |
+| `OBJ 0x0a3a/0x0a56/0x0a72/0x0a8e` | 6 valori | `b43_phy_ac_cck_rate_po()` | qui la tabella e' trascritta dal d6220 per davvero, ed e' dichiarata tale nel commento. Fuori priorita' per la regola dell'MVP: i valori CCK divergono fra freddo e caldo e la divergenza va annotata, non risolta ora |
+| `OBJ 0x014e`, `0x07da` | 89 valori | shared memory del MAC | fuori dal perimetro del PHY, vedi famiglia 7 |
+
+**Varia perche' e' una misura o un poll** -- scartare il valore e' corretto e non
+c'e' niente da chiudere: `OBJ 0x0308/0x030c` (425 e 385 valori, il campione di
+rumore), `PHY 0x0013` (`poll` x168), `PHY 0x0380` (`poll` x743), `PHY 0x0270`
+(`poll` x123), `OBJ 0x0000/0x0002` (`0x55aa`/`0xaa55`, il self-test di
+`b43_validate_chipaccess`).
+
+**Costante su tutti e 26** -- fragile per board, non per canale, e sta in fondo
+alla coda: il blocco `TBL 0x07[0x0362-0x0379]` a `0x0101`, `[0x03cd]/[0x03dd]`
+a `0x0c02`, il write-verify `TBL 0x45/0x65/0x85[0x20]`, `RAD 0x0020/0x0022/
+0x003a` piu' stride, `PHY 0x016c/0x0394/0x03a9/0x040f/0x06dd/0x08dd/0x0add/
+0x0b3e`, `OBJ 0x024e-0x02ae`, `OBJ 0x030a/0x030e/0x0310/0x0312/0x0314`.
+
+Il censimento e i verdetti si rifanno cosi':
+
+```sh
+cd test/unit && ./gates.sh                      # lascia /tmp/gate.merged
+python3 ../../reverse-tools/reads.py consumers /tmp/gate.merged > /tmp/census.txt
+python3 read_perturb.py /tmp/census.txt /tmp/gate.merged | sort
+```
+
+La varianza si legge invece dai 26 segmenti ripiegati, cercando i valori di ogni
+chiave scartata. Attenzione a `gates.sh`, che riscrive sempre `/tmp/gate.merged`
+e `/tmp/gate.full`: un audit fatto dopo aver lanciato il gate su un altro
+segmento legge i file di quel segmento, e i valori sembrano non tornare.
+
 ## Cosa consumano gia' bene
 
-142 letture cambiano l'uscita se perturbate: gli accumulatori RX-IQ, i
+224 letture cambiano l'uscita se perturbate: gli accumulatori RX-IQ, i
 readback della cal TX IQ/LO (`0x0c[0x80-0x93]` -> `0x40-0x55`), il blocco D e
 la coda del finalize, i LO DAC, le `OBJ 0x1d2/1d4/1d6 -> 0x1f2/1f4/1f6`, e le
 RMW sui registri radio `0x000e/0x0017/0x001a/0x0049/0x004e/0x015f/0x0161`.

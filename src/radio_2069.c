@@ -1056,30 +1056,6 @@ void b43_radio_2069_channel_setup(struct b43_wldev *dev,
 #define R2069_AFE_CAL_CLK	0x121	/* [12] per-core cal clock enable */
 #define R2069_AFE_CAL_CTRL	0x122	/* [3:0] cal-enable bits */
 #define R2069_AFE_CAL_STAT	0x144	/* [1]=done (1st read) [0]=valid (2nd) */
-/*
- * AFE_CAL_CTRL config word, over which the enable nibble 0x000f is set and
- * then dropped. It is NOT fixed, though it was written here as if it were: the
- * top bits depend on the bandwidth.
- *
- *   20 MHz  0x5830      40 MHz  0x5030      80 MHz  0x4230
- *
- * which is 0x4030 in common plus 0x1800, 0x1000 and 0x0200. What that field
- * selects is not known; the three values are read off the cold sweep and each
- * is the same on two different channels of its width, so it does not depend on
- * the channel.
- */
-static u16 r2069_afecal_cfg(struct b43_wldev *dev)
-{
-	switch (dev->phy.chandef->width) {
-	case NL80211_CHAN_WIDTH_80:
-		return 0x4230;
-	case NL80211_CHAN_WIDTH_40:
-		return 0x5030;
-	default:
-		return 0x5830;
-	}
-}
-
 static inline void r2069_mod(struct b43_wldev *dev, u16 reg, u16 mask, u16 val)
 {
 	b43_radio_maskset(dev, reg, (u16)~mask, val & mask);
@@ -1253,13 +1229,17 @@ void b43_radio_2069_rccal(struct b43_wldev *dev)
  * Per-core analog-front-end calibration for the 2069 radio.
  *
  * Two passes over the active chains, faithful to the d6220 bring-up
- * capture: arm every core (route the PHY in, gate the cal
- * clock off), settle, then launch every core (gate the clock on, set the
- * AFE_CAL_CTRL enable nibble over the bandwidth-dependent config, poll
- * done/valid,
- * drop the nibble). Completion is two STAT reads per try -- done from the
- * first, valid from the second. The post-cal PHY writes are fixed constants,
- * not a restore of the arm-time values.
+ * capture: arm every core (save the three gain regs, route the PHY in, gate
+ * the cal clock off), settle, then launch every core (gate the clock on, set
+ * the AFE_CAL_CTRL enable nibble, poll done/valid, drop the nibble, put the
+ * gain regs back). Completion is two STAT reads per try -- done from the
+ * first, valid from the second.
+ *
+ * Both writes of AFE_CAL_CTRL come from its own readback: the vendor writes
+ * <read>|0x000f to arm and <read> to disarm. The word carries a bandwidth
+ * field in its top bits -- 0x5830 at 20 MHz, 0x5030 at 40, 0x4230 at 80 --
+ * which is why it must not be a constant, and taking it from the register
+ * needs no table.
  * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
  *   11237-11298]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -1269,6 +1249,7 @@ void b43_radio_2069_afecal(struct b43_wldev *dev)
 {
 	B43_AC_FN();
 	struct b43_phy_ac *ac = dev->phy.ac;
+	u16 gain_saved[B43_PHY_AC_MAX_CORES][3] = { { 0 } };
 	unsigned int core;
 
 	/* Enable the shared analog cal block (same gate rccal uses). */
@@ -1283,13 +1264,14 @@ void b43_radio_2069_afecal(struct b43_wldev *dev)
 			continue;
 
 		/*
-		 * The vendor emits three diagnostic peeks of the PHY registers
-		 * before the arming masksets, once per core. They sample the
-		 * pre-arm state; nothing consumes the values.
+		 * The three gain regs the arming masksets below perturb, read
+		 * once per core before touching them: pass 2 writes them back
+		 * from here. Same save/restore over the same three registers
+		 * that b43_phy_ac_idle_tssi_meas() does.
 		 */
-		b43_phy_read_log(dev, 0x0739 + pbase);
-		b43_phy_read_log(dev, 0x073a + pbase);
-		b43_phy_read_log(dev, 0x0725 + pbase);
+		gain_saved[core][0] = b43_phy_read(dev, 0x0739 + pbase);
+		gain_saved[core][1] = b43_phy_read(dev, 0x073a + pbase);
+		gain_saved[core][2] = b43_phy_read(dev, 0x0725 + pbase);
 
 		b43_phy_maskset(dev, 0x0739 + pbase, (u16)~0x0080, 0x0080);
 		b43_phy_maskset(dev, 0x0725 + pbase, (u16)~0x0004, 0x0004);
@@ -1310,17 +1292,10 @@ void b43_radio_2069_afecal(struct b43_wldev *dev)
 		/*
 		 * Clock un-gate is the AFE_CAL_CLK[12] bit toggled by the two
 		 * r2069_mod above (off in pass 1, on here); the trace confirms
-		 * it, so no extra gating is needed. The blob then does a bare
-		 * readback of AFE_CAL_CTRL, once per core, before writing the
-		 * enable word:
-		 * the value isn't used for the write (which is absolute,
-		 * CFG|0x000f, not a RMW), but we route it through _log so the
-		 * real pre-enable CTRL state is captured on hardware -- the
-		 * trace only has the address, the value was the hole we're
-		 * filling. It's surfaced in the per-core b43dbg below.
+		 * it, so no extra gating is needed.
 		 */
 		r2069_mod(dev, R2069_AFE_CAL_CLK | rbase, 0x1000, 0x1000);
-		ctrl = b43_radio_read_log(dev, R2069_AFE_CAL_CTRL | rbase);
+		ctrl = b43_radio_read(dev, R2069_AFE_CAL_CTRL | rbase);
 
 		/*
 		 * The vendor reads STAT only after the arming write, never before:
@@ -1328,7 +1303,7 @@ void b43_radio_2069_afecal(struct b43_wldev *dev)
 		 * STAT reads, then the CTRL disarm write.
 		 */
 		b43_radio_write(dev, R2069_AFE_CAL_CTRL | rbase,
-				r2069_afecal_cfg(dev) | 0x000f);
+				ctrl | 0x000f);
 		post[0] = b43_radio_read_log(dev, R2069_AFE_CAL_STAT | rbase);
 		udelay(5);
 		post[1] = b43_radio_read_log(dev, R2069_AFE_CAL_STAT | rbase);
@@ -1338,12 +1313,11 @@ void b43_radio_2069_afecal(struct b43_wldev *dev)
 		       "radio 2069: afecal core %u ctrl=0x%04x stat post(0/1/10us)=0x%04x/0x%04x\n",
 		       core, ctrl, post[0], post[1]);
 
-		b43_radio_write(dev, R2069_AFE_CAL_CTRL | rbase,
-				r2069_afecal_cfg(dev));
+		b43_radio_write(dev, R2069_AFE_CAL_CTRL | rbase, ctrl);
 
-		b43_phy_write(dev, 0x0739 + pbase, 0x0000);
-		b43_phy_write(dev, 0x073a + pbase, 0x0180);
-		b43_phy_write(dev, 0x0725 + pbase, 0x0600);
+		b43_phy_write(dev, 0x0739 + pbase, gain_saved[core][0]);
+		b43_phy_write(dev, 0x073a + pbase, gain_saved[core][1]);
+		b43_phy_write(dev, 0x0725 + pbase, gain_saved[core][2]);
 	}
 
 	/* Disable the cal block. */

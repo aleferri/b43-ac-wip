@@ -92,16 +92,20 @@ si dividono in due famiglie che il punteggio separa da se':
 
 | famiglia | segmenti | grezzo | di troppo |
 |---|---|---|---|
-| centro banda ≤ 5250 MHz | 7 (ch36-48) | 93.79% – 99.92% | 0 – 88 |
-| centro banda > 5250 MHz | 19 (da ch52) | 85.78% – 87% | 1804 |
+| centro banda ≤ 5250 MHz | 7 (ch36-48) | 96.76% – 99.92% | 0 – 385 |
+| centro banda > 5250 MHz | 19 (da ch52) | 84.92% – 85.84% | 1808, tranne 1933 su cold15 |
 
 Sopra i 5250 MHz il driver stock esegue un attach diverso, non un attach
 ridotto: ~16k op contro le ~29k dei canali bassi. La differenza non e' qualita'
-del port su quei canali, ed e' la voce "op di troppo" a pesare — 1804 op su
-tutti e 19 i segmenti tranne uno, quindi una causa sola: sopra la soglia il
+del port su quei canali, ed e' la voce "op di troppo" a pesare — 1808 op su
+diciotto dei diciannove segmenti, quindi una causa sola: sopra la soglia il
 vendor non esegue la calibrazione RX IQ, e il port ne esegue ancora dei pezzi. Il dettaglio per
 segmento e la struttura di quella differenza stanno in
 [`docs/retrace-todo.md`](docs/retrace-todo.md).
+
+Nella famiglia bassa solo ch36 BW20 sta a zero op di troppo; gli altri sei
+stanno fra 141 e 385, ed e' il debito delle costanti per-canale, non la stessa
+causa della famiglia alta.
 
 Una parte del denominatore non e' raggiungibile da nessun codice del driver, e
 il conto va tenuto separato: le ricariche del template beacon e della probe
@@ -181,7 +185,6 @@ Mappa file sorgente → patch: [`docs/driver-status.md`](docs/driver-status.md).
 | BW40 / BW80 | `switch_channel` ritorna `-EOPNOTSUPP` | Il codice c'e' ed e' confrontato contro i segmenti a 40 e 80 MHz con `make AC_ANY_CHANNEL=1`; quello che manca e' la validazione che apra il guard |
 | 2.4 GHz | `op_switch_channel` ritorna `-EOPNOTSUPP` | Mappa radio 2G non validata |
 | Canali ≠ 36 | 50 voci in channeltab (5170–5825 MHz), solo ch36 in `b43_phy_ac_validated_configs[]` | Il confronto gira su tutti e 26 i segmenti con `AC_ANY_CHANNEL=1`, che scavalca il guard e lo dice con un `b43warn`. Piano in [`docs/channel-generalization.md`](docs/channel-generalization.md) |
-| `rxcal_radio_setup`, `rxcal_cleanup`, `rxcal_radio_cleanup` | stub vuoti, ~300 op RMW | Chiamate da `channel_setup_tail2()`: quello che non emettono manca al path vivo |
 
 ### Bug aperti
 

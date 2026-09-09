@@ -105,6 +105,41 @@ static void oracle_push(const char *cls, u16 addr, u32 val)
 }
 
 /*
+ * Una cattura a freddo dello sweep porta DUE attach in testa: `wl` al
+ * caricamento fa l'attach di tutti i core, quindi prima di wl1 -- l'AC -- c'e'
+ * quello di wl0, l'N-PHY a 2.4 GHz. Sono 46 op, e reverse-tools/
+ * strip_other_core.py le toglie.
+ *
+ * Qui l'oracolo carica il file intero e non ha una finestra, quindi quelle op
+ * finiscono in testa alle code per indirizzo e il driver sotto esame si legge
+ * lo stato dell'altro core. Non e' un caso ipotetico: `UCODEREV` (0x0000) e
+ * `UCODEPATCH` (0x0002) sono lette da b43_validate_chipaccess() su entrambi i
+ * core, e senza il taglio il port riceve i pattern del self-test di wl0,
+ * 0x55aa e 0xaa55, al posto dei valori veri.
+ *
+ * Il testimone e' il confine che definisce il taglio: fra la prima e la
+ * seconda coppia OTP.RDR/OTP.INIT. Se prima della prima op PHY dell'attach AC
+ * -- la lettura di 0x0739 -- ce ne sono due, la cattura non e' tagliata.
+ *
+ * Si rifiuta invece di avvisare: quattro valori sbagliati in mezzo a
+ * ventimila op non si notano, e il resto della corsa sembra buono.
+ */
+static int oracle_has_other_core(FILE *f)
+{
+	char line[512];
+	int otp = 0;
+
+	while (fgets(line, sizeof(line), f)) {
+		if (strstr(line, "PHY.RD") && strstr(line, "addr=0x0739"))
+			break;
+		if (strstr(line, "OTP.RDR"))
+			otp++;
+	}
+	rewind(f);
+	return otp >= 2;
+}
+
+/*
  * Le righe della cattura: `<ts> #<ep> cpuN <CLASSE> addr=0x.. val=0x..`.
  * Si prendono solo le letture, perche' l'oracolo risponde a quelle; le
  * scritture del vendor sono il termine di confronto, non un ingresso.
@@ -124,6 +159,23 @@ static void oracle_load(void)
 		fprintf(stderr, "b43-integration: B43_READ_ORACLE=%s "
 			"non si apre\n", path);
 		return;
+	}
+	if (oracle_has_other_core(f)) {
+		fprintf(stderr,
+			"b43-integration: %s porta ancora l'attach di wl0 in "
+			"testa: due coppie OTP.RDR/OTP.INIT prima della prima "
+			"PHY.RD 0x0739.\n"
+			"b43-integration:   Le code per indirizzo servirebbero "
+			"al driver lo stato dell'altro core -- 0x0000 e 0x0002 "
+			"col self-test di wl0.\n"
+			"b43-integration:   Taglia prima:\n"
+			"b43-integration:     python3 reverse-tools/"
+			"strip_other_core.py <segmento> /tmp/seg\n"
+			"b43-integration:     python3 reverse-tools/"
+			"trace_filter.py --retvals /tmp/seg /tmp/oracolo\n",
+			path);
+		fclose(f);
+		abort();
 	}
 	while (fgets(line, sizeof(line), f)) {
 		char *p = strstr(line, ".RD");

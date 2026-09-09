@@ -9,7 +9,7 @@ locale differisce, e' una scelta architetturale della versione di driver
 
 ## Metodo
 
-Falsificabile, non a occhio. Per ogni fase di `b43_phy_ac_set_channel` si
+Falsificabile, non a occhio. Per ogni fase di `b43_phy_ac_op_switch_channel` si
 estrae una **firma**: la prima write/maskset a costanti nel corpo della
 funzione della fase. La firma si localizza in sequenza nella traccia di
 riferimento (harness `switch_channel`, che replica l'ordine D6220); l'intervallo
