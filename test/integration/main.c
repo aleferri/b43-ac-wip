@@ -26,6 +26,11 @@
 #include <net/mac80211.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
+#include <linux/ssb/ssb.h>
+#include <linux/string.h>
+
+#include "../board_profile.h"
+#include "trace_out.h"
 
 extern const struct bcma_host_ops b43_test_bcma_ops;
 
@@ -89,6 +94,19 @@ static void build_core(void)
 	test_cc_core.bus = &test_bus;
 	test_cc_core.id.id = BCMA_CORE_CHIPCOMMON;
 	test_bus.drv_cc.core = &test_cc_core;
+
+	/*
+	 * La SROM. Senza, b43 gira su una board azzerata: femctrl=0 -- che il
+	 * driver segnala -- rxchain=0, coremask=0, subband5gver=0 e pa5ga tutta
+	 * a zero, cioe' ogni valore che dipende dalla board sbagliato in
+	 * silenzio. Il profilo e' condiviso con ../unit, che e' la stessa
+	 * board, e si sceglie con B43_BOARD come la' con argv.
+	 *
+	 * Su hardware la riempie bcma_sprom_extract_r11(); qui il profilo sta
+	 * al suo posto, con le stesse maschere.
+	 */
+	board_profile_to_sprom(board_profile_lookup(b43_test_env("B43_BOARD")),
+			       &test_bus.sprom);
 
 	test_core.bus = &test_bus;
 	test_core.id.id = D6220_CORE_ID;

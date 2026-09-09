@@ -368,6 +368,13 @@ struct b43_phy_ac {
 	 * first two calibrations. It appears to saturate at two.
 	 */
 	u8 cal_cycles;
+	/*
+	 * Byte basso della soglia CRS min-power come l'ha scritta l'ultima
+	 * volta uno dei tre siti, per non riscriverla invariata dall'hook
+	 * periodico; vedi b43_phy_ac_op_recalc_txpower(). Zero vuol dire mai
+	 * scritta, e non e' un valore della scala, che parte da 41.
+	 */
+	u16 crs_low;
 	/* RX-IQ accumulators gathered by the measurement, consumed by the
 	 * solve. */
 	struct b43_phy_ac_iq_acc iq_acc[B43_PHY_AC_MAX_CORES];

@@ -361,3 +361,31 @@ int __ssb_driver_register(void *drv, void *owner) { return 0; }
 char __this_module[512];
 char param_ops_int[64];
 char param_ops_string[64];
+
+#ifdef __SANITIZE_ADDRESS__
+/*
+ * Gli header del kernel, quando vedono __SANITIZE_ADDRESS__, rimappano
+ * memcpy/memset/memmove sulle varianti KASAN, che qui non esistono. Sono tre
+ * alias sui builtin: bastano a far linkare la build ASAN=1, che e' il solo
+ * modo di far dire al sanitizer *chi* corrompe la memoria invece di guardare
+ * il sintomo -- una free() invalida in un build e un SIGSEGV in un altro.
+ */
+void *__hwasan_memcpy(void *d, const void *s, size_t n);
+void *__hwasan_memset(void *d, int c, size_t n);
+void *__hwasan_memmove(void *d, const void *s, size_t n);
+
+void *__hwasan_memcpy(void *d, const void *s, size_t n)
+{
+	return __builtin_memcpy(d, s, n);
+}
+
+void *__hwasan_memset(void *d, int c, size_t n)
+{
+	return __builtin_memset(d, c, n);
+}
+
+void *__hwasan_memmove(void *d, const void *s, size_t n)
+{
+	return __builtin_memmove(d, s, n);
+}
+#endif

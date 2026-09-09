@@ -218,6 +218,42 @@ static u32 oracle_lookup(const char *cls, u16 addr, int width)
 	return k->vals[k->n - 1];	/* coda esaurita: l'ultimo visto */
 }
 
+/*
+ * Marcatori di confine (B43_AC_FN e B43_AC_BLOCK in phy_ac.h), gli stessi che
+ * emette ../unit e che fn_map.py legge. Servono a attribuire le op di questa
+ * traccia alle funzioni del driver: senza, il confronto fra la sequenza di b43
+ * intero e quella dell'harness si puo' allineare ma non spiegare.
+ *
+ * Silenziosi se B43_FN_MARKERS non e' nell'ambiente, perche' la traccia di
+ * default e' un termine di confronto e i marcatori non sono op.
+ */
+static int fn_markers_enabled(void)
+{
+	static int enabled = -1;
+
+	if (enabled < 0)
+		enabled = getenv("B43_FN_MARKERS") ? 1 : 0;
+	return enabled;
+}
+
+void b43_ac_fn_enter(const char *fn)
+{
+	if (fn_markers_enabled())
+		fprintf(stream(), "----FN:%s----\n", fn);
+}
+
+void b43_ac_fn_leave(const char *fn)
+{
+	if (fn_markers_enabled())
+		fprintf(stream(), "----/FN:%s----\n", fn);
+}
+
+void b43_ac_block_mark(const char *name)
+{
+	if (fn_markers_enabled())
+		fprintf(stream(), "----BLK:%s----\n", name);
+}
+
 /* Per i messaggi di main.c, che e' compilato senza stdio. */
 void b43_trace_note(const char *fmt, int arg)
 {
@@ -273,6 +309,18 @@ void b43_trace_fill(void *buf, unsigned long count, u16 off, u8 reg_width)
 u32 b43_trace_read(const char *cls, u16 addr, int width)
 {
 	return oracle_lookup(cls, addr, width);
+}
+
+/*
+ * I file compilati con gli header del kernel non hanno stdlib: `-nostdinc` e
+ * getenv() finisce dichiarata implicitamente, cioe' troncata a int. Per questo
+ * l'ambiente si legge da qui, che e' codice utente.
+ */
+const char *b43_test_env(const char *name)
+{
+	const char *v = getenv(name);
+
+	return (v && *v) ? v : NULL;
 }
 
 long b43_test_env_long(const char *name, long def)
