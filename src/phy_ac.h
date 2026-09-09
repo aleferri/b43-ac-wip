@@ -15,11 +15,10 @@ struct ieee80211_channel;
 #define  B43_PHY_AC_BANDCTL_5GHZ		0x0001
 #define B43_PHY_AC_TABLE_ID			0x00d
 #define B43_PHY_AC_TABLE_OFFSET			0x00e
-#define B43_PHY_AC_TABLE_DATA1			0x00f
-#define B43_PHY_AC_TABLE_DATA2			0x010
-#define B43_PHY_AC_TABLE_DATA3			0x011
-
-/* PHY-table access registers, used in pairs for bulk writes. */
+/*
+ * The three data registers. LO and HI are written as a pair for a 32-bit
+ * cell; DATA_2 is the alternate port tables 0x11, 0x14 and 0x20 go through.
+ */
 #define B43_PHY_AC_TABLE_DATA_LO		0x00f
 #define B43_PHY_AC_TABLE_DATA_HI		0x010
 #define B43_PHY_AC_TABLE_DATA_2		0x011
@@ -58,6 +57,10 @@ struct ieee80211_channel;
 #define B43_PHY_AC_AFE_C2			0x925	/* by stride from C1 */
 #define B43_PHY_AC_AFE_C2_OVER			0x939
 
+/*
+ * Not used by name: b43_phy_ac_clip_det() writes 0x06d4 + core * 0x200 inline
+ * so the correlator resolves the stride, see the comment there.
+ */
 #define B43_PHY_AC_C1_CLIP			0x6d4
 #define  B43_PHY_AC_C1_CLIP_DIS			0x4000
 #define B43_PHY_AC_C2_CLIP			0x8d4
@@ -69,10 +72,11 @@ struct ieee80211_channel;
 #define B43_PHY_AC_REG_TBL_WRITE_GATE		0x19E
 #define  B43_PHY_AC_TBL_WRITE_GATE_LOCK		0x0002
 /*
- * Bit 0 of the same register enables the radio tuning sequence; it is not a
- * second lock. The stock driver raises it before the 2069's PLL bank and
- * lowers it after the last write, then reinitialises the register with
- * 0x01c0, 0x0200 and 0x003c.
+ * Bit 0 of the same register is not a second lock, and the two names below are
+ * the same bit. The stock driver raises it around the 2069's PLL bank, then
+ * reinitialises the register with 0x01c0, 0x0200 and 0x003c, and also around
+ * each RF-sequencer command in b43_phy_ac_run_rfseq_cmd(). Whether those are
+ * one function or two is not established; only the second name is used.
  */
 #define  B43_PHY_AC_TBL_WRITE_GATE_RADIO_TUNE	0x0001
 #define  B43_PHY_AC_RF_SEQ_OVERRIDE_GATE	0x0001
@@ -477,7 +481,7 @@ struct b43_phy_ac {
 	 *     global accumulator, that the vendor uses for settling.
 	 *
 	 * Intended use: computing the I/Q compensation coefficients; the formula
-	 * is still open, see the TODO in rxcal_gainctrl(). Not used for the
+	 * is still open. Not used for the
 	 * op-for-op match, which only looks at the ops emitted. On real hardware
 	 * these are the values the cal finds, to be consumed by the next phase,
 	 * the RX-IQ compensation write.
@@ -529,14 +533,9 @@ struct b43_phy_ac {
  * REQUIRE()	   -> use in functions returning void
  * REQUIRE_RET()   -> use in functions returning a value
  *
- * NOTE on STATE_PHY_RUN: mirrors BBCFG[15], kept only for parity with the
- * annotator (annotate_enables.py tracks the same bit). No driver code sets or
- * clears it, by design: the vendor never writes BBCFG[15] in the captured
- * flows (attach-ch36 and down-to-bss-up show only RSTCCA / bit 0x4000 pulses
- * on BBCFG), so the baseband run-state is established at chip power-on and is
- * never toggled in the sequences the driver reproduces. Do not use
- * STATE_PHY_RUN in `want`/`forbid`: it has no mutator and reflects nothing
- * observable in these flows.
+ * STATE_PHY_RUN has no mutator and must not appear in `want` or `forbid`: it
+ * mirrors BBCFG[15] for parity with annotate_enables.py, and no op in the
+ * three sweeps touches that bit -- the run state is established at power-on.
  */
 #define B43_PHY_AC_REQUIRE(dev, want, forbid) do {			\
 	struct b43_phy_ac *__ac = (dev)->phy.ac;			\
@@ -575,12 +574,12 @@ bool b43_phy_ac_force_rf_sequence(struct b43_wldev *dev, u16 rf_seq, u16 gate);
 u16  b43_phy_ac_classifier(struct b43_wldev *dev, u16 mask, u16 val);
 
 /*
- * The wl-diag trace records the address of every register read but not the
- * value returned (the tracer only captures input args). So each read below is
- * a hole in the trace. Route value-consuming reads through these to capture
- * the real value on hardware; the log is compiled out when B43_DEBUG is 0
- * (dead branch elided), so release builds pay nothing. `dev` must be a plain
- * lvalue -- it is evaluated more than once.
+ * For a read whose value nobody uses, which is a potential logic error: the
+ * log puts its address and value where they can be compared with the captured
+ * ones. The captures do carry every read value -- the cold sweeps in a
+ * separate RETVAL record, the hot sweep and the DSL folded into the read line.
+ *
+ * Compiled out when B43_DEBUG is 0. `dev` is evaluated more than once.
  */
 #define b43_phy_read_log(dev, reg) ({					\
 	u16 __r = (reg), __v = b43_phy_read((dev), __r);		\
@@ -604,7 +603,7 @@ void b43_phy_ac_reset_cca(struct b43_wldev *dev);
  * b43_phy_ac_set_channel_calibrations() calls them; that function documents
  * the rounds. Each of these is a phase transcribed from a capture, with its
  * internal structure, op counts and still-transcribed values documented next
- * to the code. Phase-to-op-range map: docs/vendor-op-map.md.
+ * to the code.
  */
 void b43_phy_ac_post_cal_finalize(struct b43_wldev *dev);
 void b43_phy_ac_post_cal_finalize_iter3(struct b43_wldev *dev);
