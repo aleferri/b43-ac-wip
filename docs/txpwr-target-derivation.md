@@ -160,11 +160,16 @@ None of that data is needed in the driver. cfg80211 already supplies
 it up per 20 MHz sub-channel and takes the minimum over the block — a bonded
 block is bounded by its lowest channel, not by its primary.
 
-On the captures this stage does not bind: ch100 receives 86 where a 21 dBm
-ceiling would give 84. So the op-for-op match holds only under a regulatory
-domain at least as permissive as the one the captures were taken under. That
-is a property of the system, not of the driver, but it was not a condition on
-the comparison before and now it is.
+On the hot sweep this stage does not bind: ch100 receives 86 where a 21 dBm
+ceiling would give 84. On a first bring-up it does, and the ceilings are
+board-independent -- 56 on ch36-48 at 20 MHz, 60 on ch60 at 40, 68 on ch100 at
+40, 76 on ch100 at 20 and 80, the same on the d6220 and agcombo -- which with
+the margin and the boards' 5.5 dB antenna gain are 21, 22, 24 and 26 dBm EIRP.
+The vendor's limits are per bandwidth and cfg80211's `max_power` is per 20 MHz
+channel, so the driver reproduces the 20 MHz ones and bounds bonded blocks by
+their lowest channel where the vendor does not. The cold gate feeds the
+expressible part through `AC_MAX_POWER_MAP`; see `docs/retrace-todo.md`,
+section on register `0x0646`.
 
 ## The idle-TSSI base index: a latent bug the gate cannot see
 

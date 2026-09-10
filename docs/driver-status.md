@@ -77,12 +77,12 @@ schema previsto, con `switch_channel` stub al passo 1 e riempito via via:
 
 ## Note sulle scelte di implementazione
 
-**SALAME**: la formula `(cur & 0x0800) | 0x05f4` per reg 0x0140 assume che
-solo il bit 11 sia di stato PHY tra i 16 bit e che gli altri bit siano
-invarianti; convalidata su 4 catture d6220 + 4 agcombo ma il RE dei
-bit [10:4] non è completo — potrebbero esserci altri bit di stato che
-nelle catture osservate erano casualmente uguali. Da rivalidare se il
-compare fallisce su catture non testate.
+La formula `(cur & 0x0800) | 0x05f4` per reg 0x0140 assume che solo il bit
+11 si muova e che gli altri siano invarianti. L'invarianza e' misurata, non
+supposta: sui 104 segmenti in repo (cold e hot d6220, cold agcombo; 16 canali
+a 20/40/80 MHz) il registro riceve solo `0x05f4/0x05f6/0x0df4/0x0df6`. Cosa
+significhino i bit [10:4] resta ignoto, ma non serve saperlo per emettere il
+valore giusto.
 
 **SALAME**: sul chip vero, se il PLL non locca velocemente, il poll
 100×10µs dà 1ms di budget prima di emettere `b43dbg` — nessuna evidenza

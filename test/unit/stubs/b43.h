@@ -171,7 +171,18 @@ struct ssb_sprom {
 	u32 mcsbw205gmpo, mcsbw405gmpo, mcsbw805gmpo;
 	u32 mcsbw205ghpo, mcsbw405ghpo, mcsbw805ghpo;
 	/* Antenna gain per band, quarter-dB, SROM ag0/ag1. Index 1 is 5 GHz. */
+	u16 pdoffset40ma[3];
+	u16 pdoffset80ma[3];
 	s8 antenna_gain_qdb[2];
+	u16 mcslr5gpo[3];
+	u16 sb20in40hrpo;
+	u16 sb20in40lrpo;
+	u16 sb20in80and160hr5gpo[3];
+	u16 sb20in80and160lr5gpo[3];
+	u16 sb40and80hr5gpo[3];
+	u16 sb40and80lr5gpo[3];
+	u16 dot11agduphrpo;
+	u16 dot11agduplrpo;
 
 	u8 revision;
 	u8 rxchain;

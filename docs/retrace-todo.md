@@ -1669,137 +1669,173 @@ mano, cioe' dai valori di `cold01`, ed ogni derivata -- LUT LOFT comprese --
 usciva sbagliata. Sul freddo non muove niente -- la' l'oracolo era in sincrono
 -- e il periodico resta `MATCH`.
 
-## Il muro di ch36 bw40, e la forma del target di potenza
+## Il target di potenza, registro `0x0646`: SROM, tetto regolatorio, margine
 
-`@10952`, ed e' un valore: `PHY.MOD 0x0846`/`0x0646`, vendor `0x42`, port
-`0x38`. Misurato su tutte le occorrenze e tutte le famiglie:
+Il valore e' `min(maxp5ga[grp] - 2*nib, tetto) - 6`, la stessa catena di
+`wlc_phy_txpower_recalc_target()` in brcmsmac: il tetto regolatorio si applica
+**prima** del margine di 6, e `nib` e' il nibble minimo del campo `mcsbw*po`
+della larghezza -- a 80 MHz quello a 20, vedi sotto. Non e' ad anello chiuso:
+le 52 catture a caldo sono in coppia per configurazione e le due copie danno
+valori identici, mentre RX-IQ e idle-TSSI cambiano 26 volte su 26.
 
-| | occ1 | occ2 | occ3 |
+### A caldo il tetto non lega: 26/26 dalla sola SROM
+
+Contro lo sweep a caldo del d6220 la parte SROM e' esatta su tutte le 26
+configurazioni, con la correzione `-2` sul primo blocco a 40 MHz (ch36, ch52)
+che il sorgente porta come fit su due punti. Nessun tetto serve: a caldo il
+sistema gira col country impostato dallo userspace, e quel dominio e' piu'
+permissivo della SROM su ogni canale catturato.
+
+### A freddo il tetto lega, ed e' del locale, non della board
+
+Sui due sweep a freddo -- d6220 (`maxp5ga` 72/70/86, `mcsbw*po` con nibble
+diversi per larghezza) e agcombo (74/74/82, nibble uguali) -- il registro
+scrive gli **stessi** valori dove il modello SROM darebbe numeri diversi:
+
+| configurazione | d6220 SROM | agcombo SROM | scritto, entrambe |
 | --- | --- | --- | --- |
-| ch36-48 bw20 | 0x38 | 0x38 | 0x38 |
-| ch36/44 bw40 | 0x42 | **0x3e** | 0x42 |
-| ch36 bw80 | 0x42 | **0x3e** | 0x42 |
-| da ch52, bw40 e bw80 | 0x40 | 0x40 | 0x40 |
+| ch36-48 bw20 | 66/64 | 68 | **56** |
+| ch60 bw40 | 64 | 68 | **60** |
+| ch100 bw40 | 80 | 76 | **68** |
+| ch100 bw20 e bw80 | 80 | 76 | **76** |
 
-Due cose separate, e la tabella le distingue:
+Ovunque altro il valore a freddo e' la SROM, senza la correzione `-2` del
+primo blocco: ch36 e ch52 a 40 MHz e ch52 a 80 escono 2 sopra il caldo su
+entrambe le board. La correzione e' quindi un termine del percorso a caldo che
+resta senza spiegazione.
 
-1. **La base** dipende da banda e larghezza: 0x38 a bw20 sotto i 5250, 0x42 a
-   bw40 e bw80 sotto, 0x40 sopra. Il port scrive 0x38 sempre. E' la derivazione
-   di `ppr[]` da `mcsbw*po`, gia' nella lista delle aperte, e trascrivere tre
-   valori non e' derivarla.
-2. **La riduzione di 4 sull'occorrenza centrale** compare solo a bw40 e bw80
-   sotto i 5250. Sopra i 5250 le tre occorrenze sono uguali, coerente col fatto
-   che la' le calibrazioni non girano: l'occorrenza centrale e' quella dentro la
-   calibrazione, e a bw20 la riduzione e' zero.
+Riaggiunto il margine e l'antenna gain che tutte le board dichiarano
+(`aga0..2 = 133`, cioe' 5 dB + 2/4 = 22 quarti), i quattro tetti fanno **21,
+22, 24 e 26 dBm**, tutti interi: quattro valori tutti congrui a 2 modulo 4 non
+sono un caso, e' la forma `EIRP - antgain` di un locale. Il DSL conferma il
+meccanismo e non i numeri: sotto wl 6.30 scrive 56 anche su ch52-64 a 20 MHz
+e 60 a 40 e 80 su tutta la banda bassa, anche sul down->up -- un locale piu'
+vecchio, applicato sempre perche' su quel router nessuno imposta il country.
 
-Il secondo punto e' strutturale e si puo' chiudere prima del primo -- ma da solo
-non muove il muro, perche' il muro batte sulla base.
+### Non viene da nessuna lettura, su nessuno dei 104 segmenti
 
-## txpwr_target(): il modello e' esatto, ed e' il percorso a freddo che manca
+Per ogni segmento -- 26 cold d6220, 26 cold agcombo, 52 hot -- ho raccolto
+tutte le letture con valore che precedono la prima scrittura di `0x0646`
+(1500-1800 per segmento, contatori statistici `0x0768-0x078a` esclusi) e ho
+cercato un indirizzo il cui valore letto determini lo scritto, o il residuo
+scritto-meno-SROM, o anche solo separi i segmenti dove il tetto lega da quelli
+dove no. Il test e' funzionale, non di correlazione: stesso valore letto,
+stesso scritto, su entrambe le board insieme.
 
-Lo studio di funzione fatto sui soli segmenti a freddo diceva 74/104 e concludeva
-che mancasse lo stadio regolamentare. Sbagliato, e il controllo che lo smonta e'
-lo sweep a caldo.
+Gli indirizzi il cui valore letto varia fra segmenti sono 35 sul d6220 a
+freddo, 50 su agcombo, 12 a caldo. Nessuno passa il test, ne' sullo scritto ne'
+sul residuo ne' sul binario lega/non-lega. L'unico che lo passerebbe e'
+`RAD 0x08dc`, con 26 valori distinti su 26 segmenti: e' la word di PLL che il
+driver stesso scrive dalla tabella canali 84 op prima (`#5029` su `cold01`) e
+poi rilegge -- un'eco del canale, e ogni funzione del canale e' "funzione" di
+lui. Le correlazioni di rango piu' alte dopo di lui sono flag a due stati che
+il driver scrive e rilegge (`RAD 0x0170 = 0x0100` sui soli ch36-48, `PHY 0x0401
+= 0x7733`), che marcano la sotto-banda e per questo co-variano con il tetto a
+20 MHz, ma ch36 e ch44 a 40 e 80 MHz le leggono uguali e non legano. Le misure
+analogiche (TSSI `0x0012/0x0013`, rccal `0x0414/0x0415`) hanno rho fra 0.0 e
+0.4 e differiscono fra le due board dove lo scritto e' identico.
 
-### Il target di potenza e' ad anello aperto
+L'argomento indipendente dalle letture: stesso chip 4352 del d6220, stessa
+configurazione ch52/20, wl 6.30 sul DSL scrive 56 dove wl 7.14 scrive 62. Un
+numero che cambia col binario e non col chip sta nel binario: e' la CLM. La
+traccia non copre OTP e chipcommon, ma una costante di chip non dipende dal
+canale ne' cambia fra freddo e caldo sullo stesso board.
 
-Le 52 catture a caldo sono in coppia per configurazione, e le due copie di ogni
-coppia danno **valori identici**; le tre occorrenze del registro dentro ogni
-segmento a caldo sono identiche fra loro. Niente varia da una sessione
-all'altra, quindi non c'e' nessun anello chiuso su TSSI a monte di questo
-registro: e' una funzione dei soli ingressi statici.
+Un residuo che non e' del tetto, emerso dalla tabella: d6220 `ch52 bw80` a
+freddo scrive 64 dove il caldo scrive 62, cioe' `+2` sopra la SROM coi nibble
+a 20 MHz. Coi nibble di `bw40` (`0x10000000`, min 0) fa 64 esatto, e ch36 bw80
+resta esatto con entrambi. A freddo l'80 MHz potrebbe prendere gli offset a 40
+invece che a 20: una osservazione, non una regola. **SALAME**.
 
-### E su quel percorso il modello fa 26/26
+Che la differenza freddo/caldo sia il country impostato dopo l'attach e' l'unica
+spiegazione coerente con le tre board, ma non e' nelle tracce: **SALAME** sul
+perche', non sul cosa.
 
-Confrontato con lo sweep a caldo, `maxp5ga[grp] - 2*nib(po) - 6` con la
-correzione `-2` del primo blocco e' **esatto su tutte e 26 le configurazioni**,
-a una condizione: **a 80 MHz si prendono gli offset a 20 MHz**, non quelli a 80.
-Coi nibble di `bw80` fa 23/26, e le tre che sbaglia sono esattamente le tre
-configurazioni a 80 MHz -- ch36, ch52 e ch100, tutte e tre rimesse a posto dal
-ramo a 20.
+### Il port: e' `recalc_txpower`, con il PPR di b43
 
-Il che chiude una decisione rimasta aperta due volte. Il commento originale
-diceva «80 MHz takes the 20 MHz offsets» e l'avevo scavalcato perche'
-`mcsbw805g*po` esiste in NVRAM; esistere non vuol dire essere l'ingresso di
-questo consumatore, e lo sweep a caldo lo dimostra 26 a 23. La tabella di
-selezione ha ora la terza colonna che punta all'indice 0.
+Il registro e' `TxPwrCtrlTargetPwr` per core, una **potenza** in quarti di dBm
+e non un indice: in phy_n.c e' `pi->tx_power_max` scritto su 0x1ea, e la
+catena che lo produce e' `wlc_phy_txpower_recalc_target()`, che b43 porta gia'
+come `b43_nphy_op_recalc_txpower()` sul suo `struct b43_ppr`: `clear` →
+`load_max_from_sprom` → `apply_max(regolatorio)` → `add(-(6 + antgain))` →
+`apply_min(8 dBm)` → `get_max`. Il `6 + antgain` sta in mainline sotto
+`#if 0 / TODO: Enable this once we get gains working`: le catture AC dicono che
+si puo' accendere, con l'antenna gain sul solo lato regolatorio -- a caldo la
+SROM da sola e' esatta 26/26.
 
-### Quindi il tetto che avevo derivato non e' regolamentare
+`src/ppr_ac.{c,h}` e' quel PPR per la SROM rev 11: stesse primitive, righe
+OFDM e MCS a 20/40/80, caricamento dal `min` di `maxp5ga` sulle catene attive
+(come fa b43) piu' il delta per core, e i `mcsbw*po` per larghezza. Un canale a
+40 carica anche la riga a 20 (20-in-40), uno a 80 anche 20 e 40: il `max` sui
+rate prende quindi l'offset piu' piccolo fra le larghezze contenute, ed e' la
+forma, non un fit. `b43_phy_ac_txpwr_recalc()` la usa; `recalc_txpower`
+restituisce `NEED_ADJUST` solo se il target e' cambiato e `adjust_txpower` lo
+scrive sotto `mac_suspend`, come il core b43 si aspetta. Il CRS min power, che
+stava nell'hook `recalc_txpower` per errore, e' `pwork_60sec`, stessa cadenza.
+Il nibble minimo, `mcsbw5g_po(bw)` per il target e la correzione `-2` "primo
+blocco" sono spariti.
 
-Un limite regolamentare si applica a ogni sessione. Il caldo e' spiegato per
-intero **senza nessun tetto**, quindi i tetti "board-indipendenti" che avevo
-ricavato -- 62 su U-NII-1, 82 su ch100, 66 su ch60-bw40, 74 su ch100-bw40 --
-erano un artefatto di aver guardato solo il freddo. Su U-NII-1 il valore a
-freddo e' 56 su entrambe le board perche' e' un clamp a una costante, e una
-costante e' board-indipendente per costruzione: non perche' venga dal
-regolamento.
+Il PPR non serve solo al `max`. Gli offset per rate in SHM
+(`prb_rsp_rate_po`) sono la distanza `(max − ppr[rate])·4` sulla tabella
+finita, non piu' il nibble grezzo meno il nibble minimo: con il tetto giusto
+gli undici residui che il vecchio commento chiamava "bonus" e "sotto maxp"
+si muovono nella direzione attesa -- ch100/40 d6220 100→94 valori sbagliati,
+agcombo 3029→3020, ch60/40 105→99, ch36/40 e ch36/80 −4 -- e con il tetto
+sbagliato peggiorano, che e' la conferma per l'altro verso. `adjust_txpower`
+rilancia l'intero `txpwrctrl_setup()` sotto `mac_suspend`, come phy_n. Il
+pavimento TSSI-visible e' il piu' piccolo valore non saturato della LUT
+est_pwr sulle catene attive, `max` con gli 8 dBm di b43: la funzione del
+vendor non e' in nessuna fonte aperta e quella e' la derivazione disponibile
+(**SALAME** sul fatto che coincida); su tutte le catture il target sta molto
+sopra e non lega.
 
-### Cosa manca davvero: il percorso a freddo
+Cosa cambia sui dati: a freddo tutte e 52 le configurazioni sono spiegate,
+compresa ch52/80 che coi soli nibble a 20 stava a +2. A caldo restano fuori
+ch36/40, ch52/40 e ch52/80, dove il vendor scrive **2 sotto**: e' un termine
+della catena di `recalc_target` che il port non ha -- limite regolatorio per
+rate del country in forza, user target o soglia TSSI-visible -- e la cattura
+non dice quale. Prima quel `-2` era un fit su due punti che a freddo sbagliava
+di segno; ora e' un residuo dichiarato.
 
-Differenza modello-meno-freddo, per configurazione:
+I tetti del vendor sono per larghezza e cfg80211 porta un `max_power` per
+canale da 20 MHz: `reg_ceiling()` prende il minimo sul blocco, che riproduce
+i tetti a 20 e bounda 40/80 dove il vendor non lo fa. `gates.sh --cold`
+esporta `AC_MAX_POWER_MAP=36:21,40:21,44:21,48:21,100:26`, la parte esprimibile
+del locale di default; `--hot` resta al default permissivo. `patches/0001`
+dichiara `antenna_gain_qdb` e non lo estrae: su hardware vale 0, la SROM lega
+comunque, il tetto e' 5.5 dB troppo permissivo.
 
-| | bw20 | bw40 | bw80 |
-| --- | --- | --- | --- |
-| ch36 | +10 | -2 / +2 / -2 | 0 / +4 / 0 |
-| ch40 | +10 | | |
-| ch44, ch48 | +8 | 0 / +4 / 0 | |
-| ch52-64 | 0 | -2 | -2 |
-| ch100 | +4 | +12 | +4 |
-| ch104-140 | 0 | 0 | 0 |
+`patches/0001` ora estrae anche gli offset espliciti delle righe sub-band
+(`sb20in40*`, `sb20in80and160*`, `sb40and80*`, `dot11agdup*`, `mcslr5g*`;
+parole 200-218 di `bcmsrom_fmt.h`, GPL, in bcmdhd) e decodifica `agbg0`/`aga0`
+in `antenna_gain_qdb[]`. I campi sub-band sono zero su tutte e tre le board:
+il loader non li applica, perche' quale nibble vada su quale rate sta in
+`wlc_phy_txpwr_apply_srom11`, che non e' aperta; il recalc avverte una volta
+se una board li porta non nulli. `ppr_force_disabled` e' `b43_ppr_ac_force_
+disabled()`: i rate sotto il pavimento TSSI-visible vanno a zero, non al
+pavimento -- il loop non insegue una lettura che non ha.
 
-Tre cose che una singola "riduzione a freddo" non spiega:
+### Tabella 0x21: non e' il PPR, sono i `pdoffset`
 
-1. A bw40 e bw80 il freddo sta a volte **sopra** il modello (-2), non sotto.
-   Sui blocchi primi -- ch36 e ch52 a 40 MHz -- il freddo vale
-   `maxp - 6` senza la correzione `-2`, mentre il caldo la applica. Cioe' la
-   correzione del primo blocco **c'e' a caldo e non a freddo**.
-2. A bw40 e bw80 il freddo porta **tre valori diversi** nello stesso segmento,
-   con la seconda occorrenza 4 sotto le altre due. A bw20 le tre sono uguali.
-3. `ch100 bw40` a freddo sta 12 sotto e non rientra in nessuno degli schemi.
+I 24 u32 della tabella 0x21 sono un byte per core (`0x0202` sul d6220,
+`0x020202` su agcombo a tre catene -- il vecchio commento leggeva male il
+terzo byte) e su tutti i 104 segmenti assumono tre soli payload. Le voci 1, 5
+e 6 valgono 2 su tutte le board e tutti i canali; la voce 10 vale 1 su agcombo
+da ch100 in su a ogni larghezza, 0 altrove e 0 sempre sul d6220. Agcombo e' la
+sola board con `pdoffset80ma{0,1,2} = 0x0100`: l'1 sta nel nibble del
+sub-band 2, che e' ch100-140 nella partizione pa5g. Le tre board portano
+`pdoffset40ma = 0x3222`: 2 sui sub-band 0-2, il 3 del sub-band 3 non e'
+catturato. Quindi la tabella e' l'offset del rilevatore di potenza per gruppo
+di rate: `pdoffset40ma[core]` nibble del sub-band sulle voci dei gruppi a 40
+(1, 5, 6), `pdoffset80ma[core]` sulla voce del gruppo a 80 (10), il resto zero
+(la rev 11 non ha un campo a 20 e `pdoffsetcckma` e' zero dove dichiarato).
+Il legame a 80 e' misurato su due board e tre sub-band; quello a 40 e' per
+stessa codifica, non discriminato dai dati. `patches/0001` estrae anche
+`pdoffset80ma`; su agcombo il port perde 6 valori sbagliati per segmento.
 
-Il clamp `first_bu ? min(0x38, lim) : lim` di `phy_ac.c` sta in piedi come
-impalcatura proprio per questo, ed e' anche il motivo per cui togliendolo il
-muro di `cold01` tornava indietro: il valore a freddo su U-NII-1 e' davvero 56,
-solo non per la ragione scritta.
-
-Il prossimo passo e' caratterizzare il freddo, e il segnale nuovo e' la seconda
-occorrenza: e' l'unica differenza **dentro** un segmento, quindi non puo' venire
-da SROM, canale o larghezza, che nel segmento non cambiano.
-
-## Lo stadio che manca e' quello regolamentare
-
-Il residuo piu' grosso ha una firma che esclude la SROM. Su U-NII-1 a 20 MHz --
-ch36, 40, 44, 48, dodici osservazioni fra le due board -- il valore misurato e'
-**56 su entrambe**, mentre il modello da' 66 sulla d6220 e 68 sull'agcombo:
-
-| board | maxp5ga[0] | modello | wl |
-| --- | --- | --- | --- |
-| d6220 | 72 | 66 | **56** |
-| agcombo | 74 | 68 | **56** |
-
-Due board con `maxp5ga` diverso e `mcsbw*po` diverso che producono lo stesso
-numero: quel numero non puo' venire dalla SROM. E' il tetto regolamentare, cioe'
-esattamente lo stadio che il commento di `txpwr_target()` dichiara di non
-applicare -- «The regulatory stage is not applied». Un `ceil = 62` prima del
-margine di 6 riproduce tutte e dodici.
-
-Torna anche con la fisica: 56 quarter-dBm sono 14 dBm, U-NII-1 e' la sotto-banda
-col limite piu' basso, e a 40 e 80 MHz il valore misurato sale (66 sulla d6220)
-perche' il limite e' di densita' spettrale e la potenza totale cresce con la
-larghezza. A quelle larghezze il tetto non lega piu' e vince la SROM.
-
-E questo riabilita la costante `0x38` del clamp a `phy_ac.c:10610`, che il
-commento chiamava «scaffolding read off one board»: **non e' impalcatura**, 0x38
-= 56 e' il valore regolamentare di U-NII-1 a 20 MHz, verificato su due board. Il
-difetto e' che il clamp lo applica a ogni primo bring-up invece di condizionarlo
-a banda e larghezza, e cosi' schiaccia anche 40 e 80 MHz dove il tetto non lega.
-
-**Dove va il fix.** `b43_phy_ac_reg_ceiling()` esiste gia' e legge
-`chan->max_power`, che e' dove cfg80211 mette il tetto del regulatory domain.
-Quindi non serve inventare una tabella: serve che l'harness fornisca il tetto
-per sotto-banda invece del default permissivo che ha adesso, e che il clamp a
-0x38 sparisca a favore di `ceil`. E' la stessa forma del lavoro su
-`IEEE80211_CHAN_RADAR`: la regola sta in cfg80211, il driver la legge.
+Aperti su questo registro: il `-2` a caldo, il `-4` della seconda occorrenza a
+freddo sotto i 5250 (vedi sotto), e la regola con cui i campi sub-band si
+sommano alle righe, che serve solo a una board dove non sono zero.
 
 ### Il campo bw80 non decide questo registro
 
@@ -2933,8 +2969,12 @@ registro: il resto e' esatto, 26/26 sul caldo.
   Fatto anche PHY `0x0140`, che si e' rivelato una regola e non tre numeri: il
   bit `0x0800` e' impostato a 20 MHz e azzerato sopra, e il resto della parola
   non si muove -- `0x0df4`/`0x0df6` a 20, `0x05f4`/`0x05f6` a 40 e 80. Vale su
-  17 delle 18 scritture a quel registro; la diciottesima viene da un altro
-  sito e resta da trovare.
+  17 delle 18 scritture a quel registro; la diciottesima e' la prima di
+  `channel_switch_prep()`, che riporta il bit 11 dal suo peek prima che
+  `coeff_bank_init()` lo abbia impostato per la larghezza corrente: legge
+  `0x0df7` su tutti i 52 attach a freddo dei due board e scrive `0x0df4`
+  anche a 40 e 80. Sui 104 segmenti in repo il registro non assume altri
+  valori che quei quattro.
 
   Restano da fare, e sono tre valori per tre larghezze senza legge:
 
@@ -3268,12 +3308,11 @@ registro: il resto e' esatto, 26/26 sul caldo.
   dei simboli fra i due blob con `strings`/`readelf -s` prima di ipotizzare
   differenze di board — "funzione assente nella versione vecchia" e' un
   pattern gia' accertato una volta.
-- **Max index TX su 0x0646/0x0846 -- gate applicato, resta il DSL.** Al primo
-  bring-up tutte le board scrivono la costante `0x38`; su un channel setup
-  successivo il valore e' `maxp5ga[grp] - 6`, cioe' `0x42` sul d6220
-  (maxp5ga0=72) e `0x44` su agcombo (74). Il port ora gata sulla fase e combacia
-  su entrambi i gate d6220. **Resta aperto**: il DSL emette `0x38` anche sul
-  down→up, quindi o non fa la derivazione o la fa da altri campi.
+- **Max index TX su 0x0646/0x0846 -- chiuso come tetto regolatorio.** Lo
+  `0x38` del primo bring-up e' il tetto del locale di default che lega su
+  ch36-48 a 20 MHz, non una costante di fase; il DSL lo emette anche sul
+  down->up perche' la' il country non viene mai impostato. Vedi la sezione sul
+  registro `0x0646`.
 - **La cattura `d6220/wl-diag-wl1-down-to-bss-up_delay_only.txt` sottoconta:
 inaffidabile
   per i conteggi.** E' una finestra da `#50388` (36228 episodi, zero RETVAL) e
@@ -3653,30 +3692,31 @@ restano: il valore e' identico su entrambe le board di riferimento, quindi da'
 un vincolo solo e 17 word candidate. Serve la fonte canonica, non un terzo dump.
 
 **Un valore di potenza trascritto non si
-scrive mai senza confrontarlo con cio' che l'SROM dichiara.** Applicato
-all'indice massimo di potenza TX: la costante di impalcatura `0x38` e' ora
-clampata al limite derivato da `maxp5ga`. Sulle tre board quel limite vale
-`0x42`, `0x46` e `0x44`, tutti sopra `0x38`, quindi il clamp e' un no-op e i
-gate non cambiano; su una board con `maxp5ga` piu' basso impedisce di superare
-il massimo dichiarato dal suo front-end, e lo dice in un warning.
+scrive mai senza confrontarlo con cio' che l'SROM dichiara.** L'indice massimo
+di potenza TX non e' piu' trascritto: viene da `txpwr_target()`, che parte da
+`maxp5ga` e applica tetto regolatorio e margine, anche al primo bring-up.
 
-### Marcatore `SCAFFOLD(ch36)`
+### Impalcatura: i siti che scrivono valori trascritti e toccano RF
 
-I siti che scrivono valori trascritti e toccano RF sono marcati
-`SCAFFOLD(ch36)` -- e `SCAFFOLD(femctrl6)` per la tabella di controllo FEM --
-distinti da `TODO(formula)`: il secondo dice "manca la
-formula", il primo dice "questo non e' un valore, e fuori da ch36 e'
-pericoloso". Sono greppabili, e sono tre: soglie `crs_min_pwr`, default LUT di
-gain del core 2, e **indice massimo di potenza TX** -- quest'ultimo il piu'
-pericoloso del file, perche' un indice troppo alto sovrapilota il PA.
+Non c'e' un marcatore greppabile: i tag `SCAFFOLD(...)` e `TODO(formula)` di
+cui parlavano le versioni precedenti di questo file non sono piu' nel sorgente.
+I siti si trovano con `grep -n -i scaffold src/*.c`, che oggi ne da' tre, e il
+commento di ognuno dice cosa e' trascritto e da dove:
 
-Due sono usciti dalla lista, e per ragioni diverse. Il blocco `0x60`/`0x64`
-ora scrive `afe_res[]`/`afe_res_cal[]`, cioe' i risultati riletti dalla cal AFE:
-il valore e' **derivato**, il marcatore va via. L'ampiezza del tono no: resta un
-letterale, ma non e' impalcatura ch36 -- e' misurata invariante su 16 canali e
-tre larghezze (vedi sopra), quindi il marcatore diceva una cosa falsa sul suo
-raggio di validita'. Un `SCAFFOLD` si toglie derivando il valore **oppure**
-dimostrando che l'invarianza copre il dominio; questo e' il secondo caso.
+- la tabella di controllo FEM, che e' quella di `femctrl=6`, il solo valore
+  osservato (`b43_phy_ac_set_regtbl_on_femctrl`);
+- le soglie `crs_min_pwr` e il banco `0x0910`, trascritti da ch36 a 20 MHz,
+  tenuti fuori dagli altri canali dal filtro di `op_switch_channel()`
+  (`docs/bank-0910-analysis.md`);
+- il filtro delle configurazioni validate in `op_switch_channel()`, che e'
+  impalcatura per costruzione, non un limite del chip.
+
+Ne sono usciti, per ragioni diverse: il blocco `0x60`/`0x64`, che ora scrive
+`afe_res[]`/`afe_res_cal[]`, risultati riletti dalla cal AFE; l'ampiezza del
+tono, misurata invariante su 16 canali e tre larghezze; l'indice massimo di
+potenza TX, derivato da SROM, tetto regolatorio e margine (sezione sul registro
+`0x0646`). Un valore trascritto esce derivandolo **oppure** dimostrando che
+l'invarianza copre il dominio.
 
 La regola operativa: un `SCAFFOLD` si rimuove solo derivando il valore, oppure
 allargando il filtro dei canali con una cattura a supporto. Non si rimuove

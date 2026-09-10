@@ -493,7 +493,7 @@ che è il modo più economico di chiudere i controesempi qui sotto.
 - **agcombo BW40 e BW80**: somme `{67, 73}` e `{56, 59}`, contro `{64, 67}` di
   BW20. Il 67 ricorre, il resto no.
 
-Le costanti in `phy_ac.c` sono marcate `TODO(formula)` per questo: la forma è
+Le costanti in `phy_ac.c` sono dichiarate impalcatura nel commento di `b43_phy_ac_prog_bank_0910()` per questo: la forma è
 derivata, i quattro valori no. Servono almeno un secondo canale a BW20 per
 separare la dipendenza dal canale, e la mappatura dei siti a BW40 per capire
 perché le passate sono tre.

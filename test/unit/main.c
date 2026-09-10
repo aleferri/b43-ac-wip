@@ -1828,7 +1828,7 @@ int main(int argc, char **argv)
 	} else if (!strcmp(flow, "crsmin")) {
 		/*
 		 * Self-test della catena crsmin (non usa oracolo). Esercita
-		 * recalc_txpower tre volte: le prime due (cal_cycles 0->1->2)
+		 * pwork_60sec tre volte: le prime due (cal_cycles 0->1->2)
 		 * sono "a freddo" e scrivono la ladder bumped (+4); dalla
 		 * terza il bump sparisce. Atteso, ch36 BW20 (idx 1 -> 48):
 		 * cold 52 (=0x34, il valore d'attach osservato), poi 48 (=0x30).
@@ -1870,7 +1870,7 @@ int main(int argc, char **argv)
 			if (k == 1)
 				b43_test_mirror_phy_set(0x0324, 0x00ff);
 
-			b43_phyops_ac.recalc_txpower(&g_wldev, false);
+			b43_phyops_ac.pwork_60sec(&g_wldev);
 			got = b43_test_mirror_phy_get(0x0324) & 0xff;
 			fprintf(stderr,
 				"crsmin: ciclo %u  CRS byte-basso=0x%02x atteso=0x%02x  %s%s\n",

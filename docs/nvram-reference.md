@@ -51,7 +51,7 @@ non necessariamente un punto in cui il driver legge il campo NVRAM.
 | `pa5ga{c}[grp·3..]` | transfer function est_pwr (128 voci) | tbl `0x40`/`0x60`/`0x80` (core 0/1/2) | ✓ 128/128 su d6220 e agcombo |
 | `rxgains_5gl.triso[c]` | `((triso+4)<<1)+2` | reg `0x06f9 + c·0x200`, bit 14:8 (val `0x1600`) | ✓ per core, entrambi i board |
 | `rxgains_5gl.elnagain[c]` | `(elnagain+3)<<1` | tbl `0x44 + c·0x20`, offset 0 | ✓ |
-| `maxp5ga{c}[grp]` | `maxp − 6` | reg `0x0646 + c·0x200`, max index (mask 0x00ff) | ✓ 3 punti / 2 board (offset −6: TODO) |
+| `maxp5ga{c}[grp]` | `min(maxp − 2·nib, tetto) − 6` | reg `0x0646 + c·0x200`, max index (mask 0x00ff) | ✓ 26/26 a caldo, 2 board; il −6 e' il margine di `wlc_phy_txpower_recalc_target()` |
 | `rxchain` | `& 0x07` → coremask | numero di blocchi per-core (tbl `0x80` solo se 3×3) | ✓ strutturale |
 | `subband5gver` | confini 5250/5500/5700 → `pa5g_group` | selettore dello slice `pa5ga`/`maxp5ga` | ✓ (indiretto) |
 | `tssifloor5g` | clamp per-chain | reg `0x0724 + c·0x200` (val `0x03ff`) | ⚠ SALAME (valore+struttura) |
@@ -75,7 +75,7 @@ Dettagli e note di derivazione: est_pwr e max index in
 - `boardnum` — seriale board. ~
 - `macaddr` — MAC. ~
 - `devid` — PCI device-id (`0x43b3` / `0x43a2`). ~
-- `ccode` + `regrev` — dominio regolatorio (vuoto = world, regrev 0). ~
+- `ccode` + `regrev` — dominio regolatorio (vuoto = world, regrev 0). E' il locale sotto cui gira il primo bring-up, e i suoi tetti sono quelli che legano su `0x0646` a freddo; a caldo il country lo imposta lo userspace. ~
 - `ledbh10` — comportamento/mappatura LED 0-1. Scritte reali su reg `0x0182`, `0x0202..0x0204` ma lato **core b43**, non AC-PHY. ~
 - `watchdog` — periodo watchdog in ms; `0x0bb8`→reg `0x0554/0x0555` (core, off-path). ~
 - `xtalfreq` — frequenza quarzo (`0xffff` = default). ~
@@ -84,8 +84,8 @@ Dettagli e note di derivazione: est_pwr e max index in
 - `aa2g`, `aa5g` — bitmask antenne disponibili per banda. ~
 - `txchain`, `rxchain` — bitmask catene attive; `rxchain & 7` → coremask (3=2×2, 7=3×3). ✓ per rxchain
 - `antswitch` — config switch antenna. ~
-- `agbg0..2` — guadagno antenna 2.4 GHz per antenna (quarti di dB). ~
-- `aga0..2` — guadagno antenna 5 GHz per antenna (quarti di dB). ~
+- `agbg0..2` — guadagno antenna 2.4 GHz per antenna. Encoding di brcmsmac: dB interi nei bit [5:0], quarti nei bit [7:6]; `71` = 7.25 dB. ✓ encoding
+- `aga0..2` — guadagno antenna 5 GHz per antenna, stesso encoding; `133` = 5.5 dB = 22 quarti. **Entra nel tetto regolatorio** di `0x0646`: `QDB(max_power) − antgain`, ed e' il termine che rende interi i quattro tetti misurati a freddo. Quale dei tre legge wl non si distingue sui board di riferimento, tutti a 133; `patches/0001` decodifica `aga0` in `antenna_gain_qdb[1]`. ✓ 2 board
 
 ### Front-end / configurazione del path
 - `femctrl` — tipo/pilotaggio front-end module. **Ora è letto**: `set_regtbl_on_femctrl` porta la tabella di controllo FEM di femctrl 6 (la sola osservata, condivisa dalle tre board) e si ferma con un warning se il valore non corrisponde, invece di applicarla incondizionatamente. Vale 6 su d6220, DSL-3580L e agcombo. Il campo è in `struct ssb_sprom` come `u8 femctrl`, letto per nome dal filler NVRAM — vedi la nota sul prerequisito di build in `retrace-todo.md`. ~
@@ -107,7 +107,7 @@ Ogni gruppo è una terna `(a1, b0, b1)` del modello pdet.
 
 ### Potenza massima e offset per-rate
 - `maxp2ga0..2` — potenza max 2.4 GHz per core (quarti di dBm; es. 66 = 16.5 dBm). ~
-- `maxp5ga0..2` — potenza max 5 GHz per core, 4 valori sub-band. **Deriva il max index**: `reg 0x0646+c·0x200 = maxp5ga[grp] − 6`. ✓ (offset −6 su 3 punti; TODO conferma con un board a maxp diverso)
+- `maxp5ga0..2` — potenza max 5 GHz per core, 4 valori sub-band. **Deriva il max index**: `reg 0x0646+c·0x200 = min(maxp5ga[grp] − 2·nib(mcsbw*po), tetto) − 6`. ✓ (26/26 sullo sweep a caldo; il −6 e' il margine fisso di brcmsmac, non un fit)
 - `cckbw202gpo`, `cckbw20ul2gpo` — offset CCK. ~ (packing TODO)
 - `mcsbw{20,40,80}2gpo`, `...5g{l,m,h}po` — offset per-MCS impaccati per banda/bw. Footprint: tabella ppr `0x21`. Il sorgente dichiara che `mcsbw205glpo` deriva lo slot `0x0202`, ma il differenziale d6220 vs agcombo mostra ppr **identico** con `mcsbw205glpo` diverso → la derivazione dichiarata è ⚠ falsificata; `0x0202` è un backoff per-rate fisso per il rate-set a ch36/5gl. ~ (packing per-rate TODO)
 - `mcsbw160...po` — offset 80+80/160 MHz. ~

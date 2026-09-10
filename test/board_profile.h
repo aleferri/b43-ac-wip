@@ -39,6 +39,16 @@ struct board_profile {
 	/* maxp5ga per-core (3 core), 4 sub-band u8. NVRAM keys maxp5ga{0,1,2}.
 	 * Drives the per-core max TX index (maxp5ga[grp] - margin). */
 	u8 maxp5ga[3][4];
+	/* Antenna gain, raw NVRAM encoding (agbg0, aga0): whole dB in bits
+	 * [5:0], quarter dB in bits [7:6]. The 5 GHz value is what the
+	 * regulatory ceiling subtracts from an EIRP limit; on the d6220 and
+	 * agcombo aga0..2 are all 133, so which of the three wl reads does not
+	 * matter there. */
+	u8 antgain_raw[2];
+	/* Power-detector offsets per chain, one nibble per pa5g sub-band; NVRAM
+	 * pdoffset40ma{0,1,2} and pdoffset80ma{0,1,2}. Feed table 0x21. */
+	u16 pdoffset40ma[3];
+	u16 pdoffset80ma[3];
 	/* mcsbw{20,40}5g{l,m,h}po, NVRAM. Index 0 = 5gl, 1 = 5gm, 2 = 5gh. */
 	u32 mcsbw5g_po[3][3];	/* [sotto-banda][bw20, bw40, bw80] */
 	/* rxgains_5gl per-core (3 core). NVRAM keys rxgains5gelnagaina{0,1,2}
@@ -109,7 +119,10 @@ static const struct board_profile PROFILE_D6220 = {
 		{ 72, 70, 86, 0 },
 		{ 76, 76, 76, 76 },
 		},
-.mcsbw5g_po = {
+	.antgain_raw = { 71, 133 },
+	.pdoffset40ma = { 0x3222, 0x3222, 0x3222 },
+	.pdoffset80ma = { 0, 0, 0 },
+	.mcsbw5g_po = {
 		/* mcsbw{20,40,80}5g{l,m,h}po di wl1_nvram.txt */
 		{ 0x20000000, 0x21000000, 0x32222222 },
 		{ 0x11111111, 0x10000000, 0x22222222 },
@@ -146,7 +159,10 @@ static const struct board_profile PROFILE_AGCOMBO = {
 		{ 74, 74, 82, 82 },
 		{ 74, 74, 82, 82 },
 		},
-.mcsbw5g_po = {
+	.antgain_raw = { 71, 133 },
+	.pdoffset40ma = { 0x3222, 0x3222, 0x3222 },
+	.pdoffset80ma = { 0x0100, 0x0100, 0x0100 },
+	.mcsbw5g_po = {
 		/*
 		 * mcsbw{20,40,80}5g{l,m,h}po di agcombo_nvram.txt, che li porta
 		 * in esadecimale. Su questa board le tre larghezze hanno la
@@ -192,7 +208,10 @@ static const struct board_profile PROFILE_DSL = {
 		{ 76, 76, 76, 76 },
 		{ 76, 76, 76, 76 },
 		},
-.mcsbw5g_po = {
+	.antgain_raw = { 71, 71 },
+	.pdoffset40ma = { 0x3222, 0x3222, 0x3222 },
+	.pdoffset80ma = { 0, 0, 0 },
+	.mcsbw5g_po = {
 		/*
 		 * mcsbw{20,40,80}5g{l,m,h}po di wl1_nvram.txt, che li porta in
 		 * decimale. Come sull'agcombo le tre larghezze hanno la stessa
@@ -230,6 +249,11 @@ static inline void board_profile_to_sprom(const struct board_profile *p,
 	memset(s, 0, sizeof(*s));
 	s->rxchain = p->rxchain;
 	s->subband5gver = p->subband5gver;
+	for (b = 0; b < 2; b++)
+		s->antenna_gain_qdb[b] = (s8)(4 * (p->antgain_raw[b] & 0x3f) +
+					      (p->antgain_raw[b] >> 6));
+	memcpy(s->pdoffset40ma, p->pdoffset40ma, sizeof(s->pdoffset40ma));
+	memcpy(s->pdoffset80ma, p->pdoffset80ma, sizeof(s->pdoffset80ma));
 
 	s->tssiposslope2g = c1 & 0x0001;
 	s->epagain2g      = (c1 & 0x000e) >> 1;
