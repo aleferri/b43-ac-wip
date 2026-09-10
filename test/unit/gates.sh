@@ -81,12 +81,28 @@ while [ $# -gt 0 ]; do
 	esac
 done
 
+# The regulatory ceiling the stock driver applies on a first bring-up, in dBm
+# EIRP per 20 MHz channel, measured on the d6220 and agcombo cold sweeps: the
+# same values on two boards with different SROMs, so they are the locale's,
+# not the board's. The driver subtracts the 5 GHz antenna gain (aga0 = 133,
+# 5.5 dB) and the 6-unit margin: 21 dBm on ch36-48 gives the 0x38 every cold
+# attach writes, 26 dBm on ch100 gives its 0x4c. Everything else stays at the
+# permissive default. Two of the vendor's cold ceilings cannot be expressed
+# this way, because they hold at 40 MHz only -- ch60 (22 dBm) and ch100
+# (24 dBm) -- and cfg80211 has no per-bandwidth max_power; on those two
+# segments the value on 0x0646/0x0846 is the regulatory domain's, not the
+# vendor's. The hot sweep runs after the userspace set a country and the
+# ceiling never binds there, so --hot keeps the default.
+COLD_REG_MAP="36:21,40:21,44:21,48:21,100:26"
+
 if [ "$COND" = cold ]; then
 	DIR=$COLD
 	ARCHIVE=cold-sweep.zip
 	: "${FLOW:=full}"
 	FIRST_INIT=1
 	DEFAULT="$COLD/cold01-ch36-bw20.txt"
+	: "${AC_MAX_POWER_MAP:=$COLD_REG_MAP}"
+	export AC_MAX_POWER_MAP
 else
 	DIR=$HOT
 	ARCHIVE=hot-sweep.zip

@@ -90,28 +90,57 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
 	return 36;
 }
 
+static void b43_phy_ac_txpwrctrl_setup(struct b43_wldev *dev, u16 freq);
+
 /*
- * Periodic TX power recalculation.
+ * The periodic work, split the way the b43 core splits it.
  *
- * 1. CRS min power is ported, as b43_phy_ac_op_recalc_txpower(), the core's
- *    hook. The high byte of 0x0324 and friends is the one-shot reset already
- *    done in op_switch_channel; the low byte is the recalculated threshold,
- *    derived from the crsmin chain verified against the D6220 7.14 blob
+ * 1. recalc_txpower / adjust_txpower are the TX power target: the core calls
+ *    recalc from b43_op_config() and every minute, the recalc says whether
+ *    the target moved, and only then adjust writes it to the PHY. That is
+ *    wlc_phy_txpower_recalc_target() and what b43_nphy_op_recalc_txpower()
+ *    does for the N-PHY; the computation is b43_phy_ac_txpwr_recalc(). The
+ *    channel setup computes the same target itself before its two write
+ *    sites, so from the core's calls nothing changes unless the regulatory
+ *    ceiling did.
+ *
+ * 2. CRS min power is the pwork_60sec hook, the same cadence the core gives
+ *    the recalc. The high byte of 0x0324 and friends is the one-shot reset
+ *    already done in op_switch_channel; the low byte is the recalculated
+ *    threshold, from the crsmin chain verified against the d6220 7.14 blob
  *    (ladder, per-bandwidth anchoring, clamp and cold bump). The one input
  *    that cannot be reproduced without hardware is the interference sample
  *    per freq_range: it is pinned here to the steady-state low-5 GHz value
  *    and has to be replaced by the measurement on real hardware.
  *
- * 2. The periodic cycle on 0x0725/0x0925 is ported as the measure block
- *    inside b43_phy_ac_watchdog(), the pwork_15sec hook, on the vendor's
- *    period of roughly five seconds.
- *
- * adjust_txpower stays a stub: no capture shows an adjust phase distinct
- * from the recalc, and the b43 core only calls it when recalc returns
- * NEED_ADJUST, which does not happen here.
+ * 3. The periodic cycle on 0x0725/0x0925 is the measure block inside
+ *    b43_phy_ac_watchdog(), the pwork_15sec hook, on the vendor's period of
+ *    roughly five seconds.
  */
+static enum b43_txpwr_result
+b43_phy_ac_op_recalc_txpower(struct b43_wldev *dev, bool ignore_tssi)
+{
+	B43_AC_FN();
+
+	if (!b43_phy_ac_txpwr_recalc(dev))
+		return B43_TXPWR_RES_DONE;
+
+	return B43_TXPWR_RES_NEED_ADJUST;
+}
+
 static void b43_phy_ac_op_adjust_txpower(struct b43_wldev *dev)
 {
+	B43_AC_FN();
+	struct b43_phy_ac *ac = dev->phy.ac;
+
+	/*
+	 * As b43_nphy_op_recalc_txpower() does after its PPR: the whole power
+	 * control setup under a suspended MAC -- idle TSSI, est_pwr LUTs, the
+	 * per-rate table and the target -- not the target register alone.
+	 */
+	b43_mac_suspend(dev);
+	b43_phy_ac_txpwrctrl_setup(dev, 5000 + 5 * ac->cal_channel);
+	b43_mac_enable(dev);
 }
 
 /*
@@ -303,10 +332,9 @@ static void b43_phy_ac_wd_stats_poll_opt(struct b43_wldev *dev,
 					 bool head_sweep,
 					 unsigned int ctr32_passes,
 					 bool ctr32_tail);
-static u32 b43_phy_ac_mcsbw5g_po(const struct ssb_sprom *sprom,
-				 unsigned int band,
-				 enum nl80211_chan_width width);
 static unsigned int b43_phy_ac_po_band(u16 chan);
+static void b43_phy_ac_txpwr_target_write(struct b43_wldev *dev);
+static u8 b43_phy_ac_tssi_visible_qdbm(struct b43_wldev *dev);
 static void b43_phy_ac_farrow_setup(struct b43_wldev *dev,
 				    struct ieee80211_channel *channel);
 
@@ -796,50 +824,20 @@ static void b43_phy_ac_chainmask_block(struct b43_wldev *dev)
  * 10, 12 and 16 of the same block -- probe-response PLCP and duration -- and
  * not 14.
  *
- * The value is a distance from the maximum, as in phy_n's PPR: with
+ * The value is the rate's distance from the target in the per-rate table,
+ * as in phy_n's PPR: (max - ppr[rate]) in quarter dBm, times four, so the
+ * field is in sixteenths of a dB. The table is the one
+ * b43_phy_ac_txpwr_recalc() built for this channel -- SROM, regulatory
+ * ceiling, margin -- and the legacy rates take the 20 MHz MCS row they fall
+ * on: 6, 9, 12 and 18 on mcs0, then 24, 36, 48 and 54 on mcs1..4. Two things
+ * follow from taking the distance on the finished table rather than on the
+ * raw nibbles: where the ceiling binds the rates flatten against it and the
+ * distances shrink, and on a bonded channel the maximum may sit on a 40 or
+ * 80 MHz row, which pushes the 20 MHz rates further from it.
  *
- *     ppr[i] = maxp5ga[sb] - 2 * nib[i]        (phy_n.c srom_convert)
- *     max    = maxp5ga[sb] - 2 * min(nib)      (get_max on the loaded PPR)
- *
- * the field is `(max - ppr[i]) / 2`, in which maxp5ga cancels and what is
- * left is
- *
- *     nib[i] - min(nib)
- *
- * where nib[i] is the mcsbw*po nibble of the MCS the legacy rate falls on --
- * 6, 9, 12 and 18 on mcs0, then 24, 36, 48 and 54 on mcs1..4 -- and the
- * minimum is taken over all eight nibbles of the operating width's field. The
- * nibbles are unsigned: read as signed, agcombo's mcsbw205ghpo = 0xcca88440
- * would give negative backoffs. The result is multiplied by 8, so the field is
- * in half-quarters of a dB.
- *
- * Obtained by inverting the chain on the two cold sweeps, d6220 and agcombo,
- * 52 configurations: 41 come out exact in this form.
- *
- * TODO: the other 11 carry two terms this form does not, and both break the
- * cancellation of maxp5ga.
- *
- * Seven are the spectral-density bonus on the bonded widths, where the maximum
- * sits *above* maxp5ga by 1 or 2 dB: widening the channel raises the permitted
- * total. The increment is not uniform between the two boards -- 8 quarters on
- * the d6220 at ch36 bw80, 4 on agcombo -- so it is not transcribed.
- *
- * Unverified hypothesis: the bonus scales with the number of chains. The
- * d6220 has two cores and takes 8 quarters at 80 MHz, agcombo has three and
- * takes 4; at 40 MHz both take 4. That would explain the non-uniformity rather
- * than restate it, but at 80 MHz there is one point per board.
- *
- * Four have the maximum *below* maxp5ga, that is the group ceiling bites
- * before the maximum is taken: agcombo ch36-48 bw20 and ch100 bw40, and d6220
- * ch100 bw40. Probably just a narrower maximum, but four points do not
- * separate that from a ceiling applied per group; the DSL full sweep is the
- * data needed, and it is worth running now that the model has no free
- * parameters left.
- *
- * Outside are the four CCK rates, whose cells the vendor writes before these:
- * they are the PPR's cck[4] group, with no 5 GHz SROM field in rev 11, so
- * their value comes from ceiling and floor and nothing else -- which is the
- * board-independence measured on three boards.
+ * The CCK rates are outside: they are the PPR's cck[4] group, with no 5 GHz
+ * SROM field in rev 11, so their value comes from ceiling and floor and
+ * nothing else -- the board-independence measured on three boards.
  * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
  *   13009-13068, 13683-13742, 36065-36124]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -849,17 +847,9 @@ static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev)
 {
 	B43_AC_FN();
 	struct b43_phy_ac *ac = dev->phy.ac;
-	struct ssb_sprom *sprom = dev->dev->bus_sprom;
-	unsigned int band = b43_phy_ac_po_band(ac->cal_channel);
+	const struct b43_ppr_ac *ppr = &ac->txpwr_ppr;
+	u8 max = b43_ppr_ac_get_max(ppr);
 	unsigned int i;
-	u8 min_nib;
-	u32 po;
-
-	po = b43_phy_ac_mcsbw5g_po(sprom, band, ac->cal_width);
-
-	min_nib = 0xf;
-	for (i = 0; i < 8; i++)
-		min_nib = min_t(u8, min_nib, (po >> (4 * i)) & 0xf);
 
 	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_prb_rsp_rates); i++) {
 		const struct b43_phy_ac_prb_rsp_rate *r =
@@ -873,7 +863,7 @@ static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev)
 		if (r->cck)
 			val = b43_phy_ac_cck_rate_po(ac);
 		else
-			val = (u16)((((po >> (4 * r->mcs)) & 0xf) - min_nib) * 8);
+			val = (u16)((max - ppr->rates.mcs_20[r->mcs]) * 4);
 
 		b43_shm_read16(dev, B43_SHM_SHARED, cell);
 		b43_shm_write16(dev, B43_SHM_SHARED, cell, val);
@@ -958,8 +948,10 @@ static void b43_phy_ac_classctl_write(struct b43_wldev *dev, bool arm)
 	/*
 	 * Bit 0x0800 is set at 20 MHz and clear above it: the captures write
 	 * 0x0df4/0x0df6 at 20 MHz and 0x05f4/0x05f6 at 40 and 80, and the rest
-	 * of the word does not move. Seventeen of the eighteen writes to this
-	 * register follow that; the one that does not comes from elsewhere.
+	 * of the word does not move. The one write per attach that does not
+	 * follow the width is the first, in channel_switch_prep(), which
+	 * carries bit 11 over from its peek before coeff_bank_init() has set
+	 * it for this width.
 	 */
 	b43_phy_write(dev, 0x0140,
 		      (u16)((arm ? 0x0df4 : 0x0df6) &
@@ -1482,10 +1474,21 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
  * A bonded configuration is bounded by every 20 MHz channel it occupies, not
  * by its primary alone, so the minimum over the block is what binds.
  *
- * What this clamp actually models on this hardware is open; see the note in
- * b43_phy_ac_txpwr_target(). On the captures it does not bind, ch100 receiving
- * 86 where a 21 dBm ceiling would give 84, so the op-for-op match holds only
- * for a domain at least as permissive as the one the captures were taken in.
+ * The stock driver applies the same stage. On the hot sweeps it does not
+ * bind, so those follow the SROM alone; on a first bring-up it does, under
+ * whatever locale the driver runs before the userspace sets a country, and
+ * the ceilings it applies are board-independent: the d6220 and agcombo, with
+ * different maxp5ga and mcsbw*po, write the same 56 on ch36-48 at 20 MHz, 60
+ * on ch60 at 40 MHz, 68 on ch100 at 40 MHz and 76 on ch100 at 20 and 80 MHz.
+ * Adding the 6-unit margin back and the 22-qdB antenna gain the boards carry
+ * (aga0..2 = 133) gives 21, 22, 24 and 26 dBm, all whole, which is the shape
+ * of an EIRP table. The vendor's limits are per bandwidth, though: ch36-48
+ * bind at 20 MHz only and ch100 binds differently at 40 than at 20 and 80.
+ * cfg80211 carries one max_power per 20 MHz channel, so this function can
+ * reproduce the 20 MHz ceilings and, through the minimum over the block, will
+ * bound 40 and 80 MHz where the vendor does not. That is the regulatory
+ * domain's policy, not a port defect. The harness reproduces the vendor's
+ * first bring-up through AC_MAX_POWER_MAP; see test/unit/gates.sh.
  */
 static u16 b43_phy_ac_reg_ceiling(struct b43_wldev *dev)
 {
@@ -1540,59 +1543,6 @@ static u16 b43_phy_ac_reg_ceiling(struct b43_wldev *dev)
 }
 
 /*
- * Sub-band index for the TX power ceiling.
- *
- * Keyed on the primary channel, not the centre: at 80 MHz the captures follow
- * the primary, and using the centre puts ch36 one group too high.
- *
- * The first boundary depends on the width, 5210 at 20 and 80 MHz and 5250 at
- * 40. That is not a fit dressed up as a rule -- the sign of the residuals
- * settles it. A regulatory limit can only lower a ceiling, so any residual
- * where this driver comes out *below* the vendor cannot be explained by the
- * regulatory stage that is still missing. At 40 MHz the 5210 boundary leaves
- * ch44 two units low, which nothing downstream could raise; 5250 leaves ch36
- * and ch52 two units high, which a missing clamp explains, and every other
- * 40 MHz configuration exact.
- *
- * Deliberately not b43_phy_ac_pa5g_group(), which implements the
- * subband5gver=4 split at 5250 for every width and feeds the pa5ga
- * coefficients. The two partitions coincide at 40 MHz and differ at 20, so
- * they are kept apart rather than one being bent to fit the other.
- *
- * The 20 MHz boundary rests on one board: it is pinned by ch40 giving 66 and
- * ch44 giving 64 with maxp5ga = {72, 70, ...}, and only the d6220 has those
- * two entries distinct.
- */
-static unsigned int b43_phy_ac_txpwr_subband(u16 chan,
-					     enum nl80211_chan_width width)
-{
-	u16 freq = 5000 + 5 * chan;
-	u16 first = (width == NL80211_CHAN_WIDTH_40) ? 5250 : 5210;
-
-	if (freq < first)
-		return 0;
-	if (freq < 5500)
-		return 1;
-	return 2;
-}
-
-/*
- * Is this the lowest 40 MHz block of its sub-band?
- *
- * The previous block's primary sits eight channels down; if that falls in a
- * different sub-band, or off the bottom of the band, this is the first.
- */
-static bool b43_phy_ac_txpwr_first_block(u16 chan)
-{
-	if (chan < 44)
-		return true;
-
-	return b43_phy_ac_txpwr_subband(chan - 8, NL80211_CHAN_WIDTH_40) !=
-	       b43_phy_ac_txpwr_subband(chan, NL80211_CHAN_WIDTH_40);
-}
-
-
-/*
  * Per-band index into the rev-11 mcsbw*po fields: 0 = 5gl, 1 = 5gm, 2 = 5gh.
  * The split is by channel number and is not the same as the subband5gver
  * split that indexes maxp5ga, which is by frequency; the two partitions are
@@ -1608,150 +1558,103 @@ static unsigned int b43_phy_ac_po_band(u16 chan)
 }
 
 /*
- * Offset di potenza per-rate della sotto-banda @band alla larghezza corrente.
+ * TX power target: the per-rate table and its maximum per core.
  *
- * La SROM rev 11 ne porta uno per ognuna delle nove combinazioni, e bcma li
- * estrae in campi piatti; qui si scelgono per indice invece di ripetere il
- * ternario a ogni chiamante.
+ * This is wlc_phy_txpower_recalc_target() of brcmsmac, and the body of
+ * b43_nphy_op_recalc_txpower() in b43, with the rev 11 table: for every rate
+ * the channel carries, min(SROM limit, regulatory limit) less the 6-unit
+ * margin, floored at 8 dBm; the maximum over the rates is what the PHY closes
+ * its power loop on, written to 0x0646[7:0] per core, and the per-rate
+ * distances from it are the power offsets. The 6 + antenna gain that phy_n.c
+ * keeps under "#if 0 / TODO: Enable this once we get gains working" is what
+ * the AC captures reproduce, with the antenna gain on the regulatory side
+ * only: the hot sweep is exact from the SROM alone on all 26 configurations.
+ *
+ * The SROM table is loaded from the minimum maxp5ga over the active cores, as
+ * b43's loader does, and each core then takes back the difference to its own
+ * maxp5ga. On the three boards in the repository the cores are equal and the
+ * two forms coincide.
+ *
+ * Because the 40 and 80 MHz tables also carry their 20-in-40, 20-in-80 and
+ * 40-in-80 rows, the maximum lands on the smallest mcsbw*po offset among the
+ * widths the channel contains. That is the form, not a fit: against the hot
+ * sweep it is exact at 20 and 40 MHz and on ch36 and ch100 at 80; on ch52 at
+ * 80 MHz it gives 64 where the vendor writes 62 hot and 64 cold. The two
+ * units the vendor takes off at hot on ch36/40, ch52/40 and ch52/80 are one
+ * term this function does not have -- in recalc_target's chain it can only be
+ * the per-rate regulatory limit of the country in force, the user target or
+ * the TSSI-visible threshold, and the captures do not say which.
+ *
+ * Returns whether the target changed since the last computation, so the
+ * periodic hook can leave the PHY alone when it did not.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   13001-13002, 35875-35876]
+ * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+ *   7211-7212]
  */
-static u32 b43_phy_ac_mcsbw5g_po(const struct ssb_sprom *sprom,
-				 unsigned int band,
-				 enum nl80211_chan_width width)
-{
-	/*
-	 * A 80 MHz si prendono gli offset a 20, non quelli a 80: e' la terza
-	 * colonna della tabella a puntare all'indice 0. Deciso dallo sweep a
-	 * caldo, dove il modello fa 26/26 esatte coi nibble a 20 e 23/26 con
-	 * quelli a 80 -- e le tre che sbaglia sono esattamente le tre
-	 * configurazioni a 80 MHz. Il massimo e' su ogni rate e i rate a 20
-	 * restano popolati a qualunque larghezza, quindi portano il nibble piu'
-	 * piccolo e vincono.
-	 */
-	static const u8 sel[3][3] = { { 0, 1, 0 }, { 3, 4, 3 }, { 6, 7, 6 } };
-	const u32 po[9] = {
-		sprom->mcsbw205glpo, sprom->mcsbw405glpo, sprom->mcsbw805glpo,
-		sprom->mcsbw205gmpo, sprom->mcsbw405gmpo, sprom->mcsbw805gmpo,
-		sprom->mcsbw205ghpo, sprom->mcsbw405ghpo, sprom->mcsbw805ghpo,
-	};
-	unsigned int w = (width == NL80211_CHAN_WIDTH_80) ? 2
-		       : (width == NL80211_CHAN_WIDTH_40) ? 1 : 0;
-
-	return po[sel[band % 3][w]];
-}
-
-/*
- * Per-core TX power target, in quarter-dBm, for register 0x0646 + core stride.
- *
- * This is the reduction brcmsmac performs in wlc_phy_txpower_recalc_target():
- * a per-rate limit is built from the SROM, the regulatory ceiling and a fixed
- * 6-unit margin, and the register takes the maximum over rates while the
- * per-rate distances from that maximum go to table 0x21, the ppr array.
- *
- *   srom_max[rate] = maxp5ga[sb] - 2 * nibble(rate)   (phy_n.c srom_convert)
- *   target         = max over rates, minus 6          (phy_cmn.c)
- *
- * The maximum lands on the rate with the smallest offset nibble, so the whole
- * per-rate array collapses to its minimum nibble here. The nibbles are in
- * half-dB and the register in quarter-dB, which is where the factor 2 comes
- * from; brcmsmac's QDB() factor of 4 converts the whole-dB SROM and
- * regulatory values.
- *
- * b43_phy_ac_reg_ceiling() below clamps the SROM limit, and what that clamp
- * models is not known. It does not look regulatory: ch36 on the d6220 takes 56
- * cold and 66 hot, same board and same channel, where a legal limit cannot
- * move, and the four board-independent ceilings it was fitted to -- 62 on
- * U-NII-1, 82 on ch100, 66 on ch60-bw40, 74 on ch100-bw40 -- are each the cold
- * observation plus the 6-unit margin, so they restate the data instead of
- * explaining it. What does hold: both boards write 56 in U-NII-1 with maxp5ga
- * 72 and 74, so it follows neither SROM, and from ch52 up the cold value
- * follows the channel, 62 then 76 then 80.
- *
- * Verified against the d6220 sweep and the agcombo captures: exact on all 17
- * observations at 20 MHz and all 4 at 80 MHz. 40 MHz is 5 of 8, and is why
- * the validated list carries no 40 MHz entry.
- *
- * The direction of that error matters. Coming out below the vendor costs
- * range and nothing else; coming out above it drives the PA harder than the
- * board was characterised for. Both 40 MHz residuals are on the wrong side --
- * this driver computes 66 where the vendor writes 64, and 64 where it writes
- * 62 -- so 40 MHz is not merely unverified here, it is unverified in the
- * hazardous direction. Whoever enables it should bias the result low until
- * the last stage is understood.
- *
- * The residual is regular: the first 40 MHz block of each sub-band comes out
- * two units high and the second is exact, which is a function of the block's
- * position rather than of any channel. That rules out the per-channel stages,
- * including the regulatory ceiling above.
- *
- * The two 40 MHz configurations the derivation misses are corrected by hand.
- * The predicate that selects them -- lowest 40 MHz block of a sub-band whose
- * maxp5ga entry differs from the next one's -- is fitted, and fitted on two
- * points, and agcombo does not confirm it: an unconditional correction is
- * wrong there, so any predicate false on agcombo and true on the d6220's ch36
- * and ch52 scores the same. There is one agcombo observation at 40 MHz.
- *
- * It is also not physically motivated. The grp0/grp1 boundary is at 5250 MHz,
- * and it is ch44's block that touches it, 5210 to 5250, while ch36's sits well
- * inside at 5170 to 5210. A "block spills into the neighbouring sub-band"
- * mechanism would fire on ch44, which is the configuration the derivation
- * already gets right.
- *
- * What the correction does have going for it is direction: it only ever
- * lowers, so a board where the predicate misfires loses range rather than
- * overdriving the PA.
- *
- * table 0x21, the ppr array, cannot settle which rate wins the maximum: its
- * offsets are identical across all 52 sweep segments and all three widths,
- * while the mcsbw*po nibbles differ by width. So the offsets are not
- * 2 * nibble(rate) and carry no information about the per-rate SROM limits.
- */
-static u16 b43_phy_ac_txpwr_target(struct b43_wldev *dev, unsigned int core)
+bool b43_phy_ac_txpwr_recalc(struct b43_wldev *dev)
 {
 	B43_AC_FN();
 	const struct ssb_sprom *sprom = dev->dev->bus_sprom;
 	struct b43_phy_ac *ac = dev->phy.ac;
-	unsigned int band = b43_phy_ac_po_band(ac->cal_channel);
-	unsigned int grp = b43_phy_ac_txpwr_subband(ac->cal_channel,
-						   ac->cal_width);
-	u32 po;
-	u8 maxp, nib;
-	int lim, ceil;
-	unsigned int j;
+	struct b43_ppr_ac *ppr = &ac->txpwr_ppr;
+	unsigned int sb = b43_ppr_ac_subband(ac->cal_channel, ac->cal_width);
+	u16 ceiling = b43_phy_ac_reg_ceiling(dev);
+	unsigned int core;
+	u8 maxp, max;
 
-	/*
-	 * mcsbw805g{l,m,h}po esiste in NVRAM ed e' letta qui, ma non decide
-	 * questo registro: sulle sei osservazioni a 80 MHz i nibble di bw80 e
-	 * quelli di bw20 fanno 4 su 6 entrambi, e ch52 sbaglia in tutti i casi.
-	 * Il ramo resta su bw80 per la direzione dell'errore -- con bw80 la
-	 * d6220 esce sotto il vendor, con bw20 esce sopra, e uscire sopra
-	 * spinge il PA oltre la caratterizzazione della board.
-	 * Vedi lo studio di funzione in docs/retrace-todo.md.
-	 */
-	po = b43_phy_ac_mcsbw5g_po(sprom, band, ac->cal_width);
+	if (ac->txpwr_calc_chan == ac->cal_channel &&
+	    ac->txpwr_calc_width == ac->cal_width &&
+	    ac->txpwr_calc_ceiling == ceiling)
+		return false;
 
-	nib = 0xf;
-	for (j = 0; j < 8; j++)
-		nib = min_t(u8, nib, (po >> (4 * j)) & 0xf);
+	maxp = b43_ppr_ac_load_max_from_sprom(sprom, ac->coremask, ac->num_cores,
+					      ppr, ac->cal_channel, ac->cal_width);
+	if (ceiling)
+		b43_ppr_ac_apply_max(ppr, (u8)min_t(u16, ceiling, 0xff));
+	b43_ppr_ac_add(ppr, -6);
+	b43_ppr_ac_apply_min(ppr, B43_PHY_AC_QDB(8));
+	b43_ppr_ac_force_disabled(ppr, b43_phy_ac_tssi_visible_qdbm(dev));
+	max = b43_ppr_ac_get_max(ppr);
 
-	maxp = sprom->core_pwr_info[core].maxp5ga[grp];
-	lim = maxp - 2 * nib;
+	if (b43_ppr_ac_sprom_has_subband_po(sprom) && !ac->txpwr_calc_chan)
+		b43warn(dev->wl,
+			"AC-PHY: la SROM porta offset espliciti per le righe "
+			"sub-band (sb*/dot11agdup*/mcslr*), che questa tabella "
+			"non applica: il target a 40/80 MHz puo' differire.\n");
 
-	/* TODO: find the last stage; this fitted correction stands in for it. */
-	if (ac->cal_width == NL80211_CHAN_WIDTH_40 &&
-	    b43_phy_ac_txpwr_first_block(ac->cal_channel) && grp + 1 < 4 &&
-	    sprom->core_pwr_info[core].maxp5ga[grp + 1] &&
-	    sprom->core_pwr_info[core].maxp5ga[grp + 1] != maxp)
-		lim -= 2;
+	for (core = 0; core < ac->num_cores; core++) {
+		u8 own = sprom->core_pwr_info[core].maxp5ga[sb];
+		u8 target = max;
 
-	/* The regulatory ceiling bounds the SROM limit, before the margin. */
-	ceil = b43_phy_ac_reg_ceiling(dev);
-	if (ceil && lim > ceil)
-		lim = ceil;
+		if (own > maxp)
+			target = (u8)min_t(unsigned int, max + (own - maxp), 0x7f);
+		ac->txpwr_max[core] = target;
+	}
 
-	if (lim <= 6)
-		return 0;
+	ac->txpwr_calc_chan = ac->cal_channel;
+	ac->txpwr_calc_width = ac->cal_width;
+	ac->txpwr_calc_ceiling = ceiling;
 
-	return (u16)(lim - 6);
+	return true;
+}
+
+/*
+ * The target registers, one per core, emitted from the highest core down to
+ * match the vendor's order (0x0846 before 0x0646). Called from the channel
+ * setup at the vendor's two sites and from adjust_txpower().
+ */
+static void b43_phy_ac_txpwr_target_write(struct b43_wldev *dev)
+{
+	struct b43_phy_ac *ac = dev->phy.ac;
+	unsigned int cr;
+
+	for (cr = ac->num_cores; cr-- > 0; ) {
+		if (!((ac->coremask >> cr) & 1))
+			continue;
+		b43_phy_maskset(dev, 0x0646 + cr * 0x0200, (u16)~0x00ff,
+				ac->txpwr_max[cr]);
+	}
 }
 
 /*
@@ -1805,6 +1708,44 @@ static void b43_phy_ac_est_pwr_lut(struct b43_wldev *dev, unsigned int core,
 	}
 }
 
+/*
+ * The lowest power the closed loop can see, in quarter dBm.
+ *
+ * recalc_target disables the rates whose target falls below the power the
+ * TSSI detector resolves (wlc_phy_tssivisible_thresh in the vendor driver,
+ * whose value is not in any open source). What is in hand is the
+ * est_pwr transfer function above: the TSSI index runs it downwards and the
+ * table clamps at -8 where the detector has nothing left to say, so the
+ * smallest unclamped entry over the active cores is the floor the hardware
+ * itself declares. Taking it from the LUT and not from a constant is the
+ * derivation available; whether the vendor's threshold sits exactly there is
+ * not established -- SALAME -- and on every capture in the repository the
+ * targets are far above it, so it does not bind.
+ */
+static u8 b43_phy_ac_tssi_visible_qdbm(struct b43_wldev *dev)
+{
+	struct b43_phy_ac *ac = dev->phy.ac;
+	unsigned int grp = b43_phy_ac_pa5g_group(dev, 5000 + 5 * ac->cal_channel);
+	unsigned int core, j;
+	int floor = 0x7f;
+
+	for (core = 0; core < ac->num_cores; core++) {
+		u16 lut[128];
+
+		if (!(ac->coremask & (1u << core)))
+			continue;
+		b43_phy_ac_est_pwr_lut(dev, core, grp, lut);
+		for (j = 0; j < ARRAY_SIZE(lut); j++) {
+			int v = (s8)lut[j];
+
+			if (v > -8 && v < floor)
+				floor = v;
+		}
+	}
+
+	return floor < 0 ? 0 : (u8)floor;
+}
+
 /* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
  *   13072-13404, 13746-14078]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -1828,31 +1769,38 @@ static void b43_phy_ac_txpwrctrl_setup(struct b43_wldev *dev, u16 freq)
 	dev->phy.ac->pa5g_grp = (u8)grp;
 
 	/*
-	 * ppr[24], the per-rate power reduction in table 0x21 offset 0, 24
-	 * u32s: ppr[1] = ppr[5] = ppr[6] = 0x00000202 and the rest zero.
+	 * Table 0x21, 24 u32s: the power-detector offsets by rate group, one
+	 * byte per core in the low bytes of each word, taken from the SROM's
+	 * pdoffset40ma[core] for the 40 MHz groups (entries 1, 5, 6) and
+	 * pdoffset80ma[core] for the 80 MHz group (entry 10), one nibble per
+	 * pa5g sub-band. The rest of the table is zero: rev 11 has no 20 MHz
+	 * field, and pdoffsetcckma is zero on the one board that declares it.
 	 *
-	 * Channel-invariant, and the d6220 sweep is unambiguous about it: one
-	 * payload across all 16 of its 20 MHz channels. So these constants are
-	 * right on every channel of this board, not just ch36.
-	 *
-	 * They are also not an mcsbw*po mapping.
-	 * If they were, they would change at 5250: this board's
-	 * mcsbw205glpo and mcsbw205gmpo differ, and ppr does not. Nor does
-	 * regulatory limiting enter -- all three boards have an empty ccode
-	 * and regrev 0, so there is no country table in play.
-	 *
-	 * The board axis is verified and is not invariant: on the agcombo
-	 * sweep, over its upper sub-band segments -- ch100-140, at every width
-	 * -- the payload also carries ppr[10] = 0x00000101, where the d6220 has
-	 * zero on all 26 of its segments. It shows where the SROM nibbles are
-	 * large: agcombo has mcsbw205ghpo = 0xcca88440 against small values on
-	 * this board. So these three constants are right for the d6220 and
-	 * incomplete elsewhere, and the table is derived from the SROM even
-	 * though it does not move on this board.
+	 * Read off all 104 segments of the three sweeps, which write three
+	 * payloads and no other: 0x0202 on entries 1/5/6 on the d6220 (two
+	 * cores), 0x020202 on agcombo (three), and on agcombo alone entry 10 =
+	 * 0x010101 on ch100 and up at every width -- exactly the board whose
+	 * pdoffset80ma is 0x0100, with the 1 in the sub-band-2 nibble, against
+	 * 0 on the other two. The 80 MHz link is therefore measured on two
+	 * boards and three sub-bands. The 40 MHz link is by the same encoding:
+	 * all three boards carry pdoffset40ma = 0x3222, so 2 on sub-bands 0-2
+	 * is what they write and sub-band 3 (nibble 3) is not captured. It is
+	 * not the mcsbw*po table: those nibbles differ between the two boards
+	 * and between their bands, and the payload does not follow them.
 	 */
-	ppr[1] = 0x00000202;
-	ppr[5] = 0x00000202;
-	ppr[6] = 0x00000202;
+	for (core = 0; core < num_cores; core++) {
+		const struct ssb_sprom *sp = dev->dev->bus_sprom;
+		u32 o40, o80;
+
+		if (!((dev->phy.ac->coremask >> core) & 1))
+			continue;
+		o40 = (sp->pdoffset40ma[core] >> (4 * grp)) & 0xf;
+		o80 = (sp->pdoffset80ma[core] >> (4 * grp)) & 0xf;
+		ppr[1] |= o40 << (8 * core);
+		ppr[5] |= o40 << (8 * core);
+		ppr[6] |= o40 << (8 * core);
+		ppr[10] |= o80 << (8 * core);
+	}
 
 	/*
 	 * Preconditions, the vendor's state on entry to txpwrctrl_setup():
@@ -1901,71 +1849,13 @@ static void b43_phy_ac_txpwrctrl_setup(struct b43_wldev *dev, u16 freq)
 	b43_phy_maskset(dev, 0x0070, (u16)~(0x0400), (0x0400));
 
 	/*
-	 * Per-core max index, emitted high core -> low core to match the
-	 * vendor order (0x0846 before 0x0646; the current index above goes
-	 * 0->1).
-	 *
-	 * maxp5ga - 6 is not the rule, and this is not a matter of fixing the
-	 * margin or the sub-band boundaries. The d6220 sweep refutes it on its
-	 * own, without appealing to another board:
-	 *
-	 *  - it writes four distinct values below 5.5 GHz -- 66 and 64 at
-	 *    20 MHz, 62 at 20 MHz from ch52 up, and 66 again at 40 MHz on the
-	 *    ch44 pair -- where maxp5ga holds three usable entries. No constant
-	 *    margin over a three-entry lookup can produce four values.
-	 *  - it is not a function of the centre frequency either: 5180 and
-	 *    5200 give 66, 5190 gives 64, 5220 gives 64 and 5230 gives 66.
-	 *
-	 * Both points are same-board, same-driver. The DSL-3580L looks like a
-	 * third witness -- same 4352, maxp5ga uniformly 76, three different
-	 * values written -- but it runs wl 6.30 against this port's 7.14 and
-	 * writes the cores in the opposite order, so it testifies about a
-	 * different algorithm. It is the right capture for telling a version
-	 * fork from a hardware fact, and the wrong one for refuting a 7.14
-	 * model.
-	 *
-	 * This register is the TX power ceiling index, written during power
-	 * control setup, but it is not an outcome of that loop. The sweep runs
-	 * every configuration twice, eleven seconds apart, and across those 26
-	 * pairs the RX-IQ coefficients differ 26 times out of 26 and the
-	 * idle-TSSI base index 25 times, while this value differs zero times.
-	 * It is a deterministic function of channel and bandwidth, so there is
-	 * a computation to find; it just is not this one.
-	 *
-	 * The most useful clue is that 20 and 40 MHz swap values on the first
-	 * two channels -- ch36 gives 66 then 64, ch44 gives 64 then 66 -- so
-	 * bandwidth does not enter as a scale factor. The NVRAM has a separate
-	 * mcsbw*po field per bandwidth and per band, nine in all, which is
-	 * where a term of that shape would come from.
-	 *
-	 * maxp5ga is the ceiling the board declares; the clamp below is what
-	 * makes it binding. ch36 and ch100 both land on maxp5ga - 6, so
-	 * neither distinguishes the margin from the derivation.
+	 * Per-core target power, high core -> low core to match the vendor
+	 * order (the current index above goes 0->1). The value is the one
+	 * b43_phy_ac_txpwr_recalc() computed for this channel: the 0x38 every
+	 * board writes on attach is the regulatory ceiling binding, see
+	 * b43_phy_ac_reg_ceiling().
 	 */
-	{
-		unsigned int cr;
-
-		for (cr = num_cores; cr-- > 0; ) {
-			if (!((dev->phy.ac->coremask >> cr) & 1))
-				continue;
-			/*
-			 * On a first bring-up the max index is the constant
-			 * 0x38, independent of the SROM: the d6220, agcombo and
-			 * DSL all write 0x38 on attach. On a later channel setup
-			 * it is maxp5ga[grp] - 6, which gives 0x42 on the d6220
-			 * (maxp5ga0 = 72) and 0x44 on agcombo (74).
-			 *
-			 * The DSL emits 0x38 on the down-to-up path too, a
-			 * version difference tracked in retrace-todo.md.
-			 */
-			b43_phy_maskset(dev, 0x0646 + cr * 0x0200, (u16)~0x00ff,
-					(dev->phy.ac->status_mask &
-					 B43_PHY_AC_STATE_FIRST_BRINGUP)
-					? 0x0038
-					: (b43_phy_ac_txpwr_target(dev, cr) &
-					   0x00ff));
-		}
-	}
+	b43_phy_ac_txpwr_target_write(dev);
 
 	/*
 	 * Per-core est_pwr LUT, 128 u16s, plus the per-rate ppr, 24 u32s.
@@ -2445,8 +2335,11 @@ static void b43_phy_ac_clip_det(struct b43_wldev *dev, bool enable)
  * 5 GHz is bit 0. The clip mask here is 0x0010, distinct from the 0x0020 that
  * set_reg_on_reset() uses on the same registers.
  *
- * TODO: the 0x05f4 written to 0x0140 is pinned to ch36. If it has to vary per
- * channel it must come from the channel table or from a computation.
+ * The 0x05f4 written to 0x0140 does not depend on channel or width: over the
+ * 104 segments of the three sweeps (d6220 cold and hot, agcombo cold) every
+ * write to that register is one of 0x05f4/0x05f6/0x0df4/0x0df6, so bits
+ * [10:0] are fixed and only bit 11 moves, and that one is taken from the
+ * peek below.
  * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
  *   5007-5023]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -2466,10 +2359,11 @@ static void b43_phy_ac_channel_switch_prep(struct b43_wldev *dev)
 
 	/* B: classifier setup, a peek then a plain write. Bits [10:0] are
 	 * invariant -- bit 2 is WAITEDEN, the others are not identified --
-	 * while bit 11 carries PHY state: clear on a fresh attach, then set
-	 * by coeff_bank_init() and persistent on the chip. Preserving it from
-	 * the peek is what makes both the attach captures (bit 11 clear) and
-	 * a later set_channel (bit 11 set) match. */
+	 * while bit 11 is the 20 MHz flag that coeff_bank_init() sets or
+	 * clears later in this same setup. Here it still holds whatever the
+	 * previous setup or the PHY reset left: 0x0df7 on all 52 cold
+	 * attaches of both boards, 0x05f7 on the first hot segment. Carrying
+	 * it over from the peek is what matches all of them. */
 	{
 		u16 cur = b43_phy_read_log(dev, 0x0140);
 		u16 next = (u16)((cur & 0x0800) | 0x05f4);
@@ -3249,7 +3143,7 @@ static void b43_phy_ac_coeff_bank_init(struct b43_wldev *dev)
  * 0x0b50, appears in no capture. The values are transcribed rather than
  * derived, and the two identical pairs (1000/1000 and 500/500) look more like
  * settle windows than gain codes. 0x0554 and 0x0555 are adjusted later by the
- * periodic watchdog; see b43_phy_ac_op_recalc_txpower().
+ * periodic watchdog; see b43_phy_ac_op_pwork_60sec().
  * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
  *   1202-1214, 5253-5268]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -4601,7 +4495,7 @@ static void b43_phy_ac_crs_note_noise(struct b43_wldev *dev, u16 sample)
  * Standing ladder index, reset to the floor when the sub-band changes.
  *
  * The partition is pa5g_group's, at 5250 and 5500 MHz -- not the one
- * b43_phy_ac_txpwr_subband() uses for the power ceiling, whose first boundary
+ * b43_ppr_ac_subband() uses for the power target, whose first boundary
  * is 5210. Using that one puts ch44 and ch48 in a different sub-band from
  * ch36 and resets the index where the vendor carries it.
  *
@@ -4633,8 +4527,7 @@ static u8 b43_phy_ac_crs_min_pwr(struct b43_wldev *dev, unsigned int idx,
 	return crs;
 }
 
-static enum b43_txpwr_result
-b43_phy_ac_op_recalc_txpower(struct b43_wldev *dev, bool ignore_tssi)
+static void b43_phy_ac_op_pwork_60sec(struct b43_wldev *dev)
 {
 	bool cold = (dev->phy.ac->cal_cycles < 2);
 	unsigned int idx;
@@ -4650,7 +4543,6 @@ b43_phy_ac_op_recalc_txpower(struct b43_wldev *dev, bool ignore_tssi)
 
 	/*
 	 * Solo se la soglia cambia. Il core chiama questo hook da
-	 * b43_op_config() a ogni cambio di configurazione e da
 	 * b43_periodic_every60sec() ogni minuto, mentre il vendor riscrive la
 	 * soglia solo quando l'indice della scala si muove: su 76 dei 78
 	 * segmenti degli sweep le scritture CRS sono esattamente due, quelle
@@ -4664,11 +4556,9 @@ b43_phy_ac_op_recalc_txpower(struct b43_wldev *dev, bool ignore_tssi)
 	 * chiamata riscriverebbe gli otto registri.
 	 */
 	if (crs == dev->phy.ac->crs_low)
-		return B43_TXPWR_RES_DONE;
+		return;
 
 	b43_phy_ac_crs_regs_write(dev, crs);
-
-	return B43_TXPWR_RES_DONE;
 }
 
 /*
@@ -4819,10 +4709,12 @@ static void b43_phy_ac_arm_tone_gen(struct b43_wldev *dev, u16 arm_val)
  *      20 MHz in 5 GHz and 0x36 at 40 and 80
  *   5. clear the high and low bytes of 0x0910-0x0913, eight alternating ops
  *   6. peek 0x03a9, then two clears on it, bits 0-6 and bit 11
- *   7. ten raw writes to 0x00ec-0x00f5, values pinned to 5 GHz at 20 MHz
+ *   7. ten raw writes to 0x00ec-0x00f5. The values do not depend on channel
+ *      or width: they are identical on all 104 segments of the three sweeps
+ *      (d6220 cold and hot, agcombo cold), 16 channels at 20, 40 and 80 MHz.
+ *      Whether 2.4 GHz uses the same ones is not known; there is no capture
+ *      of that band.
  *   8. peek and relock the outer gate, closing the tail for chan_tables()
- *
- * TODO: parametrise the 0x00ec-0x00f5 values by bandwidth and band.
  * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
  *   7495-7533]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -6150,8 +6042,8 @@ void b43_phy_ac_post_cal_finalize(struct b43_wldev *dev)
  *     iteration 1's, which looks like convergence: the readback returns to
  *     its starting value after iteration 2's excursion
  *
- * TODO: establish where iteration 3 ends and what follows -- further
- * iterations, or the RX-IQ compensation write-back.
+ * It is the last idle-TSSI iteration: what follows is the RX-IQ compensation
+ * apply, see b43_phy_ac_rxiqcal_apply().
  * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
  *   15728-16503]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -6292,7 +6184,6 @@ static const struct b43_ac_b2j_op b43_phy_ac_b2j_ops[] = {
 	{ 0x0729, 0x0100, 0x0100 },
 	{ 0x0727, 0x0004, 0x0004 },
 	{ 0x073c, 0x0010, 0x0010 },
-	/* WR raw coefficienti I/Q (TODO formula) */
 	{ 0x0724, 0x0000, 0x03ff },
 	{ 0x0736, 0x0000, 0x0152 },
 
@@ -6632,9 +6523,12 @@ void b43_phy_ac_rxiqcal_apply(struct b43_wldev *dev)
  *
  * TODO: the name "stage2" is provisional, to be revisited once the structure
  * of the post-rxiqcal phases is clear.
- * TODO: the three groups are fixed because the 0x000c overrides are global
- * even when the coremask excludes a chain. To be checked against a capture
- * from a different chip.
+ *
+ * The three 0x000c groups are fixed and not per coremask: the d6220 wires two
+ * chains and clears all three, and the 4360 on agcombo emits the same twelve
+ * table writes in the same order. The two hypotheses coincide there, since
+ * agcombo wires all three chains; a board that wires fewer on a different
+ * chip would be needed to separate them, and none is in the repository.
  * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
  *   16974-17422]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -6748,9 +6642,9 @@ void b43_phy_ac_post_rxiqcal_stage2(struct b43_wldev *dev)
 	 * the offset and the data -- which is exactly b43_actab_write_bulk().
 	 *
 	 * The values are per core: the first seven and the last are identical
-	 * between cores 0 and 1, while slots 0x07 to 0x10 differ. Two cores are
-	 * hardcoded here, from the d6220 ch36 capture where two are active. A
-	 * board with three will probably need a 0x40 + i slot for core 2.
+	 * between cores 0 and 1, while slots 0x07 to 0x10 differ. Two cores,
+	 * and not the coremask: agcombo wires three chains and still writes
+	 * only 0x00-0x11 and 0x20-0x31, with the same values as the d6220.
 	 */
 	{
 		static const u16 b4d_core0_vals[18] = {
@@ -7249,14 +7143,15 @@ void b43_phy_ac_rxcal_afe_finalize_gain_luts(struct b43_wldev *dev)
 /*
  * Return the gain registers 0x0720-0x073e to their defaults and close with
  * the commit pulse. Called immediately after txpwr_by_index(). The values are
- * identical across chains.
- *
- * TODO: whether the vendor also emits core 2 on a three-chain board is
- * unknown; no capture shows it.
+ * identical across chains, and the block runs once per active chain: two on
+ * the d6220, three on agcombo, where the same sixteen writes appear on
+ * 0x0b20-0x0b3e as well.
  * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
  *   22842-22877, 27632-27667]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   17970-18005, 22844-22879]
+ * [capture-ref: router-data/agcombo/cold-sweep.zip!cold01-ch36-bw20.txt;
+ *   30383-30434]
  */
 void b43_phy_ac_rxgain_defaults_pulse(struct b43_wldev *dev)
 {
@@ -7284,12 +7179,14 @@ void b43_phy_ac_rxgain_defaults_pulse(struct b43_wldev *dev)
 		{ 0x0739, 0x0000 },
 		{ 0x073a, 0x0180 },
 	};
+	u8 mask = dev->phy.ac->coremask;
 	unsigned int core, k;
 
-	/* Block 2: 16 WR per core × 2 core */
-	for (core = 0; core < 2; core++) {
+	for (core = 0; core < dev->phy.ac->num_cores; core++) {
 		u16 stride = (u16)(core * 0x200);
 
+		if (!(mask & (1 << core)))
+			continue;
 		for (k = 0; k < ARRAY_SIZE(gain_cfg); k++)
 			b43_phy_write(dev, gain_cfg[k].off + stride,
 				      gain_cfg[k].val);
@@ -10117,48 +10014,13 @@ void b43_phy_ac_bss_up(struct b43_wldev *dev)
 	b43_phy_maskset(dev, 0x0071, (u16)~0x0700, 0x0400);
 	b43_phy_maskset(dev, 0x0070, (u16)~0x0800, 0);
 	b43_phy_maskset(dev, 0x0070, (u16)~0x0400, 0x0400);
-	{
-		/*
-		 * Scaffolding: the maximum TX power index, and the most dangerous
-		 * value in this file. On a different RF chain an index that is too
-		 * high overdrives the PA.
-		 *
-		 * On a first bring-up the stock driver writes a constant 0x38 on
-		 * every board captured; from a later channel setup on it writes
-		 * the same target as txpwrctrl_setup(), so the derivation is
-		 * shared with that site rather than computed again.
-		 *
-		 * Emitted from the highest core down, to match the vendor's order.
-		 */
-		bool first_bu = dev->phy.ac->status_mask &
-				B43_PHY_AC_STATE_FIRST_BRINGUP;
-		u16 lim1 = b43_phy_ac_txpwr_target(dev, 1) & 0x00ff;
-		u16 lim0 = b43_phy_ac_txpwr_target(dev, 0) & 0x00ff;
-		u16 mi1 = first_bu ? min_t(u16, 0x0038, lim1) : lim1;
-		u16 mi0 = first_bu ? min_t(u16, 0x0038, lim0) : lim0;
-
-		/*
-		 * The clamp is not cosmetic. The 0x38 constant is scaffolding read
-		 * off one board, while the derived limit describes this board's PA,
-		 * through maxp5ga. On the three boards in the repository maxp5ga
-		 * gives 0x42, 0x46 and 0x44, all above 0x38, so here the clamp is
-		 * a no-op and the gates do not change. On a board with a lower
-		 * maxp5ga, writing a raw 0x38 would exceed the maximum its front
-		 * end declares.
-		 *
-		 * The general rule: a transcribed power value is never written
-		 * without checking it against what the SROM declares. chip_id does
-		 * not describe the PA -- femctrl and pdgain5g are identical across
-		 * the three boards, while pa5ga and maxp5ga differ on all three.
-		 */
-		if (first_bu && lim0 < 0x0038)
-			b43warn(dev->wl,
-				"AC-PHY: max index TX di impalcatura (0x38) sopra il limite "
-				"SROM di questa board (0x%02x): clampato.\n", lim0);
-
-		b43_phy_maskset(dev, 0x0846, (u16)~0x00ff, mi1);
-		b43_phy_maskset(dev, 0x0646, (u16)~0x00ff, mi0);
-	}
+	/*
+	 * The target power again, the same value txpwrctrl_setup() wrote. The
+	 * 0x38 the stock driver writes here on a first bring-up is the
+	 * regulatory ceiling binding under its default locale, not a constant
+	 * of the phase.
+	 */
+	b43_phy_ac_txpwr_target_write(dev);
 
 	/*
 	 * The two est_pwr LUTs again, cores 0 and 1.
@@ -10380,10 +10242,11 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	 *
 	 * Part of what the channel setup programs is not derived: the values
 	 * were transcribed from captures and exist only to get the bring-up
-	 * moving. Gains, TX power indices, gain-LUT defaults, tone generator
-	 * amplitudes and thresholds are among them, and on an RF chain other
-	 * than the one they were read from they are not slightly wrong, they
-	 * can overdrive the PA.
+	 * moving. Gains, gain-LUT defaults and the CRS thresholds are among
+	 * them, and on an RF chain other than the one they were read from
+	 * they are not slightly wrong, they can overdrive the PA. The TX
+	 * power index is no longer one of them: it comes from the SROM, the
+	 * regulatory ceiling and the margin.
 	 *
 	 * The channel table accepts all of 5 GHz, so it is no protection on
 	 * its own: without this filter, tuning ch100 would write the ch36
@@ -10421,6 +10284,7 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	dev->phy.ac->cal_width = width;
 	dev->phy.ac->cal_freq = width == NL80211_CHAN_WIDTH_20
 				? channel->center_freq : chandef->center_freq1;
+	b43_phy_ac_txpwr_recalc(dev);
 
 	/*
 	 * The MAC is already suspended from the end of op_init(), whose tail
@@ -10908,6 +10772,7 @@ const struct b43_phy_operations b43_phyops_ac = {
 	.recalc_txpower		= b43_phy_ac_op_recalc_txpower,
 	.adjust_txpower		= b43_phy_ac_op_adjust_txpower,
 	.pwork_15sec		= b43_phy_ac_op_pwork_15sec,
+	.pwork_60sec		= b43_phy_ac_op_pwork_60sec,
 };
 
 /* ==========================================================================

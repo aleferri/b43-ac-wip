@@ -3,6 +3,7 @@
 #define B43_PHY_AC_H_
 
 #include "phy_common.h"
+#include "ppr_ac.h"
 
 struct ieee80211_channel;
 
@@ -368,14 +369,14 @@ struct b43_phy_ac {
 	u8  beacon_reload_done;
 	/*
 	 * Count of calibration cycles this session, gating the cold bump in
-	 * recalc_txpower()'s crsmin path: the blob bumps the ladder for the
+	 * the crsmin path of pwork_60sec(): the blob bumps the ladder for the
 	 * first two calibrations. It appears to saturate at two.
 	 */
 	u8 cal_cycles;
 	/*
 	 * Byte basso della soglia CRS min-power come l'ha scritta l'ultima
 	 * volta uno dei tre siti, per non riscriverla invariata dall'hook
-	 * periodico; vedi b43_phy_ac_op_recalc_txpower(). Zero vuol dire mai
+	 * periodico; vedi b43_phy_ac_op_pwork_60sec(). Zero vuol dire mai
 	 * scritta, e non e' un valore della scala, che parte da 41.
 	 */
 	u16 crs_low;
@@ -468,6 +469,17 @@ struct b43_phy_ac {
 	u8 crs_subband;
 	/* Operating width of the same configuration. */
 	enum nl80211_chan_width cal_width;
+	/*
+	 * TX power target, the output of b43_phy_ac_txpwr_recalc(): the
+	 * per-rate table after SROM, regulatory ceiling and margin, its
+	 * maximum per core, and the inputs it was computed from, so the
+	 * periodic hook can tell a change from a repeat.
+	 */
+	struct b43_ppr_ac txpwr_ppr;
+	u8 txpwr_max[B43_PHY_AC_MAX_CORES];
+	u16 txpwr_calc_chan;
+	enum nl80211_chan_width txpwr_calc_width;
+	u16 txpwr_calc_ceiling;
 	/*
 	 * RX-IQ imbalance accumulator readings from the probe sweep in
 	 * b43_phy_ac_rxcal_gainctrl(), indexed [core][step_idx][sample]:
@@ -683,6 +695,7 @@ void b43_phy_ac_gainctrl_final_apply(struct b43_wldev *dev,
  * phy_ac.c.
  */
 void b43_phy_ac_watchdog(struct b43_wldev *dev, bool noise_cal);
+bool b43_phy_ac_txpwr_recalc(struct b43_wldev *dev);
 
 /*
  * Ricarica del template beacon, cioe' b43_update_templates() del core: TIMBPOS,

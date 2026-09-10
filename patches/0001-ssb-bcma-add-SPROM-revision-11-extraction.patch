@@ -19,17 +19,24 @@ only the absolute offsets moved. CCODE uses 0x96, since rev-8 0x92 collides
 with the middle word of the rev-11 IL0MAC block.
 
 Signed-off-by: Alessio Ferri <alessio.ferri@mythread.it>
+
+Also extracts the explicit per-rate-group offsets of the bonded channels'
+sub-band rows (sb20in40*, sb20in80and160*, sb40and80*, dot11agdup*,
+mcslr5g*; SROM11 words 200-218 of bcmsrom_fmt.h) and decodes the antenna
+gain (agbg0/aga0, whole dB in [5:0] plus quarter dB in [7:6]) into
+antenna_gain_qdb[], which the regulatory ceiling subtracts from EIRP, and pdoffset80ma, the
+per-chain power-detector offsets of the 80 MHz rate groups.
 ---
- drivers/bcma/sprom.c         | 100 ++++++++++++++++++++++++++++++++++-
- include/linux/ssb/ssb.h      |  31 +++++++++++
- include/linux/ssb/ssb_regs.h |  44 +++++++++++++++
- 3 files changed, 174 insertions(+), 1 deletion(-)
+ drivers/bcma/sprom.c         | 164 ++++++++++++++++++++++++++++++++++-
+ include/linux/ssb/ssb.h      |  68 +++++++++++++++
+ include/linux/ssb/ssb_regs.h |  93 ++++++++++++++++++++
+ 3 files changed, 324 insertions(+), 1 deletion(-)
 
 diff --git a/drivers/bcma/sprom.c b/drivers/bcma/sprom.c
-index e668ad796..514c8149d 100644
+index e668ad7..46df8ba 100644
 --- a/drivers/bcma/sprom.c
 +++ b/drivers/bcma/sprom.c
-@@ -474,6 +474,134 @@ static void bcma_sprom_extract_r8(struct bcma_bus *bus, const u16 *sprom)
+@@ -474,6 +474,165 @@ static void bcma_sprom_extract_r8(struct bcma_bus *bus, const u16 *sprom)
  	     SSB_SPROM8_TEMPDELTA_HYSTERESIS_SHIFT);
  }
  
@@ -140,6 +147,8 @@ index e668ad796..514c8149d 100644
 +	for (i = 0; i < 3; i++)
 +		bus->sprom.pdoffset40ma[i] =
 +			sprom[SPOFF(SSB_SPROM11_PDOFFSET40MA) + i];
++		bus->sprom.pdoffset80ma[i] =
++			sprom[SPOFF(SSB_SPROM11_PDOFFSET80MA) + i];
 +
 +	SPEX(cckbw202gpo,           SSB_SPROM11_CCKBW202GPO,           ~0, 0);
 +	SPEX(cckbw20ul2gpo,         SSB_SPROM11_CCKBW20UL2GPO,         ~0, 0);
@@ -159,12 +168,41 @@ index e668ad796..514c8149d 100644
 +	SPEX32(mcsbw405ghpo,        SSB_SPROM11_MCSBW405GHPO,          ~0, 0);
 +	SPEX32(mcsbw805ghpo,        SSB_SPROM11_MCSBW805GHPO,          ~0, 0);
 +	SPEX32(mcsbw1605ghpo,       SSB_SPROM11_MCSBW1605GHPO,         ~0, 0);
++
++	SPEX(mcslr5gpo[0],          SSB_SPROM11_MCSLR5GLPO,            ~0, 0);
++	SPEX(mcslr5gpo[1],          SSB_SPROM11_MCSLR5GMPO,            ~0, 0);
++	SPEX(mcslr5gpo[2],          SSB_SPROM11_MCSLR5GHPO,            ~0, 0);
++	SPEX(sb20in40hrpo,          SSB_SPROM11_SB20IN40HRPO,          ~0, 0);
++	SPEX(sb20in40lrpo,          SSB_SPROM11_SB20IN40LRPO,          ~0, 0);
++	SPEX(sb20in80and160hr5gpo[0], SSB_SPROM11_SB20IN80AND160HR5GLPO, ~0, 0);
++	SPEX(sb20in80and160hr5gpo[1], SSB_SPROM11_SB20IN80AND160HR5GMPO, ~0, 0);
++	SPEX(sb20in80and160hr5gpo[2], SSB_SPROM11_SB20IN80AND160HR5GHPO, ~0, 0);
++	SPEX(sb20in80and160lr5gpo[0], SSB_SPROM11_SB20IN80AND160LR5GLPO, ~0, 0);
++	SPEX(sb20in80and160lr5gpo[1], SSB_SPROM11_SB20IN80AND160LR5GMPO, ~0, 0);
++	SPEX(sb20in80and160lr5gpo[2], SSB_SPROM11_SB20IN80AND160LR5GHPO, ~0, 0);
++	SPEX(sb40and80hr5gpo[0],    SSB_SPROM11_SB40AND80HR5GLPO,      ~0, 0);
++	SPEX(sb40and80hr5gpo[1],    SSB_SPROM11_SB40AND80HR5GMPO,      ~0, 0);
++	SPEX(sb40and80hr5gpo[2],    SSB_SPROM11_SB40AND80HR5GHPO,      ~0, 0);
++	SPEX(sb40and80lr5gpo[0],    SSB_SPROM11_SB40AND80LR5GLPO,      ~0, 0);
++	SPEX(sb40and80lr5gpo[1],    SSB_SPROM11_SB40AND80LR5GMPO,      ~0, 0);
++	SPEX(sb40and80lr5gpo[2],    SSB_SPROM11_SB40AND80LR5GHPO,      ~0, 0);
++	SPEX(dot11agduphrpo,        SSB_SPROM11_DOT11AGDUPHRPO,        ~0, 0);
++	SPEX(dot11agduplrpo,        SSB_SPROM11_DOT11AGDUPLRPO,        ~0, 0);
++
++	/* Whole dB in bits [5:0], sign-extended, quarter dB in bits [7:6]. */
++	for (i = 0; i < 2; i++) {
++		u8 raw = i ? (sprom[SSB_SPROM11_AGBG2A0 / 2] >> 8) & 0xff
++			 : sprom[SSB_SPROM11_AGBG10 / 2] & 0xff;
++		s8 gain = (s8)((raw & 0x3f) << 2) >> 2;
++
++		bus->sprom.antenna_gain_qdb[i] = (s8)(4 * gain + (raw >> 6));
++	}
 +}
 +
  /*
   * Indicates the presence of external SPROM.
   */
-@@ -640,7 +735,10 @@ int bcma_sprom_get(struct bcma_bus *bus)
+@@ -640,7 +799,10 @@ int bcma_sprom_get(struct bcma_bus *bus)
  		bcma_warn(bus, "Invalid SPROM read from the PCIe card, trying to use fallback SPROM\n");
  		err = bcma_fill_sprom_with_fallback(bus, &bus->sprom);
  	} else {
@@ -177,7 +215,7 @@ index e668ad796..514c8149d 100644
  	}
  
 diff --git a/include/linux/ssb/ssb.h b/include/linux/ssb/ssb.h
-index 7fee9afa9..05d738534 100644
+index 1f326da..6f2f8df 100644
 --- a/include/linux/ssb/ssb.h
 +++ b/include/linux/ssb/ssb.h
 @@ -23,6 +23,19 @@ struct ssb_sprom_core_pwr_info {
@@ -200,7 +238,7 @@ index 7fee9afa9..05d738534 100644
  };
  
  struct ssb_sprom {
-@@ -192,6 +205,44 @@ struct ssb_sprom {
+@@ -192,6 +205,61 @@ struct ssb_sprom {
  	u16 legofdm40duppo;
  	u8 sar2g;
  	u8 sar5g;
@@ -213,7 +251,10 @@ index 7fee9afa9..05d738534 100644
 +	struct ssb_sprom_rxgains rxgains_5gm;
 +	struct ssb_sprom_rxgains rxgains_5gh;
 +	u8 subband5gver;
-+	s8 antenna_gain_qdb[2];	/* Antenna gain in quarter dB, per band */
++	/* Antenna gain in quarter dB, per band: agbg0 for 2.4 GHz, aga0 for
++	 * 5 GHz, decoded from the SROM's whole-dB [5:0] + quarter-dB [7:6]
++	 * encoding. */
++	s8 antenna_gain_qdb[2];
 +	u16 dot11agofdmhrbw202gpo;
 +	u16 ofdmlrbw202gpo;
 +	u32 mcsbw805glpo;
@@ -223,6 +264,20 @@ index 7fee9afa9..05d738534 100644
 +	u32 mcsbw1605gmpo;
 +	u32 mcsbw1605ghpo;
 +	u16 pdoffset40ma[3];
++	u16 pdoffset80ma[3];
++	/* Explicit per-rate-group power offsets of the bonded channels'
++	 * sub-band rows (20-in-40, 20-in-80/160, 40-in-80, duplicate legacy),
++	 * low-rate and high-rate halves, and the MCS 8-9 offsets; nibbles.
++	 * Index 0..2 is the 5 GHz l/m/h band. */
++	u16 mcslr5gpo[3];
++	u16 sb20in40hrpo;
++	u16 sb20in40lrpo;
++	u16 sb20in80and160hr5gpo[3];
++	u16 sb20in80and160lr5gpo[3];
++	u16 sb40and80hr5gpo[3];
++	u16 sb40and80lr5gpo[3];
++	u16 dot11agduphrpo;
++	u16 dot11agduplrpo;
 +	/* FEM / PA control block (SROM11_FEM_CFG1/2). femctrl seleziona lo
 +	 * schema di controllo del front-end module: un driver che programma
 +	 * la tabella di controllo FEM deve verificarlo, non assumerlo.
@@ -246,10 +301,10 @@ index 7fee9afa9..05d738534 100644
  
  /* Information about the PCB the circuitry is soldered on. */
 diff --git a/include/linux/ssb/ssb_regs.h b/include/linux/ssb/ssb_regs.h
-index 210f46494..9fedf5dcd 100644
+index 210f464..9644ece 100644
 --- a/include/linux/ssb/ssb_regs.h
 +++ b/include/linux/ssb/ssb_regs.h
-@@ -606,6 +606,76 @@
+@@ -606,6 +606,99 @@
  #define SSB_SPROM8_BW40PO		0x0196
  #define SSB_SPROM8_BWDUPPO		0x0198
  
@@ -259,6 +314,9 @@ index 210f46494..9fedf5dcd 100644
 +#define SSB_SPROM11_IL0MAC		0x0090	/* 6 byte MAC address */
 +#define SSB_SPROM11_CCODE		0x0096	/* 2 byte country code */
 +#define SSB_SPROM11_ANTAVAIL		0x00A0
++#define SSB_SPROM11_AGBG10		0x00A2	/* agbg0 low byte, agbg1 high */
++#define SSB_SPROM11_AGBG2A0		0x00A4	/* agbg2 low byte, aga0 high */
++#define SSB_SPROM11_AGA21		0x00A6	/* aga1 low byte, aga2 high */
 +#define SSB_SPROM11_TXRXC		0x00A8
 +/* FEM / PA control block. Layout canonico da bcmsrom_tbl.h (SROM11_FEM_CFG1/2);
 + * offset verificato sui dump raw di DSL-3580L e D6220, dove le due word
@@ -287,6 +345,7 @@ index 210f46494..9fedf5dcd 100644
 +#define SSB_SPROM11_TSSIFLOOR_5GL	0x00C0
 +#define SSB_SPROM11_TSSIFLOOR_MASK	0x03FF
 +#define SSB_SPROM11_PDOFFSET40MA	0x00CA	/* 3 x u16, one per chain */
++#define SSB_SPROM11_PDOFFSET80MA	0x00D0	/* 3 x u16, one per chain */
 +#define SSB_SPROM11_SUBBAND5GVER	0x00D6
 +
 +/* Per-chain power info blocks. Stride 0x28 bytes; field layout given by
@@ -322,6 +381,25 @@ index 210f46494..9fedf5dcd 100644
 +#define SSB_SPROM11_MCSBW405GHPO	0x0184
 +#define SSB_SPROM11_MCSBW805GHPO	0x0188
 +#define SSB_SPROM11_MCSBW1605GHPO	0x018C
++#define SSB_SPROM11_MCSLR5GLPO		0x0190
++#define SSB_SPROM11_MCSLR5GMPO		0x0192
++#define SSB_SPROM11_MCSLR5GHPO		0x0194
++#define SSB_SPROM11_SB20IN40HRPO	0x0196
++#define SSB_SPROM11_SB20IN80AND160HR5GLPO 0x0198
++#define SSB_SPROM11_SB40AND80HR5GLPO	0x019A
++#define SSB_SPROM11_SB20IN80AND160HR5GMPO 0x019C
++#define SSB_SPROM11_SB40AND80HR5GMPO	0x019E
++#define SSB_SPROM11_SB20IN80AND160HR5GHPO 0x01A0
++#define SSB_SPROM11_SB40AND80HR5GHPO	0x01A2
++#define SSB_SPROM11_SB20IN40LRPO	0x01A4
++#define SSB_SPROM11_SB20IN80AND160LR5GLPO 0x01A6
++#define SSB_SPROM11_SB40AND80LR5GLPO	0x01A8
++#define SSB_SPROM11_SB20IN80AND160LR5GMPO 0x01AA
++#define SSB_SPROM11_SB40AND80LR5GMPO	0x01AC
++#define SSB_SPROM11_SB20IN80AND160LR5GHPO 0x01AE
++#define SSB_SPROM11_SB40AND80LR5GHPO	0x01B0
++#define SSB_SPROM11_DOT11AGDUPHRPO	0x01B2
++#define SSB_SPROM11_DOT11AGDUPLRPO	0x01B4
 +
  /* Values for boardflags_lo read from SPROM */
  #define SSB_BFL_BTCOEXIST		0x0001	/* implements Bluetooth coexistance */

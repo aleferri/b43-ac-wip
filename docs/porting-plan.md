@@ -87,9 +87,9 @@ versione del blob.
 
 | blocco | stato |
 |---|---|
-| `ppr[24]` power reduction per-rate | hardcoded dalla cattura ch36; va derivato da `mcsbw*po` SROM |
+| `ppr[24]` power reduction per-rate | tabella 0x21 = offset del rilevatore di potenza per gruppo di rate, un byte per core, da `pdoffset40ma`/`pdoffset80ma` SROM (nibble del sub-band pa5g); verificata sui 104 segmenti |
 | Base index idle-TSSI | seed catturato, il readback viene scartato |
-| `recalc_txpower` / `adjust_txpower` | stub vuoti: nessuna calibrazione periodica |
+| `recalc_txpower` / `adjust_txpower` | il target di potenza su `struct b43_ppr_ac` (`src/ppr_ac.c`), come `b43_nphy_op_recalc_txpower`; il CRS min power e' `pwork_60sec` |
 | Generalizzazione canale | 50 voci in channeltab, solo ch36 validato op-per-op — piano in `channel-generalization.md` |
 
 Per i blocchi di calibrazione la logica del loop — quante iterazioni, cosa

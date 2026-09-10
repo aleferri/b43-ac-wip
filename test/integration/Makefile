@@ -54,7 +54,7 @@ endif
 # I file di b43 che si compilano come sono. Tutti e tre a zero errori.
 UPSTREAM := main.c phy_common.c bus.c xmit.c \
             phy_ac.c tables_phy_ac.c radio_2069.c rxiqcal_phy_ac.c \
-            helpers_phy_ac.c
+            helpers_phy_ac.c ppr_ac.c
 
 # I nostri: il bus finto che emette le op. L'aggancio e' la vtable
 # bcma_host_ops, non i simboli bcma_* che il link chiede.
