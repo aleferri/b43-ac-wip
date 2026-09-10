@@ -269,15 +269,16 @@ a `0x0c02`, il write-verify `TBL 0x45/0x65/0x85[0x20]`, `RAD 0x0020/0x0022/
 Il censimento e i verdetti si rifanno cosi':
 
 ```sh
-cd test/unit && ./gates.sh                      # lascia /tmp/gate.merged
-python3 ../../reverse-tools/reads.py consumers /tmp/gate.merged > /tmp/census.txt
-python3 read_perturb.py /tmp/census.txt /tmp/gate.merged | sort
+GATE_TMP=/tmp/gate test/unit/gates.sh            # tiene /tmp/gate/merged
+python3 reverse-tools/reads.py consumers /tmp/gate/merged > /tmp/census.txt
+python3 test/unit/read_perturb.py /tmp/census.txt /tmp/gate/merged | sort
 ```
 
 La varianza si legge invece dai 26 segmenti ripiegati, cercando i valori di ogni
-chiave scartata. Attenzione a `gates.sh`, che riscrive sempre `/tmp/gate.merged`
-e `/tmp/gate.full`: un audit fatto dopo aver lanciato il gate su un altro
-segmento legge i file di quel segmento, e i valori sembrano non tornare.
+chiave scartata. Senza `GATE_TMP` i file di lavoro di `gates.sh` stanno in una
+directory temporanea per run e spariscono alla fine; con `GATE_TMP` la stessa
+directory viene riscritta a ogni lancio, quindi un audit fatto dopo aver
+lanciato il gate su un altro segmento legge i file di quel segmento.
 
 ## Cosa consumano gia' bene
 

@@ -43,19 +43,21 @@ blocco rxgain vivono come sezioni di `phy_ac.c` (patch 0006).
 Le patch "—" toccano file fuori da `drivers/net/wireless/broadcom/b43/` e
 non hanno corrispondente in `src/`: vanno mantenute editando la patch.
 
-## Rigenerazione patch 0005/0006
+## Rigenerazione patch 0006
 
 ```sh
-scripts/regen-patches.sh
+scripts/regen-patches.sh          # KVER=6.8.0-139 per scegliere gli header
 ```
 
-Lo script fa sparse checkout del kernel (riusabile via `KDIR=`), applica
-la serie, sovrascrive con i sorgenti di `src/` i file che vi
-corrispondono, e riemette 0005 e 0006 con `git format-patch`. Messaggi
-di commit e author sono presi dalle patch correnti via `git am`: per
-cambiarli si edita la patch e si rilancia. Le righe di Makefile per
-`rxiqcal_phy_ac.o`/`helpers_phy_ac.o` stanno nella 0006 insieme ai
-rispettivi sorgenti, così il tree linka a ogni step della serie.
+Lo script scarica b43 vanilla al tag degli header kernel installati con
+`test/integration/fetch-upstream.sh` (lo stesso base della suite di
+integrazione), applica 0003 e 0004, sovrascrive con tutto `src/` -- `.c`,
+`.h` e `Makefile`, che e' il Makefile del kernel con le righe della PHY AC --
+e riemette la 0006 con `git format-patch`. Un file che la 0006 corrente
+aggiunge e `src/` non ha piu' viene tolto. Messaggio e author sono presi
+dalla patch corrente via `git am`: per cambiarli si edita la patch e si
+rilancia. Un nuovo sorgente in `src/` entra nella patch aggiungendo la sua
+riga a `src/Makefile`, non alla patch.
 
 ## Split upstream previsto per 0006
 

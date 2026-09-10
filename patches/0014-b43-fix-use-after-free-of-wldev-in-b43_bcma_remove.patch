@@ -1,0 +1,50 @@
+From 4b78282b65ca54f41cd2cfb95c5ea5f17a5f0560 Mon Sep 17 00:00:00 2001
+From: Alessandro Ferri <aleferri@example.invalid>
+Date: Thu, 10 Sep 2026 11:46:35 +0000
+Subject: [PATCH 14/14] b43: fix use-after-free of wldev in b43_bcma_remove
+
+b43_one_core_detach() frees the wldev it is handed, and b43_bcma_remove()
+then reads wldev->dev to free the bus device. On a SLUB kernel the freed
+object still holds the pointer, so the read goes unnoticed; under
+AddressSanitizer it is a heap-use-after-free on the very first remove.
+
+Take the bus device out of wldev before the detach, which is what
+b43_ssb_remove() already does.
+
+Signed-off-by: Alessandro Ferri <aleferri@example.invalid>
+---
+ drivers/net/wireless/broadcom/b43/main.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/wireless/broadcom/b43/main.c b/drivers/net/wireless/broadcom/b43/main.c
+index a871a78..919287d 100644
+--- a/drivers/net/wireless/broadcom/b43/main.c
++++ b/drivers/net/wireless/broadcom/b43/main.c
+@@ -5863,6 +5863,7 @@ bcma_out:
+ static void b43_bcma_remove(struct bcma_device *core)
+ {
+ 	struct b43_wldev *wldev = bcma_get_drvdata(core);
++	struct b43_bus_dev *dev = wldev->dev;
+ 	struct b43_wl *wl = wldev->wl;
+ 
+ 	/* We must cancel any work here before unregistering from ieee80211,
+@@ -5878,14 +5879,14 @@ static void b43_bcma_remove(struct bcma_device *core)
+ 		ieee80211_unregister_hw(wl->hw);
+ 	}
+ 
+-	b43_one_core_detach(wldev->dev);
++	b43_one_core_detach(dev);
+ 
+ 	/* Unregister HW RNG driver */
+ 	b43_rng_exit(wl);
+ 
+ 	b43_leds_unregister(wl);
+ 	ieee80211_free_hw(wl->hw);
+-	kfree(wldev->dev);
++	kfree(dev);
+ }
+ 
+ static struct bcma_driver b43_bcma_driver = {
+-- 
+2.43.0
+

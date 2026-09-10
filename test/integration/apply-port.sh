@@ -8,11 +8,18 @@
 #
 # Le patch che toccano bcma e ssb si saltano: qui il bus e' finto
 # (bcma_stub.c), e quelle modifiche non hanno niente da applicare.
+#
+# Uso: apply-port.sh [versione-header]
+# La versione degli header e' quella con cui il Makefile ha fatto il fetch, e
+# va passata: ricalcolarla qui da /usr/src prende la prima installata, che con
+# piu' versioni non e' detto sia la stessa.
 set -e
-HERE=$(dirname "$0")
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 DIR=$HERE/b43-upstream
-PATCHES=$(cd "$HERE/../../patches" && pwd)
+PATCHES=$HERE/../../patches
 STRIP=drivers/net/wireless/broadcom/b43/
+KVER=${1:-$(ls /usr/src/ | grep -oE '^linux-headers-[0-9.]+-[0-9]+$' | head -1 |
+       sed 's/linux-headers-//')}
 
 test -f "$DIR/main.c" || { echo "prima: make fetch" >&2; exit 1; }
 
@@ -20,8 +27,6 @@ test -f "$DIR/main.c" || { echo "prima: make fetch" >&2; exit 1; }
 # (pa5ga, maxp5ga, femctrl, subband5gver, rxgains) che mainline non ha e senza
 # cui phy_ac.c non compila. Generati qui, non committati: sono header del
 # kernel toppati, non nostro codice.
-KVER=$(ls /usr/src/ | grep -oE '^linux-headers-[0-9.]+-[0-9]+$' | head -1 |
-       sed 's/linux-headers-//')
 KH=/usr/src/linux-headers-$KVER/include/linux/ssb
 if [ -d "$KH" ]; then
 	mkdir -p "$HERE/kinc/linux/ssb"

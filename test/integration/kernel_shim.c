@@ -174,16 +174,44 @@ unsigned long int_sqrt(unsigned long x)
 	return y;
 }
 
-int __sw_hweight32(unsigned int w)
-{
-	int n = 0;
-
-	while (w) {
-		n += w & 1;
-		w >>= 1;
-	}
-	return n;
-}
+/*
+ * Chiamata da un inline asm degli header (arch/x86/include/asm/arch_hweight.h)
+ * che dichiara solo %rdi in ingresso e %rax in uscita: e' il chiamante ad
+ * assumere che ogni altro registro sopravviva, perche' la versione del kernel
+ * (arch/x86/lib/hweight.S) li preserva. Una funzione C qui non puo' onorare
+ * quel contratto, e con -O2 il puntatore che il chiamante teneva in %rdx o
+ * %rcx viene sovrascritto: la corruzione emerge migliaia di op dopo, come
+ * free() su un puntatore invalido o SEGV su dev->phy.ac. Stessa sequenza
+ * dell'originale, stesso vincolo sui registri.
+ */
+asm(
+"	.text\n"
+"	.globl __sw_hweight32\n"
+"	.type __sw_hweight32, @function\n"
+"__sw_hweight32:\n"
+"	pushq	%rdi\n"
+"	pushq	%rdx\n"
+"	movl	%edi, %edx\n"
+"	shrl	%edx\n"
+"	andl	$0x55555555, %edx\n"
+"	subl	%edx, %edi\n"
+"	movl	%edi, %edx\n"
+"	andl	$0x33333333, %edx\n"
+"	shrl	$2, %edi\n"
+"	andl	$0x33333333, %edi\n"
+"	addl	%edx, %edi\n"
+"	movl	%edi, %edx\n"
+"	shrl	$4, %edx\n"
+"	addl	%edx, %edi\n"
+"	andl	$0x0f0f0f0f, %edi\n"
+"	imull	$0x01010101, %edi, %edi\n"
+"	shrl	$24, %edi\n"
+"	movl	%edi, %eax\n"
+"	popq	%rdx\n"
+"	popq	%rdi\n"
+"	ret\n"
+"	.size __sw_hweight32, .-__sw_hweight32\n"
+);
 
 void __local_bh_enable_ip(unsigned long ip, unsigned int cnt) { }
 void *skb_pull(void *skb, unsigned int len) { return NULL; }

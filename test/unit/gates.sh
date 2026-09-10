@@ -59,10 +59,23 @@
 #   ./gates.sh --hot [segment...]               hot, three default segments
 #   ./gates.sh --hot --flow switch_channel DIR  one row per channel, over a dir
 #
-# Environment: COLD, HOT override the segment directories.
+# Environment: COLD, HOT override the segment directories; GATE_TMP keeps the
+# working files (seg, merged, full, cmp) in that directory instead of a
+# temporary one.
 
 set -e
-HERE=$(dirname "$0")
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO=$HERE/../..
+TOOLS=$REPO/reverse-tools
+# GATE_TMP: la directory di lavoro, quando serve tenerne i file -- la cattura
+# ripiegata la rilegge read_perturb.py. Senza, una dir per run che sparisce.
+if [ -n "${GATE_TMP:-}" ]; then
+	TMP=$GATE_TMP
+	mkdir -p "$TMP"
+else
+	TMP=$(mktemp -d)
+	trap 'rm -rf "$TMP"' EXIT
+fi
 COLD=${COLD:-/tmp/cold/segmenti}
 HOT=${HOT:-/tmp/hot/segmenti}
 
@@ -117,7 +130,7 @@ fi
 
 if [ ! -d "$DIR" ]; then
 	echo "missing $DIR:"
-	echo "  unzip -d $(dirname "$DIR") router-data/d6220/$ARCHIVE"
+	echo "  unzip -d $(dirname "$DIR") $REPO/router-data/d6220/$ARCHIVE"
 	exit 1
 fi
 
@@ -146,7 +159,7 @@ for seg in $SEGS; do
 	# produced wrong conclusions about the chanspec, the probe-response
 	# writes and the noise sample.
 	[ "$COND" = cold ] &&
-		python3 "$HERE/../../reverse-tools/check_class_coverage.py" \
+		python3 "$TOOLS/check_class_coverage.py" \
 			--require "$seg"
 
 	# L'attach dell'altro core esce prima di piegare le letture, o la
@@ -157,14 +170,14 @@ for seg in $SEGS; do
 	# b43_validate_chipaccess lo eseguono entrambi i core. Il taglio e' un
 	# no-op per il punteggio del PHY -- nel prefisso non c'e' una sola
 	# PHY.RD o RAD.RD -- e serve all'oracolo, non al confronto.
-	python3 "$HERE/../../reverse-tools/strip_other_core.py" "$seg" \
-		/tmp/gate.seg 2>/dev/null || cp "$seg" /tmp/gate.seg
+	python3 "$TOOLS/strip_other_core.py" "$seg" \
+		"$TMP/seg" 2>/dev/null || cp "$seg" "$TMP/seg"
 
-	python3 "$HERE/../../reverse-tools/trace_filter.py" --retvals \
-		/tmp/gate.seg /tmp/gate.merged >/dev/null 2>&1 ||
-		cp /tmp/gate.seg /tmp/gate.merged
+	python3 "$TOOLS/trace_filter.py" --retvals \
+		"$TMP/seg" "$TMP/merged" >/dev/null 2>&1 ||
+		cp "$TMP/seg" "$TMP/merged"
 
-	eval "$(python3 - /tmp/gate.merged "$FLOW" <<'PY'
+	eval "$(python3 - "$TMP/merged" "$FLOW" <<'PY'
 import re, sys
 
 path, flow = sys.argv[1], sys.argv[2]
@@ -189,21 +202,21 @@ print(f"oracle={insmod or start or ''}")
 PY
 )"
 	[ -n "$from" ] || { echo "$seg: no PHY op"; fail=1; continue; }
-	last=$(grep -oE '#[0-9]+' /tmp/gate.merged | tail -1 | tr -d '#')
+	last=$(grep -oE '#[0-9]+' "$TMP/merged" | tail -1 | tr -d '#')
 
 	# The probe phase deadline and the watchdog tick are clocks, and the
 	# clock is in the segment's timestamps. See probe_schedule.py.
-	sched=$(python3 "$HERE/../../reverse-tools/probe_schedule.py" \
-		/tmp/gate.merged --sh 2>/dev/null || true)
+	sched=$(python3 "$TOOLS/probe_schedule.py" \
+		"$TMP/merged" --sh 2>/dev/null || true)
 
 	# How many times the stack above republished the beacon, and on which
 	# ticks. Same reason as the schedule above. See beacon_reloads.py.
-	sched="$sched $(python3 "$HERE/../../reverse-tools/beacon_reloads.py" \
-		/tmp/gate.merged --sh 2>/dev/null || true)"
+	sched="$sched $(python3 "$TOOLS/beacon_reloads.py" \
+		"$TMP/merged" --sh 2>/dev/null || true)"
 
 	# MAC.BW is written only by the first segment of each bandwidth: the
 	# others inherit it. The segment knows by itself whether it has it.
-	if grep -q ' MAC\.BW' /tmp/gate.merged; then
+	if grep -q ' MAC\.BW' "$TMP/merged"; then
 		macw=0
 	else
 		macw=$(case $bw in 40) echo 2 ;; 80) echo 3 ;; *) echo 1 ;; esac)
@@ -214,8 +227,8 @@ PY
 	# shellcheck disable=SC2086
 	if ! env AC_CHANNEL=$ch AC_BW=$bw AC_MAC_WIDTH=$macw \
 	     AC_FIRST_INIT=$FIRST_INIT \
-	     AC_READ_ORACLE=/tmp/gate.merged AC_READ_ORACLE_FROM=$oracle $sched \
-		"$HERE/ac_trace" "$FLOW" d6220 2>/dev/null > /tmp/gate.full; then
+	     AC_READ_ORACLE="$TMP/merged" AC_READ_ORACLE_FROM=$oracle $sched \
+		"$HERE/ac_trace" "$FLOW" d6220 2>/dev/null > "$TMP/full"; then
 		if [ "$TABLE" = 1 ]; then
 			printf '%5s %8s %8s %10s %10s %s\n' \
 				"$ch" - - - - "flow failed"
@@ -233,7 +246,7 @@ PY
 	# break the table; in detail mode it stays on stdout, next to the score
 	# it disclaims -- a reader who redirects stderr away would otherwise see
 	# a 2% score with no explanation of why the run never happened.
-	nport=$(grep -c '^cpu' /tmp/gate.full || true)
+	nport=$(grep -c '^cpu' "$TMP/full" || true)
 	if [ "$nport" -lt 6000 ]; then
 		{
 		echo "  WARNING: the port emitted only $nport ops on ch$ch/bw$bw:"
@@ -244,8 +257,8 @@ PY
 	fi
 
 	if [ "$TABLE" = 1 ]; then
-		python3 "$HERE/../../reverse-tools/sweep_report.py" score \
-			/tmp/gate.merged /tmp/gate.full "$ch"
+		python3 "$TOOLS/sweep_report.py" score \
+			"$TMP/merged" "$TMP/full" "$ch"
 		continue
 	fi
 
@@ -262,17 +275,17 @@ PY
 	# first divergence and gives the context. The two measures are not
 	# comparable: the first tolerates insertions, the second does not.
 	echo "  --- cmp_skip ---"
-	python3 "$HERE/cmp_skip.py" /tmp/gate.merged /tmp/gate.full \
+	python3 "$HERE/cmp_skip.py" "$TMP/merged" "$TMP/full" \
 		"$from:$last" --board d6220 \
 		| grep -E 'grezzo|nel perimetro|CON  ecce|fuori perimetro|op saltate|valore sbagliato|op di wl mancanti|solo vendor|solo port|invisibili'
 	echo "  --- compare ---"
-	python3 "$HERE/compare.py" /tmp/gate.merged /tmp/gate.full \
+	python3 "$HERE/compare.py" "$TMP/merged" "$TMP/full" \
 		--range "$from:$last" --auto-align \
-		> /tmp/gate.cmp || fail=1
+		> "$TMP/cmp" || fail=1
 	if [ "$COND" = cold ]; then
-		sed -n '1,4p;/^  @/{p;q}' /tmp/gate.cmp
+		sed -n '1,4p;/^  @/{p;q}' "$TMP/cmp"
 	else
-		sed -n '/^  @/{p;q}' /tmp/gate.cmp
+		sed -n '/^  @/{p;q}' "$TMP/cmp"
 	fi
 done
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# phase1-to-openwrt.sh - convert the phase1 b43 AC-PHY patches into the form
+# phase1-to-openwrt.sh - convert the b43 AC-PHY patch series into the form
 # OpenWrt's mac80211 package expects and drop them into a target tree.
 #
 # What it does:
@@ -37,16 +37,21 @@ fi
 OUT_DIR="$TARGET_DIR/package/kernel/mac80211/patches/brcm"
 
 # Short name per patch, matched on the descriptive part of the filename so it
-# survives renumbering. Unknown patches fall back to a slug of that same part.
+# survives renumbering. format-patch truncates long subjects, so the match is
+# on a distinctive middle segment, not on the tail. Unknown patches fall back
+# to a slug of that same part.
 short_name() {
 	case "$1" in
-	*register-definitions*) echo "acphy-regdefs" ;;
-	*5-GHz-channel*)        echo "acphy-5ghz-channels" ;;
-	*dma-64k*)              echo "dma-64k-align" ;;
-	*2069-radio*)           echo "acphy-radio-2069" ;;
-	*init-channel-tuning*)  echo "acphy-init" ;;
-	*wire-AC-PHY-into*)     echo "acphy-txrx-wiring" ;;
-	*)                      echo "" ;;
+	*5-GHz-channel*)              echo "acphy-5ghz-channels" ;;
+	*descriptor-ring-alignment*)  echo "dma-64k-align" ;;
+	*AC-PHY-bring-up*)            echo "acphy-bringup" ;;
+	*wire-AC-PHY-into*)           echo "acphy-txrx-wiring" ;;
+	*station-MAC*)                echo "shm-station-mac" ;;
+	*address-match-table*)        echo "address-match-table" ;;
+	*shared-memory-cells*)        echo "shm-cells" ;;
+	*key-index-block*)            echo "ucode42-key-index-block" ;;
+	*use-after-free*)             echo "bcma-remove-use-after-free" ;;
+	*)                            echo "" ;;
 	esac
 }
 
