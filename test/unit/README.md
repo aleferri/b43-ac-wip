@@ -137,7 +137,7 @@ non a dare un punteggio. Il numero da citare e' `grezzo`.
 ### 5. Trovare la prossima divergenza
 
 ```sh
-python3 compare.py /tmp/m01 /tmp/gate.full --range 528:36542 --auto-align
+python3 compare.py /tmp/m01 /tmp/gate/full --range 528:36542 --auto-align
 ```
 
 `compare.py` e' posizione-per-posizione e si ferma alla prima divergenza col
@@ -153,9 +153,11 @@ AC_FN_MARKERS=1 AC_CHANNEL=36 AC_BW=20 AC_FIRST_INIT=1 ./ac_trace full d6220
 
 annota l'output con `----FN:nome----`.
 
-Attenzione ai file temporanei: `gates.sh` scrive sempre in `/tmp/gate.merged` e
-`/tmp/gate.full`. Analizzarli dopo aver lanciato il gate su **un altro**
-segmento significa leggere i file del segmento sbagliato.
+I file di lavoro di `gates.sh` -- `seg`, `merged`, `full`, `cmp` -- stanno in
+una directory temporanea per run e spariscono alla fine. Per analizzarli si
+lancia con `GATE_TMP=/tmp/gate ./gates.sh`, che li tiene li'; la directory
+viene riscritta a ogni lancio, quindi analizzarli dopo aver lanciato il gate su
+**un altro** segmento significa leggere i file del segmento sbagliato.
 
 ### 6. Prima di dire che una fase e' assente nel vendor
 
@@ -343,8 +345,8 @@ indirizzo che la cattura non ha** e il confronto e' invalido da li' in avanti.
 Il conto si fa cosi':
 
 ```sh
-grep -c 'PHY\.RD   addr=0x000f' /tmp/gate.full
-grep -c 'PHY\.RD   addr=0x0011' /tmp/gate.full
+grep -c 'PHY\.RD   addr=0x000f' /tmp/gate/full
+grep -c 'PHY\.RD   addr=0x0011' /tmp/gate/full
 ```
 
 `non consumati del tutto` **non** deve essere zero e non e' un difetto:

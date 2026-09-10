@@ -3,8 +3,12 @@
 # 2) elenca le 37 non-valutabili con il source della chiamata + contesto,
 #    così si vede se il "set" runtime è filtrato dal caller o no.
 
-python3 << 'PYEOF'
-import re, glob
+SRC=$(CDPATH= cd -- "$(dirname -- "$0")/../src" && pwd)
+
+python3 - "$SRC" << 'PYEOF'
+import re, glob, os, sys
+
+SRC = sys.argv[1]
 
 CAST = re.compile(r'\(\s*u(?:8|16|32)\s*\)')
 def sanitize(e): return CAST.sub('', e.strip())
@@ -54,7 +58,7 @@ def show_ctx(lines, ln, before=2, after=1):
 print("=" * 70)
 print("GRUPPO A - Bug ATTIVI (set con bit nella zona 'preservata' da mask):")
 print("=" * 70)
-for path in sorted(glob.glob('src/*.c')):
+for path in sorted(glob.glob(os.path.join(SRC, '*.c'))):
     for line, endline, argstr, src_lines in find_calls(path):
         args = split_args(argstr)
         if len(args) != 4: continue
@@ -69,7 +73,7 @@ print()
 print("=" * 70)
 print("GRUPPO B - NON valutabili (set/mask runtime): il caller filtra?")
 print("=" * 70)
-for path in sorted(glob.glob('src/*.c')):
+for path in sorted(glob.glob(os.path.join(SRC, '*.c'))):
     for line, endline, argstr, src_lines in find_calls(path):
         args = split_args(argstr)
         if len(args) != 4: continue

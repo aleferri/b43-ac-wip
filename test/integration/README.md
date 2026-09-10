@@ -1,11 +1,11 @@
 # b43 intero su AC
 
-Stato: **b43 compila, linka, parte e completa l'attach, con il `src/` di
-questo repo dentro.** La catena di riconoscimento -- core, PHY, radio -- e'
-tutta chiusa, i valori vengono dai dump della board, e `b43_bcma_probe`
-ritorna 0 e il bring-up, chiamato da `hw->ops->start()`, emette 6981 op prima
-di fermarsi su una precondizione del port (vedi [Dove si
-ferma](#dove-si-ferma-adesso-una-precondizione-del-port)).
+Stato: **b43 compila, linka, parte, completa attach e bring-up e si chiude
+pulito, con il `src/` di questo repo dentro.** La catena di riconoscimento --
+core, PHY, radio -- e' tutta chiusa, i valori vengono dai dump della board,
+`b43_bcma_probe` ritorna 0, `hw->ops->start()` ritorna 0 dopo 21036 op su
+ch36 BW20, e la remove non lascia niente in piedi neanche sotto
+AddressSanitizer (vedi [Dove si ferma](#dove-si-ferma)).
 
 ## Come si lancia
 
@@ -31,7 +31,7 @@ make check          # ogni file di b43 e del port: deve dire "0 errori"
 make b43-trace      # compila, linka, stampa il conto dei simboli
 ```
 
-`make fetch` deve finire con `applicate 8, saltate 3`: le 8 patch che toccano
+`make fetch` deve finire con `applicate 9, saltate 3`: le 9 patch che toccano
 `b43/` e le 3 su bcma/ssb che qui non hanno niente da applicare. Se una patch
 non applica lo script **esce con errore** e l'albero in `b43-upstream/` va
 buttato (`rm -rf b43-upstream kinc`) prima di riprovare: `patch` applica un
@@ -75,9 +75,8 @@ senza, la traccia va su stdout **insieme all'output di make**, che va bene per
 guardare e non per confrontare. Le righe `b43: ...` -- cioe' `b43info` e
 `b43err`, quelle che dicono quale gate ha respinto la probe -- vanno su stderr.
 
-Oggi l'esito e' `probe: 0`, e il file contiene 68 op: il banco analogico dell'attach, il self-test di
-`b43_validate_chipaccess` e il `switch_analog(dev, 0)` di chiusura. Si
-confrontano con gli strumenti di `../unit`:
+Oggi l'esito e' `probe: 0` e `start: 0`, e il file contiene 21036 op: attach,
+bring-up intero e lo stop. Si confrontano con gli strumenti di `../unit`:
 
 ```sh
 python3 ../unit/compare.py /tmp/m01 /tmp/int.trace --auto-align
@@ -381,7 +380,7 @@ Stanno toppati in `kinc/`, che va **prima** degli header kernel.
 ### Stato
 
 Tutti e nove i file compilano a **zero errori**, e delle patch di `b43/` ne
-applicano **8 su 8**.
+applicano **9 su 9**, e tutta la serie applica anche con `git am` senza fuzz.
 
 Due difetti veri trovati, che `../unit` non poteva trovare perche' compila
 contro `stubs/b43.h` invece degli header kernel:
@@ -686,24 +685,43 @@ troppo vecchio (`fwrev <= 0x128`). Il modello ora copre solo `0x0004` e
 il `b43warn` sul path non allineato, e si paga volentieri: quell'avviso non
 tocca il flusso, `fwrev` decide il ramo dell'ucode.
 
-### Dove si ferma adesso: una precondizione del port
+### Il bring-up arriva in fondo, e la chiusura ha trovato due difetti
 
-```
-b43: ERROR: phy_ac: b43_phy_ac_channel_setup precondition failed:
-     status=0x1a78 want=0x0078 forbid=0x0306
-b43: ERROR: PHY init: Channel switch to default failed
-start: -22
-```
+Per un periodo la suite si fermava a 6981 op su una precondizione del port
+(`b43_phy_ac_channel_setup`, `forbid=0x0306` con `AFE_ON` alzato). Non lo fa
+piu': `start: 0` dopo **21036 op**, e quella precondizione e' storia di
+`src/`. Ma la patch 0006 era fuori sincrono da `src/` -- mancavano
+`ppr_ac.c/.h` e `phy_ac.c` divergeva di 1500 righe -- e la suite misurava un
+albero che non esisteva. `scripts/regen-patches.sh` ora copia tutto `src/`,
+Makefile compreso, che e' il Makefile del kernel con le righe AC e non un
+makefile fuori albero.
 
-**6981 op**, e per la prima volta il gate non e' di uno stub: e' il
-`B43_AC_REQUIRE` del port. `forbid=0x0306` include
-`B43_PHY_AC_STATE_AFE_ON` (`0x0200`), che `status` ha alzato: `channel_setup`
-pretende il front-end parcheggiato e lo trova armato. Il percorso e' arrivato
-da `b43_phy_init()` -> `switch_analog` -> `software_rfkill` -> `op_init` ->
-`b43_switch_channel`, cioe' l'ordine vero di b43, e in `../unit` quella
-sequenza la decide l'harness -- che e' esattamente la domanda per cui questa
-suite esiste. Chi ha ragione fra il predicato e l'ordine non si decide qui: va
-guardato contro la cattura.
+Con la patch giusta il binario arrivava a `start: 0` e moriva **dopo**, in due
+modi diversi a seconda dei flag: `free(): invalid pointer` a `-O2`, SEGV su
+`dev->phy.ac` in `b43_phy_ac_post_rfseq_misc_setup` con `DEBUG=1`. Un sintomo
+che cambia con l'inlining e' corruzione di memoria, e ASAN ha dato le due
+cause:
+
+- **`__sw_hweight32` era una funzione C.** Gli header x86
+  (`arch/x86/include/asm/arch_hweight.h`) la chiamano da un inline asm che
+  dichiara solo `%rdi` in ingresso e `%rax` in uscita, perche' la versione del
+  kernel (`arch/x86/lib/hweight.S`) preserva ogni altro registro. In userspace
+  le `ALTERNATIVE` non vengono patchate, quindi la `call` gira sempre, e una
+  funzione C sporca `%rdx` e `%rcx`: e' li' che il compilatore teneva
+  `dev->phy.ac`. Ora e' asm in `kernel_shim.c` con lo stesso contratto, e
+  `KFLAGS` ha `-mno-red-zone` come il kernel, perche' quella `call` scrive
+  l'indirizzo di ritorno sotto `%rsp`. La compilazione e il link non lo
+  potevano vedere, e nemmeno il sanitizer da solo: e' il caso in cui serve
+  leggere il contratto dell'asm.
+- **`b43_bcma_remove` in mainline legge `wldev->dev` dopo che
+  `b43_one_core_detach()` ha liberato `wldev`.** Use-after-free vero, presente
+  anche in master; nel kernel passa perche' SLUB lascia il puntatore nella
+  memoria liberata. Il ramo `b43_ssb_remove` salva `dev` prima della detach, e
+  `patches/0014` fa lo stesso sul ramo bcma.
+
+Nel farlo e' emerso che `patches/0013` applicava solo con il fuzz di `patch`:
+il contesto dell'hunk su `xmit.h` non aveva la riga `/* FIXME ... */` del
+sorgente. Riemessa via git, con lo stesso messaggio e author.
 
 ### Lo stub e' programmabile
 
@@ -733,9 +751,8 @@ make clean && make AC_ANY_CHANNEL=1 b43-trace
 make AC_ANY_CHANNEL=1 run ORACLE=/tmp/m05 B43_CHANNEL=52 TRACE_OUT=/tmp/t
 ```
 
-Con quello ch52 arriva alla stessa distanza di ch36 -- 6983 op contro 6981 --
-e si ferma sulla stessa precondizione del port. **Ricompilare senza il flag
-prima di chiudere**, o il gate di riferimento gira su un binario che difende
+Con quello ch52 arriva in fondo come ch36 -- `start: 0`, 20916 op contro
+21036. **Ricompilare senza il flag prima di chiudere**, o il gate di riferimento gira su un binario che difende
 meno: e' la stessa avvertenza di `../unit/README.md`.
 
 Il guard **non** va aperto per far girare la suite, e il punteggio non e' il
@@ -758,6 +775,8 @@ scrive mai:
 Una sola configurazione e' a zero su entrambe le colonne, ed e' la sola nella
 lista.
 
-Finche' il bring-up non arriva in fondo la finestra di confronto del
-Traguardo 3 non e' definita, quindi questa suite non cita ancora una
-percentuale: sarebbe 6981 op contro 28588.
+Il bring-up arriva in fondo, quindi la finestra di confronto del Traguardo 3
+e' definibile: 21036 op del port contro 28566 del vendor sul segmento di
+riferimento. La suite non cita ancora una percentuale perche' il perimetro --
+cosa b43 davvero non fa, contro cosa l'harness di `../unit` non poteva
+emettere -- va ancora scritto per questa suite: e' il prossimo passo.

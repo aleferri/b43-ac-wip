@@ -25,7 +25,7 @@ import argparse
 import difflib
 import re
 import importlib.util
-import re
+import os
 import sys
 
 
@@ -121,7 +121,10 @@ KNOWN = {
 }
 
 
-def load_compare(path='compare.py'):
+def load_compare(path=None):
+    if path is None:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            'compare.py')
     spec = importlib.util.spec_from_file_location('cmp', path)
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)

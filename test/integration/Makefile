@@ -17,6 +17,10 @@
 #
 # -O2 non e' un'ottimizzazione, e' un requisito: senza, gli header kernel
 # danno "impossible constraint in 'asm'" su asm_inline.
+#
+# -mno-red-zone come nel kernel: gli header fanno `call` dentro inline asm
+# (arch_hweight.h), e la call scrive l'indirizzo di ritorno sotto %rsp, dove
+# senza il flag gcc tiene le variabili locali delle funzioni foglia.
 
 KVER    ?= $(shell ls /usr/src/ | grep -oE '^linux-headers-[0-9.]+-[0-9]+$$' | head -1 | sed 's/linux-headers-//')
 K       := /usr/src/linux-headers-$(KVER)
@@ -40,6 +44,7 @@ KFLAGS := -nostdinc -I$(CURDIR)/$(UP) $(KINC) -D__KERNEL__ -DMODULE -DKBUILD_MOD
           -DCONFIG_B43_BCMA=1 -DCONFIG_B43_PHY_AC=1 \
           $(if $(AC_ANY_CHANNEL),-DCONFIG_B43_PHY_AC_ANY_CHANNEL=1) \
           -O2 -fno-strict-aliasing -fno-common -std=gnu11 -w \
+          -mno-red-zone \
           -Werror=implicit-function-declaration \
           -include $(CURDIR)/compat.h \
           -DB43_AC_FN_TRACE
@@ -80,14 +85,14 @@ endif
 
 # Cio' che trace_out.c chiede a libc: si risolve al link finale, quindi va
 # tenuto fuori dal conto del lavoro rimasto o il numero mente.
-LIBC := memmove|fprintf|fopen|fclose|fgets|fwrite|getenv|memset|memcpy|stdout|stderr|strcmp|strstr|strnlen|snprintf|sscanf|__isoc99_sscanf|calloc|realloc|free|abort|_GLOBAL_OFFSET_TABLE_|__stack_chk_fail|__printf_chk|__fprintf_chk|__vfprintf_chk|setvbuf|strtol
+LIBC := memmove|fprintf|fopen|fclose|fgets|fwrite|getenv|memset|memcpy|stdout|stderr|strcmp|strstr|strnlen|snprintf|sscanf|__isoc99_sscanf|calloc|realloc|free|abort|_GLOBAL_OFFSET_TABLE_|__stack_chk_fail|__printf_chk|__fprintf_chk|__vfprintf_chk|setvbuf|strtol|rewind
 
 .PHONY: all check link run clean fetch
 all: b43-trace
 
 fetch:
 	sh fetch-upstream.sh $(KVER)
-	sh apply-port.sh
+	sh apply-port.sh $(KVER)
 
 # Traguardo 1: i sorgenti di b43 compilano contro gli header veri.
 check:

@@ -16,12 +16,14 @@ undecidable by construction: a read whose consumer rewrites every bit of the
 word (the mask has nowhere to land), and a read consumed at one site and
 discarded at another, since the verdict is per address and not per site.
 
-Usage, from test/unit after ./gates.sh has left /tmp/gate.merged:
-    python3 ../../reverse-tools/reads.py consumers /tmp/gate.merged > census.txt
-    python3 read_perturb.py census.txt /tmp/gate.merged | sort
+Usage, after a gates.sh run that kept its working files:
+    GATE_TMP=/tmp/gate test/unit/gates.sh
+    python3 reverse-tools/reads.py consumers /tmp/gate/merged > census.txt
+    python3 test/unit/read_perturb.py census.txt /tmp/gate/merged | sort
 """
 import subprocess, re, sys, os
 
+AC_TRACE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ac_trace')
 MASKS = os.environ.get('MASKS',
     '0x0001 0x0002 0x0004 0x0010 0x0040 0x0100 0x0400 0x1000 0x4000 0x8000').split()
 
@@ -34,7 +36,7 @@ for l in open(sys.argv[1]):
     elif t: cands.append(('TBL', int(t.group(2),16), int(t.group(1),16), t.group(4)))
 env0=dict(os.environ, AC_CHANNEL='36', AC_BW='20', AC_MAC_WIDTH='0', AC_FIRST_INIT='1', AC_READ_ORACLE=sys.argv[2], AC_READ_ORACLE_FROM='528')
 def run(env):
-    r=subprocess.run(['./ac_trace','full','d6220'],env=env,capture_output=True,text=True)
+    r=subprocess.run([AC_TRACE,'full','d6220'],env=env,capture_output=True,text=True)
     # drop the read lines themselves (perturbed value shows there trivially)
     return [l for l in r.stdout.split('\n') if '.RD ' not in l]
 base=run(env0)

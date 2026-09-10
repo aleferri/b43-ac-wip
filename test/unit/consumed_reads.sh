@@ -16,6 +16,9 @@
 # Usage: consumed_reads.sh <merged-capture> [flow] [board] [oracle-from]
 
 set -e
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
 CAP=${1:?merged capture}
 FLOW=${2:-switch_channel}
 BOARD=${3:-d6220}
@@ -26,7 +29,7 @@ run() {
 	AC_READ_ORACLE="$CAP" AC_READ_ORACLE_FROM="$FROM" \
 	AC_READ_PERTURB="$1" AC_READ_PERTURB_KIND="$2" \
 	AC_READ_PERTURB_MASK="${MASK:-1}" \
-	./ac_trace "$FLOW" "$BOARD" 2>/dev/null
+	"$HERE/ac_trace" "$FLOW" "$BOARD" 2>/dev/null
 }
 
 # Two corrections the naive version needs:
@@ -55,12 +58,12 @@ for kind in phy radio; do
 	for a in $addrs; do
 		short=$(printf '%s' "$a" | sed 's/^0x0*//')
 		filt="$pat +addr=0x0*$short "
-		run "" phy | grep -vE "$filt" > /tmp/consumed.base
+		run "" phy | grep -vE "$filt" > "$TMP/base"
 		best=0
 		for m in $MASKS; do
 			MASK=$m run "$a" "$kind" | grep -vE "$filt" \
-				> /tmp/consumed.pert
-			d=$(diff /tmp/consumed.base /tmp/consumed.pert |
+				> "$TMP/pert"
+			d=$(diff "$TMP/base" "$TMP/pert" |
 			    grep -c '^[<>]' || true)
 			[ "$d" -gt "$best" ] && best=$d
 		done
