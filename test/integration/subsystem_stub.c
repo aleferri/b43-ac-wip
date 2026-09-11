@@ -317,12 +317,24 @@ void b43_pio_rx(void *q) { }
  *   b43_plcp_get_ratecode_cck, b43_plcp_get_ratecode_ofdm
  */
 
-int b43_leds_register(struct b43_wldev *dev) { return 0; }
-void b43_leds_unregister(void *wl) { }
-void b43_leds_init(struct b43_wldev *dev) { }
-void b43_leds_exit(struct b43_wldev *dev) { }
-void b43_leds_stop(struct b43_wldev *dev) { }
-void b43_rfkill_poll(struct ieee80211_hw *hw) { }
+/*
+ * leds.c e rfkill.c si compilano: sotto di loro stanno il LED core e i
+ * trigger di mac80211, che qui non ci sono. La registrazione riesce e i
+ * trigger hanno un nome, perche' con un nome nullo b43_register_led()
+ * ritorna -EINVAL e il percorso dei LED -- il mask per b43_gpio_init() e le
+ * scritture di GPIO_CONTROL in b43_leds_init() -- non gira affatto. Il LED
+ * core non richiama mai brightness_set: nessun trigger scatta senza traffico.
+ */
+int led_classdev_register_ext(struct device *parent,
+			      struct led_classdev *led_cdev,
+			      struct led_init_data *init_data) { return 0; }
+void led_classdev_unregister(struct led_classdev *led_cdev) { }
+const char *__ieee80211_get_tx_led_name(struct ieee80211_hw *hw) { return "tx"; }
+const char *__ieee80211_get_rx_led_name(struct ieee80211_hw *hw) { return "rx"; }
+const char *__ieee80211_get_assoc_led_name(struct ieee80211_hw *hw) { return "assoc"; }
+const char *__ieee80211_get_radio_led_name(struct ieee80211_hw *hw) { return "radio"; }
+void wiphy_rfkill_set_hw_state_reason(struct wiphy *wiphy, bool blocked,
+				      enum rfkill_hard_block_reasons reason) { }
 
 /*
  * Sospensione e ripresa delle code TX, e lo stato TX: percorso dati, nessuna

@@ -226,6 +226,23 @@ unsigned long strnlen(const char *s, unsigned long n)
 	return i;
 }
 
+/* Il contratto del kernel: -E2BIG (-7) se tronca, altrimenti la lunghezza. */
+long strscpy(char *dst, const char *src, unsigned long n)
+{
+	unsigned long len = strnlen(src, n);
+
+	if (!n)
+		return -7;
+	if (len == n) {
+		len = n - 1;
+		memcpy(dst, src, len);
+		dst[len] = 0;
+		return -7;
+	}
+	memcpy(dst, src, len + 1);
+	return (long)len;
+}
+
 /* --- firmware: RIESCE, con un blob minimo valido ------------------------
  *
  * Deve riuscire: se `request_firmware` fallisce, `b43_upload_microcode` esce,

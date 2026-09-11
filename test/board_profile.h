@@ -72,6 +72,11 @@ struct board_profile {
 	 * MMIO di B43_MMIO_MAC_HW_CAP che l'harness non modella. */
 	u16 core_rev;
 	u32 mac_hw_cap;
+	/* LED behaviour per GPIO pin: 0-3 from SROM ledbh0-3 (words 55-56 on
+	 * rev 11), 4-15 from NVRAM ledbh4..15. 0xff is "no field", and on
+	 * 0-3 it is what selects b43's defaults, as it does the stock
+	 * driver's. Consumed by leds.c; the pins end up in b43_gpio_init(). */
+	u8 ledbh[16];
 };
 
 /*
@@ -88,6 +93,11 @@ static const struct board_profile PROFILE_D6220 = {
 	.macaddr = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x03 },
 	/* WLCOREREV e MACHW_L/H come li scrive il vendor: cold01 #652-#654 */
 	.core_rev = 42, .mac_hw_cap = 0x30518c05,
+	/* SROM words 55-56 = 0xffff; NVRAM ledbh10=0x88: gpio 10, active-low,
+	 * activity. Together with the gpio 0-2 defaults this is the 0x407
+	 * the vendor writes on the chipcommon. */
+	.ledbh = { [0] = 0xff, [1] = 0xff, [2] = 0xff, [3] = 0xff,
+		   [10] = 0x88 },
 	.radio_ver = 0x2069, .phy_rev = 1,
 	.num_cores = 3, .coremask = 0x3, .rxchain = 3,
 	.subband5gver = 0x4,
@@ -146,6 +156,11 @@ static const struct board_profile PROFILE_AGCOMBO = {
 	.fem_cfg1 = 0x30a1, .fem_cfg2 = 0x00a1,
 	.tssifloor5g = { 0x3ff, 0x3ff, 0x3ff, 0x3ff },
 	.radio_ver = 0x2069, .phy_rev = 1,
+	/* NVRAM ledbh10=0x88 as on the D6220. agcombo_srom.txt is all zeros
+	 * from word 48 on, so ledbh0-3 are not readable there; 0xff follows
+	 * the 0x407 the vendor writes, which needs the gpio 0-2 defaults. */
+	.ledbh = { [0] = 0xff, [1] = 0xff, [2] = 0xff, [3] = 0xff,
+		   [10] = 0x88 },
 	.num_cores = 3, .coremask = 0x7, .rxchain = 7,
 	/* Same 5gl values as d6220 (NVRAM agcombo). */
 	.rxgains_5gl_elnagain = { 3, 3, 3 },
@@ -184,6 +199,9 @@ static const struct board_profile PROFILE_AGCOMBO = {
 static const struct board_profile PROFILE_DSL = {
 	.name = "dsl", .chip_id = 0x4352, .radio_rev = 4,
 	.radio_ver = 0x2069, .phy_rev = 1,
+	/* Same SROM words and the same ledbh10=0x88 as the D6220. */
+	.ledbh = { [0] = 0xff, [1] = 0xff, [2] = 0xff, [3] = 0xff,
+		   [10] = 0x88 },
 	.num_cores = 3, .coremask = 0x3, .rxchain = 3,
 	.subband5gver = 0x4,
 	.fem_cfg1     = 0x30a1,
@@ -269,6 +287,11 @@ static inline void board_profile_to_sprom(const struct board_profile *p,
 	s->gainctrlsph    = (c2 & 0xf800) >> 11;
 
 	memcpy(s->tssifloor5g, p->tssifloor5g, sizeof(s->tssifloor5g));
+	s->gpio0 = p->ledbh[0];
+	s->gpio1 = p->ledbh[1];
+	s->gpio2 = p->ledbh[2];
+	s->gpio3 = p->ledbh[3];
+	memcpy(s->gpio_ext, &p->ledbh[4], sizeof(s->gpio_ext));
 	memcpy(s->rxgains_5gl.elnagain, p->rxgains_5gl_elnagain,
 	       sizeof(s->rxgains_5gl.elnagain));
 	memcpy(s->rxgains_5gl.triso, p->rxgains_5gl_triso,

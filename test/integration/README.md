@@ -31,8 +31,9 @@ make check          # ogni file di b43 e del port: deve dire "0 errori"
 make b43-trace      # compila, linka, stampa il conto dei simboli
 ```
 
-`make fetch` deve finire con `applicate 10, saltate 3`: le 10 patch che toccano
-`b43/` e le 3 su bcma/ssb che qui non hanno niente da applicare. Se una patch
+`make fetch` deve finire con `applicate 11, saltate 4`: le 11 patch che toccano
+`b43/` e le 4 su bcma/ssb che qui non hanno niente da applicare (i loro hunk su
+`include/linux/ssb/` vanno pero' in `kinc/`, che li prende tutti). Se una patch
 non applica lo script **esce con errore** e l'albero in `b43-upstream/` va
 buttato (`rm -rf b43-upstream kinc`) prima di riprovare: `patch` applica un
 file alla volta, e un albero mezzo toppato compila lo stesso.
@@ -54,7 +55,7 @@ dell'altro core** e poi **ripiegato**, esattamente come in `../unit/README.md`:
 ```sh
 unzip -d /tmp/cold ../../router-data/d6220/cold-sweep.zip
 python3 ../../reverse-tools/strip_other_core.py \
-    /tmp/cold/segmenti/cold01-ch36-bw20.txt /tmp/cold01-pulito.txt
+    /tmp/cold/cold01-ch36-bw20.txt /tmp/cold01-pulito.txt
 python3 ../../reverse-tools/trace_filter.py --retvals \
     /tmp/cold01-pulito.txt /tmp/m01
 ```
@@ -75,8 +76,8 @@ senza, la traccia va su stdout **insieme all'output di make**, che va bene per
 guardare e non per confrontare. Le righe `b43: ...` -- cioe' `b43info` e
 `b43err`, quelle che dicono quale gate ha respinto la probe -- vanno su stderr.
 
-Oggi l'esito e' `probe: 0` e `start: 0`, e il file contiene 29470 op: attach,
-bring-up intero, TX power adjust, calibrazioni e lo stop. Si confrontano con gli strumenti di `../unit`, **con
+Oggi l'esito e' `probe: 0` e `start: 0`, e il file contiene 29828 op: attach,
+bring-up intero, TX power adjust, calibrazioni e lo stop, LED compresi. Si confrontano con gli strumenti di `../unit`, **con
 il profilo `--bus`**:
 
 ```sh
@@ -95,9 +96,12 @@ e' neutro -- 99.93% contro 99.92% -- quindi quello che misura qui e' b43, non
 la traduzione. Senza `--bus` il confronto si rompe alla prima maskset e il
 numero non dice niente.
 
-Con il profilo, il segmento di riferimento da' **84.22%** (26109/31001): 13
-valori sbagliati, 3319 op del vendor mancanti, 1547 del port di troppo, 51
-regioni. Lo switch di canale da solo -- la traccia tagliata sui marcatori
+Con il profilo, il segmento di riferimento da' **84.17%** (26101/31010): 14
+valori sbagliati, 3334 op del vendor mancanti, 1547 del port di troppo, 52
+regioni. Dodici delle mancanti sono i LED del vendor sul chipcommon, che il
+`PERIMETER` di `compare.py` dichiara del core, e le 13 `REG.WR 0x49c` con cui
+`leds.c` li pilota dal MAC stanno in `SOLO_PORT`: stessa funzione, registro
+diverso, per struttura di b43. Lo switch di canale da solo -- la traccia tagliata sui marcatori
 `B43_FN_MARKERS=1` contro la finestra `5007:13465` -- fa 98.72%, zero valori
 sbagliati, come l'harness di `../unit`. La prima divergenza posizionale sta a
 `@50`: dopo il core attach il vendor scrive il blocco di configurazione della
@@ -368,9 +372,18 @@ Da 120. Le voci, e cosa vuol dire ciascuna:
   come fa il kernel: b43 ci scrive la sua `b43_wl` e la rilegge con
   `hw_to_b43_wl()`, e con una struttura inventata il puntatore cadrebbe
   altrove e il difetto si vedrebbe mille op piu' tardi.
-- **`b43_` (23)**: DMA, PIO, LED, rfkill, e le vtable degli altri PHY. `init`
-  di DMA e PIO deve **riuscire**, o `b43_wireless_core_init` esce prima di
-  `b43_security_init`: non emettono op ma il loro esito e' un gate. Le vtable
+- **`b43_` (18)**: DMA, PIO e le vtable degli altri PHY. `init` di DMA e PIO
+  deve **riuscire**, o `b43_wireless_core_init` esce prima di
+  `b43_security_init`: non emettono op ma il loro esito e' un gate. LED e
+  rfkill **non** sono stubbati: `leds.c` e `rfkill.c` si compilano, e sotto di
+  loro stanno il LED core (`led_classdev_register_ext` riesce) e i trigger di
+  mac80211 (`__ieee80211_get_*_led_name` con un nome, perche' con un nome
+  nullo `b43_register_led()` esce e il percorso non gira). Cosi' il mask dei
+  pin per `b43_gpio_init()` e le scritture di `GPIO_CONTROL` in
+  `b43_leds_init()`/`b43_leds_exit()` sono quelle di b43 intero, con i
+  `ledbh` del profilo di board (`test/board_profile.h`), compreso il gpio 10
+  di `patches/0016-0017`. Il LED core non richiama mai `brightness_set`:
+  senza traffico nessun trigger scatta. Le vtable
   `b43_phyops_{g,n,lp,ht}` sono a **NULL** di proposito: `b43_phy_allocate()`
   dispaccia su `phy->type` e su questo hardware prende il ramo AC, quindi un
   puntatore nullo fa vedere subito un dispatch sbagliato invece di produrre

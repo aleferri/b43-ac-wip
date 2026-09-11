@@ -79,7 +79,7 @@ versione del blob.
 
 | blocco | dove | note |
 |---|---|---|
-| Blocco PMU/GPIO di attach | fra preambolo analogico e corpo radio | `PMU.RC` bracchettata set/clear, `GPIO.CTL`/`OUT`/`OE`, MHF e MACCTL intercalate. Parzialmente fatto (`frontend_gpio_setup`); resta la coda dopo `@40` |
+| Blocco PMU/GPIO di attach | fra preambolo analogico e corpo radio | `PMU.RC` bracchettata set/clear, `GPIO.CTL`/`OUT`/`OE`, MHF e MACCTL intercalate. Parzialmente fatto (`cold_mac_preamble`); resta la coda dopo `@40` |
 | `BCMA_CC_PMU_CTL` | patch 0007, non `phy_ac` | `val=0x01770381` con un argomento — da decodificare contro i bit del registro |
 | Seconda emissione dell'unità analog-on | apertura attach | il save è dell'entrata, non dell'unità: serve separare save e corpo |
 

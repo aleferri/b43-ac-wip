@@ -36,6 +36,11 @@ sono un artefatto rigenerato.
 | — (MAC in shared memory, AC) | 0010 |
 | — (address match table, corerev >= 42) | 0011 |
 | — (celle SHM, corerev >= 42) | 0012 |
+| — (key index block su ucode42, `main.c`) | 0013 |
+| — (use-after-free in `b43_bcma_remove`) | 0014 |
+| — (`channel_calibrate` da `b43_op_config`, `phy_common.c`) | 0015 |
+| — (`ledbh4..15` da NVRAM sopra la SROM del device: `ssb.h`, `bcm47xx_sprom.c`, `bcma/sprom.c`) | 0016 |
+| — (LED su gpio 4-15, piu' LED per ruolo: `leds.{c,h}`, `main.c`) | 0017 |
 
 Farrow e rxgain non hanno file dedicati: `b43_phy_ac_farrow_setup` e il
 blocco rxgain vivono come sezioni di `phy_ac.c` (patch 0006).

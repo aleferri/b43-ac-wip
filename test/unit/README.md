@@ -23,7 +23,7 @@ confrontabili.
 unzip -d /tmp/cold ../../router-data/d6220/cold-sweep.zip
 ```
 
-I 26 segmenti stanno in `/tmp/cold/segmenti/coldNN-chC-bwB.txt`.
+I 26 segmenti stanno in `/tmp/cold/coldNN-chC-bwB.txt`.
 
 Ogni segmento contiene **due** attach, non uno: `wl` al caricamento fa
 l'attach di tutti i core, quindi la testa ha prima wl0 -- l'N-PHY 2.4 GHz --
@@ -32,7 +32,7 @@ e poi wl1, che e' l'AC. Sono 46 op, fra la prima e la seconda coppia
 
 ```sh
 python3 ../../reverse-tools/strip_other_core.py \
-    /tmp/cold/segmenti/cold01-ch36-bw20.txt /tmp/cold01-pulito.txt
+    /tmp/cold/cold01-ch36-bw20.txt /tmp/cold01-pulito.txt
 ```
 
 Il confronto quel prefisso lo salta gia', perche' parte dalla prima `PHY.RD
@@ -50,7 +50,7 @@ vanno ripiegate:
 
 ```sh
 python3 ../../reverse-tools/trace_filter.py --retvals \
-    /tmp/cold/segmenti/cold01-ch36-bw20.txt /tmp/m01
+    /tmp/cold/cold01-ch36-bw20.txt /tmp/m01
 ```
 
 Dimenticarlo e' l'errore piu' facile da fare: una `grep 'val=0x...'` su un file
@@ -78,8 +78,8 @@ directory di segmenti.
 
 ```sh
 ./gates.sh                                             # cold01 ch36 bw20
-./gates.sh /tmp/cold/segmenti/cold05-ch52-bw20.txt     # un altro segmento
-./gates.sh /tmp/cold/segmenti/cold[0-9][0-9]-ch*.txt   # tutti e 26
+./gates.sh /tmp/cold/cold05-ch52-bw20.txt     # un altro segmento
+./gates.sh /tmp/cold/cold[0-9][0-9]-ch*.txt   # tutti e 26
 
 unzip -d /tmp/hot ../../router-data/d6220/hot-sweep.zip
 ./gates.sh --hot                                       # tre segmenti up
@@ -116,8 +116,8 @@ regressioni piu' sensibile che ci sia.
 ### 4. Leggere il punteggio
 
 ```
-grezzo          : 28552/28574 = 99.92%   15 regioni
-                  0 col valore sbagliato, 22 op di wl mancanti,
+grezzo          : 28545/28582 = 99.87%   19 regioni
+                  0 col valore sbagliato, 37 op di wl mancanti,
                   0 op del port di troppo
 nel perimetro   : ...
 ```
@@ -165,7 +165,7 @@ Serve un **testimone**: un registro o una tabella che nel port solo quella
 funzione tocca. Si conta su tutti i segmenti, non su uno:
 
 ```sh
-for s in /tmp/cold/segmenti/cold[0-9][0-9]-ch*.txt; do
+for s in /tmp/cold/cold[0-9][0-9]-ch*.txt; do
     printf '%-24s %s\n' "$(basename $s)" "$(grep -c 'addr=0x0380' $s)"
 done
 ```
@@ -231,19 +231,25 @@ ferma su un LSB di calibrazione.
 
 ### `SOLO_VENDOR` — op che nessun codice b43 puo' emettere
 
-Oggi una voce: **`MAC.BW`**, l'hook su `wlc_bmac_bw_set`. Il suo equivalente
+Tre voci. **`MAC.BW`**, l'hook su `wlc_bmac_bw_set`: il suo equivalente
 GPL in brcmsmac fa `pi->bw = bw` e nient'altro, piu' un reset e un init del
 PHY; in b43 la larghezza sta in `phy.chandef`, che `b43_phy_init()` imposta
 prima che il PHY arrivi la', e non c'e' nessun registro da scrivere. E' un
-confine di funzione che b43 non ha.
+confine di funzione che b43 non ha. **`MARK`**, i record che lo script dello
+sweep e il modulo wl-diag scrivono da soli (`'chNN bwB'`, `'mod GOING'`): non
+c'e' un registro dietro. E l'**offload della probe response**, che e' una
+scelta del WIP e non un limite: la ragione voce per voce sta in `compare.py`.
 
 Ogni voce qui dichiara un pezzo di obiettivo **irraggiungibile**, quindi serve
 la prova che non ci sia niente da emettere, non l'impressione.
 
 ### `PERIMETER` — op di codice fuori da `src/`
 
-Shared memory del MAC, template RAM, OTP, SROM. Il criterio e' l'appartenenza
-dimostrata da `b43.h`, **non** la raggiungibilita' da `src/`: quest'ultima e'
+Shared memory del MAC, template RAM, OTP, SROM, e i LED sul chipcommon
+(`GPIO.*` con le maschere di board e `gpiotimeroutmask` a `0x8c`, che nel blob
+sono `wlc_bmac_hw_up`/`wlc_bmac_led`/`wlc_bmac_led_hw_deinit` e in b43 sono
+`leds.c`). Il criterio e' l'appartenenza dimostrata da `b43.h` o dal blob,
+**non** la raggiungibilita' da `src/`: quest'ultima e'
 degenere, perche' farebbe salire il punteggio quando si toglie codice.
 
 Va **ristretta ogni volta che il port impara a scrivere una cella**: il
@@ -372,7 +378,7 @@ overrun che ha girato piu' del previsto.
 ```sh
 AC_FN_MARKERS=1 ./ac_trace full d6220 > /tmp/annotato.txt
 python3 ../../reverse-tools/fn_map.py coverage /tmp/annotato.txt \
-    /tmp/cold/segmenti/cold01-ch36-bw20.txt
+    /tmp/cold/cold01-ch36-bw20.txt
 ```
 
 La copertura si misura contro la cattura **grezza**, non ripiegata: i marcatori

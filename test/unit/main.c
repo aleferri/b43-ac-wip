@@ -1165,7 +1165,7 @@ static void emit_core_shm_chipinit(const struct board_profile *p)
 	 */
 	/*
 	 * Modo operativo del core: INFRA e DISCPMQ, AP azzerato. Lo fa
-	 * b43_adjust_opmode(); stava dentro frontend_gpio_setup del PHY e
+	 * b43_adjust_opmode(); stava dentro il preambolo MAC del PHY (cold_mac_preamble) e
 	 * l'abbiamo spostato qui, che e' dove il vendor lo emette -- fra
 	 * ANTSWAP e WLCOREREV, non con la GPIO.CTL.
 	 */
