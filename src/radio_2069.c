@@ -881,7 +881,7 @@ static u16 r2069_pick_value(const struct b43_phy_ac_channeltab_e_radio2069 *e,
  * afe_728 = 0x0800 in the ch36/5GHz capture. A second call with afe_728=0x0000
  * is also observed in the same bring-up; its exact position is not yet pinned,
  * so only the 0x0800 call is wired here.
- * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   1112-1201, 5163-5252]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   478-567, 833-922]
@@ -910,7 +910,7 @@ void b43_radio_2069_afe_lpf_stage(struct b43_wldev *dev, u16 afe_728)
 	}
 }
 
-/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+/* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   5024-5127]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   694-797]
@@ -1067,7 +1067,7 @@ static const u8  b43_r2069_rccal_mode[3] = { 0, 2, 1 };
 static const u8  b43_r2069_rccal_nloop[3] = { 0x1c, 0x70, 0x40 };
 
 /* Pass 0/1 common preamble: program the engine for this pass. */
-/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+/* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   911-923, 956-968, 1025-1037]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   293-305, 338-350, 401-413]
@@ -1086,7 +1086,7 @@ static void b43_r2069_rccal_setup(struct b43_wldev *dev, unsigned int pass)
 }
 
 /* Kick the engine and poll the done bit. */
-/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+/* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   924-947, 969-994, 1062-1089]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   306-329, 351-370, 438-455]
@@ -1165,7 +1165,7 @@ static void b43_r2069_rccal_disarm_p2b(struct b43_wldev *dev)
 	}
 }
 
-/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+/* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   911-1111]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   293-477]
@@ -1240,7 +1240,7 @@ void b43_radio_2069_rccal(struct b43_wldev *dev)
  * field in its top bits -- 0x5830 at 20 MHz, 0x5030 at 40, 0x4230 at 80 --
  * which is why it must not be a constant, and taking it from the register
  * needs no table.
- * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   11237-11298]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   6907-6968]
@@ -1344,7 +1344,7 @@ static const u16 b43_r2069_prefregs_rev4[][2] = {
 	{ 0x0972, 0x0600 },
 };
 
-/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+/* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   709-732]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   91-114]
@@ -1423,7 +1423,7 @@ static void b43_radio_2069_lo_trim_unii1(struct b43_wldev *dev)
 	}
 }
 
-/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+/* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   692-850]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   74-232]
@@ -1510,7 +1510,7 @@ void b43_radio_2069_init(struct b43_wldev *dev)
  * phy_ac.c: it was inlined between b43_radio_2069_init and
  * b43_radio_2069_rccal -- pure radio-register block, no PHY touches,
  * same misplacement as the prefregs/init functions above.
- * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   851-910]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   233-292]

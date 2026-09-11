@@ -193,7 +193,7 @@ static void b43_phy_ac_rxiq_coeffs(struct b43_wldev *dev, u8 write,
  *      reverse order too (0x0725 then 0x073a then 0x0739, per core).
  *   4. peek 0x0393, write 0x0394 = 0x0110, write 0x0393 = 0x8000 to arm the
  *      generator.
- * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   14622-14654]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   10036-10068]
@@ -243,7 +243,7 @@ void b43_phy_ac_rxcal_tone_setup(struct b43_wldev *dev)
  * Arm the tone generator for the calibration of rx_core: peek 0x0393,
  * write 0x0394 = 0x0110 | core, write 0x0393 = 0x8000. The capture shows
  * 0x0110 for core 0 and 0x0111 for core 1.
- * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   14655-14658, 14787-14790]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   10069-10072, 10201-10204]
@@ -299,7 +299,7 @@ static const u16 b43_phy_ac_rxcal_radio_regs[7] = {
 	0x016e, 0x000e, 0x0161, 0x0017, 0x015f, 0x0024, 0x0025,
 };
 
-/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+/* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   14522-14571, 14572-14621]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   9936-9985, 9986-10035]
@@ -413,7 +413,7 @@ static void b43_phy_ac_stopplayback(struct b43_wldev *dev)
  * rxcal_cleanup_nphy: reset the 14 gain-control registers to their idle
  * values. The caller loops over cores, so all of core 0's writes come out
  * before any of core 1's.
- * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   14920-14933, 14934-14947]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   10334-10347, 10348-10361]
@@ -438,7 +438,7 @@ void b43_phy_ac_rxcal_cleanup(struct b43_wldev *dev, u8 rx_core)
 /*
  * Per-core radio-side cleanup: restore the seven radio registers that
  * rxcal_radio_setup saved. Same per-core ordering as above.
- * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   14948-14954, 14955-14961]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   10362-10368, 10369-10375]

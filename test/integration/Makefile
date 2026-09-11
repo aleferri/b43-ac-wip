@@ -41,7 +41,7 @@ KINC := -I$(CURDIR)/kinc -I$(KG)/include -I$(K)/include -I$(K)/include/uapi \
 KFLAGS := -nostdinc -I$(CURDIR)/$(UP) $(KINC) -D__KERNEL__ -DMODULE -DKBUILD_MODNAME=\"b43\" \
           -include $(K)/include/linux/kconfig.h \
           -include $(K)/include/linux/compiler_types.h \
-          -DCONFIG_B43_BCMA=1 -DCONFIG_B43_PHY_AC=1 \
+          -DCONFIG_B43_BCMA=1 -DCONFIG_B43_PHY_AC=1 -DCONFIG_B43_LEDS=1 \
           $(if $(AC_ANY_CHANNEL),-DCONFIG_B43_PHY_AC_ANY_CHANNEL=1) \
           -O2 -fno-strict-aliasing -fno-common -std=gnu11 -w \
           -mno-red-zone \
@@ -57,7 +57,7 @@ KFLAGS += -fno-inline -g
 endif
 
 # I file di b43 che si compilano come sono. Tutti e tre a zero errori.
-UPSTREAM := main.c phy_common.c bus.c xmit.c \
+UPSTREAM := main.c phy_common.c bus.c xmit.c leds.c rfkill.c \
             phy_ac.c tables_phy_ac.c radio_2069.c rxiqcal_phy_ac.c \
             helpers_phy_ac.c ppr_ac.c
 

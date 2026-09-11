@@ -1,0 +1,246 @@
+From 2c36dc8d07239faba3c752c156bbf9813e74fa08 Mon Sep 17 00:00:00 2001
+From: Alessandro Ferri <aleferri@example.invalid>
+Date: Fri, 11 Sep 2026 11:16:11 +0000
+Subject: [PATCH 16/17] bcma: ssb: carry the NVRAM ledbh4..ledbh15 LED mappings
+
+The SPROM has fields for the LEDs on GPIO pins 0-3 only, ledbh0-3, and
+struct ssb_sprom mirrors that as gpio0-3. Broadcom boards map LEDs on any
+of the sixteen GPIO lines through NVRAM ledbh4..ledbh15, which the stock
+driver reads with the same device prefix as ledbh0-3; on the Netgear D6220
+and the D-Link DSL-3580L the 5 GHz activity LED is ledbh10=0x88.
+
+On those boards the 802.11 core is a PCIe device with its own SPROM, so
+bcma reads the SPROM from the device and the NVRAM fallback never runs:
+whatever the board says in NVRAM about the device is lost. The stock
+driver merges the two; do the same for the variables the SPROM has no word
+for.
+
+Add gpio_ext[12] for pins 4-15. bcm47xx_sprom fills it in two places: in
+bcm47xx_sprom_fill_auto(), next to ledbh0-3, for a SPROM that comes from
+NVRAM, and through bcm47xx_sprom_fill_bcma_nvram(), which resolves the
+bus's prefix as the fallback does, for a SPROM read from the device; bcma
+calls the latter after extracting the device SPROM. The prefix resolution
+moves out of bcm47xx_get_sprom_bcma() into a helper the two share. Like
+the fallback, this exists only with bcma built in; elsewhere the call is
+an inline no-op.
+
+Signed-off-by: Alessandro Ferri <aleferri@example.invalid>
+---
+ drivers/bcma/sprom.c                      |  6 ++
+ drivers/firmware/broadcom/bcm47xx_sprom.c | 91 +++++++++++++++++------
+ include/linux/bcm47xx_sprom.h             | 16 ++++
+ include/linux/ssb/ssb.h                   |  2 +
+ 4 files changed, 93 insertions(+), 22 deletions(-)
+
+diff --git a/drivers/bcma/sprom.c b/drivers/bcma/sprom.c
+index 46df8ba..acba77d 100644
+--- a/drivers/bcma/sprom.c
++++ b/drivers/bcma/sprom.c
+@@ -11,6 +11,7 @@
+ 
+ #include <linux/bcma/bcma.h>
+ #include <linux/bcma/bcma_regs.h>
++#include <linux/bcm47xx_sprom.h>
+ #include <linux/pci.h>
+ #include <linux/io.h>
+ #include <linux/dma-mapping.h>
+@@ -804,6 +805,11 @@ int bcma_sprom_get(struct bcma_bus *bus)
+ 		else
+ 			bcma_sprom_extract_r8(bus, sprom);
+ 		kfree(sprom);
++		/*
++		 * The board's NVRAM may say more about this device than its
++		 * SPROM has words for. Not having NVRAM here is the norm.
++		 */
++		bcm47xx_sprom_fill_bcma_nvram(bus, &bus->sprom);
+ 	}
+ 
+ 	return err;
+diff --git a/drivers/firmware/broadcom/bcm47xx_sprom.c b/drivers/firmware/broadcom/bcm47xx_sprom.c
+index 14fbcd1..30ec816 100644
+--- a/drivers/firmware/broadcom/bcm47xx_sprom.c
++++ b/drivers/firmware/broadcom/bcm47xx_sprom.c
+@@ -29,6 +29,7 @@
+ #include <linux/bcm47xx_nvram.h>
+ #include <linux/bcm47xx_sprom.h>
+ #include <linux/bcma/bcma.h>
++#include <linux/err.h>
+ #include <linux/etherdevice.h>
+ #include <linux/if_ether.h>
+ #include <linux/ssb/ssb.h>
+@@ -171,6 +172,25 @@ static void nvram_read_alpha2(const char *prefix, const char *name,
+ 	memcpy(val, buf, 2);
+ }
+ 
++/*
++ * The variables no SPROM revision has a word for: the board sets them in
++ * NVRAM only, next to the device's other entries, and the stock driver
++ * reads them with the same prefix. Read both when the SPROM comes from
++ * NVRAM and on top of a SPROM read from the device.
++ */
++static void bcm47xx_sprom_fill_nvram_only(struct ssb_sprom *sprom,
++					  const char *prefix, bool fallback)
++{
++	char name[sizeof("ledbh15")];
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(sprom->gpio_ext); i++) {
++		snprintf(name, sizeof(name), "ledbh%d", i + 4);
++		nvram_read_u8(prefix, NULL, name, &sprom->gpio_ext[i], 0xff,
++			      fallback);
++	}
++}
++
+ /* This is one-function-only macro, it uses local "sprom" variable! */
+ #define ENTRY(_revmask, _type, _prefix, _name, _val, _allset, _fallback) \
+ 	if (_revmask & BIT(sprom->revision)) \
+@@ -208,6 +228,8 @@ static void bcm47xx_sprom_fill_auto(struct ssb_sprom *sprom,
+ 	ENTRY(0xfffffffe, u8, pre, "ledbh1", gpio1, 0xff, fb);
+ 	ENTRY(0xfffffffe, u8, pre, "ledbh2", gpio2, 0xff, fb);
+ 	ENTRY(0xfffffffe, u8, pre, "ledbh3", gpio3, 0xff, fb);
++	if (sprom->revision)
++		bcm47xx_sprom_fill_nvram_only(sprom, pre, fb);
+ 
+ 	ENTRY(0x0000070e, u16, pre, "pa0b0", pa0b0, 0, fb);
+ 	ENTRY(0x0000070e, u16, pre, "pa0b1", pa0b1, 0, fb);
+@@ -646,45 +668,70 @@ static void bcm47xx_sprom_apply_prefix_alias(char *prefix, size_t prefix_size)
+ 	}
+ }
+ 
+-static int bcm47xx_get_sprom_bcma(struct bcma_bus *bus, struct ssb_sprom *out)
++/*
++ * The NVRAM prefix of a bcma bus's variables: pci/<bus>/<slot>/ or its
++ * devpathN alias for a PCI device, sb/<core>/ for the SoC's own core.
++ * Returns the prefix, NULL for a SoC bus without an 802.11 core, or an
++ * error pointer for a host type NVRAM knows nothing about. *fallback is
++ * set when the caller may fall back to unprefixed variables.
++ */
++static char *bcm47xx_sprom_bcma_prefix(struct bcma_bus *bus, char *buf,
++				       size_t size, bool *fallback)
+ {
+-	struct bcma_boardinfo *binfo = &bus->boardinfo;
+ 	struct bcma_device *core;
+-	char buf[10];
+-	char *prefix;
+-	bool fallback = false;
+ 
++	*fallback = false;
+ 	switch (bus->hosttype) {
+ 	case BCMA_HOSTTYPE_PCI:
+-		memset(out, 0, sizeof(struct ssb_sprom));
+ 		/* On BCM47XX all PCI buses share the same domain */
+ 		if (IS_ENABLED(CONFIG_BCM47XX))
+-			snprintf(buf, sizeof(buf), "pci/%u/%u/",
++			snprintf(buf, size, "pci/%u/%u/",
+ 				 bus->host_pci->bus->number + 1,
+ 				 PCI_SLOT(bus->host_pci->devfn));
+ 		else
+-			snprintf(buf, sizeof(buf), "pci/%u/%u/",
++			snprintf(buf, size, "pci/%u/%u/",
+ 				 pci_domain_nr(bus->host_pci->bus) + 1,
+ 				 bus->host_pci->bus->number);
+-		bcm47xx_sprom_apply_prefix_alias(buf, sizeof(buf));
+-		prefix = buf;
+-		break;
++		bcm47xx_sprom_apply_prefix_alias(buf, size);
++		return buf;
+ 	case BCMA_HOSTTYPE_SOC:
+-		memset(out, 0, sizeof(struct ssb_sprom));
+ 		core = bcma_find_core(bus, BCMA_CORE_80211);
+-		if (core) {
+-			snprintf(buf, sizeof(buf), "sb/%u/",
+-				 core->core_index);
+-			prefix = buf;
+-			fallback = true;
+-		} else {
+-			prefix = NULL;
+-		}
+-		break;
++		if (!core)
++			return NULL;
++		snprintf(buf, size, "sb/%u/", core->core_index);
++		*fallback = true;
++		return buf;
+ 	default:
++		return ERR_PTR(-EINVAL);
++	}
++}
++
++int bcm47xx_sprom_fill_bcma_nvram(struct bcma_bus *bus, struct ssb_sprom *out)
++{
++	char buf[10];
++	char *prefix;
++	bool fallback;
++
++	prefix = bcm47xx_sprom_bcma_prefix(bus, buf, sizeof(buf), &fallback);
++	if (IS_ERR(prefix))
++		return PTR_ERR(prefix);
++	bcm47xx_sprom_fill_nvram_only(out, prefix, fallback);
++	return 0;
++}
++
++static int bcm47xx_get_sprom_bcma(struct bcma_bus *bus, struct ssb_sprom *out)
++{
++	struct bcma_boardinfo *binfo = &bus->boardinfo;
++	char buf[10];
++	char *prefix;
++	bool fallback;
++
++	prefix = bcm47xx_sprom_bcma_prefix(bus, buf, sizeof(buf), &fallback);
++	if (IS_ERR(prefix)) {
+ 		pr_warn("Unable to fill SPROM for given bustype.\n");
+-		return -EINVAL;
++		return PTR_ERR(prefix);
+ 	}
++	memset(out, 0, sizeof(struct ssb_sprom));
+ 
+ 	nvram_read_u16(prefix, NULL, "boardvendor", &binfo->vendor, 0, true);
+ 	if (!binfo->vendor)
+diff --git a/include/linux/bcm47xx_sprom.h b/include/linux/bcm47xx_sprom.h
+index f8254fd..0af1b9c 100644
+--- a/include/linux/bcm47xx_sprom.h
++++ b/include/linux/bcm47xx_sprom.h
+@@ -9,6 +9,7 @@
+ #include <linux/kernel.h>
+ #include <linux/vmalloc.h>
+ 
++struct bcma_bus;
+ struct ssb_sprom;
+ 
+ #ifdef CONFIG_BCM47XX_SPROM
+@@ -28,4 +29,19 @@ static inline int bcm47xx_sprom_register_fallbacks(void)
+ };
+ #endif
+ 
++/*
++ * The NVRAM-only variables of a bus whose SPROM was read from the device:
++ * what bcm47xx_fill_sprom() would read for it that the SPROM has no word
++ * for. Like the fallback itself, only with bcma built in.
++ */
++#if defined(CONFIG_BCM47XX_SPROM) && IS_BUILTIN(CONFIG_BCMA)
++int bcm47xx_sprom_fill_bcma_nvram(struct bcma_bus *bus, struct ssb_sprom *out);
++#else
++static inline int bcm47xx_sprom_fill_bcma_nvram(struct bcma_bus *bus,
++						struct ssb_sprom *out)
++{
++	return -ENOTSUPP;
++}
++#endif
++
+ #endif /* __BCM47XX_SPROM_H */
+diff --git a/include/linux/ssb/ssb.h b/include/linux/ssb/ssb.h
+index 6f2f8df..15781ab 100644
+--- a/include/linux/ssb/ssb.h
++++ b/include/linux/ssb/ssb.h
+@@ -76,6 +76,8 @@ struct ssb_sprom {
+ 	u8 gpio1;		/* GPIO pin 1 */
+ 	u8 gpio2;		/* GPIO pin 2 */
+ 	u8 gpio3;		/* GPIO pin 3 */
++	u8 gpio_ext[12];	/* GPIO pins 4-15; NVRAM ledbh4-ledbh15 only,
++				 * no SPROM revision carries them */
+ 	u8 maxpwr_bg;		/* 2.4GHz Amplifier Max Power (in dBm Q5.2) */
+ 	u8 maxpwr_al;		/* 5.2GHz Amplifier Max Power (in dBm Q5.2) */
+ 	u8 maxpwr_a;		/* 5.3GHz Amplifier Max Power (in dBm Q5.2) */
+-- 
+2.43.0
+

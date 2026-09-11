@@ -23,20 +23,20 @@ KVER=${1:-$(ls /usr/src/ | grep -oE '^linux-headers-[0-9.]+-[0-9]+$' | head -1 |
 
 test -f "$DIR/main.c" || { echo "prima: make fetch" >&2; exit 1; }
 
-# I due header ssb di patches/0001: aggiungono i campi della SROM rev11
-# (pa5ga, maxp5ga, femctrl, subband5gver, rxgains) che mainline non ha e senza
-# cui phy_ac.c non compila. Generati qui, non committati: sono header del
-# kernel toppati, non nostro codice.
+# I due header ssb, con sopra ogni patch della serie che li tocca: la 0001
+# aggiunge i campi della SROM rev11 (pa5ga, maxp5ga, femctrl, subband5gver,
+# rxgains) senza cui phy_ac.c non compila, la 0016 gpio_ext[] senza cui non
+# compila leds.c. Generati qui, non committati: sono header del kernel
+# toppati, non nostro codice.
 KH=/usr/src/linux-headers-$KVER/include/linux/ssb
 if [ -d "$KH" ]; then
 	mkdir -p "$HERE/kinc/linux/ssb"
 	cp "$KH/ssb.h" "$KH/ssb_regs.h" "$HERE/kinc/linux/ssb/"
-	# La glob va risolta fuori dalla redirezione: dash non la espande la'.
-	srom=$(ls "$PATCHES"/0001-*.patch 2>/dev/null | head -1)
-	if [ -n "$srom" ]; then
+	for p in "$PATCHES"/*.patch; do
+		grep -q '^+++ b/include/linux/ssb/' "$p" || continue
 		(cd "$HERE/kinc" && patch --batch -p2 -N -r /dev/null \
-		    < "$srom" >/dev/null 2>&1) || true
-	fi
+		    < "$p" >/dev/null 2>&1) || true
+	done
 	if grep -q antenna_gain_qdb "$HERE/kinc/linux/ssb/ssb.h"; then
 		:
 	else

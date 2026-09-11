@@ -74,8 +74,8 @@ dove si documenta come si produce un numero citabile.
 Su `cold01-ch36-bw20`, il segmento di riferimento:
 
 ```
-grezzo: 28552/28574 = 99.92%
-        0 col valore sbagliato, 22 op di wl mancanti, 0 op del port di troppo
+grezzo: 28545/28582 = 99.87%
+        0 col valore sbagliato, 37 op di wl mancanti, 0 op del port di troppo
 ```
 
 Il denominatore e' l'unione dei due flussi, quindi fa 100% solo se il port
@@ -83,17 +83,20 @@ emette esattamente le op del driver stock: ne' meno, ne' di piu', ne' con
 valori diversi. Le tre voci sono tre lavori distinti — una formula da trovare,
 del codice da scrivere, un gate da mettere — e stanno in
 [`docs/retrace-todo.md`](docs/retrace-todo.md). Sul segmento di riferimento la
-prima e la terza voce sono a zero, e le 22 della seconda sono tutte op del
-core o di bcma, fuori da `src/`; la terza resta aperta sui canali sopra i
-5250 MHz.
+prima e la terza voce sono a zero, e le 37 della seconda sono tutte fuori da
+`src/`: 22 sono op del core o di bcma dentro l'attach, 12 sono i LED (vedi la
+tabella sotto), 3 stanno nella coda del rmmod con cui ogni segmento si chiude
+-- il reset del chip via watchdog di `pcie_watchdog_reset()`, chiamata da
+`si_detach()` sui core PCIe Gen2, e il rilascio LED a maschera vuota di wl0.
+La terza voce resta aperta sui canali sopra i 5250 MHz.
 
 Tutti e 26 i segmenti dello sweep a freddo sono misurati sullo stesso albero, e
 si dividono in due famiglie che il punteggio separa da se':
 
 | famiglia | segmenti | grezzo | di troppo |
 |---|---|---|---|
-| centro banda ≤ 5250 MHz | 7 (ch36-48) | 96.76% – 99.92% | 0 – 385 |
-| centro banda > 5250 MHz | 19 (da ch52) | 84.92% – 85.84% | 1808, tranne 1933 su cold15 |
+| centro banda ≤ 5250 MHz | 7 (ch36-48) | 96.71% – 99.87% | 0 – 385 |
+| centro banda > 5250 MHz | 19 (da ch52) | 84.90% – 85.82% | 1808, tranne 1933 su cold15 |
 
 Sopra i 5250 MHz il driver stock esegue un attach diverso, non un attach
 ridotto: ~16k op contro le ~29k dei canali bassi. La differenza non e' qualita'
@@ -147,9 +150,9 @@ word-per-word.
   azzeramenti, una sola lista in ordine vendor),
   `init_regs`, config MHF, `mac_suspend`.
 - **`op_software_rfkill`**: `radio_2069_init`, `pwron`, `rccal` (3 passate,
-  cap LPF e DACBUF derivati dalle misure), `afe_lpf_stage`. GPIO frontend,
-  PA bias e PMU enable finale sono *fuori* dallo scope di rfkill e non sono
-  ancora implementati.
+  cap LPF e DACBUF derivati dalle misure), `afe_lpf_stage`. PA bias e PMU
+  enable finale sono *fuori* dallo scope di rfkill e non sono ancora
+  implementati.
 - **`switch_channel`** (BW20, 5 GHz): freeze RX → `radio_2069_channel_setup`
   → `channel_setup` (reset-time, AFE/LPF, RF sequencer, `rxcore_setstate`,
   farrow, chanspec tail, coeff bank) → `chan_tables` → noise shaping
@@ -181,7 +184,8 @@ Mappa file sorgente → patch: [`docs/driver-status.md`](docs/driver-status.md).
 | Ricalcolo TX power periodico (`recalc_txpower`) | portata | Catena CRS min-power implementata (ladder + ancoraggio per-BW + bump a freddo, dal blob D6220 7.14). Su hardware manca solo il campione d'interferenza per freq_range che seleziona l'indice, oggi fissato al valore della config validata (ch36 BW20). `adjust_txpower` resta stub: mai invocata nel path MVP |
 | `ppr[24]` (power reduction per-rate) | hardcoded dalla cattura D6220 ch36 | Derivazione da `mcsbw*po` SROM assente: TX power sbagliata su altri canali/board |
 | Base index idle-TSSI | seed catturato, il readback viene scartato | Errore non dominante, ma non è board-independent |
-| GPIO frontend 2-fase, PA bias per-core, PMU regctl enable finale | non implementati | Sono le op che il vendor emette solo a steady state |
+| PA bias per-core, PMU regctl enable finale | non implementati | Sono le op che il vendor emette solo a steady state |
+| LED (`ledbh10` da NVRAM) | portato nel core, `patches/0016-0017` | Il blocco GPIO che il vendor intercala nel preambolo freddo, i toggle al bss-up/down e il rilascio al rmmod sono `wlc_bmac_hw_up`/`wlc_bmac_led`/`wlc_bmac_led_hw_deinit` sul chipcommon: LED, senza effetto sul PHY. b43 li fa in `leds.c` per la sua via (MMIO `GPIO_CONTROL` del MAC); la 0016 porta `ledbh4..15` da NVRAM in `ssb_sprom`, anche sopra la SROM letta dal device (bcma), la 0017 gli insegna quei pin e piu' LED per ruolo. Le op del vendor stanno nel `PERIMETER` di `compare.py`, le `GPIO_CONTROL` di b43 in `SOLO_PORT`. Gira in `test/integration`, non provata su hardware |
 | BW40 / BW80 | `switch_channel` ritorna `-EOPNOTSUPP` | Il codice c'e' ed e' confrontato contro i segmenti a 40 e 80 MHz con `make AC_ANY_CHANNEL=1`; quello che manca e' la validazione che apra il guard |
 | 2.4 GHz | `op_switch_channel` ritorna `-EOPNOTSUPP` | Mappa radio 2G non validata |
 | Canali ≠ 36 | 50 voci in channeltab (5170–5825 MHz), solo ch36 in `b43_phy_ac_validated_configs[]` | Il confronto gira su tutti e 26 i segmenti con `AC_ANY_CHANNEL=1`, che scavalca il guard e lo dice con un `b43warn`. Piano in [`docs/channel-generalization.md`](docs/channel-generalization.md) |
@@ -215,7 +219,7 @@ cd test/unit
 unzip -d /tmp/cold ../../router-data/d6220/cold-sweep.zip
 make
 ./gates.sh                                    # cold a freddo: grezzo + prima divergenza
-./gates.sh /tmp/cold/segmenti/cold*.txt       # tutti e 26
+./gates.sh /tmp/cold/cold*.txt       # tutti e 26
 
 AC_READ_ORACLE=../../router-data/d6220/wl-diag-wl1-steady-tick-ch36-bw20.txt \
     ./ac_trace periodic d6220 > /tmp/p.out

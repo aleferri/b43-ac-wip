@@ -1965,6 +1965,42 @@ registro: il resto e' esatto, 26/26 sul caldo.
 
 ## Punti aperti
 
+- **I LED sono del core, e il gpio 10 b43 non lo conosce.** Il blocco
+  `GPIO.CTL`/`OUT`/`OE` a maschera `0x407` che il vendor intercala nel
+  preambolo freddo, i due toggle `0x0004`/`0x0400` al bss-up e al down e il
+  rilascio al rmmod sono, nel blob `wlD6220.o`, `wlc_bmac_hw_up()` (con
+  `si_gpioled()`, cioe' la scrittura di `gpiotimeroutmask` a chipcommon
+  `0x8c`, che il confronto scartava come ombra), `wlc_bmac_led()` e
+  `wlc_bmac_led_hw_deinit()` via `wlc_led_deinit()`. La maschera e' dato di
+  board: SROM `ledbh0-3` a `0xff` danno i default di wl su gpio 0-2, NVRAM
+  `ledbh10=0x88` da' il gpio 10 active-low. Sul PHY zero effetto, quindi il
+  port non li emette piu' e stanno nel `PERIMETER` di `compare.py`; il port
+  li emetteva come `frontend_gpio_setup`, che ora si chiama
+  `cold_mac_preamble` e tiene solo MHF, MACCTL e la richiesta PMU.
+
+  Il debito era del core e sta in `patches/0016-0017`: `leds.c` copriva
+  `gpio0-3` dalla SROM per la sua via (MMIO `GPIO_CONTROL` del MAC, non
+  `si_gpioout` sul chipcommon) con uno slot per ruolo, e un LED su gpio 10 da
+  variabile NVRAM non aveva ne' campo SPROM ne' slot. La 0016 porta
+  `ledbh4..15` in `struct ssb_sprom` (`gpio_ext[]`): li legge
+  `bcm47xx_sprom` con il prefisso del device, e **bcma li aggiunge sopra la
+  SROM letta dalla scheda** -- sul D6220 il 43b3 ha la sua SROM rev 11 e il
+  fallback NVRAM non gira mai, quindi leggerli solo la' non serviva a
+  niente. La 0017 passa gli slot a un pool per pin -- sul D6220 gpio 0 e gpio 10 sono entrambi
+  activity, e uno slot per ruolo ne accendeva uno solo -- e fa instradare al
+  MAC da `b43_gpio_init()` i pin dei LED registrati. Compila e gira in
+  `test/integration`, che da allora compila anche `leds.c` e `rfkill.c` con il
+  profilo D6220 (`ledbh0-3=0xff`, `ledbh10=0x88`): `GPIO_MASK` e `GPIOCTL` a
+  `0x40f`, le scritture di `GPIO_CONTROL` in init ed exit. Su hardware non
+  provata.
+
+  Nella coda del rmmod resta un'op che nessuno dei due emette:
+  `SI.COREREG core=0 off=0x80 val=4` e' `pcie_watchdog_reset()` da
+  `si_detach()` -> `pcicore_deinit()` sui core PCIe Gen2 (`0x83c`): arma il
+  watchdog del chipcommon a 4 tick, aspetta 100 ms, ripristina la config
+  PCIe. E' un reset del chip al detach, del layer bus, e bcma non ha un
+  equivalente.
+
 - **Il poll delle statistiche ha due forme; il parametro c'e', il chiamante
   no.** Su `cold01` i 23 poll che iniziano con `0x010e` si dividono cosi': i
   primi tre -- `#12961`, `#13481`, `#13540`, dentro il blocco di config MAC del
@@ -2997,7 +3033,7 @@ registro: il resto e' esatto, 26/26 sul caldo.
   nella forma corta il vendor la scrive **tre** volte e nella lunga una, e il
   port ne emetteva una.
 
-  Aggiunta in `b43_phy_ac_frontend_gpio_setup()`, fra la terza
+  Aggiunta in `b43_phy_ac_cold_mac_preamble()`, fra la terza
   `b43_maccontrol_set(0x04000400)` e `b43_phy_ac_pmu_req(dev, false)`, gatata
   su `center_freq > 5250`. Il posizionale dei 19 passa da `@54` a **~@9600**.
 
@@ -3037,7 +3073,7 @@ registro: il resto e' esatto, 26/26 sul caldo.
   generale: `switch_analog` ha altri tre siti di chiamata --- `main.c:5650`,
   `4956`, `3402` --- che precedono `b43_phy_init()`, e la' `phy.chandef` e'
   nullo. E' il difetto che la suite di integrazione ha trovato in
-  `frontend_gpio_setup`; vedi `test/integration/README.md`.
+  `cold_mac_preamble`; vedi `test/integration/README.md`.
 
   Cosa e' rimasto: `b43_phy_ac_write_chanspec()` ora legge `dev->phy.chandef`
   invece di frugare in `dev->wl->hw->conf.chandef`, che e' l'idioma di b43 e la
@@ -3187,7 +3223,7 @@ registro: il resto e' esatto, 26/26 sul caldo.
   cadono in mezzo a quelle che la funzione emette in blocco, e l'harness puo'
   inserire solo ai confini fra chiamate del flow.
 
-  Uno risolto: `b43_phy_ac_frontend_gpio_setup()` chiudeva con un
+  Uno risolto: `b43_phy_ac_cold_mac_preamble()` chiudeva con un
   `b43_maccontrol_set(~0x40060000, 0x40020000)`, cioe' `INFRA | DISCPMQ` con
   `AP` azzerato -- il modo operativo del **core**, che `b43_adjust_opmode()`
   imposta. Il PHY non doveva scriverlo, e le catture concordano: il vendor lo

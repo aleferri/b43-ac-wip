@@ -17,7 +17,7 @@ TAG=v$(echo "$KVER" | cut -d. -f1,2)
 DIR=${OUTDIR:-$(dirname "$0")/b43-upstream}
 BASE=https://raw.githubusercontent.com/torvalds/linux/$TAG/drivers/net/wireless/broadcom/b43
 
-FILES="main.c phy_common.c bus.c xmit.c phy_ac.c dma.c
+FILES="main.c phy_common.c bus.c xmit.c phy_ac.c dma.c leds.c rfkill.c
        Makefile Kconfig
        b43.h main.h phy_common.h bus.h debugfs.h leds.h rfkill.h pio.h
        dma.h xmit.h lo.h wa.h sdio.h sysfs.h tables.h ppr.h

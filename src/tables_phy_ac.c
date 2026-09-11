@@ -160,7 +160,7 @@ void b43_actab_zerofill_locked(struct b43_wldev *dev,
 	actab_zerofill_common(dev, id, offset, width, len, false);
 }
 
-/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+/* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   11065-11070, 11118-11123, 11171-11176]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   6735-6740, 6788-6793, 6841-6846]
@@ -204,7 +204,7 @@ void b43_actab_write_bulk_reopen(struct b43_wldev *dev,
  *
  * Supports width 16, data through DATA_LO, and width 32, data through DATA_HI
  * then DATA_LO, high half first as in write_bulk's 32-bit case.
- * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   16978-16985, 16987-16993, 16995-17001, 17003-17009, 17011-17018,
  *   17020-17026, 17028-17034, 17036-17042, 17044-17051, 17053-17059,
  *   17061-17067, 17069-17075, 17077-17162, 17425-17431, 17433-17439,
@@ -590,7 +590,7 @@ void b43_actab_write_bulk_scoped(struct b43_wldev *dev,
 			(u16)~B43_PHY_AC_TBL_WRITE_GATE_LOCK, 0);
 }
 
-/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+/* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   5391-5395, 5398-5402, 5417-5421, 5424-5428, 5443-5447, 5450-5454,
  *   5469-5473, 5476-5480, 5495-5499, 5502-5506, 5521-5525, 5528-5532,
  *   5547-5551, 5554-5558, 5573-5577, 5580-5584, 5599-5603, 5606-5610,
@@ -1087,7 +1087,7 @@ static const struct b43_phy_ac_table_desc b43_phy_ac_tables_rev0[] = {
 /* Init */
 
 /* TODO: calibrate. */
-/* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+/* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   1272-4987]
  */
 void b43_phy_ac_tables_init(struct b43_wldev *dev)

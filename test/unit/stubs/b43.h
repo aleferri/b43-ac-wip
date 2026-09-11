@@ -188,6 +188,11 @@ struct ssb_sprom {
 	u8 rxchain;
 	u8 subband;
 	u8 subband5gver;
+	/* LED behaviour per GPIO pin: ledbh0-3 dalla SROM, 4-15 dalla NVRAM
+	 * (gpio_ext e' di patches/0016). Il PHY non li legge; stanno qui perche'
+	 * board_profile.h li riempie per la suite di integrazione. */
+	u8 gpio0, gpio1, gpio2, gpio3;
+	u8 gpio_ext[12];
 	/* Blocco FEM/PA (SROM11_FEM_CFG1/2), decodificato come in bcma. */
 	u8 tssiposslope2g, epagain2g, pdgain2g, tworangetssi2g, papdcap2g, femctrl;
 	u8 tssiposslope5g, epagain5g, pdgain5g, tworangetssi5g, papdcap5g, gainctrlsph;

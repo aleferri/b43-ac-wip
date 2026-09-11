@@ -76,7 +76,7 @@ else
 	TMP=$(mktemp -d)
 	trap 'rm -rf "$TMP"' EXIT
 fi
-COLD=${COLD:-/tmp/cold/segmenti}
+COLD=${COLD:-/tmp/cold}
 HOT=${HOT:-/tmp/hot/segmenti}
 
 COND=cold

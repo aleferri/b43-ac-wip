@@ -47,8 +47,11 @@ SHADOW_OFFSETS = {
     0x064,                 # gpioout               <- GPIO.OUT
     0x068,                 # gpioouten             <- GPIO.OE / GPIO.OUTEN
     0x06c,                 # gpiocontrol           <- GPIO.CTL
-    0x08c,                 # gpiopull              <- GPIO.CTL
 }
+# NON un'ombra, anche se segue sempre una GPIO.CTL o GPIO.OE: (core 0,
+# 0x08c) e' gpiotimeroutmask, scritto da si_gpioled(), cioe' la maschera dei
+# GPIO che il timer dei LED puo' pilotare. E' un'op del blocco LED e sta nel
+# PERIMETER con le altre.
 # Op che il driver esegue davvero, ma da codice fuori dall'unita' sotto test:
 # l'harness compila solo src/, non main.c di b43 ne' bcma. Vanno saltate, non
 # riprodotte, e solo dopo aver verificato che chi le esegue le emetta *nel punto
@@ -272,6 +275,12 @@ PHY_ANCHE = [
 #            la larghezza sta in phy.chandef, che b43_phy_init() punta prima di
 #            switch_analog e di b43_software_rfkill: e' gia' impostata quando il
 #            PHY arriva qui, e non c'e' nulla da scrivere.
+#   MARK     record del tracer, non del driver: lo scrive lo script dello
+#            sweep dallo userspace ('chNN bwB', prima del rmmod del canale
+#            precedente) o il modulo wl-diag stesso ('mod COMING'/'mod GOING').
+#            Non c'e' nessun registro dietro, quindi nessun codice puo'
+#            emetterlo. Entra nella finestra solo da quando i segmenti a freddo
+#            arrivano fino a 'mod GOING'.
 #   probe response offload   PRTLEN (0x004a), PRSSID (0x0160-0x017e),
 #            PRSSIDLEN (0x0048), le temporizzazioni 0x0180-0x0186 e la word di
 #            template RAM 0x0700. b43 non fa rispondere il firmware ai probe:
@@ -292,6 +301,7 @@ PHY_ANCHE = [
 #            un'assenza.
 SOLO_VENDOR = (
     r'^MAC\.BW\b',
+    r"^MARK\b",
     r'^OBJ\.WR addr=0x(?:48|4a|18[0246])(?: |$)',
     r'^OBJ\.WR addr=0x1(?:6[02468ace]|7[02468ace])(?: |$)',
     r'^TPL\.RAMW addr=0x700(?: |$)',
@@ -345,10 +355,19 @@ SOLO_VENDOR = (
 #
 #          E' l'unica voce di questa lista che non si chiude con una
 #          ricattura: il vendor quel test non lo fa e non lo fara'.
+#   REG.WR 0x49c   GPIO_CONTROL del MAC, come b43 pilota i LED: leds.c fa
+#          read-modify-write della cella a ogni cambio di stato, in
+#          b43_leds_init(), b43_leds_exit() e dai trigger. Il vendor gli
+#          stessi LED li pilota con si_gpioout sul chipcommon -- le op che il
+#          PERIMETER dichiara del core -- quindi qui la controparte non c'e'
+#          e non ci sara': stessa funzione, registro diverso, per struttura.
+#          Compare solo con il profilo --bus (test/integration): l'harness
+#          di test/unit non compila leds.c.
 SOLO_PORT = (
     r'^OBJ\.(RD|WR) addr=0x0*[46] ',
     r'^OBJ\.(RD|WR) addr=0x0*[02] val=0x0*(1122|3344|ccdd)\b',
     r'^AMT\.',
+    r'^REG\.WR off=0x49c\b',
 )
 
 
@@ -414,6 +433,25 @@ PERIMETER = [
                 "la finestra del confronto va fatta partire dopo -- e' a questo "
                 "che serve il --range di questo strumento. Se non lo sono, e' "
                 "un buco della patch."),
+
+    dict(pattern=r'^(GPIO\.(CTL|OUT|OE) val=0x[0-9a-f]+ mask=0x(407|4|400)'
+                 r'|SI\.COREREG core=0x0 off=0x8c\b)',
+         motivo="i LED. Nel blob (wlD6220.o) sono quattro funzioni del core, "
+                "tutte su chipcommon: wlc_bmac_hw_up() all'attach -- "
+                "si_gpiocontrol(mask, 0), si_gpioled(mask, mask) che e' la "
+                "scrittura di gpiotimeroutmask a 0x8c, si_gpioout(mask, off) "
+                "con il bit alzato per i LED active-low, si_gpioouten(mask, "
+                "mask) -- wlc_bmac_led() per accendere e spegnere i singoli "
+                "LED al bss-up e al down (gpio 2 e gpio 10, quest'ultimo "
+                "active-low: 0x0004 e 0x0400), e wlc_bmac_led_hw_deinit() al "
+                "rmmod, che rilascia la maschera con out, outen e gpioled a "
+                "zero. La maschera e' dato di board: SROM ledbh0-3 a 0xff, "
+                "quindi i default di wl su gpio 0-2, piu' NVRAM ledbh10=0x88 "
+                "per gpio 10; da qui 0x407. Sul PHY non hanno effetto, e in "
+                "b43 i LED li fa leds.c dai campi gpio0-3 della SROM, per la "
+                "sua via (MMIO GPIO_CONTROL del MAC) e non per quella del "
+                "vendor; i pin 4-15 da NVRAM ledbh glieli insegnano "
+                "patches/0016-0017. Vedi docs/retrace-todo.md."),
 
     dict(pattern=r'^CAL\.INIT\b',
          motivo="switch di forzatura delle calibrazioni del driver stock. In "
