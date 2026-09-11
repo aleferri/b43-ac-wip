@@ -121,26 +121,21 @@ static enum b43_txpwr_result
 b43_phy_ac_op_recalc_txpower(struct b43_wldev *dev, bool ignore_tssi)
 {
 	B43_AC_FN();
+	bool recomputed = b43_phy_ac_txpwr_recalc(dev);
 
-	if (!b43_phy_ac_txpwr_recalc(dev))
+	if (!recomputed && !dev->phy.ac->txpwr_adjust_due)
 		return B43_TXPWR_RES_DONE;
 
 	return B43_TXPWR_RES_NEED_ADJUST;
 }
 
+static void b43_phy_ac_txpwr_adjust(struct b43_wldev *dev);
+
 static void b43_phy_ac_op_adjust_txpower(struct b43_wldev *dev)
 {
 	B43_AC_FN();
-	struct b43_phy_ac *ac = dev->phy.ac;
-
-	/*
-	 * As b43_nphy_op_recalc_txpower() does after its PPR: the whole power
-	 * control setup under a suspended MAC -- idle TSSI, est_pwr LUTs, the
-	 * per-rate table and the target -- not the target register alone.
-	 */
-	b43_mac_suspend(dev);
-	b43_phy_ac_txpwrctrl_setup(dev, 5000 + 5 * ac->cal_channel);
-	b43_mac_enable(dev);
+	b43_phy_ac_txpwr_adjust(dev);
+	dev->phy.ac->txpwr_adjust_due = false;
 }
 
 /*
@@ -172,13 +167,23 @@ static void b43_phy_ac_op_prepare_structs(struct b43_wldev *dev)
 
 /* Mode-bit clears. These ops are not contiguous in the capture: they are
  * spread through the radio and rfkill bring-up window, tagged per sequence. */
+/*
+ * The two AFE power banks. OFF is the 0x173e..0x1720 bank with 0x1721=0xffff,
+ * 0x1725=0x1fff and 0x1720=0x03ff: every AFE block powered down. It closes
+ * every `wl down` -- at 99% of all 26 cold and all hot up/down segments --
+ * and opens the attach, twice. ON is the four-write bank with 0x1721=0x5000
+ * and 0x1720=0x0180, at 1% of every segment: the front end powering up for
+ * the channel switch. The names used to be the other way round, which made
+ * the down phase look like a bring-up.
+ */
 enum b43_phy_ac_afe_mode {
-	B43_PHY_AC_AFE_DOWN,	/* front-end parked (RF blocked / pre-init) */
-	B43_PHY_AC_AFE_ON,	/* front-end armed for RX/TX (bss-up) */
+	B43_PHY_AC_AFE_ON,	/* front-end powered, ready for the switch */
+	B43_PHY_AC_AFE_OFF,	/* front-end powered down: attach and wl down */
 };
 
 static void b43_phy_ac_enable_afe(struct b43_wldev *dev,
 				  enum b43_phy_ac_afe_mode mode);
+static void b43_phy_ac_down(struct b43_wldev *dev);
 
 /* [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
  *   1252-1271]
@@ -211,7 +216,7 @@ static void b43_phy_ac_mode_init(struct b43_wldev *dev)
 	 * carrying its own shadow can see it: one that derives the state from
 	 * the registers cannot.
 	 */
-	b43_phy_ac_enable_afe(dev, B43_PHY_AC_AFE_DOWN);
+	b43_phy_ac_enable_afe(dev, B43_PHY_AC_AFE_ON);
 
 	/*
 	 * RMW pairs: read the base-page register, OR in the bit, write to the
@@ -3441,7 +3446,7 @@ static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
 	B43_PHY_AC_REQUIRE(dev,
 			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
 			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
-			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_AFE_ON);
+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_AFE_OFF);
 
 	if (!e) {
 		b43err(dev->wl, "AC-PHY: no channel table entry, skipping setup\n");
@@ -4914,11 +4919,11 @@ static bool b43_phy_ac_may_calibrate_tx(struct b43_wldev *dev)
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   10382-28591]
  */
-void b43_phy_ac_set_channel_calibrations(struct b43_wldev *dev)
+static void b43_phy_ac_post_switch_calibrations(struct b43_wldev *dev)
 {
 	B43_AC_FN();
 	/*
-	 * Called after op_switch_channel()'s mac_enable and after its body has
+	 * Runs with the MAC enabled, after op_switch_channel()'s body has
 	 * put the classifier in WAITED mode, that is RX_OFDM
 	 * plus RX_WAITED on a normal channel setup. The observed entry state is
 	 * {MAC_EN | RX_OFDM | RX_WAITED}; CLIP_ALL_DIS is not set here, since
@@ -5139,31 +5144,25 @@ static bool b43_phy_ac_config_validated(struct b43_wldev *dev, u16 chan,
 }
 
 /*
- * Second half of the channel setup.
+ * The TX power adjust that follows a channel switch: adjust_txpower.
  *
- * This is what the core invokes in b43 after b43_switch_channel() returns:
- * b43_op_config() calls b43_phy_txpower_check(), and between the two halves
- * the core writes the BSS configuration. The boundary is read off the data,
- * not chosen: on the reference segment the last op of the first half is the
+ * b43 reaches it from b43_op_config() through b43_phy_txpower_check() and the
+ * txpower_adjust_work, after b43_switch_channel() has returned and the core
+ * has written the BSS configuration. The boundary is read off the data, not
+ * chosen: on the reference segment the last op of the switch is the
  * basic-rate map and the first of this one is the PLCP, with the core's BSS
- * block in between.
- *
- * It takes `channel` as a parameter and derives the rest from `dev`, those
- * being the only two values of op_switch_channel()'s prologue that this half
- * used, so the cut carries no implicit state. One that did would compile
- * without a warning and get the values wrong at runtime.
+ * block in between. The frequency comes from the channel the switch tuned,
+ * the only value of its prologue this phase used.
  * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
  *   13665-14082]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   9295-9714]
  */
-void b43_phy_ac_channel_setup_tail(struct b43_wldev *dev,
-				   struct ieee80211_channel *channel)
+static void b43_phy_ac_txpwr_adjust(struct b43_wldev *dev)
 {
 	B43_AC_FN();
-	struct b43_phy *phy = &dev->phy;
+	struct b43_phy_ac *ac = dev->phy.ac;
 
-	(void)phy;
 	b43_maccontrol_set(dev, ~0x10000000u, 0x10000000);
 	b43_maccontrol_set(dev, ~0x10000000u, 0);
 	b43_maccontrol_set(dev, ~0x00040000u, 0x00040000);
@@ -5209,7 +5208,7 @@ void b43_phy_ac_channel_setup_tail(struct b43_wldev *dev,
 	/* Second txpwrctrl_setup() call. The vendor emits the same sequence
 	 * op-for-op: the LUT is computed from the same SPROM coefficients and
 	 * the ppr values are unchanged. */
-	b43_phy_ac_txpwrctrl_setup(dev, channel->center_freq);
+	b43_phy_ac_txpwrctrl_setup(dev, 5000 + 5 * ac->cal_channel);
 
 	/*
 	 * Transition after the second txpwrctrl_setup(): TX power control setup,
@@ -5229,20 +5228,20 @@ void b43_phy_ac_channel_setup_tail(struct b43_wldev *dev,
 }
 
 /*
- * Seconda meta' della coda del setup di canale.
+ * RX gain-control calibration: the per-core loopback sweep that opens the
+ * post-switch calibrations, with its radio setup, tone generator and cleanup.
  *
- * Fra le due meta' il core emette quattro passate conf_tx, una per coda di
- * accesso, ognuna dentro la sua parentesi enable/suspend. Sono separate da
- * ~79 op l'una dall'altra, e il carico di ogni
- * giro e' un blocco di parametri EDCF, il template probe response, l'SSID e i
- * PLCP degli otto rate. La parentesi e' del core come il carico, quindi qui
- * non c'e' nessun ciclo: c'e' solo il punto in cui la coda riprende.
+ * In the capture it sits 3.3 s after the TX power adjust and two ops before
+ * the rest of the calibrations, so it is theirs and not the channel switch's.
+ * Between the adjust and this the core emits four conf_tx passes, one per
+ * access queue, each in its own enable/suspend bracket and ~79 ops apart; the
+ * bracket is the core's like the payload, so there is no loop here.
  * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
  *   14407-14966]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   9821-10380]
  */
-void b43_phy_ac_channel_setup_tail2(struct b43_wldev *dev)
+static void b43_phy_ac_rxgainctrl_cal(struct b43_wldev *dev)
 {
 	B43_AC_FN();
 	b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);                              /* peek */
@@ -5306,14 +5305,30 @@ void b43_phy_ac_channel_setup_tail2(struct b43_wldev *dev)
 		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);       /* unlock */
 	}
 
-	/*
-	 * The post-channel calibration sequence -- post_cal_finalize, rxiqcal,
-	 * rxcal_afe, the gainctrl_final loop and the teardown -- is invoked by the caller of
-	 * op_switch_channel(), after its mac_enable; see
-	 * b43_phy_ac_op_switch_channel() and
-	 * b43_phy_ac_set_channel_calibrations(). The vendor emits the MAC.MCTRL
-	 * enable between the end of the rxcal cleanup and post_cal_finalize.
-	 */
+}
+
+/*
+ * channel_calibrate: the calibrations that close a channel switch, run by
+ * b43_op_config() in place of its final mac_enable. The RX gain-control sweep
+ * needs the MAC suspended and the calibrations after it need it running --
+ * rxgainctrl_regs() forbids MAC_EN, post_switch_calibrations() requires it --
+ * so the enable the caller owes sits between the two, where the vendor emits
+ * it.
+ *
+ * Checked against the capture with annotate_enables.py: the last conf_tx
+ * pass leaves the MAC suspended at #14406, the sweep runs #14407-#14966 with
+ * no MAC transition, #14967 is the one MAC.MCTRL enable between #14406 and
+ * #15100, and post_cal_finalize() enters at #14968 with
+ * {MAC=1, RX=ow, CLIP=000, CCA=0}: the REQUIRE it carries.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
+ *   14406-14968]
+ */
+static void b43_phy_ac_op_channel_calibrate(struct b43_wldev *dev)
+{
+	B43_AC_FN();
+	b43_phy_ac_rxgainctrl_cal(dev);
+	b43_mac_enable(dev);
+	b43_phy_ac_post_switch_calibrations(dev);
 }
 
 /*
@@ -5434,6 +5449,7 @@ static void b43_phy_ac_mhf_config(struct b43_wldev *dev)
 static int b43_phy_ac_op_init(struct b43_wldev *dev)
 {
 	B43_AC_FN();
+	dev->phy.ac->tuned = false;
 	if (dev->dev->bus_type != B43_BUS_BCMA) {
 		b43err(dev->wl, "AC-PHY is supported only on BCMA bus!\n");
 		return -EOPNOTSUPP;
@@ -5546,9 +5562,9 @@ static int b43_phy_ac_op_init(struct b43_wldev *dev)
 
 /*
  * Program the PHY analog front-end bank (the AFE_C1 registers at +0x1000
- * stride, 0x1720-0x173e) to the requested mode. B43_PHY_AC_AFE_ON is the
+ * stride, 0x1720-0x173e) to the requested mode. B43_PHY_AC_AFE_OFF is the
  * final RX/TX arm the OEM emits at bss-up;
- * B43_PHY_AC_AFE_DOWN parks the front-end. Kept as one named operation so
+ * B43_PHY_AC_AFE_ON parks the front-end. Kept as one named operation so
  * the enable point is explicit and callers pick a mode rather than
  * open-coding register writes.
  * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
@@ -5561,7 +5577,7 @@ static void b43_phy_ac_enable_afe(struct b43_wldev *dev,
 {
 	B43_AC_FN();
 	switch (mode) {
-	case B43_PHY_AC_AFE_ON:
+	case B43_PHY_AC_AFE_OFF:
 		b43_phy_write(dev, 0x173e, 0x0000);
 		b43_phy_write(dev, 0x1739, 0x0000);
 		b43_phy_write(dev, 0x173a, 0x0000);
@@ -5570,14 +5586,14 @@ static void b43_phy_ac_enable_afe(struct b43_wldev *dev,
 		b43_phy_write(dev, 0x1721, 0xffff);
 		b43_phy_write(dev, 0x1728, 0x0000);
 		b43_phy_write(dev, 0x1720, 0x03ff);
-		dev->phy.ac->status_mask |= B43_PHY_AC_STATE_AFE_ON;
+		dev->phy.ac->status_mask |= B43_PHY_AC_STATE_AFE_OFF;
 		break;
-	case B43_PHY_AC_AFE_DOWN:
+	case B43_PHY_AC_AFE_ON:
 		b43_phy_write(dev, 0x1728, 0x0080);
 		b43_phy_write(dev, 0x1720, 0x0180);
 		b43_phy_write(dev, 0x1729, 0x0000);
 		b43_phy_write(dev, 0x1721, 0x5000);
-		dev->phy.ac->status_mask &= ~B43_PHY_AC_STATE_AFE_ON;
+		dev->phy.ac->status_mask &= ~B43_PHY_AC_STATE_AFE_OFF;
 		break;
 	}
 }
@@ -5818,7 +5834,7 @@ static void b43_phy_ac_switch_analog_once(struct b43_wldev *dev, bool on,
 	saved_417 = b43_phy_read_log(dev, 0x0417);
 	saved_416 = b43_phy_read_log(dev, 0x0416);
 
-	b43_phy_ac_afe_arm(dev, on ? B43_PHY_AC_AFE_ON : B43_PHY_AC_AFE_DOWN,
+	b43_phy_ac_afe_arm(dev, on ? B43_PHY_AC_AFE_OFF : B43_PHY_AC_AFE_ON,
 			   saved_417, saved_416);
 
 	/*
@@ -5857,7 +5873,7 @@ static void b43_phy_ac_switch_analog_once(struct b43_wldev *dev, bool on,
 	 */
 	b43_phy_ac_mhf_bringup_clears(dev);
 
-	b43_phy_ac_afe_arm(dev, B43_PHY_AC_AFE_ON, saved_417, saved_416);
+	b43_phy_ac_afe_arm(dev, B43_PHY_AC_AFE_OFF, saved_417, saved_416);
 }
 
 /*
@@ -5937,9 +5953,17 @@ static void b43_phy_ac_op_software_rfkill(struct b43_wldev *dev, bool blocked)
 		return;
 	}
 
+	/*
+	 * RF blocked is the PHY half of `wl down`: b43_phy_exit() calls this
+	 * from b43_wireless_core_exit(), and the vendor's down phase is one
+	 * contiguous burst that ends with the AFE_OFF bank and the PMU
+	 * release. It is b43_phy_ac_down() whole; switch_analog(false), which
+	 * b43 calls after it, then has nothing left to emit, and the vendor
+	 * emits nothing there either -- from the PMU release to the `mod
+	 * GOING` of the rmmod only GPIO and SI.COREREG.
+	 */
 	if (blocked) {
-		/* RF blocked: park the front-end. */
-		b43_phy_ac_enable_afe(dev, B43_PHY_AC_AFE_DOWN);
+		b43_phy_ac_down(dev);
 		return;
 	}
 
@@ -9923,28 +9947,29 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 }
 
 /*
- * The bss-up step: what the vendor emits about half a second after the last
- * watchdog turn of the probe phase, in one burst of ~460 op over 19 ms.
+ * The PHY half of `wl down`: what the vendor emits when the sweep script
+ * brings the interface down, in one burst of ~460 op over 19 ms, closing
+ * with the AFE_OFF bank and the PMU release that pairs with the cold
+ * preamble's request. Every cold segment has it at 99%, a second before the
+ * `mod GOING` of the rmmod, and every hot up/down segment has it at 99% too,
+ * with no rmmod at all: it is the down, and it was called bss_up for a
+ * while, which made the teardown look like a bring-up and hid the fact that
+ * the driver never emitted it.
  *
- * It is NOT the tail of the channel setup, and the clock says so: on cold04 the
- * calibration ends at t=869.844, the watchdog turns run to 889.993, and this
- * block sits at 890.450-890.469, after a gap of 457 ms. Six of its seven pieces
- * belong elsewhere -- per-rate power in shared memory, the TX power LUTs, the
- * MAC/GPIO frontend, the analog arm that b43 reaches through
- * phy_ops->switch_analog, and the PMU release that pairs with the cold
- * preamble's request -- and only the coefficient write-back is cal state, which
- * is why @lo_dac and @txiqlo_coef live in the phy state.
+ * It is NOT the tail of the channel setup, and the clock says so: on cold04
+ * the calibration ends at t=869.844, the watchdog turns run to 889.993, and
+ * this block sits at 890.450-890.469, after a gap of 457 ms. Only the
+ * coefficient write-back is cal state, which is why @lo_dac and @txiqlo_coef
+ * live in the phy state.
  *
- * Which b43 hook each piece hangs off is an open decision, tracked in
- * docs/retrace-todo.md: today nothing in the driver calls this, and the trace
- * harness calls it after switch_channel, which is where the capture puts it.
+ * b43 reaches it from b43_phy_exit() through software_rfkill(blocked=true).
  *
  * [capture-ref: router-data/d6220/cold-sweep.zip!segmenti/cold01-ch36-bw20.txt;
  *   36045-36542]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   28595-29084]
  */
-void b43_phy_ac_bss_up(struct b43_wldev *dev)
+static void b43_phy_ac_down(struct b43_wldev *dev)
 {
 	B43_AC_FN();
 	u16 (*lo_dac)[4] = dev->phy.ac->lo_dac;
@@ -10146,13 +10171,9 @@ void b43_phy_ac_bss_up(struct b43_wldev *dev)
 	b43_mac_suspend(dev);
 	b43_maccontrol_set(dev, 0, 0x04000400);   /* mask=~0=0xffffffff */
 
-	/*
-	 * The bss-up radio-ON step: the same analog arm switch_analog() emits,
-	 * without a save of its own, then the PMU release. It is not part of
-	 * the RX-IQ finalize -- see docs/retrace-todo.md for what this tail is
-	 * made of and where each piece belongs.
-	 */
-	b43_phy_ac_afe_arm(dev, B43_PHY_AC_AFE_ON, 0x0000, 0x0001);
+	/* The front end powered down, without a save of its own, then the
+	 * PMU release. */
+	b43_phy_ac_afe_arm(dev, B43_PHY_AC_AFE_OFF, 0x0000, 0x0001);
 	b43_phy_ac_pmu_req(dev, true);
 }
 
@@ -10280,6 +10301,12 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 		return -EOPNOTSUPP;
 	}
 
+	if (dev->phy.ac->tuned &&
+	    dev->phy.ac->cal_channel == channel->hw_value &&
+	    dev->phy.ac->cal_width == width)
+		return 0;
+
+	dev->phy.ac->tuned = false;
 	dev->phy.ac->cal_channel = channel->hw_value;
 	dev->phy.ac->cal_width = width;
 	dev->phy.ac->cal_freq = width == NL80211_CHAN_WIDTH_20
@@ -10731,6 +10758,8 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	 * RX-IQ teardown: hundreds of ops, invoked by the caller the way the
 	 * core does after b43_switch_channel() returns.
 	 */
+	dev->phy.ac->txpwr_adjust_due = true;
+	dev->phy.ac->tuned = true;
 	return 0;
 }
 
@@ -10773,6 +10802,7 @@ const struct b43_phy_operations b43_phyops_ac = {
 	.adjust_txpower		= b43_phy_ac_op_adjust_txpower,
 	.pwork_15sec		= b43_phy_ac_op_pwork_15sec,
 	.pwork_60sec		= b43_phy_ac_op_pwork_60sec,
+	.channel_calibrate	= b43_phy_ac_op_channel_calibrate,
 };
 
 /* ==========================================================================

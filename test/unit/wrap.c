@@ -711,9 +711,9 @@ static void phy_state_track(struct b43_wldev *dev, u16 reg, u16 val)
 	}
 	case 0x1720:				/* front-end armed vs parked */
 		if (val & 0x0200)
-			ac->status_mask |= B43_PHY_AC_STATE_AFE_ON;
+			ac->status_mask |= B43_PHY_AC_STATE_AFE_OFF;
 		else
-			ac->status_mask &= ~B43_PHY_AC_STATE_AFE_ON;
+			ac->status_mask &= ~B43_PHY_AC_STATE_AFE_OFF;
 		break;
 	default:
 		break;
@@ -732,12 +732,13 @@ void __wrap_b43_phy_mask(struct b43_wldev *dev, u16 reg, u16 mask)
 	(void)dev;
 	/*
 	 * kernel: reg = read(reg) & mask
-	 * vendor: single PHY.MOD line with val=<kmask>, mask=0 (no RD).
+	 * vendor: PHY.AND with val=<kmask>, which tracelib.norm() folds onto
+	 * the MOD form with the null mask; printing it in the vendor's own
+	 * form keeps the direction, which the bus profile needs to unfold it.
 	 *   Verified: b43_phy_mask(0x0471, ~0x0001) at D6220 #82499 emits
-	 *   PHY.MOD addr=0x0471 val=0xfffe mask=0x0000.
+	 *   PHY.AND addr=0x0471 val=0xfffe.
 	 */
-	fprintf(trace(), "cpu1 PHY.MOD  addr=0x%04x val=0x%04x mask=0x0000\n",
-		reg, mask);
+	fprintf(trace(), "cpu1 PHY.AND  addr=0x%04x val=0x%04x\n", reg, mask);
 	if (reg < MIRROR_PHY_SZ) mirror_phy[reg] &= mask;
 }
 
@@ -746,12 +747,12 @@ void __wrap_b43_phy_set(struct b43_wldev *dev, u16 reg, u16 val)
 	(void)dev;
 	/*
 	 * kernel: reg = read(reg) | val
-	 * vendor: single PHY.MOD line with val=<kset>, mask=0 (no RD).
+	 * vendor: PHY.OR with val=<kset>, folded by tracelib.norm() like the
+	 * AND above.
 	 *   Verified: b43_phy_set(0x0400, 0x0001) at D6220 #82504 emits
-	 *   PHY.MOD addr=0x0400 val=0x0001 mask=0x0000.
+	 *   PHY.OR addr=0x0400 val=0x0001.
 	 */
-	fprintf(trace(), "cpu1 PHY.MOD  addr=0x%04x val=0x%04x mask=0x0000\n",
-		reg, val);
+	fprintf(trace(), "cpu1 PHY.OR   addr=0x%04x val=0x%04x\n", reg, val);
 	if (reg < MIRROR_PHY_SZ) mirror_phy[reg] |= val;
 }
 
@@ -1187,10 +1188,9 @@ void __wrap_b43_actab_fill_r11(struct b43_wldev *dev,
  * quella semantica — se il porting driver chiama mac_suspend in punti dove
  * il vendor non emette la stessa op, è un bug DEL PORTING, non del wrap.
  *
- * Nel test env aggiorniamo anche `dev->phy.ac->status_mask` con il bit
- * MAC_EN: quello che il driver fa in production è emettere la MAC.MCTRL,
- * il modello scratch traccia lo stato per i REQUIRE checks. Se l'op tocca
- * il bit 0 (B43_MACCTL_ENABLED), sincronizziamo il modello.
+ * Lo stato del MAC per le REQUIRE del driver non si tiene qui: lo legge
+ * b43_phy_ac_status() da dev->mac_suspended, che i wrapper di
+ * b43_mac_suspend/enable qui sotto mantengono come fa il core.
  */
 #define B43_MACCTL_ENABLED  0x00000001u
 
@@ -1199,13 +1199,6 @@ void __wrap_b43_maccontrol_set(struct b43_wldev *dev, u32 mask, u32 set)
 	fprintf(trace(),
 		"cpu1 MAC.MCTRL val=0x%08x mask=0x%08x\n",
 		set, (u32)~mask);
-
-	if (((u32)~mask) & B43_MACCTL_ENABLED) {
-		if (set & B43_MACCTL_ENABLED)
-			dev->phy.ac->status_mask |= B43_PHY_AC_STATE_MAC_EN;
-		else
-			dev->phy.ac->status_mask &= ~B43_PHY_AC_STATE_MAC_EN;
-	}
 }
 
 /*
@@ -1250,20 +1243,9 @@ static int mac_trace = -1;
  * AC_MAC_REFCOUNT=1 e questo stato, switch_channel combacia con 192 MAC.MCTRL,
  * zero annidamenti e zero enable fuori posto.
  *
- * Lo stato logico del MAC segue il contatore, non le write emesse. Con il
- * refcount attivo le transizioni che non scrivono MACCTL lasciavano status_mask
- * indietro, e le REQUIRE dello scratch fallivano saltando blocchi interi: il
- * flow si troncava invece di divergere.
+ * Lo stato logico del MAC segue il contatore, non le write emesse: e' il
+ * contatore che b43_phy_ac_status() legge per le REQUIRE del driver.
  */
-static void mac_state_sync(struct b43_wldev *dev)
-{
-	if (!dev->phy.ac)
-		return;
-	if (dev->mac_suspended > 0)
-		dev->phy.ac->status_mask &= ~B43_PHY_AC_STATE_MAC_EN;
-	else
-		dev->phy.ac->status_mask |= B43_PHY_AC_STATE_MAC_EN;
-}
 
 static int mac_rc(void)
 {
@@ -1301,7 +1283,6 @@ void __wrap_b43_mac_enable(struct b43_wldev *dev)
 	if (dev->mac_suspended < 0)
 		fprintf(stderr, "wrap: mac_suspended = %d (enable senza suspend)\n",
 			dev->mac_suspended);
-	mac_state_sync(dev);
 }
 
 void __wrap_b43_mac_suspend(struct b43_wldev *dev)
@@ -1315,7 +1296,6 @@ void __wrap_b43_mac_suspend(struct b43_wldev *dev)
 			dev->mac_suspended, dev->mac_suspended + 1);
 	if (dev->mac_suspended++ == 0)
 		b43_maccontrol_set(dev, ~B43_MACCTL_ENABLED, 0);
-	mac_state_sync(dev);
 }
 
 void __wrap_b43_mac_suspend_enable(struct b43_wldev *dev) { (void)dev; }

@@ -85,7 +85,7 @@ endif
 
 # Cio' che trace_out.c chiede a libc: si risolve al link finale, quindi va
 # tenuto fuori dal conto del lavoro rimasto o il numero mente.
-LIBC := memmove|fprintf|fopen|fclose|fgets|fwrite|getenv|memset|memcpy|stdout|stderr|strcmp|strstr|strnlen|snprintf|sscanf|__isoc99_sscanf|calloc|realloc|free|abort|_GLOBAL_OFFSET_TABLE_|__stack_chk_fail|__printf_chk|__fprintf_chk|__vfprintf_chk|setvbuf|strtol|rewind
+LIBC := memmove|fprintf|fopen|fclose|fgets|fwrite|getenv|memset|memcpy|stdout|stderr|strcmp|strstr|strnlen|snprintf|sscanf|__isoc99_sscanf|calloc|realloc|free|abort|_GLOBAL_OFFSET_TABLE_|__stack_chk_fail|__printf_chk|__fprintf_chk|__vfprintf_chk|setvbuf|strtol|rewind|strlen|__snprintf_chk
 
 .PHONY: all check link run clean fetch
 all: b43-trace
@@ -132,12 +132,20 @@ b43-trace: link
 # una cattura ripiegata da reverse-tools/trace_filter.py --retvals.
 # La traccia va su stdout insieme all'output di make: per un file da dare a
 # compare.py si usa TRACE_OUT, che diventa B43_TRACE_OUT per il binario.
+# Due tracce dalla stessa build: quella nuda per il confronto e, accanto
+# (TRACE_OUT.fn), quella con i marcatori di funzione per attribuire. Uscire da
+# una sola corsa toglie il modo di ragionare su una traccia annotata di una
+# build precedente, che non si distingue a occhio da quella corrente.
 run: b43-trace
 	@test -n "$(ORACLE)" || { \
 	    echo "uso: make run ORACLE=<cattura ripiegata> [TRACE_OUT=<file>]"; exit 1; }
 	B43_READ_ORACLE=$(ORACLE) $(if $(TRACE_OUT),B43_TRACE_OUT=$(TRACE_OUT)) \
 	    $(if $(B43_CHANNEL),B43_CHANNEL=$(B43_CHANNEL)) \
 	    $(if $(B43_BW),B43_BW=$(B43_BW)) ./b43-trace
+	$(if $(TRACE_OUT),B43_FN_MARKERS=1 B43_READ_ORACLE=$(ORACLE) \
+	    B43_TRACE_OUT=$(TRACE_OUT).fn \
+	    $(if $(B43_CHANNEL),B43_CHANNEL=$(B43_CHANNEL)) \
+	    $(if $(B43_BW),B43_BW=$(B43_BW)) ./b43-trace 2>/dev/null)
 
 clean:
 	rm -f $(UP)/*.o *.o b43_partial.o residual.txt b43-trace

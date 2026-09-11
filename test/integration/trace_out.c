@@ -61,15 +61,28 @@ static FILE *stream(void)
  * Esaurita la coda si ritorna l'ultimo valore visto, non zero: e' il
  * comportamento meno sbagliato quando il port legge piu' del vendor, e lo
  * dice una volta su stderr.
+ *
+ * La coda e' quella del bus, non quella del tracer: un PHY.MOD del vendor e'
+ * una lettura seguita da una scrittura, e la lettura non ha valore
+ * registrato. Senza un posto in coda per quella lettura, il maskset del
+ * driver -- che sul bus legge davvero -- consuma il valore della lettura
+ * successiva e da li' in avanti l'indirizzo e' sfasato: sul segmento di
+ * riferimento il primo PHY.RD 0x19e dello switch prendeva 0x3d2 invece di
+ * 0x0. Il posto lo tiene ORACLE_SHADOW, che rende l'ultimo valore noto del
+ * registro, letto o scritto: e' cio' che l'hardware avrebbe risposto salvo
+ * bit che si muovono da soli. I RAD.MOD non ne hanno bisogno: il tracer del
+ * vendor registra anche la RAD.RD e la RAD.WR interne, con i valori.
  */
 #define ORACLE_KEYS	4096
 #define ORACLE_MAX	65536
+#define ORACLE_SHADOW	0xffffffffu
 
 struct oracle_key {
 	char cls[32];
 	u16 addr;
 	u32 *vals;
 	unsigned n, cap, pos;
+	u32 last;
 };
 
 static struct oracle_key okeys[ORACLE_KEYS];
@@ -178,14 +191,14 @@ static void oracle_load(void)
 		abort();
 	}
 	while (fgets(line, sizeof(line), f)) {
-		char *p = strstr(line, ".RD");
-
-		if (!p)
-			continue;
 		if (sscanf(line, "%*s #%*u cpu%*u %31s addr=0x%x val=0x%x",
 			   cls, &addr, &val) != 3)
 			continue;
-		oracle_push(cls, (u16)addr, val);
+		if (strstr(cls, ".RD"))
+			oracle_push(cls, (u16)addr, val);
+		else if (!strcmp(cls, "PHY.MOD") || !strcmp(cls, "PHY.AND") ||
+			 !strcmp(cls, "PHY.OR"))
+			oracle_push("PHY.RD", (u16)addr, ORACLE_SHADOW);
 	}
 	fclose(f);
 	fprintf(stderr, "b43-integration: oracolo da %s, %u chiavi\n",
@@ -213,9 +226,30 @@ static u32 oracle_lookup(const char *cls, u16 addr, int width)
 	k = okey(cls, addr, 0);
 	if (!k || !k->n)
 		return 0;
-	if (k->pos < k->n)
-		return k->vals[k->pos++];
-	return k->vals[k->n - 1];	/* coda esaurita: l'ultimo visto */
+	while (k->pos < k->n) {
+		u32 v = k->vals[k->pos++];
+
+		if (v == ORACLE_SHADOW)
+			return k->last;
+		k->last = v;
+		return v;
+	}
+	return k->last;	/* coda esaurita: l'ultimo visto */
+}
+
+/* Una scrittura del driver aggiorna l'ombra che i segnaposto rendono. */
+static void oracle_note_write(const char *wr_cls, u16 addr, u32 val)
+{
+	char cls[32];
+	struct oracle_key *k;
+	size_t n = strlen(wr_cls);
+
+	if (n < 3 || strcmp(wr_cls + n - 3, ".WR"))
+		return;
+	snprintf(cls, sizeof(cls), "%.*s.RD", (int)(n - 3), wr_cls);
+	k = okey(cls, addr, 0);
+	if (k)
+		k->last = val;
 }
 
 /*
@@ -263,12 +297,36 @@ void b43_trace_note(const char *fmt, int arg)
 
 void b43_trace_op(const char *cls, u16 addr, u32 val, u16 mask, int has_mask)
 {
+	oracle_note_write(cls, addr, val);
 	if (has_mask >= 0)
 		fprintf(stream(), "cpu%d %-8s addr=0x%04x val=0x%04x mask=0x%04x\n",
 			cpu, cls, addr, val, mask);
 	else
 		fprintf(stream(), "cpu%d %-8s addr=0x%04x val=0x%04x\n",
 			cpu, cls, addr, val);
+}
+
+/*
+ * MACCONTROL nella forma del vendor, che lo traccia come maskset a 32 bit
+ * senza indirizzo. Sul bus e' una scrittura intera: la mask non c'e', e il
+ * confronto a maschera di compare.py vincola i bit che il vendor ha toccato.
+ */
+void b43_trace_macctl(u32 val)
+{
+	fprintf(stream(), "cpu%d MAC.MCTRL val=0x%08x\n", cpu, val);
+}
+
+/* Maskset a 32 bit con indirizzo: i registri del PMU. */
+void b43_trace_op32(const char *cls, u16 addr, u32 val, u32 mask)
+{
+	fprintf(stream(), "cpu%d %s addr=0x%x val=0x%08x mask=0x%08x\n",
+		cpu, cls, addr, val, mask);
+}
+
+/* Le GPIO del chipcommon: registro implicito nella classe, come nel vendor. */
+void b43_trace_gpio(const char *cls, u32 val, u32 mask)
+{
+	fprintf(stream(), "cpu%d %s val=0x%08x mask=0x%08x\n", cpu, cls, val, mask);
 }
 
 /*

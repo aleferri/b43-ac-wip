@@ -233,6 +233,50 @@ def lcs_stats(V, T):
     return eq, len(diff), diff
 
 
+def ident(o):
+    """Identita' di un'op senza il valore: classe e registro, o la sola classe
+    per quelle che un registro non lo hanno (MAC.MCTRL, GPIO.*)."""
+    m = OP_HEAD.match(o)
+    if m:
+        return m.group(1) + ' ' + m.group(2)
+    return o.split(' ', 1)[0]
+
+
+def bus_stats(V, T, C):
+    """Allineamento e conteggi per il profilo bus.
+
+    Una traccia presa al bus ha i valori pieni; il vendor svolto ha la lettura
+    di un MOD senza valore e la scrittura vincolata a maschera. Le due stringhe
+    non sono mai uguali, quindi l'allineamento va fatto sull'identita' -- classe
+    e registro -- e il valore si giudica dentro i blocchi allineati con
+    ops_equal() di compare.py, che le maschere e le wildcard le conosce. Fuori
+    dai blocchi allineati le identita' differiscono per costruzione: la' e'
+    tutto mancante o di troppo, non c'e' un valore da confrontare.
+    """
+    kv = [ident(o) for o in V]
+    kt = [ident(o) for o in T]
+    sm = difflib.SequenceMatcher(None, kv, kt, autojunk=False)
+    eq = wrong = missing = surplus = 0
+    diff = []
+    def same(v, t):
+        # canon() ha reso 'val=*' la lettura senza valore; ops_equal() la
+        # conosce come UNDEFINED.
+        return C.ops_equal(v.replace('val=*', 'val=UNDEFINED'), t)
+
+    for k, a, b, c, d in sm.get_opcodes():
+        if k == 'equal':
+            bad = [i for i in range(b - a) if not same(V[a + i], T[c + i])]
+            eq += (b - a) - len(bad)
+            wrong += len(bad)
+            for i in bad:
+                diff.append(('value', a + i, a + i + 1, c + i, c + i + 1))
+            continue
+        missing += b - a
+        surplus += d - c
+        diff.append((k, a, b, c, d))
+    return eq, len(diff), diff, wrong, missing, surplus
+
+
 def classify(V, T):
     """Separa il valore sbagliato dall'op di troppo.
 
@@ -273,14 +317,17 @@ def main():
     ap.add_argument('vendor')
     ap.add_argument('test')
     ap.add_argument('range')
+    ap.add_argument('--bus', action='store_true',
+                    help='profilo bus di compare.py: MOD svolti, TBL.* scartati')
     ap.add_argument('--board', default='agcombo')
     ap.add_argument('--verbose', action='store_true')
     args = ap.parse_args()
 
     C = load_compare()
     lo, hi = (int(x) for x in args.range.split(':'))
-    v = C.load_vendor(args.vendor, (lo, hi))
-    t = C.load_test(args.test)
+    profile = 'bus' if args.bus else None
+    v = C.load_vendor(args.vendor, (lo, hi), profile)
+    t = C.load_test(args.test, profile)
     off = C.find_offset(t, v[0])
     if off > 0:
         t = t[off:]
@@ -301,11 +348,17 @@ def main():
     V0, sv = C.drop_solo_vendor(V0)
     T, sp = C.drop_solo_port(T)
 
-    eq0, nreg0, _ = lcs_stats(V0, T)
+    def stats(V, T):
+        if args.bus:
+            return bus_stats(V, T, C)
+        eq, nreg, diff = lcs_stats(V, T)
+        return (eq, nreg, diff) + classify(V, T)
+
+    eq0, nreg0, _, *cls0 = stats(V0, T)
     VP, outside, keys = C.apply_perimeter(V0)
-    eqp, nregp, _ = lcs_stats(VP, T)
+    eqp, nregp, _, *clsp = stats(VP, T)
     V1, skipped, used = apply_skips(VP, rules, args.verbose)
-    eq1, nreg1, diff1 = lcs_stats(V1, T)
+    eq1, nreg1, diff1, *cls1 = stats(V1, T)
 
     print(f"board {args.board}, finestra {lo}:{hi}")
     if sv:
@@ -323,18 +376,18 @@ def main():
     print("a navigare, non a dare un punteggio: quel debito e' in")
     print("docs/retrace-todo.md.\n")
 
-    def riga(nome, eq, nv, nt, nreg, V, T):
+    def riga(nome, eq, nv, nt, nreg, cls):
         tot = nv + (nt - eq)
-        wrong, missing, surplus = classify(V, T)
+        wrong, missing, surplus = cls
         print(f"{nome:16s}: {eq}/{tot} = {100.0 * eq / tot:.2f}%   {nreg} regioni")
         print(f"                  {wrong} col valore sbagliato, "
               f"{missing} op di wl mancanti, {surplus} op del port di troppo")
 
-    riga("grezzo", eq0, len(V0), len(T), nreg0, V0, T)
-    riga("nel perimetro", eqp, len(VP), len(T), nregp, VP, T)
+    riga("grezzo", eq0, len(V0), len(T), nreg0, cls0)
+    riga("nel perimetro", eqp, len(VP), len(T), nregp, clsp)
     print(f"                  {len(outside)} op fuori perimetro su "
           f"{len(keys)} celle dichiarate di altri")
-    riga("CON  eccezioni", eq1, len(V1), len(T), nreg1, V1, T)
+    riga("CON  eccezioni", eq1, len(V1), len(T), nreg1, cls1)
     print(f"                  {len(skipped)} op saltate su {len(rules)} regole\n")
 
     for k, r in enumerate(C.PERIMETER):

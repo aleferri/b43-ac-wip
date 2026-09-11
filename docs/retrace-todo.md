@@ -922,7 +922,7 @@ segmento. Su `cold04`, mappa degli eventi:
 | 865.71-869.84 | ~16000 | le calibrazioni post-channel | `set_channel_calibrations` |
 | 869.84-889.99 | ~4500 | 18 giri di watchdog piu' la chiusura | fase probe, dentro `rxiqcal_finalize` |
 | *stacco 457 ms* | | | |
-| 890.45-890.47 | 460 | bss-up | `b43_phy_ac_bss_up()` |
+| 890.45-890.47 | 460 | bss-up | `b43_phy_ac_down()` |
 
 **Dentro `op_switch_channel` non resta niente di estraneo.** La sua regione --
 `#109336`-`#122340` -- e' un burst continuo di 11384 op in **156 ms**, e lo
@@ -938,7 +938,7 @@ chiamante in `src/`**: li chiama solo `main.c` dell'harness.
 | `b43_phy_ac_channel_setup_tail()` | 0 | 1 |
 | `b43_phy_ac_channel_setup_tail2()` | 0 | 1 |
 | `b43_phy_ac_set_channel_calibrations()` | 0 | 1 |
-| `b43_phy_ac_bss_up()` | 0 | 1 |
+| `b43_phy_ac_down()` | 0 | 1 |
 
 `bss_up` e' appena stata portata fuori e il suo hook e' una decisione aperta,
 ma le altre tre erano cosi' da prima. Vuol dire che **sul ferro le
@@ -1004,7 +1004,7 @@ rilascio PMU che fa coppia con la richiesta del preambolo a freddo. Il gap di
 457 ms fra A e B dice che B non e' la coda della calibrazione ma un evento
 successivo: il tempo dice quello che l'ordine delle op da sole non poteva dire.
 
-**Portata fuori.** Il blocco B e' ora `b43_phy_ac_bss_up()`, e
+**Portata fuori.** Il blocco B e' ora `b43_phy_ac_down()`, e
 `rxiqcal_finalize()` finisce dopo la fase probe. Lo stato che il blocco consuma
 -- il readback dei LO DAC e i coefficienti TX IQ/LO salvati nel blocco D -- era
 locale a `rxiqcal_finalize()` e sta in `@lo_dac` e `@txiqlo_coef` nello stato
@@ -3485,7 +3485,7 @@ bss-up in coda -- e **una sola volta nei 52 segmenti `up` a caldo**, quella del
 bss-up. Quindi "assente sul d6220" vale per la seconda entrata del preambolo,
 non per l'attach: anche il d6220 rientra nell'arm analogico, venti secondi
 dopo, ed e' l'occorrenza che stava sepolta in `rxiqcal_finalize()` e che ora e'
-in `b43_phy_ac_bss_up()` con le altre due dietro `b43_phy_ac_afe_arm()`.
+in `b43_phy_ac_down()` con le altre due dietro `b43_phy_ac_afe_arm()`.
 
 Il gate in `b43_phy_ac_op_switch_analog` e' su `chip_id` perche' e' l'unica
 variabile che distingue i due testimoni, non perche' sia dimostrato.

@@ -1,0 +1,82 @@
+From 35301cd1a0f92948b60f04a49ac9d78cff20aadf Mon Sep 17 00:00:00 2001
+From: Alessandro Ferri <aleferri@example.invalid>
+Date: Thu, 10 Sep 2026 14:22:58 +0000
+Subject: [PATCH] b43: let the PHY close a channel switch with its calibrations
+
+The AC PHY runs a calibration sequence after every channel switch, and it
+has a MAC-state contract the core cannot satisfy from outside: the RX
+gain-control sweep that opens it needs the MAC suspended, the calibrations
+that follow need it running. On the OEM driver's trace the MAC enable that
+b43_op_config() would emit on its way out falls exactly between the two.
+
+Add a channel_calibrate PHY operation that b43_op_config() calls in place of
+its final b43_mac_enable() when it has switched channel, with the MAC still
+suspended; the hook owns the enable and puts it where its calibration needs
+it. PHYs that do not provide it see no change.
+
+Signed-off-by: Alessandro Ferri <aleferri@example.invalid>
+---
+ drivers/net/wireless/broadcom/b43/main.c       | 7 ++++++-
+ drivers/net/wireless/broadcom/b43/phy_common.h | 7 +++++++
+ 2 files changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/broadcom/b43/main.c b/drivers/net/wireless/broadcom/b43/main.c
+index 919287d..2420d39 100644
+--- a/drivers/net/wireless/broadcom/b43/main.c
++++ b/drivers/net/wireless/broadcom/b43/main.c
+@@ -4112,6 +4112,7 @@ static int b43_op_config(struct ieee80211_hw *hw, u32 changed)
+ 	struct b43_wldev *dev = wl->current_dev;
+ 	struct b43_phy *phy = &dev->phy;
+ 	struct ieee80211_conf *conf = &hw->conf;
++	bool switched = false;
+ 	int antenna;
+ 	int err = 0;
+ 
+@@ -4134,6 +4135,7 @@ static int b43_op_config(struct ieee80211_hw *hw, u32 changed)
+ 		 * The firmware takes care of races with the TX handler.
+ 		 */
+ 		b43_switch_channel(dev, phy->channel);
++		switched = true;
+ 	}
+ 
+ 	if (changed & IEEE80211_CONF_CHANGE_RETRY_LIMITS)
+@@ -4177,7 +4179,10 @@ static int b43_op_config(struct ieee80211_hw *hw, u32 changed)
+ 	}
+ 
+ out_mac_enable:
+-	b43_mac_enable(dev);
++	if (switched && phy->ops->channel_calibrate)
++		phy->ops->channel_calibrate(dev);
++	else
++		b43_mac_enable(dev);
+ 	mutex_unlock(&wl->mutex);
+ 
+ 	return err;
+diff --git a/drivers/net/wireless/broadcom/b43/phy_common.h b/drivers/net/wireless/broadcom/b43/phy_common.h
+index 5ec5233..2a68e0f 100644
+--- a/drivers/net/wireless/broadcom/b43/phy_common.h
++++ b/drivers/net/wireless/broadcom/b43/phy_common.h
+@@ -147,6 +147,12 @@ enum b43_txpwr_result {
+  * 			Can be NULL, if not required.
+  * @pwork_60sec:	Periodic work. Called every 60 seconds.
+  * 			Can be NULL, if not required.
++ * @channel_calibrate:	Calibrations that close a channel switch. Called by
++ * 			b43_op_config() with the MAC suspended, in place of
++ * 			its final b43_mac_enable(): the hook re-enables the
++ * 			MAC itself at the point its calibration needs it
++ * 			running, and must leave it enabled.
++ * 			Can be NULL, if not required.
+  */
+ struct b43_phy_operations {
+ 	/* Initialisation */
+@@ -182,6 +188,7 @@ struct b43_phy_operations {
+ 	/* Misc */
+ 	void (*pwork_15sec)(struct b43_wldev *dev);
+ 	void (*pwork_60sec)(struct b43_wldev *dev);
++	void (*channel_calibrate)(struct b43_wldev *dev);
+ };
+ 
+ struct b43_phy_g;
+-- 
+2.43.0
+

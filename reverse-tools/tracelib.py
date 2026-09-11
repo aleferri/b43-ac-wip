@@ -60,16 +60,97 @@ def norm(op):
 
     The `ret=`/`a5=`/`a6=` suffix of the read hooks is also dropped: those are
     arguments of the tracer, not of the op, and the harness stubs do not model
-    them.
+    them. So is `sel=`, the shared-memory routing: the d6220 captures were
+    decoded without it and the DSL ones and the integration harness carry it,
+    and on the offset-in-bytes form of the address it adds nothing.
     """
     op = " ".join(op.split())
     op = re.sub(r"^GPIO\.OUTEN\b", "GPIO.OE", op)
-    op = re.sub(r"\s+(ret|a5|a6)=\S+", "", op)
+    op = re.sub(r"\s+(ret|a5|a6|sel)=\S+", "", op)
     op = _HEX.sub(lambda m: "0x" + m.group(1).lower(), op)
     m = re.match(r"PHY\.(AND|OR)\s+addr=(\S+)\s+val=(\S+)", op)
     if m:
         op = f"PHY.MOD addr={m.group(2)} val={m.group(3)} mask=0x0"
     return re.sub(r"\s*\((set|clr)[^)]*\)", "", op)
+
+
+_MOD = re.compile(r"^(PHY|RAD)\.MOD\s+addr=(\S+)\s+val=(\S+)\s+mask=(\S+)$")
+_ANDOR = re.compile(r"^(PHY|RAD)\.(AND|OR)\s+addr=(\S+)\s+val=(\S+)")
+_ACCESSOR_ONLY = re.compile(r"^(TBL\.(WR|RD)|MAC\.MHF)\b")
+
+
+def unfold_bus(op):
+    """The op as the bus sees it: zero, one or two ops.
+
+    A trace taken at the MMIO bus -- test/integration -- has no accessor-level
+    classes. A read-modify-write is a read and a write of the same register;
+    a table access is the words on the data port, and the TBL marker that
+    names the table stands for nothing on the bus; a host-flag maskset is a
+    software shadow whose write-through, when it happens, is its own OBJ.WR
+    on both sides. This maps an accessor-level
+    op onto that vocabulary so the two can be compared without teaching the
+    bus tracer what the accessors were.
+
+    The read carries no value: the vendor never logs what a MOD read back.
+    The write is constrained on the modified bits only, `mask=` kept on the
+    op so ops_equal knows which bits to compare; the rest came from the read
+    and is not the driver's doing. AND/OR are handled from their raw form,
+    before norm() folds them to MOD with the null-mask sentinel and the
+    direction is lost.
+    """
+    op = " ".join(op.split())
+    if _ACCESSOR_ONLY.match(op):
+        return []
+    m = _ANDOR.match(op)
+    if m:
+        space, kind, addr, val = m.groups()
+        v = int(val, 16)
+        mask = v if kind == "OR" else (~v & 0xffff)
+        set_ = v if kind == "OR" else 0
+        return [norm(f"{space}.RD addr={addr} val=UNDEFINED"),
+                norm(f"{space}.WR addr={addr} val=0x{set_:04x} mask=0x{mask:04x}")]
+    op = norm(op)
+    m = _MOD.match(op)
+    if m:
+        space, addr, val, mask = m.groups()
+        if int(mask, 16) == 0:
+            return [op]
+        return [f"{space}.RD addr={addr} val=UNDEFINED",
+                f"{space}.WR addr={addr} val={val} mask={mask}"]
+    return [op]
+
+
+_RD_OF = re.compile(r"^(PHY|RAD)\.RD\s+addr=(\S+)\s+val=(\S+)")
+
+
+def unfold_bus_seq(raw_ops):
+    """unfold_bus() over a whole trace, with the one case that needs lookahead.
+
+    The vendor tracer hooks the radio read and the radio write that
+    radio_reg_mod() makes internally, so every RAD.MOD comes as a triple --
+    the MOD, the RAD.RD it performed and the RAD.WR it performed, 435 of 435
+    on the reference segment -- and the unit harness prints the same triple.
+    Those two inner lines are the bus ops themselves, values included, so the
+    MOD line stands for nothing on the bus and is dropped. PHY MODs carry no
+    such shadow (52 of 3435 are followed by a read of the same register, no
+    more than chance) and are left to unfold_bus().
+    """
+    out = []
+    i = 0
+    n = len(raw_ops)
+    while i < n:
+        op = " ".join(raw_ops[i].split())
+        m = _MOD.match(norm(op))
+        if m and m.group(1) == "RAD" and i + 2 < n:
+            r = _RD_OF.match(norm(raw_ops[i + 1]))
+            w = re.match(r"^RAD\.WR\s+addr=(\S+)", norm(raw_ops[i + 2]))
+            if (r and r.group(1) == "RAD" and r.group(2) == m.group(2) and
+                    w and w.group(1) == m.group(2)):
+                i += 1
+                continue
+        out.extend(unfold_bus(op))
+        i += 1
+    return out
 
 
 def op_class(op):

@@ -300,7 +300,7 @@ Distinte dai doppioni sopra: non sono codice del core rispecchiato qui, sono
 funzioni di `src/` che **nessuno in `src/` chiama**. `run_switch_channel()` le
 invoca nell'ordine della cattura: `channel_setup_tail()`, le passate di
 `conf_tx`, `channel_setup_tail2()`, `set_channel_calibrations()` e
-`b43_phy_ac_bss_up()`. `op_switch_channel()` fa il channel setup e ritorna.
+`b43_phy_ac_down()`. `op_switch_channel()` fa il channel setup e ritorna.
 
 Ne segue un limite del punteggio che va tenuto presente leggendolo: il gate
 misura che quelle funzioni **emettono** le op giuste, non che il driver le

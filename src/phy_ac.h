@@ -110,7 +110,7 @@ struct ieee80211_channel;
 					 B43_PHY_AC_STATE_CLIP_C2_DIS)
 #define B43_PHY_AC_STATE_PHY_RUN	0x0080	/* BBCFG bit 0x8000: 1=running, 0=quiesced */
 #define B43_PHY_AC_STATE_CCA_RESET	0x0100	/* BBCFG bit 0x4000 (RSTCCA active) */
-#define B43_PHY_AC_STATE_AFE_ON		0x0200	/* RF front-end armed (enable_afe ON) */
+#define B43_PHY_AC_STATE_AFE_OFF		0x0200	/* RF front-end powered down (enable_afe OFF); 0x1720 bit 9 */
 /*
  * First bring-up. b43_phy_init() clears phy->do_full_init between ops->init
  * and set_channel, so from set_channel on that flag is always false. op_init
@@ -409,7 +409,7 @@ struct b43_phy_ac {
 	 */
 	/*
 	 * Cal state saved in block D of rxiqcal_finalize() and written back by
-	 * b43_phy_ac_bss_up(), half a second later in the captures: the LO DAC
+	 * b43_phy_ac_down(), at `wl down`: the LO DAC
 	 * readback of radio 0x?002-0x?005, and the TX IQ/LO coefficients of
 	 * the IQLOCAL table (0x000c) per core at 0x60 + 4*core -- {a, b} at
 	 * +0/+1 and the LO leakage word at +2, two signed bytes.
@@ -481,6 +481,21 @@ struct b43_phy_ac {
 	enum nl80211_chan_width txpwr_calc_width;
 	u16 txpwr_calc_ceiling;
 	/*
+	 * A channel switch leaves the hardware power control behind the
+	 * target even when the target itself did not move: the vendor runs
+	 * the whole txpwrctrl setup again after the core's BSS configuration.
+	 * Raised by op_switch_channel(), consumed by adjust_txpower().
+	 */
+	bool txpwr_adjust_due;
+	/*
+	 * The configuration the radio is tuned to, once op_switch_channel()
+	 * has run to completion; cleared by op_init(). b43 asks for the same
+	 * channel twice on the way up -- from b43_phy_init() and again from
+	 * b43_op_config() -- and the vendor tunes once: the second request
+	 * finds the radio already there and has nothing to emit.
+	 */
+	bool tuned;
+	/*
 	 * RX-IQ imbalance accumulator readings from the probe sweep in
 	 * b43_phy_ac_rxcal_gainctrl(), indexed [core][step_idx][sample]:
 	 *   step_idx is the vendor's order of the four {bit1, bit2} combinations
@@ -548,10 +563,20 @@ struct b43_phy_ac {
  * STATE_PHY_RUN has no mutator and must not appear in `want` or `forbid`: it
  * mirrors BBCFG[15] for parity with annotate_enables.py, and no op in the
  * three sweeps touches that bit -- the run state is established at power-on.
+ *
+ * STATE_MAC_EN is not stored either: it is the core's dev->mac_suspended
+ * counter read at check time, since b43_mac_suspend()/b43_mac_enable() are
+ * the only mutators of the MAC run state and they are the core's. A shadow
+ * bit here would have to be kept in step by whoever calls them, and nothing
+ * in this driver does.
  */
+#define b43_phy_ac_status(dev)						\
+	((dev)->phy.ac->status_mask |					\
+	 ((dev)->mac_suspended == 0 ? B43_PHY_AC_STATE_MAC_EN : 0))
+
 #define B43_PHY_AC_REQUIRE(dev, want, forbid) do {			\
 	struct b43_phy_ac *__ac = (dev)->phy.ac;			\
-	u16 __sm = __ac->status_mask;					\
+	u16 __sm = b43_phy_ac_status(dev);				\
 	if (__sm & B43_PHY_AC_STATE_FAULTED)				\
 		return;							\
 	if ((__sm & (want)) != (want) || (__sm & (forbid))) {		\
@@ -566,7 +591,7 @@ struct b43_phy_ac {
 
 #define B43_PHY_AC_REQUIRE_RET(dev, want, forbid, ret) do {		\
 	struct b43_phy_ac *__ac = (dev)->phy.ac;			\
-	u16 __sm = __ac->status_mask;					\
+	u16 __sm = b43_phy_ac_status(dev);				\
 	if (__sm & B43_PHY_AC_STATE_FAULTED)				\
 		return (ret);						\
 	if ((__sm & (want)) != (want) || (__sm & (forbid))) {		\
@@ -654,18 +679,7 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev);
  * arm and the PMU release. Not part of switch_channel; no b43 hook is wired to
  * it yet, see the function's comment and docs/retrace-todo.md.
  */
-void b43_phy_ac_bss_up(struct b43_wldev *dev);
-/*
- * L'enable del MAC e le calibrazioni post-canale le invoca il chiamante di
- * op_switch_channel, come in b43 fa il core dopo b43_switch_channel(): tenerle
- * in coda alla callback impedirebbe di inserire fra le due fasi del setup la
- * configurazione BSS che il core scrive.
- */
-void b43_phy_ac_channel_setup_tail2(struct b43_wldev *dev);
-void b43_phy_ac_channel_setup_tail(struct b43_wldev *dev,
-				   struct ieee80211_channel *channel);
 void b43_phy_ac_prb_rsp_plcp_pass(struct b43_wldev *dev);
-void b43_phy_ac_set_channel_calibrations(struct b43_wldev *dev);
 
 /*
  * One AFE cal iteration: arm a command on 0x0380, wait on the busy bit, read
