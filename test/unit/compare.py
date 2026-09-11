@@ -574,6 +574,21 @@ def val_nondet(op: str) -> bool:
 
 RET_SUFFIX = re.compile(r'\s+ret=0x[0-9a-fA-F]+')
 
+MASKED_OP = re.compile(r'^(\S+(?: addr=\S+)?) val=(0x[0-9a-fA-F]+) mask=(0x[0-9a-fA-F]+)$')
+PLAIN_OP = re.compile(r'^(\S+(?: addr=\S+)?) val=(0x[0-9a-fA-F]+)$')
+
+def val_entro_maschera(v: str, t: str) -> bool:
+    """Un'op del vendor con mask contro una del port a valore pieno: la write
+    in cui unfold_bus() ha svolto un MOD, o una MAC.MCTRL, che il vendor traccia
+    come maskset e il bus come scrittura intera. Il vendor vincola solo i bit
+    della mask; gli altri li ha letti, e il port li ha letti a sua volta
+    dall'oracolo, che per quelle letture non ha un valore."""
+    mv, mt = MASKED_OP.match(v), PLAIN_OP.match(t)
+    if not (mv and mt) or mv.group(1) != mt.group(1):
+        return False
+    mask = int(mv.group(3), 16)
+    return (int(mv.group(2), 16) & mask) == (int(mt.group(2), 16) & mask)
+
 def ops_equal(v: str, t: str) -> bool:
     """Confronto op-per-op con il valore letto trattato come wildcard quando il
     vendor non lo ha registrato.
@@ -589,6 +604,8 @@ def ops_equal(v: str, t: str) -> bool:
     v = RET_SUFFIX.sub('', v)
     if v == t:
         return True
+    if val_entro_maschera(v, t):
+        return True
     if val_nondet(v):
         return VAL_TOK.sub('val=*', v, count=1) == VAL_TOK.sub('val=*', t, count=1)
     if val_entro_tolleranza(v, t):
@@ -601,9 +618,16 @@ def extract_episode(raw: str) -> int:
     m = re.search(r'#(\d+)', raw)
     return int(m.group(1)) if m else -1
 
-def load_vendor(path, ep_range):
+def op_forms(raws, profile):
+    """Le op normalizzate di una traccia: una per riga, o quelle del profilo
+    `bus`, che svolge i MOD e conosce la coppia RAD.MOD + RAD.RD."""
+    if profile == 'bus':
+        return tracelib.unfold_bus_seq(raws)
+    return [normalize_op(r) for r in raws]
+
+def load_vendor(path, ep_range, profile=None):
     lo, hi = ep_range or (0, 10**9)
-    out = []
+    raws = []
     for line in open(path):
         m = VENDOR_LINE.match(line)
         if not m:
@@ -611,16 +635,12 @@ def load_vendor(path, ep_range):
         ep = extract_episode(line)
         if not (lo <= ep <= hi):
             continue
-        out.append(normalize_op(m.group(1)))
-    return drop_shadow_ops(out)
+        raws.append(m.group(1))
+    return drop_shadow_ops(op_forms(raws, profile))
 
-def load_test(path):
-    out = []
-    for line in open(path):
-        m = TEST_LINE.match(line)
-        if m:
-            out.append(normalize_op(m.group(1)))
-    return out
+def load_test(path, profile=None):
+    raws = [m.group(1) for line in open(path) for m in [TEST_LINE.match(line)] if m]
+    return op_forms(raws, profile)
 
 def find_offset(test, target_op):
     """Return the index of `target_op` in test, or -1.
@@ -638,6 +658,9 @@ def main():
     ap.add_argument('vendor')
     ap.add_argument('test')
     ap.add_argument('--range', help='LO:HI vendor episode range')
+    ap.add_argument('--bus', action='store_true',
+                    help='profilo bus: MOD svolti in RD+WR, TBL.* scartati; '
+                         'per una traccia presa al bus MMIO (test/integration)')
     ap.add_argument('--auto-align', action='store_true',
                     help='skip test prologue by aligning on vendor[0]')
     ap.add_argument('--align-on', help='align test on this exact op string')
@@ -658,8 +681,9 @@ def main():
         lo, hi = args.range.split(':')
         rng = (int(lo), int(hi))
 
-    vendor = load_vendor(args.vendor, rng)
-    test = load_test(args.test)
+    profile = 'bus' if args.bus else None
+    vendor = load_vendor(args.vendor, rng, profile)
+    test = load_test(args.test, profile)
 
     vendor, sv = drop_solo_vendor(vendor)
     test, sp = drop_solo_port(test)

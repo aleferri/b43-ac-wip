@@ -18,6 +18,9 @@
 #include <linux/types.h>
 
 void b43_trace_op(const char *cls, u16 addr, u32 val, u16 mask, int has_mask);
+void b43_trace_macctl(u32 val);
+void b43_trace_gpio(const char *cls, u32 val, u32 mask);
+void b43_trace_op32(const char *cls, u16 addr, u32 val, u32 mask);
 void b43_trace_shm(const char *cls, u32 routing_off, u32 val, int width);
 void b43_trace_raw(const char *cls, u16 off, u32 val, int width);
 void b43_trace_block(const char *cls, u16 off, unsigned long count,

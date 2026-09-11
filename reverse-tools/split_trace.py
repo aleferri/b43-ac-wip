@@ -11,6 +11,15 @@ depends on how the capture was taken, not on preference:
              does not have to be guessed. This is the criterion of the COLD
              sweep of cold_capture.sh, where every cycle is an rmmod+insmod.
 
+  mod        The module's own load markers: a segment runs from a `mod
+             COMING` to just before the next one, so it is exactly one life of
+             the module -- insmod, attach, up, down, rmmod -- with its `mod
+             GOING` at the end and nothing of the neighbouring cycles in it.
+             The name comes from the channel label that precedes the COMING,
+             which is where cold_capture.sh writes it. Cutting on the label
+             instead (`mark`) leaves the previous cycle's rmmod at the head of
+             each segment, and the attach's two AFE_OFF banks and the down's
+             one look like three different things.
   chanspec   The chanspec write into shared memory (`OBJ.WR 0xa0`, or the
              CS.SHM argument that performs it). Exact boundary and name from
              the same signal. This is the criterion the CALD sweep segments in
@@ -39,6 +48,7 @@ default segment names in test/unit/gates.sh.
 
 Usage:
   split_trace.py --on mark     trace.txt dir/ [--prefix cold] [--bringup-only]
+  split_trace.py --on mod      trace.txt dir/ [--prefix cold] [--bringup-only]
   split_trace.py --on chanspec trace.txt dir/
   split_trace.py --on gaps     trace.txt dir/ [--gap 1.03] [--channels 36,40]
 """
@@ -130,6 +140,32 @@ def cut_on_mark(lines, skip_mod):
                 n += 1
                 name = name_from_mark(n, label)
                 current = []
+        current.append(line)
+    if current:
+        segments.append((name, current))
+    return segments, found
+
+
+def cut_on_mod(lines):
+    """[(name, lines)]: one segment per life of the module, from `mod COMING`
+    to the line before the next. The channel label is the last one seen
+    before the COMING. What precedes the first COMING goes to
+    00-preambolo.txt."""
+    segments, current = [], []
+    name, n, found, label = "00-preambolo.txt", 0, 0, "senza-etichetta"
+    for line in lines:
+        m = RE_MARK.search(line)
+        if m:
+            found += 1
+            mark = m.group(1)
+            if mark == "mod COMING":
+                if current:
+                    segments.append((name, current))
+                n += 1
+                name = name_from_mark(n, label)
+                current = []
+            elif not RE_MOD.match(mark) and mark != "fine corsa":
+                label = mark
         current.append(line)
     if current:
         segments.append((name, current))
@@ -271,7 +307,7 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--on", required=True,
-                    choices=("mark", "chanspec", "gaps"),
+                    choices=("mark", "mod", "chanspec", "gaps"),
                     help="the boundary criterion")
     ap.add_argument("trace")
     ap.add_argument("outdir", nargs="?", default="split")
@@ -295,10 +331,14 @@ def main():
         lines = f.readlines()
     channels = a.channels.split(",") if a.channels else []
 
-    if a.on == "mark":
-        segments, found = cut_on_mark(lines, a.skip_mod)
-        if found == 0:
-            print("no MARK record in the trace. If it comes from "
+    if a.on in ("mark", "mod"):
+        if a.on == "mark":
+            segments, found = cut_on_mark(lines, a.skip_mod)
+        else:
+            segments, found = cut_on_mod(lines)
+        if found == 0 or (a.on == "mod" and
+                          not any(n != "00-preambolo.txt" for n, _ in segments)):
+            print("no usable MARK record in the trace. If it comes from "
                   "capture_plan.sh (hot sweep), the right criterion is "
                   "--on chanspec.", file=sys.stderr)
             return 1
@@ -314,7 +354,9 @@ def main():
                     g.writelines(rr)
             print(f"{dest}: {len(dropped)} segments with no RAD op "
                   f"({', '.join(n for n, _ in dropped)})")
-        print(f"\n{found} MARKs found, {len(segments)} segments written.")
+        what = ("one per life of the module, `mod COMING` to `mod GOING`"
+                if a.on == "mod" else "one per channel label")
+        print(f"\n{found} MARKs found, {len(segments)} segments written, {what}.")
         print("The names come from the LABELS, not from an assumed order: if "
               "a channel is missing, it is missing because the cycle did not "
               "happen.")

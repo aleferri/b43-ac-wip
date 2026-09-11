@@ -244,7 +244,7 @@ static void note_write(struct bcma_device *core, u16 off, u32 val, int width)
 		return;
 	case B43_MMIO_MACCTL:
 		macctl = val;
-		b43_trace_op("MAC.MCTRL", 0, val, 0, -1);
+		b43_trace_macctl(val);
 		return;
 	case B43_MMIO_MACCMD:
 		b43_trace_op("MAC.MCMD", 0, val, 0, -1);
@@ -305,14 +305,14 @@ static u32 note_read(struct bcma_device *core, u16 off, int width)
 			return D6220_RADIO_ID;
 		if (radio_addr == 0)
 			return D6220_RADIO_REV;
-		break;
-	case B43_MMIO_PHY_DATA:
-		v = b43_trace_read("PHY.RD", phy_addr, width);
-		b43_trace_op("PHY.RD", phy_addr, v, 0, -1);
-		return v;
+		fallthrough;
 	case B43_MMIO_RADIO_DATA_LOW:
 		v = b43_trace_read("RAD.RD", radio_addr, width);
 		b43_trace_op("RAD.RD", radio_addr, v, 0, -1);
+		return v;
+	case B43_MMIO_PHY_DATA:
+		v = b43_trace_read("PHY.RD", phy_addr, width);
+		b43_trace_op("PHY.RD", phy_addr, v, 0, -1);
 		return v;
 	case B43_MMIO_SHM_DATA:
 	case B43_MMIO_SHM_DATA_UNALIGNED:

@@ -31,7 +31,7 @@ make check          # ogni file di b43 e del port: deve dire "0 errori"
 make b43-trace      # compila, linka, stampa il conto dei simboli
 ```
 
-`make fetch` deve finire con `applicate 9, saltate 3`: le 9 patch che toccano
+`make fetch` deve finire con `applicate 10, saltate 3`: le 10 patch che toccano
 `b43/` e le 3 su bcma/ssb che qui non hanno niente da applicare. Se una patch
 non applica lo script **esce con errore** e l'albero in `b43-upstream/` va
 buttato (`rm -rf b43-upstream kinc`) prima di riprovare: `patch` applica un
@@ -75,12 +75,122 @@ senza, la traccia va su stdout **insieme all'output di make**, che va bene per
 guardare e non per confrontare. Le righe `b43: ...` -- cioe' `b43info` e
 `b43err`, quelle che dicono quale gate ha respinto la probe -- vanno su stderr.
 
-Oggi l'esito e' `probe: 0` e `start: 0`, e il file contiene 21036 op: attach,
-bring-up intero e lo stop. Si confrontano con gli strumenti di `../unit`:
+Oggi l'esito e' `probe: 0` e `start: 0`, e il file contiene 29470 op: attach,
+bring-up intero, TX power adjust, calibrazioni e lo stop. Si confrontano con gli strumenti di `../unit`, **con
+il profilo `--bus`**:
 
 ```sh
-python3 ../unit/compare.py /tmp/m01 /tmp/int.trace --auto-align
+python3 ../unit/compare.py /tmp/m01 /tmp/int.trace --auto-align --bus
+python3 ../unit/cmp_skip.py /tmp/m01 /tmp/int.trace 528:36546 --board d6220 --bus
 ```
+
+Il profilo serve perche' questa traccia e' presa al bus MMIO, e il bus non ha le
+classi degli accessor: un `PHY.MOD` del vendor qui e' una `PHY.RD` seguita da
+una `PHY.WR` dello stesso registro, un `TBL.WR` e' solo le parole sulla porta
+dati, un `MAC.MHF` e' un'ombra software. `tracelib.unfold_bus()` svolge il
+vendor (e l'harness di `../unit`, che ha le stesse classi) in quel vocabolario:
+la `RD` senza valore, perche' il vendor non registra cosa un MOD ha riletto, e
+la `WR` vincolata sui soli bit della mask. Sull'harness di `../unit` il profilo
+e' neutro -- 99.93% contro 99.92% -- quindi quello che misura qui e' b43, non
+la traduzione. Senza `--bus` il confronto si rompe alla prima maskset e il
+numero non dice niente.
+
+Con il profilo, il segmento di riferimento da' **84.22%** (26109/31001): 13
+valori sbagliati, 3319 op del vendor mancanti, 1547 del port di troppo, 51
+regioni. Lo switch di canale da solo -- la traccia tagliata sui marcatori
+`B43_FN_MARKERS=1` contro la finestra `5007:13465` -- fa 98.72%, zero valori
+sbagliati, come l'harness di `../unit`. La prima divergenza posizionale sta a
+`@50`: dopo il core attach il vendor scrive il blocco di configurazione della
+shared memory (`0x80`, `0x5c`, `0x16`, `0xc0`/`0xc2`, `0x18`, `0x1c`, `0x44`,
+`0x46`, poi l'azzeramento da `0x78c`) prima di toccare il PHY, e b43 entra in
+`op_init`.
+
+Una correzione di nome che ha spostato 460 op: la fase che il port chiamava
+`bss_up` e' il **`wl down`**. Lo dicono i tempi -- in ogni segmento a freddo
+sta al 99%, un secondo prima del `mod GOING` del rmmod, e in ogni segmento
+`up` dello sweep a caldo, dove non c'e' nessun rmmod, sta al 99% pure -- e lo
+dice il suo contenuto: finisce con il banco AFE a 8 scritture
+(`0x1721=0xffff`, `0x1725=0x1fff`, `0x1720=0x03ff`, ogni blocco spento) e con
+il rilascio del PMU che chiude la richiesta del preambolo freddo. I nomi dei
+due banchi AFE nel port erano invertiti, `AFE_ON` per quello che spegne e
+`AFE_DOWN` per quello a 4 scritture con `0x5000` che sta all'1% di ogni
+segmento e accende; ora sono `AFE_OFF` e `AFE_ON`, e il bit di stato e'
+`STATE_AFE_OFF`, con la stessa maschera. La fase e' `b43_phy_ac_down()`, e b43
+la raggiunge da `b43_phy_exit()` con `software_rfkill(blocked=true)`: prima
+non la emetteva affatto, e al suo posto spegneva l'AFE con il banco corto.
+
+Tre cose di misura hanno pesato piu' del driver, e valgono per chiunque legga
+questa traccia:
+
+- **il tracer del vendor registra ogni maskset radio come terna** -- il
+  `RAD.MOD`, la `RAD.RD` interna e la `RAD.WR` interna, 435 su 435 sul
+  segmento di riferimento. Sul bus la terna e' la coppia RD+WR con i valori
+  veri, e `tracelib.unfold_bus_seq()` scarta il MOD. I `PHY.MOD` non hanno
+  ombra (52 su 3435 seguiti da una lettura, casuale);
+- **l'oracolo deve avere un posto in coda per la lettura di ogni `PHY.MOD`**:
+  il vendor non ne registra il valore, ma il maskset del driver sul bus legge
+  davvero, e senza segnaposto consuma il valore della lettura successiva. Il
+  segnaposto rende l'ultimo valore noto del registro, letto o scritto: e' il
+  primo `PHY.RD 0x19e` dello switch che prendeva `0x3d2` invece di `0x0`;
+- **`cmp_skip.py --bus` allinea su (classe, registro) e giudica i valori
+  dentro i blocchi allineati** con `ops_equal()`. Allineare sulle stringhe,
+  come nel profilo di default, contava ogni MOD svolto come due valori
+  sbagliati: erano 5167, sono 13.
+
+I 13 che restano, presi uno per uno con `make run` (che ora scrive anche
+`TRACE_OUT.fn`, la traccia con i marcatori, dalla stessa build): nove sono lo
+stack sopra il driver che questa suite non impersona -- `DTIMPER`, `BTSFOFF`,
+`TIMBPOS` e il `RD 0xcc` che legge 0x44 invece di 0x45 sono il blocco BSS del
+core che `bss_info_changed` scriverebbe fra lo switch e il TX power adjust
+(`#13596-#13603`); `MCTRL |= BEACPROMISC` a `#13671` e il suo clear a `#36053`
+sono `b43_adjust_opmode` con l'interfaccia AP, aggiunta e tolta; le due
+suspend dentro `rxiqcal_finalize` sono le ricariche del beacon, che in
+`../unit` sono `AC_BEACON_RELOADS` e in b43 sono il core -- e il resto e'
+rumore d'allineamento degli stessi blocchi mancanti. In cambio ne e' uscito
+un difetto del tracer, `PMU.RC` che troncava la mask a 16 bit nello stub, e
+la fase down qui sopra.
+
+Tre cose hanno portato il numero dal 26% a qui, e sono il modo in cui le fasi
+che `../unit` chiamava a mano hanno preso il nome di cio' che b43 fa:
+
+- **`channel_setup_tail` era `adjust_txpower`.** b43 lo raggiunge da
+  `b43_op_config()` con `b43_phy_txpower_check()` e il `txpower_adjust_work`;
+  il body e' quello, e `recalc_txpower` risponde `NEED_ADJUST` dopo uno
+  switch (`txpwr_adjust_due`). Lo stub deve dare a `hw->conf.power_level` il
+  `max_power` del canale come fa mac80211, e far girare il work in linea come
+  `queue_work_on`: senza, `b43_op_config` salta il check.
+- **`channel_setup_tail2` + `set_channel_calibrations` sono il phyop
+  `channel_calibrate`** (`patches/0015`): `b43_op_config()` lo chiama al
+  posto del suo `mac_enable` finale, e il phyop riaccende il MAC fra lo sweep
+  del gain control RX, che lo vuole sospeso (`rxgainctrl_regs` vieta
+  `MAC_EN`), e le calibrazioni, che lo vogliono acceso. E' dove il vendor
+  emette quell'enable, e non era un'op spostabile: spostarla fa fallire la
+  precondizione.
+- **`op_switch_channel` a chanspec uguale non emette.** b43 lo chiama due
+  volte sulla salita, da `b43_phy_init()` e da `b43_op_config()`; la cattura
+  ha un solo `PHY.MOD 0x0003 val=0x0100` di `channel_switch_prep`. La seconda
+  consumava le code dell'oracolo e le calibrazioni leggevano valori d'altri:
+  22532 op di troppo che sono diventate 3929. `op_init()` azzera `tuned`,
+  cosi' l'up dopo un down risintonizza come il vendor a caldo.
+
+E un difetto del port che solo questa suite poteva vedere: `STATE_MAC_EN` non
+era alzato o abbassato da nessuna riga di `src/`, lo manteneva
+`__wrap_b43_maccontrol_set` di `../unit`. Ora `b43_phy_ac_status()` lo deriva
+da `dev->mac_suspended`, che e' del core e lo tengono `b43_mac_suspend/enable`.
+
+Quel che resta sono le 3319 op del vendor che b43 non emette -- il watchdog
+(`wd_*`, 19 tick con la schedula di `AC_PROBE_TICKS`/`AC_WATCHDOG_TICKS` che
+`../unit` passa e qui non gira), il blocco BSS di `bss_info_changed`, le
+quattro passate `conf_tx`, il blocco shm di `wlc_coreinit` a `@50` -- e le
+1547 del port di troppo, che sono del core: l'azzeramento della shared memory in
+`b43_upload_microcode`, la AMT, le chiavi. Sul tetto regolatorio: non e' una
+manopola del driver. `b43_phy_ac_reg_ceiling()` legge il `max_power` che
+cfg80211 ha applicato al canale, e `AC_MAX_POWER_MAP` e' lo stub di cfg80211
+dell'harness di `../unit`. Il d6220 ha `ccode=` vuoto nel NVRAM, quindi `wl`
+gira con la sua locale interna e 21/26 dBm non si ricavano da niente di bordo:
+qui `subsystem_stub.c` li applica alla registrazione come una tabella con un
+nome, `wl_default_locale_5g`, e sul segmento di riferimento non cambiano
+un'op, perche' su ch36 il SROM da' gia' 56.
 
 ### Dove muore
 
@@ -380,7 +490,7 @@ Stanno toppati in `kinc/`, che va **prima** degli header kernel.
 ### Stato
 
 Tutti e nove i file compilano a **zero errori**, e delle patch di `b43/` ne
-applicano **9 su 9**, e tutta la serie applica anche con `git am` senza fuzz.
+applicano **10 su 10**, e tutta la serie applica anche con `git am` senza fuzz.
 
 Due difetti veri trovati, che `../unit` non poteva trovare perche' compila
 contro `stubs/b43.h` invece degli header kernel:

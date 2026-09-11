@@ -1009,17 +1009,21 @@ static void run_switch_channel(void)
 	int r = b43_phyops_ac.switch_channel(&g_wldev, 36);
 
 	/*
-	 * L'ordine di b43_op_config(), tutto dentro la sua parentesi di
-	 * sospensione: switch_channel, la configurazione BSS del core, la
-	 * seconda meta' del setup, poi l'enable e le calibrazioni.
+	 * L'ordine di b43_op_config(): switch_channel, la configurazione BSS
+	 * del core, il TX power adjust che b43_phy_txpower_check() accoda, le
+	 * passate conf_tx dello stack, e al posto del mac_enable finale il
+	 * phyop channel_calibrate, che riabilita il MAC fra lo sweep del gain
+	 * control e le calibrazioni: e' dove il vendor lo emette.
 	 */
 	emit_core_bss_config();
-	b43_phy_ac_channel_setup_tail(&g_wldev, &g_chan);
+	if (b43_phyops_ac.recalc_txpower(&g_wldev, true) ==
+	    B43_TXPWR_RES_NEED_ADJUST)
+		b43_phyops_ac.adjust_txpower(&g_wldev);
 	emit_core_conf_tx_passes();
-	b43_phy_ac_channel_setup_tail2(&g_wldev);
-	b43_mac_enable(&g_wldev);
 	if (r == 0)
-		b43_phy_ac_set_channel_calibrations(&g_wldev);
+		b43_phyops_ac.channel_calibrate(&g_wldev);
+	else
+		b43_mac_enable(&g_wldev);
 
 	/*
 	 * Then the bss-up burst, which in the captures lands about half a
@@ -1030,7 +1034,7 @@ static void run_switch_channel(void)
 	 * harness has to stand in for it.
 	 */
 	if (r == 0)
-		b43_phy_ac_bss_up(&g_wldev);
+		b43_phyops_ac.software_rfkill(&g_wldev, true);
 
 	fprintf(stderr, "test: switch_channel returned %d\n", r);
 }

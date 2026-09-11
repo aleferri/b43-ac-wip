@@ -50,6 +50,7 @@ struct b43_phy_operations {
 
 	void (*pwork_15sec)(struct b43_wldev *dev);
 	void (*pwork_60sec)(struct b43_wldev *dev);
+	void (*channel_calibrate)(struct b43_wldev *dev);
 };
 
 #endif

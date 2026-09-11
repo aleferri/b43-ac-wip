@@ -59,19 +59,19 @@ int bcma_host_pci_irq_ctl(struct bcma_bus *bus, struct bcma_device *core,
  */
 u32 bcma_chipco_gpio_control(struct bcma_drv_cc *cc, u32 mask, u32 value)
 {
-	b43_trace_op("GPIO.CTL", 0, value, mask, 1);
+	b43_trace_gpio("GPIO.CTL", value, mask);
 	return value;
 }
 
 u32 bcma_chipco_gpio_out(struct bcma_drv_cc *cc, u32 mask, u32 value)
 {
-	b43_trace_op("GPIO.OUT", 0, value, mask, 1);
+	b43_trace_gpio("GPIO.OUT", value, mask);
 	return value;
 }
 
 u32 bcma_chipco_gpio_outen(struct bcma_drv_cc *cc, u32 mask, u32 value)
 {
-	b43_trace_op("GPIO.OUTEN", 0, value, mask, 1);
+	b43_trace_gpio("GPIO.OUTEN", value, mask);
 	return value;
 }
 
@@ -83,10 +83,12 @@ u32 bcma_chipco_pll_read(struct bcma_drv_cc *cc, u32 offset)
 	return v;
 }
 
+/* La mask del tracer sono i bit toccati, cioe' il complemento di quella
+ * del kernel: la stessa convenzione di MAC.MCTRL e dei MOD. */
 void bcma_chipco_regctl_maskset(struct bcma_drv_cc *cc, u32 offset,
 				u32 mask, u32 set)
 {
-	b43_trace_op("PMU.RC", (u16)offset, set, (u16)mask, 1);
+	b43_trace_op32("PMU.RC", (u16)offset, set, ~mask);
 }
 
 /* --- ssb: non percorso, ma il link lo chiede -------------------------- */
@@ -177,6 +179,38 @@ static enum nl80211_chan_width shim_width(long bw)
 	}
 }
 
+/*
+ * Il regdomain che cfg80211 applica ai canali alla registrazione, abbassando
+ * il max_power che il driver ha dichiarato. La cattura a freddo e' di un wl
+ * con ccode= vuoto nel NVRAM, cioe' con la sua locale interna, e i tetti che
+ * quella scrive sono board-independent: 21 dBm EIRP su ch36-48 a 20 MHz e 26
+ * su ch100 (vedi b43_phy_ac_reg_ceiling in src/phy_ac.c). Non c'e' niente
+ * nel bordo da cui ricavarli, e sul ferro cfg80211 applicherebbe il world
+ * regdomain, che e' un altro numero per policy: qui vale la locale del
+ * vendor, perche' e' la sua traccia che si confronta. Gli altri canali
+ * restano al max_power che b43 registra e il tetto non lega, come sul
+ * vendor a caldo.
+ */
+static const struct {
+	u16 chan;
+	s8 dbm;
+} wl_default_locale_5g[] = {
+	{ 36, 21 }, { 40, 21 }, { 44, 21 }, { 48, 21 }, { 100, 26 },
+};
+
+static struct ieee80211_hw *g_hw;
+
+static void apply_regdomain(struct ieee80211_supported_band *sb)
+{
+	unsigned int i, j;
+
+	for (i = 0; i < sb->n_channels; i++)
+		for (j = 0; j < ARRAY_SIZE(wl_default_locale_5g); j++)
+			if (sb->channels[i].hw_value == wl_default_locale_5g[j].chan &&
+			    sb->channels[i].max_power > wl_default_locale_5g[j].dbm)
+				sb->channels[i].max_power = wl_default_locale_5g[j].dbm;
+}
+
 int ieee80211_register_hw(struct ieee80211_hw *hw)
 {
 	long want = b43_test_env_long("B43_CHANNEL", 0);
@@ -185,11 +219,13 @@ int ieee80211_register_hw(struct ieee80211_hw *hw)
 	enum nl80211_band band;
 	int i;
 
+	g_hw = hw;
 	for (band = 0; band < NUM_NL80211_BANDS; band++) {
 		struct ieee80211_supported_band *sb = hw->wiphy->bands[band];
 
 		if (!sb || !sb->n_channels)
 			continue;
+		apply_regdomain(sb);
 		if (!first)
 			first = &sb->channels[0];
 		for (i = 0; i < sb->n_channels; i++) {
@@ -218,6 +254,13 @@ int ieee80211_register_hw(struct ieee80211_hw *hw)
 	hw->conf.chandef.width = shim_width(bw);
 	hw->conf.chandef.center_freq1 = pick->center_freq +
 		(bw == 40 ? 10 : bw == 80 ? 30 : 0);
+	/*
+	 * mac80211 hands the driver a power level with the channel, the
+	 * channel's own max_power when userspace has not asked for less. Zero
+	 * is the value b43_op_config() reads as "no power level", and on it
+	 * the TX power check -- and adjust_txpower behind it -- never runs.
+	 */
+	hw->conf.power_level = pick->max_power;
 	return 0;
 }
 void ieee80211_unregister_hw(struct ieee80211_hw *hw) { }
@@ -226,7 +269,13 @@ void ieee80211_stop_queue(struct ieee80211_hw *hw, int queue) { }
 void ieee80211_free_txskb(struct ieee80211_hw *hw, struct sk_buff *skb) { }
 void ieee80211_handle_wake_tx_queue(struct ieee80211_hw *hw,
 				    struct ieee80211_txq *txq) { }
-void ieee80211_queue_work(struct ieee80211_hw *hw, struct work_struct *work) { }
+/* In linea, come queue_work_on(): la suite e' a un thread, e il work che
+ * b43_phy_txpower_check() accoda e' adjust_txpower, cioe' op da confrontare. */
+void ieee80211_queue_work(struct ieee80211_hw *hw, struct work_struct *work)
+{
+	if (work && work->func)
+		work->func(work);
+}
 void ieee80211_queue_delayed_work(struct ieee80211_hw *hw,
 				  struct delayed_work *work,
 				  unsigned long delay) { }
@@ -308,6 +357,20 @@ u32 ieee80211_channel_to_freq_khz(int chan, enum nl80211_band band)
 struct ieee80211_channel *ieee80211_get_channel_khz(struct wiphy *wiphy,
 						    u32 freq)
 {
+	enum nl80211_band band;
+	int i;
+
+	if (!g_hw)
+		return NULL;
+	for (band = 0; band < NUM_NL80211_BANDS; band++) {
+		struct ieee80211_supported_band *sb = g_hw->wiphy->bands[band];
+
+		if (!sb)
+			continue;
+		for (i = 0; i < sb->n_channels; i++)
+			if (sb->channels[i].center_freq * 1000 == freq)
+				return &sb->channels[i];
+	}
 	return NULL;
 }
 void ieee80211_rts_get(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
