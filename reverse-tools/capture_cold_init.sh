@@ -60,7 +60,8 @@
 #
 # Variabili d'ambiente:
 #   IF         interfaccia                                   (default wl1)
-#   SETTLE     attesa dopo up e dopo bss up, secondi          (default 10)
+#   SETTLE     attesa dopo up, secondi                        (default 10)
+#   SETTLE_BSS attesa dopo bss up, secondi                    (default $SETTLE)
 #   SSID       se impostato: ssid + bss up prima dell'attesa  (default vuoto)
 #   WL_KO      percorso di wl.ko: OBBLIGATORIO, vedi sotto
 #   DEVID      deviceid atteso su IF, da `wl revinfo`         (default 0x43b3)
@@ -70,6 +71,19 @@
 # Niente `set -u`, niente head/awk/sed/tr: il busybox di questi firmware non li
 # ha tutti e uno script che li usa muore a meta' senza dirlo. Qui servono solo
 # builtin della shell piu' wl, insmod, rmmod, sleep, grep.
+#
+# WL=/lib/modules/3.4.11-rt19/extra/wl.ko
+# IF=wl1 SETTLE=12 SSID=test-ap5 WL_KO=$WL ./capture_cold_init.sh 20 36 40 44 48 52 56 60 64 100 104 108 112 116 120 124 128 132 136 140 144 149 153 157 161 165
+# IF=wl1 SETTLE=12 SSID=test-ap5 WL_KO=$WL ./capture_cold_init.sh 40 36 44 52 60 100 108 116 124 132 140 149 157
+# IF=wl1 SETTLE=12 SSID=test-ap5 WL_KO=$WL ./capture_cold_init.sh 80 36 52 100 116 132 149
+#
+# Sui canali con guardia radar il BSS non sale finche' il CAC non e' passato, e
+# il CAC scorre dentro la prima attesa: e' SETTLE che lo deve coprire, 60 s piu'
+# margine, e 600 s sui blocchi che toccano i 5600-5650 MHz del radar meteo.
+# SETTLE_BSS invece serve solo a lasciare in traccia il blocco BSS e qualche
+# giro di watchdog, quindi resta corto: tenerlo legato a SETTLE raddoppia
+# l'attesa senza aggiungere niente alla cattura.
+# IF=wl1 SETTLE=70 SETTLE_BSS=15 SSID=test-ap5 WL_KO=$WL ./capture_cold_init.sh 20 52 56 60 64 100 104 108 112 116 132 136 140
 
 BW="$1"
 [ -n "$BW" ] || { echo "uso: sh cold_capture.sh <20|40|80> <canale> [canale...]" >&2; exit 1; }
@@ -78,6 +92,7 @@ shift
 
 [ -n "$IF" ]     || IF=wl1
 [ -n "$SETTLE" ] || SETTLE=10
+[ -n "$SETTLE_BSS" ] || SETTLE_BSS=$SETTLE
 [ -n "$DEVID" ]  || DEVID=0x43b3
 
 case "$BW" in
@@ -87,6 +102,10 @@ esac
 
 case "$SETTLE" in
     ''|*[!0-9]*) echo "attesa non numerica: '$SETTLE'" >&2; exit 1 ;;
+esac
+
+case "$SETTLE_BSS" in
+    ''|*[!0-9]*) echo "attesa bss non numerica: '$SETTLE_BSS'" >&2; exit 1 ;;
 esac
 
 # Il percorso di wl.ko va saputo PRIMA del primo rmmod, non al momento
@@ -261,7 +280,7 @@ ciclo() {
 
     if [ -n "$SSID" ]; then
         wl -i "$IF" bss up > /dev/null 2>&1
-        sleep "$SETTLE"
+        sleep "$SETTLE_BSS"
     fi
 
     wl -i "$IF" down
@@ -269,7 +288,7 @@ ciclo() {
     return 0
 }
 
-echo "cold_capture: $IF, BW$BW, attesa ${SETTLE}s, deviceid atteso $DEVID"
+echo "cold_capture: $IF, BW$BW, attesa ${SETTLE}s + ${SETTLE_BSS}s bss, deviceid atteso $DEVID"
 echo "modulo: $WL_KO"
 [ -n "$SSID" ] || echo "SSID non impostato: la bss non sale e mancheranno le tabelle per-core"
 echo "il rmmod di wl porta giu' anche il 2.4 GHz: non guidare questa procedura in wifi"

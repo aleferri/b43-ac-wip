@@ -1,496 +1,496 @@
-   2009.972000 #27036    cpu1 MAC.MCTRL val=0x00000000 mask=0x00000001
-   2009.972000 #27037    cpu1 PHY.RD   addr=0x07af val=0x00000000
-   2009.972000 #27039    cpu1 PHY.RD   addr=0x07b3 val=0x00000000
-   2009.972000 #27041    cpu1 PHY.RD   addr=0x07ab val=0x00000120
-   2009.972000 #27043    cpu1 PHY.RD   addr=0x07b1 val=0x00005b8e
-   2009.972000 #27045    cpu1 PHY.RD   addr=0x09af val=0x00000000
-   2009.972000 #27047    cpu1 PHY.RD   addr=0x09b3 val=0x00000000
-   2009.972000 #27049    cpu1 PHY.RD   addr=0x09ab val=0x00000125
-   2009.972000 #27051    cpu1 PHY.RD   addr=0x09b1 val=0x00005b8e
-   2009.972000 #27053    cpu1 PHY.RD   addr=0x0523 val=0x00000000
-   2009.972000 #27055    cpu1 PHY.RD   addr=0x0529 val=0x00000000
-   2009.972000 #27057    cpu1 PHY.RD   addr=0x0528 val=0x00000000
-   2009.972000 #27059    cpu1 PHY.RD   addr=0x0527 val=0x00000000
-   2009.972000 #27061    cpu1 MAC.MCTRL val=0x00000001 mask=0x00000001
-   2009.972000 #27062    cpu1 OBJ.WR   addr=0x0308 val=0x0000
-   2009.972000 #27063    cpu1 OBJ.WR   addr=0x030a val=0x0000
-   2009.972000 #27064    cpu1 OBJ.WR   addr=0x030c val=0x0000
-   2009.972000 #27065    cpu1 OBJ.WR   addr=0x030e val=0x0000
-   2009.972000 #27066    cpu1 OBJ.WR   addr=0x0310 val=0x0000
-   2009.972000 #27067    cpu1 OBJ.WR   addr=0x0312 val=0x0000
-   2009.972000 #27068    cpu1 MAC.MCTRL val=0x00000000 mask=0x00000001
-   2009.972000 #27069    cpu1 PHY.MOD  addr=0x0520 val=0x0000 mask=0x000c
-   2009.972000 #27070    cpu1 MAC.MCTRL val=0x00000001 mask=0x00000001
-   2009.972000 #27071    cpu1 OBJ.RD   addr=0x010e val=0x00000000
-   2009.972000 #27073    cpu1 OBJ.RD   addr=0x0158 val=0x00000000
-   2009.972000 #27075    cpu1 OBJ.RD   addr=0x010c val=0x00000000
-   2009.972000 #27077    cpu1 OBJ.RD   addr=0x015e val=0x00000000
-   2009.972000 #27079    cpu1 OBJ.RD   addr=0x0768 val=0x00006002
-   2009.972000 #27081    cpu1 OBJ.RD   addr=0x076a val=0x00000000
-   2009.972000 #27083    cpu1 OBJ.RD   addr=0x076c val=0x00000000
-   2009.972000 #27085    cpu1 OBJ.RD   addr=0x076e val=0x00000000
-   2009.972000 #27087    cpu1 OBJ.RD   addr=0x0770 val=0x00000000
-   2009.972000 #27089    cpu1 OBJ.RD   addr=0x0772 val=0x00000000
-   2009.972000 #27091    cpu1 OBJ.RD   addr=0x0774 val=0x00000000
-   2009.972000 #27093    cpu1 OBJ.RD   addr=0x0776 val=0x00000000
-   2009.972000 #27095    cpu1 OBJ.RD   addr=0x0778 val=0x00000000
-   2009.972000 #27097    cpu1 OBJ.RD   addr=0x077a val=0x00000000
-   2009.972000 #27099    cpu1 OBJ.RD   addr=0x077c val=0x00000000
-   2009.972000 #27101    cpu1 OBJ.RD   addr=0x077e val=0x00000000
-   2009.972000 #27103    cpu1 OBJ.RD   addr=0x0780 val=0x00008d07
-   2009.972000 #27105    cpu1 OBJ.RD   addr=0x0782 val=0x0000000a
-   2009.972000 #27107    cpu1 OBJ.RD   addr=0x0784 val=0x00000000
-   2009.972000 #27109    cpu1 OBJ.RD   addr=0x0786 val=0x00000000
-   2009.972000 #27111    cpu1 OBJ.RD   addr=0x0788 val=0x00000000
-   2009.972000 #27113    cpu1 OBJ.RD   addr=0x078a val=0x00000000
-   2009.972000 #27115    cpu1 OBJ.RD   addr=0x076a val=0x00000000
-   2009.972000 #27117    cpu1 OBJ.RD   addr=0x0768 val=0x00006002
-   2009.972000 #27119    cpu1 OBJ.RD   addr=0x076a val=0x00000000
-   2009.972000 #27121    cpu1 OBJ.RD   addr=0x076e val=0x00000000
-   2009.972000 #27123    cpu1 OBJ.RD   addr=0x076c val=0x00000000
-   2009.972000 #27125    cpu1 OBJ.RD   addr=0x076e val=0x00000000
-   2009.973000 #27127    cpu1 OBJ.RD   addr=0x0772 val=0x00000000
-   2009.973000 #27129    cpu1 OBJ.RD   addr=0x0770 val=0x00000000
-   2009.973000 #27131    cpu1 OBJ.RD   addr=0x0772 val=0x00000000
-   2009.973000 #27133    cpu1 OBJ.RD   addr=0x0776 val=0x00000000
-   2009.973000 #27135    cpu1 OBJ.RD   addr=0x0774 val=0x00000000
-   2009.973000 #27137    cpu1 OBJ.RD   addr=0x0776 val=0x00000000
-   2009.973000 #27139    cpu1 OBJ.RD   addr=0x077a val=0x00000000
-   2009.973000 #27141    cpu1 OBJ.RD   addr=0x0778 val=0x00000000
-   2009.973000 #27143    cpu1 OBJ.RD   addr=0x077a val=0x00000000
-   2009.973000 #27145    cpu1 OBJ.RD   addr=0x077e val=0x00000000
-   2009.973000 #27147    cpu1 OBJ.RD   addr=0x077c val=0x00000000
-   2009.973000 #27149    cpu1 OBJ.RD   addr=0x077e val=0x00000000
-   2009.973000 #27151    cpu1 OBJ.RD   addr=0x076a val=0x00000000
-   2009.973000 #27153    cpu1 OBJ.RD   addr=0x0768 val=0x00006002
-   2009.973000 #27155    cpu1 OBJ.RD   addr=0x076a val=0x00000000
-   2009.973000 #27157    cpu1 OBJ.RD   addr=0x076e val=0x00000000
-   2009.973000 #27159    cpu1 OBJ.RD   addr=0x076c val=0x00000000
-   2009.973000 #27161    cpu1 OBJ.RD   addr=0x076e val=0x00000000
-   2009.973000 #27163    cpu1 OBJ.RD   addr=0x0772 val=0x00000000
-   2009.973000 #27165    cpu1 OBJ.RD   addr=0x0770 val=0x00000000
-   2009.973000 #27167    cpu1 OBJ.RD   addr=0x0772 val=0x00000000
-   2009.973000 #27169    cpu1 OBJ.RD   addr=0x0776 val=0x00000000
-   2009.973000 #27171    cpu1 OBJ.RD   addr=0x0774 val=0x00000000
-   2009.973000 #27173    cpu1 OBJ.RD   addr=0x0776 val=0x00000000
-   2009.973000 #27175    cpu1 OBJ.RD   addr=0x077a val=0x00000000
-   2009.973000 #27177    cpu1 OBJ.RD   addr=0x0778 val=0x00000000
-   2009.973000 #27179    cpu1 OBJ.RD   addr=0x077a val=0x00000000
-   2009.973000 #27181    cpu1 OBJ.RD   addr=0x077e val=0x00000000
-   2009.973000 #27183    cpu1 OBJ.RD   addr=0x077c val=0x00000000
-   2009.973000 #27185    cpu1 OBJ.RD   addr=0x077e val=0x00000000
-   2009.973000 #27187    cpu1 OBJ.RD   addr=0x07e2 val=0x00000000
-   2009.973000 #27189    cpu1 OBJ.RD   addr=0x07e0 val=0x00000000
-   2009.973000 #27191    cpu1 OBJ.RD   addr=0x07e2 val=0x00000000
-   2009.973000 #27193    cpu1 OBJ.RD   addr=0x07e6 val=0x00000000
-   2009.973000 #27195    cpu1 OBJ.RD   addr=0x07e4 val=0x00000000
-   2009.973000 #27197    cpu1 OBJ.RD   addr=0x07e6 val=0x00000000
-   2009.973000 #27199    cpu1 OBJ.RD   addr=0x07de val=0x00000000
-   2009.973000 #27201    cpu1 OBJ.RD   addr=0x07dc val=0x00000000
-   2009.973000 #27203    cpu1 OBJ.RD   addr=0x07de val=0x00000000
-   2009.973000 #27205    cpu1 OBJ.RD   addr=0x07d6 val=0x00000000
-   2009.973000 #27207    cpu1 OBJ.RD   addr=0x07d8 val=0x00000000
-   2009.973000 #27209    cpu1 OBJ.RD   addr=0x07da val=0x00000000
-   2009.973000 #27211    cpu1 OBJ.RD   addr=0x015a val=0x00000000
-   2009.973000 #27213    cpu1 OBJ.RD   addr=0x014e val=0x00000000
-   2009.973000 #27215    cpu1 MAC.MCTRL val=0x00000000 mask=0x00000001
-   2009.973000 #27216    cpu1 PHY.RD   addr=0x019e val=0x000003d0
-   2009.973000 #27218    cpu1 PHY.MOD  addr=0x019e val=0x0000 mask=0x0040
-   2009.973000 #27219    cpu1 PHY.MOD  addr=0x019e val=0x0000 mask=0x0080
-   2009.973000 #27220    cpu1 PHY.MOD  addr=0x019e val=0x0000 mask=0x0100
-   2009.973000 #27221    cpu1 PHY.RD   addr=0x073e val=0x00000000
-   2009.973000 #27223    cpu1 PHY.WR   addr=0x073e val=0x0440
-   2009.973000 #27224    cpu1 PHY.RD   addr=0x0727 val=0x00000004
-   2009.973000 #27226    cpu1 PHY.RD   addr=0x073c val=0x00000000
-   2009.973000 #27228    cpu1 PHY.RD   addr=0x0721 val=0x00005000
-   2009.973000 #27230    cpu1 PHY.RD   addr=0x0729 val=0x00001000
-   2009.973000 #27232    cpu1 PHY.RD   addr=0x0720 val=0x00000180
-   2009.973000 #27234    cpu1 PHY.RD   addr=0x0728 val=0x00000880
-   2009.973000 #27236    cpu1 PHY.RD   addr=0x0724 val=0x00000000
-   2009.973000 #27238    cpu1 PHY.RD   addr=0x0736 val=0x00000000
-   2009.973000 #27240    cpu1 PHY.RD   addr=0x0725 val=0x00000600
-   2009.973000 #27242    cpu1 PHY.RD   addr=0x0739 val=0x00000000
-   2009.973000 #27244    cpu1 PHY.RD   addr=0x073a val=0x00000180
-   2009.973000 #27246    cpu1 PHY.RD   addr=0x0722 val=0x00000000
-   2009.973000 #27248    cpu1 PHY.RD   addr=0x0734 val=0x00000000
-   2009.973000 #27250    cpu1 PHY.MOD  addr=0x0727 val=0x0002 mask=0x0002
-   2009.973000 #27251    cpu1 PHY.MOD  addr=0x073c val=0x0002 mask=0x000e
-   2009.973000 #27252    cpu1 PHY.MOD  addr=0x0727 val=0x0001 mask=0x0001
-   2009.973000 #27253    cpu1 PHY.MOD  addr=0x073c val=0x0001 mask=0x0001
-   2009.973000 #27254    cpu1 PHY.MOD  addr=0x0721 val=0x0100 mask=0x0100
-   2009.973000 #27255    cpu1 PHY.MOD  addr=0x0729 val=0x0000 mask=0x0100
-   2009.973000 #27256    cpu1 PHY.MOD  addr=0x0720 val=0x0020 mask=0x0020
-   2009.973000 #27257    cpu1 PHY.MOD  addr=0x0728 val=0x0020 mask=0x0020
-   2009.973000 #27258    cpu1 PHY.MOD  addr=0x0720 val=0x0040 mask=0x0040
-   2009.973000 #27259    cpu1 PHY.MOD  addr=0x0728 val=0x0000 mask=0x0040
-   2009.973000 #27260    cpu1 PHY.MOD  addr=0x0720 val=0x0010 mask=0x0010
-   2009.973000 #27261    cpu1 PHY.MOD  addr=0x0728 val=0x0010 mask=0x0010
-   2009.973000 #27262    cpu1 PHY.WR   addr=0x0736 val=0x0154
-   2009.973000 #27263    cpu1 PHY.WR   addr=0x0724 val=0x03ff
-   2009.973000 #27264    cpu1 PHY.MOD  addr=0x073a val=0x0003 mask=0x0007
-   2009.973000 #27265    cpu1 PHY.MOD  addr=0x0725 val=0x0020 mask=0x0020
-   2009.973000 #27266    cpu1 PHY.MOD  addr=0x0739 val=0x007a mask=0x007e
-   2009.973000 #27267    cpu1 PHY.MOD  addr=0x0725 val=0x0002 mask=0x0002
-   2009.973000 #27268    cpu1 PHY.MOD  addr=0x073a val=0x0000 mask=0x0008
-   2009.973000 #27269    cpu1 PHY.MOD  addr=0x0725 val=0x0040 mask=0x0040
-   2009.973000 #27270    cpu1 PHY.MOD  addr=0x073a val=0x0010 mask=0x0010
-   2009.973000 #27271    cpu1 PHY.MOD  addr=0x0725 val=0x0080 mask=0x0080
-   2009.973000 #27272    cpu1 PHY.MOD  addr=0x073a val=0x0040 mask=0x0060
-   2009.973000 #27273    cpu1 PHY.MOD  addr=0x0725 val=0x0100 mask=0x0100
-   2009.973000 #27274    cpu1 PHY.MOD  addr=0x0734 val=0x0000 mask=0x0007
-   2009.973000 #27275    cpu1 PHY.MOD  addr=0x0722 val=0x0004 mask=0x0004
-   2009.973000 #27276    cpu1 PHY.RD   addr=0x093e val=0x00000000
-   2009.973000 #27278    cpu1 PHY.WR   addr=0x093e val=0x0440
-   2009.973000 #27279    cpu1 PHY.RD   addr=0x0927 val=0x00000004
-   2009.973000 #27281    cpu1 PHY.RD   addr=0x093c val=0x00000000
-   2009.973000 #27283    cpu1 PHY.RD   addr=0x0921 val=0x00005000
-   2009.973000 #27285    cpu1 PHY.RD   addr=0x0929 val=0x00001000
-   2009.973000 #27287    cpu1 PHY.RD   addr=0x0920 val=0x00000180
-   2009.973000 #27289    cpu1 PHY.RD   addr=0x0928 val=0x00000880
-   2009.973000 #27291    cpu1 PHY.RD   addr=0x0924 val=0x00000000
-   2009.973000 #27293    cpu1 PHY.RD   addr=0x0936 val=0x00000000
-   2009.973000 #27295    cpu1 PHY.RD   addr=0x0925 val=0x00000600
-   2009.973000 #27297    cpu1 PHY.RD   addr=0x0939 val=0x00000000
-   2009.973000 #27299    cpu1 PHY.RD   addr=0x093a val=0x00000180
-   2009.973000 #27301    cpu1 PHY.RD   addr=0x0922 val=0x00000000
-   2009.973000 #27303    cpu1 PHY.RD   addr=0x0934 val=0x00000000
-   2009.973000 #27305    cpu1 PHY.MOD  addr=0x0927 val=0x0002 mask=0x0002
-   2009.973000 #27306    cpu1 PHY.MOD  addr=0x093c val=0x0002 mask=0x000e
-   2009.973000 #27307    cpu1 PHY.MOD  addr=0x0927 val=0x0001 mask=0x0001
-   2009.973000 #27308    cpu1 PHY.MOD  addr=0x093c val=0x0001 mask=0x0001
-   2009.973000 #27309    cpu1 PHY.MOD  addr=0x0921 val=0x0100 mask=0x0100
-   2009.973000 #27310    cpu1 PHY.MOD  addr=0x0929 val=0x0000 mask=0x0100
-   2009.973000 #27311    cpu1 PHY.MOD  addr=0x0920 val=0x0020 mask=0x0020
-   2009.973000 #27312    cpu1 PHY.MOD  addr=0x0928 val=0x0020 mask=0x0020
-   2009.973000 #27313    cpu1 PHY.MOD  addr=0x0920 val=0x0040 mask=0x0040
-   2009.973000 #27314    cpu1 PHY.MOD  addr=0x0928 val=0x0000 mask=0x0040
-   2009.973000 #27315    cpu1 PHY.MOD  addr=0x0920 val=0x0010 mask=0x0010
-   2009.973000 #27316    cpu1 PHY.MOD  addr=0x0928 val=0x0010 mask=0x0010
-   2009.973000 #27317    cpu1 PHY.WR   addr=0x0936 val=0x0154
-   2009.973000 #27318    cpu1 PHY.WR   addr=0x0924 val=0x03ff
-   2009.974000 #27319    cpu1 PHY.MOD  addr=0x093a val=0x0003 mask=0x0007
-   2009.974000 #27320    cpu1 PHY.MOD  addr=0x0925 val=0x0020 mask=0x0020
-   2009.974000 #27321    cpu1 PHY.MOD  addr=0x0939 val=0x007a mask=0x007e
-   2009.974000 #27322    cpu1 PHY.MOD  addr=0x0925 val=0x0002 mask=0x0002
-   2009.974000 #27323    cpu1 PHY.MOD  addr=0x093a val=0x0000 mask=0x0008
-   2009.974000 #27324    cpu1 PHY.MOD  addr=0x0925 val=0x0040 mask=0x0040
-   2009.974000 #27325    cpu1 PHY.MOD  addr=0x093a val=0x0010 mask=0x0010
-   2009.974000 #27326    cpu1 PHY.MOD  addr=0x0925 val=0x0080 mask=0x0080
-   2009.974000 #27327    cpu1 PHY.MOD  addr=0x093a val=0x0040 mask=0x0060
-   2009.974000 #27328    cpu1 PHY.MOD  addr=0x0925 val=0x0100 mask=0x0100
-   2009.974000 #27329    cpu1 PHY.MOD  addr=0x0934 val=0x0000 mask=0x0007
-   2009.974000 #27330    cpu1 PHY.MOD  addr=0x0922 val=0x0004 mask=0x0004
-   2009.974000 #27331    cpu1 RAD.RD   addr=0x016e val=0x00000000
-   2009.974000 #27333    cpu1 RAD.RD   addr=0x000e val=0x00000001
-   2009.974000 #27335    cpu1 RAD.RD   addr=0x0161 val=0x00000100
-   2009.974000 #27337    cpu1 RAD.RD   addr=0x0017 val=0x00000011
-   2009.974000 #27339    cpu1 RAD.RD   addr=0x015f val=0x00000000
-   2009.974000 #27341    cpu1 RAD.RD   addr=0x0024 val=0x00000203
-   2009.974000 #27343    cpu1 RAD.RD   addr=0x0025 val=0x00000098
-   2009.974000 #27345    cpu1 RAD.MOD  addr=0x0161 val=0x4000 mask=0x4000
-   2009.974000 #27346    cpu1 RAD.RD   addr=0x0161 val=0x00000100
-   2009.974000 #27348    cpu1 RAD.WR   addr=0x0161 val=0x4100
-   2009.974000 #27349    cpu1 RAD.MOD  addr=0x000e val=0x0001 mask=0x0001
-   2009.974000 #27350    cpu1 RAD.RD   addr=0x000e val=0x00000001
-   2009.974000 #27352    cpu1 RAD.WR   addr=0x000e val=0x0001
-   2009.974000 #27353    cpu1 RAD.MOD  addr=0x0161 val=0x1000 mask=0x1000
-   2009.974000 #27354    cpu1 RAD.RD   addr=0x0161 val=0x00004100
-   2009.974000 #27356    cpu1 RAD.WR   addr=0x0161 val=0x5100
-   2009.974000 #27357    cpu1 RAD.MOD  addr=0x0017 val=0x0001 mask=0x0001
-   2009.974000 #27358    cpu1 RAD.RD   addr=0x0017 val=0x00000010
-   2009.974000 #27360    cpu1 RAD.WR   addr=0x0017 val=0x0011
-   2009.974000 #27361    cpu1 RAD.MOD  addr=0x0017 val=0x0000 mask=0x0002
-   2009.974000 #27362    cpu1 RAD.RD   addr=0x0017 val=0x00000011
-   2009.974000 #27364    cpu1 RAD.WR   addr=0x0017 val=0x0011
-   2009.974000 #27365    cpu1 RAD.MOD  addr=0x015f val=0x2000 mask=0x2000
-   2009.974000 #27366    cpu1 RAD.RD   addr=0x015f val=0x00000000
-   2009.974000 #27368    cpu1 RAD.WR   addr=0x015f val=0x2000
-   2009.974000 #27369    cpu1 RAD.MOD  addr=0x0025 val=0x0091 mask=0x03ff
-   2009.974000 #27370    cpu1 RAD.RD   addr=0x0025 val=0x00000000
-   2009.974000 #27372    cpu1 RAD.WR   addr=0x0025 val=0x0091
-   2009.974000 #27373    cpu1 RAD.MOD  addr=0x015f val=0x4000 mask=0x4000
-   2009.974000 #27374    cpu1 RAD.RD   addr=0x015f val=0x00002000
-   2009.974000 #27376    cpu1 RAD.WR   addr=0x015f val=0x6000
-   2009.974000 #27377    cpu1 RAD.MOD  addr=0x0024 val=0x0300 mask=0x0700
-   2009.974000 #27378    cpu1 RAD.RD   addr=0x0024 val=0x00000003
-   2009.974000 #27380    cpu1 RAD.WR   addr=0x0024 val=0x0303
-   2009.974000 #27381    cpu1 RAD.RD   addr=0x036e val=0x00000000
-   2009.974000 #27383    cpu1 RAD.RD   addr=0x020e val=0x00000001
-   2009.974000 #27385    cpu1 RAD.RD   addr=0x0361 val=0x00000100
-   2009.974000 #27387    cpu1 RAD.RD   addr=0x0217 val=0x00000011
-   2009.974000 #27389    cpu1 RAD.RD   addr=0x035f val=0x00000000
-   2009.974000 #27391    cpu1 RAD.RD   addr=0x0224 val=0x00000203
-   2009.974000 #27393    cpu1 RAD.RD   addr=0x0225 val=0x0000009c
-   2009.974000 #27395    cpu1 RAD.MOD  addr=0x0361 val=0x4000 mask=0x4000
-   2009.974000 #27396    cpu1 RAD.RD   addr=0x0361 val=0x00000100
-   2009.974000 #27398    cpu1 RAD.WR   addr=0x0361 val=0x4100
-   2009.974000 #27399    cpu1 RAD.MOD  addr=0x020e val=0x0001 mask=0x0001
-   2009.974000 #27400    cpu1 RAD.RD   addr=0x020e val=0x00000001
-   2009.974000 #27402    cpu1 RAD.WR   addr=0x020e val=0x0001
-   2009.974000 #27403    cpu1 RAD.MOD  addr=0x0361 val=0x1000 mask=0x1000
-   2009.974000 #27404    cpu1 RAD.RD   addr=0x0361 val=0x00004100
-   2009.974000 #27406    cpu1 RAD.WR   addr=0x0361 val=0x5100
-   2009.974000 #27407    cpu1 RAD.MOD  addr=0x0217 val=0x0001 mask=0x0001
-   2009.974000 #27408    cpu1 RAD.RD   addr=0x0217 val=0x00000010
-   2009.974000 #27410    cpu1 RAD.WR   addr=0x0217 val=0x0011
-   2009.974000 #27411    cpu1 RAD.MOD  addr=0x0217 val=0x0000 mask=0x0002
-   2009.974000 #27412    cpu1 RAD.RD   addr=0x0217 val=0x00000011
-   2009.974000 #27414    cpu1 RAD.WR   addr=0x0217 val=0x0011
-   2009.974000 #27415    cpu1 RAD.MOD  addr=0x035f val=0x2000 mask=0x2000
-   2009.974000 #27416    cpu1 RAD.RD   addr=0x035f val=0x00000000
-   2009.974000 #27418    cpu1 RAD.WR   addr=0x035f val=0x2000
-   2009.974000 #27419    cpu1 RAD.MOD  addr=0x0225 val=0x0091 mask=0x03ff
-   2009.974000 #27420    cpu1 RAD.RD   addr=0x0225 val=0x00000000
-   2009.974000 #27422    cpu1 RAD.WR   addr=0x0225 val=0x0091
-   2009.974000 #27423    cpu1 RAD.MOD  addr=0x035f val=0x4000 mask=0x4000
-   2009.974000 #27424    cpu1 RAD.RD   addr=0x035f val=0x00002000
-   2009.974000 #27426    cpu1 RAD.WR   addr=0x035f val=0x6000
-   2009.974000 #27427    cpu1 RAD.MOD  addr=0x0224 val=0x0300 mask=0x0700
-   2009.974000 #27428    cpu1 RAD.RD   addr=0x0224 val=0x00000003
-   2009.974000 #27430    cpu1 RAD.WR   addr=0x0224 val=0x0303
-   2009.974000 #27431    cpu1 PHY.RD   addr=0x019e val=0x00000210
-   2009.974000 #27433    cpu1 PHY.RD   addr=0x040f val=0x000009ff
-   2009.974000 #27435    cpu1 PHY.MOD  addr=0x040f val=0x0000 mask=0x0200
-   2009.974000 #27436    cpu1 PHY.RD   addr=0x0394 val=0x0000000b
-   2009.974000 #27438    cpu1 PHY.RD   addr=0x0393 val=0x00000000
-   2009.974000 #27440    cpu1 PHY.RD   addr=0x0739 val=0x0000007a
-   2009.974000 #27442    cpu1 PHY.WR   addr=0x0739 val=0x00fa
-   2009.974000 #27443    cpu1 PHY.RD   addr=0x073a val=0x000001d3
-   2009.974000 #27445    cpu1 PHY.WR   addr=0x073a val=0x01d3
-   2009.974000 #27446    cpu1 PHY.RD   addr=0x0725 val=0x000007e2
-   2009.974000 #27448    cpu1 PHY.WR   addr=0x0725 val=0x07e6
-   2009.974000 #27449    cpu1 PHY.RD   addr=0x0939 val=0x0000007a
-   2009.974000 #27451    cpu1 PHY.WR   addr=0x0939 val=0x00fa
-   2009.974000 #27452    cpu1 PHY.RD   addr=0x093a val=0x000001d3
-   2009.974000 #27454    cpu1 PHY.WR   addr=0x093a val=0x01d3
-   2009.974000 #27455    cpu1 PHY.RD   addr=0x0925 val=0x000007e2
-   2009.974000 #27457    cpu1 PHY.WR   addr=0x0925 val=0x07e6
-   2009.974000 #27458    cpu1 PHY.WR   addr=0x0925 val=0x07e2
-   2009.974000 #27459    cpu1 PHY.WR   addr=0x093a val=0x01d3
-   2009.974000 #27460    cpu1 PHY.WR   addr=0x0939 val=0x007a
-   2009.974000 #27461    cpu1 PHY.WR   addr=0x0725 val=0x07e2
-   2009.974000 #27462    cpu1 PHY.WR   addr=0x073a val=0x01d3
-   2009.974000 #27463    cpu1 PHY.WR   addr=0x0739 val=0x007a
-   2009.974000 #27464    cpu1 PHY.RD   addr=0x0393 val=0x00000000
-   2009.974000 #27466    cpu1 PHY.WR   addr=0x0394 val=0x0110
-   2009.974000 #27467    cpu1 PHY.WR   addr=0x0393 val=0x8000
-   2009.974000 #27468    cpu1 RAD.MOD  addr=0x016e val=0x0002 mask=0x0002
-   2009.974000 #27469    cpu1 RAD.RD   addr=0x016e val=0x00000000
-   2009.974000 #27471    cpu1 RAD.WR   addr=0x016e val=0x0002
-   2009.974000 #27472    cpu1 RAD.MOD  addr=0x000e val=0x0002 mask=0x0002
-   2009.974000 #27473    cpu1 RAD.RD   addr=0x000e val=0x00000001
-   2009.974000 #27475    cpu1 RAD.WR   addr=0x000e val=0x0003
-   2009.974000 #27476    cpu1 RAD.MOD  addr=0x016e val=0x0001 mask=0x0001
-   2009.974000 #27477    cpu1 RAD.RD   addr=0x016e val=0x00000002
-   2009.974000 #27479    cpu1 RAD.WR   addr=0x016e val=0x0003
-   2009.974000 #27480    cpu1 RAD.MOD  addr=0x000e val=0x0000 mask=0x0004
-   2009.974000 #27481    cpu1 RAD.RD   addr=0x000e val=0x00000003
-   2009.974000 #27483    cpu1 RAD.WR   addr=0x000e val=0x0003
-   2009.974000 #27484    cpu1 PHY.RD   addr=0x0013 val=0x00000fd0
-   2009.974000 #27486    cpu1 PHY.RD   addr=0x0013 val=0x00000fd4
-   2009.974000 #27488    cpu1 PHY.RD   addr=0x0013 val=0x00000fd0
-   2009.974000 #27490    cpu1 PHY.RD   addr=0x0013 val=0x00000fc8
-   2009.974000 #27492    cpu1 PHY.RD   addr=0x0013 val=0x00000fd4
-   2009.974000 #27494    cpu1 PHY.RD   addr=0x0013 val=0x00000fd4
-   2009.974000 #27496    cpu1 PHY.RD   addr=0x0013 val=0x00000fd0
-   2009.974000 #27498    cpu1 PHY.RD   addr=0x0013 val=0x00000fc8
-   2009.974000 #27500    cpu1 RAD.MOD  addr=0x016e val=0x0002 mask=0x0002
-   2009.974000 #27501    cpu1 RAD.RD   addr=0x016e val=0x00000003
-   2009.974000 #27503    cpu1 RAD.WR   addr=0x016e val=0x0003
-   2009.974000 #27504    cpu1 RAD.MOD  addr=0x000e val=0x0000 mask=0x0002
-   2009.974000 #27505    cpu1 RAD.RD   addr=0x000e val=0x00000003
-   2009.974000 #27507    cpu1 RAD.WR   addr=0x000e val=0x0001
-   2009.974000 #27508    cpu1 RAD.MOD  addr=0x016e val=0x0001 mask=0x0001
-   2009.974000 #27509    cpu1 RAD.RD   addr=0x016e val=0x00000003
-   2009.974000 #27511    cpu1 RAD.WR   addr=0x016e val=0x0003
-   2009.974000 #27512    cpu1 RAD.MOD  addr=0x000e val=0x0000 mask=0x0004
-   2009.974000 #27513    cpu1 RAD.RD   addr=0x000e val=0x00000001
-   2009.974000 #27515    cpu1 RAD.WR   addr=0x000e val=0x0001
-   2009.974000 #27516    cpu1 PHY.RD   addr=0x0013 val=0x00000c40
-   2009.974000 #27518    cpu1 PHY.RD   addr=0x0013 val=0x00000c3c
-   2009.974000 #27520    cpu1 PHY.RD   addr=0x0013 val=0x00000c3c
-   2009.974000 #27522    cpu1 PHY.RD   addr=0x0013 val=0x00000c44
-   2009.974000 #27524    cpu1 PHY.RD   addr=0x0013 val=0x00000c3c
-   2009.974000 #27526    cpu1 PHY.RD   addr=0x0013 val=0x00000c40
-   2009.974000 #27528    cpu1 PHY.RD   addr=0x0013 val=0x00000c44
-   2009.974000 #27530    cpu1 PHY.RD   addr=0x0013 val=0x00000c44
-   2009.974000 #27532    cpu1 RAD.MOD  addr=0x016e val=0x0002 mask=0x0002
-   2009.974000 #27533    cpu1 RAD.RD   addr=0x016e val=0x00000003
-   2009.974000 #27535    cpu1 RAD.WR   addr=0x016e val=0x0003
-   2009.974000 #27536    cpu1 RAD.MOD  addr=0x000e val=0x0002 mask=0x0002
-   2009.974000 #27537    cpu1 RAD.RD   addr=0x000e val=0x00000001
-   2009.974000 #27539    cpu1 RAD.WR   addr=0x000e val=0x0003
-   2009.974000 #27540    cpu1 RAD.MOD  addr=0x016e val=0x0001 mask=0x0001
-   2009.974000 #27541    cpu1 RAD.RD   addr=0x016e val=0x00000003
-   2009.974000 #27543    cpu1 RAD.WR   addr=0x016e val=0x0003
-   2009.974000 #27544    cpu1 RAD.MOD  addr=0x000e val=0x0004 mask=0x0004
-   2009.974000 #27545    cpu1 RAD.RD   addr=0x000e val=0x00000003
-   2009.975000 #27547    cpu1 RAD.WR   addr=0x000e val=0x0007
-   2009.975000 #27548    cpu1 PHY.RD   addr=0x0013 val=0x00000fd0
-   2009.975000 #27550    cpu1 PHY.RD   addr=0x0013 val=0x00000fd0
-   2009.975000 #27552    cpu1 PHY.RD   addr=0x0013 val=0x00000fc8
-   2009.975000 #27554    cpu1 PHY.RD   addr=0x0013 val=0x00000fc8
-   2009.975000 #27556    cpu1 PHY.RD   addr=0x0013 val=0x00000fc8
-   2009.975000 #27558    cpu1 PHY.RD   addr=0x0013 val=0x00000fd0
-   2009.975000 #27560    cpu1 PHY.RD   addr=0x0013 val=0x00000fd0
-   2009.975000 #27562    cpu1 PHY.RD   addr=0x0013 val=0x00000fd0
-   2009.975000 #27564    cpu1 RAD.MOD  addr=0x016e val=0x0002 mask=0x0002
-   2009.975000 #27565    cpu1 RAD.RD   addr=0x016e val=0x00000003
-   2009.975000 #27567    cpu1 RAD.WR   addr=0x016e val=0x0003
-   2009.975000 #27568    cpu1 RAD.MOD  addr=0x000e val=0x0000 mask=0x0002
-   2009.975000 #27569    cpu1 RAD.RD   addr=0x000e val=0x00000007
-   2009.975000 #27571    cpu1 RAD.WR   addr=0x000e val=0x0005
-   2009.975000 #27572    cpu1 RAD.MOD  addr=0x016e val=0x0001 mask=0x0001
-   2009.975000 #27573    cpu1 RAD.RD   addr=0x016e val=0x00000003
-   2009.975000 #27575    cpu1 RAD.WR   addr=0x016e val=0x0003
-   2009.975000 #27576    cpu1 RAD.MOD  addr=0x000e val=0x0004 mask=0x0004
-   2009.975000 #27577    cpu1 RAD.RD   addr=0x000e val=0x00000005
-   2009.975000 #27579    cpu1 RAD.WR   addr=0x000e val=0x0005
-   2009.975000 #27580    cpu1 PHY.RD   addr=0x0013 val=0x00000c30
-   2009.975000 #27582    cpu1 PHY.RD   addr=0x0013 val=0x00000c38
-   2009.975000 #27584    cpu1 PHY.RD   addr=0x0013 val=0x00000c38
-   2009.975000 #27586    cpu1 PHY.RD   addr=0x0013 val=0x00000c30
-   2009.975000 #27588    cpu1 PHY.RD   addr=0x0013 val=0x00000c30
-   2009.975000 #27590    cpu1 PHY.RD   addr=0x0013 val=0x00000c2c
-   2009.975000 #27592    cpu1 PHY.RD   addr=0x0013 val=0x00000c30
-   2009.975000 #27594    cpu1 PHY.RD   addr=0x0013 val=0x00000c28
-   2009.975000 #27596    cpu1 PHY.RD   addr=0x0393 val=0x00008000
-   2009.975000 #27598    cpu1 PHY.WR   addr=0x0394 val=0x0111
-   2009.975000 #27599    cpu1 PHY.WR   addr=0x0393 val=0x8000
-   2009.975000 #27600    cpu1 RAD.MOD  addr=0x036e val=0x0002 mask=0x0002
-   2009.975000 #27601    cpu1 RAD.RD   addr=0x036e val=0x00000000
-   2009.975000 #27603    cpu1 RAD.WR   addr=0x036e val=0x0002
-   2009.975000 #27604    cpu1 RAD.MOD  addr=0x020e val=0x0002 mask=0x0002
-   2009.975000 #27605    cpu1 RAD.RD   addr=0x020e val=0x00000001
-   2009.975000 #27607    cpu1 RAD.WR   addr=0x020e val=0x0003
-   2009.975000 #27608    cpu1 RAD.MOD  addr=0x036e val=0x0001 mask=0x0001
-   2009.975000 #27609    cpu1 RAD.RD   addr=0x036e val=0x00000002
-   2009.975000 #27611    cpu1 RAD.WR   addr=0x036e val=0x0003
-   2009.975000 #27612    cpu1 RAD.MOD  addr=0x020e val=0x0000 mask=0x0004
-   2009.975000 #27613    cpu1 RAD.RD   addr=0x020e val=0x00000003
-   2009.975000 #27615    cpu1 RAD.WR   addr=0x020e val=0x0003
-   2009.975000 #27616    cpu1 PHY.RD   addr=0x0013 val=0x00000fb4
-   2009.975000 #27618    cpu1 PHY.RD   addr=0x0013 val=0x00000fb0
-   2009.975000 #27620    cpu1 PHY.RD   addr=0x0013 val=0x00000fac
-   2009.975000 #27622    cpu1 PHY.RD   addr=0x0013 val=0x00000fb0
-   2009.975000 #27624    cpu1 PHY.RD   addr=0x0013 val=0x00000fb4
-   2009.975000 #27626    cpu1 PHY.RD   addr=0x0013 val=0x00000fac
-   2009.975000 #27628    cpu1 PHY.RD   addr=0x0013 val=0x00000fb4
-   2009.975000 #27630    cpu1 PHY.RD   addr=0x0013 val=0x00000fb4
-   2009.975000 #27632    cpu1 RAD.MOD  addr=0x036e val=0x0002 mask=0x0002
-   2009.975000 #27633    cpu1 RAD.RD   addr=0x036e val=0x00000003
-   2009.975000 #27635    cpu1 RAD.WR   addr=0x036e val=0x0003
-   2009.975000 #27636    cpu1 RAD.MOD  addr=0x020e val=0x0000 mask=0x0002
-   2009.975000 #27637    cpu1 RAD.RD   addr=0x020e val=0x00000003
-   2009.975000 #27639    cpu1 RAD.WR   addr=0x020e val=0x0001
-   2009.975000 #27640    cpu1 RAD.MOD  addr=0x036e val=0x0001 mask=0x0001
-   2009.975000 #27641    cpu1 RAD.RD   addr=0x036e val=0x00000003
-   2009.975000 #27643    cpu1 RAD.WR   addr=0x036e val=0x0003
-   2009.975000 #27644    cpu1 RAD.MOD  addr=0x020e val=0x0000 mask=0x0004
-   2009.975000 #27645    cpu1 RAD.RD   addr=0x020e val=0x00000001
-   2009.975000 #27647    cpu1 RAD.WR   addr=0x020e val=0x0001
-   2009.975000 #27648    cpu1 PHY.RD   addr=0x0013 val=0x00000c14
-   2009.975000 #27650    cpu1 PHY.RD   addr=0x0013 val=0x00000c18
-   2009.975000 #27652    cpu1 PHY.RD   addr=0x0013 val=0x00000c14
-   2009.975000 #27654    cpu1 PHY.RD   addr=0x0013 val=0x00000c1c
-   2009.975000 #27656    cpu1 PHY.RD   addr=0x0013 val=0x00000c14
-   2009.975000 #27658    cpu1 PHY.RD   addr=0x0013 val=0x00000c18
-   2009.975000 #27660    cpu1 PHY.RD   addr=0x0013 val=0x00000c18
-   2009.975000 #27662    cpu1 PHY.RD   addr=0x0013 val=0x00000c10
-   2009.975000 #27664    cpu1 RAD.MOD  addr=0x036e val=0x0002 mask=0x0002
-   2009.975000 #27665    cpu1 RAD.RD   addr=0x036e val=0x00000003
-   2009.975000 #27667    cpu1 RAD.WR   addr=0x036e val=0x0003
-   2009.975000 #27668    cpu1 RAD.MOD  addr=0x020e val=0x0002 mask=0x0002
-   2009.975000 #27669    cpu1 RAD.RD   addr=0x020e val=0x00000001
-   2009.975000 #27671    cpu1 RAD.WR   addr=0x020e val=0x0003
-   2009.975000 #27672    cpu1 RAD.MOD  addr=0x036e val=0x0001 mask=0x0001
-   2009.975000 #27673    cpu1 RAD.RD   addr=0x036e val=0x00000003
-   2009.975000 #27675    cpu1 RAD.WR   addr=0x036e val=0x0003
-   2009.975000 #27676    cpu1 RAD.MOD  addr=0x020e val=0x0004 mask=0x0004
-   2009.975000 #27677    cpu1 RAD.RD   addr=0x020e val=0x00000003
-   2009.975000 #27679    cpu1 RAD.WR   addr=0x020e val=0x0007
-   2009.975000 #27680    cpu1 PHY.RD   addr=0x0013 val=0x00000fb4
-   2009.975000 #27682    cpu1 PHY.RD   addr=0x0013 val=0x00000fb0
-   2009.975000 #27684    cpu1 PHY.RD   addr=0x0013 val=0x00000fb0
-   2009.975000 #27686    cpu1 PHY.RD   addr=0x0013 val=0x00000fb0
-   2009.975000 #27688    cpu1 PHY.RD   addr=0x0013 val=0x00000fb0
-   2009.975000 #27690    cpu1 PHY.RD   addr=0x0013 val=0x00000fac
-   2009.975000 #27692    cpu1 PHY.RD   addr=0x0013 val=0x00000fb0
-   2009.975000 #27694    cpu1 PHY.RD   addr=0x0013 val=0x00000fb0
-   2009.975000 #27696    cpu1 RAD.MOD  addr=0x036e val=0x0002 mask=0x0002
-   2009.975000 #27697    cpu1 RAD.RD   addr=0x036e val=0x00000003
-   2009.975000 #27699    cpu1 RAD.WR   addr=0x036e val=0x0003
-   2009.975000 #27700    cpu1 RAD.MOD  addr=0x020e val=0x0000 mask=0x0002
-   2009.975000 #27701    cpu1 RAD.RD   addr=0x020e val=0x00000007
-   2009.975000 #27703    cpu1 RAD.WR   addr=0x020e val=0x0005
-   2009.975000 #27704    cpu1 RAD.MOD  addr=0x036e val=0x0001 mask=0x0001
-   2009.975000 #27705    cpu1 RAD.RD   addr=0x036e val=0x00000003
-   2009.975000 #27707    cpu1 RAD.WR   addr=0x036e val=0x0003
-   2009.975000 #27708    cpu1 RAD.MOD  addr=0x020e val=0x0004 mask=0x0004
-   2009.975000 #27709    cpu1 RAD.RD   addr=0x020e val=0x00000005
-   2009.975000 #27711    cpu1 RAD.WR   addr=0x020e val=0x0005
-   2009.975000 #27712    cpu1 PHY.RD   addr=0x0013 val=0x00000bf0
-   2009.975000 #27714    cpu1 PHY.RD   addr=0x0013 val=0x00000bf0
-   2009.975000 #27716    cpu1 PHY.RD   addr=0x0013 val=0x00000bfc
-   2009.975000 #27718    cpu1 PHY.RD   addr=0x0013 val=0x00000c00
-   2009.975000 #27720    cpu1 PHY.RD   addr=0x0013 val=0x00000c00
-   2009.975000 #27722    cpu1 PHY.RD   addr=0x0013 val=0x00000c00
-   2009.975000 #27724    cpu1 PHY.RD   addr=0x0013 val=0x00000bfc
-   2009.975000 #27726    cpu1 PHY.RD   addr=0x0013 val=0x00000bfc
-   2009.975000 #27728    cpu1 PHY.WR   addr=0x019e val=0x03d0
-   2009.975000 #27729    cpu1 PHY.WR   addr=0x073e val=0x0000
-   2009.975000 #27730    cpu1 PHY.WR   addr=0x0727 val=0x0004
-   2009.975000 #27731    cpu1 PHY.WR   addr=0x073c val=0x0000
-   2009.975000 #27732    cpu1 PHY.WR   addr=0x0721 val=0x5000
-   2009.975000 #27733    cpu1 PHY.WR   addr=0x0729 val=0x1000
-   2009.975000 #27734    cpu1 PHY.WR   addr=0x0720 val=0x0180
-   2009.975000 #27735    cpu1 PHY.WR   addr=0x0728 val=0x0880
-   2009.975000 #27736    cpu1 PHY.WR   addr=0x0724 val=0x0000
-   2009.975000 #27737    cpu1 PHY.WR   addr=0x0736 val=0x0000
-   2009.975000 #27738    cpu1 PHY.WR   addr=0x0725 val=0x0600
-   2009.975000 #27739    cpu1 PHY.WR   addr=0x0739 val=0x0000
-   2009.975000 #27740    cpu1 PHY.WR   addr=0x073a val=0x0180
-   2009.975000 #27741    cpu1 PHY.WR   addr=0x0722 val=0x0000
-   2009.975000 #27742    cpu1 PHY.WR   addr=0x0734 val=0x0000
-   2009.975000 #27743    cpu1 PHY.WR   addr=0x093e val=0x0000
-   2009.975000 #27744    cpu1 PHY.WR   addr=0x0927 val=0x0004
-   2009.975000 #27745    cpu1 PHY.WR   addr=0x093c val=0x0000
-   2009.975000 #27746    cpu1 PHY.WR   addr=0x0921 val=0x5000
-   2009.975000 #27747    cpu1 PHY.WR   addr=0x0929 val=0x1000
-   2009.975000 #27748    cpu1 PHY.WR   addr=0x0920 val=0x0180
-   2009.975000 #27749    cpu1 PHY.WR   addr=0x0928 val=0x0880
-   2009.975000 #27750    cpu1 PHY.WR   addr=0x0924 val=0x0000
-   2009.975000 #27751    cpu1 PHY.WR   addr=0x0936 val=0x0000
-   2009.975000 #27752    cpu1 PHY.WR   addr=0x0925 val=0x0600
-   2009.975000 #27753    cpu1 PHY.WR   addr=0x0939 val=0x0000
-   2009.975000 #27754    cpu1 PHY.WR   addr=0x093a val=0x0180
-   2009.975000 #27755    cpu1 PHY.WR   addr=0x0922 val=0x0000
-   2009.975000 #27756    cpu1 PHY.WR   addr=0x0934 val=0x0000
-   2009.975000 #27757    cpu1 RAD.WR   addr=0x016e val=0x0000
-   2009.975000 #27758    cpu1 RAD.WR   addr=0x000e val=0x0001
-   2009.975000 #27759    cpu1 RAD.WR   addr=0x0161 val=0x0100
-   2009.975000 #27760    cpu1 RAD.WR   addr=0x0017 val=0x0011
-   2009.975000 #27761    cpu1 RAD.WR   addr=0x015f val=0x0000
-   2009.975000 #27762    cpu1 RAD.WR   addr=0x0024 val=0x0203
-   2009.975000 #27763    cpu1 RAD.WR   addr=0x0025 val=0x0098
-   2009.975000 #27764    cpu1 RAD.WR   addr=0x036e val=0x0000
-   2009.975000 #27765    cpu1 RAD.WR   addr=0x020e val=0x0001
-   2009.975000 #27766    cpu1 RAD.WR   addr=0x0361 val=0x0100
-   2009.975000 #27767    cpu1 RAD.WR   addr=0x0217 val=0x0011
-   2009.975000 #27768    cpu1 RAD.WR   addr=0x035f val=0x0000
-   2009.975000 #27769    cpu1 RAD.WR   addr=0x0224 val=0x0203
-   2009.975000 #27770    cpu1 RAD.WR   addr=0x0225 val=0x009c
-   2009.976000 #27771    cpu1 PHY.MOD  addr=0x019e val=0x0002 mask=0x0002
-   2009.976000 #27772    cpu1 PHY.WR   addr=0x0394 val=0x000b
-   2009.976000 #27773    cpu1 PHY.WR   addr=0x0393 val=0x0000
-   2009.976000 #27774    cpu1 PHY.MOD  addr=0x040f val=0x0000 mask=0x0200
-   2009.976000 #27775    cpu1 PHY.MOD  addr=0x019e val=0x0000 mask=0x0002
-   2009.976000 #27776    cpu1 MAC.MCTRL val=0x00000001 mask=0x00000001
-   2009.976000 #27777    cpu1 OBJ.RD   addr=0x008c val=0x0000d024
-   2009.976000 #27779    cpu1 OBJ.RD   addr=0x0308 val=0x00000588
-   2009.976000 #27781    cpu1 OBJ.RD   addr=0x030a val=0x00000000
-   2009.976000 #27783    cpu1 OBJ.RD   addr=0x030c val=0x000005b8
-   2009.976000 #27785    cpu1 OBJ.RD   addr=0x030e val=0x00000000
-   2009.976000 #27787    cpu1 OBJ.RD   addr=0x0310 val=0x00000000
-   2009.976000 #27789    cpu1 OBJ.RD   addr=0x0312 val=0x00000000
-   2009.976000 #27791    cpu1 OBJ.RD   addr=0x0314 val=0x00000045
+    616.016000 #33124    cpu0 MAC.MCTRL val=0x00000000 mask=0x00000001
+    616.016000 #33125    cpu0 PHY.RD   addr=0x07af val=0x00000000
+    616.016000 #33127    cpu0 PHY.RD   addr=0x07b3 val=0x00000000
+    616.016000 #33129    cpu0 PHY.RD   addr=0x07ab val=0x000007dd
+    616.016000 #33131    cpu0 PHY.RD   addr=0x07b1 val=0x00005b8e
+    616.016000 #33133    cpu0 PHY.RD   addr=0x09af val=0x00000000
+    616.016000 #33135    cpu0 PHY.RD   addr=0x09b3 val=0x00000000
+    616.016000 #33137    cpu0 PHY.RD   addr=0x09ab val=0x000007e2
+    616.016000 #33139    cpu0 PHY.RD   addr=0x09b1 val=0x00005b8e
+    616.016000 #33141    cpu0 PHY.RD   addr=0x0523 val=0x00000000
+    616.016000 #33143    cpu0 PHY.RD   addr=0x0529 val=0x00000000
+    616.016000 #33145    cpu0 PHY.RD   addr=0x0528 val=0x00000000
+    616.016000 #33147    cpu0 PHY.RD   addr=0x0527 val=0x00000000
+    616.016000 #33149    cpu0 MAC.MCTRL val=0x00000001 mask=0x00000001
+    616.016000 #33150    cpu0 OBJ.WR   addr=0x0308 val=0x0000 sel=0x10000
+    616.016000 #33151    cpu0 OBJ.WR   addr=0x030a val=0x0000 sel=0x10000
+    616.016000 #33152    cpu0 OBJ.WR   addr=0x030c val=0x0000 sel=0x10000
+    616.016000 #33153    cpu0 OBJ.WR   addr=0x030e val=0x0000 sel=0x10000
+    616.016000 #33154    cpu0 OBJ.WR   addr=0x0310 val=0x0000 sel=0x10000
+    616.016000 #33155    cpu0 OBJ.WR   addr=0x0312 val=0x0000 sel=0x10000
+    616.016000 #33156    cpu0 MAC.MCTRL val=0x00000000 mask=0x00000001
+    616.016000 #33157    cpu0 PHY.MOD  addr=0x0520 val=0x0004 mask=0x000c
+    616.016000 #33158    cpu0 MAC.MCTRL val=0x00000001 mask=0x00000001
+    616.016000 #33159    cpu0 OBJ.RD   addr=0x010e val=0x00000000 sel=0x10000
+    616.016000 #33161    cpu0 OBJ.RD   addr=0x0158 val=0x00000000 sel=0x10000
+    616.016000 #33163    cpu0 OBJ.RD   addr=0x010c val=0x00000000 sel=0x10000
+    616.016000 #33165    cpu0 OBJ.RD   addr=0x015e val=0x00000000 sel=0x10000
+    616.016000 #33167    cpu0 OBJ.RD   addr=0x0768 val=0x0000cfd4 sel=0x10000
+    616.016000 #33169    cpu0 OBJ.RD   addr=0x076a val=0x00000000 sel=0x10000
+    616.016000 #33171    cpu0 OBJ.RD   addr=0x076c val=0x00000000 sel=0x10000
+    616.016000 #33173    cpu0 OBJ.RD   addr=0x076e val=0x00000000 sel=0x10000
+    616.016000 #33175    cpu0 OBJ.RD   addr=0x0770 val=0x00000000 sel=0x10000
+    616.016000 #33177    cpu0 OBJ.RD   addr=0x0772 val=0x00000000 sel=0x10000
+    616.016000 #33179    cpu0 OBJ.RD   addr=0x0774 val=0x00000000 sel=0x10000
+    616.016000 #33181    cpu0 OBJ.RD   addr=0x0776 val=0x00000000 sel=0x10000
+    616.016000 #33183    cpu0 OBJ.RD   addr=0x0778 val=0x00000000 sel=0x10000
+    616.016000 #33185    cpu0 OBJ.RD   addr=0x077a val=0x00000000 sel=0x10000
+    616.016000 #33187    cpu0 OBJ.RD   addr=0x077c val=0x00000000 sel=0x10000
+    616.016000 #33189    cpu0 OBJ.RD   addr=0x077e val=0x00000000 sel=0x10000
+    616.016000 #33191    cpu0 OBJ.RD   addr=0x0780 val=0x0000a04e sel=0x10000
+    616.016000 #33193    cpu0 OBJ.RD   addr=0x0782 val=0x00000016 sel=0x10000
+    616.016000 #33195    cpu0 OBJ.RD   addr=0x0784 val=0x00000000 sel=0x10000
+    616.016000 #33197    cpu0 OBJ.RD   addr=0x0786 val=0x00000000 sel=0x10000
+    616.016000 #33199    cpu0 OBJ.RD   addr=0x0788 val=0x00000000 sel=0x10000
+    616.016000 #33201    cpu0 OBJ.RD   addr=0x078a val=0x00000000 sel=0x10000
+    616.016000 #33203    cpu0 OBJ.RD   addr=0x076a val=0x00000000 sel=0x10000
+    616.016000 #33205    cpu0 OBJ.RD   addr=0x0768 val=0x0000cfd4 sel=0x10000
+    616.016000 #33207    cpu0 OBJ.RD   addr=0x076a val=0x00000000 sel=0x10000
+    616.016000 #33209    cpu0 OBJ.RD   addr=0x076e val=0x00000000 sel=0x10000
+    616.016000 #33211    cpu0 OBJ.RD   addr=0x076c val=0x00000000 sel=0x10000
+    616.016000 #33213    cpu0 OBJ.RD   addr=0x076e val=0x00000000 sel=0x10000
+    616.016000 #33215    cpu0 OBJ.RD   addr=0x0772 val=0x00000000 sel=0x10000
+    616.016000 #33217    cpu0 OBJ.RD   addr=0x0770 val=0x00000000 sel=0x10000
+    616.016000 #33219    cpu0 OBJ.RD   addr=0x0772 val=0x00000000 sel=0x10000
+    616.016000 #33221    cpu0 OBJ.RD   addr=0x0776 val=0x00000000 sel=0x10000
+    616.016000 #33223    cpu0 OBJ.RD   addr=0x0774 val=0x00000000 sel=0x10000
+    616.016000 #33225    cpu0 OBJ.RD   addr=0x0776 val=0x00000000 sel=0x10000
+    616.016000 #33227    cpu0 OBJ.RD   addr=0x077a val=0x00000000 sel=0x10000
+    616.016000 #33229    cpu0 OBJ.RD   addr=0x0778 val=0x00000000 sel=0x10000
+    616.016000 #33231    cpu0 OBJ.RD   addr=0x077a val=0x00000000 sel=0x10000
+    616.016000 #33233    cpu0 OBJ.RD   addr=0x077e val=0x00000000 sel=0x10000
+    616.016000 #33235    cpu0 OBJ.RD   addr=0x077c val=0x00000000 sel=0x10000
+    616.016000 #33237    cpu0 OBJ.RD   addr=0x077e val=0x00000000 sel=0x10000
+    616.016000 #33239    cpu0 OBJ.RD   addr=0x076a val=0x00000000 sel=0x10000
+    616.016000 #33241    cpu0 OBJ.RD   addr=0x0768 val=0x0000cfd4 sel=0x10000
+    616.016000 #33243    cpu0 OBJ.RD   addr=0x076a val=0x00000000 sel=0x10000
+    616.016000 #33245    cpu0 OBJ.RD   addr=0x076e val=0x00000000 sel=0x10000
+    616.016000 #33247    cpu0 OBJ.RD   addr=0x076c val=0x00000000 sel=0x10000
+    616.016000 #33249    cpu0 OBJ.RD   addr=0x076e val=0x00000000 sel=0x10000
+    616.016000 #33251    cpu0 OBJ.RD   addr=0x0772 val=0x00000000 sel=0x10000
+    616.016000 #33253    cpu0 OBJ.RD   addr=0x0770 val=0x00000000 sel=0x10000
+    616.016000 #33255    cpu0 OBJ.RD   addr=0x0772 val=0x00000000 sel=0x10000
+    616.016000 #33257    cpu0 OBJ.RD   addr=0x0776 val=0x00000000 sel=0x10000
+    616.017000 #33259    cpu0 OBJ.RD   addr=0x0774 val=0x00000000 sel=0x10000
+    616.017000 #33261    cpu0 OBJ.RD   addr=0x0776 val=0x00000000 sel=0x10000
+    616.017000 #33263    cpu0 OBJ.RD   addr=0x077a val=0x00000000 sel=0x10000
+    616.017000 #33265    cpu0 OBJ.RD   addr=0x0778 val=0x00000000 sel=0x10000
+    616.017000 #33267    cpu0 OBJ.RD   addr=0x077a val=0x00000000 sel=0x10000
+    616.017000 #33269    cpu0 OBJ.RD   addr=0x077e val=0x00000000 sel=0x10000
+    616.017000 #33271    cpu0 OBJ.RD   addr=0x077c val=0x00000000 sel=0x10000
+    616.017000 #33273    cpu0 OBJ.RD   addr=0x077e val=0x00000000 sel=0x10000
+    616.017000 #33275    cpu0 OBJ.RD   addr=0x07e2 val=0x00000000 sel=0x10000
+    616.017000 #33277    cpu0 OBJ.RD   addr=0x07e0 val=0x00000000 sel=0x10000
+    616.017000 #33279    cpu0 OBJ.RD   addr=0x07e2 val=0x00000000 sel=0x10000
+    616.017000 #33281    cpu0 OBJ.RD   addr=0x07e6 val=0x00000000 sel=0x10000
+    616.017000 #33283    cpu0 OBJ.RD   addr=0x07e4 val=0x00000000 sel=0x10000
+    616.017000 #33285    cpu0 OBJ.RD   addr=0x07e6 val=0x00000000 sel=0x10000
+    616.017000 #33287    cpu0 OBJ.RD   addr=0x07de val=0x00000000 sel=0x10000
+    616.017000 #33289    cpu0 OBJ.RD   addr=0x07dc val=0x00000000 sel=0x10000
+    616.017000 #33291    cpu0 OBJ.RD   addr=0x07de val=0x00000000 sel=0x10000
+    616.017000 #33293    cpu0 OBJ.RD   addr=0x07d6 val=0x00000000 sel=0x10000
+    616.017000 #33295    cpu0 OBJ.RD   addr=0x07d8 val=0x00000000 sel=0x10000
+    616.017000 #33297    cpu0 OBJ.RD   addr=0x07da val=0x00000000 sel=0x10000
+    616.017000 #33299    cpu0 OBJ.RD   addr=0x015a val=0x00000000 sel=0x10000
+    616.017000 #33301    cpu0 OBJ.RD   addr=0x014e val=0x00000000 sel=0x10000
+    616.017000 #33303    cpu0 MAC.MCTRL val=0x00000000 mask=0x00000001
+    616.017000 #33304    cpu0 PHY.RD   addr=0x019e val=0x000003d0
+    616.017000 #33306    cpu0 PHY.MOD  addr=0x019e val=0x0000 mask=0x0040
+    616.017000 #33307    cpu0 PHY.MOD  addr=0x019e val=0x0000 mask=0x0080
+    616.017000 #33308    cpu0 PHY.MOD  addr=0x019e val=0x0000 mask=0x0100
+    616.017000 #33309    cpu0 PHY.RD   addr=0x073e val=0x00000000
+    616.017000 #33311    cpu0 PHY.WR   addr=0x073e val=0x0440
+    616.017000 #33312    cpu0 PHY.RD   addr=0x0727 val=0x00000004
+    616.017000 #33314    cpu0 PHY.RD   addr=0x073c val=0x00000000
+    616.017000 #33316    cpu0 PHY.RD   addr=0x0721 val=0x00005000
+    616.017000 #33318    cpu0 PHY.RD   addr=0x0729 val=0x00001000
+    616.017000 #33320    cpu0 PHY.RD   addr=0x0720 val=0x00000180
+    616.017000 #33322    cpu0 PHY.RD   addr=0x0728 val=0x00000880
+    616.017000 #33324    cpu0 PHY.RD   addr=0x0724 val=0x00000000
+    616.017000 #33326    cpu0 PHY.RD   addr=0x0736 val=0x00000000
+    616.017000 #33328    cpu0 PHY.RD   addr=0x0725 val=0x00000600
+    616.017000 #33330    cpu0 PHY.RD   addr=0x0739 val=0x00000000
+    616.017000 #33332    cpu0 PHY.RD   addr=0x073a val=0x00000180
+    616.017000 #33334    cpu0 PHY.RD   addr=0x0722 val=0x00000000
+    616.017000 #33336    cpu0 PHY.RD   addr=0x0734 val=0x00000000
+    616.017000 #33338    cpu0 PHY.MOD  addr=0x0727 val=0x0002 mask=0x0002
+    616.017000 #33339    cpu0 PHY.MOD  addr=0x073c val=0x0002 mask=0x000e
+    616.017000 #33340    cpu0 PHY.MOD  addr=0x0727 val=0x0001 mask=0x0001
+    616.017000 #33341    cpu0 PHY.MOD  addr=0x073c val=0x0001 mask=0x0001
+    616.017000 #33342    cpu0 PHY.MOD  addr=0x0721 val=0x0100 mask=0x0100
+    616.017000 #33343    cpu0 PHY.MOD  addr=0x0729 val=0x0000 mask=0x0100
+    616.017000 #33344    cpu0 PHY.MOD  addr=0x0720 val=0x0020 mask=0x0020
+    616.017000 #33345    cpu0 PHY.MOD  addr=0x0728 val=0x0020 mask=0x0020
+    616.017000 #33346    cpu0 PHY.MOD  addr=0x0720 val=0x0040 mask=0x0040
+    616.017000 #33347    cpu0 PHY.MOD  addr=0x0728 val=0x0000 mask=0x0040
+    616.017000 #33348    cpu0 PHY.MOD  addr=0x0720 val=0x0010 mask=0x0010
+    616.017000 #33349    cpu0 PHY.MOD  addr=0x0728 val=0x0010 mask=0x0010
+    616.017000 #33350    cpu0 PHY.WR   addr=0x0736 val=0x0154
+    616.017000 #33351    cpu0 PHY.WR   addr=0x0724 val=0x03ff
+    616.017000 #33352    cpu0 PHY.MOD  addr=0x073a val=0x0003 mask=0x0007
+    616.017000 #33353    cpu0 PHY.MOD  addr=0x0725 val=0x0020 mask=0x0020
+    616.017000 #33354    cpu0 PHY.MOD  addr=0x0739 val=0x007a mask=0x007e
+    616.017000 #33355    cpu0 PHY.MOD  addr=0x0725 val=0x0002 mask=0x0002
+    616.017000 #33356    cpu0 PHY.MOD  addr=0x073a val=0x0000 mask=0x0008
+    616.017000 #33357    cpu0 PHY.MOD  addr=0x0725 val=0x0040 mask=0x0040
+    616.017000 #33358    cpu0 PHY.MOD  addr=0x073a val=0x0010 mask=0x0010
+    616.017000 #33359    cpu0 PHY.MOD  addr=0x0725 val=0x0080 mask=0x0080
+    616.017000 #33360    cpu0 PHY.MOD  addr=0x073a val=0x0040 mask=0x0060
+    616.017000 #33361    cpu0 PHY.MOD  addr=0x0725 val=0x0100 mask=0x0100
+    616.017000 #33362    cpu0 PHY.MOD  addr=0x0734 val=0x0000 mask=0x0007
+    616.017000 #33363    cpu0 PHY.MOD  addr=0x0722 val=0x0004 mask=0x0004
+    616.017000 #33364    cpu0 PHY.RD   addr=0x093e val=0x00000000
+    616.017000 #33366    cpu0 PHY.WR   addr=0x093e val=0x0440
+    616.017000 #33367    cpu0 PHY.RD   addr=0x0927 val=0x00000004
+    616.017000 #33369    cpu0 PHY.RD   addr=0x093c val=0x00000000
+    616.017000 #33371    cpu0 PHY.RD   addr=0x0921 val=0x00005000
+    616.017000 #33373    cpu0 PHY.RD   addr=0x0929 val=0x00001000
+    616.017000 #33375    cpu0 PHY.RD   addr=0x0920 val=0x00000180
+    616.017000 #33377    cpu0 PHY.RD   addr=0x0928 val=0x00000880
+    616.017000 #33379    cpu0 PHY.RD   addr=0x0924 val=0x00000000
+    616.017000 #33381    cpu0 PHY.RD   addr=0x0936 val=0x00000000
+    616.017000 #33383    cpu0 PHY.RD   addr=0x0925 val=0x00000600
+    616.017000 #33385    cpu0 PHY.RD   addr=0x0939 val=0x00000000
+    616.017000 #33387    cpu0 PHY.RD   addr=0x093a val=0x00000180
+    616.017000 #33389    cpu0 PHY.RD   addr=0x0922 val=0x00000000
+    616.017000 #33391    cpu0 PHY.RD   addr=0x0934 val=0x00000000
+    616.017000 #33393    cpu0 PHY.MOD  addr=0x0927 val=0x0002 mask=0x0002
+    616.017000 #33394    cpu0 PHY.MOD  addr=0x093c val=0x0002 mask=0x000e
+    616.017000 #33395    cpu0 PHY.MOD  addr=0x0927 val=0x0001 mask=0x0001
+    616.017000 #33396    cpu0 PHY.MOD  addr=0x093c val=0x0001 mask=0x0001
+    616.017000 #33397    cpu0 PHY.MOD  addr=0x0921 val=0x0100 mask=0x0100
+    616.017000 #33398    cpu0 PHY.MOD  addr=0x0929 val=0x0000 mask=0x0100
+    616.017000 #33399    cpu0 PHY.MOD  addr=0x0920 val=0x0020 mask=0x0020
+    616.017000 #33400    cpu0 PHY.MOD  addr=0x0928 val=0x0020 mask=0x0020
+    616.017000 #33401    cpu0 PHY.MOD  addr=0x0920 val=0x0040 mask=0x0040
+    616.017000 #33402    cpu0 PHY.MOD  addr=0x0928 val=0x0000 mask=0x0040
+    616.017000 #33403    cpu0 PHY.MOD  addr=0x0920 val=0x0010 mask=0x0010
+    616.017000 #33404    cpu0 PHY.MOD  addr=0x0928 val=0x0010 mask=0x0010
+    616.017000 #33405    cpu0 PHY.WR   addr=0x0936 val=0x0154
+    616.017000 #33406    cpu0 PHY.WR   addr=0x0924 val=0x03ff
+    616.017000 #33407    cpu0 PHY.MOD  addr=0x093a val=0x0003 mask=0x0007
+    616.017000 #33408    cpu0 PHY.MOD  addr=0x0925 val=0x0020 mask=0x0020
+    616.017000 #33409    cpu0 PHY.MOD  addr=0x0939 val=0x007a mask=0x007e
+    616.017000 #33410    cpu0 PHY.MOD  addr=0x0925 val=0x0002 mask=0x0002
+    616.017000 #33411    cpu0 PHY.MOD  addr=0x093a val=0x0000 mask=0x0008
+    616.017000 #33412    cpu0 PHY.MOD  addr=0x0925 val=0x0040 mask=0x0040
+    616.017000 #33413    cpu0 PHY.MOD  addr=0x093a val=0x0010 mask=0x0010
+    616.017000 #33414    cpu0 PHY.MOD  addr=0x0925 val=0x0080 mask=0x0080
+    616.017000 #33415    cpu0 PHY.MOD  addr=0x093a val=0x0040 mask=0x0060
+    616.017000 #33416    cpu0 PHY.MOD  addr=0x0925 val=0x0100 mask=0x0100
+    616.017000 #33417    cpu0 PHY.MOD  addr=0x0934 val=0x0000 mask=0x0007
+    616.017000 #33418    cpu0 PHY.MOD  addr=0x0922 val=0x0004 mask=0x0004
+    616.017000 #33419    cpu0 RAD.RD   addr=0x016e val=0x00000000
+    616.017000 #33421    cpu0 RAD.RD   addr=0x000e val=0x00000001
+    616.017000 #33423    cpu0 RAD.RD   addr=0x0161 val=0x00000100
+    616.017000 #33425    cpu0 RAD.RD   addr=0x0017 val=0x00000011
+    616.017000 #33427    cpu0 RAD.RD   addr=0x015f val=0x00000000
+    616.017000 #33429    cpu0 RAD.RD   addr=0x0024 val=0x00000203
+    616.017000 #33431    cpu0 RAD.RD   addr=0x0025 val=0x00000098
+    616.017000 #33433    cpu0 RAD.MOD  addr=0x0161 val=0x4000 mask=0x4000
+    616.017000 #33434    cpu0 RAD.RD   addr=0x0161 val=0x00000100
+    616.017000 #33436    cpu0 RAD.WR   addr=0x0161 val=0x4100
+    616.017000 #33437    cpu0 RAD.MOD  addr=0x000e val=0x0001 mask=0x0001
+    616.017000 #33438    cpu0 RAD.RD   addr=0x000e val=0x00000001
+    616.017000 #33440    cpu0 RAD.WR   addr=0x000e val=0x0001
+    616.017000 #33441    cpu0 RAD.MOD  addr=0x0161 val=0x1000 mask=0x1000
+    616.017000 #33442    cpu0 RAD.RD   addr=0x0161 val=0x00004100
+    616.018000 #33444    cpu0 RAD.WR   addr=0x0161 val=0x5100
+    616.018000 #33445    cpu0 RAD.MOD  addr=0x0017 val=0x0001 mask=0x0001
+    616.018000 #33446    cpu0 RAD.RD   addr=0x0017 val=0x00000010
+    616.018000 #33448    cpu0 RAD.WR   addr=0x0017 val=0x0011
+    616.018000 #33449    cpu0 RAD.MOD  addr=0x0017 val=0x0000 mask=0x0002
+    616.018000 #33450    cpu0 RAD.RD   addr=0x0017 val=0x00000011
+    616.018000 #33452    cpu0 RAD.WR   addr=0x0017 val=0x0011
+    616.018000 #33453    cpu0 RAD.MOD  addr=0x015f val=0x2000 mask=0x2000
+    616.018000 #33454    cpu0 RAD.RD   addr=0x015f val=0x00000000
+    616.018000 #33456    cpu0 RAD.WR   addr=0x015f val=0x2000
+    616.018000 #33457    cpu0 RAD.MOD  addr=0x0025 val=0x0091 mask=0x03ff
+    616.018000 #33458    cpu0 RAD.RD   addr=0x0025 val=0x00000098
+    616.018000 #33460    cpu0 RAD.WR   addr=0x0025 val=0x0091
+    616.018000 #33461    cpu0 RAD.MOD  addr=0x015f val=0x4000 mask=0x4000
+    616.018000 #33462    cpu0 RAD.RD   addr=0x015f val=0x00002000
+    616.018000 #33464    cpu0 RAD.WR   addr=0x015f val=0x6000
+    616.018000 #33465    cpu0 RAD.MOD  addr=0x0024 val=0x0300 mask=0x0700
+    616.018000 #33466    cpu0 RAD.RD   addr=0x0024 val=0x00000003
+    616.018000 #33468    cpu0 RAD.WR   addr=0x0024 val=0x0303
+    616.018000 #33469    cpu0 RAD.RD   addr=0x036e val=0x00000000
+    616.018000 #33471    cpu0 RAD.RD   addr=0x020e val=0x00000001
+    616.018000 #33473    cpu0 RAD.RD   addr=0x0361 val=0x00000100
+    616.018000 #33475    cpu0 RAD.RD   addr=0x0217 val=0x00000011
+    616.018000 #33477    cpu0 RAD.RD   addr=0x035f val=0x00000000
+    616.018000 #33479    cpu0 RAD.RD   addr=0x0224 val=0x00000003
+    616.018000 #33481    cpu0 RAD.RD   addr=0x0225 val=0x00000000
+    616.018000 #33483    cpu0 RAD.MOD  addr=0x0361 val=0x4000 mask=0x4000
+    616.018000 #33484    cpu0 RAD.RD   addr=0x0361 val=0x00000100
+    616.018000 #33486    cpu0 RAD.WR   addr=0x0361 val=0x4100
+    616.018000 #33487    cpu0 RAD.MOD  addr=0x020e val=0x0001 mask=0x0001
+    616.018000 #33488    cpu0 RAD.RD   addr=0x020e val=0x00000001
+    616.018000 #33490    cpu0 RAD.WR   addr=0x020e val=0x0001
+    616.018000 #33491    cpu0 RAD.MOD  addr=0x0361 val=0x1000 mask=0x1000
+    616.018000 #33492    cpu0 RAD.RD   addr=0x0361 val=0x00004100
+    616.018000 #33494    cpu0 RAD.WR   addr=0x0361 val=0x5100
+    616.018000 #33495    cpu0 RAD.MOD  addr=0x0217 val=0x0001 mask=0x0001
+    616.018000 #33496    cpu0 RAD.RD   addr=0x0217 val=0x00000010
+    616.018000 #33498    cpu0 RAD.WR   addr=0x0217 val=0x0011
+    616.018000 #33499    cpu0 RAD.MOD  addr=0x0217 val=0x0000 mask=0x0002
+    616.018000 #33500    cpu0 RAD.RD   addr=0x0217 val=0x00000011
+    616.018000 #33502    cpu0 RAD.WR   addr=0x0217 val=0x0011
+    616.018000 #33503    cpu0 RAD.MOD  addr=0x035f val=0x2000 mask=0x2000
+    616.018000 #33504    cpu0 RAD.RD   addr=0x035f val=0x00000000
+    616.018000 #33506    cpu0 RAD.WR   addr=0x035f val=0x2000
+    616.018000 #33507    cpu0 RAD.MOD  addr=0x0225 val=0x0091 mask=0x03ff
+    616.018000 #33508    cpu0 RAD.RD   addr=0x0225 val=0x00000000
+    616.018000 #33510    cpu0 RAD.WR   addr=0x0225 val=0x0091
+    616.018000 #33511    cpu0 RAD.MOD  addr=0x035f val=0x4000 mask=0x4000
+    616.018000 #33512    cpu0 RAD.RD   addr=0x035f val=0x00002000
+    616.018000 #33514    cpu0 RAD.WR   addr=0x035f val=0x6000
+    616.018000 #33515    cpu0 RAD.MOD  addr=0x0224 val=0x0300 mask=0x0700
+    616.018000 #33516    cpu0 RAD.RD   addr=0x0224 val=0x00000003
+    616.018000 #33518    cpu0 RAD.WR   addr=0x0224 val=0x0303
+    616.018000 #33519    cpu0 PHY.RD   addr=0x019e val=0x00000210
+    616.018000 #33521    cpu0 PHY.RD   addr=0x040f val=0x000009ff
+    616.018000 #33523    cpu0 PHY.MOD  addr=0x040f val=0x0000 mask=0x0200
+    616.018000 #33524    cpu0 PHY.RD   addr=0x0394 val=0x0000000b
+    616.018000 #33526    cpu0 PHY.RD   addr=0x0393 val=0x00000000
+    616.018000 #33528    cpu0 PHY.RD   addr=0x0739 val=0x0000007a
+    616.018000 #33530    cpu0 PHY.WR   addr=0x0739 val=0x00fa
+    616.018000 #33531    cpu0 PHY.RD   addr=0x073a val=0x000001d3
+    616.018000 #33533    cpu0 PHY.WR   addr=0x073a val=0x01d3
+    616.018000 #33534    cpu0 PHY.RD   addr=0x0725 val=0x000007e2
+    616.018000 #33536    cpu0 PHY.WR   addr=0x0725 val=0x07e6
+    616.018000 #33537    cpu0 PHY.RD   addr=0x0939 val=0x0000007a
+    616.018000 #33539    cpu0 PHY.WR   addr=0x0939 val=0x00fa
+    616.018000 #33540    cpu0 PHY.RD   addr=0x093a val=0x000001d3
+    616.018000 #33542    cpu0 PHY.WR   addr=0x093a val=0x01d3
+    616.018000 #33543    cpu0 PHY.RD   addr=0x0925 val=0x000007e2
+    616.018000 #33545    cpu0 PHY.WR   addr=0x0925 val=0x07e6
+    616.018000 #33546    cpu0 PHY.WR   addr=0x0925 val=0x07e2
+    616.018000 #33547    cpu0 PHY.WR   addr=0x093a val=0x01d3
+    616.018000 #33548    cpu0 PHY.WR   addr=0x0939 val=0x007a
+    616.018000 #33549    cpu0 PHY.WR   addr=0x0725 val=0x07e2
+    616.018000 #33550    cpu0 PHY.WR   addr=0x073a val=0x01d3
+    616.018000 #33551    cpu0 PHY.WR   addr=0x0739 val=0x007a
+    616.018000 #33552    cpu0 PHY.RD   addr=0x0393 val=0x00000000
+    616.018000 #33554    cpu0 PHY.WR   addr=0x0394 val=0x0110
+    616.018000 #33555    cpu0 PHY.WR   addr=0x0393 val=0x8000
+    616.018000 #33556    cpu0 RAD.MOD  addr=0x016e val=0x0002 mask=0x0002
+    616.018000 #33557    cpu0 RAD.RD   addr=0x016e val=0x00000000
+    616.018000 #33559    cpu0 RAD.WR   addr=0x016e val=0x0002
+    616.018000 #33560    cpu0 RAD.MOD  addr=0x000e val=0x0002 mask=0x0002
+    616.018000 #33561    cpu0 RAD.RD   addr=0x000e val=0x00000001
+    616.018000 #33563    cpu0 RAD.WR   addr=0x000e val=0x0003
+    616.018000 #33564    cpu0 RAD.MOD  addr=0x016e val=0x0001 mask=0x0001
+    616.018000 #33565    cpu0 RAD.RD   addr=0x016e val=0x00000002
+    616.018000 #33567    cpu0 RAD.WR   addr=0x016e val=0x0003
+    616.018000 #33568    cpu0 RAD.MOD  addr=0x000e val=0x0000 mask=0x0004
+    616.018000 #33569    cpu0 RAD.RD   addr=0x000e val=0x00000003
+    616.018000 #33571    cpu0 RAD.WR   addr=0x000e val=0x0003
+    616.018000 #33572    cpu0 PHY.RD   addr=0x0013 val=0x00000064
+    616.018000 #33574    cpu0 PHY.RD   addr=0x0013 val=0x00000064
+    616.018000 #33576    cpu0 PHY.RD   addr=0x0013 val=0x00000064
+    616.018000 #33578    cpu0 PHY.RD   addr=0x0013 val=0x0000005c
+    616.018000 #33580    cpu0 PHY.RD   addr=0x0013 val=0x00000060
+    616.018000 #33582    cpu0 PHY.RD   addr=0x0013 val=0x00000064
+    616.018000 #33584    cpu0 PHY.RD   addr=0x0013 val=0x00000060
+    616.018000 #33586    cpu0 PHY.RD   addr=0x0013 val=0x00000064
+    616.018000 #33588    cpu0 RAD.MOD  addr=0x016e val=0x0002 mask=0x0002
+    616.018000 #33589    cpu0 RAD.RD   addr=0x016e val=0x00000003
+    616.018000 #33591    cpu0 RAD.WR   addr=0x016e val=0x0003
+    616.018000 #33592    cpu0 RAD.MOD  addr=0x000e val=0x0000 mask=0x0002
+    616.018000 #33593    cpu0 RAD.RD   addr=0x000e val=0x00000003
+    616.018000 #33595    cpu0 RAD.WR   addr=0x000e val=0x0001
+    616.018000 #33596    cpu0 RAD.MOD  addr=0x016e val=0x0001 mask=0x0001
+    616.018000 #33597    cpu0 RAD.RD   addr=0x016e val=0x00000003
+    616.018000 #33599    cpu0 RAD.WR   addr=0x016e val=0x0003
+    616.018000 #33600    cpu0 RAD.MOD  addr=0x000e val=0x0000 mask=0x0004
+    616.018000 #33601    cpu0 RAD.RD   addr=0x000e val=0x00000001
+    616.018000 #33603    cpu0 RAD.WR   addr=0x000e val=0x0001
+    616.018000 #33604    cpu0 PHY.RD   addr=0x0013 val=0x00000c38
+    616.018000 #33606    cpu0 PHY.RD   addr=0x0013 val=0x00000c40
+    616.018000 #33608    cpu0 PHY.RD   addr=0x0013 val=0x00000c40
+    616.018000 #33610    cpu0 PHY.RD   addr=0x0013 val=0x00000c44
+    616.018000 #33612    cpu0 PHY.RD   addr=0x0013 val=0x00000c3c
+    616.018000 #33614    cpu0 PHY.RD   addr=0x0013 val=0x00000c3c
+    616.018000 #33616    cpu0 PHY.RD   addr=0x0013 val=0x00000c40
+    616.018000 #33618    cpu0 PHY.RD   addr=0x0013 val=0x00000c3c
+    616.018000 #33620    cpu0 RAD.MOD  addr=0x016e val=0x0002 mask=0x0002
+    616.018000 #33621    cpu0 RAD.RD   addr=0x016e val=0x00000003
+    616.018000 #33623    cpu0 RAD.WR   addr=0x016e val=0x0003
+    616.018000 #33624    cpu0 RAD.MOD  addr=0x000e val=0x0002 mask=0x0002
+    616.018000 #33625    cpu0 RAD.RD   addr=0x000e val=0x00000001
+    616.018000 #33627    cpu0 RAD.WR   addr=0x000e val=0x0003
+    616.018000 #33628    cpu0 RAD.MOD  addr=0x016e val=0x0001 mask=0x0001
+    616.018000 #33629    cpu0 RAD.RD   addr=0x016e val=0x00000003
+    616.018000 #33631    cpu0 RAD.WR   addr=0x016e val=0x0003
+    616.018000 #33632    cpu0 RAD.MOD  addr=0x000e val=0x0004 mask=0x0004
+    616.018000 #33633    cpu0 RAD.RD   addr=0x000e val=0x00000003
+    616.018000 #33635    cpu0 RAD.WR   addr=0x000e val=0x0007
+    616.018000 #33636    cpu0 PHY.RD   addr=0x0013 val=0x00000064
+    616.018000 #33638    cpu0 PHY.RD   addr=0x0013 val=0x00000060
+    616.018000 #33640    cpu0 PHY.RD   addr=0x0013 val=0x00000060
+    616.018000 #33642    cpu0 PHY.RD   addr=0x0013 val=0x00000060
+    616.018000 #33644    cpu0 PHY.RD   addr=0x0013 val=0x0000005c
+    616.018000 #33646    cpu0 PHY.RD   addr=0x0013 val=0x00000060
+    616.018000 #33648    cpu0 PHY.RD   addr=0x0013 val=0x0000005c
+    616.018000 #33650    cpu0 PHY.RD   addr=0x0013 val=0x00000060
+    616.018000 #33652    cpu0 RAD.MOD  addr=0x016e val=0x0002 mask=0x0002
+    616.018000 #33653    cpu0 RAD.RD   addr=0x016e val=0x00000003
+    616.018000 #33655    cpu0 RAD.WR   addr=0x016e val=0x0003
+    616.018000 #33656    cpu0 RAD.MOD  addr=0x000e val=0x0000 mask=0x0002
+    616.018000 #33657    cpu0 RAD.RD   addr=0x000e val=0x00000007
+    616.018000 #33659    cpu0 RAD.WR   addr=0x000e val=0x0005
+    616.018000 #33660    cpu0 RAD.MOD  addr=0x016e val=0x0001 mask=0x0001
+    616.018000 #33661    cpu0 RAD.RD   addr=0x016e val=0x00000003
+    616.018000 #33663    cpu0 RAD.WR   addr=0x016e val=0x0003
+    616.018000 #33664    cpu0 RAD.MOD  addr=0x000e val=0x0004 mask=0x0004
+    616.018000 #33665    cpu0 RAD.RD   addr=0x000e val=0x00000005
+    616.018000 #33667    cpu0 RAD.WR   addr=0x000e val=0x0005
+    616.019000 #33668    cpu0 PHY.RD   addr=0x0013 val=0x00000c2c
+    616.019000 #33670    cpu0 PHY.RD   addr=0x0013 val=0x00000c30
+    616.019000 #33672    cpu0 PHY.RD   addr=0x0013 val=0x00000c30
+    616.019000 #33674    cpu0 PHY.RD   addr=0x0013 val=0x00000c30
+    616.019000 #33676    cpu0 PHY.RD   addr=0x0013 val=0x00000c38
+    616.019000 #33678    cpu0 PHY.RD   addr=0x0013 val=0x00000c38
+    616.019000 #33680    cpu0 PHY.RD   addr=0x0013 val=0x00000c2c
+    616.019000 #33682    cpu0 PHY.RD   addr=0x0013 val=0x00000c3c
+    616.019000 #33684    cpu0 PHY.RD   addr=0x0393 val=0x00008000
+    616.019000 #33686    cpu0 PHY.WR   addr=0x0394 val=0x0111
+    616.019000 #33687    cpu0 PHY.WR   addr=0x0393 val=0x8000
+    616.019000 #33688    cpu0 RAD.MOD  addr=0x036e val=0x0002 mask=0x0002
+    616.019000 #33689    cpu0 RAD.RD   addr=0x036e val=0x00000000
+    616.019000 #33691    cpu0 RAD.WR   addr=0x036e val=0x0002
+    616.019000 #33692    cpu0 RAD.MOD  addr=0x020e val=0x0002 mask=0x0002
+    616.019000 #33693    cpu0 RAD.RD   addr=0x020e val=0x00000001
+    616.019000 #33695    cpu0 RAD.WR   addr=0x020e val=0x0003
+    616.019000 #33696    cpu0 RAD.MOD  addr=0x036e val=0x0001 mask=0x0001
+    616.019000 #33697    cpu0 RAD.RD   addr=0x036e val=0x00000002
+    616.019000 #33699    cpu0 RAD.WR   addr=0x036e val=0x0003
+    616.019000 #33700    cpu0 RAD.MOD  addr=0x020e val=0x0000 mask=0x0004
+    616.019000 #33701    cpu0 RAD.RD   addr=0x020e val=0x00000003
+    616.019000 #33703    cpu0 RAD.WR   addr=0x020e val=0x0003
+    616.019000 #33704    cpu0 PHY.RD   addr=0x0013 val=0x00000040
+    616.019000 #33706    cpu0 PHY.RD   addr=0x0013 val=0x00000048
+    616.019000 #33708    cpu0 PHY.RD   addr=0x0013 val=0x00000048
+    616.019000 #33710    cpu0 PHY.RD   addr=0x0013 val=0x00000048
+    616.019000 #33712    cpu0 PHY.RD   addr=0x0013 val=0x00000040
+    616.019000 #33714    cpu0 PHY.RD   addr=0x0013 val=0x00000048
+    616.019000 #33716    cpu0 PHY.RD   addr=0x0013 val=0x00000048
+    616.019000 #33718    cpu0 PHY.RD   addr=0x0013 val=0x00000048
+    616.019000 #33720    cpu0 RAD.MOD  addr=0x036e val=0x0002 mask=0x0002
+    616.019000 #33721    cpu0 RAD.RD   addr=0x036e val=0x00000003
+    616.019000 #33723    cpu0 RAD.WR   addr=0x036e val=0x0003
+    616.019000 #33724    cpu0 RAD.MOD  addr=0x020e val=0x0000 mask=0x0002
+    616.019000 #33725    cpu0 RAD.RD   addr=0x020e val=0x00000003
+    616.019000 #33727    cpu0 RAD.WR   addr=0x020e val=0x0001
+    616.019000 #33728    cpu0 RAD.MOD  addr=0x036e val=0x0001 mask=0x0001
+    616.019000 #33729    cpu0 RAD.RD   addr=0x036e val=0x00000003
+    616.019000 #33731    cpu0 RAD.WR   addr=0x036e val=0x0003
+    616.019000 #33732    cpu0 RAD.MOD  addr=0x020e val=0x0000 mask=0x0004
+    616.019000 #33733    cpu0 RAD.RD   addr=0x020e val=0x00000001
+    616.019000 #33735    cpu0 RAD.WR   addr=0x020e val=0x0001
+    616.019000 #33736    cpu0 PHY.RD   addr=0x0013 val=0x00000c18
+    616.019000 #33738    cpu0 PHY.RD   addr=0x0013 val=0x00000c18
+    616.019000 #33740    cpu0 PHY.RD   addr=0x0013 val=0x00000c18
+    616.019000 #33742    cpu0 PHY.RD   addr=0x0013 val=0x00000c14
+    616.019000 #33744    cpu0 PHY.RD   addr=0x0013 val=0x00000c18
+    616.019000 #33746    cpu0 PHY.RD   addr=0x0013 val=0x00000c14
+    616.019000 #33748    cpu0 PHY.RD   addr=0x0013 val=0x00000c14
+    616.019000 #33750    cpu0 PHY.RD   addr=0x0013 val=0x00000c14
+    616.019000 #33752    cpu0 RAD.MOD  addr=0x036e val=0x0002 mask=0x0002
+    616.019000 #33753    cpu0 RAD.RD   addr=0x036e val=0x00000003
+    616.019000 #33755    cpu0 RAD.WR   addr=0x036e val=0x0003
+    616.019000 #33756    cpu0 RAD.MOD  addr=0x020e val=0x0002 mask=0x0002
+    616.019000 #33757    cpu0 RAD.RD   addr=0x020e val=0x00000001
+    616.019000 #33759    cpu0 RAD.WR   addr=0x020e val=0x0003
+    616.019000 #33760    cpu0 RAD.MOD  addr=0x036e val=0x0001 mask=0x0001
+    616.019000 #33761    cpu0 RAD.RD   addr=0x036e val=0x00000003
+    616.019000 #33763    cpu0 RAD.WR   addr=0x036e val=0x0003
+    616.019000 #33764    cpu0 RAD.MOD  addr=0x020e val=0x0004 mask=0x0004
+    616.019000 #33765    cpu0 RAD.RD   addr=0x020e val=0x00000003
+    616.019000 #33767    cpu0 RAD.WR   addr=0x020e val=0x0007
+    616.019000 #33768    cpu0 PHY.RD   addr=0x0013 val=0x00000048
+    616.019000 #33770    cpu0 PHY.RD   addr=0x0013 val=0x00000040
+    616.019000 #33772    cpu0 PHY.RD   addr=0x0013 val=0x00000048
+    616.019000 #33774    cpu0 PHY.RD   addr=0x0013 val=0x00000040
+    616.019000 #33776    cpu0 PHY.RD   addr=0x0013 val=0x00000048
+    616.019000 #33778    cpu0 PHY.RD   addr=0x0013 val=0x00000040
+    616.019000 #33780    cpu0 PHY.RD   addr=0x0013 val=0x00000040
+    616.019000 #33782    cpu0 PHY.RD   addr=0x0013 val=0x00000048
+    616.019000 #33784    cpu0 RAD.MOD  addr=0x036e val=0x0002 mask=0x0002
+    616.019000 #33785    cpu0 RAD.RD   addr=0x036e val=0x00000003
+    616.019000 #33787    cpu0 RAD.WR   addr=0x036e val=0x0003
+    616.019000 #33788    cpu0 RAD.MOD  addr=0x020e val=0x0000 mask=0x0002
+    616.019000 #33789    cpu0 RAD.RD   addr=0x020e val=0x00000007
+    616.019000 #33791    cpu0 RAD.WR   addr=0x020e val=0x0005
+    616.019000 #33792    cpu0 RAD.MOD  addr=0x036e val=0x0001 mask=0x0001
+    616.019000 #33793    cpu0 RAD.RD   addr=0x036e val=0x00000003
+    616.019000 #33795    cpu0 RAD.WR   addr=0x036e val=0x0003
+    616.019000 #33796    cpu0 RAD.MOD  addr=0x020e val=0x0004 mask=0x0004
+    616.019000 #33797    cpu0 RAD.RD   addr=0x020e val=0x00000005
+    616.019000 #33799    cpu0 RAD.WR   addr=0x020e val=0x0005
+    616.019000 #33800    cpu0 PHY.RD   addr=0x0013 val=0x00000bf4
+    616.019000 #33802    cpu0 PHY.RD   addr=0x0013 val=0x00000bf0
+    616.019000 #33804    cpu0 PHY.RD   addr=0x0013 val=0x00000bf4
+    616.019000 #33806    cpu0 PHY.RD   addr=0x0013 val=0x00000bf4
+    616.019000 #33808    cpu0 PHY.RD   addr=0x0013 val=0x00000bf4
+    616.019000 #33810    cpu0 PHY.RD   addr=0x0013 val=0x00000bf4
+    616.019000 #33812    cpu0 PHY.RD   addr=0x0013 val=0x00000bf4
+    616.019000 #33814    cpu0 PHY.RD   addr=0x0013 val=0x00000bf4
+    616.019000 #33816    cpu0 PHY.WR   addr=0x019e val=0x03d0
+    616.019000 #33817    cpu0 PHY.WR   addr=0x073e val=0x0000
+    616.019000 #33818    cpu0 PHY.WR   addr=0x0727 val=0x0004
+    616.019000 #33819    cpu0 PHY.WR   addr=0x073c val=0x0000
+    616.019000 #33820    cpu0 PHY.WR   addr=0x0721 val=0x5000
+    616.019000 #33821    cpu0 PHY.WR   addr=0x0729 val=0x1000
+    616.019000 #33822    cpu0 PHY.WR   addr=0x0720 val=0x0180
+    616.019000 #33823    cpu0 PHY.WR   addr=0x0728 val=0x0880
+    616.019000 #33824    cpu0 PHY.WR   addr=0x0724 val=0x0000
+    616.019000 #33825    cpu0 PHY.WR   addr=0x0736 val=0x0000
+    616.019000 #33826    cpu0 PHY.WR   addr=0x0725 val=0x0600
+    616.019000 #33827    cpu0 PHY.WR   addr=0x0739 val=0x0000
+    616.019000 #33828    cpu0 PHY.WR   addr=0x073a val=0x0180
+    616.019000 #33829    cpu0 PHY.WR   addr=0x0722 val=0x0000
+    616.019000 #33830    cpu0 PHY.WR   addr=0x0734 val=0x0000
+    616.019000 #33831    cpu0 PHY.WR   addr=0x093e val=0x0000
+    616.019000 #33832    cpu0 PHY.WR   addr=0x0927 val=0x0004
+    616.019000 #33833    cpu0 PHY.WR   addr=0x093c val=0x0000
+    616.019000 #33834    cpu0 PHY.WR   addr=0x0921 val=0x5000
+    616.019000 #33835    cpu0 PHY.WR   addr=0x0929 val=0x1000
+    616.019000 #33836    cpu0 PHY.WR   addr=0x0920 val=0x0180
+    616.019000 #33837    cpu0 PHY.WR   addr=0x0928 val=0x0880
+    616.019000 #33838    cpu0 PHY.WR   addr=0x0924 val=0x0000
+    616.019000 #33839    cpu0 PHY.WR   addr=0x0936 val=0x0000
+    616.019000 #33840    cpu0 PHY.WR   addr=0x0925 val=0x0600
+    616.019000 #33841    cpu0 PHY.WR   addr=0x0939 val=0x0000
+    616.019000 #33842    cpu0 PHY.WR   addr=0x093a val=0x0180
+    616.019000 #33843    cpu0 PHY.WR   addr=0x0922 val=0x0000
+    616.019000 #33844    cpu0 PHY.WR   addr=0x0934 val=0x0000
+    616.019000 #33845    cpu0 RAD.WR   addr=0x016e val=0x0000
+    616.019000 #33846    cpu0 RAD.WR   addr=0x000e val=0x0001
+    616.019000 #33847    cpu0 RAD.WR   addr=0x0161 val=0x0100
+    616.019000 #33848    cpu0 RAD.WR   addr=0x0017 val=0x0011
+    616.019000 #33849    cpu0 RAD.WR   addr=0x015f val=0x0000
+    616.019000 #33850    cpu0 RAD.WR   addr=0x0024 val=0x0203
+    616.019000 #33851    cpu0 RAD.WR   addr=0x0025 val=0x0098
+    616.019000 #33852    cpu0 RAD.WR   addr=0x036e val=0x0000
+    616.019000 #33853    cpu0 RAD.WR   addr=0x020e val=0x0001
+    616.019000 #33854    cpu0 RAD.WR   addr=0x0361 val=0x0100
+    616.019000 #33855    cpu0 RAD.WR   addr=0x0217 val=0x0011
+    616.019000 #33856    cpu0 RAD.WR   addr=0x035f val=0x0000
+    616.019000 #33857    cpu0 RAD.WR   addr=0x0224 val=0x0003
+    616.019000 #33858    cpu0 RAD.WR   addr=0x0225 val=0x0000
+    616.019000 #33859    cpu0 PHY.MOD  addr=0x019e val=0x0002 mask=0x0002
+    616.019000 #33860    cpu0 PHY.WR   addr=0x0394 val=0x000b
+    616.019000 #33861    cpu0 PHY.WR   addr=0x0393 val=0x0000
+    616.019000 #33862    cpu0 PHY.MOD  addr=0x040f val=0x0000 mask=0x0200
+    616.019000 #33863    cpu0 PHY.MOD  addr=0x019e val=0x0000 mask=0x0002
+    616.019000 #33864    cpu0 MAC.MCTRL val=0x00000001 mask=0x00000001
+    616.021000 #33865    cpu1 OBJ.RD   addr=0x008c val=0x0000d024 sel=0x10000
+    616.021000 #33867    cpu1 OBJ.RD   addr=0x0308 val=0x00000531 sel=0x10000
+    616.021000 #33869    cpu1 OBJ.RD   addr=0x030a val=0x00000000 sel=0x10000
+    616.021000 #33871    cpu1 OBJ.RD   addr=0x030c val=0x0000071a sel=0x10000
+    616.021000 #33873    cpu1 OBJ.RD   addr=0x030e val=0x00000000 sel=0x10000
+    616.021000 #33875    cpu1 OBJ.RD   addr=0x0310 val=0x00000000 sel=0x10000
+    616.021000 #33877    cpu1 OBJ.RD   addr=0x0312 val=0x00000000 sel=0x10000
+    616.021000 #33879    cpu1 OBJ.RD   addr=0x0314 val=0x00000045 sel=0x10000
