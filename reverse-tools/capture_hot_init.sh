@@ -23,6 +23,8 @@
 #   sh capture_plan.sh 20b          seconda metà dei 20 MHz (UNII-2e + UNII-3)
 #   sh capture_plan.sh 40           tutti i 40 MHz
 #   sh capture_plan.sh 80           tutti gli 80 MHz
+#   sh capture_plan.sh 20dfs        i soli canali con guardia radar, 20 MHz
+#   sh capture_plan.sh 20meteo      i soli 5600-5650, che vogliono 600 s
 #   sh capture_plan.sh 20a wl1 10   interfaccia e attesa espliciti
 #   sh capture_plan.sh 20a wl1 10 test-ap   con SSID, per programmare il BSS
 #
@@ -49,16 +51,36 @@ SSID="$4"
 # Il prefisso `5g` e' obbligatorio, e cosi' `-i $IF`: `wl chanspec` senza
 # interfaccia agisce sul core 2.4 GHz band-locked.
 C20A="36 40 44 48 52 56 60 64"
-C20B="100 104 108 112 116 120 124 128 132 136 140"
-C40="36 44 52 60 100 108 116 124 132"
-C80="36 52 100 116"
+C20B="100 104 108 112 116 120 124 128 132 136 140 144 149 153 157 161 165"
+C40="36 44 52 60 100 108 116 124 132 140 149 157"
+C80="36 52 100 116 132 149"
+
+# Le fasi DFS sono i sottoinsiemi di quelle sopra su cui il canale porta la
+# guardia radar, cioe' quelli su cui `up` non arriva al BSS finche' il CAC non
+# e' passato: 60 s, e 600 s sui blocchi che toccano i 5600-5650 MHz del radar
+# meteo (20: 120 124 128; 40: 116 124; 80: 116), che stanno in una fase a
+# parte perche' l'attesa che serve a loro sprecherebbe un'ora sulle altre.
+# Che il check sia pendente lo dice la cattura, non il piano: sui segmenti che
+# lo sono reverse-tools/cac_polls.py trova i turni di poll, e sugli altri no.
+C20DFS="52 56 60 64 100 104 108 112 116 132 136 140"
+C20METEO="120 124 128"
+C40DFS="52 60 100 108 132 140"
+C40METEO="116 124"
+C80DFS="52 100 132"
+C80METEO="116"
 
 case "$FASE" in
     20a) LIST="$C20A"; BW=20 ;;
     20b) LIST="$C20B"; BW=20 ;;
     40)  LIST="$C40";  BW=40 ;;
     80)  LIST="$C80";  BW=80 ;;
-    *)   echo "uso: sh capture_plan.sh {20a|20b|40|80} [interfaccia] [attesa]" >&2
+    20dfs)   LIST="$C20DFS";   BW=20 ;;
+    20meteo) LIST="$C20METEO"; BW=20 ;;
+    40dfs)   LIST="$C40DFS";   BW=40 ;;
+    40meteo) LIST="$C40METEO"; BW=40 ;;
+    80dfs)   LIST="$C80DFS";   BW=80 ;;
+    80meteo) LIST="$C80METEO"; BW=80 ;;
+    *)   echo "uso: sh capture_plan.sh {20a|20b|40|80|20dfs|20meteo|40dfs|40meteo|80dfs|80meteo} [interfaccia] [attesa]" >&2
          exit 1 ;;
 esac
 

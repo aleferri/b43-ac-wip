@@ -121,7 +121,10 @@ else
 	ARCHIVE=hot-sweep.zip
 	: "${FLOW:=up}"
 	FIRST_INIT=0
-	DEFAULT="$HOT/01-up-ch36-bw20.txt $HOT/09-up-ch52-bw20.txt $HOT/19-up-ch104-bw20.txt"
+	# By channel, not by position: the index of a segment is its rank in
+	# the sweep's channel list, so extending that list renumbers everything
+	# after it and a fixed index silently lands on another channel.
+	DEFAULT="$HOT/*-up-ch36-bw20.txt $HOT/*-up-ch52-bw20.txt $HOT/*-up-ch104-bw20.txt"
 fi
 
 # switch_channel executes a single warm cycle, so its oracle starts at the
