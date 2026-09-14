@@ -199,11 +199,6 @@ CORE_SHM = [
     (0x0188, 0x0188, "PRPHYCTL"),
     (0x01c0, 0x023e, "tabelle rate: OFDMDIRECT/BASIC, CCKDIRECT/BASIC"),
     (0x0318, 0x05d3, "TKIPTSCTTAK, 50 voci da 14 byte"),
-    (0x05d6, 0x05d8, "le due celle del blocco 0x05d4-0x05dc di cui non e' "
-                     "derivata la maschera parziale: al primo bring-up sotto "
-                     "i 5250 MHz dipendono da larghezza e numero di catene. "
-                     "Le altre tre le scrive ora il port da coremask, vedi "
-                     "b43_phy_ac_chainmask_block()"),
     (0x05dc, 0x05de, "0x05dc, scritta una volta sola e fuori dalle quattro "
                      "occorrenze del blocco: porta lo stesso coremask ma non "
                      "e' stabilito da dove"),
@@ -216,7 +211,9 @@ CORE_SHM = [
 # 0x00d4 HOSTF5, 0x0018/0x001a BTL0/BTL1,
 # 0x0240-0x02be i quattro blocchi EDCFQ, 0x05f4 PSM,
 # 0x05e0-0x05f2 la coda di KEYIDXBLOCK, che il port azzera nella corsa
-# 0x05e0-0x0666 di set_channel.
+# 0x05e0-0x0666 di set_channel,
+# 0x05d6/0x05d8 le due celle centrali del blocco chainmask, che
+# b43_phy_ac_chainmask_block() scrive ora a tutti e quattro i siti.
 #
 # Vanno tolte, non e' facoltativo: il perimetro scarta op dal solo lato vendor,
 # quindi una cella che il port emette e il perimetro scarta diventa

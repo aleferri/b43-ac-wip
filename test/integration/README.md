@@ -3,8 +3,9 @@
 Stato: **b43 compila, linka, parte, completa attach e bring-up e si chiude
 pulito, con il `src/` di questo repo dentro.** La catena di riconoscimento --
 core, PHY, radio -- e' tutta chiusa, i valori vengono dai dump della board,
-`b43_bcma_probe` ritorna 0, `hw->ops->start()` ritorna 0 dopo 21036 op su
-ch36 BW20, e la remove non lascia niente in piedi neanche sotto
+`b43_bcma_probe` ritorna 0, `hw->ops->start()` ritorna 0 dopo 29415 op su
+ch36 BW20 -- lo `stop()` che segue ne aggiunge 466, la fase `down` -- e la
+remove non lascia niente in piedi neanche sotto
 AddressSanitizer (vedi [Dove si ferma](#dove-si-ferma)).
 
 ## Come si lancia
@@ -76,7 +77,8 @@ senza, la traccia va su stdout **insieme all'output di make**, che va bene per
 guardare e non per confrontare. Le righe `b43: ...` -- cioe' `b43info` e
 `b43err`, quelle che dicono quale gate ha respinto la probe -- vanno su stderr.
 
-Oggi l'esito e' `probe: 0` e `start: 0`, e il file contiene 29828 op: attach,
+Oggi l'esito e' `probe: 0` e `start: 0`, e il file contiene 29881 op -- 29853
+per il confronto, che scarta le `SOLO_PORT`: attach,
 bring-up intero, TX power adjust, calibrazioni e lo stop, LED compresi. Si confrontano con gli strumenti di `../unit`, **con
 il profilo `--bus`**:
 
@@ -96,13 +98,13 @@ e' neutro -- 99.93% contro 99.92% -- quindi quello che misura qui e' b43, non
 la traduzione. Senza `--bus` il confronto si rompe alla prima maskset e il
 numero non dice niente.
 
-Con il profilo, il segmento di riferimento da' **84.17%** (26101/31010): 14
-valori sbagliati, 3334 op del vendor mancanti, 1547 del port di troppo, 52
+Con il profilo, il segmento di riferimento da' **84.21%** (26109/31003): 14
+valori sbagliati, 3319 op del vendor mancanti, 1547 del port di troppo, 48
 regioni. Dodici delle mancanti sono i LED del vendor sul chipcommon, che il
 `PERIMETER` di `compare.py` dichiara del core, e le 13 `REG.WR 0x49c` con cui
 `leds.c` li pilota dal MAC stanno in `SOLO_PORT`: stessa funzione, registro
 diverso, per struttura di b43. Lo switch di canale da solo -- la traccia tagliata sui marcatori
-`B43_FN_MARKERS=1` contro la finestra `5007:13465` -- fa 98.72%, zero valori
+`B43_FN_MARKERS=1` contro la finestra `5007:13465` -- fa 98.78%, zero valori
 sbagliati, come l'harness di `../unit`. La prima divergenza posizionale sta a
 `@50`: dopo il core attach il vendor scrive il blocco di configurazione della
 shared memory (`0x80`, `0x5c`, `0x16`, `0xc0`/`0xc2`, `0x18`, `0x1c`, `0x44`,
@@ -812,7 +814,7 @@ tocca il flusso, `fwrev` decide il ramo dell'ucode.
 
 Per un periodo la suite si fermava a 6981 op su una precondizione del port
 (`b43_phy_ac_channel_setup`, `forbid=0x0306` con `AFE_ON` alzato). Non lo fa
-piu': `start: 0` dopo **21036 op**, e quella precondizione e' storia di
+piu': `start: 0`, e quella precondizione e' storia di
 `src/`. Ma la patch 0006 era fuori sincrono da `src/` -- mancavano
 `ppr_ac.c/.h` e `phy_ac.c` divergeva di 1500 righe -- e la suite misurava un
 albero che non esisteva. `scripts/regen-patches.sh` ora copia tutto `src/`,
@@ -874,8 +876,14 @@ make clean && make AC_ANY_CHANNEL=1 b43-trace
 make AC_ANY_CHANNEL=1 run ORACLE=/tmp/m05 B43_CHANNEL=52 TRACE_OUT=/tmp/t
 ```
 
-Con quello ch52 arriva in fondo come ch36 -- `start: 0`, 20916 op contro
-21036. **Ricompilare senza il flag prima di chiudere**, o il gate di riferimento gira su un binario che difende
+Con quello ch52 arriva in fondo come ch36 -- `start: 0`, 28395 op contro
+29873. Il gate di `b43_phy_ac_may_calibrate_tx()` **non** scatta qui e non
+deve: `ac->cac_pending` non ha un produttore in b43, che non annuncia il
+rilevamento radar, quindi il driver calibra su ch52 come su ch36. La cattura a
+freddo del vendor la' ne ha 16k perche' il suo controllo di disponibilita' era
+in corso; b43 ci arriva a controllo finito. Vedi il commento di
+`may_calibrate_tx()` e `../unit/README.md`.
+**Ricompilare senza il flag prima di chiudere**, o il gate di riferimento gira su un binario che difende
 meno: e' la stessa avvertenza di `../unit/README.md`.
 
 Il guard **non** va aperto per far girare la suite, e il punteggio non e' il
@@ -899,7 +907,6 @@ Una sola configurazione e' a zero su entrambe le colonne, ed e' la sola nella
 lista.
 
 Il bring-up arriva in fondo, quindi la finestra di confronto del Traguardo 3
-e' definibile: 21036 op del port contro 28566 del vendor sul segmento di
-riferimento. La suite non cita ancora una percentuale perche' il perimetro --
-cosa b43 davvero non fa, contro cosa l'harness di `../unit` non poteva
-emettere -- va ancora scritto per questa suite: e' il prossimo passo.
+e' definibile, e il perimetro per questa suite e' scritto: il segmento di
+riferimento da' 84.19% con il profilo `--bus`, e il solo switch di canale
+98.72% con zero valori sbagliati. Vedi [L'oracolo](#loracolo).

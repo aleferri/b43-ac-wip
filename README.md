@@ -74,8 +74,8 @@ dove si documenta come si produce un numero citabile.
 Su `cold01-ch36-bw20`, il segmento di riferimento:
 
 ```
-grezzo: 28545/28582 = 99.87%
-        0 col valore sbagliato, 37 op di wl mancanti, 0 op del port di troppo
+grezzo: 28553/28582 = 99.90%
+        0 col valore sbagliato, 29 op di wl mancanti, 0 op del port di troppo
 ```
 
 Il denominatore e' l'unione dei due flussi, quindi fa 100% solo se il port
@@ -83,43 +83,44 @@ emette esattamente le op del driver stock: ne' meno, ne' di piu', ne' con
 valori diversi. Le tre voci sono tre lavori distinti — una formula da trovare,
 del codice da scrivere, un gate da mettere — e stanno in
 [`docs/retrace-todo.md`](docs/retrace-todo.md). Sul segmento di riferimento la
-prima e la terza voce sono a zero, e le 37 della seconda sono tutte fuori da
-`src/`: 22 sono op del core o di bcma dentro l'attach, 12 sono i LED (vedi la
+prima e la terza voce sono a zero, e le 29 della seconda sono tutte fuori da
+`src/`: 14 sono op del core o di bcma dentro l'attach, 12 sono i LED (vedi la
 tabella sotto), 3 stanno nella coda del rmmod con cui ogni segmento si chiude
 -- il reset del chip via watchdog di `pcie_watchdog_reset()`, chiamata da
 `si_detach()` sui core PCIe Gen2, e il rilascio LED a maschera vuota di wl0.
-La terza voce resta aperta sui canali sopra i 5250 MHz.
 
 Tutti e 26 i segmenti dello sweep a freddo sono misurati sullo stesso albero, e
 si dividono in due famiglie che il punteggio separa da se':
 
 | famiglia | segmenti | grezzo | di troppo |
 |---|---|---|---|
-| centro banda ≤ 5250 MHz | 7 (ch36-48) | 96.71% – 99.87% | 0 – 385 |
-| centro banda > 5250 MHz | 19 (da ch52) | 84.90% – 85.82% | 1808, tranne 1933 su cold15 |
+| centro banda ≤ 5250 MHz | 7 (ch36-48) | 97.88% – 99.90% | 0 su ch36 BW20, 69 – 255 sugli altri sei |
+| centro banda > 5250 MHz | 19 (da ch52) | 98.64% – 99.76% | 0, tranne 4 su cold06 e cold11 e 59 su cold15 |
 
 Sopra i 5250 MHz il driver stock esegue un attach diverso, non un attach
-ridotto: ~16k op contro le ~29k dei canali bassi. La differenza non e' qualita'
-del port su quei canali, ed e' la voce "op di troppo" a pesare — 1808 op su
-diciotto dei diciannove segmenti, quindi una causa sola: sopra la soglia il
-vendor non esegue la calibrazione RX IQ, e il port ne esegue ancora dei pezzi. Il dettaglio per
-segmento e la struttura di quella differenza stanno in
+ridotto: ~16k op contro le ~29k dei canali bassi. Quella differenza e' chiusa:
+il vendor la' non esegue la calibrazione RX IQ, il port nemmeno, e da ultimo
+nemmeno il write-back dei coefficienti in coda a `b43_phy_ac_down()` -- che il
+port emetteva a zero, perche' in un attach a freddo nessuno li aveva salvati.
+
+Delle op di troppo che restano, quelle della famiglia bassa sono in parte il
+debito delle costanti per-canale. Il resto, e tutte quelle di cold15, e' la
+spazzata dei contatori sui giri in cui il timer del vendor era in ritardo: non
+e' il driver a deciderlo, e il latch della stessa finestra e' gia' chiuso --
+vedi "Il latch della finestra sui giri in ritardo" in
 [`docs/retrace-todo.md`](docs/retrace-todo.md).
 
-Nella famiglia bassa solo ch36 BW20 sta a zero op di troppo; gli altri sei
-stanno fra 141 e 385, ed e' il debito delle costanti per-canale, non la stessa
-causa della famiglia alta.
-
-Una parte del denominatore non e' raggiungibile da nessun codice del driver, e
-il conto va tenuto separato: le ricariche del template beacon e della probe
-response sono blocchi da 57 op che il vendor ripete **da 7 a 21 volte** sui 26
-segmenti dello stesso albero, senza correlazione con la durata (33-39 s in
-tutti). Il numero lo decide lo stack sopra, non il driver. Valgono il 72-85%
-delle op mancanti di ogni segmento sotto i 5250 MHz e il 13-15% di quelle
-sopra.
-Il criterio che le separa dal debito vero e' il conteggio fra segmenti: una
-fase come `prb_rsp_rate_po` sta a 3 passate su tutti e 26 i segmenti a freddo e
-tutti e 52 quelli a caldo, e quella e' struttura.
+Una parte del flusso non e' decisa dal driver, e il conto va tenuto separato:
+le ricariche del template beacon e della probe response sono blocchi che il
+vendor ripete un numero di volte che decide lo stack sopra, senza correlazione
+con la durata del segmento (33-39 s in tutti). Non sono pero' debito: il
+conteggio lo legge `reverse-tools/beacon_reloads.py` dalla cattura e `gates.sh`
+lo passa all'harness come `AC_BEACON_RELOADS`, ed e' un orologio come
+`probe_ticks` e il poll di CAC. Sui 26 segmenti il port ne emette esattamente
+quante il vendor, da 7 a 19 caricamenti di template per segmento.
+Il criterio che separa un orologio dal debito vero e' il conteggio fra
+segmenti: una fase come `prb_rsp_rate_po` sta a 3 passate su tutti e 26 i
+segmenti a freddo e tutti e 52 quelli a caldo, e quella e' struttura.
 
 Il secondo gate e' il tick del watchdog periodico contro l'oracolo a regime, e
 sta a **`MATCH`** — confronto posizione-per-posizione, nessuna eccezione. E'

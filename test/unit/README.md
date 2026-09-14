@@ -92,8 +92,11 @@ python3 compare.py \
 ```
 
 `gates.sh` fa tutto da se': ripiega la cattura, ricava la finestra dalla prima
-op PHY dell'attach, ricava la schedule dei tick con `probe_schedule.py`, lancia
-il flow `full` con l'oracolo di lettura e chiama `cmp_skip.py` e `compare.py`.
+op PHY dell'attach, ricava la schedule dei tick con `probe_schedule.py`, quella
+delle ricariche del beacon con `beacon_reloads.py`, quella del poll di CAC con
+`cac_polls.py` e i giri in cui il watchdog del vendor non ha latchato con
+`watchdog_turns.py`, lancia il flow `full` con l'oracolo di lettura e chiama
+`cmp_skip.py` e `compare.py`.
 Non serve rifarne i passi a mano, e farlo a mano sbaglia la finestra.
 
 **Il gate a freddo non copre il caldo, e la differenza non e' di grado.** Lo

@@ -143,6 +143,42 @@ Ordine tipico: decodifica → fold RETVAL → collapse → (reorder) → confron
   **I due numeri non sono confrontabili** e quello citabile e' di `cmp_skip`.
 - **annotate_enables.py** / **dataflow.py** — utility di debug (stato enable
   riga-per-riga; data-flow attraverso le table read).
+- **audit_hooks.py** — il piano hook di `wl-diag` contro un blob, senza
+  flashare: rifa' `pianifica()` offline (prologo, finestra del detour, siti di
+  chiamata, registro di rientro) e dice quali classi di op la cattura
+  conterrebbe. Un hook che non si aggancia sul device non da' errore, quindi
+  questo e' il posto dove accorgersene -- e **zero siti di chiamata** e' il
+  caso che inganna: il simbolo si risolve, il prologo si aggancia, e la classe
+  resta a zero perche' la funzione e' inlineata in tutti i chiamanti.
+  Controlla anche la forma della tabella hook, che il compilatore qui non
+  vede. Un oggetto pre-link basta: il piano esce identico a quello sul .ko
+  estratto dal firmware. Vedi `wl-diag/README.md` e
+  `router-data/CLASS-COVERAGE.md`.
+
+### Gli orologi, letti dalla cattura
+
+L'harness non ha un orologio: quanto dura una fase, quante volte lo stack sopra
+ha ripubblicato il beacon, quanti turni di poll ci stanno, quando il timer del
+vendor e' scattato -- niente di tutto questo segue da qualcosa che il driver
+abbia. Questi quattro li leggono dai timestamp del segmento, e `gates.sh` li
+passa all'harness come variabili d'ambiente. Nessuno dei quattro va lanciato a
+mano per il gate.
+
+- **probe_schedule.py** — la scadenza della fase probe in tick da 1 s, dalla
+  cadenza dei gruppi `PHY.RD 0x07af`, e su quali tick cade il measure block
+  (`AC_PROBE_TICKS`, `AC_WATCHDOG_TICKS`).
+- **beacon_reloads.py** — quante ricariche del template cadono prima della fase
+  e su quali tick le altre (`AC_BEACON_RELOADS`).
+- **cac_polls.py** — i turni del poll di disponibilita' del canale e dove
+  cadono (`AC_CAC_POLLS`).
+- **watchdog_turns.py** — i giri su cui il timer del vendor non ha latchato la
+  finestra statistiche (`AC_WD_NOLATCH`). Misura anche i giri senza la spazzata
+  dei contatori e li riporta con `--check`, ma non li emette: non si e' ancora
+  trovato come collocarli. Vedi `docs/retrace-todo.md`.
+
+Il controllo che dice se uno di questi legge bene e' sempre lo stesso: sui
+segmenti dove il fenomeno non c'e' deve dare la risposta vuota. Su
+`watchdog_turns.py` sono ventuno segmenti su ventisei.
 
 ## Lato device: hook del tracer
 

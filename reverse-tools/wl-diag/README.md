@@ -57,6 +57,52 @@ intatta e funziona su entrambi i kernel. Tre condizioni verificate a runtime:
 indirizzo esatto, salto sullo stesso registro, `addiu` non condiviso.
 `reverse-tools/callsites_pic.py` fa la stessa analisi offline su un blob.
 
+### Verificare il piano prima di flashare
+
+`pianifica()` decide sul device e lo dice nel dmesg del router. Un hook che non
+si aggancia **non da' errore**: la cattura esce senza quella classe, e il buco
+si scopre settimane dopo guardando una traccia. E' successo con
+`phy_reg_write_wide`, che su 6.30 aveva il prologo libero e su 7.14 ha un
+branch alla parola 3.
+
+Le stesse decisioni si prendono da fermi, perche' dipendono dalle prime quattro
+parole della funzione e dalle coppie lui/addiu dei chiamanti, che stanno gia'
+nell'oggetto pre-link:
+
+```sh
+python3 reverse-tools/audit_hooks.py wlD6220.o
+```
+
+Stampa una riga per hook -- `detour`, `short-j`, `siti`, `scartato`, `assente`
+-- con il numero di siti di chiamata, e in fondo le classi che la cattura
+conterrebbe e quelle che resterebbero fuori.
+
+Prima del piano controlla la forma della tabella: che ogni `.campo =` esista in
+`struct hook`, che nessuna voce abbia piu' inizializzatori posizionali dei
+campi che li accettano, e che il codice non legga campi non dichiarati. Sono
+gli errori che qui non li trova nessuno, perche' il tracer si compila con gli
+header del kernel del router: si scoprono a build fallita in fondo a un ciclo
+di flash. E' successo due volte -- un `true` destinato a `retcap` finito in
+`use_bp`, e `.ripiego_di` usato senza essere mai stato dichiarato. Se il
+controllo fallisce lo strumento esce con stato 1 e lo dice prima del piano,
+che in quel caso non vale. Le voci `scartato` e `assente` sono il lavoro da fare **prima** di
+andare sul router.
+
+Due limiti dell'oggetto pre-link, e vanno tenuti presenti leggendo l'uscita.
+Il verdetto su prologo e registro di rientro e' **definitivo**: il linker non
+tocca le parole del prologo, e nessuna regola del pianificatore guarda gli
+immediati con rilocazione. Il conteggio dei siti di chiamata e' invece un
+**minimo**, perche' un simbolo GLOBAL puo' averne altri in oggetti che il
+prelink non contiene; e un simbolo LOCAL che qui si vede sempre, sul device si
+risolve solo con `CONFIG_KALLSYMS_ALL` -- lo strumento lo segnala voce per
+voce.
+
+Cio' che lo strumento **non** dice e' se la funzione agganciata venga poi
+chiamata sul percorso che interessa. Quello lo dice `callsites_pic.py`, che
+elenca i chiamanti per nome: e' cosi' che si e' stabilito che `RCMTA.WR` non
+puo' comparire sul core AC e che `phy_reg_write_array` non ha chiamanti
+AC-PHY. Vedi `router-data/CLASS-COVERAGE.md`.
+
 | funzione | 6.30 | 7.14 |
 |---|---|---|
 | `wlc_bmac_mhf_get` | 2 siti, 2 ok | 3 siti, 3 ok |

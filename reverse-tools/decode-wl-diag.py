@@ -68,6 +68,7 @@ OPS = {
     43: "AMT.WR",    44: "RCMTA.WR",  45: "ADDRM.SET",
     46: "PHY.WARR",  47: "PHY.RDW",   48: "PHY.WRW",
     49: "IHR.WR",    50: "OBJ.SET",
+    51: "PHY.FGC",
     26: "CHANSPEC",
     27: "TPL.PTRW",  28: "TPL.DATW",
     29: "TPL.PTRR",  30: "TPL.DATR",  31: "TPL.RAMW",
@@ -101,7 +102,7 @@ ADDRMATCH = {43, 44, 45}
 PHY_WARR = 46
 # Registro fisso, nessun argomento indirizzo: stamparne uno sarebbe uno zero
 # inventato. PHY.RDW e' anche una read, quindi il valore arriva dal RETVAL.
-NO_ADDR  = {47, 48}
+NO_ADDR  = {47, 48, 51}		# registro fisso o nessun indirizzo: PHY.RDW/WRW, PHY.FGC
 # OBJ.SET: memset su shared memory, offset + valore + lunghezza.
 OBJ_SET  = 50
 MARK     = 39
