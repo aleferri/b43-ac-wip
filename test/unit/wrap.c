@@ -425,6 +425,21 @@ static void oracle_init(void)
 				tbl_words = 0;
 			else
 				tbl_len = 0;
+		} else if ((p = strstr(line, "PHY.RDW")) != NULL) {
+			/*
+			 * Il data port riletto senza riselezionare l'indirizzo:
+			 * e' la parola successiva della cella aperta dal
+			 * marcatore. phy_reg_read_wide del blob non prende un
+			 * indirizzo e legge base+0x3fe, mentre phy_reg_read
+			 * scrive prima base+0x3fc -- vedi resolve_wide_reads()
+			 * in compare.py, che risolve lo stesso record dal lato
+			 * confronto.
+			 */
+			if (sscanf(p, "PHY.RDW %*[^=]=%x", &val) != 1)
+				continue;
+			if (tbl_len && tbl_words)
+				oracle_tbl_push(tbl_id, tbl_off + tbl_words - 1,
+						val);
 		} else if ((p = strstr(line, "PHY.RD")) != NULL) {
 			if (sscanf(p, "PHY.RD %*[^=]=%x %*[^=]=%x",
 				   &addr, &val) != 2)
@@ -596,21 +611,39 @@ void b43_test_oracle_report(void)
 static bool tbl_oracle_serve(u16 id, u16 offset, u8 width, size_t len)
 {
 	size_t i;
+	unsigned words = width == 48 ? 3 : (width == 32 ? 2 : 1);
 
 	oracle_init();
 	perturb_init();
-	if (!oracle_on || id >= TBL_MIRROR_IDS || width == 48 ||
+	if (!oracle_on || id >= TBL_MIRROR_IDS ||
 	    offset + len > TBL_MIRROR_OFFS || !oracle_tbl[id])
 		return false;
 	for (i = 0; i < len; i++) {
 		struct oracle_q *q = &oracle_tbl[id][offset + i];
-		unsigned need = width == 32 ? 2 : 1;
 
-		if (q->n - q->iter < (int)need) {
+		if (q->n - q->iter < (int)words) {
 			if (q->n)
 				oracle_miss_exhausted++;
 			return false;
 		}
+	}
+	if (width == 48) {
+		/*
+		 * Le tre parole della cella escono dalla stessa porta dati, una
+		 * dopo l'altra: il piano e' piatto, non una colonna per
+		 * registro come a 32 bit.
+		 */
+		for (i = 0; i < len; i++) {
+			struct oracle_q *q = &oracle_tbl[id][offset + i];
+			unsigned k;
+
+			for (k = 0; k < 3; k++)
+				tbl_mirror_lo[i * 3 + k] = q->v[q->iter++];
+			oracle_hits++;
+		}
+		plan_add(phy_plans, &phy_plans_n, B43_PHY_AC_TABLE_DATA_2,
+			 tbl_mirror_lo, (int)(len * 3));
+		return true;
 	}
 	for (i = 0; i < len; i++) {
 		struct oracle_q *q = &oracle_tbl[id][offset + i];
@@ -778,10 +811,17 @@ void __wrap_b43_phy_maskset(struct b43_wldev *dev, u16 reg, u16 mask, u16 set)
 	}
 }
 
+/*
+ * Il force delle clock gated. Stava come commento perche' le catture del d6220
+ * non lo tracciavano: l'hook che lo registra, `PHY.FGC`, e' fra quelli aggiunti
+ * con la ricattura, e su cold01 sono 80 op. Come commento il confronto non lo
+ * vedeva, quindi il vendor le contava mancanti e il port non le aveva: ora si
+ * confrontano.
+ */
 void __wrap_b43_phy_force_clock(struct b43_wldev *dev, bool force)
 {
 	(void)dev;
-	fprintf(trace(), "; phy_force_clock %d\n", force);
+	fprintf(trace(), "cpu1 PHY.FGC   val=0x%04x\n", force ? 1 : 0);
 }
 
 /* ============ RADIO register accessors ============ */
@@ -1394,6 +1434,21 @@ void b43_test_tplram_write16(u16 offset, u16 val)
  * su offset/2, quindi una riga AMT -- word 0..127 -- calpesterebbe le celle
  * basse della shared memory, UCODEREV e le HOSTF comprese.
  */
+/*
+ * Un record per riga piu' il traffico che la riga costa. L'hook del tracer su
+ * wlc_bmac_write_amt da' `AMT.WR idx=`, e sotto ci sono la lettura e la
+ * riscrittura della riga da 8 byte sul routing RCMTA -- `OBJ.BULKR` e
+ * `OBJ.BULKW`, due degli hook aggiunti con la ricattura. Prima non c'erano e
+ * qui si emetteva solo il record logico; adesso ci sono e la riga si confronta
+ * per intero.
+ *
+ * Quello che si emette qui e' la forma che ha la cattura: una lettura e una
+ * scrittura della riga intera. `b43_amt_write()` di patches/0011 fa invece due
+ * b43_shm_write32() sulle due word, e rilegge solo nel caso KEEP_FLAGS. Le due
+ * cose non coincidono e la patch va portata alla forma della cattura -- vedi
+ * docs/retrace-todo.md. Finche' non lo e', questo doppione descrive il vendor
+ * e non la patch, che e' il contrario di come dovrebbe stare.
+ */
 void b43_test_emit_amt(u16 idx, u16 flags)
 {
 	if (flags)
@@ -1401,6 +1456,9 @@ void b43_test_emit_amt(u16 idx, u16 flags)
 			idx, flags);
 	else
 		fprintf(trace(), "cpu1 AMT.WR    idx=0x%04x\n", idx);
+
+	fprintf(trace(), "cpu1 OBJ.BULKR addr=0x%04x len=8\n", (u16)(idx * 8));
+	fprintf(trace(), "cpu1 OBJ.BULKW addr=0x%04x len=8\n", (u16)(idx * 8));
 }
 
 /*

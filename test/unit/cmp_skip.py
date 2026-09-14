@@ -99,6 +99,37 @@ KNOWN = {
              ctx=[(-4, r'^MAC\.MHF addr=0x0 val=0x0 mask=0x4000$')],
              max=1, cascata=False,
              motivo="meta' enable della seconda coppia."),
+
+        # L'azzeramento delle 56 righe MAC delle chiavi pairwise. Queste NON
+        # sono come le altre voci di questa lista: il port le deve emettere, e
+        # non le emette. Stanno qui come posizione d'attesa, non come
+        # assoluzione, perche' il punto in cui vanno cade dentro
+        # b43_phy_ac_shm_readback_block() -- codice del core parcheggiato nel
+        # PHY per mancanza di un aggancio, come dice il suo stesso commento --
+        # e infilarcele raddoppierebbe quel difetto per guadagnare 224 op.
+        # `grezzo` non le salta, quindi il numero citabile non se ne accorge:
+        # la differenza si vede solo sulla riga CON eccezioni. Vedi
+        # docs/retrace-todo.md, sezione ADDRM.SET.
+        dict(pattern=r'^ADDRM\.SET idx=',
+             dopo=None,
+             max=60, cascata=False,
+             motivo="azzeramento righe MAC chiavi pairwise: b43_clear_keys() "
+                    "del core, che chiama keymac_write(dev, i, NULL) su "
+                    "ognuna. Da emettere, manca l'aggancio nel flow."),
+        dict(pattern=r'^AMT\.WR idx=',
+             dopo=r'^ADDRM\.SET idx=',
+             max=60, cascata=False,
+             motivo="il livello sotto della stessa riga: b43_amt_write()."),
+        dict(pattern=r'^OBJ\.BULKR addr=0x[0-9a-f]+ len=8$',
+             dopo=r'^AMT\.WR idx=',
+             dopo2=r'^ADDRM\.SET idx=',
+             max=60, cascata=False,
+             motivo="rilettura della riga, che KEEP_FLAGS comporta."),
+        dict(pattern=r'^OBJ\.BULKW addr=0x[0-9a-f]+ len=8$',
+             dopo=r'^OBJ\.BULKR addr=0x[0-9a-f]+ len=8$',
+             dopo2=r'^AMT\.WR idx=',
+             max=60, cascata=False,
+             motivo="riscrittura della riga."),
     ],
     'agcombo': [
         dict(pattern=r'^PHY\.WR addr=0x1ec val=0x2$',
@@ -199,7 +230,13 @@ PORTE = {('PHY.WR', '0xd'), ('PHY.WR', '0xe'), ('PHY.WR', '0xf'),
 # le classi generate non compaiono nelle catture del d6220:
 #
 #   TPL.RAMW -> TPL.PTRW/TPL.DATW    zero occorrenze delle seconde
-#   OBJ.BULKW -> OBJ.WR              la coppia bulk non e' agganciata la'
+#
+# Una che invece c'era in questa lista e non ci sta piu': `OBJ.BULKW -> OBJ.WR`
+# stava qui perche' la coppia bulk non era agganciata nelle catture del d6220.
+# Adesso lo e' -- su cold01 sono 130 OBJ.BULKR e 151 OBJ.BULKW -- e i due lati
+# emettono entrambi l'intestazione, quindi si accoppiano da soli sulla loro
+# classe. Se ricompare una cattura in cui il bulk non c'e' e le op singole si',
+# quella si' che vuole una regola.
 #
 # E una che c'e' ma non e' un pericolo per l'accoppiamento: MAC.MHF scrive la
 # cella HOSTF corrispondente in cinque casi su undici, quindi un MHF mancante
@@ -346,7 +383,7 @@ def main():
     # denominatore e il numeratore parlano di cose diverse. Definite in
     # compare.py, come il perimetro.
     V0, sv = C.drop_solo_vendor(V0)
-    T, sp = C.drop_solo_port(T)
+    T, sp = C.drop_solo_port(T, V0)
 
     def stats(V, T):
         if args.bus:

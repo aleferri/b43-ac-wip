@@ -709,31 +709,16 @@ void b43_actab_read_bulk(struct b43_wldev *dev,
 	switch (width) {
 	case 8: {
 		u8 *p = data;
-		/*
-		 * id=0x20 usa DATA_2 (0x011) invece di DATA_LO. Vedi actab_write_bulk
-		 * per la controparte in scrittura.
-		 */
-		u16 data_reg = (id == 0x20)
-			? B43_PHY_AC_TABLE_DATA_2
-			: B43_PHY_AC_TABLE_DATA_LO;
 
 		for (i = 0; i < len; i++)
-			p[i] = b43_phy_read(dev, data_reg) & 0xff;
+			p[i] = b43_phy_read(dev, B43_PHY_AC_TABLE_DATA_LO) & 0xff;
 		break;
 	}
 	case 16: {
 		u16 *p = data;
-		/*
-		 * id=0x20 usa DATA_2 (0x011) come per width=8 — verificato sul
-		 * vendor, dove TBL.RD id=0x0020 off=0x14/0x1e emette
-		 * PHY.RD addr=0x0011.
-		 */
-		u16 data_reg = (id == 0x20)
-			? B43_PHY_AC_TABLE_DATA_2
-			: B43_PHY_AC_TABLE_DATA_LO;
 
 		for (i = 0; i < len; i++)
-			p[i] = b43_phy_read(dev, data_reg);
+			p[i] = b43_phy_read(dev, B43_PHY_AC_TABLE_DATA_LO);
 		break;
 	}
 	case 32: {

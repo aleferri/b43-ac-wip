@@ -125,6 +125,15 @@ static u16 g_bss_cc = 0x0044;
  */
 static unsigned int g_edcf_reload_mask = 0x1;
 
+/*
+ * Lunghezza dell'SSID della cattura, in byte. Un ingresso solo: da lui
+ * dipendono la cella 0x001e, le celle BTL e -- via g_ac.ssid_len -- i PLCP
+ * degli otto rate. Lo sweep ricatturato usa `test-ap5`, otto caratteri; quello
+ * vecchio ne usava sette, ed e' la ragione per cui i valori derivati erano
+ * tutti uno sotto. Leva perche' la prossima cattura potra' usarne un terzo.
+ */
+static unsigned int g_ssid_len = 8;
+
 
 static void mount_board(const struct board_profile *p)
 {
@@ -187,20 +196,31 @@ static void mount_board(const struct board_profile *p)
 
 	/*
 	 * Radar-detection requirement, as cfg80211 would set it from the
-	 * regulatory domain. The sub-bands are the ones the spec fixes, not
-	 * something read off the captures: U-NII-1 (5150-5250) and U-NII-3
-	 * (5725-5850) carry no radar duty, U-NII-2A (5250-5350) and U-NII-2C
-	 * (5470-5725) do.
+	 * regulatory domain: U-NII-1 (5150-5250) and U-NII-3 (5725-5850) carry
+	 * no radar duty, U-NII-2A (5250-5350) and U-NII-2C do.
 	 *
-	 * Both sweeps stop at ch140 (5700 MHz), so they contain no U-NII-3
-	 * channel and cannot distinguish this from a plain "above 5250"
-	 * threshold. Which is the reason to take it from the spec: the
-	 * threshold happens to agree on the sixteen channels that were
-	 * captured, and disagrees on channels 149-165, where it would suppress
-	 * calibrations that are allowed to run.
+	 * Where U-NII-2C ends is the one edge the spec and this device do not
+	 * agree on, and here the captures arbitrate instead of the spec. The
+	 * stock driver polls the radar detector on a channel that carries the
+	 * duty and not on one that does not, so reverse-tools/cac_polls.py
+	 * reads the answer off each segment; run over all forty-three of the
+	 * cold sweep it draws the boundary at ch140, not at 5725:
+	 *
+	 *   ch36-48       no poll        ch52-140      poll
+	 *   ch144-165     no poll
+	 *
+	 * and the same on the 40 and 80 MHz blocks, which follow their low
+	 * channel: 140/40 spans 5690-5730 and polls, 149/40 does not. So 5720
+	 * -- ch144, inside U-NII-2C by the spec -- carries no duty on this
+	 * board. Marking it would suppress the calibrations the vendor runs
+	 * there, which is most of a 29k-operation attach.
+	 *
+	 * This is the regulatory domain the captures were taken under, not a
+	 * universal truth: another domain may well put ch144 back under the
+	 * duty, and then it is cfg80211 that says so, not this line.
 	 */
 	if ((g_chan.center_freq > 5250 && g_chan.center_freq <= 5350) ||
-	    (g_chan.center_freq > 5470 && g_chan.center_freq <= 5725))
+	    (g_chan.center_freq > 5470 && g_chan.center_freq <= 5700))
 		g_chan.flags |= IEEE80211_CHAN_RADAR;
 
 	/*
@@ -366,13 +386,21 @@ static void mount_board(const struct board_profile *p)
 			g_ac.probe_watchdog_tick[0] = 5;
 			g_ac.probe_watchdog_tick[1] = 15;
 		}
+		g_ac.probe_watchdog_n = 2;
 		if (e)
 			g_ac.probe_ticks = (u16)strtoul(e, NULL, 10);
 		if (w) {
-			char *end;
-			g_ac.probe_watchdog_tick[0] = (u16)strtoul(w, &end, 10);
-			g_ac.probe_watchdog_tick[1] = *end == ','
-				? (u16)strtoul(end + 1, NULL, 10) : 0xffff;
+			char *end = (char *)w;
+
+			g_ac.probe_watchdog_n = 0;
+			while (*end && g_ac.probe_watchdog_n <
+					ARRAY_SIZE(g_ac.probe_watchdog_tick)) {
+				g_ac.probe_watchdog_tick[
+					g_ac.probe_watchdog_n++] =
+					(u16)strtoul(end, &end, 10);
+				if (*end == ',')
+					end++;
+			}
 		}
 		/*
 		 * I giri senza il latch della finestra, come lista di tick:
@@ -424,6 +452,19 @@ static void mount_board(const struct board_profile *p)
 				(u8)strtoul(e, NULL, 0);
 	}
 
+	{
+		const char *e = getenv("AC_CAC_WAIT_TICKS");
+
+		if (e && *e)
+			g_ac.cac_wait_ticks = (u16)strtoul(e, NULL, 10);
+	}
+	{
+		const char *e = getenv("AC_SSID_LEN");
+
+		if (e && *e)
+			g_ssid_len = (unsigned int)strtoul(e, NULL, 0);
+		g_ac.ssid_len = (u8)g_ssid_len;
+	}
 	{
 		const char *e = getenv("AC_EDCF_RELOADS");
 
@@ -1124,6 +1165,16 @@ static void run_switch_channel(void)
 	    B43_TXPWR_RES_NEED_ADJUST)
 		b43_phyops_ac.adjust_txpower(&g_wldev);
 	emit_core_conf_tx_passes();
+
+	/*
+	 * La fase d'attesa del controllo di disponibilita'. Sta qui perche' e'
+	 * qui che la cattura DFS la mette: il blocco d'attesa comincia dove
+	 * cold01 ha l'entrata di channel_calibrate(), cioe' subito dopo queste
+	 * passate. Chi la esegue e' il driver; quanti giri duri lo dice la
+	 * cattura, come per gli altri orologi del vendor, e chi la fa partire
+	 * e' lo stack -- qui questo harness, su hardware mac80211.
+	 */
+	b43_phy_ac_cac_wait(&g_wldev);
 	if (r == 0)
 		b43_phyops_ac.channel_calibrate(&g_wldev);
 	else
@@ -1209,6 +1260,34 @@ static void emit_core_counters_first(void)
 	b43_shm_read16(&g_wldev, B43_SHM_SHARED, 0x077e);
 }
 
+/*
+ * La riga 0x3f dell'AMT riscritta a zero una seconda volta, e solo dove il
+ * canale porta la guardia radar.
+ *
+ * Contata sulle riscritture della riga su tutti e 43 i segmenti a freddo: tre
+ * dove la guardia non c'e', sei dove c'e'. I tre radar-meteo ne hanno cinque,
+ * e la mancante e' una di quelle del bss-up, che quei segmenti non hanno. Il
+ * confine e' ch140, lo stesso che cac_polls.py ricava dai segmenti: ch144 sta
+ * a tre come ch36.
+ *
+ * Delle tre in piu' questa e' l'unica nel preambolo, subito dopo il primo
+ * campionamento dei contatori. Le altre due cadono nell'attesa del check --
+ * su cold05 a 6.7 s e a 69.6 s dall'inizio, cioe' ai due bordi dei sessanta
+ * secondi -- e questo harness quella transizione non la modella: cac_pending
+ * e' un booleano per l'intera corsa. Vedi docs/retrace-todo.md.
+ *
+ * Non c'e' un sito b43 che la emetta. La riga la scrive patches/0011 dal core
+ * init, e il chiamante qui e' la sospensione del match durante il channel
+ * availability check, che b43 non ha: e' il motivo per cui sta fra i doppioni
+ * e non in src/.
+ */
+static void emit_core_amt_cac_suspend(void)
+{
+	if (!(g_chan.flags & IEEE80211_CHAN_RADAR))
+		return;
+	b43_test_emit_amt(0x3f, 0);
+}
+
 static void emit_core_hostflags(void)
 {
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x005e, 0x0100);
@@ -1230,10 +1309,21 @@ static void emit_core_shm_macaddr(const struct board_profile *p)
 /*
  * Doppione di b43_amt_write() di patches/0011, che vive in main.c del core.
  *
- * Emette UN record per riga, che e' la granularita' del tracer: il suo hook su
- * wlc_bmac_write_amt da' `AMT.WR idx=`, non le due word sottostanti. Quelle il
- * vendor le scrive sulla coppia objaddr/objdata direttamente, che nessun
- * accessor agganciato copre, quindi non sono confrontabili e non si emettono.
+ * Emette il record logico e il traffico della riga: l'hook del tracer su
+ * wlc_bmac_write_amt da' `AMT.WR idx=`, e sotto ci sono la lettura e la
+ * riscrittura degli 8 byte della riga sul routing RCMTA. Quelle due il vendor
+ * le fa sulla coppia objaddr/objdata, che nelle catture vecchie nessun
+ * accessor agganciato copriva -- percio' qui non si emettevano. La ricattura
+ * ha aggiunto `OBJ.BULKR`/`OBJ.BULKW`, che le coprono, e la riga si confronta
+ * per intero: vedi b43_test_emit_amt() in wrap.c.
+ *
+ * Resta fuori dal confronto dove vanno le due righe in cima. Qui sono in coda
+ * all'azzeramento, e nella cattura non ci sono: il ciclo di azzeramento sta a
+ * #307-#622 e le righe con i flag a #13302 e #13943, dentro il bss-up, tirate
+ * da `ADDRM.SET` -- che e' l'entrata che il core chiama e che questo harness
+ * non modella. Nel frattempo il vendor rifa anche un azzeramento parziale di
+ * 56 righe (idx 0x00-0x37). Vanno spostate la', non tenute qui per comodita';
+ * finche' ci sono, il confronto le conta due volte sbagliate.
  *
  * Come per emit_core_shm_macaddr(): sta qui e non in src/ perche' non e'
  * codice del PHY, e i valori sono quelli della patch, cosi' se la patch cambia
@@ -1326,8 +1416,12 @@ static u16 beacon_tpl_len(void)
 {
 	enum nl80211_chan_width w = g_wldev.phy.chandef->width;
 
-	return (u16)(0x012a + (w == NL80211_CHAN_WIDTH_80 ? 2 :
-			       w == NL80211_CHAN_WIDTH_40 ? 1 : 0));
+	/*
+	 * Parte fissa piu' l'SSID: 0x012a era questo con sette caratteri.
+	 */
+	return (u16)(0x0123 + g_ssid_len +
+		     (w == NL80211_CHAN_WIDTH_80 ? 2 :
+		      w == NL80211_CHAN_WIDTH_40 ? 1 : 0));
 }
 
 /*
@@ -1356,7 +1450,8 @@ void b43_ac_beacon_reload(struct b43_wldev *dev, unsigned int which)
 
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc,
 			b43_shm_read16(dev, B43_SHM_SHARED, 0x00cc));
-	b43_shm_write16(dev, B43_SHM_SHARED, 0x001e, 0x0043);
+	/* Parte fissa piu' l'SSID, come in emit_core_bss_ssid(). */
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x001e, (u16)(0x003c + g_ssid_len));
 	b43_test_tplram_write16(btl == 0x0018 ? 0x0200 : 0x0480, 0x012c);
 	b43_shm_write16(dev, B43_SHM_SHARED, btl, beacon_tpl_len());
 
@@ -1378,7 +1473,9 @@ void b43_ac_beacon_reload(struct b43_wldev *dev, unsigned int which)
 
 static void emit_core_bss_ssid(u16 btl)
 {
-	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x001e, 0x0043);
+	/* Parte fissa piu' l'SSID: 0x0043 era questo con sette caratteri. */
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x001e,
+			(u16)(0x003c + g_ssid_len));
 	/*
 	 * L'offset del template segue la cella della lunghezza: BTL0 carica
 	 * beacon0 a 0x0200, BTL1 carica beacon1 a 0x0480. Non sono le costanti
@@ -1557,11 +1654,15 @@ static void emit_core_amt(const struct board_profile *p)
 	for (i = 0; i < 64; i++)
 		b43_test_emit_amt(i, 0);
 
-	/* Le due righe in cima: BSSID e indirizzo di stazione. Il BSSID a
-	 * questo punto non c'e' ancora -- l'associazione e' dopo -- ma la riga
-	 * viene scritta comunque, azzerata e marcata valida. */
-	b43_test_emit_amt(0x3e, 0x8002);
-	b43_test_emit_amt(0x3f, 0x8008);
+	/*
+	 * Le due righe in cima -- BSSID e indirizzo di stazione -- non si
+	 * emettono qui. Stavano in coda a questo ciclo, e la cattura non le ha
+	 * la': l'azzeramento sta a #307-#622 e le righe con i flag a #13302 e
+	 * #13943, dentro il bss-up e passando da `ADDRM.SET`. Tenerle qui
+	 * costava sei op di troppo nel punto sbagliato, che e' peggio che non
+	 * emetterle: il bss-up questo harness non lo modella, e finche' non lo
+	 * modella la riga giusta e' nessuna riga.
+	 */
 	(void)p;
 }
 
@@ -1625,6 +1726,7 @@ static void run_full(void)
 	emit_core_shm_unexplained();
 	emit_core_shm_macaddr(g_profile);
 	emit_core_counters_first();
+	emit_core_amt_cac_suspend();
 	emit_core_hostflags();
 	run_rfkill();
 	run_op_init();
@@ -1923,8 +2025,8 @@ int main(int argc, char **argv)
 		/*
 		 * Un tick del watchdog a regime, con la tornata di measure
 		 * block (noise cal). Riferimento: sweep d6220, tick
-		 * #27036-#27791 (ch36 BW20, dopo il primo up del segmento),
-		 * estratto in router-data/d6220/
+		 * #33124-#33879 di cold01 (ch36 BW20, dopo il primo up del
+		 * segmento), estratto in router-data/d6220/
 		 * wl-diag-wl1-steady-tick-ch36-bw20.txt — file che fa sia da
 		 * AC_READ_ORACLE (i valori SHM/TSSI sono stato ucode, non
 		 * derivabile) sia da riferimento per compare.py.
@@ -1932,13 +2034,22 @@ int main(int argc, char **argv)
 		 * Stato entrante: MAC attivo (come switch_channel), PHY in
 		 * release — il REQUIRE del measure block vuole
 		 * RX_WAITED|RX_OFDM e niente CLIP_ALL_DIS/CCA_RESET/RX_CCK.
-		 * Il toggle di 0x0520[3:2] parte da 0x0000, il valore che il
-		 * tick di riferimento scrive.
+		 *
+		 * Il toggle di 0x0520[3:2] fa parte dello stato entrante come
+		 * gli altri due, e la sua fase e' una proprieta' dell'estratto,
+		 * non una costante del driver: l'alternanza parte da 0x0000 al
+		 * primo cambio di modo del segmento e non si azzera mai piu'
+		 * (26 cambi su cold01, alternanza intera senza rotture), quindi
+		 * il valore di un tick a meta' flusso e' deciso dalla parita'
+		 * del suo indice. Il tick estratto e' il decimo, e scrive
+		 * 0x0004. Un estratto preso a un altro canale cade su un altro
+		 * indice, perche' quante calibrazioni lo precedono cambia con
+		 * la famiglia, e li' la fase va ricontata sul segmento.
 		 */
 		g_wldev.mac_suspended = 0;
 		g_ac.status_mask = B43_PHY_AC_STATE_RX_WAITED |
 				   B43_PHY_AC_STATE_RX_OFDM;
-		g_ac.probe_mode = 0x0000;
+		g_ac.probe_mode = 0x0004;
 		b43_phy_ac_watchdog(&g_wldev, true);
 	} else if (!strcmp(flow, "crsmin")) {
 		/*

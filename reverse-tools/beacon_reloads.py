@@ -46,11 +46,11 @@ probe_schedule = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(probe_schedule)
 
 OP = re.compile(r"^\s*([\d.]+)\s+#(\d+)\s+cpu\d+\s+(.*?)\s*$")
-TIMBPOS = re.compile(r"^OBJ\.WR\s+addr=0x001e\s+val=0x[0-9a-f]+$")
+TIMBPOS = re.compile(r"^OBJ\.WR\s+addr=0x001e\s+val=0x[0-9a-f]+(?: |$)")
 # Le quattro passate conf_tx nell'ordine in cui l'harness le emette, ognuna
 # riconosciuta dall'ultima cella del suo blocco di coda.
 EDCF_LAST = [0x027e, 0x025e, 0x029e, 0x02be]
-BTL = re.compile(r"^OBJ\.WR\s+addr=0x00(18|1a)\s+val=0x[0-9a-f]+$")
+BTL = re.compile(r"^OBJ\.WR\s+addr=0x00(18|1a)\s+val=0x[0-9a-f]+(?: |$)")
 SUSPEND = "MAC.MCTRL val=0x00000000 mask=0x00000001"
 
 
@@ -121,31 +121,57 @@ def pre_late(path):
                if lo < i < hi and TIMBPOS.match(op))
 
 
+MODE_CHANGE = re.compile(
+    r"^\s*([\d.]+)\s+#(\d+)\s+cpu\d+\s+PHY\.MOD\s+addr=0x0*520\b.*"
+    r"mask=0x0*c\b")
+
+
+def mode_changes(path):
+    """Il tempo di ogni cambio di modo, uno per corpo di giro."""
+    out = []
+    for line in open(path):
+        m = MODE_CHANGE.match(line)
+        if m:
+            out.append(float(m.group(1)))
+    return out
+
+
 def schedule(path):
     """[tick per reload] or None with no probe phase.
 
-    The grid is probe_schedule.py's: group 0 closes tick 0, and a tick is one
-    median group spacing. A reload is placed by its distance from group 0.
+    Il tick di una ricarica e' quanti corpi di giro la precedono, contati; non
+    quanto tempo e' passato, diviso per la durata di un tick.
+
+    Contare e' esatto per costruzione e dividere no, perche' il tick del vendor
+    arriva in ritardo -- e' la stessa cosa che watchdog_turns.py registra come
+    @probe_nolatch_tick, e su cold01 sono quattro giri su ventisei. Ogni
+    ritardo sposta l'attribuzione di uno e l'errore si accumula: la formula a
+    tempo dava `2,6,7,13,14,19,21,26,26` dove i corpi contati danno
+    `2,6,7,12,13,18,19,24,25`, e le prime tre coincidono perche' il ritardo non
+    era ancora arrivato. Alimentate a mano, le seconde portano cold01 da 92.08%
+    a 92.74%.
+
+    Il marcatore e' il cambio di modo su 0x0520, non il gruppo di
+    probe_schedule.py: quello e' `PHY.RD 0x07af`, che su cold01 compare 24
+    volte per 26 giri, mentre i cambi di modo sono 26, esattamente
+    @probe_ticks. Un marcatore che salta dei giri non puo' numerarli.
+
+    L'inizio della fase resta quello dei gruppi: una ricarica prima del primo
+    gruppo non sta su un tick del ciclo.
     """
     groups, _ = probe_schedule.collect(path)
     if len(groups) < 3:
         return None
     times = [t for t, _ in groups]
-    tick = statistics.median(b - a for a, b in zip(times[1:], times[2:]))
-    first_cost = max(1, round((times[1] - times[0]) / tick))
-    spent = [0] + [first_cost + i for i in range(len(groups) - 1)]
-    deadline = spent[-1] + 1
+    bodies = mode_changes(path)
+    deadline = len(bodies)
 
     pre, ticks = 0, []
     for t, _ in collect(path):
         if t < times[0]:
             pre += 1               # prima che la fase parta: non su un tick
             continue
-        # Il tick e' la distanza dal primo gruppo in lunghezze di tick. Non
-        # "il tick del gruppo che segue": fra il primo gruppo e il secondo ci
-        # sono tre tick perche' il primo ne costa tre, e quel criterio li
-        # collasserebbe tutti sull'ultimo.
-        ticks.append(min(deadline, round((t - times[0]) / tick)))
+        ticks.append(min(deadline, sum(1 for b in bodies if b < t)))
     return pre, ticks
 
 

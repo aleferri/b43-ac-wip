@@ -84,11 +84,106 @@ FOREIGN_COREREG = {
 SHADOW_PARENT = re.compile(r'^(?:PMU\.(?:RC|PLL)|GPIO\.(?:OUT|OE|OUTEN|CTL))\b')
 SI_COREREG = re.compile(r'^SI\.COREREG\s+core=(0x[0-9a-fA-F]+)\s+off=(0x[0-9a-fA-F]+)')
 
+# L'intestazione di una copia in object memory. Il tracer del vendor la scrive
+# perche' aggancia la routine di copia, e subito sotto ci sono le word, una op
+# per word: `OBJ.BULKW addr=0x0160 len=32` e poi le sedici `OBJ.WR` da 0x0160.
+# In quel caso l'intestazione non e' accesso all'hardware, e' il nome di chi lo
+# fa -- b43 scrive le stesse word senza passare da una routine di copia, e
+# pretendere che emetta anche l'intestazione vorrebbe dire inventare un'op.
+#
+# Non sempre pero' e' un'ombra: sulle righe della address match table
+# (routing RCMTA) le word non sono decodificate, l'intestazione e' l'unico
+# record del traffico, e il port la deve emettere -- vedi b43_test_emit_amt().
+# Percio' la condizione non e' la classe ma cosa la segue: si scarta solo se
+# sotto c'e' la singola allo stesso indirizzo.
+BULK_HEAD = re.compile(r'^OBJ\.BULK([RW])\s+addr=(0x[0-9a-fA-F]+)\s+len=')
+BULK_WORD = re.compile(r'^OBJ\.(RD|WR)\s+addr=(0x[0-9a-fA-F]+)\b')
+
+# Il chanspec in shared memory, stesso caso dell'intestazione qui sopra: il
+# tracer aggancia la funzione che lo scrive, e la write e' l'op successiva --
+# `CS.SHM ch=36 bw=20 band=5g raw=0xd024` e poi `OBJ.WR addr=0x00a0
+# val=0xd024`, dove il campo raw del record e' la parola che la write porta.
+# Un evento solo con due record, quindi l'hardware lo si confronta sulla write
+# e il port non deve emettere il confine.
+#
+# La condizione e' cosa segue, non la classe, come per BULK_HEAD: se il record
+# non ha sotto la sua write resta nel flusso e pesa. Sui 43 segmenti a freddo
+# ce n'e' esattamente uno per segmento e la write c'e' sempre, con lo stesso
+# valore; un segmento che registrasse il confine e non la write lo direbbe
+# invece di sparire.
+CHANSPEC_HEAD = re.compile(r'^CS\.SHM\b.*\braw=(0x[0-9a-fA-F]+)')
+CHANSPEC_WORD = re.compile(
+    r'^OBJ\.WR\s+addr=0x0*a0\s+val=(0x[0-9a-fA-F]+)\b')
+
+
+def _chanspec_head_is_shadow(op, nxt):
+    m = CHANSPEC_HEAD.match(op)
+    if not m or nxt is None:
+        return False
+    w = CHANSPEC_WORD.match(nxt)
+    return bool(w) and int(m.group(1), 16) == int(w.group(1), 16)
+
+
+def _bulk_head_is_shadow(op, nxt):
+    m = BULK_HEAD.match(op)
+    if not m or nxt is None:
+        return False
+    w = BULK_WORD.match(nxt)
+    if not w:
+        return False
+    if (m.group(1), w.group(1)) not in (('R', 'RD'), ('W', 'WR')):
+        return False
+    return int(m.group(2), 16) == int(w.group(2), 16)
+
+
+# PHY.RDW: la lettura del data port senza riselezionare l'indirizzo.
+#
+# Il record non porta un indirizzo perche' la FUNZIONE non ne ha uno, non
+# perche' il tracer se lo perda. Letto sul prologo del blob 7.14 del d6220
+# (`mipsdis.py wlD6220.o 0xbc458 0x68`), phy_reg_read_wide prende il solo $a0:
+#
+#     lw   $v0, 228($a0)      base MMIO
+#     lhu  $v0, 1022($v0)     legge base+0x3fe, PHY_DATA
+#
+# mentre phy_reg_read(pi, addr) a 0xb9d70 usa $a1 e prima scrive base+0x3fc,
+# PHY_CONTROL. La wide quella scrittura non la fa: rilegge il data port con
+# l'indirizzo lasciato dov'era.
+#
+# Quindi il registro non e' ignoto ed e' determinato per costruzione: e' quello
+# che l'ultimo accesso PHY ha selezionato. Si risolve qui, e il confronto vede
+# la stessa op che emette b43, che quel registro lo riseleziona ogni volta --
+# una scrittura idempotente di PHY_CONTROL, senza effetto sul dato letto.
+#
+# Se nessun accesso PHY precede, l'indirizzo non c'e' e il record resta com'e':
+# diventa una divergenza, che e' il verso giusto in cui sbagliare.
+PHY_SELECT = re.compile(r'^PHY\.(?:RD|WR|MOD)\s+addr=(0x[0-9a-fA-F]+)')
+WIDE_READ = re.compile(r'^PHY\.RDW\s+(val=\S+)')
+
+
+def resolve_wide_reads(ops):
+    """Da' a ogni PHY.RDW l'indirizzo che l'accesso precedente ha selezionato."""
+    out, sel = [], None
+    for op in ops:
+        m = PHY_SELECT.match(op)
+        if m:
+            sel = m.group(1)
+        w = WIDE_READ.match(op)
+        if w and sel is not None:
+            op = normalize_op(f"PHY.RD addr={sel} {w.group(1)}")
+        out.append(op)
+    return out
+
+
 def drop_shadow_ops(ops):
-    """Scarta le SI.COREREG che implementano l'op di alto livello precedente."""
+    """Scarta le op di alto livello di cui le seguenti sono l'attuazione."""
     out = []
     parent = False
-    for op in ops:
+    for i, op in enumerate(ops):
+        nxt = ops[i + 1] if i + 1 < len(ops) else None
+        if _bulk_head_is_shadow(op, nxt):
+            continue
+        if _chanspec_head_is_shadow(op, nxt):
+            continue
         if FOREIGN_READBACK.match(op):
             parent = True          # le sue ombre restano ombre
             continue
@@ -322,12 +417,13 @@ SOLO_VENDOR = (
 # e' di qualcun altro -- applicato al lato test.
 #
 #   AMT.*  la address match table. Il port la scrive per via di `patches/0011`,
-#          ricavata dalla cattura a freddo del DSL-3580L; le catture del d6220
-#          non la hanno perche' l'hook su `wlc_bmac_write_amt` e' stato aggiunto
-#          dopo che sono state prese. NON e' un'op di troppo: e' un'op giusta
-#          senza oracolo, e ci resta finche' non c'e' un retrace del d6220 con
-#          quell'hook. Quel giorno questa voce va togliata e il confronto
-#          diventa piu' severo, che e' il verso giusto.
+#          ricavata dalla cattura a freddo del DSL-3580L. Non e' un'op di
+#          troppo: e' un'op giusta che una cattura senza l'hook su
+#          `wlc_bmac_write_amt` non puo' contenere. Sta quindi in
+#          SOLO_PORT_SENZA_CLASSE e non qui: vale solo contro una cattura che
+#          la classe non la traccia, e si spegne da se' contro una che la
+#          traccia -- il d6220 e il DSL oggi, l'agcombo quando sara'
+#          ricatturato.
 #
 #   OBJ su 0x0004/0x0006 e le tre costanti su 0x0000/0x0002
 #          la meta' non allineata di b43_validate_chipaccess()
@@ -363,16 +459,29 @@ SOLO_VENDOR = (
 SOLO_PORT = (
     r'^OBJ\.(RD|WR) addr=0x0*[46] ',
     r'^OBJ\.(RD|WR) addr=0x0*[02] val=0x0*(1122|3344|ccdd)\b',
-    r'^AMT\.',
     r'^REG\.WR off=0x49c\b',
 )
 
+# Il secondo caso della lista sopra: la controparte esiste, ma la cattura non
+# traccia quella classe. E' temporanea per definizione, e la condizione la
+# decide la cattura invece di chi legge -- appena il lato vendor porta una op
+# della classe la voce si spegne e il confronto diventa piu' severo, senza che
+# nessuno debba ricordarsi di venirla a togliere. Stesso criterio di
+# check_class_coverage.py e dei flag oracle_has_* di wrap.c.
+SOLO_PORT_SENZA_CLASSE = (
+    (r'^AMT\.', 'AMT.'),
+)
 
-def drop_solo_port(ops):
+
+def drop_solo_port(ops, vendor=()):
     """Togli dal port le op che il vendor legittimamente non ha."""
+    pats = list(SOLO_PORT)
+    for pat, classe in SOLO_PORT_SENZA_CLASSE:
+        if not any(op.startswith(classe) for op in vendor):
+            pats.append(pat)
     out, dropped = [], []
     for op in ops:
-        (dropped if any(re.search(p, op) for p in SOLO_PORT) else out).append(op)
+        (dropped if any(re.search(p, op) for p in pats) else out).append(op)
     return out, dropped
 
 
@@ -671,7 +780,7 @@ def load_vendor(path, ep_range, profile=None):
         if not (lo <= ep <= hi):
             continue
         raws.append(m.group(1))
-    return drop_shadow_ops(op_forms(raws, profile))
+    return drop_shadow_ops(resolve_wide_reads(op_forms(raws, profile)))
 
 def load_test(path, profile=None):
     raws = [m.group(1) for line in open(path) for m in [TEST_LINE.match(line)] if m]
@@ -721,7 +830,7 @@ def main():
     test = load_test(args.test, profile)
 
     vendor, sv = drop_solo_vendor(vendor)
-    test, sp = drop_solo_port(test)
+    test, sp = drop_solo_port(test, vendor)
     if sv:
         print(f"solo vendor: {len(sv)} op scartate perche' nessun codice b43 "
               f"puo' emetterle; vedi SOLO_VENDOR in questo file")
