@@ -23,7 +23,10 @@ confrontabili.
 unzip -d /tmp/cold ../../router-data/d6220/cold-sweep.zip
 ```
 
-I 26 segmenti stanno in `/tmp/cold/coldNN-chC-bwB.txt`.
+I 43 segmenti stanno in `/tmp/cold/coldNN-chC-bwB.txt`: 25 a 20 MHz, 12 a 40 e
+6 a 80. I 21 con la guardia radar sono stati ripresi con il CAC completato,
+quindi hanno il bss-up che i primi non avevano; i sei radar-meteo (ch120, 124,
+128 a 20 MHz, 116 e 124 a 40, 116 a 80) sono ancora vecchio stile.
 
 Ogni segmento contiene **due** attach, non uno: `wl` al caricamento fa
 l'attach di tutti i core, quindi la testa ha prima wl0 -- l'N-PHY 2.4 GHz --
@@ -102,10 +105,17 @@ Non serve rifarne i passi a mano, e farlo a mano sbaglia la finestra.
 **Il gate a freddo non copre il caldo, e la differenza non e' di grado.** Lo
 sweep a freddo e' tutto primo bring-up -- un modulo ricaricato per canale --
 quindi ogni predicato che distingue il primo bring-up dai successivi e'
-invisibile la': un termine mancante vale lo stesso su tutti e 26 i segmenti e
-i punteggi tornano. Un predicato come quello di `may_calibrate_tx()`, che
-guarda solo `center_freq <= 5250`, a freddo non si distingue da uno corretto,
-e sui segmenti `up` sopra i 5250 fa la differenza fra l'80% e il 35%.
+invisibile la': un termine mancante vale lo stesso su tutti i segmenti e i
+punteggi tornano.
+
+Due predicati che ci sono passati attraverso, e che valgono come promemoria.
+`may_calibrate_tx()` guardava `center_freq <= 5250`: a freddo non si distingue
+da uno corretto, e sui segmenti `up` sopra i 5250 fa la differenza fra l'80% e
+il 35%. Oggi guarda `IEEE80211_CHAN_RADAR` e il flag della guardia radar, che
+e' la regola giusta -- ma il confine superiore della sotto-banda l'ha dato solo
+la ricattura: era preso dalla spec a 5725, e `cac_polls.py` su tutti e 43 i
+segmenti lo mette a ch140. Con 5725, ch144 veniva marcato e il port saltava le
+calibrazioni che il vendor esegue: 51% invece di 95% su quel solo segmento.
 
 `gates.sh --hot` usa il flow `up` con `AC_FIRST_INIT=0` e i suoi tre segmenti
 di default sono scelti per cogliere proprio quel caso: uno sotto i 5250 MHz e
@@ -190,17 +200,20 @@ nell'ultimo bit.
 
 ### `SOLO_PORT` — op del port che l'oracolo non puo' contenere
 
-Oggi una voce: **`AMT.*`**, la address match table. Il port la scrive per via di
-`patches/0011`, ricavata dalla cattura a freddo del DSL-3580L; le catture del
-d6220 non la hanno perche' l'hook su `wlc_bmac_write_amt` e' stato aggiunto
-dopo che sono state prese. **Non e' un'op di troppo: e' un'op giusta senza
-oracolo**, e ci resta finche' non c'e' un retrace del d6220 con quell'hook.
-
 I casi legittimi per questa lista sono due e vanno distinti: un'op che b43 deve
 fare per la sua struttura dove wl ne fa una diversa, che e' permanente, e un'op
 giusta la cui controparte esiste ma non e' stata catturata, che e' temporanea
 per definizione e si chiude con una ricattura. Tutto il resto e' il port che fa
 qualcosa di troppo, e si corregge nel driver, non nella lista.
+
+I due casi stanno in due liste separate, perche' la seconda non va tenuta a
+mano: `SOLO_PORT` sono le permanenti, `SOLO_PORT_SENZA_CLASSE` le altre, e
+quelle valgono solo contro una cattura che non traccia quella classe. Appena il
+lato vendor porta una op della classe la voce si spegne da se' e il confronto
+diventa piu' severo. `AMT.*` era l'esempio: ci stava perche' l'hook su
+`wlc_bmac_write_amt` era stato aggiunto dopo le catture del d6220, e con la
+ricattura -- 124 op AMT su cold01 -- non scatta piu' la', mentre continua a
+valere sull'agcombo, che quell'hook non lo ha.
 
 ### `VAL_NONDET` — celle il cui valore non e' prevedibile
 

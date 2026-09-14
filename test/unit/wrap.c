@@ -778,10 +778,17 @@ void __wrap_b43_phy_maskset(struct b43_wldev *dev, u16 reg, u16 mask, u16 set)
 	}
 }
 
+/*
+ * Il force delle clock gated. Stava come commento perche' le catture del d6220
+ * non lo tracciavano: l'hook che lo registra, `PHY.FGC`, e' fra quelli aggiunti
+ * con la ricattura, e su cold01 sono 80 op. Come commento il confronto non lo
+ * vedeva, quindi il vendor le contava mancanti e il port non le aveva: ora si
+ * confrontano.
+ */
 void __wrap_b43_phy_force_clock(struct b43_wldev *dev, bool force)
 {
 	(void)dev;
-	fprintf(trace(), "; phy_force_clock %d\n", force);
+	fprintf(trace(), "cpu1 PHY.FGC   val=0x%04x\n", force ? 1 : 0);
 }
 
 /* ============ RADIO register accessors ============ */
@@ -1394,6 +1401,21 @@ void b43_test_tplram_write16(u16 offset, u16 val)
  * su offset/2, quindi una riga AMT -- word 0..127 -- calpesterebbe le celle
  * basse della shared memory, UCODEREV e le HOSTF comprese.
  */
+/*
+ * Un record per riga piu' il traffico che la riga costa. L'hook del tracer su
+ * wlc_bmac_write_amt da' `AMT.WR idx=`, e sotto ci sono la lettura e la
+ * riscrittura della riga da 8 byte sul routing RCMTA -- `OBJ.BULKR` e
+ * `OBJ.BULKW`, due degli hook aggiunti con la ricattura. Prima non c'erano e
+ * qui si emetteva solo il record logico; adesso ci sono e la riga si confronta
+ * per intero.
+ *
+ * Quello che si emette qui e' la forma che ha la cattura: una lettura e una
+ * scrittura della riga intera. `b43_amt_write()` di patches/0011 fa invece due
+ * b43_shm_write32() sulle due word, e rilegge solo nel caso KEEP_FLAGS. Le due
+ * cose non coincidono e la patch va portata alla forma della cattura -- vedi
+ * docs/retrace-todo.md. Finche' non lo e', questo doppione descrive il vendor
+ * e non la patch, che e' il contrario di come dovrebbe stare.
+ */
 void b43_test_emit_amt(u16 idx, u16 flags)
 {
 	if (flags)
@@ -1401,6 +1423,9 @@ void b43_test_emit_amt(u16 idx, u16 flags)
 			idx, flags);
 	else
 		fprintf(trace(), "cpu1 AMT.WR    idx=0x%04x\n", idx);
+
+	fprintf(trace(), "cpu1 OBJ.BULKR addr=0x%04x len=8\n", (u16)(idx * 8));
+	fprintf(trace(), "cpu1 OBJ.BULKW addr=0x%04x len=8\n", (u16)(idx * 8));
 }
 
 /*

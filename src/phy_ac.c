@@ -363,6 +363,32 @@ static bool b43_phy_ac_may_calibrate_tx(struct b43_wldev *dev);
 	} while (0)
 
 static void b43_phy_ac_post_bringup_tail(struct b43_wldev *dev);
+/*
+ * Le quattro celle sparse con cui si apre la spazzata, e la spazzata piatta
+ * 0x0768-0x078a. Due funzioni e non una perche' all'ingresso della fase probe
+ * fra loro cadono le letture di fase e il cambio di modo -- a regime no.
+ *
+ * L'ordine delle quattro e' quello del giro a regime. All'ingresso la cattura
+ * ne ha un altro, `0x010e 0x010c 0x0158 0x015e`, e quello va con il riordino,
+ * non qui.
+ */
+static void b43_phy_ac_wd_head_words(struct b43_wldev *dev)
+{
+	static const u16 head[4] = { 0x010e, 0x0158, 0x010c, 0x015e };
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(head); i++)
+		b43_shm_read16(dev, B43_SHM_SHARED, head[i]);
+}
+
+static void b43_phy_ac_wd_flat_sweep(struct b43_wldev *dev)
+{
+	u16 off;
+
+	for (off = 0x0768; off <= 0x078a; off += 2)
+		b43_shm_read16(dev, B43_SHM_SHARED, off);
+}
+
 static void b43_phy_ac_wd_stats_poll_opt(struct b43_wldev *dev,
 					 bool head_sweep,
 					 unsigned int ctr32_passes,
@@ -641,16 +667,32 @@ static void b43_phy_ac_shm_readback_block(struct b43_wldev *dev)
  * byte a 20 MHz e uno in piu' per ogni raddoppio. Provvisoria per definizione
  * -- sul ferro deve venire dal template della probe response.
  */
-static u16 b43_phy_ac_prb_rsp_len(enum nl80211_chan_width width)
+/*
+ * Lunghezza del probe response: la parte fissa, che dipende dalla larghezza
+ * per via degli elementi HT/VHT, piu' l'SSID.
+ *
+ * I numeri erano 284/285/286, che sono questi con un SSID di sette caratteri.
+ * Sommare l'SSID invece di inchiodarne uno e' l'unico modo di non ritarare
+ * cinque letterali alla prossima cattura: la stessa lunghezza decide anche
+ * 0x001e e le celle BTL nel doppione del core.
+ */
+static u16 b43_phy_ac_prb_rsp_len(enum nl80211_chan_width width,
+				  unsigned int ssid_len)
 {
+	u16 fixed;
+
 	switch (width) {
 	case NL80211_CHAN_WIDTH_80:
-		return 286;
+		fixed = 279;
+		break;
 	case NL80211_CHAN_WIDTH_40:
-		return 285;
+		fixed = 278;
+		break;
 	default:
-		return 284;
+		fixed = 277;
+		break;
 	}
+	return (u16)(fixed + ssid_len);
 }
 
 /*
@@ -805,7 +847,8 @@ static void b43_phy_ac_basic_rate_map(struct b43_wldev *dev)
 void b43_phy_ac_prb_rsp_plcp_pass(struct b43_wldev *dev)
 {
 	b43_phy_ac_prb_rsp_plcp(dev,
-			b43_phy_ac_prb_rsp_len(dev->phy.ac->cal_width));
+			b43_phy_ac_prb_rsp_len(dev->phy.ac->cal_width,
+					       dev->phy.ac->ssid_len));
 }
 
 /*
@@ -2275,16 +2318,30 @@ b43_phy_ac_force_rf_sequence(struct b43_wldev *dev, u16 rf_seq, u16 gate)
 }
 
 /*
- * CCA reset strobe without the phy_force_clock/udelay wrapper: pulse bit
- * 0x4000 of BBCFG (0x0001) and track the state. The vendor emits the pulse
- * as an atomic maskset pair -- val=<bit> mask=<bit>, then val=0 mask=<bit> --
- * at many points of the bring-up, to kick the CCA state machine without
- * forcing the PHY clock. Never as a plain write: every op on 0x0001 in both
- * cold sweeps is a MOD, 696 of 696 on the d6220 and 784 of 784 on agcombo,
- * which is why phy_maskset() is used at every site.
+ * CCA reset strobe: pulse bit 0x4000 of BBCFG (0x0001) with the PHY clock
+ * forced for the duration, and track the state. The vendor emits the pulse as
+ * an atomic maskset pair -- val=<bit> mask=<bit>, then val=0 mask=<bit> -- at
+ * many points of the bring-up, to kick the CCA state machine. Never as a plain
+ * write: every op on 0x0001 in both cold sweeps is a MOD, 696 of 696 on the
+ * d6220 and 784 of 784 on agcombo, which is why phy_maskset() is used at every
+ * site.
  *
- * For the hard variant, which does force the clock and is used by
- * channel_switch_prep(), see b43_phy_ac_reset_cca().
+ * There used to be two variants here, this one without the force and
+ * b43_phy_ac_reset_cca() with it, because the captures showed the force at
+ * three sites and not at the other thirty-five. They showed nothing of the
+ * kind: the force was not traced at all. `PHY.FGC` is one of the hooks the
+ * recapture added, and with it all thirty-eight pulses of cold01 have the same
+ * four operations, in the same order:
+ *
+ *   PHY.FGC val=0x0001
+ *   PHY.MOD addr=0x0001 val=0x4000 mask=0x4000
+ *   PHY.MOD addr=0x0001 val=0x0000 mask=0x4000
+ *   PHY.FGC val=0x0000
+ *
+ * Thirty-five are the sites below and three are channel_switch_prep()'s, and
+ * there is no shape that distinguishes them. So there is one function, and
+ * b43_phy_ac_reset_cca() is the exported name for it. The udelay comes with
+ * the force: forcing the clock is what makes the settling time real.
  * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   11398-11399, 11444-11445, 11709-11710, 11795-11796, 12038-12039,
  *   12124-12125, 14979-14980, 15244-15245, 15330-15331, 15573-15574,
@@ -2307,13 +2364,16 @@ static void b43_phy_ac_cca_pulse(struct b43_wldev *dev)
 	B43_AC_FN();
 	struct b43_phy_ac *phy_ac = dev->phy.ac;
 
+	b43_phy_force_clock(dev, true);
 	b43_phy_maskset(dev, B43_PHY_AC_BBCFG,
 			(u16)~B43_PHY_AC_BBCFG_RSTCCA,
 			B43_PHY_AC_BBCFG_RSTCCA);
 	phy_ac->status_mask |= B43_PHY_AC_STATE_CCA_RESET;
+	udelay(1);
 	b43_phy_maskset(dev, B43_PHY_AC_BBCFG,
 			(u16)~B43_PHY_AC_BBCFG_RSTCCA, 0);
 	phy_ac->status_mask &= ~B43_PHY_AC_STATE_CCA_RESET;
+	b43_phy_force_clock(dev, false);
 }
 
 /*
@@ -2329,21 +2389,7 @@ static void b43_phy_ac_cca_pulse(struct b43_wldev *dev)
 void
 b43_phy_ac_reset_cca(struct b43_wldev *dev)
 {
-	B43_AC_FN();
-	struct b43_phy_ac *phy_ac = dev->phy.ac;
-
-	b43_phy_force_clock(dev, true);
-	/* Pulse RSTCCA; phy_maskset() so the harness emits the vendor's shape,
-	 * see b43_phy_ac_cca_pulse(). */
-	b43_phy_maskset(dev, B43_PHY_AC_BBCFG,
-			(u16)~B43_PHY_AC_BBCFG_RSTCCA,
-			B43_PHY_AC_BBCFG_RSTCCA);
-	phy_ac->status_mask |= B43_PHY_AC_STATE_CCA_RESET;
-	udelay(1);
-	b43_phy_maskset(dev, B43_PHY_AC_BBCFG,
-			(u16)~B43_PHY_AC_BBCFG_RSTCCA, 0);
-	phy_ac->status_mask &= ~B43_PHY_AC_STATE_CCA_RESET;
-	b43_phy_force_clock(dev, false);
+	b43_phy_ac_cca_pulse(dev);
 }
 
 /**************************************************
@@ -5189,11 +5235,18 @@ static void b43_phy_ac_rxgain_init(struct b43_wldev *dev, unsigned int core)
  * time an AP bring-up arrives the check has finished, so the calibrations will
  * run where the cold captures have them absent. See docs/retrace-todo.md.
  */
+/*
+ * Does this channel carry the radar-detection duty at all. The calibration
+ * gate is this AND the check being settled; the detector poll is only this.
+ */
+static bool b43_phy_ac_chan_has_radar_duty(struct b43_wldev *dev)
+{
+	return !!(dev->phy.chandef->chan->flags & IEEE80211_CHAN_RADAR);
+}
+
 static bool b43_phy_ac_may_calibrate_tx(struct b43_wldev *dev)
 {
-	const struct ieee80211_channel *chan = dev->phy.chandef->chan;
-
-	if (!(chan->flags & IEEE80211_CHAN_RADAR))
+	if (!b43_phy_ac_chan_has_radar_duty(dev))
 		return true;
 	return !dev->phy.ac->cac_pending;
 }
@@ -9752,6 +9805,37 @@ static void b43_phy_ac_wd_stats_clear(struct b43_wldev *dev)
  *   26290-26473, 26660-26668, 26835-27070, 27793-27827, 27988-28022,
  *   28183-28217, 28384-28418]
  */
+/*
+ * Le letture di fase, e con @arm_tone la coppia del tone generator.
+ *
+ * Estratta da b43_phy_ac_wd_sample_phase_opt() perche' all'ingresso della fase
+ * probe non sta al suo posto: la cattura la mette fra le quattro celle sparse
+ * della spazzata e il cambio di modo, mentre a regime viene dopo entrambi.
+ * Vedi docs/retrace-todo.md.
+ */
+static void b43_phy_ac_wd_peek(struct b43_wldev *dev, bool arm_tone)
+{
+	unsigned int k;
+
+	b43_mac_suspend(dev);
+	for (k = 0; k < ARRAY_SIZE(b43_phy_ac_probe_peek_regs); k++)
+		b43_phy_read_log(dev, b43_phy_ac_probe_peek_regs[k]);
+	if (arm_tone) {
+		b43_phy_write(dev, 0x0554, 0x0bb8);
+		b43_phy_write(dev, 0x0555, 0x0bb8);
+	}
+	b43_mac_enable(dev);
+}
+
+/* Il cambio di modo che chiude il giro, estratto per la stessa ragione. */
+static void b43_phy_ac_wd_mode_next(struct b43_wldev *dev)
+{
+	b43_mac_suspend(dev);
+	b43_phy_maskset(dev, 0x0520, (u16)~0x000c,
+			probe_mode_next(dev->phy.ac));
+	b43_mac_enable(dev);
+}
+
 static void b43_phy_ac_wd_sample_phase_opt(struct b43_wldev *dev, bool peek,
 					   bool arm_tone)
 {
@@ -9772,27 +9856,15 @@ static void b43_phy_ac_wd_sample_phase_opt(struct b43_wldev *dev, bool peek,
 	 * Il tick periodico a regime e' la forma piena, ed e' quello che
 	 * b43_phy_ac_watchdog() emette.
 	 */
-	if (peek) {
-		b43_mac_suspend(dev);
-		for (k = 0; k < ARRAY_SIZE(b43_phy_ac_probe_peek_regs); k++)
-			b43_phy_read_log(dev, b43_phy_ac_probe_peek_regs[k]);
-		if (arm_tone) {
-			b43_phy_write(dev, 0x0554, 0x0bb8);
-			b43_phy_write(dev, 0x0555, 0x0bb8);
-		}
-		b43_mac_enable(dev);
-	}
+	if (peek)
+		b43_phy_ac_wd_peek(dev, arm_tone);
 
 	/*
 	 * La spazzata c'e' su ogni giro, anche su quelli che il latch lo hanno
 	 * perso: vedi @probe_nolatch_tick in phy_ac.h per il conto che lo dice.
 	 */
 	b43_phy_ac_wd_stats_clear(dev);
-
-	b43_mac_suspend(dev);
-	b43_phy_maskset(dev, 0x0520, (u16)~0x000c,
-			probe_mode_next(dev->phy.ac));
-	b43_mac_enable(dev);
+	b43_phy_ac_wd_mode_next(dev);
 }
 
 static void b43_phy_ac_wd_sample_phase(struct b43_wldev *dev)
@@ -9838,7 +9910,6 @@ static void b43_phy_ac_wd_stats_poll_opt(struct b43_wldev *dev,
 					 bool ctr32_tail)
 {
 	B43_AC_FN();
-	static const u16 head[4] = { 0x010e, 0x0158, 0x010c, 0x015e };
 	static const u16 ctr32[6] = {
 		0x0768, 0x076c, 0x0770, 0x0774, 0x0778, 0x077c
 	};
@@ -9846,10 +9917,8 @@ static void b43_phy_ac_wd_stats_poll_opt(struct b43_wldev *dev,
 	u16 off;
 
 	if (head_sweep) {
-		for (i = 0; i < ARRAY_SIZE(head); i++)
-			b43_shm_read16(dev, B43_SHM_SHARED, head[i]);
-		for (off = 0x0768; off <= 0x078a; off += 2)
-			b43_shm_read16(dev, B43_SHM_SHARED, off);
+		b43_phy_ac_wd_head_words(dev);
+		b43_phy_ac_wd_flat_sweep(dev);
 	}
 
 	if (!ctr32_passes)
@@ -9995,8 +10064,12 @@ static void b43_phy_ac_op_pwork_15sec(struct b43_wldev *dev)
 static bool b43_phy_ac_watchdog_on_tick(const struct b43_phy_ac *ac,
 					unsigned int tick)
 {
-	return ac->probe_watchdog_tick[0] == tick ||
-	       ac->probe_watchdog_tick[1] == tick;
+	unsigned int i;
+
+	for (i = 0; i < ac->probe_watchdog_n; i++)
+		if (ac->probe_watchdog_tick[i] == tick)
+			return true;
+	return false;
 }
 
 /*
@@ -10174,13 +10247,16 @@ static void b43_phy_ac_cac_poll(struct b43_wldev *dev, unsigned int turns)
 	unsigned int i;
 
 	/*
-	 * The complement of the calibration gate, and it has to be that and
-	 * not @cac_pending alone: a first bring-up has a check outstanding on
-	 * every channel, but only a channel that carries the radar duty waits
-	 * for it. Read the flag alone and the arming turn lands on ch36 too,
-	 * where the capture has none.
+	 * The duty alone, not the calibration gate. Those two were the same
+	 * test for as long as every captured segment on a radar channel had
+	 * the check outstanding from the arm to the end, so no capture could
+	 * separate them. The DFS recapture does: on cold05 the detector is
+	 * read 706 times between +10.7 s and +147.5 s, and 305 of those fall
+	 * after +73.6 s, which is where the check settles and the tone
+	 * generator starts. The poll is in-service monitoring and outlives the
+	 * check; the calibrations are what waits for it.
 	 */
-	if (b43_phy_ac_may_calibrate_tx(dev))
+	if (!b43_phy_ac_chan_has_radar_duty(dev))
 		return;
 
 	B43_AC_FN();
@@ -10260,22 +10336,11 @@ static void b43_phy_ac_crs_block_e(struct b43_wldev *dev)
 	b43_mac_enable(dev);
 }
 
+
 /* Il latch della finestra statistiche e, subito dietro, il blocco E. */
 static void b43_phy_ac_stats_latch_and_crs(struct b43_wldev *dev)
 {
-	/*
-	 * Latch the ucode statistics here, ahead of block E, so the CRS value
-	 * below follows the sample.
-	 *
-	 * The position is fixed and not a periodic tick that happens to land in
-	 * it: the window 0x008c and 0x0308 to 0x0314 sits immediately before
-	 * the mac_suspend and block E in all 32 sweep segments, and again in
-	 * the attach capture that traces the OBJ class, at episodes 56973 to
-	 * 56989 of its warm cycle on ch140. Exactly one sample falls between
-	 * the CRS write of chanspec_tail() and this one, in every case.
-	 */
 	b43_phy_ac_wd_stats_tail(dev);
-
 	b43_phy_ac_crs_block_e(dev);
 }
 
@@ -10304,7 +10369,8 @@ static void b43_phy_ac_wd_turn(struct b43_wldev *dev, unsigned int tick)
 			nolatch = true;
 
 	b43_phy_ac_wd_body(dev, reloads,
-			   b43_phy_ac_watchdog_on_tick(ac, tick),
+			   b43_phy_ac_watchdog_on_tick(ac,
+					ac->cac_wait_ticks + tick),
 			   !nolatch && tick != 0);
 
 	/*
@@ -10314,9 +10380,14 @@ static void b43_phy_ac_wd_turn(struct b43_wldev *dev, unsigned int tick)
 	if (tick == 1 && !b43_phy_ac_may_calibrate_tx(dev))
 		b43_phy_ac_crs_block_e(dev);
 
-	/* Fra la lettura dei contatori e il loro azzeramento. */
-	if (tick < ac->cac_poll_n)
-		b43_phy_ac_cac_poll(dev, ac->cac_poll_tick[tick]);
+	/*
+	 * Fra la lettura dei contatori e il loro azzeramento. L'indice parte
+	 * da dopo i giri della fase d'attesa, che hanno consumato la loro
+	 * parte della stessa lista: vedi b43_phy_ac_cac_wait().
+	 */
+	if (ac->cac_wait_ticks + tick < ac->cac_poll_n)
+		b43_phy_ac_cac_poll(dev,
+			ac->cac_poll_tick[ac->cac_wait_ticks + tick]);
 
 	b43_phy_ac_wd_sample_phase_opt(dev, tick != 1 && tick != 2, tick == 0);
 }
@@ -10333,6 +10404,68 @@ static void b43_phy_ac_wd_turn(struct b43_wldev *dev, unsigned int tick)
  * mac_enable op_channel_calibrate() owes straight to the host-flag clear that
  * opens this function, with nothing in between.
  */
+/*
+ * La fase d'attesa del controllo di disponibilita' del canale.
+ *
+ * Su un canale con la guardia radar le calibrazioni non partono finche' il
+ * controllo non si e' chiuso, e nel frattempo il watchdog gira. Nella cattura
+ * il blocco d'attesa sta esattamente dove un canale senza guardia ha l'entrata
+ * di b43_phy_ac_op_channel_calibrate(): su cold05 sono 10867 operazioni in
+ * 62.9 secondi, 58 giri, e dopo di esse il bring-up riprende e tutto il resto
+ * segue nello stesso ordine di cold01.
+ *
+ * Un giro d'attesa e' il corpo senza measure block piu' i poll del rivelatore
+ * che gli spettano. I poll non si fermano quando il controllo si chiude -- su
+ * cold05 sono 706 dal +10.7 s al +147.5 s e 305 cadono dopo -- percio' la
+ * lista e' una sola e questa fase ne consuma il primo tratto.
+ *
+ * Su hardware questa funzione non ha chiamanti: quei giri sono il periodic
+ * work che ticchetta mentre lo stack sopra tiene sospeso il bring-up dell'AP,
+ * e @cac_pending lo azzera l'evento CAC_FINISHED di mac80211. Qui li esegue
+ * chi guida la traccia, che e' anche chi dice quanti sono.
+ */
+static void b43_phy_ac_cac_wait_turn(struct b43_wldev *dev, unsigned int turn,
+				     bool tail)
+{
+	struct b43_phy_ac *ac = dev->phy.ac;
+
+	b43_phy_ac_wd_body(dev, 0,
+			   b43_phy_ac_watchdog_on_tick(ac, turn), tail);
+	if (turn < ac->cac_poll_n)
+		b43_phy_ac_cac_poll(dev, ac->cac_poll_tick[turn]);
+	b43_phy_ac_wd_sample_phase_opt(dev, true, false);
+}
+
+void b43_phy_ac_cac_wait(struct b43_wldev *dev)
+{
+	struct b43_phy_ac *ac = dev->phy.ac;
+	unsigned int i;
+
+	/*
+	 * Solo dove il controllo e' pendente. Provato a generalizzarla a "N
+	 * giri prima delle calibrazioni" per coprire anche il varco di cold01,
+	 * che ne ha uno: non funziona, il giro che il vendor mette nel varco
+	 * e' 95 op e un corpo intero ne fa ~170. Vedi docs/retrace-todo.md.
+	 */
+	if (!ac->cac_pending || !ac->cac_wait_ticks)
+		return;
+
+	/*
+	 * Il latch della finestra e' la coda del corpo, e l'ultimo giro non la
+	 * emette se dopo di lui la emette qualcun altro: dove la calibrazione
+	 * e' permessa il latch lo fa b43_phy_ac_stats_latch_and_crs(), subito
+	 * dopo, ed e' quello che il blocco E segue. Dove non lo e' -- il
+	 * controllo di disponibilita' ancora pendente -- quella chiamata non
+	 * c'e' e il latch resta la coda del giro.
+	 */
+	for (i = 0; i < ac->cac_wait_ticks; i++)
+		b43_phy_ac_cac_wait_turn(dev, i,
+			!(i + 1 == ac->cac_wait_ticks &&
+			  b43_phy_ac_may_calibrate_tx(dev)));
+
+	ac->cac_pending = false;
+}
+
 static void b43_phy_ac_post_bringup_tail(struct b43_wldev *dev)
 {
 	B43_AC_FN();
@@ -10400,14 +10533,19 @@ static void b43_phy_ac_post_bringup_tail(struct b43_wldev *dev)
 	b43_phy_ac_cac_poll(dev, dev->phy.ac->cac_poll_pre);
 
 	/*
-	 * Sotto i 5250 il latch e il blocco E stanno qui, fra la cella a
-	 * 0xffff e la fase probe. Sopra, dove il controllo di disponibilita'
-	 * e' ancora pendente, no: il latch a se' non c'e' affatto -- cold05 ne
-	 * ha diciannove dopo la cella contro i venti di cold01 -- e il blocco E
-	 * segue il latch che il giro 1 emette da solo, dentro il giro. Le
-	 * distanze dalla cella lo dicono: latch e blocco E a +1 e +10 su
-	 * cold01, a +198 e +207 su cold05, e le 193 operazioni in mezzo sono
-	 * un giro piu' la spazzata con cui si apre il successivo.
+	 * Il latch e il blocco E stanno fra la cella a 0xffff e la fase
+	 * probe, o dentro il primo giro della fase. Quale dei due non e' una
+	 * proprieta' del canale: e' se un tick del periodico e' caduto in
+	 * mezzo, e va detto all'harness come gli altri orologi del vendor.
+	 * Vedi docs/retrace-todo.md.
+	 */
+	/*
+	 * Il latch e il blocco E prima della fase. Non e' quello che fa il
+	 * vendor -- vedi docs/retrace-todo.md, dove c'e' il confronto dei due
+	 * flussi come sequenze di pezzi -- ma il prefisso giusto cambia da
+	 * segmento a segmento e vuole un ingresso dalla cattura che ancora non
+	 * c'e'. Fra le due approssimazioni sbagliate, questa e' quella che
+	 * indovina i quattro segmenti col varco vuoto.
 	 */
 	if (b43_phy_ac_may_calibrate_tx(dev))
 		b43_phy_ac_stats_latch_and_crs(dev);

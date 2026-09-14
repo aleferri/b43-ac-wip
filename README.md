@@ -74,9 +74,17 @@ dove si documenta come si produce un numero citabile.
 Su `cold01-ch36-bw20`, il segmento di riferimento:
 
 ```
-grezzo: 28553/28582 = 99.90%
-        0 col valore sbagliato, 29 op di wl mancanti, 0 op del port di troppo
+grezzo: 28408/30961 = 91.75%
+        181 col valore sbagliato, 1283 op di wl mancanti, 908 op del port di troppo
 ```
+
+Contro lo sweep precedente lo stesso albero dava `28553/28582 = 99.90%` con 29
+op mancanti e nient'altro. Il numero non e' peggiorato perche' il driver sia
+peggiorato: e' peggiorato perche' la cattura vede di piu'. La ricattura ha
+aggiunto nove classi di hook -- `AMT`, `OBJ.BULKR`/`OBJ.BULKW`, `ADDRM.SET`,
+`PHY.FGC`, `PHY.RDW`, `PHY.WARR`, `CS.SHM`, `OBJ.SET` -- e ognuna porta in
+denominatore op che prima nessuno dei due lati emetteva. Il 99.90% misurava un
+confronto a cui mancava lo stesso pezzo da entrambe le parti.
 
 Il denominatore e' l'unione dei due flussi, quindi fa 100% solo se il port
 emette esattamente le op del driver stock: ne' meno, ne' di piu', ne' con
@@ -89,19 +97,25 @@ tabella sotto), 3 stanno nella coda del rmmod con cui ogni segmento si chiude
 -- il reset del chip via watchdog di `pcie_watchdog_reset()`, chiamata da
 `si_detach()` sui core PCIe Gen2, e il rilascio LED a maschera vuota di wl0.
 
-Tutti e 26 i segmenti dello sweep a freddo sono misurati sullo stesso albero, e
-si dividono in due famiglie che il punteggio separa da se':
+Lo sweep a freddo e' ora di 43 segmenti, e la tabella per famiglie che stava
+qui non e' piu' valida: si reggeva su una separazione a 5250 MHz che lo sweep
+vecchio non poteva smentire, perche' si fermava a ch140 e li' ogni canale con
+la guardia radar sta sopra la soglia e ogni canale senza sta sotto. Con
+ch144-165 le due cose si separano, e la famiglia vera e' la guardia radar, non
+la frequenza: `cac_polls.py` la legge da ogni segmento e mette il confine a
+ch140.
 
-| famiglia | segmenti | grezzo | di troppo |
-|---|---|---|---|
-| centro banda ≤ 5250 MHz | 7 (ch36-48) | 97.88% – 99.90% | 0 su ch36 BW20, 69 – 255 sugli altri sei |
-| centro banda > 5250 MHz | 19 (da ch52) | 98.64% – 99.76% | 0, tranne 4 su cold06 e cold11 e 59 su cold15 |
+La differenza di dimensione fra le due famiglie -- ~16k op contro ~29k --
+neanche e' quella che c'era scritto qui. La parte grossa, 12052 op su 14022,
+e' il bss-up che non avviene: sui canali con la guardia radar il CAC non si
+chiudeva entro la finestra di cattura, quindi l'AP non saliva mai e le quattro
+tabelle del BSS (`0x0e`, `0x42`, `0x62`, `0x82`) mancano. Non e' un attach
+diverso del driver stock, e' una cattura presa durante l'attesa. I 21 segmenti
+DFS sono stati ripresi con il CAC completato e adesso ce le hanno.
 
-Sopra i 5250 MHz il driver stock esegue un attach diverso, non un attach
-ridotto: ~16k op contro le ~29k dei canali bassi. Quella differenza e' chiusa:
-il vendor la' non esegue la calibrazione RX IQ, il port nemmeno, e da ultimo
-nemmeno il write-back dei coefficienti in coda a `b43_phy_ac_down()` -- che il
-port emetteva a zero, perche' in un attach a freddo nessuno li aveva salvati.
+Quei 21 non producono pero' ancora un numero: contengono la transizione
+CAC-pendente -> CAC-fatto a meta' segmento, mentre `cac_pending` nell'harness
+e' un booleano per l'intera corsa. Vedi `docs/retrace-todo.md`.
 
 Delle op di troppo che restano, quelle della famiglia bassa sono in parte il
 debito delle costanti per-canale. Il resto, e tutte quelle di cold15, e' la
@@ -116,7 +130,8 @@ vendor ripete un numero di volte che decide lo stack sopra, senza correlazione
 con la durata del segmento (33-39 s in tutti). Non sono pero' debito: il
 conteggio lo legge `reverse-tools/beacon_reloads.py` dalla cattura e `gates.sh`
 lo passa all'harness come `AC_BEACON_RELOADS`, ed e' un orologio come
-`probe_ticks` e il poll di CAC. Sui 26 segmenti il port ne emette esattamente
+`probe_ticks` e il poll di CAC. Sui segmenti dello sweep precedente il port ne
+emetteva esattamente
 quante il vendor, da 7 a 19 caricamenti di template per segmento.
 Il criterio che separa un orologio dal debito vero e' il conteggio fra
 segmenti: una fase come `prb_rsp_rate_po` sta a 3 passate su tutti e 26 i
