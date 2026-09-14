@@ -202,8 +202,21 @@ void b43_phy_ac_rxcal_tone_setup(struct b43_wldev *dev)
 {
 	B43_AC_FN();
 	static const u16 reg_off[3] = { 0x0039, 0x003a, 0x0025 }; /* relative to 0x0700 */
-	static const u16 pass1_vals[3] = { 0x00fa, 0x01d3, 0x07e6 };
-	static const u16 pass2_vals[3] = { 0x007a, 0x01d3, 0x07e2 };
+	/*
+	 * Le due parole su 0x0739 e 0x073a seguono la larghezza: quello che
+	 * qui stava scritto -- 0x00fa, 0x007a e 0x01d3 -- e' la loro forma a
+	 * 20 MHz. A 40 MHz 0x073a vale 0x0192 e a 80 0x0198, e 0x0739 passa da
+	 * 0x007a a 0x007e a 80. La parte fissa e' 0x0190 per 0x073a e il bit
+	 * 0x0080 che la prima passata aggiunge a 0x0739. Vedi
+	 * b43_phy_ac_rxgain_bw().
+	 *
+	 * 0x0725 non si muove: nei 26 segmenti a freddo scrive 0x07e6 e
+	 * 0x07e2 su ogni canale e ogni larghezza.
+	 */
+	const struct b43_phy_ac_rxgain_bw *g = b43_phy_ac_rxgain_bw(dev);
+	const u16 w73a = (u16)(0x0190 | g->f73a_07 | g->f73a_08 | g->f73a_60);
+	const u16 pass1_vals[3] = { (u16)(0x0080 | g->f739_7e), w73a, 0x07e6 };
+	const u16 pass2_vals[3] = { g->f739_7e, w73a, 0x07e2 };
 	u8 c, num_cores = dev->phy.ac->num_cores;
 	u8 mask = dev->phy.ac->coremask;
 	int i;
@@ -491,8 +504,9 @@ static void b43_phy_ac_rxiq_set_tone(struct b43_wldev *dev, u8 core,
 /*
  * Gain override: apply the measurement gain on <core>, then micro-settle.
  * Two-step write sequence from the trace: first the "armed"
- * values (0x00fa / 0x01d3 / 0x07e6), then the settled values (0x007a /
- * 0x01d3 / 0x07e2). The read-before-write is a save — we skip it here
+ * values (0x00fa / 0x01d3 / 0x07e6 a 20 MHz), then the settled values
+ * (0x007a / 0x01d3 / 0x07e2). Le due parole su 0x0739 e 0x073a seguono la
+ * larghezza; vedi b43_phy_ac_rxgain_bw(). The read-before-write is a save — we skip it here
  * because the caller saves and restores the registers.
  */
 static void b43_phy_ac_rxiq_apply_gain(struct b43_wldev *dev, u8 core)
@@ -500,13 +514,16 @@ static void b43_phy_ac_rxiq_apply_gain(struct b43_wldev *dev, u8 core)
 	B43_AC_FN();
 	u16 s = (u16)(core * 0x200);
 
-	b43_phy_write(dev, 0x0739 + s, 0x00fa);
-	b43_phy_write(dev, 0x073a + s, 0x01d3);
+	const struct b43_phy_ac_rxgain_bw *g = b43_phy_ac_rxgain_bw(dev);
+	u16 w73a = (u16)(0x0190 | g->f73a_07 | g->f73a_08 | g->f73a_60);
+
+	b43_phy_write(dev, 0x0739 + s, (u16)(0x0080 | g->f739_7e));
+	b43_phy_write(dev, 0x073a + s, w73a);
 	b43_phy_write(dev, 0x0725 + s, 0x07e6);
 	/* micro-settle: same sequence both cores */
 	b43_phy_write(dev, 0x0725 + s, 0x07e2);
-	b43_phy_write(dev, 0x073a + s, 0x01d3);
-	b43_phy_write(dev, 0x0739 + s, 0x007a);
+	b43_phy_write(dev, 0x073a + s, w73a);
+	b43_phy_write(dev, 0x0739 + s, g->f739_7e);
 }
 
 /*

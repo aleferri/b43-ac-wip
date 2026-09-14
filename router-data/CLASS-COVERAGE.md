@@ -42,6 +42,107 @@ Verificata a freddo, non solo per etichetta: 6 letture OTP, 1 `SROMCTL`, 8 op
 PMU, 1 `CAL.INIT` e un select della tabella `0x01` in **ognuno** dei 28
 segmenti, e un solo chanspec programmato per segmento.
 
+## Le classi che il DSL ha e il d6220 no
+
+Sette classi compaiono nelle catture DSL-3580L e in nessuna del d6220:
+`AMT.WR`, `RCMTA.WR`, `OBJ.BULKW`, `OBJ.SET`, `SROMCTL.WR`, `PHY.WARR`,
+`CS.SHM`. La spiegazione che questo file dava prima -- le catture sono piu'
+vecchie degli hook -- **non regge**, e il conteggio lo dice:
+
+| cattura | driver | `AMT.WR` | `OBJ.BULKW` | `OBJ.SET` | `SROMCTL.WR` | `CS.SHM` |
+| --- | --- | --- | --- | --- | --- | --- |
+| d6220 cold sweep | 7.14.89.14 | 0 | 0 | 0 | 0 | 0 |
+| d6220 hot sweep | 7.14.89.14 | 0 | 0 | 0 | 0 | 0 |
+| agcombo cold sweep | 7.14.43.21 | 0 | 0 | 0 | 0 | 0 |
+| DSL-3580L | 6.30.102.7 | 122 | 7 | 1 | 4 | 1 |
+
+Tre sweep, **due board diverse**, tutte a 7.14, tutte a zero; il 6.30 le ha
+tutte. E' uno spartiacque di versione, non una data. Le stesse dieci classi
+mancano in blocco, comprese `ADDRM.SET` e `IHR.WR` che mancano anche sul DSL.
+
+## Quello che si verifica da fermi, e quello che no
+
+Il modulo `wl` linkato si estrae dal firmware (`.chk` -> header Netgear di 60
+byte -> JFFS2 big-endian -> `wl.ko`), ed e' **lo stesso codice dell'oggetto
+pre-link**: `.text` e `.rodata` byte-identiche, rilocazioni identiche per
+offset e tipo, cambiano solo gli indici di simbolo. Il piano hook sui due esce
+riga per riga identico, quindi il prelink basta e non e' un'approssimazione.
+
+`reverse-tools/audit_hooks.py` rifa' `pianifica()` sull'oggetto e conta anche i
+**siti di chiamata**, che e' la colonna che conta: un hook si pianifica
+benissimo su una funzione che nessuno chiama. GCC emette la copia out-of-line
+di una funzione GLOBAL anche quando la inlinea in tutti i chiamanti, quindi
+simbolo risolto, prologo agganciato, classe a zero per sempre. Sul blob 7.14
+capita a due simboli:
+
+| simbolo | siti | conseguenza |
+| --- | --- | --- |
+| `phy_reg_write_wide` | 0 | `PHY.WRW` non comparira' mai su questa build |
+| `wlc_write_amtinfo_by_idx` | 0 | non e' agganciato, e il suo corpo e' il dispatch AMT |
+
+**Per l'AMT l'inlining pero' non spiega niente**, e va detto perche' e' la
+prima ipotesi che viene in mente: `wlc_bmac_write_amt` ha 12 chiamanti reali,
+fra cui `wlc_bmac_init`. E la scrittura passa comunque da
+`wlc_bmac_copyto_objmem`, 568 byte con 13 chiamanti, certamente sul percorso di
+attach: se il suo hook fosse stato armato, `OBJ.BULKW` non sarebbe zero.
+
+**La misura che manca non e' statica.** `pianifica()` stampa una riga per hook
+all'insmod: rimettere il tracer corrente sul d6220 e leggere il dmesg dice se
+l'hook e' stato pianificato, cosa che nessuna analisi sull'oggetto puo' dire
+perche' dipende da quale binario girava quel giorno. Se risulta pianificato e
+muto, il candidato da guardare e' `wlc_write_amtinfo_by_idx` inlineata, e
+l'unica via e' agganciare la funzione che la contiene -- `wlc_set_addrmatch`,
+gia' in tabella e che si pianifica.
+
+## Due assenze che restano legittime
+
+**`RCMTA.WR` non puo' comparire per il nostro core.** L'unico chiamante e'
+`wlc_set_addrmatch`, che smista su una soglia: `lw 0(a0)` / `lw 16(v0)` /
+`sltiu v0, 0x28` / `bne` -- sotto 40 va a `wlc_bmac_set_rcmta`, da 40 in su a
+`wlc_bmac_write_amt`. E' la soglia di `brcms_b_set_addrmatch()` in brcmsmac,
+che su `D11REV_GE(rev, 40)` usa l'AMT. Il core AC e' **corerev 42**. Le 54
+`RCMTA.WR` della cattura DSL sono dell'altro core.
+
+**`PHY.WARR` non ha chiamanti AC-PHY.** Dei 271 siti nel blob 7.14 nessuno e'
+una funzione `*_acphy`: sono LCN, LCN40, LP, G, A, N piu' una decina di
+dispatcher generici che si diramano per tipo di PHY. Nella cattura DSL tutte e
+quattro le occorrenze sono `cpu0` e cadono nella finestra dell'attach di wl0.
+Non e' una prova -- i dispatcher generici non sono stati seguiti dentro -- ma
+le due evidenze puntano dalla stessa parte.
+
+## `PHY.FGC`, la classe che non c'era
+
+Il force gated clock non e' inlineato: `wlc_bmac_phyclk_fgc` e' vivo, 96 byte.
+Non era **agganciato**, quindi non esisteva una classe per esso in nessuna
+cattura, di nessuna versione. E dall'altra parte l'harness emette
+`b43_phy_force_clock()` come commento, che `compare.py` ignora: invisibile su
+tutti e due i lati del confronto.
+
+Conta perche' i chiamanti AC sono tre e non uno -- `wlc_phy_resetcca_acphy`
+una volta, `wlc_phy_cal_txiqlo_acphy` due -- mentre il port lo chiama solo da
+`b43_phy_ac_reset_cca()`. Se il vendor forza il clock anche attorno alla cal
+TX IQ/LO, oggi la divergenza non la vede nessuno.
+
+L'hook e' su `wlc_bmac_phyclk_fgc` e non sul thunk `wlapi_bmac_phyclk_fgc`:
+tutti e tredici i chiamanti passano dal thunk, che gli fa tail-call, e il thunk
+ha `lui $t9` alla parola 0 -- il caso che ha imposto la scelta del registro di
+rientro -- piu' tredici siti contro `MAX_SITES` 8. Short-j, rientro su `$t9`.
+
+## Cosa cambia per il confronto
+
+`AMT.WR` sta oggi in `SOLO_PORT` di `test/unit/compare.py`, con la nota che e'
+"un'op giusta senza oracolo" e che la voce si chiude con una ricattura. Resta
+li' finche' non si sa se l'hook si arma. `OBJ.BULKW` porta il selettore della
+finestra di object memory, che e' il punto aperto sul routing qui sotto.
+`CS.SHM` e' il confine per segmentare uno sweep che
+`reverse-tools/split_trace.py` oggi deve ricavare dai salti temporali.
+`PHY.FGC` e' l'unica classe nuova che copre un buco su **entrambi** i lati.
+
+Il tracer per il 2.6.30 (`reverse-tools/wl-diag-2630/`) non e' stato toccato:
+le correzioni qui sopra sono verificate sul blob 7.14, e per il 6.30 non c'e'
+un oggetto su cui rifare il piano. Applicarle alla cieca la' significherebbe
+mettere uno `shortj` su un prologo che nessuno ha guardato.
+
 ## Il campo `sel` e la ricostruzione per intersezione
 
 Le op `OBJ` portano un `sel`, il routing della finestra di shared memory. Un

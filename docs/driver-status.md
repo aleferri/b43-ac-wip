@@ -1,21 +1,73 @@
 # Stato del bring-up
 
-Il draft 1 di `switch_channel` è validato op-per-op contro il trace vendor
-`d6220/cold-sweep.zip`, segmento ch36 bw20 (flow `down` e `up` con oracolo, via test/unit/gates.sh; prima divergenza
-@23951 su 25013 op). Il primo bring-up HW
-è quindi atteso funzionante su:
+## Cosa il driver accetta
 
-- **Board**: NetGear D6220 (o board equivalenti con chip 0x4352, radio
-  2069 rev 4, 3 cores).
-- **Canale**: 36 (5180 MHz) validato op-per-op. Ch44 dovrebbe funzionare
-  (95.8% delle op sono chan-invariant vs ch36, vedi
-  `channel-generalization.md`) ma non è validato.
-- **Bandwidth**: solo BW20. BW40 è rifiutato esplicitamente da
-  `switch_channel` con `-EOPNOTSUPP` in attesa di implementazione.
+`op_switch_channel()` ammette **solo ch36 a 20 MHz**: `b43_phy_ac_validated_configs[]`
+ha quella sola voce, e ogni altra combinazione di canale e larghezza esce con
+`-EOPNOTSUPP` e un `b43warn` che dice perche'. Non e' una lacuna di
+implementazione da riempire -- il codice emette gia' le op giuste su ogni
+canale e larghezza catturati -- ma un guard sul front-end RF: diverse tabelle
+sono trascritte da ch36 a 20 MHz e non hanno evidenza altrove (gli stadi
+passa-basso dell'AFE, la scala del CRS minimum power, le voci per larghezza del
+blocco `0x00ec-0x00f5`). `CONFIG_B43_PHY_AC_ANY_CHANNEL` lo scavalca, e' sotto
+`B43_DEBUG`, default `n`, e serve al lavoro di bring-up per far girare una
+configurazione non coperta contro la sua cattura.
 
-Altri canali 5 GHz sono untested. La generalizzazione richiede
-estrazione di ~40 registri radio-chain per canale + ~30 chanspec
-tables (piano operativo in `channel-generalization.md`).
+Fuori dal guard: chip `0x4352` e `0x4360`, altrimenti `-EOPNOTSUPP`. Board di
+riferimento NetGear D6220 (radio 2069 rev 4), piu' DSL-3580L e agcombo nelle
+catture.
+
+## Cosa le suite misurano
+
+Le tre condizioni di `test/unit/README.md`, piu' `test/integration`. Il numero
+citabile e' il `grezzo` di `cmp_skip.py`.
+
+| misura | esito |
+| --- | --- |
+| freddo `cold01` ch36 bw20 | **99.90%** (28553/28582), `compare.py` senza divergenze |
+| freddo, gli altri 25 segmenti | da 97.88% a 99.76%, 24 su 26 sopra il 98%, con `AC_ANY_CHANNEL=1` |
+| freddo `cold05` ch52 bw20 | 99.71% |
+| freddo `cold24` ch36 bw80 | 98.73% |
+| caldo, i tre segmenti di riferimento | 86.43% (ch36), 89.30% (ch52), 85.60% (ch104) |
+| tick periodico | **MATCH**, posizione per posizione |
+| integrazione, b43 intero | `probe: 0`, `start: 0`, 29853 op; 84.21% sul segmento intero, **98.78% sul solo switch di canale con zero valori sbagliati** |
+
+Il freddo e il caldo non sono intercambiabili e nessuno dei due copre l'altro:
+ogni predicato che distingue il primo bring-up dai successivi e' invisibile
+nello sweep a freddo. Vedi `test/unit/gates.sh`.
+
+Il salto fra le due famiglie di canali a freddo -- sotto e sopra i 5250 MHz --
+e' chiuso: sopra la soglia il driver salta le calibrazioni post-switch ed
+emette il poll di CAC, entrambi dietro `b43_phy_ac_may_calibrate_tx()`. Il
+residuo per canale sta in `retrace-todo.md`.
+
+**Nessun segmento si ferma piu' su un'operazione mancante o di troppo**: la
+prima divergenza posizionale di tutti e 25 e' un valore, e sono due famiglie --
+il banco `0x0910` su nove segmenti, il blocco ppr per rate sugli altri. Questo
+non vuol dire che non resti struttura: `compare.py` si ferma alla prima
+divergenza e cio' che sta a valle non lo misura, mentre `cmp_skip.py` conta
+ancora 29 mancanti sui segmenti migliori -- lo stesso fondo di `cold01`, che ne
+ha 29 e zero di troppo -- e molte di piu' sui quattro sotto il 98%.
+
+## Cosa resta aperto
+
+- **I valori sbagliati crescono con la larghezza**: 0 su ch36 bw20, 8 su ch52
+  bw20, 93 su ch36 bw80. E' la voce piu' grossa del residuo a freddo.
+- **La spazzata dei contatori sui giri in ritardo**: 12-36 op di troppo su
+  cinque segmenti, il residuo del latch della finestra statistiche che e'
+  chiuso. Misure e due tentativi falliti in `retrace-todo.md`.
+- **La ri-emissione del blocco CRS**: 16 op su `cold09`, l'unico segmento a
+  freddo che ne ha una quarta passata. Due eccezioni su 78 segmenti e una
+  regola di isteresi che il test negativo scarta; vedi `retrace-todo.md`.
+- **La scala del banco `0x0910`**: il `target` del sito finalize e' fittato su
+  `cold01`, che e' l'unico fuori scala della sua famiglia. Misure e ipotesi in
+  `bank-0910-analysis.md`.
+- **Il bit `0x80` di shm `0x00cc`**: non e' il canale, la banda, la larghezza,
+  il CAC ne' il beaconing, e nessuna altra cella della cattura ha la sua
+  partizione. Vedi `retrace-todo.md`.
+- La generalizzazione a piu' canali validati richiede l'estrazione dei registri
+  radio-chain per canale e delle chanspec table; piano in
+  `channel-generalization.md`.
 
 ## Mappatura file sorgente → patch
 

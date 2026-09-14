@@ -46,6 +46,10 @@ probe_schedule = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(probe_schedule)
 
 OP = re.compile(r"^\s*([\d.]+)\s+#(\d+)\s+cpu\d+\s+(.*?)\s*$")
+TIMBPOS = re.compile(r"^OBJ\.WR\s+addr=0x001e\s+val=0x[0-9a-f]+$")
+# Le quattro passate conf_tx nell'ordine in cui l'harness le emette, ognuna
+# riconosciuta dall'ultima cella del suo blocco di coda.
+EDCF_LAST = [0x027e, 0x025e, 0x029e, 0x02be]
 BTL = re.compile(r"^OBJ\.WR\s+addr=0x00(18|1a)\s+val=0x[0-9a-f]+$")
 SUSPEND = "MAC.MCTRL val=0x00000000 mask=0x00000001"
 
@@ -65,6 +69,56 @@ def collect(path):
         if i + 1 < len(ops) and ops[i + 1][1].startswith(SUSPEND):
             out.append((t, m.group(1)))
     return out
+
+
+def edcf_mask(path):
+    """Su quali passate conf_tx cade una ricarica del beacon.
+
+    Non e' strutturale: su cold01 solo la prima la porta, su cold05 tutte e
+    quattro, e i quattro blocchi di coda ci sono in entrambi i casi -- nel
+    vendor come nel port. Quindi e' hostapd che ha spinto un beacon li', ed e'
+    un ingresso come il numero dei tick. Il criterio e' posizionale: una
+    scrittura di TIMBPOS entro poche op dalla fine del blocco della passata.
+    """
+    ops = []
+    for line in open(path, errors="replace"):
+        m = OP.match(line)
+        if m:
+            ops.append(m.group(3))
+    mask = 0
+    for n, last in enumerate(EDCF_LAST):
+        pat = "OBJ.WR   addr=0x%04x" % last
+        for i, op in enumerate(ops):
+            if not op.startswith(pat):
+                continue
+            if any(TIMBPOS.match(x) for x in ops[i + 1:i + 8]):
+                mask |= 1 << n
+            break
+    return mask
+
+
+def pre_late(path):
+    """Quante delle pre-fase cadono dopo la cella a 0xffff.
+
+    Il confine e' la cella e non l'inizio della fase: su cold04 una delle tre
+    sta dopo il latch e il blocco E, e contarla con le altre sfasa il flusso di
+    una ricarica intera. Sui 26 segmenti a freddo e' zero ovunque tranne li'.
+    """
+    ops = []
+    for line in open(path, errors="replace"):
+        m = OP.match(line)
+        if m:
+            ops.append(m.group(3))
+    cell = [i for i, op in enumerate(ops)
+            if op.startswith("OBJ.WR   addr=0x0026 val=0xffff")]
+    group = [i for i, op in enumerate(ops)
+             if op.startswith("PHY.RD   addr=0x0527")]
+    if not cell:
+        return 0
+    lo = cell[0]
+    hi = group[0] if group else len(ops)
+    return sum(1 for i, op in enumerate(ops)
+               if lo < i < hi and TIMBPOS.match(op))
 
 
 def schedule(path):
@@ -108,11 +162,19 @@ def main():
         return 1
     pre, ticks = got
 
+    mask = edcf_mask(a.capture)
+    late = pre_late(a.capture)
+    pre = max(0, pre - late)
+
     if a.sh:
+        print(f"AC_EDCF_RELOADS={mask:#x}")
+        if late:
+            print(f"AC_BEACON_PRE_LATE={late}")
         print(f"AC_BEACON_RELOADS={pre}:" + ",".join(str(t) for t in ticks))
     else:
-        print(f"reloads  {pre + len(ticks)}")
-        print(f"pre      {pre} before the phase starts")
+        print(f"conf_tx  mask {mask:#x}")
+        print(f"reloads  {pre + len(ticks)} da programmare")
+        print(f"pre      {pre} before the phase starts, {late} after the cell")
         print(f"ticks    {ticks if ticks else 'none'}")
     return 0
 

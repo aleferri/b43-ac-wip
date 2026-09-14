@@ -48,6 +48,33 @@ basta: ch36 con `crs` 49 da' offset 0, ch40-48 con `crs` 52 danno +5, e ch48 nei
 suoi due cicli da' 0 e +5 a parita' di `crs`. Tre somme distinte, non due, e un
 target che non e' costante nel sito.
 
+**Sul d6220 a freddo la somma e' invece costante per larghezza.** I 26 segmenti
+dello sweep, sito finalize (il secondo blocco; il primo, `chanspec_tail`, scrive
+sempre `off = 0` come gia' detto):
+
+| larghezza | somma | su quanti | eccezioni |
+| --- | --- | --- | --- |
+| 20 MHz | 52 | 15 su 16 | `cold01` da' 57 |
+| 40 MHz | 54 | 6 su 7 | `cold19` da' 58 |
+| 80 MHz | 52 | 3 su 3 | — |
+
+Il `crs` che entra varia (52 su ch36-64, 57 su ch104-136, 58 su ch140 a 20 MHz)
+e l'offset lo compensa fino alla somma, con segno: `(57,-5,52)` su sei segmenti,
+`(58,-6,52)` su `cold16`, `(58,-4,54)` su due a 40 MHz.
+
+Due cose che questo dice e che valgono per il §4. La prima: il `target = 57` del
+sito finalize per il 4352 e' fittato su `cold01`, **l'unico segmento fuori scala
+della sua famiglia**; su 15 dei 16 a 20 MHz la somma e' 52 e su tutti e tre gli
+80 MHz pure. La seconda: 54 non sta nel ladder `{49, 52, 57, 64}` del §5, quindi
+o il ladder a 40 MHz e' un altro, o la somma non e' la entry come il §5.4
+sostiene.
+
+Gli scarti di `cold01` (+5) e `cold19` (+4) non si spiegano con il campione di
+rumore del tick in cui il blocco cade: ne' il rapporto ne' la differenza fra
+`OBJ 0x0308` e `0x030c` li separa da `cold25`, che ha un rapporto piu' alto
+(4276/3185) e sta sulla scala. Se il campione che decide e' un altro, o e'
+quello del ciclo precedente come il §5 vuole, va misurato li'.
+
 C'e' anche un problema di conteggio da sciogliere prima dei valori: su ch40
 ciclo 1 il vendor emette 32 op sul banco dove il port ne emette 16, ed e' lo
 stesso ciclo in cui compare il gradino 64, unico caso nei 32 segmenti.

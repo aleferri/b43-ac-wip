@@ -84,6 +84,48 @@ static void plan_rxiq_poll(const char *board, bool first_init)
 
 static const struct board_profile *g_profile;
 
+/*
+ * Valore che il core scrive in shared memory 0x00cc alla prima passata della
+ * config BSS. Il bit 0x80 non e' costante e non e' derivato da niente che
+ * src/ conosca: 0x00cc e' del blocco BSS del core -- in b43 lo scrive
+ * bss_info_changed(), e src/ non lo tocca mai -- quindi prenderlo dal
+ * chiamante non nasconde un difetto del PHY.
+ *
+ * Cosa lo muove, per quel che i 26 segmenti a freddo del d6220 dicono: il bit
+ * e' alto se la frequenza e' 5250 MHz o piu', oppure se la larghezza e' 80
+ * MHz. Torna su tutti e 26 senza eccezioni. Alla seconda passata
+ * (emit_core_bss_config1, che gia' rilegge e riscrive) la soglia sulla
+ * larghezza scende a 40: ch36 e ch44 a 40 MHz hanno 0x44 alla prima passata e
+ * 0xc5 alla seconda.
+ *
+ * Sui 52 segmenti a caldo e' alto ovunque, ch36 a 20 MHz compreso, dove a
+ * freddo e' basso -- ma quelli non sono la stessa condizione e non
+ * contraddicono la regola: il LEGGIMI dello sweep a caldo dice che l'SSID e'
+ * impostato prima dell'up, cioe' il BSS c'e' gia' quando questo blocco viene
+ * scritto. Sul DSL-3580L il bit e' alto su ogni canale e larghezza, il che non
+ * contraddice ma nemmeno conferma: quella board gira una wl piu' vecchia.
+ *
+ * Resta una regola fittata su due termini, non una derivazione: cosa
+ * significhi il bit non e' stabilito, e per questo il valore arriva dalla
+ * cattura invece di essere calcolato qui. gates.sh lo legge da lei.
+ */
+static u16 g_bss_cc = 0x0044;
+
+/*
+ * Su quali delle quattro passate conf_tx lo stack di sopra ripubblica il
+ * beacon. Non e' strutturale: su cold01 accade solo sulla prima, su cold05 su
+ * tutte e quattro, e lo stesso albero emette le quattro passate in entrambi i
+ * casi. E' hostapd che spinge un beacon mentre il tracer gira, quindi va come
+ * AC_PROBE_TICKS e AC_BEACON_RELOADS -- fuori dalla cattura e dentro dal
+ * chiamante.
+ *
+ * Le passate sono nell'ordine di edcf_queues[]: best effort, background,
+ * video, voce, cioe' i blocchi che finiscono su 0x027e, 0x025e, 0x029e e
+ * 0x02be. Il bit n dice che dopo la passata n c'e' una ricarica.
+ */
+static unsigned int g_edcf_reload_mask = 0x1;
+
+
 static void mount_board(const struct board_profile *p)
 {
 	g_profile = p;
@@ -313,6 +355,7 @@ static void mount_board(const struct board_profile *p)
 	{
 		const char *e = getenv("AC_PROBE_TICKS");
 		const char *w = getenv("AC_WATCHDOG_TICKS");
+		const char *n = getenv("AC_WD_NOLATCH");
 
 		if (g_wldev.phy.do_full_init) {
 			g_ac.probe_ticks = 19;
@@ -330,6 +373,22 @@ static void mount_board(const struct board_profile *p)
 			g_ac.probe_watchdog_tick[0] = (u16)strtoul(w, &end, 10);
 			g_ac.probe_watchdog_tick[1] = *end == ','
 				? (u16)strtoul(end + 1, NULL, 10) : 0xffff;
+		}
+		/*
+		 * I giri senza il latch della finestra, come lista di tick:
+		 * vedi @probe_nolatch_tick. Assente vuol dire "nessuno", che
+		 * e' il caso regolare.
+		 */
+		if (n) {
+			char *end = (char *)n;
+
+			while (*end && g_ac.probe_nolatch_n <
+					ARRAY_SIZE(g_ac.probe_nolatch_tick)) {
+				g_ac.probe_nolatch_tick[g_ac.probe_nolatch_n++]
+					= (u16)strtoul(end, &end, 10);
+				if (*end == ',')
+					end++;
+			}
 		}
 	}
 
@@ -357,7 +416,52 @@ static void mount_board(const struct board_profile *p)
 		}
 	}
 
-	b43_test_band = NL80211_BAND_5GHZ;
+	{
+		const char *e = getenv("AC_BEACON_PRE_LATE");
+
+		if (e)
+			g_ac.beacon_reload_pre_late =
+				(u8)strtoul(e, NULL, 0);
+	}
+
+	{
+		const char *e = getenv("AC_EDCF_RELOADS");
+
+		if (e)
+			g_edcf_reload_mask = (unsigned int)strtoul(e, NULL, 0);
+	}
+
+	{
+		const char *e = getenv("AC_BSS_CC");
+
+		if (e)
+			g_bss_cc = (u16)strtoul(e, NULL, 0);
+	}
+
+	/*
+	 * Turni del poll di CAC, stessa forma di AC_BEACON_RELOADS: quelli
+	 * prima della fase, poi uno per tick. reverse-tools/cac_polls.py li
+	 * ricava dalla cattura; senza la variabile non c'e' poll, che e' il
+	 * caso di ogni segmento sotto i 5250 e di tutto lo sweep a caldo.
+	 */
+	{
+		const char *e = getenv("AC_CAC_POLLS");
+		char *end;
+
+		if (e) {
+			g_ac.cac_poll_pre = (u8)strtoul(e, &end, 10);
+			if (*end == ':')
+				end++;
+			while (*end && g_ac.cac_poll_n <
+					ARRAY_SIZE(g_ac.cac_poll_tick)) {
+				g_ac.cac_poll_tick[g_ac.cac_poll_n++]
+					= (u8)strtoul(end, &end, 10);
+				if (*end == ',')
+					end++;
+			}
+		}
+	}
+
 
 	/* Preconditions the rxiqcal REQUIRE gates want to see. */
 	g_ac.status_mask = B43_PHY_AC_STATE_RX_WAITED |
@@ -1233,13 +1337,17 @@ static u16 beacon_tpl_len(void)
  */
 void b43_ac_beacon_reload(struct b43_wldev *dev, unsigned int which)
 {
+	static bool late_head_done;
 	u16 btl = (which & 1) ? 0x001a : 0x0018;
 
 	/*
 	 * Testa della prima ricarica tardiva e solo di quella: quattro celle a
-	 * 0x2637, una volta in tutto il segmento.
+	 * 0x2637, una volta in tutto il segmento. La condizione e' "la prima
+	 * tardiva" e non "indice zero" perche' l'indice ora conta anche le
+	 * ricariche del blocco BSS e delle passate conf_tx, che la testa non
+	 * hanno: su cold05 la prima tardiva e' la sesta del segmento.
 	 */
-	if (which == 0) {
+	if (!late_head_done) {
 		u16 off;
 
 		for (off = 0x0300; off <= 0x0306; off += 2)
@@ -1260,7 +1368,8 @@ void b43_ac_beacon_reload(struct b43_wldev *dev, unsigned int which)
 	 * Coda della prima ricarica e solo di quella, come la testa: tre celle
 	 * a zero, una volta in tutto il segmento.
 	 */
-	if (which == 0) {
+	if (!late_head_done) {
+		late_head_done = true;
 		b43_shm_write16(dev, B43_SHM_SHARED, 0x00a4, 0x0000);
 		b43_shm_write16(dev, B43_SHM_SHARED, 0x00b4, 0x0000);
 		b43_shm_write16(dev, B43_SHM_SHARED, 0x00d6, 0x0000);
@@ -1315,12 +1424,13 @@ static void emit_core_bss_config(void)
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x0012, 0x0003);
 
 	b43_shm_read16(&g_wldev, B43_SHM_SHARED, 0x00cc);
-	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00cc, 0x0044);
-	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00cc, 0x0045);
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00cc, g_bss_cc);
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00cc, g_bss_cc | 0x0001);
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00ce, 0x0000);
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00d0, 0x0000);
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x001c, 0x003a);
 	emit_core_bss_ssid(0x0018);
+	g_ac.beacon_reload_done++;
 	/*
 	 * I PLCP chiudono ogni caricamento di template, questo compreso:
 	 * cold01 li mette a #13625, subito dopo PRSSIDLEN, e poi di nuovo in
@@ -1340,7 +1450,8 @@ static void emit_core_bss_config1(void)
 	u16 cc = b43_shm_read16(&g_wldev, B43_SHM_SHARED, 0x00cc);
 
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00cc, cc);
-	emit_core_bss_ssid(0x001a);
+	emit_core_bss_ssid((g_ac.beacon_reload_done & 1) ? 0x001a : 0x0018);
+	g_ac.beacon_reload_done++;
 }
 
 /*
@@ -1416,7 +1527,7 @@ static void emit_core_conf_tx_pass(unsigned int n)
 	b43_mac_enable(&g_wldev);
 	b43_mac_suspend(&g_wldev);
 	emit_core_edcf_queue(&edcf_queues[n]);
-	if (n == 0)
+	if (g_edcf_reload_mask & (1u << n))
 		emit_core_bss_config1();
 	b43_phy_ac_prb_rsp_plcp_pass(&g_wldev);
 }

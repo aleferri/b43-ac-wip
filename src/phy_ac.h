@@ -348,6 +348,29 @@ struct b43_phy_ac {
 	 * arrive from b43_phy_ac_op_pwork_15sec() where they belong.
 	 */
 	u16 probe_ticks;
+	/*
+	 * I giri della fase su cui il latch della finestra statistiche non
+	 * c'e'. Il giro c'e' lo stesso -- la spazzata dei contatori, il blocco
+	 * di misura, il cambio di modo -- e a mancare e' solo la coda di
+	 * b43_phy_ac_wd_stats_tail(): la cattura di quei giri porta tutto il
+	 * resto e non le letture 0x0308-0x0314. Il conto lo dice: su cold17 le
+	 * op di troppo del port erano sette letture per cella della finestra e
+	 * nient'altro, non sette giri interi.
+	 *
+	 * Capita dove il timer del vendor e' rimasto indietro: divari fino a
+	 * 2.6 s fra un latch e il successivo dove la cadenza e' 1.004, e nella
+	 * stessa finestra i gruppi probe a 1.31 s -- la macchina carica, non
+	 * una scelta del driver. Su ventuno dei ventisei segmenti a freddo la
+	 * lista e' vuota, ed e' quel controllo a dire che si legge bene: la'
+	 * il numero di latch e la scadenza coincidono esattamente.
+	 *
+	 * Viene dal chiamante per la stessa ragione di @probe_ticks, delle
+	 * ricariche del beacon e del poll di CAC: e' un orologio, e l'harness
+	 * non ne ha uno. reverse-tools/watchdog_turns.py lo legge dalla
+	 * cattura.
+	 */
+	u16 probe_nolatch_tick[16];
+	u8  probe_nolatch_n;
 	u16 probe_watchdog_tick[2];
 	/*
 	 * Ricariche del template beacon che cadono dentro la fase probe. Lo
@@ -364,9 +387,39 @@ struct b43_phy_ac {
 	 * reverse-tools/beacon_reloads.py li legge dalla cattura.
 	 */
 	u16 beacon_reload_pre;
+	/*
+	 * Quelle che cadono dopo la cella a 0xffff e prima che la fase parta.
+	 * Stanno a parte perche' il confine e' la cella e non l'inizio della
+	 * fase: su cold04 una delle tre pre-fase sta dopo il latch e il blocco
+	 * E, e messa con le altre sfasa il flusso di una ricarica intera. Sui
+	 * 26 segmenti a freddo e' zero ovunque tranne li'.
+	 */
+	u8  beacon_reload_pre_late;
 	u16 beacon_reload_tick[24];
 	u8  beacon_reload_n;
 	u8  beacon_reload_done;
+	/*
+	 * Quanti turni del poll di CAC cadono dove, per le tre posizioni che
+	 * b43_phy_ac_cac_poll() serve: @cac_poll_pre prima del latch delle
+	 * statistiche e @cac_poll_tick[i] sul tick i, piu' quello che va con
+	 * l'arming, che non si conta qui. Cosa sia la fase e perche' sia il
+	 * flusso e non un timer sta sul gruppo cac in phy_ac.c.
+	 *
+	 * Viene dal chiamante perche' quanti turni ci stiano non segue da
+	 * niente che il driver abbia: e' quanto dura la finestra che il tracer
+	 * ha catturato. La discriminazione e' totale e la porta tutto lo sweep
+	 * del d6220 -- zero turni sui sette segmenti a freddo sotto i 5250,
+	 * 134 su diciotto dei diciannove sopra e 108 su cold15, zero su ogni
+	 * segmento a caldo qualunque sia il canale -- e 0x0251 non compare da
+	 * nessun'altra parte. reverse-tools/cac_polls.py li legge dalla
+	 * cattura.
+	 */
+	/* L'avviso di campione fuori dal misurato si emette una volta sola. */
+	bool crs_noise_warned;
+
+	u8  cac_poll_pre;
+	u8  cac_poll_tick[24];
+	u8  cac_poll_n;
 	/*
 	 * Count of calibration cycles this session, gating the cold bump in
 	 * the crsmin path of pwork_60sec(): the blob bumps the ladder for the
@@ -413,9 +466,22 @@ struct b43_phy_ac {
 	 * readback of radio 0x?002-0x?005, and the TX IQ/LO coefficients of
 	 * the IQLOCAL table (0x000c) per core at 0x60 + 4*core -- {a, b} at
 	 * +0/+1 and the LO leakage word at +2, two signed bytes.
+	 *
+	 * @iqlo_saved says whether block D has run in this driver's life, and
+	 * it is what the write-back is conditional on: there is nothing to
+	 * write back before the first save, and the arrays hold zeroes that
+	 * would land on the LO DAC and the IQ/LO correctors. The predicate is
+	 * the save and not b43_phy_ac_may_calibrate_tx(), which the two sweeps
+	 * separate: above 5250 MHz a cold segment has neither the save nor the
+	 * write-back, while a hot one has both with the calibration skipped
+	 * all the same -- hot 09 (ch52) writes 0x0079/0x0079/0x0069/0x0078 to
+	 * radio 0x0002-0x0005 where cold05 writes nothing at all. A cold sweep
+	 * cannot tell the two rules apart on its own: one channel per module
+	 * load means the save either ran in that same segment or never.
 	 */
 	u16 lo_dac[2][4];
 	u16 txiqlo_coef[2][3];
+	bool iqlo_saved;
 	u16 rxgain_cfg_saved[B43_PHY_AC_MAX_CORES][26];
 	u16 rfseq_gain_saved[B43_PHY_AC_MAX_CORES][3];
 	/*
@@ -673,6 +739,12 @@ void b43_phy_ac_rxiq_apply_coefficients(struct b43_wldev *dev);
 void b43_phy_ac_radio_iqcal_teardown(struct b43_wldev *dev);
 void b43_phy_ac_rxiq_teardown_apply_defaults(struct b43_wldev *dev);
 void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev);
+
+/* I quattro campi del blocco RX gain che seguono la larghezza; vedi phy_ac.c. */
+struct b43_phy_ac_rxgain_bw {
+	u16 f73a_07, f739_7e, f73a_08, f73a_60;
+};
+const struct b43_phy_ac_rxgain_bw *b43_phy_ac_rxgain_bw(struct b43_wldev *dev);
 /*
  * The bss-up burst the vendor emits ~0.5 s after the probe phase: per-rate
  * power, TX power LUTs, the cal coefficient write-back, MAC/GPIO, the analog
