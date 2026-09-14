@@ -4135,3 +4135,782 @@ AP: l'argomento resta il `PRMAXTIME=1` del core, non la loro assenza.
 Classi assenti per intero dalle catture dei gate, da trattare come non
 informative su quelle due: `OBJ.RD`, `OBJ.WR`, `TPL.RAMW`, `MAC.BW`,
 `CAL.INIT`. Un'assenza vale come prova solo se la classe e' tracciata.
+
+## `b43_amt_write()`: scrittura di riga, non di due word
+
+`patches/0011` scrive una riga della address match table come due
+`b43_shm_write32()` su `(index * 2) + 0` e `+ 1`, e rilegge la word alta solo
+quando il chiamante passa `B43_AMT_KEEP_FLAGS`.
+
+La cattura dice un'altra cosa. Su `cold01`, per ognuna delle 64 righe del ciclo
+di azzeramento:
+
+```
+#307  AMT.WR    idx=0x0000
+#308  OBJ.BULKR addr=0x0000 len=8 a5=0x00040000
+#310  OBJ.BULKW addr=0x0000 len=8 a5=0x00040000
+```
+
+`a5=0x00040000` e' il routing RCMTA e `addr = idx * 8` e' la riga da 8 byte:
+una lettura e una riscrittura della riga intera, su **tutte** le righe, comprese
+le 64 azzerate dove non c'e' niente da preservare. Non due accessi da 4 byte.
+
+Questi hook -- `OBJ.BULKR` e `OBJ.BULKW` -- sono fra quelli aggiunti con la
+ricattura, e prima non c'erano: e' il motivo per cui il commento di
+`emit_core_amt()` diceva che le due word non erano confrontabili.
+
+Da fare: portare `b43_amt_write()` alla forma della cattura, il che assorbe
+anche il ramo `KEEP_FLAGS`, visto che la riga viene letta comunque. Non e'
+stato fatto qui perche' l'harness non compila il core e la modifica non sarebbe
+verificabile in questo albero; `b43_test_emit_amt()` intanto emette la forma
+del vendor, quindi finche' la patch non segue i due sono disallineati.
+
+Resta fuori anche dove vanno le due righe in cima. L'harness le mette in coda
+all'azzeramento; nella cattura stanno a `#13302` e `#13943`, dentro il bss-up,
+tirate da `ADDRM.SET` -- 60 op di una classe che il port non emette affatto --
+e in mezzo il vendor rifa un azzeramento parziale di 56 righe (`idx 0x00-0x37`).
+E' la prima divergenza che resta su `cold01`, a `@255`.
+
+## La sequenza CAC, per intero
+
+Ricavata da `cold05-ch52-bw20` dello sweep ricatturato, che e' il primo
+segmento a freddo in cui il check si chiude dentro la finestra di cattura.
+
+### Dove sta
+
+Il vendor si ferma **fra le passate conf_tx e `op_channel_calibrate`**: il
+blocco d'attesa e' inserito esattamente dove `cold01` ha l'entrata di quella
+funzione, e tutto quello che segue viene nello stesso ordine -- il 92.7% della
+sequenza di `cold01` si ritrova in ordine dentro `cold05`. Non e' un attach
+diverso: e' lo stesso attach con dentro un'attesa.
+
+```
+op    12477   PHY.MOD 0x02e4                l'arm del check
+op    12482   1 poll                        il giro che va con l'arm
+op    12616   1 poll
+op 12692-12712  6 poll                      cac_poll_pre
+op 12716..22841  58 giri di watchdog        l'attesa, ~127 op per giro
+op    25338   PHY.WR 0x0380                 il gate si apre: tone generator
+op ..47861    65 giri + 3 poll di coda      la fase probe come sempre
+```
+
+706 poll in tutto: 8 prima della prima testa di tick, 695 nei giri, 3 in coda.
+
+### Cos'e' un giro d'attesa
+
+Un corpo di watchdog senza measure block, cioe' `wd_body(dev, 0, false, true)`,
+piu' i poll che vanno con quel giro. Op per op, dal capture:
+
+```
+PHY.RD 0x07af 0x07b3 0x07ab 0x07b1        wd_sample_phase
+PHY.RD 0x09af 0x09b3 0x09ab 0x09b1
+PHY.RD 0x0523 0x0529 0x0528 0x0527
+MAC suspend; OBJ.WR 0x0308..0x0312 = 0; MAC enable     latch e clear
+PHY.MOD 0x0520 mask=0x000c                             il mode change
+OBJ.RD 0x010e 0x0158 0x010c 0x015e                     head sweep
+OBJ.RD 0x0768..0x078a
+OBJ.RD 0x0768..0x077e  x2                              le due passate ctr32
+OBJ.RD 0x07e2..0x07da
+OBJ.RD 0x015a 0x014e
+OBJ.RD 0x008c 0x0308..0x0314                           la coda statistiche
+[ MAC suspend; PHY.RD 0x0251; PHY.RD 0x0252; MAC enable ] x N   i poll
+```
+
+I poll stanno **in fondo al giro**, dopo la coda statistiche, non fra il corpo
+e il mode change: `PHY.MOD 0x0520` e' all'offset 20 del giro e i poll agli
+offset 103-127 su 131. Il commento di `b43_phy_ac_cac_poll()` descrive l'altra
+posizione, ed e' da correggere -- vale per i giri della fase probe come per
+quelli dell'attesa, verificati entrambi.
+
+### I conteggi per giro
+
+Attesa, 58 giri: `7,6,6, 7,6,7,7,6,7,7,6,...` -- un andamento regolare 6/7, che
+e' il battito da 151.5 ms della routine di attesa contro il secondo del tick.
+
+Probe, 65 giri: `7,1,6,7,1,1,6,7,6,1,1,6,...` -- irregolare, con gli 1 dove il
+giro cade corto.
+
+`reverse-tools/cac_polls.py` estrae gia' questa sequenza; quello che non fa e'
+separare i giri d'attesa da quelli della fase probe, e sono due fasi distinte
+che il flow esegue in due punti diversi.
+
+### Cosa manca per chiudere
+
+1. `cac_poll_tick[]` e' 24 elementi e qui servono 123 (58 + 65).
+2. Serve `cac_wait_ticks`, ricavato dalla cattura come gli altri orologi: e' il
+   numero di teste di tick fra l'arm e la prima `PHY.WR 0x0380`. Il loop probe
+   in `rxiqcal_finalize()` indicizza allora `cac_poll_tick[cac_wait_ticks +
+   tick]`. L'indicizzazione attuale e' monotona e con un solo consumatore per
+   giro (`wd_turn` per `tick` 0..ticks-1, piu' il giro di chiusura a `ticks`),
+   quindi l'offset non cambia semantica alle catture vecchio stile, dove
+   `cac_wait_ticks` e' zero.
+3. `cac_polls.py` deve emettere le due liste separate.
+4. Il flow deve eseguire i giri d'attesa fra `emit_core_conf_tx_passes()` e
+   `channel_calibrate()`, e poi azzerare `cac_pending`.
+
+Il punto aperto e' il 4, e non e' tecnico. Il loop d'attesa **non e' codice del
+driver**: su hardware quei giri sono il periodic work che ticchetta mentre
+mac80211 tiene sospeso il bring-up dell'AP, e il poll del rivelatore e' codice
+che b43 non ha ancora -- `b43_phy_ac_op_pwork_15sec()` chiama
+`b43_phy_ac_watchdog(dev, true)` e non polla niente. Quindi o il giro d'attesa
+sta nell'harness accanto a `emit_core_bss_config()` e alle passate conf_tx, che
+e' dove stanno le altre cose che l'harness fa al posto dello stack, e allora
+`b43_phy_ac_cac_poll()` va reso raggiungibile da la'; oppure si mette in `src/`
+una entrata senza chiamanti su hardware, che e' quello che questo albero ha
+evitato di fare finora.
+
+## `PHY.RDW`: la tabella 0x20 si legge a 16 bit invece che intera
+
+Classificata, e non e' un'ombra dell'accessore come l'intestazione bulk: sono
+38 letture che il port non fa.
+
+Le 19 letture larghe della tabella 0x20 hanno tutte la stessa forma:
+
+```
+PHY.WR  addr=0x000d val=0x0020      TABLE_ID
+PHY.WR  addr=0x000e val=<off>       TABLE_OFFSET
+PHY.RD  addr=0x0011 val=0x0035      una word della cella
+PHY.RDW val=0x00001300
+PHY.RDW val=0x0000f32f
+```
+
+Il port si ferma dopo la `PHY.RD 0x0011` e passa oltre. Che le due `PHY.RDW`
+non siano una resa diversa delle letture sulla porta dati lo dicono i
+conteggi: `PHY.RD 0x000f` sta a 343 su entrambi i lati e `0x0010` a zero su
+entrambi, quindi non e' che il vendor renda come `RDW` letture che il port
+rende come `PHY.RD`. Sono accessi in piu'.
+
+Valori visti nelle 38: `0x7f00` (15), `0xf3ff` (11), `0xf32f` (6), `0x1300`
+(4), `0xf34f` (2).
+
+Da fare: capire cos'e' la tabella 0x20 e con che larghezza va letta, e
+correggere la larghezza in `b43_actab_read` sul sito che la interroga. Le word
+che il port non legge sono word che non sta usando, quindi non e' solo un
+difetto di traccia.
+
+## `ADDRM.SET`: l'azzeramento delle righe MAC delle chiavi
+
+La regione di divergenza piu' grossa che resta su `cold01`, 224 op in un blocco
+solo. Il vendor, per ognuna delle 56 righe da `idx 0x00` a `0x37`, emette:
+
+```
+ADDRM.SET idx=0x0000
+AMT.WR    idx=0x0000
+OBJ.BULKR addr=0x0000 len=8 a5=0x00040000
+OBJ.BULKW addr=0x0000 len=8 a5=0x00040000
+```
+
+Il port non emette niente di tutto questo. Le 56 righe sono quelle sotto le
+otto in cima -- `B43_AMT_WIDE_ENTRIES` meno `B43_NR_GROUP_KEYS * 2` -- cioe' le
+righe MAC delle chiavi pairwise, e l'azzeramento e' `b43_clear_keys()` del core
+che chiama `keymac_write(dev, i, NULL)` su ognuna. Con `B43_AMT_KEEP_FLAGS` la
+riga viene riletta, che e' esattamente la `OBJ.BULKR` che la cattura mostra:
+i due livelli di hook del vendor, `ADDRM.SET` sopra e `AMT.WR` sotto,
+corrispondono a `keymac_write` sopra e `b43_amt_write` sotto.
+
+Il punto di inserimento non e' ambiguo. Nella cattura il blocco sta fra
+l'azzeramento di `OBJ.WR 0x0658..0x0666` e la `MAC.MHF 0x0000 mask=0x4000` che
+segue, e il port emette quelle due cose nello stesso ordine, adiacenti:
+`/tmp/p1/full` righe 11019, 11020.
+
+Non l'ho aggiunto, perche' quel punto cade **dentro**
+`b43_phy_ac_shm_readback_block()`, che il suo stesso commento dichiara codice
+del core parcheggiato nel PHY: "These are cells of the MAC, not of the PHY, so
+this belongs in the core. It sits here because the captures put it between the
+PHY write of 0x0339 and the host flag that follows, and the core has no hook at
+that point". Metterci dentro anche l'azzeramento delle chiavi raddoppia quel
+difetto invece di risolverlo.
+
+E' lo stesso problema, non uno nuovo: serve un punto di aggancio per il core in
+quella posizione del flow. Con quello, ci vanno sia le celle che oggi sono
+parcheggiate la' sia le 56 righe, ognuna dal suo doppione `emit_core_*`.
+
+Le due righe in cima (`0x3e` BSSID, `0x3f` indirizzo di stazione) seguono la
+stessa strada, ma piu' tardi: `ADDRM.SET idx=0xffffffff` e `0xfffffffe` dentro
+il bss-up, due righe ciascuno. `emit_core_amt()` le emetteva in coda
+all'azzeramento del core init, dove la cattura non le ha; sono state togliate,
+perche' sei op nel punto sbagliato costano piu' che nessuna op.
+
+## Il grappolo di coda: sono tutte ricariche del beacon
+
+Le sei regioni di divergenza fra `@25643` e `@29220` su `cold01`, ~380 op fra
+mancanti e di troppo, sono una cosa sola. Ogni regione e' un blocco di ricarica
+del beacon, e i blocchi ci sono su entrambi i lati ma **cadono a tick
+diversi**: dove il vendor ha una ricarica il port ha una spazzata di contatori,
+e viceversa, alternandosi.
+
+Il blocco, dal capture:
+
+```
+OBJ.RD   addr=0x00cc                    \
+OBJ.WR   addr=0x00cc                     |
+OBJ.WR   addr=0x001e val=0x0044          | il beacon
+TPL.RAMW addr=0x0480 val=0x012c          |   template alternato
+OBJ.WR   addr=0x001a val=0x012b          /   e la sua lunghezza
+TPL.RAMW addr=0x0700 val=0x011c         \  la probe response
+OBJ.WR   addr=0x004a val=0x0119         /   e la sua lunghezza
+OBJ.BULKW addr=0x0160 len=32 + le word     l'SSID
+```
+
+Due cause distinte, e vanno separate prima di toccare qualcosa.
+
+**La prima e' deliberata.** Il `TPL.RAMW 0x0700` -- 16 occorrenze nel vendor,
+zero nel port -- e la `OBJ.WR 0x004a` che lo segue sono il template della
+probe response, che b43 non carica di proposito: `PRMAXTIME=1` in
+`b43_wireless_core_init()` e il firmware non risponde ai probe. E' scritto in
+`test/unit/README.md` e non e' debito. La sequenza degli indirizzi lo mostra
+bene: il vendor fa `0x0200 0x0700 0x0480 0x0700 0x0200 0x0700 ...` e il port
+`0x0200 0x0480 0x0200 0x0480 ...` -- il template del beacon alterna su entrambi,
+quello della probe response c'e' solo da una parte.
+
+**La seconda e' lo sfasamento.** `AC_BEACON_RELOADS=2:2,6,7,13,14,19,21,26,26`
+viene applicato a tick che non sono quelli della cattura, e ogni blocco fuori
+posto costa due volte: 39 op mancanti nel punto giusto e 39 di troppo in quello
+sbagliato. Da guardare in `beacon_reloads.py`: l'estrazione ha smesso di essere
+cieca solo di recente -- prima il campo `sel=` la azzerava -- quindi i tick che
+produce non sono mai stati verificati contro un allineamento riuscito.
+
+## Il blocco CRS di finalize sta un giro troppo presto
+
+Dopo la correzione dell'attribuzione delle ricariche, la prima divergenza che
+resta su `cold01` fuori dalle voci gia' note e' a `@25639`, e sono tre regioni
+che sono una cosa sola: 26 op di troppo nel port, 68 di troppo subito dopo, 26
+mancanti novantacinque op piu' avanti. Il blocco da 26 e' identico op per op
+sui due lati -- la coda delle statistiche (`0x8c`, `0x308..0x314`), il suspend,
+i sedici `PHY.MOD` su `0x321-0x336` e `0x910-0x913`, l'enable -- cioe' la
+scrittura CRS in coda a `rxiqcal_finalize()` piu' `prog_bank_0910()`.
+
+Il criterio che lo inchioda e' il conteggio dei corpi di giro che la precedono,
+contati sul cambio di modo `PHY.MOD 0x0520 mask=0x000c`:
+
+```
+vendor:  1 corpo prima della scrittura CRS,  26 in tutto
+port  :  0 corpi prima,                      26 in tutto
+```
+
+Un giro, non un'op. Il port scrive il CRS prima di entrare nel ciclo del probe;
+la cattura ne esegue un giro e poi scrive. Da qui vengono tutte e tre le
+regioni, ed e' anche la spiegazione della spazzata di contatori da 68 op che il
+port sembra avere in piu': non ce l'ha in piu', ce l'ha nel posto dove il
+vendor non ce l'ha ancora, e viceversa novantacinque op dopo.
+
+### Provato a spostarlo, e non e' un ramo: e' un orologio
+
+Il ramo che c'era, `if (may_calibrate_tx()) stats_latch_and_crs()` prima della
+fase e il blocco E dietro il giro 1 sopra i 5250, veniva dalle distanze misurate
+dalla cella a `0xffff`: `+1/+10` sul vecchio cold01 e `+198/+207` su cold05.
+Sul nuovo cold01 sono `+96/+105`, cioe' un corpo di giro in mezzo, e sembrava
+che il caso "sotto i 5250" fosse solo mal misurato.
+
+Spostato il blocco dietro il giro 0 nel caso non-radar, il risultato e' un
+pareggio: cold01 da 92.74% a 92.88%, ma cold02 da 97.70% a 97.53% e cold03 da
+97.79% a 97.62%. Modifica annullata.
+
+Il motivo lo dicono le distanze su tutta la famiglia:
+
+```
+cold01-ch36-bw20     +96 / +105     un corpo di giro in mezzo
+cold02-ch40-bw20      +1 /  +10     niente in mezzo
+cold03-ch44-bw20      +1 /  +10     niente
+cold26-ch36-bw40      +1 /  +10     niente
+cold38-ch36-bw80     +73 /  +82     qualcosa in mezzo
+cold14-ch120-bw20    +198 / --      DFS, due giri, blocco E dentro il giro
+```
+
+Non e' una proprieta' del canale ne' della larghezza: `ch36` a 20 e a 80 MHz ha
+un giro in mezzo e a 40 no, `ch40` e `ch44` no. E' **se un tick del periodico
+e' caduto in quel varco**, che cambia da corsa a corsa.
+
+### E non basta nemmeno un contatore di giri
+
+Il passo dopo sembrava una leva intera: quanti corpi di giro cadono nel varco,
+0, 1 o 2, contati sul cambio di modo `PHY.MOD 0x0520 mask=0x000c`, con il
+blocco E dietro il giro N-1. Misurata, non regge neanche quella:
+
+```
+segmento              op nel varco   corpi   cosa c'e' dentro
+cold02-ch40-bw20            0          0     niente
+cold03-ch44-bw20            0          0     niente
+cold04-ch48-bw20            0          0     niente
+cold26-ch36-bw40            0          0     niente
+cold38-ch36-bw80           72          0     una spazzata statistiche nuda
+cold01-ch36-bw20           95          1     un corpo intero
+cold14-ch120-bw20         197          1     un corpo piu' una spazzata
+```
+
+Il varco di `cold38` sono 72 op tutte `OBJ.RD`: `0x010e 0x0158 0x010c 0x015e`,
+poi `0x0768..`, poi `0x015a 0x014e`. E' la spazzata dei contatori da sola,
+senza `MAC.MCTRL`, senza il `sample_phase` su `0x07af` e senza il cambio di
+modo. Quello di `cold01` sono le stesse 72 piu' il suspend, i dodici
+`sample_phase`, la `PHY.WR 0x554` e il cambio di modo: un corpo completo.
+
+Quindi le forme sono quattro e crescono per pezzi di giro, non per giri:
+niente, una spazzata, un corpo, un corpo piu' una spazzata. Il varco non
+contiene un numero intero di giri perche' la cella a `0xffff` cade **dentro**
+un giro, in un punto che cambia da corsa a corsa.
+
+Modellarlo fedelmente vuol dire dire all'harness la fase del periodico a quel
+punto, con risoluzione sotto il giro -- non "quanti giri" ma "a che punto del
+giro" -- e questo tocca la scomposizione di `wd_body()`, non solo il suo
+chiamante. E' l'unica strada che copre tutti e sei i segmenti, ed e' la
+prossima cosa da fare qui, ma va progettata: una leva intera risolverebbe
+`cold01` e `cold14` e lascerebbe `cold38` come sta.
+
+Fino a quel momento il ramo attuale e' la migliore fra le scelte sbagliate
+disponibili: indovina su quattro segmenti su sei di questa famiglia, e sono i
+quattro con il varco vuoto.
+
+## L'SSID e' cambiato di un carattere, e con lui cinque letterali
+
+Tutta la famiglia di valori "uno sotto" ha una causa sola, e non e' nel
+driver: la cattura vecchia ha SSID `test-ap`, sette caratteri, quella nuova
+`test-ap5`, otto.
+
+```
+gold/merged   OBJ.WR 0x0160 ...  ->  "test-ap"
+q1/merged     OBJ.WR 0x0160 ...  ->  "test-ap5"
+```
+
+Un byte in piu' nel probe response sposta la sua lunghezza, e da quella
+derivano i PLCP degli otto rate. `b43_phy_ac_prb_rsp_len()` ha una tabella di
+letterali, 284/285/286 per 20/40/80 MHz, tarata sui sette caratteri. Il conto
+torna esatto:
+
+```
+len=284 -> tmp = 284<<5 = 0x2380 -> plcp01 = 0x2380 | dirmap = 0x238b   il port
+len=285 -> tmp = 0x23a0          -> 0x23ab                              wl, bw20
+len=286 -> tmp = 0x23c0          -> 0x23cb                              wl, bw40
+```
+
+cioe' il valore che il port scrive su bw40 e' quello che il vendor scrive su
+bw20, che e' esattamente la firma osservata. Togliendo l'SSID: la base e'
+277/278/279 piu' la lunghezza dell'SSID, e con 7 da' 284/285/286 e con 8 da'
+285/286/287. Verificato su entrambe le catture.
+
+E dalla stessa lunghezza dipendono altri quattro letterali, tutti tarati su
+`test-ap`:
+
+```
+emit_core_bss_ssid()   0x001e = 0x0043      la cattura nuova ha 0x0044
+                       beacon_tpl_len()     0x18/0x1a: 0x12b contro 0x12c
+emit_core_bss_config() 0x0048 PRSSIDLEN
+                       0x004a PRTLEN
+b43_phy_ac_prb_rsp_plcp()  la durata 20 + nsym*4 + 16: 0x1a4 contro 0x1a8,
+                       un simbolo in piu', che e' lo stesso byte
+```
+
+Resa: 48 op su cold01 e 126 su cold26, piu' le celle di lunghezza, ed e' la
+famiglia di valori sbagliati piu' grossa dopo i contatori servita
+dall'oracolo.
+
+### Fatto
+
+La lunghezza dell'SSID e' ora un ingresso solo, `AC_SSID_LEN` (default 8), e da
+lei discendono `b43_phy_ac_prb_rsp_len()` -- parte fissa 277/278/279 piu'
+l'SSID -- `beacon_tpl_len()` e la cella `0x001e`. Il campo `ssid_len` sta in
+`struct b43_phy_ac` con il perche' scritto accanto.
+
+```
+segmento             prima     dopo     regioni
+cold01-ch36-bw20     92.74%   94.64%    251 -> 158
+cold02-ch40-bw20     97.70%   98.47%    201 ->  85
+cold03-ch44-bw20     97.79%   98.63%    190 ->  63
+cold14-ch120-bw20    97.17%   97.97%    111 ->  43
+cold26-ch36-bw40     95.69%   97.97%    477 -> 126
+cold38-ch36-bw80     96.53%   97.06%    245 -> 149
+```
+
+La prova che sia una parametrizzazione e non un +1 travestito e' la cattura
+vecchia, che ha sette caratteri: con `AC_SSID_LEN=7` da' 99.19% e 92 regioni,
+con 8 da' 98.58% e 181. Funziona in entrambi i versi.
+
+Resta da fare che il valore lo ricavi un tool invece che un default: e'
+leggibile dalla cattura, PRSSIDLEN sta a `0x0048` e l'SSID a `0x0160-0x017e`,
+quindi va accanto a `watchdog_turns.py` e `gates.sh` lo passa come gli altri.
+Finche' e' un default, un segmento con un SSID diverso sbaglia in silenzio.
+
+Nota di lettura: il commento di `emit_core_bss_ssid()` diceva "l'SSID e' quello
+della cattura, `test-ap`". Era vero.
+
+### E una conseguenza sulle catture vecchie
+
+Lo sweep vecchio ora prende 99.19% contro il 99.90% che prendeva all'inizio
+della sessione, e non e' l'SSID: e' `PHY.FGC`. Il port ne emette 76 e quelle
+catture non tracciano quella classe, quindi la' sono op di troppo. E' proprio
+il caso per cui esiste `SOLO_PORT_SENZA_CLASSE` in `compare.py`, dove ci sta
+gia' `AMT.*`: `PHY\.FGC` va aggiunto la', e si spegnera' da se' contro ogni
+cattura che lo traccia.
+
+## Fase d'attesa CAC: plumbing dentro, allineamento no
+
+Il loop d'attesa e' in `src/`, come deciso: `b43_phy_ac_cac_wait()` esegue
+`cac_wait_ticks` giri -- corpo senza measure block, piu' i poll che gli
+spettano dalla stessa lista -- e poi azzera `cac_pending`. Il commento dice che
+su hardware non ha chiamanti e perche'. `cac_poll_tick[]` e' passato da 24 a
+160 elementi, e il loop della fase probe indicizza ora
+`cac_poll_tick[cac_wait_ticks + tick]`, cosi' i due gruppi si consumano in due
+punti diversi senza sovrapporsi. La leva e' `AC_CAC_WAIT_TICKS`, default 0, e
+con zero tutto si comporta come prima -- verificato: cold01 94.64%, cold14
+97.97%, cold05 62.15%, identici.
+
+Con la leva accesa su cold05, che ne vuole 58:
+
+```
+AC_CAC_WAIT_TICKS=0    29775/47912 = 62.15%   192 regioni
+                 =55   31923/63214 = 50.50%   649
+                 =58   32541/62853 = 51.77%   571
+                 =60   33123/62443 = 53.05%   615
+```
+
+Le op che combaciano salgono di ~2800, ma il denominatore di ~15000, quindi il
+grezzo scende. I 15000 sono le calibrazioni: azzerando `cac_pending` il gate si
+apre e il port le emette, il che e' il punto dell'esercizio -- prima non le
+emetteva affatto e quelle 13000 op del vendor erano tutte mancanti. Adesso
+vengono emesse e non si allineano.
+
+Quindi la fase e' nel posto giusto e la forma del giro d'attesa e'
+approssimativamente giusta (~56 op su ~130 combaciano per giro), ma dopo di
+essa c'e' una divergenza strutturale che prima era invisibile perche' il port
+non arrivava mai la'. Il prossimo passo e' guardare la prima divergenza dopo
+la fine della fase d'attesa, con la leva accesa, che e' un terreno che nessuno
+ha ancora visto.
+
+Da controllare come prima cosa, perche' sono le candidate ovvie:
+
+- i due bool di `b43_phy_ac_wd_sample_phase_opt()`, che nel giro d'attesa ho
+  messo a `(true, false)` senza sapere cosa siano: nel loop della fase probe
+  sono `(tick != 1 && tick != 2, tick == 0)`;
+- se il giro d'attesa debba latchare la finestra (`tail`): l'ho messo a `true`
+  perche' il giro nella cattura ha l'azzeramento `OBJ.WR 0x0308..0x0312`, ma
+  non ho verificato quale dei due lo emette;
+- la posizione dell'arm: `b43_phy_ac_cac_arm()` sta in `post_bringup_tail()`,
+  cioe' dopo le calibrazioni, e nella cattura DFS sta a `#12477`, prima
+  dell'attesa. Sulle catture DFS vecchie la posizione attuale funziona (cold14
+  sta a 97.97%), quindi spostarla va misurato su entrambe le famiglie.
+
+### La prossima divergenza con l'attesa accesa: il measure block
+
+Con `AC_CAC_WAIT_TICKS=58` su cold05, tolte le voci gia' note (OTP a `@0`,
+`ADDRM.SET` a `@10455`), la prima divergenza nuova e' a `@11937` e sono **614
+op che il port non emette affatto**: `PHY.MOD 0x019e` sui mask 0x40/0x80/0x100,
+poi le letture su `0x0720-0x073e` con 64 `RAD.RD` e 64 `RAD.WR`, e in coda
+l'azzeramento della finestra e il cambio di modo. E' un measure block piu' il
+corpo che lo porta.
+
+Contando i measure block sul marcatore `PHY.RD 0x073c` e i corpi sul cambio di
+modo:
+
+```
+cold01 (26 corpi)    measure a corpi  10, 20
+cold05 (126 corpi)   measure a corpi  9, 19, 29, 39, 49, 59, [60], 69, 79,
+                                      89, 99, 109, 119
+```
+
+(i dieci a "corpo 0" su cold01 e il gruppo a "60" su cold05 sono letture di
+`0x073c` fatte dalla calibrazione, non measure block: il marcatore e' pulito
+solo dopo il primo cambio di modo.)
+
+Quindi **il measure block e' periodico, ogni dieci giri**, con offset 10 su
+cold01 e 9 su cold05 -- uno di scarto, che e' la fase d'attesa che sposta il
+conteggio. Non e' una lista arbitraria: e' un periodo, e l'offset dipende da
+dove comincia a contare.
+
+`watchdog_turns.py` pero' ne riporta due: `AC_WATCHDOG_TICKS=9,19` su cold05,
+dove il vendor ne fa dodici fino al corpo 119. Su cold01 riporta `10,20` ed e'
+giusto, perche' la' i corpi sono 26 e dopo il 20 non ce n'e' piu'. Il difetto
+si vede solo su un segmento lungo, e i segmenti lunghi sono arrivati con la
+ricattura DFS.
+
+Da fare, ed e' lo stesso intervento fatto su `beacon_reloads.py`: contare i
+corpi invece di dedurre la fase, riportare tutti i giri con measure block, e in
+`b43_phy_ac_wd_turn()` consultare `b43_phy_ac_watchdog_on_tick()` con l'indice
+spostato di `cac_wait_ticks`, esattamente come si fa ora per i poll. Il giro
+d'attesa di `b43_phy_ac_cac_wait()` deve passare `watchdog_on_tick(ac, turn)`
+invece del `false` fisso che ha adesso.
+
+### Fatto: la lista dei measure block era troncata a due
+
+In `probe_schedule.py` c'era `watchdog[:2]`, e l'attribuzione del giro passava
+per i gruppi su `PHY.RD 0x07af`. Corretto entrambi: i giri si contano sul
+cambio di modo `PHY.MOD 0x0520 mask=0x000c`, uno per corpo, e si riportano
+tutti. Le voci duplicate sullo stesso corpo si scartano, perche' dentro la
+regione delle calibrazioni `0x073c` viene letto anche da loro e un measure
+block due volte sullo stesso giro non esiste.
+
+`probe_watchdog_tick[]` passa da due slot a 32 con un contatore, e l'indice e'
+quello globale come per `cac_poll_tick[]`: `b43_phy_ac_wd_turn()` consulta
+`watchdog_on_tick(ac, cac_wait_ticks + tick)` e il giro d'attesa
+`watchdog_on_tick(ac, turn)` invece del `false` fisso che aveva.
+
+```
+                          prima      dopo
+cold01-ch36-bw20          94.64%    94.64%    invariato
+cold02-ch40-bw20          98.47%    98.47%    invariato
+cold14-ch120-bw20         97.97%    97.97%    invariato
+cold38-ch36-bw80          97.06%    98.22%
+cold05, attesa spenta     62.15%    64.44%
+cold05, attesa a 58       51.77%    67.37%
+```
+
+E' la prima volta che la fase d'attesa **conviene**: 67.37% con i 58 giri
+contro 64.44% senza. Le op che combaciano passano da 32541 a 40141.
+
+Resta da ricavare `cac_wait_ticks` dalla cattura invece di passarlo a mano --
+e' il numero di corpi fra l'arm e la prima `PHY.WR 0x0380` -- e poi `gates.sh`
+lo passa come gli altri. Finche' e' a mano, i 27 segmenti DFS restano fuori
+dal conteggio.
+
+## Finire cold01: cosa resta, e il varco non si chiude col giro d'attesa
+
+Stato a 94.64%: 59 regioni, 364 op mancanti, 158 di troppo, 160 valori.
+
+```
+@48, @29844      11 op    il LED. Fuori da src/, patches/0016-0017.
+@11028           242 op   ADDRM.SET, le 56 righe chiavi + le due coppie
+@25639-@25734    126 op   il varco del latch: blocco CRS e spazzata dislocati
+@26317-@29305     76 op   quattro gruppi 8+8+6: latch e clear dentro il giro
+valori           125      i contatori 0x768/0x780/0x782, serviti dall'oracolo
+valori            11      la cella 0x001e
+```
+
+I 125 valori dei contatori sono sintomo del varco, non difetti a se': l'oracolo
+serve la lettura sbagliata da quando i due flussi si sfasano. Quindi il varco
+vale ~325 delle ~690 anomalie e `ADDRM.SET` 242: chiusi quei due, cold01 e'
+finito a meno del LED e degli 11 valori su `0x001e`.
+
+### Terzo tentativo sul varco, e terzo fallimento
+
+Con `b43_phy_ac_cac_wait()` in piedi sembrava naturale generalizzarla: non "la
+fase d'attesa del CAC" ma "N giri prima delle calibrazioni", con N=1 su cold01,
+0 su ch40/44/48 e 58 su cold05. Provato:
+
+```
+cold01, wait=0   94.64%
+cold01, wait=1   93.87%      e 92.83% con l'ultimo giro senza tail
+cold01, wait=2   90.71%
+```
+
+Non e' questione di parametro: **il giro che il vendor mette nel varco e' 95 op
+e un corpo intero ne fa ~170**. Il varco contiene `OBJ.RD 0x010e 0x010c 0x0158
+0x015e`, il suspend, i dodici `sample_phase`, la `PHY.WR 0x0554`, la spazzata,
+e chiude su `OBJ.RD 0x07de 0x07d6 0x07d8 0x07da 0x015a 0x014e` -- cioe' un
+corpo **potato**, non un corpo. Le quattro forme misurate ieri (niente / una
+spazzata nuda / un corpo / un corpo piu' una spazzata) sono pezzi di giro, e
+nessun conteggio di giri interi le produce.
+
+La guardia su `cac_pending` e' stata rimessa: la generalizzazione e' annullata,
+cold01 torna a 94.64% e cold05 con la leva resta a 67.37%.
+
+Il varco vuole la scomposizione di `wd_body()` in stadi e una leva che dica da
+quale stadio si entra -- la cosa che avevo detto ieri e che resta vera dopo tre
+tentativi di aggirarla. Finche' non c'e', cold01 si ferma dove e' adesso piu'
+quello che dara' `ADDRM.SET`.
+
+### Il varco, op per op: e' un'interlacciatura, non un giro mancante
+
+Allineamento completo dei due lati dopo la cella `OBJ.WR 0x0026 val=0xffff` su
+cold01. Le graffe sono le op che combaciano.
+
+```
+vendor                                   port
+------------------------------------     ------------------------------------
+{OBJ.WR 0x0026 val=0xffff}               {OBJ.WR 0x0026 val=0xffff}
+                                         OBJ.RD 0x008c 0x0308..0x0314    latch
+                                         MAC susp; 16x PHY.MOD; MAC en   blocco E
+{OBJ.RD 0x010e 0x010c 0x0158 0x015e}     {OBJ.RD 0x010e 0x0158 0x010c 0x015e}
+                                         OBJ.RD 0x0768..0x07da 0x015a 0x014e
+{MAC susp; 12x sample_phase;             {MAC susp; 12x sample_phase;
+ PHY.WR 0x0554 0x0555; MAC en}            PHY.WR 0x0554 0x0555; MAC en}
+                                         OBJ.WR 0x0308..0x0312          clear
+{MAC susp; PHY.MOD 0x0520; MAC en}       {MAC susp; PHY.MOD 0x0520; MAC en}
+{OBJ.RD 0x0768..0x07da 0x015a 0x014e}    {OBJ.RD 0x0768..0x07da ...}
+OBJ.RD 0x008c 0x0308..0x0314    latch
+MAC susp; 16x PHY.MOD; MAC en   blocco E
+{OBJ.WR 0x0308..0x0312}   clear          {OBJ.WR 0x0308..0x0312}
+```
+
+Non manca un giro al port: **la testa della spazzata e il suo corpo, sul primo
+giro della fase, nel vendor sono separati da `sample_phase` e dal cambio di
+modo**, e il latch con il blocco E stanno dopo il corpo invece che prima della
+testa. Il port emette le stesse op nello stesso giro, in un ordine diverso.
+
+Che sia solo il primo giro lo dice il confronto: dal giro dopo l'ordine e'
+`[cambio modo][testa][corpo]` su entrambi i lati e combacia per 557 op di
+fila. E l'inversione `0x010c`/`0x0158` dentro la testa e' un'altra cosa
+ancora, due op, e c'e' solo su questo giro.
+
+Quindi la leva che ho provato tre volte -- quanti giri prima del latch --
+non c'era modo che funzionasse: il numero di giri e' lo stesso, e' l'ordine
+dentro il primo a essere diverso. La correzione sta in come `wd_body()` e
+`wd_sample_phase_opt()` si intrecciano all'ingresso della fase, ed e' un
+riordino di chiamate in `b43_phy_ac_post_bringup_tail()`, non un ingresso
+dalla cattura.
+
+Le quattro forme del varco (niente su ch40/44/48 e bw40, 72 op su bw80, 95 su
+cold01, 197 sui DFS) sono quanta parte di quell'intreccio cade prima del
+latch, e con l'ordine giusto dovrebbero venire da se'. Da verificare: se
+cambiando l'ordine i quattro casi tornano tutti, allora non serve nessuna leva
+nuova -- che sarebbe il primo pezzo di questa zona a chiudersi senza.
+
+### Il riordino non e' un riordino di chiamate: `wd_stats_poll()` va spezzata
+
+Andato a fare lo scambio in `b43_phy_ac_post_bringup_tail()` e non e'
+esprimibile con le chiamate che ci sono. Con i marcatori di funzione, il port
+all'ingresso della fase emette:
+
+```
+stats_latch_and_crs()      ->  OBJ.RD 0x008c ...        il latch
+  crs_regs_write()         ->  16x PHY.MOD              il blocco E
+  prog_bank_0910()
+wd_turn(0):
+  wd_stats_poll_opt()      ->  testa 0x010e.. + corpo 0x0768..
+  wd_sample_phase_opt()    ->  PHY.RD 0x07af ...
+```
+
+Il vendor all'ingresso vuole invece:
+
+```
+testa 0x010e 0x010c 0x0158 0x015e        <- prima meta' di wd_stats_poll()
+sample_phase + PHY.WR 0x0554 0x0555
+cambio di modo 0x0520
+corpo 0x0768..0x07da 0x015a 0x014e       <- seconda meta'
+latch + blocco E
+clear
+```
+
+cioe' `sample_phase` e il cambio di modo cadono **dentro** la spazzata, fra la
+testa e il corpo. Con `wd_stats_poll_opt()` che emette testa e corpo in un
+colpo, nessuna permutazione delle chiamate esistenti lo produce: serve
+spezzarla in due, testa e corpo, e all'ingresso della fase chiamarle con
+`sample_phase` e il cambio di modo in mezzo.
+
+Per riferimento, il giro a regime -- che combacia per 557 op di fila subito
+dopo -- ha l'ordine `[clear][cambio modo][testa][corpo][latch]`. Quindi la
+spezzatura serve solo all'ingresso e il giro normale resta una chiamata sola,
+che e' la ragione per cui non se ne era mai visto il bisogno.
+
+Questa e' la quarta caratterizzazione del varco e la prima che arriva al
+livello delle funzioni. Le tre precedenti -- quante forme, quanti giri, che
+ordine -- erano tutte vere e tutte insufficienti a scrivere la correzione.
+
+### La scomposizione che serve, per intero
+
+Lette le due funzioni, il varco vuole cinque pezzi e non due.
+
+`b43_phy_ac_wd_stats_poll_opt()` tiene sotto lo stesso `if (head_sweep)` due
+cose che all'ingresso della fase sono separate:
+
+```c
+if (head_sweep) {
+        for (i = 0; i < ARRAY_SIZE(head); i++)     /* 1: le quattro sparse */
+                b43_shm_read16(dev, B43_SHM_SHARED, head[i]);
+        for (off = 0x0768; off <= 0x078a; off += 2) /* 2: la spazzata piatta */
+                b43_shm_read16(dev, B43_SHM_SHARED, off);
+}
+```
+
+e `b43_phy_ac_wd_sample_phase_opt()` ne tiene tre:
+
+```
+3: suspend, le dodici letture di fase, 0x0554/0x0555 se arm_tone, enable
+4: b43_phy_ac_wd_stats_clear()
+5: suspend, PHY.MOD 0x0520 (il cambio di modo), enable
+```
+
+Ordine a regime, che combacia per 557 op:   `4 5 1 2 [latch]`
+Ordine all'ingresso, dalla cattura:         `1 3 5 2 [latch] [blocco E] 4`
+
+Quindi all'ingresso il pezzo 4 (il clear) scivola in fondo, dietro il blocco E,
+e diventa l'apertura del primo giro del ciclo; e il pezzo 3 si infila fra 1 e
+5. Non e' una permutazione delle chiamate: sono cinque pezzi dentro due
+funzioni, e vanno estratti.
+
+C'e' anche un dettaglio che avevo messo da parte come "due op a se'": la
+tabella e' `head[4] = { 0x010e, 0x0158, 0x010c, 0x015e }`, che e' l'ordine a
+regime, mentre all'ingresso la cattura ha `0x010e, 0x010c, 0x0158, 0x015e`.
+Non e' un'altra anomalia: e' il pezzo 1 che all'ingresso ha il suo ordine.
+
+Da fare, in questo ordine e misurando fra un passo e l'altro:
+
+1. estrarre i cinque pezzi lasciando invariato il giro a regime, che deve
+   restare `4 5 1 2`, e verificare che i punteggi non si muovano di niente;
+2. all'ingresso della fase chiamarli `1 3 5 2` piu' il latch, il blocco E e il
+   clear, con l'ordine proprio del pezzo 1;
+3. misurare i quattro casi del varco -- ch40 vuoto, bw80 72 op, cold01 95, un
+   DFS 197 -- e i DFS vecchi, che stanno a 97.97% e non vanno rotti.
+
+Il passo 1 e' a rischio zero per costruzione (stessa sequenza, chiamate
+diverse) e va committato da solo: se i numeri si muovono di un'op, l'estrazione
+e' sbagliata e si vede subito, invece di scoprirlo mescolato al passo 2.
+
+### Passo 1 fatto: i cinque pezzi sono estratti, e non cambiano niente
+
+`b43_phy_ac_wd_head_words()`, `b43_phy_ac_wd_flat_sweep()`,
+`b43_phy_ac_wd_peek()` e `b43_phy_ac_wd_mode_next()` escono da
+`wd_stats_poll_opt()` e da `wd_sample_phase_opt()`; il quinto,
+`wd_stats_clear()`, c'era gia'. Il giro a regime resta `4 5 1 2`, cioe' le due
+funzioni chiamano i pezzi nello stesso ordine di prima.
+
+Verifica, che e' il punto di questo passo:
+
+```
+cold01-ch36-bw20   94.88%  139 regioni   invariato
+cold02-ch40-bw20   98.53%   77           invariato
+cold26-ch36-bw40   98.08%  109           invariato
+cold38-ch36-bw80   98.26%  150
+cold14-ch120-bw20  97.99%   41
+```
+
+cold38 e cold14 si muovono di otto e di due op rispetto alle ultime misure, ma
+non per l'estrazione: quelle misure erano di prima della derivazione dell'SSID
+nel secondo scrittore di `0x001e`, che su quei due segmenti vale quelle op. I
+tre misurati dopo quella correzione sono identici alla cifra.
+
+Resta il passo 2, il riordino all'ingresso: `1 3 5 2` piu' latch, blocco E e il
+clear in coda, con l'ordine proprio del pezzo 1. Adesso e' scrivibile, perche' i
+pezzi ci sono.
+
+### Passo 2 provato e annullato, ma ora il varco ha un alfabeto
+
+Coi pezzi estratti si possono confrontare i due flussi **come sequenze di
+pezzi**, che e' l'artefatto che mancava. Dalla cella a `0xffff`, con
+1 = quattro celle sparse, 2 = spazzata, 3 = letture di fase, 4 = clear,
+5 = cambio di modo, L = latch, E = blocco E:
+
+```
+wl     1 3 5 | 1 2 L E 4 | 5 1 2 L 4 | 5 1 2 L 3 4 | 5 1 2 ...
+port   L E   | 1 2 3 4   | 5 1 2 4   | 5 1 2 L 4   | 5 1 2 ...
+```
+
+Da qui si legge tutto. Il latch e il blocco E **non** stanno prima della fase:
+il latch e' la coda del primo giro e il blocco E viene dietro di lui. Quello
+che sta prima della fase e' un prefisso di tre pezzi, `1 3 5`. Dal secondo giro
+in poi i due flussi sono la stessa sequenza.
+
+Provato: prefisso `1 3 5` prima della fase, giro 0 che latcha, blocco E dietro
+il latch del giro 0. Risultato:
+
+```
+                   prima     dopo
+cold01-ch36-bw20   94.88%   93.92%    ma 139 -> 111 regioni
+cold02-ch40-bw20   98.53%   97.71%
+cold38-ch36-bw80   98.26%   97.68%
+cold14-ch120-bw20  97.99%   97.99%
+```
+
+Annullato. Il motivo e' quello di sempre: **il prefisso non e' lo stesso su
+tutti i segmenti**. cold01 vuole `1 3 5`, ch40/44/48 e bw40 vogliono il varco
+vuoto -- e la' i tre pezzi sono puro sovrappiu' -- bw80 vuole `1 2` (72 op:
+quattro celle sparse, la spazzata, `0x015a 0x014e`), i DFS vogliono di piu'.
+
+Ma adesso il problema e' posto bene. Non e' "quanti giri" ne' "che ordine": e'
+**quale prefisso di pezzi** cade prima della fase, con l'alfabeto sopra, e va
+ricavato dalla cattura come ogni altro orologio del vendor. Il riconoscitore e'
+meccanico -- fra la cella a `0xffff` e la prima `OBJ.RD 0x008c` si leggono i
+pezzi uno per uno -- quindi e' un tool in `reverse-tools/` accanto a
+`watchdog_turns.py`, una stringa tipo `AC_PHASE_PREFIX=1,3,5`, e in
+`post_bringup_tail()` un ciclo che emette i pezzi nominati.
+
+Cinque tentativi su questo varco, e questo e' il primo che lascia qualcosa di
+riusabile: la tabella dei pezzi. Il prossimo passo e' il riconoscitore, non
+un'altra ipotesi sul prefisso.

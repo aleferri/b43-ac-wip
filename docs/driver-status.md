@@ -22,13 +22,18 @@ catture.
 Le tre condizioni di `test/unit/README.md`, piu' `test/integration`. Il numero
 citabile e' il `grezzo` di `cmp_skip.py`.
 
+Tutti i numeri qui sotto sono sullo sweep **ricatturato**, che traccia nove
+classi di hook in piu' del precedente. Non sono confrontabili con quelli che
+questo documento riportava prima: il denominatore e' cresciuto di op che
+nessuno dei due lati emetteva, quindi il vecchio 99.90% e l'attuale 91.75%
+misurano confronti diversi, non due stati del driver.
+
 | misura | esito |
 | --- | --- |
-| freddo `cold01` ch36 bw20 | **99.90%** (28553/28582), `compare.py` senza divergenze |
-| freddo, gli altri 25 segmenti | da 97.88% a 99.76%, 24 su 26 sopra il 98%, con `AC_ANY_CHANNEL=1` |
-| freddo `cold05` ch52 bw20 | 99.71% |
-| freddo `cold24` ch36 bw80 | 98.73% |
-| caldo, i tre segmenti di riferimento | 86.43% (ch36), 89.30% (ch52), 85.60% (ch104) |
+| freddo `cold01` ch36 bw20 | **94.64%** (28929/30567), 158 regioni |
+| freddo, non-DFS a 20 MHz | 98.47% (ch40), 98.63% (ch44); ch149 e ch153 da rimisurare |
+| freddo, i 27 segmenti con guardia radar | non misurabili: vedi sotto |
+| caldo, i tre segmenti di riferimento | 84.92% (ch36); ch52 e ch104 non misurabili |
 | tick periodico | **MATCH**, posizione per posizione |
 | integrazione, b43 intero | `probe: 0`, `start: 0`, 29853 op; 84.21% sul segmento intero, **98.78% sul solo switch di canale con zero valori sbagliati** |
 
@@ -36,10 +41,21 @@ Il freddo e il caldo non sono intercambiabili e nessuno dei due copre l'altro:
 ogni predicato che distingue il primo bring-up dai successivi e' invisibile
 nello sweep a freddo. Vedi `test/unit/gates.sh`.
 
-Il salto fra le due famiglie di canali a freddo -- sotto e sopra i 5250 MHz --
-e' chiuso: sopra la soglia il driver salta le calibrazioni post-switch ed
-emette il poll di CAC, entrambi dietro `b43_phy_ac_may_calibrate_tx()`. Il
-residuo per canale sta in `retrace-todo.md`.
+Le due famiglie di canali a freddo non sono "sotto e sopra i 5250 MHz": sono i
+canali con la guardia radar e quelli senza. Lo sweep vecchio non poteva
+distinguerle, perche' si fermava a ch140. Il driver legge il flag giusto,
+`IEEE80211_CHAN_RADAR`, e dietro `b43_phy_ac_may_calibrate_tx()` salta le
+calibrazioni post-switch finche' il check e' pendente; il poll del rivelatore
+non sta piu' dietro quel predicato, perche' e' monitoraggio in servizio e
+continua anche dopo che il check si e' chiuso.
+
+I 27 segmenti con la guardia radar non producono un numero. La ricattura li ha
+presi con il CAC che si chiude a meta' segmento, e l'harness ha `cac_pending`
+come booleano per l'intera corsa: il vendor si ferma a `op_channel_calibrate`
+per tutta l'attesa facendo girare il watchdog -- su `cold05` sono 10867 op in
+62.9 s, inserite esattamente dove `cold01` ha l'entrata di quella funzione --
+e poi riprende. Serve una fase d'attesa nel flow, non una leva. Il residuo per
+canale sta in `retrace-todo.md`.
 
 **Nessun segmento si ferma piu' su un'operazione mancante o di troppo**: la
 prima divergenza posizionale di tutti e 25 e' un valore, e sono due famiglie --

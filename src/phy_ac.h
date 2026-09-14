@@ -371,7 +371,20 @@ struct b43_phy_ac {
 	 */
 	u16 probe_nolatch_tick[16];
 	u8  probe_nolatch_n;
-	u16 probe_watchdog_tick[2];
+	/*
+	 * I giri della fase su cui cade il measure block. E' periodico, ogni
+	 * dieci giri, con l'offset che dipende da dove comincia il conteggio:
+	 * 10 su cold01, 9 su cold05 perche' la fase d'attesa sposta di uno.
+	 * Lista e non periodo perche' il marcatore nella cattura non e' pulito
+	 * dentro la regione delle calibrazioni, e una lista tollera la voce in
+	 * piu' che ne esce.
+	 *
+	 * L'indice e' quello globale, giri d'attesa compresi, come per
+	 * @cac_poll_tick[]: erano due slot perche' i segmenti vecchi non
+	 * passavano i ventisei giri, e cold05 ne ha dodici fino al 119.
+	 */
+	u16 probe_watchdog_tick[32];
+	u8  probe_watchdog_n;
 	/*
 	 * Ricariche del template beacon che cadono dentro la fase probe. Lo
 	 * stack sopra il driver ripubblica il beacon quando vuole, e quante
@@ -418,8 +431,20 @@ struct b43_phy_ac {
 	bool crs_noise_warned;
 
 	u8  cac_poll_pre;
-	u8  cac_poll_tick[24];
+	u8  cac_poll_tick[160];
 	u8  cac_poll_n;
+
+	/*
+	 * Quanti dei giri in @cac_poll_tick[] cadono nella fase d'attesa del
+	 * controllo di disponibilita', prima delle calibrazioni, e quanti
+	 * restano per la fase probe che viene dopo. Le catture DFS vecchie
+	 * hanno zero: la' il controllo non si chiudeva entro la finestra di
+	 * cattura e la fase d'attesa non finiva mai. Quelle ricatturate lo
+	 * chiudono a meta' segmento -- su cold05 sono 58 giri d'attesa e 65 di
+	 * fase probe -- e i due gruppi si consumano in due punti diversi del
+	 * bring-up, percio' vanno contati separatamente.
+	 */
+	u16 cac_wait_ticks;
 	/*
 	 * Count of calibration cycles this session, gating the cold bump in
 	 * the crsmin path of pwork_60sec(): the blob bumps the ladder for the
@@ -535,6 +560,20 @@ struct b43_phy_ac {
 	u8 crs_subband;
 	/* Operating width of the same configuration. */
 	enum nl80211_chan_width cal_width;
+
+	/*
+	 * Lunghezza dell'SSID, in byte. Non e' roba del PHY: entra qui perche'
+	 * la lunghezza del probe response dipende da lei, e da quella dipendono
+	 * i PLCP degli otto rate che b43_phy_ac_prb_rsp_plcp() calcola. Su un
+	 * driver vero arriva dal template che mac80211 fornisce; qui la mette
+	 * il core, o chi ne fa le veci.
+	 *
+	 * Prima era dentro i letterali di b43_phy_ac_prb_rsp_len(), tarati sui
+	 * sette caratteri di `test-ap` dello sweep vecchio. La ricattura usa
+	 * `test-ap5`, otto, e quel byte in piu' sposta i PLCP di tutti e tre i
+	 * bandwidth: vedi docs/retrace-todo.md.
+	 */
+	u8 ssid_len;
 	/*
 	 * TX power target, the output of b43_phy_ac_txpwr_recalc(): the
 	 * per-rate table after SROM, regulatory ceiling and margin, its
@@ -700,6 +739,14 @@ u16  b43_phy_ac_classifier(struct b43_wldev *dev, u16 mask, u16 val);
 })
 
 void b43_phy_ac_reset_cca(struct b43_wldev *dev);
+
+/*
+ * I giri del watchdog che scorrono mentre il controllo di disponibilita' del
+ * canale e' pendente, prima che le calibrazioni possano partire. Senza
+ * chiamanti su hardware: la' quei giri sono il periodic work e @cac_pending lo
+ * azzera CAC_FINISHED. Vedi il commento sulla funzione.
+ */
+void b43_phy_ac_cac_wait(struct b43_wldev *dev);
 
 /*
  * Post-channel-setup calibrations, in the order

@@ -38,6 +38,12 @@ import sys
 
 GROUP = re.compile(r"^\s*([\d.]+)\s+#(\d+)\s+cpu\d+\s+PHY\.RD\s+addr=0x0*7af\b")
 BLOCK = re.compile(r"^\s*([\d.]+)\s+#(\d+)\s+cpu\d+\s+PHY\.RD\s+addr=0x0*73c\b")
+# Un cambio di modo per corpo di giro, e nessun corpo senza: e' il marcatore da
+# cui contare i giri. Il gruppo su 0x07af salta dei corpi -- su cold01 ne
+# compare 24 per 26 giri -- quindi puo' dire quando la fase comincia ma non
+# numerarla.
+BODY = re.compile(r"^\s*([\d.]+)\s+#\d+\s+cpu\d+\s+PHY\.MOD\s+addr=0x0*520\b"
+                  r".*mask=0x0*c\b")
 
 
 def collect(path):
@@ -53,7 +59,14 @@ def collect(path):
     return groups, blocks
 
 
-def schedule(groups, blocks):
+def bodies(path):
+    """Il tempo di ogni corpo di giro, in ordine."""
+    return [float(m.group(1))
+            for m in (BODY.match(l) for l in open(path, errors="replace"))
+            if m]
+
+
+def schedule(groups, blocks, body_times):
     """(deadline, [watchdog ticks]) or None when there is no probe phase."""
     if len(groups) < 3:
         return None
@@ -72,8 +85,16 @@ def schedule(groups, blocks):
     for t, _ in blocks:
         if t < times[0]:
             continue                     # before the phase: cal rounds
-        later = [s for s, (tg, _) in zip(spent, groups) if tg > t]
-        watchdog.append(later[0] if later else deadline)
+        # Contati, non dedotti dal tempo: il measure block e' periodico ogni
+        # dieci giri, e su un segmento lungo la deduzione a tempo deriva.
+        # cold05 ne ha dodici fino al corpo 119 e la vecchia formula ne
+        # trovava due.
+        n = sum(1 for b in body_times if b < t)
+        # Nella regione delle calibrazioni 0x073c viene letto anche da loro,
+        # e piu' letture cadono nello stesso giro. Un measure block due volte
+        # sullo stesso corpo non esiste: si tiene il primo.
+        if n not in watchdog:
+            watchdog.append(n)
 
     return deadline, watchdog
 
@@ -86,14 +107,14 @@ def main():
     a = ap.parse_args()
 
     groups, blocks = collect(a.capture)
-    got = schedule(groups, blocks)
+    got = schedule(groups, blocks, bodies(a.capture))
     if got is None:
         print("no probe phase in this capture", file=sys.stderr)
         return 1
     deadline, watchdog = got
 
     if a.sh:
-        ticks = ",".join(str(w) for w in watchdog[:2]) or "65535"
+        ticks = ",".join(str(w) for w in watchdog) or "65535"
         print(f"AC_PROBE_TICKS={deadline} AC_WATCHDOG_TICKS={ticks}")
     else:
         print(f"groups   {len(groups)}")
