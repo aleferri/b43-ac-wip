@@ -136,6 +136,32 @@ def _bulk_head_is_shadow(op, nxt):
     return int(m.group(2), 16) == int(w.group(2), 16)
 
 
+# OBJ.SET: l'intestazione di un azzeramento di shared memory, stesso caso del
+# BULK_HEAD qui sopra. `OBJ.SET addr=0x10f4 val=0x0000 len=960` e poi le write
+# vere, una parola alla volta a partire dallo stesso indirizzo e con lo stesso
+# valore. Un evento solo con due record: le write sono nel confronto e il port
+# le emette tutte, quindi l'intestazione non va contata una seconda volta.
+#
+# Come per BULK_HEAD la condizione e' cosa segue, non la classe. Sui 43
+# segmenti a freddo ce n'e' esattamente una per segmento e la write che le
+# tocca c'e' sempre, con lo stesso indirizzo e lo stesso valore; un segmento
+# che registrasse l'intestazione senza le write lo direbbe invece di sparire.
+SET_HEAD = re.compile(
+    r'^OBJ\.SET\s+addr=(0x[0-9a-fA-F]+)\s+val=(0x[0-9a-fA-F]+)\s+len=')
+SET_WORD = re.compile(r'^OBJ\.WR\s+addr=(0x[0-9a-fA-F]+)\s+val=(0x[0-9a-fA-F]+)')
+
+
+def _set_head_is_shadow(op, nxt):
+    m = SET_HEAD.match(op)
+    if not m or nxt is None:
+        return False
+    w = SET_WORD.match(nxt)
+    if not w:
+        return False
+    return (int(m.group(1), 16) == int(w.group(1), 16) and
+            int(m.group(2), 16) == int(w.group(2), 16))
+
+
 # PHY.RDW: la lettura del data port senza riselezionare l'indirizzo.
 #
 # Il record non porta un indirizzo perche' la FUNZIONE non ne ha uno, non
@@ -183,6 +209,8 @@ def drop_shadow_ops(ops):
         if _bulk_head_is_shadow(op, nxt):
             continue
         if _chanspec_head_is_shadow(op, nxt):
+            continue
+        if _set_head_is_shadow(op, nxt):
             continue
         if FOREIGN_READBACK.match(op):
             parent = True          # le sue ombre restano ombre
