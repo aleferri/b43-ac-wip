@@ -373,6 +373,46 @@ questo. La divergenza che resta a `@24865` e' `PHY.WR 0x06a1 val=0x51` contro
 `0x50`: era il residuo sul coefficiente `b` della RX IQ, chiuso piu' sotto con la
 media per tono.
 
+### La base delle LUT segue la sotto-banda, non solo il core
+
+La sezione sopra dichiara la base "una costante del core, non della board",
+misurata su ch36 e confermata sull'agcombo. E' vera a meta': su ch36 il gruppo
+pa5g e' 0, e su quel gruppo la base e' davvero quella. Letta la prima parola
+delle tre LUT su tutti e 43 i segmenti, la partizione e' netta:
+
+| | gruppo 0 e 1, < 5500 | gruppo 2, ch100-144 | gruppo 3, ch149-165 |
+| --- | --- | --- | --- |
+| `0x0042` core 0 | nessuna base | nessuna | nessuna |
+| `0x0062` core 1 | nessuna base | nessuna | `(-10, -5)` |
+| `0x0082` core 2 | `(-8, -4)` | `(-6, -5)` | `(-6, -5)` |
+
+Misurata come differenza fra la parola del vendor e quella del port: lo scarto
+del core 2 e' `(+2, -1)` identico su tutti e ventitre i segmenti che divergono,
+quello del core 1 e' `(-10, -5)` identico su tutti e otto quelli di UNII-3.
+Cinque canali per tre larghezze ciascuno, quindi non e' un fit su un punto, e i
+venti segmenti di gruppo 0 e 1 non si muovono -- che e' il controllo negativo.
+
+```
+valori sbagliati sui 43 segmenti   11211 -> 9445
+segmenti mossi 23, fermi 20        gate periodico MATCH, cold01 invariato
+```
+
+Lo scalino a 0x21 -- `(-2, -10)` in piu' da quell'indice -- e' stato misurato
+solo sull'indice 0 e non e' stato rimisurato per sotto-banda.
+
+**SALAME** sul perche': che la base esista, che scatti a 0x21 e che segua la
+partizione di pa5g invece di un'altra non ha prove. Quel che si sa e' che segue
+quella, su 43 segmenti.
+
+### Quel che resta: le LUT si riempiono piu' di una volta
+
+Sul residuo di UNII-3 restano ~200 parole per LUT, e non sono della base: sono
+di una **seconda passata di riempimento**. Su cold23 il port scrive `0xf7fb`
+su `0x0062`, che e' il valore giusto della prima passata, dove il vendor a
+quel punto scrive `0xed00`. Cambia la parola LO, non la base, quindi e' il
+secondo giro di calibrazione a produrre un risultato diverso -- e nell'harness
+quella parola viene dall'oracolo. Da guardare li', non sulla base.
+
 ## Il coefficiente b della RX IQ: non e' l'arrotondamento
 
 Il port riproduce esattamente gli accumulatori e il coefficiente `a` -- `a`
@@ -2168,6 +2208,497 @@ Perche' il secondo giro prenda il rate peggiore invece del massimo, e perche'
 solo la'. E la correzione `-2` del primo blocco, che a caldo si applica e a
 freddo no. Sono le due ultime differenze fra il modello e le catture su questo
 registro: il resto e' esatto, 26/26 sul caldo.
+
+## Il `4` su `0x0646` a ch149-165, e un tentativo circolare da non rifare
+
+Lo sweep a 43 segmenti aggiunge otto configurazioni UNII-3 -- ch149-165 a 20
+MHz, ch149/157 a 40, ch149 a 80 -- e su tutte e otto il vendor scrive **`0x04`**
+sul registro target, dove il port scrive `0x50`. E' la prima divergenza di sette
+di quegli otto segmenti una volta chiusa la maschera parziale.
+
+`0x04` sono **1 dBm**. Su ogni altra configurazione dello sweep quel registro
+porta un numero fra 56 e 80, cioe' una potenza plausibile. Prima di modellarlo
+come un target va deciso se lo sia: una banda che il locale non permette e un
+marcatore scritto da un altro percorso del vendor spiegherebbero il numero
+altrettanto bene, e le catture non contengono il locale (vedi "Non viene da
+nessuna lettura, su nessuno dei 104 segmenti").
+
+### Il tentativo, e perche' e' circolare
+
+Provato a farlo uscire dalla catena esistente. Servono tre cose insieme: un
+tetto di 8 dBm per quei canali in `AC_MAX_POWER_MAP`, la rimozione del floor a
+8 dBm (con cui nessun tetto porta il target sotto 32) e la rimozione del
+disable TSSI-visible (che senza il floor azzera tutto). Con le tre il port
+scrive `0x04` a tutte e tre le larghezze, e i segmenti perdono 6 valori
+sbagliati l'uno.
+
+**Annullato.** Il tetto non e' misurato, e' scelto per far uscire il `4`: e'
+l'unica delle cinque voci della mappa che non venga da una configurazione dove
+il modello SROM e lo scritto si separino da soli. Da li' in poi la prova che
+floor e disable siano di troppo e' che stanno in mezzo a quel `4` -- cioe' il
+fit che si chiude su se' stesso. Che i due termini siano fittizi puo' anche
+essere vero, ma quei `−6` per segmento non lo dimostrano, e sono termini di
+comportamento su hardware, non di punteggio: il floor tiene il target sopra il
+minimo utile e il disable spegne i rate che l'anello chiuso non sa inseguire.
+
+L'argomento della forma intera -- `4 + 6` di margine `+ 22` di antenna gain fa
+8 dBm EIRP, come 21/22/24/26 degli altri quattro tetti -- e' una consistenza,
+non una misura: la forma e' additiva e produce un intero per costruzione ogni
+volta che lo scritto e' congruo a 2 modulo 4, che qui vale.
+
+Cosa lo chiuderebbe davvero, in ordine di costo: una cattura del DSL o
+dell'agcombo su ch149 (se tutte e tre le board scrivono `4` con `maxp5ga`
+diversi, non e' un target); il valore di `0x0846` sul secondo core, che un
+target segue e un marcatore no; e i segmenti a caldo su UNII-3, dove il locale
+e' quello dello userspace e il numero dovrebbe cambiare.
+
+## La maschera parziale `0x05d6`/`0x05d8` non e' la guardia radar, e' la banda
+
+Seconda divergenza dello sweep per numero di segmenti, otto: ch144-165 a 20
+MHz e ch149/ch157 a 40. Il port ci scrive la coppia parziale, il vendor
+coremask.
+
+Il conto su tutti e 43 i segmenti, quattro siti per segmento, dice che il
+vendor porta una coppia diversa da coremask **solo** su ch36-48 a 20 MHz
+(`1`/`1`) e su ch36/ch44 a 40 (`1`/`3`, e `3`/`3` al sito txpwr). Dappertutto
+altrove, guardia radar o no, sono quattro `3`.
+
+Il predicato nel codice era `b43_phy_ac_may_calibrate_tx()`, cioe' la guardia
+radar. Sui 26 segmenti vecchi i due candidati danno lo stesso risultato ovunque
+-- il commento della funzione lo diceva gia', "non si distingue qui da un
+semplice sotto i 5250" -- perche' quello sweep non conteneva **nessun canale
+senza guardia sopra i 5250**. ch144-165 sono quei canali, e separano i due:
+niente guardia, e coremask. Il predicato e' la sotto-banda, gruppo 0 di
+`b43_phy_ac_pa5g_group()`.
+
+Il termine "primo bring-up" resta: a caldo la coppia e' coremask su tutti e 52
+i segmenti.
+
+Misurato, e si muovono solo gli otto:
+
+```
+cold20 ch144 bw20   98.04% -> 98.09%   valori 284 -> 276
+cold21-25 ch149-165 bw20                       -8 ciascuno
+cold36-37 ch149/157 bw40                       -3 ciascuno
+```
+
+I due numeri sono la forma della divergenza e non un punteggio: a 20 MHz le
+celle sbagliate erano due per sito su quattro siti, a 40 una sola, perche' la'
+`0x05d8` portava gia' `3`. Totale sui 43 segmenti 10143 -> 10089, nessun altro
+segmento mosso, gate periodico a `MATCH`.
+
+### Nota di metodo: i predicati co-varianti dello sweep vecchio
+
+E' il secondo di questa famiglia, dopo quello dentro `may_calibrate_tx()`
+stessa (`center_freq <= 5250` invece della guardia radar, vedi
+`test/unit/README.md`), e i due vanno in direzione opposta: la' la guardia era
+giusta e la frequenza sbagliata, qui il contrario. Non c'e' una regola che dica
+quale scegliere; c'e' che sullo sweep a 26 segmenti **nessuno dei due casi era
+osservabile**, e ogni punto del driver che oggi guarda la guardia radar o i
+5250 MHz va rimisurato sui 43. Il modo di trovarli e' quello usato qui: contare
+il valore del sito su tutti i segmenti e guardare come si partiziona, non
+leggere il codice.
+
+## L'attesa del CAC: il timer e' un orologio del driver, e le calibrazioni stanno dentro la fase
+
+Ventuno segmenti dello sweep stavano fra il 55% e il 71%, ed erano il blocco di
+massa piu' grosso del confronto. Tutti e ventuno hanno la guardia radar e un
+check di disponibilita' che si chiude dentro la cattura.
+
+### Cosa NON era
+
+**Non era una fase mancante.** Il primo sospetto -- che il port non emettesse i
+giri d'attesa, perche' `cac_wait_ticks` resta zero e nessuno lo produce -- e'
+falso, e lo esclude un conteggio di due minuti: le teste di giro
+(`PHY.RD 0x07af`) sono **24/24 su cold01, 21/21 su cold14, 124/124 su cold05 e
+122/122 su cold09**. I giri li emette gia' la fase probe, e su un canale con la
+guardia radar la fase probe *e'* l'attesa. Accendere `b43_phy_ac_cac_wait()`
+li raddoppia, ed e' esattamente quello che si misura: 11000 op di troppo per
+sbloccarne 12744 di mancanti, con le due che quasi si annullano.
+
+Il conteggio andava fatto **prima** di scrivere un tool per contare i giri
+dalla cattura, non dopo.
+
+### Cos'era
+
+Le op mancanti di cold05 sono 13375 e **12744 stanno in una regione sola**, che
+comincia tre operazioni dopo il ripristino della riga AMT:
+
+```
+#32625  t=594.548   AMT.WR idx=0x3f a3=0x8008    il check si chiude
+#33194  t=594.551   PHY.WR 0x140 = 0x0df4        parte il blocco
+```
+
+E' la catena di calibrazione intera, che il port non esegue: il gate
+`b43_phy_ac_may_calibrate_tx()` legge `!cac_pending`, e `cac_pending` veniva
+azzerato in un solo posto, la coda di `cac_wait()`, che non gira. Il contatore
+lo conferma: `PHY.MOD 0x02ed` sta 13 volte nel vendor di cold05 e 3 nel port,
+mentre su cold01 e cold14 e' 15/15 e 3/3.
+
+### Il timer, e la sua durata
+
+Il check finisce quando il suo timer scade, e nell'harness l'unico orologio
+sono i giri del watchdog, che la cattura mette a 1.004 s l'uno dall'altro.
+`b43_phy_ac_cac_tick()` fa scadere il check al giro giusto; su hardware quella
+transizione e' l'evento `CAC_FINISHED` di mac80211 e la funzione non serve.
+
+La durata e' 60 secondi, 600 nella sotto-banda del radar meteo 5600-5650 MHz, e
+il confronto va fatto sul **blocco occupato** e non sul canale primario, perche'
+a bloccare e' la banda che si occupa. La regola non e' tarata: scritta cosi', i
+segmenti il cui check non si chiude entro la cattura escono esattamente ch120,
+ch124 e ch128 a 20 MHz piu' ch116 a 40, ch124 a 40 e ch116 a 80, e nessun altro
+dei 43. ch116 a 20 MHz sta sotto i 5600 e si chiude in sessanta secondi; lo
+stesso ch116 a 40 e a 80 copre 5600 e non si chiude. Quei sei sono catture
+incomplete, non una configurazione diversa, e su questa fase non vanno
+misurati.
+
+### Le calibrazioni stanno dentro la fase, non dopo
+
+`b43_phy_ac_calibration_block()` e' estratto dall'orchestratore perche' ha due
+chiamanti: `post_switch_calibrations()` quando il canale e' disponibile
+all'ingresso, e **il giro della fase probe che chiude il check**, che e' dove
+la cattura le mette -- tre operazioni dopo il ripristino della riga AMT, in
+mezzo ai giri. La fase riprende dal giro seguente.
+
+Che la posizione contasse lo ha detto la misura, non un'ipotesi. Messo il
+blocco *dopo* tutta la fase invece che al giro giusto:
+
+```
+                    prima    dopo la fase    al giro giusto
+cold05 ch52  bw20   70.66%      59.35%           95.49%
+cold09 ch100 bw20   70.81%      59.06%           94.37%
+cold28 ch52  bw40   66.27%      79.72%           95.40%
+cold39 ch52  bw80   55.06%      74.23%           86.67%
+```
+
+A 20 MHz peggiorava di undici punti e a 40/80 migliorava di nove-diciannove:
+non era rumore, era lo sfasamento. Dove i giri dopo la chiusura sono tanti
+(~66 a 20 MHz) il costo posizionale supera il guadagno, dove sono pochi no. La
+divisione per larghezza era il segnale che la posizione contava, ed e' il
+motivo per cui quel passo intermedio va misurato e non saltato.
+
+### La chiusura ha un marcatore, e non e' il timer da solo
+
+Le finestre misurate fra l'arm e il ripristino della riga AMT, con i giri a
+1.004 s su tutti i segmenti: 62.9 s su diciotto, 67.8 su `cold18`, 67.6 su
+`cold42`, 76.4 su `cold34`. Il passo fra i giri e' lo stesso ovunque, quindi a
+variare e' la durata del check e non l'orologio, e i 60 s del timer spiegano
+diciotto casi su ventuno.
+
+Gli altri tre li chiude un marcatore che il vendor lascia. I giri che portano
+un measure block stanno su una griglia regolare, ogni dieci a partire dal nono;
+in ogni segmento con la guardia radar c'e' **una voce fuori griglia**, e cade
+sul giro in cui il check si chiude:
+
+```
+cold05  ..,49,59,[60],69,..   chiude al 60      cold18  ..,59,[63],69,..  al 63
+cold34  ..,49,59,69,[70],79   chiude al 70      cold31  [60] .. [78]      al 60
+```
+
+Ventuno segmenti su ventuno, ed e' la sola voce fuori griglia che ognuno abbia
+prima della chiusura. Il vendor emette un measure block extra quando il check
+finisce: quello e' il momento, il timer resta il modello.
+
+Cosa allunghi il check di tre-dieci secondi non sta nelle catture. Un
+azzeramento del contatore e' **escluso**: rifarebbe sessanta secondi, non
+cinque. Resta un'attesa che si estende -- medium occupato, o un rilevamento che
+non porta a cambiare canale -- e nessuna delle due ha una prova. **SALAME** su
+quale sia.
+
+### Il giro di anticipo, che valeva piu' dei tre casi anomali
+
+La condizione `turn + 1 >= 60` chiude al giro **59**, non al 60. Un giro di
+anticipo su tutta la famiglia, e il conto di quanto e' costato vale piu' della
+correzione dei tre segmenti anomali:
+
+```
+cold34 ch132 bw40   50.56% -> 97.97%     cold42 ch132 bw80   83.66% -> 97.44%
+cold39 ch52  bw80   86.95% -> 99.08%     cold18 ch136 bw20   93.20% -> 97.51%
+cold28 ch52  bw40   95.76% -> 99.03%     cold29 ch60  bw40   95.71% -> 98.96%
+```
+
+Con questo cade una conclusione scritta qui un giro prima: `cold39` e `cold42`
+sembravano bloccati su un nodo di sostanza -- 638 regioni divergenti dentro il
+blocco di calibrazione, lette come "il port fa due passate di misura dove il
+vendor ne fa sei". Erano lo stesso blocco sfasato di un giro. **Un blocco
+grosso fuori posto produce centinaia di regioni che sembrano un problema di
+contenuto e non lo sono**, ed e' la seconda volta in questa zona: prima col
+dump da trenta secondi, poi qui.
+
+### Il dump da trenta secondi cade sul tick, non sulle teste
+
+Contando le teste `PHY.RD 0x07af` il dump risulta ai giri 27, 57, 87 e 117, e
+una regola scritta su quel conteggio lo mette due giri in anticipo: i tick 1 e
+2 della fase non emettono la testa, ma il giro c'e' e il secondo passa. Sul
+tick la regola e' `(tick + 1) % 30 == 0`, cioe' ogni trentesimo giro, senza
+termini di scarto.
+
+Vale la pena sapere quanto costa sbagliarlo: col dump due giri prima, cold05
+emette 256 operazioni di cui **sette** combaciano, e il grezzo scende dal
+95.50% al 95.03%. Un blocco giusto nel posto sbagliato costa piu' di un blocco
+assente.
+
+### Risultato sui 43 segmenti
+
+Tutti e ventuno i segmenti con il check che si chiude salgono, da +14 a +31
+punti; i ventidue restanti non si muovono di un'op.
+
+```
+op di wl mancanti, totale     278870 -> 27610
+valori sbagliati, totale        9645 -> 16196
+```
+
+I valori sbagliati **salgono**, e non e' una regressione: dodicimila operazioni
+per segmento che prima non venivano emesse adesso ci sono, e una parte porta
+numeri che il port non sa ancora derivare. E' il debito che il gate chiuso
+nascondeva, ed e' la frontiera nuova. Gate periodico a `MATCH`, cold01
+invariato a 95.82%.
+
+### Quel che viene dopo, e adesso e' alla portata
+
+La prima divergenza di quei dieci segmenti resta l'`AMT.WR 0x3f` con i suoi due
+`OBJ.BULKR`/`OBJ.BULKW`: la riga dell'address match che il core azzera quando
+il check parte e ripristina quando si chiude, tre op per sito e due siti. Prima
+non c'era dove metterle; adesso i due confini del check sono modellati -- l'arm
+e il giro in cui `cac_tick()` fa scadere il timer -- e sono esattamente quelli.
+Restano del core, quindi doppioni in `main.c` accanto a
+`emit_core_amt_cac_suspend()`, che di quelle tre occorrenze ne copre gia' una.
+
+### La riga AMT ai due confini, fatta
+
+`b43_ac_cac_match_gate()` e' dichiarata in `phy_ac.h` e definita da chi guida il
+flusso, come `b43_ac_beacon_reload()`: l'operazione e' del core -- la riga 0x3f
+dell'address match, che il BSS non deve far rispondere finche' il canale non e'
+disponibile -- e i due momenti li conosce questa fase. `cac_arm()` la sospende
+fra il maskset di `0x02e4` e il primo poll, `cac_tick()` la ripristina quando
+il timer scade. Sei operazioni per segmento, e la prima divergenza dei dieci
+segmenti che l'avevano si sposta.
+
+### Il dump da 128 byte e' un periodico da 30 secondi
+
+La prima divergenza che viene fuori dopo, su cold05 a `@16915`, e' un
+`OBJ.BULKR addr=0x00e0 len=128` seguito dalle 64 letture di `0x00e0-0x015e`:
+65 operazioni, che il port non emette affatto. Cade fra il cambio di modo e la
+testa della spazzata, cioe' fra il pezzo 5 e il pezzo 1 dell'alfabeto del giro.
+
+Cade ai **giri 27, 57, 87, 117** su ogni segmento che ci arriva. Col battito di
+1.004 s e il primo giro a +3.6 s dall'ingresso della fase, sono i 30, 60, 90 e
+120 secondi: un periodico da trenta secondi contato da li'. La regola
+
+```
+dump = giri > 27 ? (giri - 27) / 30 + 1 : 0
+```
+
+torna su **tutti e 43 i segmenti**, senza eccezioni: 4 sui dodici a 20 MHz che
+hanno 122-125 giri, 2 su quelli a 80 giri, zero sui ventuno che restano sotto
+i 28.
+
+Una cosa che la regola **non** distingue: se il periodico sia di ogni canale o
+solo di quelli con la guardia radar. I segmenti che arrivano a 28 giri sono
+tutti e soli quelli con la guardia -- gli altri stanno a 21-24 -- quindi le due
+ipotesi danno lo stesso conto su tutto lo sweep e questa cattura non le separa.
+Il conteggio dei giri e' la piu' semplice delle due e non ha un termine in piu',
+quindi e' quella da scrivere, ma la cosa va annotata: un segmento lungo su un
+canale senza guardia la metterebbe alla prova, e non c'e'.
+
+Da fare: emetterlo fra il pezzo 5 e il pezzo 1 di `b43_phy_ac_wd_turn()`. Il
+dump e' il marcatore bulk piu' le 64 parole, che e' la forma con cui la cattura
+traccia una lettura di regione, non 64 letture separate.
+
+## `OBJ.WR 0x00ce`: la cella accanto al blocco per-rate, aperta
+
+Prima divergenza di quattro segmenti e presente su venti. Il port ci scrive
+zero su tutti e 43, tre volte per segmento, insieme a `0x00d0`; e `0x00d0` e'
+zero anche nel vendor, su tutte le configurazioni, quindi la coppia
+"due zeri" del commento di `channel_setup_tail2()` e' meta' giusta.
+
+I valori del vendor, tre scritture per segmento:
+
+| valore | configurazioni |
+| --- | --- |
+| `0x0000` | ch36-48 e ch52-64 e ch100 e ch149-165 a 20, ch108-157 a 40, ch149 a 80 |
+| `0x0010` | ch104-144 a 20, ch60 e ch100 a 40, ch116 e ch132 a 80 |
+| `0x0008` | ch52 a 40 e a 80 |
+| `0x0030` | ch100 a 80 |
+| `0x0000 0x0018 0x0000` | ch36 e ch44 a 40 |
+| `0x0060 0x0048 0x0060` | ch36 a 80 |
+
+In sedicesimi di dB come i campi per-rate: 0.5, 1, 1.5, 3, 4.5 e 6 dB, tutti
+multipli di mezzo dB, cioe' di un nibble di `mcsbw*po`.
+
+Le tre scritture coincidono ovunque tranne ch36/ch44 a 40 e ch36 a 80, che sono
+**esattamente** i segmenti dove il registro target fa tre giri col `-4` in
+mezzo.
+
+I due terzetti **non sono appaiati uno a uno**, e questo va misurato prima di
+leggerci qualunque cosa. L'ordine posizionale e' identico su cold26 e cold38:
+
+```
+target 0x42 | ce | ce | target 0x3e | ...23000 op... | ce | target 0x42
+```
+
+Due scritture della cella cadono fra il primo e il secondo target, a 79
+operazioni l'una dall'altra, e la terza sta appena prima del terzo target. Non
+e' quindi una funzione del target che precede ne' di quello che segue: due
+valori diversi della cella -- `0`/`0x18` su cold26, `0x60`/`0x48` su cold38 --
+precedono lo **stesso** target `0x3e`.
+
+Quel che resta vero e' che i due terzetti hanno l'anomalia sulla stessa
+posizione, la seconda, e che la variazione della cella fra la posizione normale
+e quella anomala e' `0x18` -- sei quarti di dB -- su tutti e due i segmenti,
+con segno opposto: la cella sale a 40 MHz e scende a 80. Stessa struttura,
+contenuto che non si spiega con una proporzione.
+
+### Cosa c'e' fra la prima e la seconda scrittura
+
+Le 79 operazioni che le separano su cold26 non sono una passata del ciclo a
+dodici rate: sono una riconfigurazione del BSS per intero.
+
+```
+0x001c / 0x001e              TIM e parametri del beacon
+TPL.RAMW 0x0200 + 0x0018     template del beacon e la sua lunghezza (BTL0)
+TPL.RAMW 0x0700 + 0x004a     template della probe response e PRTLEN
+0x0160-0x017e + 0x0048       SSID e la sua lunghezza
+otto terzetti PLCP           i rate OFDM
+MAC.MCTRL x7                 la parentesi di controllo
+0x00cc   letto 0x45, riscritto 0xc5 due volte
+0x00ce = 0x18
+```
+
+Cioe' la cella cambia **insieme al bit `0x80` di `0x00cc`**, che ha una sezione
+aperta tutta sua qui sopra. Sulle prime due passate di cold26 i due si muovono
+insieme: `0x45` con `0x00ce = 0`, `0xc5` con `0x00ce = 0x18`.
+
+Il legame non e' pero' sufficiente, e il controesempio e' nello stesso paio di
+segmenti: su cold38 `0x00cc` vale `0xc4`/`0xc5` su tutte e tre le passate --
+niente `0x44` da nessuna parte -- e `0x00ce` cambia lo stesso, `0x60`, `0x48`,
+`0x60`. Quindi il bit accompagna la cella dove c'e', e non la determina.
+
+Quello che le due osservazioni insieme dicono e' dove cercare: `0x00ce` non e'
+un parametro del canale ne' del target, e' uno stato del **BSS**, scritto in
+coda alla riconfigurazione che porta template, SSID e PLCP. E' la stessa zona
+del bit `0x80`, e conviene trattarli come un problema solo.
+
+### La scansione per cella, rifatta sulle passate: niente
+
+La sezione sul bit `0x80` riporta una scansione che non trova una cella con la
+stessa partizione, e girava **fra** i segmenti. `0x00ce` cambia anche **dentro**
+un segmento, fra una passata e l'altra, quindi la scansione si poteva rifare su
+una dimensione in piu'. Fatta: i campioni sono 129 coppie (segmento, passata)
+sui 43 segmenti a freddo, e il candidato e' lo stato accumulato fino a quel
+punto -- ogni cella `OBJ`, `TPL`, `PHY` e `RAD` mai scritta o letta prima,
+1161 di esse presenti in tutti i campioni.
+
+Il test e' funzionale, non di correlazione: stesso valore letto o scritto nella
+cella candidata, stesso valore su `0x00ce`. **Nessuna delle 1161 passa.**
+
+Quindi la dimensione in piu' non basta, e la conclusione del bit `0x80` si
+estende a questa cella: il valore non ha un compagno nella cattura, e serve
+un'altra fonte -- il blob, o una ricattura che vari una condizione alla volta
+-- prima di scrivere un predicato. Quel che si e' guadagnato non e' la formula
+ma il perimetro: la cella e' zero su tutta la banda bassa a 20 MHz e su UNII-3
+a ogni larghezza, vale qualcosa solo su canale aggregato o fra ch104 e ch144,
+sta in coda alla riconfigurazione del BSS, e non dipende da niente che la
+traccia scriva o legga prima.
+
+Ipotesi provate e cadute, per non rifarle:
+
+- **non e' la saturazione K** del campo per-rate: coincide su ch104-144/20,
+  ch60/40 e ch132/80 e sbaglia su ch52/80 (K 1 dB, cella 0.5), ch100/80
+  (K 1 dB, cella 3), ch116/80 (K 2 dB, cella 1) e ch149/80 (K 1 dB, cella 0);
+- **non e' la distanza fra il massimo su tutte le righe caricate e il massimo
+  della riga a 20 MHz**: torna su ch52 a 40 e a 80, dove quella distanza e'
+  mezzo dB, e da zero su ch36 a 80, dove la cella vale 6 dB;
+- **non e' la stessa distanza presa sulla riga della larghezza**, per lo stesso
+  controesempio.
+
+Cosa si sa di sicuro: la cella e' zero su tutta la banda bassa a 20 MHz e su
+UNII-3 a ogni larghezza, e vale qualcosa solo dove il canale e' aggregato o sta
+fra ch104 e ch144. Serve capire cos'e' prima di cercarne la formula, e il posto
+dove sta -- fra il doppione di `0x00cc` e il blocco chain-mask, subito prima di
+`prb_rsp_rate_po()` -- dice che e' della stessa famiglia.
+
+## Il campo per-rate `+0x0e`: la riga della larghezza, e il tetto su maxp
+
+Misurato sullo sweep a freddo intero, 43 segmenti, prima passata di
+`prb_rsp_rate_po` su ognuno -- le tre passate di un segmento scrivono sempre
+gli stessi valori. I quattro rate CCK combaciano ovunque; divergevano i dodici
+campi OFDM su venti segmenti, ed era la prima divergenza su undici di essi.
+
+Il campo e' `(massimo - ppr[rate]) * 4`. Due termini erano sbagliati.
+
+**La riga.** I rate legacy stanno sulla riga della **larghezza operante**, non
+sulla riga a 20 MHz. Un OFDM legacy su un canale aggregato va in aria
+duplicato su tutto il blocco, quindi spende il budget della larghezza intera:
+la ragione non viene dai dati, e i dati la confermano. Contro la riga a 20 MHz
+il modello e' esatto su 24 segmenti su 43, con la riga della larghezza su 28, e
+non e' mai peggiore -- i quattro in piu' sono ch52, ch100, ch132 e ch149 a 80
+MHz.
+
+**Il tetto.** Il tetto regolatorio entra su `maxp`, prima che si sottraggano
+gli offset, non sulle righe finite. Tagliare le righe finite satura fra loro i
+rate che starebbero sopra il tetto, e su ch100 a 20 MHz questo perde il gradino
+di testa degli offset che il vendor scrive. **Lo decide quella configurazione e
+basta**: ch100/20 e' l'unico punto dello sweep dove un tetto lega su una riga i
+cui nibble non siano tutti uguali -- su ch36-48 lega su `mcsbw205glpo =
+0x20000000`, che e' piatta, e un clamp su una riga piatta non si vede. Una
+configurazione, una board.
+
+Il `maxp` restituito dal caricatore resta quello **non** tagliato, perche' il
+riporto per core del chiamante e' una distanza dal `maxp5ga` di quel core.
+
+Fatto senza stato in piu': nessuna seconda tabella, il target e gli offset
+escono dalla stessa e quindi sono coerenti per costruzione. Misura, prima e
+dopo, su tutti e 43 i segmenti:
+
+| segmento | valori sbagliati |
+| --- | --- |
+| cold09 ch100 bw20 | 242 -> 233 |
+| cold28 ch52 bw40 | 116 -> 92 |
+| cold30 ch100 bw40 | 151 -> 148 |
+| cold39 ch52 bw80 | 262 -> 238 |
+| cold40 ch100 bw80 | 277 -> 253 |
+| cold42 ch132 bw80 | 395 -> 380 |
+| cold43 ch149 bw80 | 620 -> 611 |
+
+Nessun altro segmento si muove, gate periodico a `MATCH`, cold01 invariato.
+
+### Nota di metodo: il primo modello era un fit su due punti
+
+La prima versione di questa correzione prendeva la riga a 20 MHz e come
+riferimento il massimo di quella sola riga, giustificato da ch52 a 40 e a 80
+MHz -- i due soli punti delle tre SROM dove le righe di larghezza differiscono.
+Riproduceva quei due e lasciava quattro segmenti a 80 MHz che spiegava con una
+saturazione. La riga della larghezza riproduce gli stessi due **e** quei
+quattro, senza aggiungere niente. Due punti bastano a inventare una regola e
+non a sceglierla: la prova che serviva era confrontare i due candidati su tutti
+e 43 i segmenti insieme, che e' costato dieci minuti e non e' stato fatto
+prima.
+
+### Quel che resta: una saturazione, e non si sa cosa la fissi
+
+Su 13 dei 15 segmenti che ancora divergono il vendor scrive
+`max(distanza, K)` con K costante fra i rate del segmento:
+
+| K | segmenti |
+| --- | --- |
+| 1 dB | ch104-144 bw20, ch60 bw40 |
+| 2 dB | ch116 bw80 |
+| 3 dB | ch36 bw80 |
+
+La forma e' un tetto a `massimo - K`, ma non quello regolatorio, e non una
+funzione della larghezza ne' della banda: ch100, ch104-144 e ch149-165 a 20 MHz
+condividono parola `mcsbw205ghpo` e sotto-banda `maxp5ga`, e i K sono 0, 1 dB e
+0. Cosa distingua ch104-144 dai suoi due vicini non sta in nessuna grandezza
+che il driver abbia: **SALAME** su ogni spiegazione.
+
+I due che non prendono nemmeno quella forma sono **ch100 a 40 MHz**
+(`0x10 0x10 0x10 0x18 0x28`) e **ch100 a 80**: a 40 MHz i due gradini di coda
+valgono 1.5 e 2.5 dB dove ogni altra configurazione ha multipli di mezzo dB da
+un nibble.
+
+Sbagliare questo campo di un dB non impedisce nessuna fase dell'attach: vale
+per il punteggio e per il TX power reale, che e' post-MVP.
 
 ## Punti aperti
 

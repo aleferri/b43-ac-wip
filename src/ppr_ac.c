@@ -89,6 +89,25 @@ u8 b43_ppr_ac_get_max(const struct b43_ppr_ac *ppr)
 }
 
 /*
+ * The row the channel's legacy OFDM rates sit on: the one of the operating
+ * width. A legacy rate on a bonded channel goes out duplicated over the whole
+ * block, so it spends the wide budget and not the 20 MHz one, and its distance
+ * from the target is read on the wide row.
+ */
+const u8 *b43_ppr_ac_row_for_width(const struct b43_ppr_ac *ppr,
+				   enum nl80211_chan_width width)
+{
+	switch (width) {
+	case NL80211_CHAN_WIDTH_80:
+		return ppr->rates.mcs_80;
+	case NL80211_CHAN_WIDTH_40:
+		return ppr->rates.mcs_40;
+	default:
+		return ppr->rates.mcs_20;
+	}
+}
+
+/*
  * Sub-band index into maxp5ga[].
  *
  * Keyed on the primary channel, not the centre: at 80 MHz the captures follow
@@ -149,7 +168,7 @@ static u8 b43_ppr_ac_sub(u8 maxp, u8 off)
 u8 b43_ppr_ac_load_max_from_sprom(const struct ssb_sprom *sprom, u8 coremask,
 				  unsigned int num_cores,
 				  struct b43_ppr_ac *ppr, u16 chan,
-				  enum nl80211_chan_width width)
+				  enum nl80211_chan_width width, u8 ceiling)
 {
 	static const u8 ofdm_on_mcs[B43_PPR_AC_RATES] = { 0, 0, 0, 0, 1, 2, 3, 4 };
 	const u32 po[3][3] = {
@@ -161,7 +180,7 @@ u8 b43_ppr_ac_load_max_from_sprom(const struct ssb_sprom *sprom, u8 coremask,
 	unsigned int sb = b43_ppr_ac_subband(chan, width);
 	unsigned int band = chan < 52 ? 0 : chan < 100 ? 1 : 2;
 	unsigned int c, i;
-	u8 maxp = 0xff;
+	u8 maxp = 0xff, maxp_eff;
 
 	b43_ppr_ac_clear(ppr, width);
 
@@ -173,14 +192,29 @@ u8 b43_ppr_ac_load_max_from_sprom(const struct ssb_sprom *sprom, u8 coremask,
 	if (maxp == 0xff)
 		maxp = 0;
 
+	/*
+	 * The regulatory ceiling caps the band's power, not each rate against
+	 * it: it enters here, on maxp, so the mcsbw*po spacing below survives
+	 * it whole. Capping the finished rows instead saturates the rates that
+	 * would sit above the ceiling into one another, and on ch100 at 20 MHz
+	 * -- the only configuration of the cold sweep where a ceiling binds on
+	 * a row whose nibbles are not all equal -- that loses the top step of
+	 * the per-rate offsets the vendor writes. The returned maxp is the
+	 * uncapped one, because the caller's per-core add-back is a distance to
+	 * that core's own maxp5ga.
+	 */
+	maxp_eff = maxp;
+	if (ceiling && ceiling < maxp)
+		maxp_eff = ceiling;
+
 	for (i = 0; i < B43_PPR_AC_RATES; i++) {
-		rates->mcs_20[i] = b43_ppr_ac_sub(maxp,
+		rates->mcs_20[i] = b43_ppr_ac_sub(maxp_eff,
 						  b43_ppr_ac_off(po[band][0], i));
 		if (ppr->num > 2 * B43_PPR_AC_RATES)
-			rates->mcs_40[i] = b43_ppr_ac_sub(maxp,
+			rates->mcs_40[i] = b43_ppr_ac_sub(maxp_eff,
 					b43_ppr_ac_off(po[band][1], i));
 		if (ppr->num > 3 * B43_PPR_AC_RATES)
-			rates->mcs_80[i] = b43_ppr_ac_sub(maxp,
+			rates->mcs_80[i] = b43_ppr_ac_sub(maxp_eff,
 					b43_ppr_ac_off(po[band][2], i));
 	}
 	for (i = 0; i < B43_PPR_AC_RATES; i++)

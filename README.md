@@ -74,8 +74,8 @@ dove si documenta come si produce un numero citabile.
 Su `cold01-ch36-bw20`, il segmento di riferimento:
 
 ```
-grezzo: 28408/30961 = 91.75%
-        181 col valore sbagliato, 1283 op di wl mancanti, 908 op del port di troppo
+grezzo: 29250/30525 = 95.82%
+        101 col valore sbagliato, 498 op di wl mancanti, 575 op del port di troppo
 ```
 
 Contro lo sweep precedente lo stesso albero dava `28553/28582 = 99.90%` con 29
@@ -90,12 +90,9 @@ Il denominatore e' l'unione dei due flussi, quindi fa 100% solo se il port
 emette esattamente le op del driver stock: ne' meno, ne' di piu', ne' con
 valori diversi. Le tre voci sono tre lavori distinti — una formula da trovare,
 del codice da scrivere, un gate da mettere — e stanno in
-[`docs/retrace-todo.md`](docs/retrace-todo.md). Sul segmento di riferimento la
-prima e la terza voce sono a zero, e le 29 della seconda sono tutte fuori da
-`src/`: 14 sono op del core o di bcma dentro l'attach, 12 sono i LED (vedi la
-tabella sotto), 3 stanno nella coda del rmmod con cui ogni segmento si chiude
--- il reset del chip via watchdog di `pcie_watchdog_reset()`, chiamata da
-`si_detach()` sui core PCIe Gen2, e il rilascio LED a maschera vuota di wl0.
+[`docs/retrace-todo.md`](docs/retrace-todo.md). Su `cold01` la voce piu' grossa
+e' il varco del watchdog all'ingresso della fase probe, che vale la prima
+divergenza posizionale e che sei tentativi documentati non hanno chiuso.
 
 Lo sweep a freddo e' ora di 43 segmenti, e la tabella per famiglie che stava
 qui non e' piu' valida: si reggeva su una separazione a 5250 MHz che lo sweep
@@ -113,9 +110,24 @@ tabelle del BSS (`0x0e`, `0x42`, `0x62`, `0x82`) mancano. Non e' un attach
 diverso del driver stock, e' una cattura presa durante l'attesa. I 21 segmenti
 DFS sono stati ripresi con il CAC completato e adesso ce le hanno.
 
-Quei 21 non producono pero' ancora un numero: contengono la transizione
-CAC-pendente -> CAC-fatto a meta' segmento, mentre `cac_pending` nell'harness
-e' un booleano per l'intera corsa. Vedi `docs/retrace-todo.md`.
+Quei 21 adesso producono un numero. La transizione CAC-pendente -> CAC-fatto a
+meta' segmento e' modellata: il check si chiude quando il suo timer scade, e
+l'orologio sono i giri del watchdog, uno al secondo. Le calibrazioni che il
+gate teneva fuori partono dal giro che lo chiude, che e' dove la cattura le
+mette. Prima erano fra il 55% e il 71%, ora stanno fra l'83% e il 99.8% salvo
+un'eccezione. Dettagli e misure in
+[`docs/retrace-todo.md`](docs/retrace-todo.md).
+
+Lo stato dei 43 segmenti, con `gates.sh` su ognuno:
+
+```
+minimo 95.82%   mediana 98.25%   massimo 99.83%
+```
+
+Somma sui 43: 9445 valori sbagliati, e nessun segmento sotto il 95%. Il
+segmento con piu' op fuori posto e' `cold01`, il riferimento, per via del varco
+del watchdog; i piu' bassi come punteggio sono quelli di UNII-3, dove il debito
+e' di valori e non di ordine.
 
 Delle op di troppo che restano, quelle della famiglia bassa sono in parte il
 debito delle costanti per-canale. Il resto, e tutte quelle di cold15, e' la

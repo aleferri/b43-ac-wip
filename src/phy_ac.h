@@ -844,6 +844,17 @@ bool b43_phy_ac_txpwr_recalc(struct b43_wldev *dev);
  */
 void b43_ac_beacon_reload(struct b43_wldev *dev, unsigned int which);
 
+/*
+ * La riga 0x3f dell'address match, sospesa quando parte il channel
+ * availability check e ripristinata quando si chiude: finche' il canale non e'
+ * disponibile il BSS non deve rispondere. E' del core -- b43_amt_write() di
+ * patches/0011, che e' static in main.c e che il PHY non chiama -- e sta qui
+ * per la stessa ragione di b43_ac_beacon_reload(): il momento lo conosce
+ * questa fase, l'operazione no. Su hardware i due momenti sono l'avvio del
+ * check e l'evento CAC_FINISHED di mac80211.
+ */
+void b43_ac_cac_match_gate(struct b43_wldev *dev, bool restore);
+
 /* Helper trasversali al confine MAC/PHY; razionale in helpers_phy_ac.c. */
 void b43_phy_ac_mhf_maskset(struct b43_wldev *dev, u16 slot, u16 mask, u16 val);
 void b43_maccontrol_set(struct b43_wldev *dev, u32 mask, u32 set);

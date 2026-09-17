@@ -43,6 +43,8 @@ void b43_ppr_ac_add(struct b43_ppr_ac *ppr, int diff);
 void b43_ppr_ac_apply_max(struct b43_ppr_ac *ppr, u8 max);
 void b43_ppr_ac_apply_min(struct b43_ppr_ac *ppr, u8 min);
 u8 b43_ppr_ac_get_max(const struct b43_ppr_ac *ppr);
+const u8 *b43_ppr_ac_row_for_width(const struct b43_ppr_ac *ppr,
+				   enum nl80211_chan_width width);
 void b43_ppr_ac_force_disabled(struct b43_ppr_ac *ppr, u8 threshold);
 bool b43_ppr_ac_sprom_has_subband_po(const struct ssb_sprom *sprom);
 
@@ -50,6 +52,6 @@ unsigned int b43_ppr_ac_subband(u16 chan, enum nl80211_chan_width width);
 u8 b43_ppr_ac_load_max_from_sprom(const struct ssb_sprom *sprom, u8 coremask,
 				  unsigned int num_cores,
 				  struct b43_ppr_ac *ppr, u16 chan,
-				  enum nl80211_chan_width width);
+				  enum nl80211_chan_width width, u8 ceiling);
 
 #endif /* B43_PPR_AC_H_ */
