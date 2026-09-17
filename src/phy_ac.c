@@ -338,6 +338,8 @@ static void b43_phy_ac_probe_cycle(struct b43_wldev *dev, unsigned int n_iter,
 				   bool extended_first, bool closes_sequence);
 static void b43_phy_ac_wd_stats_clear(struct b43_wldev *dev);
 static bool b43_phy_ac_may_calibrate_tx(struct b43_wldev *dev);
+static bool b43_phy_ac_watchdog_on_tick(const struct b43_phy_ac *ac,
+					unsigned int tick);
 
 /*
  * Avviso una volta per sito: dice che qui il driver scrive qualcosa che non sa
@@ -906,13 +908,15 @@ void b43_phy_ac_rxiqcal_dds_seed_tone(struct b43_wldev *dev, int step)
  * nessuno ha visto. Un conteggio di catene fuori tabella prende percio'
  * coremask e lo dichiara, invece di estrapolare.
  *
- * Il predicato e' il primo bring-up piu' b43_phy_ac_may_calibrate_tx(): a
- * freddo sopra i 5250 le quattro occorrenze portano coremask su entrambe le
- * board, e a caldo lo portano su tutti e 52 i segmenti, dove il primo
- * bring-up e' finito da un pezzo. Quel predicato non si distingue qui da un
- * semplice "sotto i 5250", per la stessa ragione per cui non si distingue
- * dentro may_calibrate_tx(): ogni canale con la guardia radar nelle catture
- * sta sopra la soglia.
+ * Il predicato e' il primo bring-up piu' la sotto-banda sotto i 5250 MHz,
+ * cioe' il gruppo 0 di b43_phy_ac_pa5g_group(). Lo separa dalla guardia radar
+ * -- che qui stava e che sui 26 segmenti vecchi dava lo stesso risultato,
+ * perche' la' ogni canale con la guardia stava sopra la soglia e nessun canale
+ * senza guardia stava sopra -- lo sweep a 43 segmenti: ch144-165 non hanno la
+ * guardia e stanno sopra i 5250, e il vendor ci porta coremask su tutti e
+ * otto i segmenti che li coprono (sei a 20 MHz, due a 40). A caldo la coppia
+ * e' coremask su tutti e 52 i segmenti, dove il primo bring-up e' finito da un
+ * pezzo, e quel termine resta.
  */
 enum b43_phy_ac_chain_site {
 	B43_PHY_AC_CHAIN_SETUP,		/* channel setup (x2) e down */
@@ -941,7 +945,7 @@ static void b43_phy_ac_chainmask_block(struct b43_wldev *dev,
 	const u16 *pair = NULL;
 
 	if ((ac->status_mask & B43_PHY_AC_STATE_FIRST_BRINGUP) &&
-	    b43_phy_ac_may_calibrate_tx(dev)) {
+	    b43_phy_ac_pa5g_group(dev, 5000 + 5 * ac->cal_channel) == 0) {
 		/*
 		 * Le catene popolate, non i core del silicio: la prova che
 		 * lega la tabella alle board e' aa5g/txchain, cioe' coremask.
@@ -982,16 +986,28 @@ static void b43_phy_ac_chainmask_block(struct b43_wldev *dev,
  * 10, 12 and 16 of the same block -- probe-response PLCP and duration -- and
  * not 14.
  *
- * The value is the rate's distance from the target in the per-rate table,
- * as in phy_n's PPR: (max - ppr[rate]) in quarter dBm, times four, so the
- * field is in sixteenths of a dB. The table is the one
- * b43_phy_ac_txpwr_recalc() built for this channel -- SROM, regulatory
- * ceiling, margin -- and the legacy rates take the 20 MHz MCS row they fall
- * on: 6, 9, 12 and 18 on mcs0, then 24, 36, 48 and 54 on mcs1..4. Two things
- * follow from taking the distance on the finished table rather than on the
- * raw nibbles: where the ceiling binds the rates flatten against it and the
- * distances shrink, and on a bonded channel the maximum may sit on a 40 or
- * 80 MHz row, which pushes the 20 MHz rates further from it.
+ * The value is the rate's distance from the target in the per-rate table, in
+ * quarter dBm times four, so the field is in sixteenths of a dB. What changes
+ * per rate is which row of the table it is read on, and the sweep decides it:
+ * the legacy OFDM rates sit on the row of the **operating width**, not on the
+ * 20 MHz one. On the six 80 MHz segments that is the difference between exact
+ * and one dB out on ch52, ch100, ch132 and ch149, and it has a reason of its
+ * own -- a legacy rate on a bonded channel goes out duplicated over the whole
+ * block, so it spends the wide budget. Within the row: 6, 9, 12 and 18 Mb/s
+ * on mcs0, then 24, 36, 48 and 54 on mcs1..4.
+ *
+ * The target the distance is taken from is the maximum over every row the
+ * channel loads, which is what the PHY closes its loop on, so the two agree by
+ * construction. The regulatory ceiling is already inside the table, applied to
+ * maxp rather than to the finished rows -- see b43_ppr_ac_load_max_from_sprom(),
+ * which is where ch100 at 20 MHz decides it.
+ *
+ * Exact on 28 of the 43 cold segments. What is left over is a saturation: on
+ * thirteen of the other fifteen the vendor writes max(distance, K) for a K
+ * constant across the rates of a segment -- 1 dB on ch104-144 at 20 MHz and on
+ * ch60 at 40, 2 dB on ch116/80, 3 dB on ch36/80 -- and nothing derives K yet.
+ * The two that do not even take that form, ch100 at 40 MHz and ch100 at 80,
+ * are in docs/retrace-todo.md.
  *
  * The CCK rates are outside: they are the PPR's cck[4] group, with no 5 GHz
  * SROM field in rev 11, so their value comes from ceiling and floor and
@@ -1006,6 +1022,7 @@ static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev)
 	B43_AC_FN();
 	struct b43_phy_ac *ac = dev->phy.ac;
 	const struct b43_ppr_ac *ppr = &ac->txpwr_ppr;
+	const u8 *row = b43_ppr_ac_row_for_width(ppr, ac->cal_width);
 	u8 max = b43_ppr_ac_get_max(ppr);
 	unsigned int i;
 
@@ -1021,7 +1038,7 @@ static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev)
 		if (r->cck)
 			val = b43_phy_ac_cck_rate_po(ac);
 		else
-			val = (u16)((max - ppr->rates.mcs_20[r->mcs]) * 4);
+			val = (u16)((max - row[r->mcs]) * 4);
 
 		b43_shm_read16(dev, B43_SHM_SHARED, cell);
 		b43_shm_write16(dev, B43_SHM_SHARED, cell, val);
@@ -1766,9 +1783,8 @@ bool b43_phy_ac_txpwr_recalc(struct b43_wldev *dev)
 		return false;
 
 	maxp = b43_ppr_ac_load_max_from_sprom(sprom, ac->coremask, ac->num_cores,
-					      ppr, ac->cal_channel, ac->cal_width);
-	if (ceiling)
-		b43_ppr_ac_apply_max(ppr, (u8)min_t(u16, ceiling, 0xff));
+					      ppr, ac->cal_channel, ac->cal_width,
+					      (u8)min_t(u16, ceiling, 0xff));
 	b43_ppr_ac_add(ppr, -6);
 	b43_ppr_ac_apply_min(ppr, B43_PHY_AC_QDB(8));
 	b43_ppr_ac_force_disabled(ppr, b43_phy_ac_tssi_visible_qdbm(dev));
@@ -1877,7 +1893,9 @@ static void b43_phy_ac_est_pwr_lut(struct b43_wldev *dev, unsigned int core,
  * itself declares. Taking it from the LUT and not from a constant is the
  * derivation available; whether the vendor's threshold sits exactly there is
  * not established -- SALAME -- and on every capture in the repository the
- * targets are far above it, so it does not bind.
+ * targets are far above it, so it does not bind. The one place it would is
+ * the 4 the vendor writes on ch149-165, and that is not established to be a
+ * target at all: see docs/retrace-todo.md.
  */
 static u8 b43_phy_ac_tssi_visible_qdbm(struct b43_wldev *dev)
 {
@@ -5330,6 +5348,164 @@ static bool b43_phy_ac_may_calibrate_tx(struct b43_wldev *dev)
 }
 
 /*
+ * Quanto dura il channel availability check, in secondi.
+ *
+ * Sessanta ovunque tranne la sotto-banda del radar meteo, 5600-5650 MHz, dove
+ * sono seicento. Il confronto e' sul blocco e non sul canale primario, perche'
+ * a bloccare e' la banda occupata: ch116 a 20 MHz sta sotto la sotto-banda e
+ * il suo check si chiude in sessanta secondi, lo stesso ch116 a 40 e a 80
+ * copre 5600 e non si chiude. Le catture dicono esattamente questo -- dei sei
+ * segmenti il cui check non arriva in fondo, tre sono ch120, ch124 e ch128 a
+ * 20 MHz e tre sono ch116 a 40, ch124 a 40 e ch116 a 80 -- e nessun altro
+ * segmento dello sweep ci ricade.
+ */
+static unsigned int b43_phy_ac_cac_seconds(struct b43_wldev *dev)
+{
+	const struct cfg80211_chan_def *chandef = &dev->wl->hw->conf.chandef;
+	unsigned int span, centre, lo, hi;
+
+	switch (chandef->width) {
+	case NL80211_CHAN_WIDTH_80:
+		span = 40;
+		break;
+	case NL80211_CHAN_WIDTH_40:
+		span = 20;
+		break;
+	default:
+		span = 10;
+		break;
+	}
+	centre = chandef->center_freq1 ? chandef->center_freq1
+				       : chandef->chan->center_freq;
+	lo = centre - span;
+	hi = centre + span;
+
+	return (lo < 5650 && hi > 5600) ? 600 : 60;
+}
+
+/*
+ * Il giro di watchdog come orologio del check: un giro e' un secondo, e il
+ * check si chiude quando ne sono passati quanti ne vuole la sotto-banda. Su
+ * hardware questa transizione e' l'evento CAC_FINISHED di mac80211 e questa
+ * funzione non serve; qui e' l'unico orologio che ci sia, ed e' quello giusto
+ * -- la cattura mette il ripristino della riga AMT al giro 58 della finestra
+ * su cold05, con i giri a 1.004 s l'uno dall'altro.
+ */
+static void b43_phy_ac_cac_tick(struct b43_wldev *dev, unsigned int turn)
+{
+	struct b43_phy_ac *ac = dev->phy.ac;
+
+	if (!ac->cac_pending || !b43_phy_ac_chan_has_radar_duty(dev))
+		return;
+	if (turn + 1 < b43_phy_ac_cac_seconds(dev))
+		return;
+
+	/*
+	 * Scaduto il timer il check si chiude al primo giro che porta un
+	 * measure block **fuori** dalla griglia dei periodici, che cadono ogni
+	 * dieci giri a partire dal nono. Quel giro fuori griglia e' il
+	 * marcatore che il vendor lascia della chiusura, e non un'altra
+	 * grandezza: sui ventuno segmenti a freddo il cui check si chiude
+	 * dentro la cattura i due coincidono ventuno volte su ventuno, ed e'
+	 * la sola voce fuori griglia che ognuno di quei segmenti abbia prima
+	 * della chiusura.
+	 *
+	 * Serve perche' il timer da solo non basta: diciotto segmenti chiudono
+	 * al giro 60 e il timer li spiega, ma cold18 e cold42 chiudono al 63 e
+	 * cold34 al 70, con i giri a 1.004 s su tutti e tre -- cioe' e' il
+	 * check a durare di piu', non l'orologio a sbagliare. Cosa lo allunghi
+	 * non sta nelle catture; un azzeramento del contatore e' escluso,
+	 * perche' rifarebbe sessanta secondi e questi ne aggiungono da tre a
+	 * dieci. Il timer resta il modello e questo e' il momento in cui il
+	 * vendor dichiara di aver finito.
+	 */
+	if (turn % 10 == 9 || !b43_phy_ac_watchdog_on_tick(ac, turn))
+		return;
+
+	ac->cac_pending = false;
+	b43_ac_cac_match_gate(dev, true);
+}
+
+/*
+ * Le calibrazioni vere e proprie, senza il gate e senza la coda della fase
+ * probe. Estratte perche' hanno due chiamanti e non uno: qui sotto, quando il
+ * canale e' disponibile all'ingresso, e il giro della fase probe che chiude il
+ * channel availability check, che e' dove la cattura le mette su un canale con
+ * la guardia radar.
+ */
+static void b43_phy_ac_calibration_block(struct b43_wldev *dev)
+{
+	B43_AC_FN();
+	/*
+	 * Post-cal finalize, iterazioni 2 e 3.
+	 */
+	b43_phy_ac_post_cal_finalize(dev);
+	b43_phy_ac_post_cal_finalize_iter3(dev);
+	b43_phy_ac_rxiqcal_apply(dev);
+	b43_phy_ac_post_rxiqcal_stage2(dev);
+
+	/* RX AFE calibration, ~1500 op. */
+	b43_phy_ac_rxcal_afe_calibrate(dev);
+	b43_phy_ac_rxcal_afe_finalize_gain_luts(dev);
+
+	/*
+	 * Primo round post-cal RXIQ.
+	 */
+	b43_phy_ac_txpwr_by_index(dev, B43_PHY_AC_TXPWR_INDEX_DEFAULT);
+	b43_phy_ac_rxgain_defaults_pulse(dev);
+	b43_phy_ac_radio_chain_range_setup(dev, true);
+	b43_phy_ac_rxgain_perchan_config(dev);
+	b43_phy_ac_rxiqcal_apply_tx_gain_bbmult(dev);
+	/* Semina del tono DDS. */
+	b43_phy_ac_rxiqcal_dds_seed(dev);
+	b43_phy_ac_rxiqcal_prep_second_iter(dev);
+	b43_phy_ac_rxiqcal_run_meas_iters(dev);
+	b43_phy_ac_rxiqcal_apply_tx_bbmult_kick(dev);
+	/* Azzeramento delle tabelle dei coefficienti IQ, 0x42/0x62/0x82. */
+	b43_phy_ac_iqcal_coeff_tables_reset(dev);
+
+	/*
+	 * Second round post-cal: applica coefficienti misurati dagli iter
+	 * 19-24. Nuova txpwr_by_index (5° di 11) + rxgain_defaults_pulse.
+	 */
+	b43_phy_ac_txpwr_by_index(dev, B43_PHY_AC_TXPWR_INDEX_DEFAULT);
+	b43_phy_ac_rxgain_defaults_pulse(dev);
+	b43_phy_ac_radio_chain_range_setup(dev, false);
+	b43_phy_ac_iqcal_apply_second_stage(dev);
+	b43_phy_ac_rxgain_config_readback(dev);
+	b43_phy_ac_rxgain_config_apply(dev);
+	/* Configurazione IQ-cal della radio. */
+	b43_phy_ac_radio_iqcal_config(dev);
+
+	/*
+	 * Ricerca del guadagno di loopback (round 6°-9° di txpwr apply):
+	 * vedi b43_phy_ac_loopback_gain_search e il commento alla ricerca.
+	 */
+	b43_phy_ac_loopback_gain_search(dev);
+
+	/*
+	 * Le passate di misura: semina di un tono e variante v2 di meas_apply,
+	 * ripetute. Due fino a 40 MHz, sei a 80, ai passi +1, -1, +3, -3, +4 e
+	 * -4 del periodo -- vedi b43_phy_ac_tone_steps.
+	 */
+	{
+		unsigned int pass, n = b43_phy_ac_meas_passes(dev);
+
+		for (pass = 0; pass < n; pass++) {
+			b43_phy_ac_rxiqcal_dds_seed_tone(dev,
+					b43_phy_ac_tone_steps[pass]);
+			b43_phy_ac_iqcal_meas_post_dds_apply_v2(dev);
+		}
+	}
+
+	/* Teardown finale RXIQ. */
+	b43_phy_ac_rxiq_apply_coefficients(dev);
+	b43_phy_ac_radio_iqcal_teardown(dev);
+	b43_phy_ac_rxiq_teardown_apply_defaults(dev);
+	b43_phy_ac_rxiqcal_finalize(dev);
+}
+
+/*
  * Orchestrator for the post-channel-setup calibrations: everything the vendor
  * emits after the rxcal_afe finalize, gathered in one place. In order:
  * post_cal_finalize iterations 2 and 3, rxiqcal iterations 1 to 24, the
@@ -5401,80 +5577,25 @@ static void b43_phy_ac_post_switch_calibrations(struct b43_wldev *dev)
 	 * all 52 segments, with no step at the boundary, so every phase above
 	 * runs once the channel is available.
 	 */
+	/*
+	 * Col check di disponibilita' pendente le calibrazioni non partono e
+	 * la fase probe gira al posto loro. Il check pero' si chiude *dentro*
+	 * quella fase -- il suo orologio sono i giri, vedi
+	 * b43_phy_ac_cac_tick() -- e la cattura mette le calibrazioni tre
+	 * operazioni dopo il ripristino della riga AMT che chiude l'attesa,
+	 * cioe' in mezzo ai giri. Percio' il blocco lo chiama il giro che
+	 * chiude il check, non questa funzione: qui resta il caso in cui il
+	 * canale e' gia' disponibile.
+	 */
 	if (!b43_phy_ac_may_calibrate_tx(dev)) {
 		b43_phy_ac_post_bringup_tail(dev);
 		return;
 	}
 
-	/*
-	 * Post-cal finalize, iterazioni 2 e 3.
-	 */
-	b43_phy_ac_post_cal_finalize(dev);
-	b43_phy_ac_post_cal_finalize_iter3(dev);
-	b43_phy_ac_rxiqcal_apply(dev);
-	b43_phy_ac_post_rxiqcal_stage2(dev);
-
-	/* RX AFE calibration, ~1500 op. */
-	b43_phy_ac_rxcal_afe_calibrate(dev);
-	b43_phy_ac_rxcal_afe_finalize_gain_luts(dev);
-
-	/*
-	 * Primo round post-cal RXIQ.
-	 */
-	b43_phy_ac_txpwr_by_index(dev, B43_PHY_AC_TXPWR_INDEX_DEFAULT);
-	b43_phy_ac_rxgain_defaults_pulse(dev);
-	b43_phy_ac_radio_chain_range_setup(dev, true);
-	b43_phy_ac_rxgain_perchan_config(dev);
-	b43_phy_ac_rxiqcal_apply_tx_gain_bbmult(dev);
-	/* Semina del tono DDS. */
-	b43_phy_ac_rxiqcal_dds_seed(dev);
-	b43_phy_ac_rxiqcal_prep_second_iter(dev);
-	b43_phy_ac_rxiqcal_run_meas_iters(dev);
-	b43_phy_ac_rxiqcal_apply_tx_bbmult_kick(dev);
-	/* Azzeramento delle tabelle dei coefficienti IQ, 0x42/0x62/0x82. */
-	b43_phy_ac_iqcal_coeff_tables_reset(dev);
-
-	/*
-	 * Second round post-cal: applica coefficienti misurati dagli iter
-	 * 19-24. Nuova txpwr_by_index (5° di 11) + rxgain_defaults_pulse.
-	 */
-	b43_phy_ac_txpwr_by_index(dev, B43_PHY_AC_TXPWR_INDEX_DEFAULT);
-	b43_phy_ac_rxgain_defaults_pulse(dev);
-	b43_phy_ac_radio_chain_range_setup(dev, false);
-	b43_phy_ac_iqcal_apply_second_stage(dev);
-	b43_phy_ac_rxgain_config_readback(dev);
-	b43_phy_ac_rxgain_config_apply(dev);
-	/* Configurazione IQ-cal della radio. */
-	b43_phy_ac_radio_iqcal_config(dev);
-
-	/*
-	 * Ricerca del guadagno di loopback (round 6°-9° di txpwr apply):
-	 * vedi b43_phy_ac_loopback_gain_search e il commento alla ricerca.
-	 */
-	b43_phy_ac_loopback_gain_search(dev);
-
-	/*
-	 * Le passate di misura: semina di un tono e variante v2 di meas_apply,
-	 * ripetute. Due fino a 40 MHz, sei a 80, ai passi +1, -1, +3, -3, +4 e
-	 * -4 del periodo -- vedi b43_phy_ac_tone_steps.
-	 */
-	{
-		unsigned int pass, n = b43_phy_ac_meas_passes(dev);
-
-		for (pass = 0; pass < n; pass++) {
-			b43_phy_ac_rxiqcal_dds_seed_tone(dev,
-					b43_phy_ac_tone_steps[pass]);
-			b43_phy_ac_iqcal_meas_post_dds_apply_v2(dev);
-		}
-	}
-
-	/* Teardown finale RXIQ. */
-	b43_phy_ac_rxiq_apply_coefficients(dev);
-	b43_phy_ac_radio_iqcal_teardown(dev);
-	b43_phy_ac_rxiq_teardown_apply_defaults(dev);
-	b43_phy_ac_rxiqcal_finalize(dev);
+	b43_phy_ac_calibration_block(dev);
 	b43_phy_ac_post_bringup_tail(dev);
 }
+
 
 /*
  * Configurations the port is known to reproduce op-for-op against a vendor
@@ -7504,21 +7625,40 @@ static u16 b43_phy_ac_loft_add(u16 a, u16 b)
  * Base LOFT LUT entry per core and index, the value iqcal_coeff_tables_reset()
  * writes and the one the calibrated word is added onto.
  *
- * Cores 0 and 1 have no base: their LUT is the LO word alone. Core 2 carries
- * (-8, -4) up to index 0x20 and (-10, -14) from 0x21, the same on the d6220,
- * which has no third chain, and on the agcombo, which has one: there the
- * chain's LO word 0xff00 gives 0xf7fc/0xf5f2, 0x0000 gives 0xf8fc/0xf6f2 and
- * 0xfe02 gives 0xf6fe/0xf4f4, entry for entry. So it is a constant of the
- * core, not of the board.
+ * Core 0 never has a base. Core 2 always does, and core 1 has one on the top
+ * sub-band only. Both depend on the pa5g group of the channel, which is what
+ * the whole 43-segment sweep says once the LUTs are read on every segment
+ * instead of on ch36 alone:
  *
- * SALAME: why core 2 alone has a base, and why it steps at index 0x21, has no
- * evidence in the captures.
+ *   gruppo 0 e 1, sotto i 5500 MHz     core 1: nessuna   core 2: (-8, -4)
+ *   gruppo 2, ch100-144                core 1: nessuna   core 2: (-6, -5)
+ *   gruppo 3, ch149-165                core 1: (-10, -5) core 2: (-6, -5)
+ *
+ * Misurato come differenza fra la parola che il vendor scrive nella LUT e
+ * quella che il port ci scrive: sui ventitre segmenti che divergono lo scarto
+ * del core 2 e' `(+2, -1)` **identico**, e su tutti e otto quelli di UNII-3
+ * quello del core 1 e' `(-10, -5)` identico. Cinque canali per tre larghezze
+ * ciascuno, quindi non e' un fit su un punto.
+ *
+ * Lo scalino a 0x21 -- `(-2, -10)` in piu' da quell'indice -- resta quello
+ * misurato su ch36 e non e' stato rimisurato per sotto-banda.
+ *
+ * SALAME: perche' la base esista, perche' scatti a 0x21 e perche' segua la
+ * partizione di pa5g invece di un'altra non ha prove nelle catture. Quel che
+ * si sa e' che segue quella, su 43 segmenti.
  */
-static u16 b43_phy_ac_loft_lut_base(unsigned int core, unsigned int off)
+static u16 b43_phy_ac_loft_lut_base(struct b43_wldev *dev, unsigned int core,
+				    unsigned int off)
 {
+	unsigned int grp = b43_phy_ac_pa5g_group(dev,
+			5000 + 5 * dev->phy.ac->cal_channel);
+	u16 base;
+
 	if (core < 2)
-		return 0;
-	return off <= 0x20 ? 0xf8fc : b43_phy_ac_loft_add(0xf8fc, 0xfef6);
+		return (core == 1 && grp >= 3) ? 0xf6fb : 0x0000;
+
+	base = (grp >= 2) ? 0xfafb : 0xf8fc;
+	return off <= 0x20 ? base : b43_phy_ac_loft_add(base, 0xfef6);
 }
 
 /*
@@ -7568,7 +7708,7 @@ void b43_phy_ac_rxcal_afe_finalize_gain_luts(struct b43_wldev *dev)
 	for (i = 0; i < 0x80; i++) {
 		for (core = 0; core < 3; core++) {
 			u16 v = b43_phy_ac_loft_add(lo[core],
-					b43_phy_ac_loft_lut_base(core, i));
+					b43_phy_ac_loft_lut_base(dev, core, i));
 
 			b43_actab_write_bulk_scoped(dev, tbl[core], (u16)i,
 						    16, 1, &v);
@@ -8320,7 +8460,7 @@ void b43_phy_ac_iqcal_coeff_tables_reset(struct b43_wldev *dev)
 
 	for (off = 0; off < 128; off++) {
 		for (core = 0; core < 3; core++) {
-			u16 v = b43_phy_ac_loft_lut_base(core, off);
+			u16 v = b43_phy_ac_loft_lut_base(dev, core, off);
 
 			b43_actab_write_bulk_scoped(dev, tbl[core], (u16)off,
 						    16, 1, &v);
@@ -10370,6 +10510,7 @@ static void b43_phy_ac_cac_arm(struct b43_wldev *dev)
 
 	B43_AC_FN();
 	b43_phy_maskset(dev, 0x02e4, (u16)~0x3f00, 0x0f00);
+	b43_ac_cac_match_gate(dev, false);
 	b43_phy_ac_cac_poll(dev, 1);
 }
 
@@ -10439,6 +10580,38 @@ static void b43_phy_ac_stats_latch_and_crs(struct b43_wldev *dev)
 }
 
 /*
+ * La regione 0x00e0-0x015e riletta per intero, un giro ogni trenta.
+ *
+ * Nella cattura e' un `OBJ.BULKR len=128` seguito dalle 64 parole, che e' la
+ * forma con cui il tracer segna una lettura di regione del vendor; b43 non ha
+ * un accessor di regione sulla shared memory, quindi qui sono le 64 letture e
+ * il marcatore resta fuori -- un'op per dump, e l'alternativa sarebbe
+ * inventare un accessor per far tornare un conteggio.
+ *
+ * Cade ogni trentesimo giro, cioe' ogni trenta secondi: i giri distano 1.004 s.
+ * Contato sulle teste `PHY.RD 0x07af` della cattura sono i giri 27, 57, 87 e
+ * 117, due meno degli indici qui, perche' i tick 1 e 2 della fase non emettono
+ * la testa -- il giro c'e' lo stesso e il secondo passa. La regola torna su
+ * tutti e 43 i segmenti a freddo: quattro dump sui dodici piu' lunghi, due su
+ * quelli da ottanta giri, zero sui ventuno che restano sotto.
+ *
+ * Non e' stabilito se il periodico sia di ogni canale o dei soli canali con la
+ * guardia radar: i segmenti che arrivano a 28 giri sono tutti e soli quelli
+ * con la guardia, gli altri si fermano a 21-24, quindi le due ipotesi danno lo
+ * stesso conto su tutto lo sweep. Qui sta la piu' semplice, che non ha un
+ * termine in piu'. Un segmento lungo su un canale senza guardia la metterebbe
+ * alla prova e non c'e'. **SALAME** su quale delle due sia.
+ */
+static void b43_phy_ac_wd_region_dump(struct b43_wldev *dev)
+{
+	u16 off;
+
+	B43_AC_FN();
+	for (off = 0x00e0; off <= 0x015e; off += 2)
+		b43_shm_read16(dev, B43_SHM_SHARED, off);
+}
+
+/*
  * Un giro del watchdog nella fase probe: il corpo, i turni di CAC che cadono
  * su quel tick, il cambio di modo. Estratto dal ciclo perche' sopra i 5250 il
  * primo giro non sta nel ciclo -- vedi il richiamo nella coda.
@@ -10453,6 +10626,10 @@ static void b43_phy_ac_wd_turn(struct b43_wldev *dev, unsigned int tick)
 	 * finestra e' stata letta appena sopra.
 	 */
 	bool nolatch = false;
+
+	/* Il periodico da trenta secondi, prima della testa della spazzata. */
+	if ((tick + 1) % 30 == 0)
+		b43_phy_ac_wd_region_dump(dev);
 
 	for (i = 0; i < ac->beacon_reload_n; i++)
 		if (ac->beacon_reload_tick[i] == tick)
@@ -10484,6 +10661,9 @@ static void b43_phy_ac_wd_turn(struct b43_wldev *dev, unsigned int tick)
 			ac->cac_poll_tick[ac->cac_wait_ticks + tick]);
 
 	b43_phy_ac_wd_sample_phase_opt(dev, tick != 1 && tick != 2, tick == 0);
+
+	/* Il giro e' anche un secondo di attesa del check. */
+	b43_phy_ac_cac_tick(dev, tick);
 }
 
 /*
@@ -10686,8 +10866,21 @@ static void b43_phy_ac_post_bringup_tail(struct b43_wldev *dev)
 		unsigned int ticks = ac->probe_ticks;
 		unsigned int tick;
 
-		for (tick = 0; tick < ticks; tick++)
+		for (tick = 0; tick < ticks; tick++) {
+			bool waiting = ac->cac_pending;
+
 			b43_phy_ac_wd_turn(dev, tick);
+
+			/*
+			 * Il giro che chiude il check porta con se' le
+			 * calibrazioni che il gate teneva fuori: nella cattura
+			 * stanno tre operazioni dopo il ripristino della riga
+			 * AMT, cioe' qui, e non dopo la fase. La fase riprende
+			 * dal giro seguente.
+			 */
+			if (waiting && !ac->cac_pending)
+				b43_phy_ac_calibration_block(dev);
+		}
 
 		/*
 		 * Il tick di chiusura. La fase si chiude sempre con un poll e

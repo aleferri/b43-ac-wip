@@ -1429,6 +1429,18 @@ static u16 beacon_tpl_len(void)
  * response non ci sono: b43 non fa l'offload, e stanno in SOLO_VENDOR di
  * compare.py -- vedi il TODO post-WIP.
  */
+/*
+ * Doppione del core: la riga AMT del BSS ai due confini del check. La forma e'
+ * quella della cattura -- il record logico e il traffico della riga -- ed e'
+ * la stessa di emit_core_amt_cac_suspend(), che copre la terza occorrenza, nel
+ * preambolo. I flag del ripristino sono quelli che la cattura porta.
+ */
+void b43_ac_cac_match_gate(struct b43_wldev *dev, bool restore)
+{
+	(void)dev;
+	b43_test_emit_amt(0x3f, restore ? 0x8008 : 0);
+}
+
 void b43_ac_beacon_reload(struct b43_wldev *dev, unsigned int which)
 {
 	static bool late_head_done;
