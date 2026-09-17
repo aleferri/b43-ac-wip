@@ -427,13 +427,11 @@ static void oracle_init(void)
 				tbl_len = 0;
 		} else if ((p = strstr(line, "PHY.RDW")) != NULL) {
 			/*
-			 * Il data port riletto senza riselezionare l'indirizzo:
-			 * e' la parola successiva della cella aperta dal
-			 * marcatore. phy_reg_read_wide del blob non prende un
-			 * indirizzo e legge base+0x3fe, mentre phy_reg_read
-			 * scrive prima base+0x3fc -- vedi resolve_wide_reads()
-			 * in compare.py, che risolve lo stesso record dal lato
-			 * confronto.
+			 * Il data port riletto senza riselezionare
+			 * l'indirizzo: e' la parola successiva della cella
+			 * aperta dal marcatore. Il perche' sta in
+			 * resolve_wide_reads() di compare.py, che risolve lo
+			 * stesso record dal lato confronto.
 			 */
 			if (sscanf(p, "PHY.RDW %*[^=]=%x", &val) != 1)
 				continue;
@@ -1525,6 +1523,66 @@ void b43_test_reg_init(int dflt, const char *map)
 				g_reg_chans[i].max_power = (int)pw;
 		if (*map == ',')
 			map++;
+	}
+}
+
+/*
+ * Doppione di b43_clear_keys(), che vive in main.c del core.
+ *
+ * Il ciclo sui 64 slot chiave: gli 8 di gruppo non toccano l'address match
+ * table, i 56 pairwise passano da keymac_write() -- da cui il record
+ * `ADDRM.SET`, che e' l'hook del tracer sull'entrata -- e scendono a
+ * b43_amt_write() con B43_AMT_KEEP_FLAGS, che e' il traffico della riga.
+ * Sull'indice: keymac_write() sottrae pairwise_keys_start, quindi lo slot 8
+ * e' la riga 0x00 e lo slot 63 la riga 0x37, che e' l'intervallo della
+ * cattura.
+ *
+ * Le righe che portano un indirizzo vero non stanno qui: sono due, le scrive
+ * il bss-up e nella cattura arrivano molto dopo (cold01 #13302 e #13943, con
+ * i flag). Vanno dove le chiavi ci sono, non in un azzeramento.
+ *
+ * Come per b43_mac_bw_set(): sta qui e non in src/ perche' non e' codice del
+ * PHY, e la forma e' quella di patches/0011, cosi' se la patch cambia questo
+ * diventa sbagliato e il confronto lo dice.
+ */
+/*
+ * Doppione della scrittura delle due righe in cima all'address match table.
+ *
+ * Il record logico e' `ADDRM.SET` con l'indice sentinella che il core usa --
+ * -1 per l'indirizzo di stazione, -2 per il BSSID -- e sotto c'e' il traffico
+ * della riga, che e' lo stesso di b43_test_emit_amt().
+ *
+ * Perche' i flag sono un parametro: patches/0011 manda queste due scritture a
+ * b43_macfilter_set(), che sul layout wide sceglie i flag dalla riga, sempre
+ * B43_AMT_F_SELF per 0x3f e B43_AMT_F_BSSID per 0x3e. La cattura non fa cosi'.
+ * La prima scrittura del BSSID ha i flag a zero -- `AMT.WR idx=0x003e` senza
+ * il campo a3 -- e solo la seconda porta 0x8002:
+ *
+ *     #13301  riga 0x3f  a3=0x8008     #13942  riga 0x3e  a3=0x8002
+ *     #13308  riga 0x3e  (nessun flag) #13948  riga 0x3f  a3=0x8008
+ *
+ * Quindi la prima coppia non esce da b43_macfilter_set() come la patch la
+ * scrive oggi: quella non sa azzerare i flag. O la patch va corretta, o la
+ * prima scrittura viene da un'altra chiamata del core. Finche' non e' deciso
+ * i flag li passa il chiamante, cosi' il doppione descrive la cattura senza
+ * fingere di descrivere la patch.
+ */
+void b43_amt_set_top_row(struct b43_wldev *dev, bool self, u16 flags)
+{
+	(void)dev;
+	fprintf(trace(), "cpu1 ADDRM.SET idx=0x%08x\n", self ? 0xffffffffu
+							     : 0xfffffffeu);
+	b43_test_emit_amt(self ? 0x3f : 0x3e, flags);
+}
+
+void b43_clear_keys(struct b43_wldev *dev)
+{
+	u16 i;
+
+	(void)dev;
+	for (i = 0; i < 56; i++) {
+		fprintf(trace(), "cpu1 ADDRM.SET idx=0x%04x\n", i);
+		b43_test_emit_amt(i, 0);
 	}
 }
 

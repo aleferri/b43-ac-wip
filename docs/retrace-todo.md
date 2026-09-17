@@ -4914,3 +4914,188 @@ pezzi uno per uno -- quindi e' un tool in `reverse-tools/` accanto a
 Cinque tentativi su questo varco, e questo e' il primo che lascia qualcosa di
 riusabile: la tabella dei pezzi. Il prossimo passo e' il riconoscitore, non
 un'altra ipotesi sul prefisso.
+## Il varco a `@25619` e' uno scambio di blocchi, non un giro mancante
+
+Ricostruito con `cmp_skip.py --verbose`, che elenca le regioni divergenti dopo
+le eccezioni. Le op ci sono su entrambi i lati: cambia l'ordine.
+
+Il vendor, per pezzi, subito dopo `OBJ.WR 0x0026 = 0xffff`:
+
+```
+25619  head sweep nuda        0x010e 0x010c 0x0158 0x015e          4 op
+25623  il tick                MAC.MCTRL, PHY.RD 0x07af 0x07b3 0x07ab 0x07b1,
+                              0x09af 0x09b3 0x09ab 0x09b1, 0x0523 0x0529
+                              0x0528 0x0527, PHY.WR 0x0554 0x0555,
+                              MAC.MCTRL, PHY.MOD 0x0520
+25642  il giro di poll        head sweep piena 0x010e 0x0158 0x010c 0x015e,
+                              spazzata 0x0768-0x078a, due passate,
+                              0x07e0 0x07e4 0x07dc, 0x07d6-0x07da, 0x015a 0x014e
+25714  blocco contatori       OBJ.RD 0x008c, 0x0308-0x0314             8 op
+25722  blocco AGC             MAC.MCTRL, PHY.MOD 0x0324-0x0913        16 op
+25739  clear                  MAC.MCTRL, OBJ.WR 0x0308.. = 0
+```
+
+Il port emette **blocco contatori e blocco AGC prima del tick**, dove il vendor
+li mette dopo il giro di poll. Le regioni lo dicono senza ambiguita': il
+`delete V[25714:25722]` e' lo stesso blocco che compare come `insert` a
+`T[25619:25627]`, 95 posizioni prima.
+
+### Cosa NON e'
+
+Tre ipotesi mie, cadute in ordine, lasciate qui perche' costano tempo a
+rifarle:
+
+**Non e' un giro di watchdog che la cattura non contiene.** Il conteggio dei
+giri per segmento (19-24 a freddo, 7-12 a caldo, zero sui DFS che restano nel
+CAC) e' durata di registrazione e non va dedotto da nessuna regola -- questo
+resta vero -- ma non spiega questa divergenza, che e' di ordine e non di
+numero.
+
+**Non e' lo stato del PHY.** Ogni segmento a freddo e' uno scarico e ricarico
+del modulo, quindi lo stato del driver a cold01 e a cold02 e' identico per
+costruzione: nessun flag interno puo' distinguerli. La differenza di tempo
+all'ingresso della fase (11.60 s su cold01 contro 12.56-12.59 s sugli altri,
+con periodo ~1.00 s) e' reale ma riguarda quanti giri stanno nella cattura, non
+l'ordine dei blocchi.
+
+**Non sono i LED.** `SI.COREREG off=0x0064` e' gia' ombra di `GPIO.OUT` in
+`SHADOW_OFFSETS`; delle otto op GPIO/SI che sopravvivono al fold il perimetro
+ne scarta sei. I conteggi grezzi (`GPIO.*` 2 contro 13, `SI.COREREG` 0 contro
+41) vanno letti dopo `apply_perimeter()`, non prima.
+
+### L'ultimo giro e' troncato, e costa poco
+
+Lo taglia il down che parte; la coda lunga dopo l'ultima testa e' il down, non
+il giro. Allineando le due code op per op su cold01:
+
+```
+ 14 op   uguali          il giro troncato, emesso da entrambi
+  6 op   solo port       OBJ.WR 0x0308 0x030a 0x030c 0x030e ... (clear contatori)
+ 83 op   uguali
+  2 op   solo vendor     OBJ.RD 0x0040
+435 op   uguali          il down, identico
+  4 op   solo vendor     GPIO.OUT + SI.COREREG, gia' fuori perimetro
+ 13 op   uguali
+```
+
+Costo reale **6 op di troppo e 2 mancanti**, lo 0.03%. Non vale una regione non
+contata in piu'.
+
+### Sesto tentativo, annullato: l'orologio del latch non basta
+
+Il codice dichiara l'approssimazione da solo -- "Il latch e il blocco E prima
+della fase. Non e' quello che fa il vendor ... ma il prefisso giusto cambia da
+segmento a segmento e vuole un ingresso dalla cattura che ancora non c'e'" --
+e sembrava che quell'ingresso potesse essere un booleano: se il tick del
+periodico e' caduto in mezzo o no.
+
+Provato. `reverse-tools/latch_placement.py` lo legge con tre marcatori che il
+port emette identici: la cella `OBJ.WR 0x0026 = 0xffff` come ancora, la testa
+di tick (`MAC.MCTRL` + `PHY.RD 0x07af 0x07b3 0x07ab`), e `OBJ.RD 0x008c` che
+apre il latch; se il latch viene dopo il tick, il tick e' caduto in mezzo. Il
+campo era `latch_in_phase` in `struct b43_phy_ac`, zero in un driver vivo.
+
+**Non funziona, e il tool resta solo come misura.** Il criterio scatta su tre
+segmenti e su due dei tre e' sbagliato:
+
+```
+             prima     con l'orologio
+cold01      95.82%       95.92%     +0.10
+cold14      99.48%       98.87%     -0.61
+cold32      99.70%       99.09%     -0.61
+```
+
+cold32 stava a 99.70% con zero valori sbagliati, cioe' era fra i segmenti
+messi meglio dello sweep. Netto negativo, annullato per intero.
+
+### Perche' non basta: il varco ha quattro lunghezze, non due
+
+Il varco e' il corpo del primo giro della fase, `wd_turn(dev, 0)`. Misurate le
+op fra la cella a 0xffff e la prima testa di tick, su tutti i segmenti che alla
+fase ci arrivano:
+
+```
+  4 op    cold01
+ 98 op    17 segmenti
+100 op    i 6 radar-meteo, con MAC.MCTRL:14 e PHY.RD:7 nel profilo
+157 op    cold04
+```
+
+Un booleano ne distingue due dove ce ne sono quattro, e i 100 op dei
+radar-meteo non sono ne' il 4 ne' il 98: sono una forma a se'. Troncare il
+corpo a quattro celle li' toglie 532 op che la cattura ha.
+
+Il riconoscitore che serve emette **la lunghezza del varco**, non un bit, e
+prima ancora va capito di quali pezzi sono fatte le quattro forme. L'alfabeto
+dei pezzi nella sezione precedente e' il punto di partenza; la lettera nuova e'
+il troncone da 4 op, che e' head sweep nuda in ordine di indirizzo
+(`0x010e 0x010c 0x0158 0x015e`, contro `0x010e 0x0158 0x010c 0x015e` del giro a
+regime) e niente altro.
+
+### Il varco di cold01 e' un campione singolo
+
+Decomposto il varco di tutti e 43 i segmenti in pezzi riconoscibili -- testa,
+spazzata 0x0768-0x078a, coda contatori, latch (0x008c + 0x0308-0x0314), blocco
+E (PHY.MOD 0x0321-0x0336 e 0x0910-0x0913) -- e classificato per due proprieta':
+se il corpo del primo giro c'e', e se latch e blocco E stanno davanti.
+
+```
+corpo=no  latch-davanti=no    1 segmento    cold01
+corpo=si  latch-davanti=no   28 segmenti    i DFS (186 op) e i radar-meteo (100)
+corpo=si  latch-davanti=si   14 segmenti    la forma dominante (98 op)
+corpo=no  latch-davanti=si    0 segmenti
+```
+
+I due bit non sono indipendenti: la quarta combinazione non esiste. E il caso
+`corpo=no` e' **uno su 43**.
+
+Vale anche per l'ordine delle quattro celle di testa: 42 segmenti su 43 leggono
+`0x010e 0x0158 0x010c 0x015e`, e solo cold01 legge `0x010e 0x010c 0x0158
+0x015e`. Il "secondo lettore" inseguito per piu' tentativi esiste in un
+segmento su 43.
+
+I 157 op di cold04 non sono una forma a se': sono i 98 con le ricariche del
+beacon in mezzo alla spazzata, che `beacon_reload_pre_late` gia' modella.
+
+**Conseguenza.** Il varco di cold01 non va chiuso con una condizione: una
+regola tarata su un campione e' una trascrizione con piu' passaggi, ed e'
+esattamente come il sesto tentativo ha fallito -- criterio preso da cold01,
+applicato ai tre segmenti su cui scattava, sbagliato su due. Se va chiuso, va
+chiuso con un ingresso letto dalla cattura che dice cosa emettere, non con un
+predicato che finge di spiegarlo.
+
+E prima va deciso se convenga. cold01 e' un segmento su 43 e gli altri 42
+stanno fra il 92% e il 99.7%; ottimizzare il segmento di riferimento distorce
+la scelta di cosa sistemare, perche' e' quello su cui si guarda il numero.
+
+### Nota di metodo aggiuntiva
+
+Il tentativo e' stato verificato sui segmenti dove l'orologio NON scattava --
+dove per costruzione non poteva cambiare niente -- e dichiarato buono. La
+regressione e' emersa solo controllando dove scattava. Una modifica
+condizionata si misura dove la condizione e' vera, non dove e' falsa.
+
+### Nota di metodo
+
+Sei giri di questa sessione su questo varco, di cui tre di sola misura, e le
+misure erano sul quesito sbagliato perche' partivano da conteggi aggregati per
+classe invece che dall'allineamento op per op. `cmp_skip.py --verbose` elenca le
+regioni divergenti gia' filtrate dalle eccezioni e mostra `delete` e `insert`
+appaiati quando un blocco e' spostato: e' lo strumento da aprire per primo su
+una divergenza posizionale, prima di contare qualunque cosa.
+
+Vale anche per la scelta di dove guardare: su cold01 le regioni divergenti sono
+77 e le prime cinque valgono il 74% del totale, con una sola -- a `@28620`,
+1214 op del port a partire da `RAD.WR 0x020e` -- che da sola e' oltre la meta'.
+
+Quel 1214 pero' **non e' un debito di 1214 op**, ed e' un errore di lettura da
+non ripetere: misura quanto e' lungo il tratto che l'LCS non riesce ad
+appaiare, non quante op sono di troppo. Gli accessi radio combaciano esatti per
+fascia di core -- core0 637/637, core1 629/629, core2 282/282, altro 156/156,
+delta zero ovunque -- quindi dentro quella regione le op sono le stesse e
+cambia l'ordine, come al varco di `@25619`. (Cade con questo anche l'ipotesi
+che il `for (core = 0; core < 3; core++)` di rxgain_perchan_tail emetta un core
+inesistente: il terzo core il vendor lo tocca, 282 accessi.)
+
+Per sapere quanto vale davvero serve un LCS locale dentro la regione, non il
+conteggio globale.

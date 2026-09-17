@@ -370,7 +370,8 @@ static void b43_phy_ac_post_bringup_tail(struct b43_wldev *dev);
  *
  * L'ordine delle quattro e' quello del giro a regime. All'ingresso la cattura
  * ne ha un altro, `0x010e 0x010c 0x0158 0x015e`, e quello va con il riordino,
- * non qui.
+ * non qui: va con la lunghezza del varco, che e' 4, 98, 100 o 157 op a seconda
+ * del segmento. Vedi docs/retrace-todo.md.
  */
 static void b43_phy_ac_wd_head_words(struct b43_wldev *dev)
 {
@@ -832,6 +833,7 @@ static u16 b43_phy_ac_cck_rate_po(struct b43_phy_ac *ac)
  */
 static void b43_phy_ac_basic_rate_map(struct b43_wldev *dev)
 {
+	B43_AC_FN();
 	/* Indice, fra gli otto rate OFDM, del basic rate di ciascuno. */
 	static const u8 basic_of[8] = { 0, 0, 2, 2, 4, 4, 4, 4 };
 	unsigned int i;
@@ -1521,13 +1523,27 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 		}
 		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
 		/*
-		 * 9 per bandwidth step in the low bits: 0x8000 at 20 MHz,
-		 * 0x8009 at 40, 0x8012 at 80. The per-core twin at 0x024e
-		 * takes the same value.
+		 * Ripristino di quello che rr_4e ha salvato all'inizio del
+		 * giro, non un valore ricalcolato.
+		 *
+		 * Sulle catture la sequenza delle scritture di questo registro
+		 * e' identica, posizione per posizione, a quella delle letture,
+		 * a tutte e tre le larghezze. Una formula sulla larghezza --
+		 * 0x8000 + 9 per passo, che era quello che c'era qui -- ci
+		 * prende dieci volte su dodici e sbaglia le due del terzo giro,
+		 * dove il registro non vale quello che la larghezza direbbe:
+		 * 0x80c0 a 20 MHz, 0x0123 a 40, e a 80 MHz l'anomalia non c'e'
+		 * affatto. Il gemello per core si comporta allo stesso modo con
+		 * valori suoi (0x8109 a 40 MHz).
+		 *
+		 * Cosa lasci quei bit in quella finestra non e' noto -- 0x0123
+		 * non ha nemmeno il bit 15 che tutti gli altri valori portano,
+		 * quindi non e' "gli stessi bit piu' qualcosa". Ma non serve
+		 * saperlo per ripristinare: il valore era gia' salvato e non
+		 * veniva usato.
 		 */
-		b43_radio_write(dev, 0x004e,
-				(u16)(0x8000 + 9 * b43_phy_ac_bw_step(dev)));
-		b43_radio_write(dev, 0x0166, 0x0000);
+		b43_radio_write(dev, 0x004e, rr_4e);
+		b43_radio_write(dev, 0x0166, rr_66);
 		b43_phy_write(dev, 0x0932, 0x0000);
 		b43_phy_write(dev, 0x0933, 0x0000);
 		b43_phy_write(dev, 0x0947, 0x0000);
@@ -1544,10 +1560,9 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 			b43_actab_write_bulk(dev, 0x000c, 0x0077, 16, 1, &dev->phy.ac->bbmult_saved[1]);
 		}
 		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
-		/* Come 0x004e qui sopra: 9 per passo di banda. */
-		b43_radio_write(dev, 0x024e,
-				(u16)(0x8000 + 9 * b43_phy_ac_bw_step(dev)));
-		b43_radio_write(dev, 0x0366, 0x0000);
+		/* Come 0x004e qui sopra: il valore salvato, non ricalcolato. */
+		b43_radio_write(dev, 0x024e, rr_24e);
+		b43_radio_write(dev, 0x0366, rr_366);
 		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~(0x0002), (0x0002));
 		b43_phy_write(dev, 0x0394, 0x000b);
 		b43_phy_write(dev, 0x0393, 0x0000);
@@ -2876,6 +2891,33 @@ static void b43_phy_ac_set_analog_tx_lpf(struct b43_wldev *dev, u16 stages,
 }
 
 /*
+ * Attende che il sequencer RF abbia finito: il bit 0 di 0x0403 e' il busy, e
+ * la sequenza e' conclusa quando rilegge chiaro.
+ *
+ * Quante letture servano non e' un numero fisso, lo decide il primo valore.
+ * Misurato su tutti i siti delle catture -- 18 su cold01, 18 a 40 MHz, 22 a
+ * 80 MHz, 58 su 58 senza eccezioni -- dove il primo valore e' 0x0000 la
+ * lettura e' una sola, dove e' 0x0101 sono due e la seconda torna 0x0000. Un
+ * doppio peek a conteggio fisso quindi sbaglia anche dove il numero indovina:
+ * ci prende solo finche' il busy e' alto al primo giro.
+ *
+ * La cattura down-to-bss-up aspetta 1027 us fra le prime due letture, quindi
+ * l'attesa e' reale; udelay(200) a ogni giro da' un tetto di 2 ms.
+ */
+static void b43_phy_ac_rfseq_wait_done(struct b43_wldev *dev)
+{
+	unsigned int i;
+
+	for (i = 0; i < 10; i++) {
+		u16 v = b43_phy_read_log(dev, 0x0403);
+
+		udelay(200);
+		if (!(v & 0x0001))
+			break;
+	}
+}
+
+/*
  * Run one RF sequencer command through the control registers
  * 0x0400/0x0402/0x0403, under an inner lock of the write gate 0x019e at
  * bit 0. Bit 0 of 0x0403 is the busy flag: the sequence is done once it reads
@@ -2902,16 +2944,7 @@ static void b43_phy_ac_run_rfseq_cmd(struct b43_wldev *dev, u16 cmd_bit)
 	b43_phy_set(dev, 0x0400, 0x0003);
 	b43_phy_set(dev, 0x0402, cmd_bit);
 
-	/* Poll until the busy bit clears, at most ten reads. The
-	 * down-to-bss-up capture delays 1027us between the first two reads of
-	 * 0x0403, so the poll does wait; udelay(200) after every read gives a
-	 * 2ms ceiling, which is enough. */
-	for (i = 0; i < 10; i++) {
-		u16 v = b43_phy_read_log(dev, 0x0403);
-		udelay(200);
-		if (!(v & 0x0001))
-			break;
-	}
+	b43_phy_ac_rfseq_wait_done(dev);
 
 	b43_phy_write(dev, 0x0400, 0x0001);
 	b43_phy_write(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, 0x03d0);  /* inner unlock via plain write */
@@ -3977,10 +4010,8 @@ static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
  * no channel in between; 5744 is taken from the SROM partition so that the two
  * places read the same, not because the data picks it.
  *
- * The vendor computes these 448 words instead of storing them: the value
- * appears nowhere in the blob as a run, and no column of chan_tuning_2069rev4
- * reproduces the census. So this stays a fitted table until the writer is
- * disassembled.
+ * Resta una tabella fittata: i tre valori sono quelli che le catture mostrano,
+ * non una regola ricavata da chi scrive quelle celle.
  */
 static const u16 b43_acphy_tbl11_head[12] = {
 	0x005b, 0x8250, 0xc338, 0x4527, 0xa6a1, 0x081b,
@@ -6944,6 +6975,15 @@ void b43_phy_ac_post_rxiqcal_stage2(struct b43_wldev *dev)
 	/* B4 preamble */
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+	/*
+	 * Il force delle clock gated resta alzato per tutta la finestra di
+	 * configurazione B4b, non solo per l'impulso CCA: la cattura ha
+	 * PHY.FGC val=0x0001 subito prima di questa scrittura e val=0x0000
+	 * subito dopo la 0x0382 = 0 che chiude la finestra, con un cca_pulse
+	 * annidato in mezzo. Da qui l'alternanza 1,1,0,0 al posto di 1,0,1,0
+	 * negli argomenti di PHY.FGC, due volte su cold01.
+	 */
+	b43_phy_force_clock(dev, true);
 	b43_phy_write(dev, 0x0382, 0x8a09);
 
 	/* B4a: three fixed per-core groups, each of four table writes at
@@ -7015,8 +7055,7 @@ void b43_phy_ac_post_rxiqcal_stage2(struct b43_wldev *dev)
 		b43_phy_mask(dev, 0x0460, (u16)~0x0001);
 		b43_phy_mask(dev, 0x0382, (u16)~0xc000);
 		b43_phy_set(dev, 0x0382, 0x8000);
-		b43_phy_read_log(dev, 0x0403);
-		b43_phy_read_log(dev, 0x0403);
+		b43_phy_ac_rfseq_wait_done(dev);
 		b43_phy_write(dev, 0x0400, 0x0000);
 
 		/* 6 MOD per-core 3-core hardcoded (stride +0x200) su
@@ -7523,6 +7562,8 @@ void b43_phy_ac_rxcal_afe_finalize_gain_luts(struct b43_wldev *dev)
 	/* Preamble */
 	b43_phy_ac_cca_pulse(dev);
 	b43_phy_write(dev, 0x0382, 0x0000);
+	/* Chiusura della finestra di force aperta con la 0x0382 = 0x8a09. */
+	b43_phy_force_clock(dev, false);
 
 	for (i = 0; i < 0x80; i++) {
 		for (core = 0; core < 3; core++) {
@@ -8020,6 +8061,7 @@ void b43_phy_ac_rxiqcal_dds_seed(struct b43_wldev *dev)
 	static const u16 zeros[2] = { 0, 0 };
 
 	/* 1 op: arm command */
+	b43_phy_force_clock(dev, true);
 	b43_phy_write(dev, 0x0382, 0x8a09);
 
 	/* 3× 8 op: azzera 3 zone da 2 slot in TBL 0x000c */
@@ -8093,8 +8135,7 @@ void b43_phy_ac_rxiqcal_prep_second_iter(struct b43_wldev *dev)
 	b43_phy_mask(dev,      0x0460, (u16)~0x0001);
 	b43_phy_mask(dev,      0x0382, (u16)~0xc000);
 	b43_phy_set(dev,       0x0382, 0x8000);
-	b43_phy_read_log(dev,  0x0403);
-	b43_phy_read_log(dev,  0x0403);                            /* double peek */
+	b43_phy_ac_rfseq_wait_done(dev);
 	b43_phy_write(dev,     0x0400, 0x0000);
 
 	/* 6 MOD per-core (3-core hardcoded stride +0x200) */
@@ -8255,6 +8296,8 @@ void b43_phy_ac_rxiqcal_apply_tx_bbmult_kick(struct b43_wldev *dev)
 	/* 3 op standalone finali: pulse + reset */
 	b43_phy_ac_cca_pulse(dev);
 	b43_phy_write(dev, 0x0382, 0x0000);
+	/* Chiusura della finestra di force aperta con la 0x0382 = 0x8a09. */
+	b43_phy_force_clock(dev, false);
 }
 
 /*
@@ -8314,7 +8357,7 @@ void b43_phy_ac_iqcal_apply_second_stage(struct b43_wldev *dev)
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0001, 0x0001); /* set bit 0 (non gate) */
 	b43_phy_set(dev,      0x0400, 0x0003);
 	b43_phy_set(dev,      0x0402, 0x0020);
-	b43_phy_read_log(dev, 0x0403);
+	b43_phy_ac_rfseq_wait_done(dev);
 	b43_phy_write(dev,    0x0400, 0x0000);
 
 	/* Gate reset (1 op): overwrite completo B43_PHY_AC_REG_TBL_WRITE_GATE */
@@ -8700,8 +8743,7 @@ static void iqcal_meas_readback_kick_tail(struct b43_wldev *dev)
 	b43_phy_mask(dev,      0x0460, (u16)~0x0001);
 	b43_phy_mask(dev,      0x0382, (u16)~0xc000);
 	b43_phy_set(dev,       0x0460, 0x0001);
-	b43_phy_read_log(dev,  0x0403);
-	b43_phy_read_log(dev,  0x0403);
+	b43_phy_ac_rfseq_wait_done(dev);
 	b43_phy_write(dev,     0x0400, 0x0000);
 
 	/* Blocco D (18 op): tail comune — vedi b43_phy_ac_rxgain_perchan_tail. */
@@ -10585,13 +10627,6 @@ static void b43_phy_ac_post_bringup_tail(struct b43_wldev *dev)
 	b43_phy_ac_cac_poll(dev, dev->phy.ac->cac_poll_pre);
 
 	/*
-	 * Il latch e il blocco E stanno fra la cella a 0xffff e la fase
-	 * probe, o dentro il primo giro della fase. Quale dei due non e' una
-	 * proprieta' del canale: e' se un tick del periodico e' caduto in
-	 * mezzo, e va detto all'harness come gli altri orologi del vendor.
-	 * Vedi docs/retrace-todo.md.
-	 */
-	/*
 	 * Il latch e il blocco E prima della fase. Non e' quello che fa il
 	 * vendor -- vedi docs/retrace-todo.md, dove c'e' il confronto dei due
 	 * flussi come sequenze di pezzi -- ma il prefisso giusto cambia da
@@ -11364,6 +11399,29 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	B43_AC_BLOCK("shm_zero_05e0");
 	for (off = 0x05e0; off <= 0x0666; off += 2)
 		b43_shm_write16(dev, B43_SHM_SHARED, off, 0x0000);
+	/*
+	 * Azzeramento della key table, 56 righe dell'address match table da
+	 * 0x00 a 0x37, contigue e tutte senza flag. Il conto e' quello di
+	 * b43_clear_keys(): 64 slot chiave meno gli 8 di gruppo.
+	 *
+	 * Sta qui perche' qui lo mette la cattura, incastrato fra le due
+	 * zeroing di shared memory e il blocco di config MAC, allo stesso
+	 * posto a freddo e a caldo. In b43 lo chiama b43_security_init()
+	 * dall'init del core, che e' prima: riconciliare i due ordini e' in
+	 * docs/retrace-todo.md, e finche' non e' fatto la chiamata sta dove il
+	 * confronto la richiede e non dove il driver la vorrebbe.
+	 *
+	 * Solo l'azzeramento. Le due righe che portano un indirizzo vero -- la
+	 * propria e quella del BSSID, con i flag -- non sono qui: arrivano nel
+	 * bss-up, dove le chiavi esistono.
+	 */
+	/* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
+	 *   12863-13198]
+	 * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
+	 *   1240155-1240490]
+	 */
+	B43_AC_BLOCK("amt_clear_keys");
+	b43_clear_keys(dev);
 	/* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
 	 *   12859-13592]
 	 * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -11383,6 +11441,28 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	 */
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x018a, 0xffce);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x018c, 0xffba);
+	/*
+	 * Le due righe in cima all'address match table: l'indirizzo di
+	 * stazione con i suoi flag, e il BSSID azzerato -- qui il BSS non c'e'
+	 * ancora.
+	 *
+	 * Non sono roba del bss-up, anche se il posto lo farebbe pensare. Su
+	 * cold14, che il CAC non lo finisce mai e al bss-up non arriva, queste
+	 * due ci sono lo stesso, a +4.2 s dall'inizio contro i +12.8 s a cui
+	 * l'attach si sospende ad aspettare il check. Stanno nell'attach, che
+	 * ogni segmento esegue per intero.
+	 *
+	 * Fra le due la cattura ha una parola di template RAM (0x0048) che
+	 * questo port non emette: la template RAM e' indietro di suo, e
+	 * inventarne una parola sola per riempire il buco sarebbe peggio del
+	 * buco.
+	 */
+	/* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
+	 *   13301-13312]
+	 */
+	B43_AC_BLOCK("amt_top_rows");
+	b43_amt_set_top_row(dev, true, 0x8008);
+	b43_amt_set_top_row(dev, false, 0);
 	b43_phy_ac_wd_stats_poll_opt(dev, true, 0, true);
 	/*
 	 * After the sweep and after the four CCK blocks that are still not
@@ -11483,6 +11563,27 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	b43_phy_ac_mhf_maskset(dev, 1, (u16)~0x0020, 0x0020);    /* MHF1 set bit 5 */
 	b43_mac_suspend(dev);
 	b43_phy_ac_wd_stats_poll_opt(dev, true, 0, true);
+	/*
+	 * Le stesse due righe in cima all'address match table una seconda
+	 * volta: ordine invertito e BSSID coi flag, perche' qui l'indirizzo
+	 * c'e'.
+	 *
+	 * Anche questa coppia sta nell'attach e non nel bss-up: su cold14, che
+	 * il CAC non lo finisce e al bss-up non arriva, c'e' lo stesso, a
+	 * +4.2 s contro i +12.8 s a cui l'attach si sospende.
+	 *
+	 * Il punto e' fra lo sweep piatto dei contatori che chiude il poll qui
+	 * sopra e la prima cella rate-po della mappa qui sotto: la cattura ha
+	 * le dodici letture 0x0768-0x078a, poi la coppia, poi 0x01f6. Fra le
+	 * due righe ha anche una parola di template RAM (0x0048) che questo
+	 * port non emette.
+	 */
+	/* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
+	 *   13942-13952]
+	 */
+	B43_AC_BLOCK("amt_top_rows_bss");
+	b43_amt_set_top_row(dev, false, 0x8002);
+	b43_amt_set_top_row(dev, true, 0x8008);
 	b43_phy_ac_basic_rate_map(dev);
 
 	/*

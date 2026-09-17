@@ -125,6 +125,30 @@ void b43_test_reg_init(int dflt, const char *map);
  * Il prototipo resta per non rompere link di scratch che lo usassero.
  */
 void b43_mac_bw_set(struct b43_wldev *dev, u32 bw);
+/*
+ * Azzeramento della key table del core: b43_clear_keys(), che vive in main.c
+ * del core e che l'harness non compila. Percorre i 64 slot chiave; i primi
+ * B43_NR_GROUP_KEYS * 2 = 8 sono di gruppo, i 56 pairwise passano da
+ * keymac_write() e finiscono sulle righe 0x00-0x37 dell'address match table
+ * via b43_amt_write() di patches/0011.
+ *
+ * Dichiarata qui e implementata dall'harness, come b43_mac_bw_set().
+ */
+/*
+ * Le due righe in cima all'address match table, quelle che patches/0011
+ * riserva all'indirizzo di stazione (0x3f) e al BSSID (0x3e). Sul layout wide
+ * prendono il posto della porta MACFILTER, e il record `ADDRM.SET` con indice
+ * -1 o -2 e' l'entrata da cui il core le scrive.
+ *
+ * I flag sono un argomento e non una costante della riga apposta: la cattura
+ * scrive il BSSID prima senza flag e poi con 0x8002, mentre
+ * b43_macfilter_set() della patch mette sempre B43_AMT_F_BSSID. Vedi il
+ * commento sull'implementazione.
+ *
+ * Dichiarata qui e implementata dall'harness, come b43_clear_keys().
+ */
+void b43_amt_set_top_row(struct b43_wldev *dev, bool self, u16 flags);
+void b43_clear_keys(struct b43_wldev *dev);
 void b43_test_oracle_coverage_report(void);
 
 /*
