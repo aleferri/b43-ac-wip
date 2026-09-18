@@ -1477,7 +1477,8 @@ static void emit_core_bss_config(void)
 	b43_shm_read16(&g_wldev, B43_SHM_SHARED, 0x00cc);
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00cc, g_bss_cc);
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00cc, g_bss_cc | 0x0001);
-	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00ce, 0x0000);
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00ce,
+			b43_phy_ac_beacon_pwr_offset(&g_wldev));
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00d0, 0x0000);
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x001c, 0x003a);
 	emit_core_bss_ssid(0x0018);

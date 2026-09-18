@@ -773,6 +773,7 @@ void b43_ac_beacon_reload(struct b43_wldev *dev, unsigned int which);
  * check e il bss-up che lo segue.
  */
 void b43_ac_cac_match_gate(struct b43_wldev *dev, bool restore);
+u16 b43_phy_ac_beacon_pwr_offset(struct b43_wldev *dev);
 
 /* Helper trasversali al confine MAC/PHY; razionale in helpers_phy_ac.c. */
 void b43_phy_ac_mhf_maskset(struct b43_wldev *dev, u16 slot, u16 mask, u16 val);
