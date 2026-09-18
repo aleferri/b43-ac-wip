@@ -2505,118 +2505,94 @@ Da fare: emetterlo fra il pezzo 5 e il pezzo 1 di `b43_phy_ac_wd_turn()`. Il
 dump e' il marcatore bulk piu' le 64 parole, che e' la forma con cui la cattura
 traccia una lettura di regione, non 64 letture separate.
 
-## `OBJ.WR 0x00ce`: la cella accanto al blocco per-rate, aperta
+## `OBJ.WR 0x00ce` e l'header BSS: cosa si sa, su cinque catture
 
-Prima divergenza di quattro segmenti e presente su venti. Il port ci scrive
-zero su tutti e 43, tre volte per segmento, insieme a `0x00d0`; e `0x00d0` e'
-zero anche nel vendor, su tutte le configurazioni, quindi la coppia
-"due zeri" del commento di `channel_setup_tail2()` e' meta' giusta.
-
-I valori del vendor, tre scritture per segmento:
-
-| valore | configurazioni |
-| --- | --- |
-| `0x0000` | ch36-48 e ch52-64 e ch100 e ch149-165 a 20, ch108-157 a 40, ch149 a 80 |
-| `0x0010` | ch104-144 a 20, ch60 e ch100 a 40, ch116 e ch132 a 80 |
-| `0x0008` | ch52 a 40 e a 80 |
-| `0x0030` | ch100 a 80 |
-| `0x0000 0x0018 0x0000` | ch36 e ch44 a 40 |
-| `0x0060 0x0048 0x0060` | ch36 a 80 |
-
-In sedicesimi di dB come i campi per-rate: 0.5, 1, 1.5, 3, 4.5 e 6 dB, tutti
-multipli di mezzo dB, cioe' di un nibble di `mcsbw*po`.
-
-Le tre scritture coincidono ovunque tranne ch36/ch44 a 40 e ch36 a 80, che sono
-**esattamente** i segmenti dove il registro target fa tre giri col `-4` in
-mezzo.
-
-I due terzetti **non sono appaiati uno a uno**, e questo va misurato prima di
-leggerci qualunque cosa. L'ordine posizionale e' identico su cold26 e cold38:
+Il blocco che le contiene e' un header di configurazione per-BSS che il driver
+stagia in shared memory e che la ucode travasa in un colpo solo. Dodici
+operazioni contigue, sempre nello stesso ordine:
 
 ```
-target 0x42 | ce | ce | target 0x3e | ...23000 op... | ce | target 0x42
+OBJ.BULKW 0x0020 len=4 ; 0x0020=0 ; 0x0022=0     puntatore template MAC/BSSID
+OBJ.WR 0x0012 = 0x0003
+OBJ.RD 0x00cc -> due scritture, la seconda alza il bit 0
+OBJ.WR 0x00ce = <derating di potenza>
+OBJ.WR 0x00d0 = 0
+OBJ.WR 0x001c ; 0x001e
 ```
 
-Due scritture della cella cadono fra il primo e il secondo target, a 79
-operazioni l'una dall'altra, e la terza sta appena prima del terzo target. Non
-e' quindi una funzione del target che precede ne' di quello che segue: due
-valori diversi della cella -- `0`/`0x18` su cold26, `0x60`/`0x48` su cold38 --
-precedono lo **stesso** target `0x3e`.
+Subito dopo vengono il template del beacon, la sua lunghezza e quello della
+probe response: tutto quel che l'header mette in scena appartiene al percorso
+beacon.
 
-Quel che resta vero e' che i due terzetti hanno l'anomalia sulla stessa
-posizione, la seconda, e che la variazione della cella fra la posizione normale
-e quella anomala e' `0x18` -- sei quarti di dB -- su tutti e due i segmenti,
-con segno opposto: la cella sale a 40 MHz e scende a 80. Stessa struttura,
-contenuto che non si spiega con una proporzione.
+### `0x00cc`: i bit 6-8 sono la maschera delle catene
 
-### Cosa c'e' fra la prima e la seconda scrittura
-
-Le 79 operazioni che le separano su cold26 non sono una passata del ciclo a
-dodici rate: sono una riconfigurazione del BSS per intero.
+Misurato su tutte e cinque le catture del repo -- d6220 freddo e caldo,
+agcombo freddo e caldo, dsl3580l -- correlando ogni scrittura con quel che il
+blocco chain-mask aveva appena messo su `0x05d6`/`0x05d8`:
 
 ```
-0x001c / 0x001e              TIM e parametri del beacon
-TPL.RAMW 0x0200 + 0x0018     template del beacon e la sua lunghezza (BTL0)
-TPL.RAMW 0x0700 + 0x004a     template della probe response e PRTLEN
-0x0160-0x017e + 0x0048       SSID e la sua lunghezza
-otto terzetti PLCP           i rate OFDM
-MAC.MCTRL x7                 la parentesi di controllo
-0x00cc   letto 0x45, riscritto 0xc5 due volte
-0x00ce = 0x18
+maschera in forza     campo bit 6-8
+      1 / 1                 1
+      3 / 3                 3
+      1 / 5                 1
+      7 / 7                 7
 ```
 
-Cioe' la cella cambia **insieme al bit `0x80` di `0x00cc`**, che ha una sezione
-aperta tutta sua qui sopra. Sulle prime due passate di cold26 i due si muovono
-insieme: `0x45` con `0x00ce = 0`, `0xc5` con `0x00ce = 0x18`.
+Coincide sempre, e **segue la maschera parziale** dove quella e' in forza: su
+cold01 il campo vale 1 mentre `coremask` vale 3. Quindi il valore da mettere
+non e' `coremask` ma l'ultima maschera che `b43_phy_ac_chainmask_block()` ha
+programmato, che oggi il driver non ricorda. Non e' un dato di board:
+l'agcombo arriva a `7` perche' ha tre catene, non perche' sia un'altra board.
 
-Il legame non e' pero' sufficiente, e il controesempio e' nello stesso paio di
-segmenti: su cold38 `0x00cc` vale `0xc4`/`0xc5` su tutte e tre le passate --
-niente `0x44` da nessuna parte -- e `0x00ce` cambia lo stesso, `0x60`, `0x48`,
-`0x60`. Quindi il bit accompagna la cella dove c'e', e non la determina.
+Restano opachi il bit 0, alzato da una seconda scrittura dopo il payload, e il
+bit 2, alzato su ogni cattura.
 
-Quello che le due osservazioni insieme dicono e' dove cercare: `0x00ce` non e'
-un parametro del canale ne' del target, e' uno stato del **BSS**, scritto in
-coda alla riconfigurazione che porta template, SSID e PLCP. E' la stessa zona
-del bit `0x80`, e conviene trattarli come un problema solo.
+### `0x00d0`: campo vivo, mai esercitato
 
-### La scansione per cella, rifatta sulle passate: niente
+**849 scritture su tre board, freddo e caldo: sempre zero.** La ucode lo legge
+e lo affetta a bitfield, quindi non e' padding; ma nessuna delle condizioni che
+queste catture coprono lo accende. Il commento del sorgente va scritto cosi' --
+campo che la ucode consuma, che il vendor lascia a zero su 849 scritture, e se
+si trova una condizione che lo accende il driver va rivisto -- invece che come
+"due zeri", che e' falso per `0x00ce` e vero solo per comportamento qui.
 
-La sezione sul bit `0x80` riporta una scansione che non trova una cella con la
-stessa partizione, e girava **fra** i segmenti. `0x00ce` cambia anche **dentro**
-un segmento, fra una passata e l'altra, quindi la scansione si poteva rifare su
-una dimensione in piu'. Fatta: i campioni sono 129 coppie (segmento, passata)
-sui 43 segmenti a freddo, e il candidato e' lo stato accumulato fino a quel
-punto -- ogni cella `OBJ`, `TPL`, `PHY` e `RAD` mai scritta o letta prima,
-1161 di esse presenti in tutti i campioni.
+### `0x00ce`: un derating di potenza, non derivabile da quel che si vede
 
-Il test e' funzionale, non di correlazione: stesso valore letto o scritto nella
-cella candidata, stesso valore su `0x00ce`. **Nessuna delle 1161 passa.**
+Q-format con LSB 1/16 dB. **Il passo fine esiste**: oltre ai multipli di mezzo
+dB compare `0x68` sull'agcombo, cioe' 4.25 dB.
 
-Quindi la dimensione in piu' non basta, e la conclusione del bit `0x80` si
-estende a questa cella: il valore non ha un compagno nella cattura, e serve
-un'altra fonte -- il blob, o una ricattura che vari una condizione alla volta
--- prima di scrivere un predicato. Quel che si e' guadagnato non e' la formula
-ma il perimetro: la cella e' zero su tutta la banda bassa a 20 MHz e su UNII-3
-a ogni larghezza, vale qualcosa solo su canale aggregato o fra ch104 e ch144,
-sta in coda alla riconfigurazione del BSS, e non dipende da niente che la
-traccia scriva o legga prima.
+Caldo e freddo coincidono alla cifra per ogni `(board, canale, larghezza)`,
+quindi non e' una misura run-to-run ma un valore ricavato da tabelle.
 
-Ipotesi provate e cadute, per non rifarle:
+Dipende dalla board oltre che da canale e larghezza, e non per un fattore
+costante. A parita' di canale e larghezza, d6220 (2 catene) contro agcombo (3):
 
-- **non e' la saturazione K** del campo per-rate: coincide su ch104-144/20,
-  ch60/40 e ch132/80 e sbaglia su ch52/80 (K 1 dB, cella 0.5), ch100/80
-  (K 1 dB, cella 3), ch116/80 (K 2 dB, cella 1) e ch149/80 (K 1 dB, cella 0);
-- **non e' la distanza fra il massimo su tutte le righe caricate e il massimo
-  della riga a 20 MHz**: torna su ch52 a 40 e a 80, dove quella distanza e'
-  mezzo dB, e da zero su ch36 a 80, dove la cella vale 6 dB;
-- **non e' la stessa distanza presa sulla riga della larghezza**, per lo stesso
-  controesempio.
+```
+ch104-140/20   1 dB -> 2 dB      ch60/40 e ch100/40   1 dB -> 2 dB
+ch36/40      0 e 1.5 -> 3 e 4.5  ch100/80             3 dB -> 4 dB
+ch36/80      4.5 e 6 -> 6 e 6.5  ch52/40 e ch52/80  0.5 dB -> 0
+```
 
-Cosa si sa di sicuro: la cella e' zero su tutta la banda bassa a 20 MHz e su
-UNII-3 a ogni larghezza, e vale qualcosa solo dove il canale e' aggregato o sta
-fra ch104 e ch144. Serve capire cos'e' prima di cercarne la formula, e il posto
-dove sta -- fra il doppione di `0x00cc` e il blocco chain-mask, subito prima di
-`prb_rsp_rate_po()` -- dice che e' della stessa famiglia.
+`ch52` va **al contrario**: piu' catene, meno derating. Questo esclude la
+compensazione di guadagno d'array come spiegazione unica.
+
+Scansioni fatte e negative, in ordine di forza crescente:
+
+- **una cella che lo determina**: 207 campioni, due board, 575 celle candidate
+  presenti in tutti -- ogni `OBJ`, `TPL`, `PHY`, `RAD` scritta o letta prima.
+  Zero. Su una board sola erano 129 campioni e 1161 candidate, pure zero: la
+  seconda board dimezza le candidate e non cambia il risultato;
+- **ripristino di un valore visto prima**, intero o per byte: zero;
+- **differenza di due valori osservati**, anche scalata: zero.
+
+### Il test che lo deciderebbe
+
+La dsl3580l ha due catene come la d6220 e condivide dei canali con lei. Se a
+parita' di `(canale, larghezza, numero di catene)` le due board scrivono lo
+stesso valore, la dipendenza dalla board sparisce e la grandezza e' derivabile
+da canale, larghezza e catene; se scrivono valori diversi, viene dalla SROM e
+va letta di la'. E' una misura di dieci minuti e non l'ho fatta perche' i nomi
+dei file dsl non portano il canale e va ricavato dal contenuto.
 
 ## Il campo per-rate `+0x0e`: la riga della larghezza, e il tetto su maxp
 

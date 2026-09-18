@@ -1018,6 +1018,40 @@ static void b43_phy_ac_chainmask_block(struct b43_wldev *dev,
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   8703-8762, 9313-9372, 28607-28634]
  */
+/*
+ * shm 0x00ce: la potenza del rate del beacon, misurata sulla riga a 20 MHz.
+ *
+ * E' la stessa forma del campo per-rate di b43_phy_ac_prb_rsp_rate_po() --
+ * distanza dal massimo della tabella, in sedicesimi di dB -- con due
+ * differenze: vale per il solo rate del beacon, che a 5 GHz e' il 6 Mbit e
+ * sta su mcs0, e la riga e' **sempre** quella a 20 MHz, non quella della
+ * larghezza operante.
+ *
+ * Nel driver del vendor la scrive wlc_beacon_phytxctl(), che prende il primo
+ * dei tre valori che wlc_stf_get_204080_pwrs() restituisce -- le potenze a 20,
+ * 40 e 80 MHz -- e ci sovrappone un campo mascherato 0x700. Quella funzione
+ * legge la sola struttura ppr, per rate e per larghezza (ppr_get_dsss,
+ * ppr_get_ofdm, ppr_get_vht_mcs): nessuna tabella regolatoria propria, il che
+ * e' il motivo per cui il valore si deriva da quel che il port ha gia'.
+ *
+ * Verificato sui 43 segmenti a freddo: coincide col campo per-rate del 6 Mbit
+ * su 37, e i sei che restano sono tutti e soli quelli a 40 e 80 MHz dove la
+ * riga a 20 e quella operante divergono -- che e' la previsione, non
+ * un'eccezione. Su ch52 a 40 MHz le due righe distano due quarti di dB e la
+ * cella vale 0x08 contro lo 0x00 del campo per-rate.
+ *
+ * Il campo 0x700 resta a zero: su nessuno dei 43 segmenti, ne' sulle altre
+ * quattro catture, la cella supera 0x100, quindi non e' mai stato osservato
+ * acceso e non si sa cosa sia.
+ */
+u16 b43_phy_ac_beacon_pwr_offset(struct b43_wldev *dev)
+{
+	const struct b43_ppr_ac *ppr = &dev->phy.ac->txpwr_ppr;
+	u8 max = b43_ppr_ac_get_max(ppr);
+
+	return (u16)((max - ppr->rates.mcs_20[0]) * 4);
+}
+
 static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev)
 {
 	B43_AC_FN();
@@ -5670,7 +5704,8 @@ static void b43_phy_ac_txpwr_adjust(struct b43_wldev *dev)
 		b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
 		b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
 	}
-	b43_shm_write16(dev, B43_SHM_SHARED, 0x00ce, 0x0000);
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x00ce,
+			b43_phy_ac_beacon_pwr_offset(dev));
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00d0, 0x0000);
 
 	/* Second pass of the twelve-rate loop. */
@@ -10727,7 +10762,8 @@ static void b43_phy_ac_down(struct b43_wldev *dev)
 		b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
 		b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
 	}
-	b43_shm_write16(dev, B43_SHM_SHARED, 0x00ce, 0x0000);
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x00ce,
+			b43_phy_ac_beacon_pwr_offset(dev));
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00d0, 0x0000);
 	b43_phy_ac_chainmask_block(dev, B43_PHY_AC_CHAIN_SETUP);
 	b43_phy_ac_prb_rsp_rate_po(dev);
