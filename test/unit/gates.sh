@@ -207,35 +207,27 @@ PY
 	[ -n "$from" ] || { echo "$seg: no PHY op"; fail=1; continue; }
 	last=$(grep -oE '#[0-9]+' "$TMP/merged" | tail -1 | tr -d '#')
 
-	# The probe phase deadline and the watchdog tick are clocks, and the
-	# clock is in the segment's timestamps. See probe_schedule.py.
-	sched=$(python3 "$TOOLS/probe_schedule.py" \
-		"$TMP/merged" --sh 2>/dev/null || true)
+	# Everything after the bring-up tail is the environment acting on the
+	# driver -- the 1 s watchdog work, the 150 ms radar timer, the core's
+	# template reloads, the bss-up after the CAC -- and the environment
+	# here is the capture: timeline.py lists those events at their
+	# instants and the harness replays them. What the driver does on each
+	# is the driver's. The same pass reads the phase of the watchdog's
+	# 10-turn counter at the segment start, state the driver carries from
+	# before the segment. See timeline.py.
+	sched=$(python3 "$TOOLS/timeline.py" "$TMP/merged" "$TMP/timeline" \
+		2>/dev/null || true)
 
-	# I giri su cui il timer del vendor non ha latchato la finestra
-	# statistiche: e' il suo orologio ad averli persi, non il driver a
-	# deciderlo. Stessa ragione del blocco sopra. Vedi watchdog_turns.py.
-	sched="$sched $(python3 "$TOOLS/watchdog_turns.py" \
-		"$TMP/merged" --sh 2>/dev/null || true)"
-
-	# How many times the stack above republished the beacon, on which ticks,
-	# and on which of the four conf_tx passes. Same reason as the schedule
-	# above. See beacon_reloads.py.
+	# On which of the four conf_tx passes the stack republished the beacon.
+	# See beacon_reloads.py; the other reloads are in the timeline.
 	sched="$sched $(python3 "$TOOLS/beacon_reloads.py" \
-		"$TMP/merged" --sh 2>/dev/null || true)"
+		"$TMP/merged" --sh 2>/dev/null | grep AC_EDCF_RELOADS || true)"
 
 	# Il valore agganciato di shm 0x00cc, che il blocco BSS del core scrive
 	# e che nessuna regola nota deriva. Vedi g_bss_cc in main.c.
 	bsscc=$(grep -m1 -oE "OBJ\.WR +addr=0x00cc val=0x[0-9a-f]+" \
 		"$TMP/merged" | grep -oE "0x[0-9a-f]+$")
 	[ -n "$bsscc" ] && sched="$sched AC_BSS_CC=$bsscc"
-
-	# Turns of the CAC poll, and the ticks they fall on: a 151.5 ms clock
-	# the harness does not have. Empty on every segment whose channel
-	# availability check had completed. See cac_polls.py.
-	sched="$sched $(python3 "$TOOLS/cac_polls.py" \
-		"$TMP/merged" --sh 2>/dev/null || true)"
-
 
 	# MAC.BW is written only by the first segment of each bandwidth: the
 	# others inherit it. The segment knows by itself whether it has it.

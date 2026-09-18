@@ -99,8 +99,8 @@ qui non e' piu' valida: si reggeva su una separazione a 5250 MHz che lo sweep
 vecchio non poteva smentire, perche' si fermava a ch140 e li' ogni canale con
 la guardia radar sta sopra la soglia e ogni canale senza sta sotto. Con
 ch144-165 le due cose si separano, e la famiglia vera e' la guardia radar, non
-la frequenza: `cac_polls.py` la legge da ogni segmento e mette il confine a
-ch140.
+la frequenza: il poll del rivelatore (`PHY.RD 0x0251`) compare su tutti e soli
+i segmenti fino a ch140, e `timeline.py` lo legge da ogni segmento.
 
 La differenza di dimensione fra le due famiglie -- ~16k op contro ~29k --
 neanche e' quella che c'era scritto qui. La parte grossa, 12052 op su 14022,
@@ -110,12 +110,20 @@ tabelle del BSS (`0x0e`, `0x42`, `0x62`, `0x82`) mancano. Non e' un attach
 diverso del driver stock, e' una cattura presa durante l'attesa. I 21 segmenti
 DFS sono stati ripresi con il CAC completato e adesso ce le hanno.
 
-Quei 21 adesso producono un numero. La transizione CAC-pendente -> CAC-fatto a
-meta' segmento e' modellata: il check si chiude quando il suo timer scade, e
-l'orologio sono i giri del watchdog, uno al secondo. Le calibrazioni che il
-gate teneva fuori partono dal giro che lo chiude, che e' dove la cattura le
-mette. Prima erano fra il 55% e il 71%, ora stanno fra l'83% e il 99.8% salvo
-un'eccezione. Dettagli e misure in
+Quei 21 adesso producono un numero. Dopo la coda del bring-up il driver non
+decide piu' il flusso: reagisce a eventi -- il work da un secondo del watchdog,
+il timer da 150 ms del rivelatore radar, le ricariche del template che sono del
+core, il bss-up che chiude il check e porta le calibrazioni. Su hardware
+arrivano dal kernel e da mac80211; nell'harness li replaya `timeline.py` dai
+timestamp della cattura, e nessuna lista di tick attraversa il confine di
+`src/`. Il measure block e il dump della regione sono contatori del driver
+(dieci e trenta giri), il bss-up e' un evento dello stack e cade dove la
+cattura lo mette, fra due giri. Sui 43 segmenti a freddo la tabella sta fra
+95.4% e 98.5% (mediana 96.6); il costo rispetto al modello a tick, da 0.4 a 1.7
+punti, sono le ricariche del template che wl fa dentro il giro del watchdog e
+b43 no. Sugli up a caldo dei canali con la guardia radar, dove `wl up` rifa' il
+CAC ogni volta e l'harness lo negava, si passa dal 37% all'86-90%. Dettagli e
+misure in
 [`docs/retrace-todo.md`](docs/retrace-todo.md).
 
 Lo stato dei 43 segmenti, con `gates.sh` su ognuno:

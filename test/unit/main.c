@@ -224,24 +224,22 @@ static void mount_board(const struct board_profile *p)
 		g_chan.flags |= IEEE80211_CHAN_RADAR;
 
 	/*
-	 * Whether the channel availability check is still outstanding. On
-	 * hardware this comes from mac80211, through the radar-detection
-	 * callback b43 does not have yet; here the flow says it, and the
-	 * default follows from what the flow is. A freshly inserted module has
-	 * passed no check, which is the cold sweep; the hot sweep is a channel
-	 * switch on a device that had already been operating there, so its
-	 * check had completed.
+	 * Whether a channel availability check is outstanding. On hardware it
+	 * is mac80211 asking for radar detection when it tunes the channel --
+	 * hw->conf.radar_enabled -- and hostapd asks for it on every AP start
+	 * on a channel with the duty. The vendor does the same on every `wl up`:
+	 * the hot up on ch52 arms the detector, polls it 414 times and brings
+	 * the BSS up 60 s later exactly like the cold attach does. So the
+	 * default is the duty itself, cold or hot.
 	 *
-	 * AC_DFS_CAC_DONE overrides it, for a cold flow on a channel whose
-	 * check some earlier owner had already passed -- which is what an AP
-	 * bring-up under hostapd actually looks like.
+	 * AC_DFS_CAC_DONE overrides it, for a channel whose check some earlier
+	 * owner had already passed and cfg80211 still holds as available.
 	 */
 	{
 		const char *e = getenv("AC_DFS_CAC_DONE");
-		const char *fi = getenv("AC_FIRST_INIT");
-		bool first = !(fi && !strcmp(fi, "0"));
 
-		g_ac.cac_pending = e ? (strtoul(e, NULL, 0) == 0) : first;
+		g_ac.cac_pending = e ? (strtoul(e, NULL, 0) == 0)
+				     : !!(g_chan.flags & IEEE80211_CHAN_RADAR);
 	}
 
 	/*
@@ -359,104 +357,31 @@ static void mount_board(const struct board_profile *p)
 	}
 
 	/*
-	 * Probe-phase deadline and the ticks the watchdog lands on. In a live
-	 * driver these come from jiffies and from the watchdog work; here the
-	 * flow declares them.
-	 *
-	 * The cold defaults come from the 26 segments of the d6220 cold sweep
-	 * that reach the phase: the watchdog fires on tick 9 in all 26, and on
-	 * tick 19 in every segment whose deadline reaches that far -- one timer
-	 * with a period of ten, the warm pair 5 and 15 being the same period at
-	 * another phase. The deadline is clock jitter and spreads over 18 to 21,
-	 * so 19 here is only the commonest of the 26; a run against a specific
-	 * segment should take it from that segment, which
-	 * reverse-tools/probe_schedule.py reads off the timestamps.
-	 */
-	{
-		const char *e = getenv("AC_PROBE_TICKS");
-		const char *w = getenv("AC_WATCHDOG_TICKS");
-		const char *n = getenv("AC_WD_NOLATCH");
-
-		if (g_wldev.phy.do_full_init) {
-			g_ac.probe_ticks = 19;
-			g_ac.probe_watchdog_tick[0] = 9;
-			g_ac.probe_watchdog_tick[1] = 19;
-		} else {
-			g_ac.probe_ticks = 19;
-			g_ac.probe_watchdog_tick[0] = 5;
-			g_ac.probe_watchdog_tick[1] = 15;
-		}
-		g_ac.probe_watchdog_n = 2;
-		if (e)
-			g_ac.probe_ticks = (u16)strtoul(e, NULL, 10);
-		if (w) {
-			char *end = (char *)w;
-
-			g_ac.probe_watchdog_n = 0;
-			while (*end && g_ac.probe_watchdog_n <
-					ARRAY_SIZE(g_ac.probe_watchdog_tick)) {
-				g_ac.probe_watchdog_tick[
-					g_ac.probe_watchdog_n++] =
-					(u16)strtoul(end, &end, 10);
-				if (*end == ',')
-					end++;
-			}
-		}
-		/*
-		 * I giri senza il latch della finestra, come lista di tick:
-		 * vedi @probe_nolatch_tick. Assente vuol dire "nessuno", che
-		 * e' il caso regolare.
-		 */
-		if (n) {
-			char *end = (char *)n;
-
-			while (*end && g_ac.probe_nolatch_n <
-					ARRAY_SIZE(g_ac.probe_nolatch_tick)) {
-				g_ac.probe_nolatch_tick[g_ac.probe_nolatch_n++]
-					= (u16)strtoul(end, &end, 10);
-				if (*end == ',')
-					end++;
-			}
-		}
-	}
-
-	/*
-	 * Ricariche del template beacon dentro la fase probe, nella forma
-	 * <prima>:<tick>,<tick>,.. che reverse-tools/beacon_reloads.py legge
-	 * dalla cattura. Senza la variabile non se ne emette nessuna: il
-	 * conteggio e' dello stack sopra e non ha un default sensato.
+	 * Le ricariche del template beacon che il vendor mette dentro la coda
+	 * del bring-up, prima del primo giro del watchdog: sono dello stack e
+	 * il conteggio viene dalla cattura (reverse-tools/beacon_reloads.py,
+	 * il campo prima dei due punti). Quelle dopo sono eventi della
+	 * timeline e non passano di qui.
 	 */
 	{
 		const char *e = getenv("AC_BEACON_RELOADS");
-		char *end;
-
-		if (e) {
-			g_ac.beacon_reload_pre = (u16)strtoul(e, &end, 10);
-			if (*end == ':')
-				end++;
-			while (*end && g_ac.beacon_reload_n <
-					ARRAY_SIZE(g_ac.beacon_reload_tick)) {
-				g_ac.beacon_reload_tick[g_ac.beacon_reload_n++]
-					= (u16)strtoul(end, &end, 10);
-				if (*end == ',')
-					end++;
-			}
-		}
-	}
-
-	{
-		const char *e = getenv("AC_BEACON_PRE_LATE");
 
 		if (e)
-			g_ac.beacon_reload_pre_late =
-				(u8)strtoul(e, NULL, 0);
+			g_ac.beacon_reload_pre = (u16)strtoul(e, NULL, 10);
 	}
 
+	/*
+	 * Stato del watchdog all'ingresso: il contatore del periodo da dieci
+	 * giri, che nel driver gira dal bring-up e che un segmento a caldo
+	 * prende a meta'. reverse-tools/timeline.py lo legge dal primo measure
+	 * block della cattura. Senza, zero: il measure block sul nono giro,
+	 * che e' l'attach a freddo.
+	 */
 	{
-		const char *e = getenv("AC_CAC_WAIT_TICKS");
+		const char *e = getenv("AC_WD_PHASE");
 
 		if (e && *e)
-			g_ac.cac_wait_ticks = (u16)strtoul(e, NULL, 10);
+			g_ac.wd_turns = (u16)strtoul(e, NULL, 10);
 	}
 	{
 		const char *e = getenv("AC_SSID_LEN");
@@ -478,31 +403,6 @@ static void mount_board(const struct board_profile *p)
 		if (e)
 			g_bss_cc = (u16)strtoul(e, NULL, 0);
 	}
-
-	/*
-	 * Turni del poll di CAC, stessa forma di AC_BEACON_RELOADS: quelli
-	 * prima della fase, poi uno per tick. reverse-tools/cac_polls.py li
-	 * ricava dalla cattura; senza la variabile non c'e' poll, che e' il
-	 * caso di ogni segmento sotto i 5250 e di tutto lo sweep a caldo.
-	 */
-	{
-		const char *e = getenv("AC_CAC_POLLS");
-		char *end;
-
-		if (e) {
-			g_ac.cac_poll_pre = (u8)strtoul(e, &end, 10);
-			if (*end == ':')
-				end++;
-			while (*end && g_ac.cac_poll_n <
-					ARRAY_SIZE(g_ac.cac_poll_tick)) {
-				g_ac.cac_poll_tick[g_ac.cac_poll_n++]
-					= (u8)strtoul(end, &end, 10);
-				if (*end == ',')
-					end++;
-			}
-		}
-	}
-
 
 	/* Preconditions the rxiqcal REQUIRE gates want to see. */
 	g_ac.status_mask = B43_PHY_AC_STATE_RX_WAITED |
@@ -721,6 +621,56 @@ static void run_rfkill(void)
 static void emit_core_bss_config(void);
 static void emit_core_bss_config1(void);
 static void emit_core_conf_tx_passes(void);
+
+/*
+ * Replay degli eventi dell'ambiente dopo la coda del bring-up, nell'ordine dei
+ * loro istanti sulla cattura: reverse-tools/timeline.py li estrae e dice cosa
+ * sono. Ogni riga e' un callback che su hardware arriva da fuori del PHY:
+ *
+ *   WD      il work da un secondo         -> b43_phy_ac_watchdog()
+ *   POLL    il timer da 150 ms del radar  -> b43_phy_ac_radar_poll()
+ *   TPL     bss_info_changed del core     -> la ricarica del template, che e'
+ *                                            del core e la emette l'harness
+ *   BSS_UP  start_ap dopo il CAC          -> b43_phy_ac_bss_up()
+ *
+ * Quanti siano e quando cadano non e' del driver: e' quanto e' durata la
+ * cattura e cosa ha fatto lo stack nel frattempo. Il driver decide solo cosa
+ * fare a ogni callback.
+ */
+static void run_timeline(void)
+{
+	const char *path = getenv("AC_TIMELINE");
+	FILE *f;
+	char line[128];
+
+	if (!path || !*path)
+		return;
+	f = fopen(path, "r");
+	if (!f) {
+		fprintf(stderr, "test: cannot open timeline %s\n", path);
+		exit(1);
+	}
+
+	while (fgets(line, sizeof(line), f)) {
+		char kind[16];
+
+		if (sscanf(line, "%*f %*d %15s", kind) != 1)
+			continue;
+		if (!strcmp(kind, "WD"))
+			b43_phy_ac_watchdog(&g_wldev);
+		else if (!strcmp(kind, "POLL"))
+			b43_phy_ac_radar_poll(&g_wldev);
+		else if (!strcmp(kind, "TPL"))
+			b43_ac_beacon_reload(&g_wldev, g_ac.beacon_reload_done++);
+		else if (!strcmp(kind, "BSS_UP"))
+			b43_phy_ac_bss_up(&g_wldev);
+		else {
+			fprintf(stderr, "test: unknown timeline event %s\n", kind);
+			exit(1);
+		}
+	}
+	fclose(f);
+}
 
 static void run_switch_channel(void)
 {
@@ -1166,30 +1116,22 @@ static void run_switch_channel(void)
 		b43_phyops_ac.adjust_txpower(&g_wldev);
 	emit_core_conf_tx_passes();
 
-	/*
-	 * La fase d'attesa del controllo di disponibilita'. Sta qui perche' e'
-	 * qui che la cattura DFS la mette: il blocco d'attesa comincia dove
-	 * cold01 ha l'entrata di channel_calibrate(), cioe' subito dopo queste
-	 * passate. Chi la esegue e' il driver; quanti giri duri lo dice la
-	 * cattura, come per gli altri orologi del vendor, e chi la fa partire
-	 * e' lo stack -- qui questo harness, su hardware mac80211.
-	 */
-	b43_phy_ac_cac_wait(&g_wldev);
 	if (r == 0)
 		b43_phyops_ac.channel_calibrate(&g_wldev);
 	else
 		b43_mac_enable(&g_wldev);
 
 	/*
-	 * Then the bss-up burst, which in the captures lands about half a
-	 * second after the last watchdog turn of the probe phase and is not
-	 * part of the channel setup. No b43 hook is wired to it yet, so it is
-	 * called from here for the same reason emit_core_bss_config() and the
-	 * conf_tx passes are: this is the stack above the driver, and the
-	 * harness has to stand in for it.
+	 * Da qui in poi il driver non decide piu' il flusso: reagisce a quello
+	 * che gli capita, e chi glielo fa capitare e' l'ambiente -- il kernel
+	 * coi timer, mac80211 con i template e il bss-up. Qui l'ambiente e' la
+	 * timeline della cattura; poi la discesa della radio, che su hardware
+	 * e' software_rfkill(true) da b43_phy_exit().
 	 */
-	if (r == 0)
+	if (r == 0) {
+		run_timeline();
 		b43_phyops_ac.software_rfkill(&g_wldev, true);
+	}
 
 	fprintf(stderr, "test: switch_channel returned %d\n", r);
 }
@@ -1947,20 +1889,6 @@ int main(int argc, char **argv)
 		run_rfkill();
 		run_op_init();
 		run_switch_channel();
-
-		/*
-		 * A segment's up phase ends with a watchdog tick: the vendor's
-		 * second CRS write comes from there, not from a second site in
-		 * the channel setup, and on the channels where a noise sample
-		 * lands between the two the ladder moves in between. Without
-		 * the tick the comparison sees the port's own later write in
-		 * its place and the two agree only by coincidence.
-		 */
-		g_wldev.mac_suspended = 0;
-		g_ac.status_mask = B43_PHY_AC_STATE_RX_WAITED |
-				   B43_PHY_AC_STATE_RX_OFDM;
-		g_ac.probe_mode = 0x0000;
-		b43_phy_ac_watchdog(&g_wldev, true);
 	} else if (!strcmp(flow, "down")) {
 		/*
 		 * The down phase on its own: the radio init that heads a sweep
@@ -2062,7 +1990,9 @@ int main(int argc, char **argv)
 		g_ac.status_mask = B43_PHY_AC_STATE_RX_WAITED |
 				   B43_PHY_AC_STATE_RX_OFDM;
 		g_ac.probe_mode = 0x0004;
-		b43_phy_ac_watchdog(&g_wldev, true);
+		g_ac.wd_turns = 8;
+		g_ac.wd_switch_turns = 9;
+		b43_phy_ac_watchdog(&g_wldev);
 	} else if (!strcmp(flow, "crsmin")) {
 		/*
 		 * Self-test della catena crsmin (non usa oracolo). Esercita

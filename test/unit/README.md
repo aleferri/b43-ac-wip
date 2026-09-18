@@ -95,11 +95,10 @@ python3 compare.py \
 ```
 
 `gates.sh` fa tutto da se': ripiega la cattura, ricava la finestra dalla prima
-op PHY dell'attach, ricava la schedule dei tick con `probe_schedule.py`, quella
-delle ricariche del beacon con `beacon_reloads.py`, quella del poll di CAC con
-`cac_polls.py` e i giri in cui il watchdog del vendor non ha latchato con
-`watchdog_turns.py`, lancia il flow `full` con l'oracolo di lettura e chiama
-`cmp_skip.py` e `compare.py`.
+op PHY dell'attach, estrae con `timeline.py` gli eventi dell'ambiente dopo il
+bring-up (giri del watchdog, poll del radar, ricariche del template, bss-up) e
+con `beacon_reloads.py` le ricariche sulle passate conf_tx, lancia il flow
+`full` con l'oracolo di lettura e chiama `cmp_skip.py` e `compare.py`.
 Non serve rifarne i passi a mano, e farlo a mano sbaglia la finestra.
 
 **Il gate a freddo non copre il caldo, e la differenza non e' di grado.** Lo
@@ -113,7 +112,7 @@ Due predicati che ci sono passati attraverso, e che valgono come promemoria.
 da uno corretto, e sui segmenti `up` sopra i 5250 fa la differenza fra l'80% e
 il 35%. Oggi guarda `IEEE80211_CHAN_RADAR` e il flag della guardia radar, che
 e' la regola giusta -- ma il confine superiore della sotto-banda l'ha dato solo
-la ricattura: era preso dalla spec a 5725, e `cac_polls.py` su tutti e 43 i
+la ricattura: era preso dalla spec a 5725, e il poll del rivelatore su tutti e 43 i
 segmenti lo mette a ch140. Con 5725, ch144 veniva marcato e il port saltava le
 calibrazioni che il vendor esegue: 51% invece di 95% su quel solo segmento.
 

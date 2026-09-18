@@ -355,6 +355,7 @@ void b43_pio_handle_txstatus(struct b43_wldev *dev, const void *status) { }
  * ricaricare, e le op che ne conseguono le emette il PHY.
  */
 void b43_ac_beacon_reload(struct b43_wldev *dev, unsigned int which) { }
+void b43_ac_cac_match_gate(struct b43_wldev *dev, bool restore) { }
 
 /* --- mac80211: utilita' pure, nessuna emette op ----------------------- */
 
