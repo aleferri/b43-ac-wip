@@ -5630,3 +5630,74 @@ inesistente: il terzo core il vendor lo tocca, 282 accessi.)
 
 Per sapere quanto vale davvero serve un LCS locale dentro la regione, non il
 conteggio globale.
+
+## Il flusso dopo il bring-up e' fatto di eventi, non di tick
+
+La chiusura del CAC "al giro che porta il measure block fuori griglia" era una
+lettura sbagliata della cattura, e il modello a tick che la reggeva era
+sbagliato per una ragione piu' grossa: quei tick non esistono su hardware.
+Cosa dicono i timestamp, su tutti e 21 i segmenti che chiudono il check:
+
+- il ripristino della riga AMT cade 62.84-63.09 s dopo l'arm su diciotto
+  segmenti, 67.6-67.8 su cold18 e cold42, 76.35 su cold34, e sempre **fra due
+  giri** del watchdog, dopo uno, due o quattro poll del rivelatore. E' un
+  evento dello stack (il bss-up dopo il CAC), non un giro;
+- il measure block che `probe_schedule.py` leggeva come tick 60/63/70 sta
+  subito **dietro** il ripristino, a MAC sospeso, prima delle calibrazioni: e'
+  del bss-up, non del watchdog. Poi le calibrazioni, il latch della finestra e
+  il blocco E;
+- il poll del rivelatore e' un timer da 150 ms: 706 letture su cold05, 680 dei
+  705 intervalli a 151 ms, gli altri a 1.3-1.4 s dove il measure block tiene il
+  thread. Parte 11 ms dopo l'arm e non si ferma alla chiusura;
+- la testa `0x7af` e il cambio di modo `0x520` stanno allo stesso istante e a
+  1.004 s dal giro precedente: il giro del vendor e' sample phase poi corpo, un
+  callback solo;
+- il measure block cade sul decimo giro dopo lo switch e poi ogni dieci (42
+  segmenti a freddo su 43); sugli up a caldo cade ovunque (7, 8, 6, 6, 9, 3 sui
+  primi sei), e il dump della regione coincide sempre con uno dei suoi giri:
+  sono due fasi di un contatore libero del driver, non del canale. La fase
+  va letta mod 30: sull'up a caldo di ch52 il dump cade sullo stesso giro del
+  measure block (marker 9), su cold05 venti giri dopo (marker 28) --
+  `AC_WD_PHASE` viene dal primo dump, e dal measure block dove il segmento
+  non ne ha, scegliendo il residuo che non ne mette uno dentro il segmento.
+
+Il modello adesso: il driver ha `b43_phy_ac_watchdog()` (un callback al
+secondo, contatori `wd_turns` dal bring-up e `wd_switch_turns` dallo switch),
+`b43_phy_ac_radar_poll()` (il timer da 150 ms) e `b43_phy_ac_bss_up()`
+(ripristino AMT, measure block, calibrazioni, latch e blocco E). Nessun tick
+nel driver. L'harness replaya gli eventi dell'ambiente con `timeline.py`, che li
+legge dai timestamp della cattura: `WD`, `POLL`, `TPL`, `BSS_UP`. L'unico stato
+d'ingresso e' `AC_WD_PHASE`, la fase del contatore da dieci all'inizio del
+segmento, come `probe_mode` e `last_cal_channel` lo sono gia'.
+
+Su hardware manca il cablaggio: `b43_op_config` deve chiamare l'arm quando
+`hw->conf.radar_enabled` si alza (mac80211 sintonizza prima del check e
+`start_ap` sullo stesso canale non rifa' lo switch, quindi senza `bss_up()` le
+calibrazioni rinviate non partirebbero mai), `bss_info_changed(BEACON_ENABLED)`
+deve chiamare `bss_up()`, e il core deve dare al PHY un work da 1 s e un timer
+da 150 ms; `b43_ac_cac_match_gate` e `b43_ac_beacon_reload` vanno definite nel
+core. Oggi `cac_pending` nel kernel non e' mai assegnato.
+
+Cosa costa: le ricariche del template in fase. Il vendor le mette dentro il
+corpo del giro, fra le due passate della spazzata dei contatori -- wl carica il
+template dal proprio watchdog -- e ora sono eventi fra un callback e l'altro,
+perche' in b43 il template lo scrive `bss_info_changed` sotto il mutex e mai
+dentro il watchdog del PHY. Ogni ricarica in fase costa 32-57 op di
+spostamento nell'LCS; su cold05 sono 23. Il gate dovrebbe trattare il blocco
+come "del core, mobile", categoria che `cmp_skip.py` non ha. Restano dentro la
+coda del bring-up, come conteggio, le ricariche fra la host-flag clear e la
+cella a 0xffff (`AC_BEACON_RELOADS`): stesso debito, stessa soluzione quando la
+coda verra' spezzata. Cadono anche i giri `nolatch`: da derivare come regola sul
+tempo dall'ultimo latch, ora che gli eventi hanno un istante. cold01 resta il
+campione singolo di sempre, col primo giro collassato sul window read; con la
+fase 9 il port gli mette un dump al giro 20 che il vendor non ha, 64 op.
+
+Misure, tabella `--table` (metrica `full`) sui 43 segmenti a freddo: HEAD
+min/mediana 96.45/97.88, ora 95.42/96.55 -- da -0.4 a -1.7 punti, tutti dalle
+ricariche mobili e da cold01. Sugli up a caldo dei canali con la guardia il
+segno e' l'opposto e non e' questo modello a farlo: la cattura dice che `wl up`
+rifa' il CAC ogni volta (05-up-ch52: arm, 414 poll, bss-up a 60 s), mentre
+l'harness metteva `cac_pending` a falso su ogni hot e faceva partire le
+calibrazioni allo switch. Ora il default e' la guardia radar, freddo o caldo:
+05-up-ch52 37.3% -> 86.0%, 10-up-ch104 36.4% -> 90.2%, 06-up-ch56 91.0%.
+Quello che resta li' e' il debito dell'attach a caldo, non del CAC.

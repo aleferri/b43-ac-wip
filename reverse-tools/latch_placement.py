@@ -6,7 +6,7 @@ dentro il primo giro della fase. Quale dei due non e' una proprieta' del canale
 ne' dello stato del driver: e' se un tick del periodico e' caduto in mezzo
 mentre l'attach finiva. Due corse identiche del driver danno risposte diverse a
 seconda di quanto ha impiegato l'hardware, quindi il dato esce dalla cattura
-come AC_PROBE_TICKS, AC_BEACON_RELOADS e AC_CAC_POLLS.
+come AC_BEACON_RELOADS e la timeline di timeline.py.
 
 Il riconoscitore e' posizionale e usa tre marcatori che il port emette
 identici:

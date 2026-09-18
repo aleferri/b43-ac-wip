@@ -318,133 +318,41 @@ struct b43_phy_ac {
 	 */
 	u16 last_cal_channel;
 	/*
-	 * Whether a channel availability check is still outstanding on the
-	 * current channel. Only meaningful where IEEE80211_CHAN_RADAR is set;
-	 * see b43_phy_ac_may_calibrate_tx().
+	 * Whether a channel availability check is outstanding on the current
+	 * channel: the calibrations that transmit wait for it, see
+	 * b43_phy_ac_may_calibrate_tx().
 	 *
-	 * It is state of the DFS check, and the check is not this driver's --
-	 * mac80211 drives it. The producer is the .start_radar_detection
-	 * callback, which mac80211 invokes after tuning the hardware and
-	 * before the check runs, and the clear is the CAC_FINISHED event.
-	 * Neither exists yet: b43 advertises no radar detection, so mac80211
-	 * will not bring an AP up on such a channel at all. Until they do,
-	 * this is set by whoever drives the flow, and a freshly loaded module
-	 * has by definition passed no check.
-	 *
-	 * Read from cfg80211's ieee80211_channel.dfs_state instead and the
-	 * answer would be the same, but the driver would be reaching into a
-	 * state machine it neither owns nor is notified by. The flag it does
-	 * get told about is this one.
+	 * The check is not this driver's, mac80211 runs it. The producer is the
+	 * config call that tunes the channel with hw->conf.radar_enabled set --
+	 * mac80211 tunes before the check and start_ap lands on the same channel
+	 * without another switch -- and the clear is b43_phy_ac_bss_up(), from
+	 * bss_info_changed(BEACON_ENABLED). Neither is wired in b43 yet; the
+	 * trace harness sets it from the channel's radar duty.
 	 */
 	bool cac_pending;
 	/*
-	 * Deadline of the probe/measure phase, in 1-second ticks, and the two
-	 * ticks the periodic watchdog lands on within it (0xffff for none).
-	 * Both stand in for a clock the trace harness does not have; see
-	 * b43_phy_ac_rxiqcal_finalize().
-	 *
-	 * Zero means no phase, and that is the live-driver case: nothing in b43
-	 * sets these, so switch_channel() emits no watchdog turns and the turns
-	 * arrive from b43_phy_ac_op_pwork_15sec() where they belong.
+	 * Giri del watchdog dal bring-up in qua. Il measure block cade ogni
+	 * dieci giri e il dump della regione statistiche ogni trenta, contati su
+	 * questo: sulla cattura il measure block sta sul nono giro della fase e
+	 * poi ogni dieci, su 42 dei 43 segmenti a freddo, e il dump sul
+	 * trentesimo. E' periodico del driver e non del canale, quindi il
+	 * contatore non si azzera al cambio canale: sui cicli a caldo la fase
+	 * comincia a un punto qualunque del periodo.
 	 */
-	u16 probe_ticks;
-	/*
-	 * I giri della fase su cui il latch della finestra statistiche non
-	 * c'e'. Il giro c'e' lo stesso -- la spazzata dei contatori, il blocco
-	 * di misura, il cambio di modo -- e a mancare e' solo la coda di
-	 * b43_phy_ac_wd_stats_tail(): la cattura di quei giri porta tutto il
-	 * resto e non le letture 0x0308-0x0314. Il conto lo dice: su cold17 le
-	 * op di troppo del port erano sette letture per cella della finestra e
-	 * nient'altro, non sette giri interi.
-	 *
-	 * Capita dove il timer del vendor e' rimasto indietro: divari fino a
-	 * 2.6 s fra un latch e il successivo dove la cadenza e' 1.004, e nella
-	 * stessa finestra i gruppi probe a 1.31 s -- la macchina carica, non
-	 * una scelta del driver. Su ventuno dei ventisei segmenti a freddo la
-	 * lista e' vuota, ed e' quel controllo a dire che si legge bene: la'
-	 * il numero di latch e la scadenza coincidono esattamente.
-	 *
-	 * Viene dal chiamante per la stessa ragione di @probe_ticks, delle
-	 * ricariche del beacon e del poll di CAC: e' un orologio, e l'harness
-	 * non ne ha uno. reverse-tools/watchdog_turns.py lo legge dalla
-	 * cattura.
-	 */
-	u16 probe_nolatch_tick[16];
-	u8  probe_nolatch_n;
-	/*
-	 * I giri della fase su cui cade il measure block. E' periodico, ogni
-	 * dieci giri, con l'offset che dipende da dove comincia il conteggio:
-	 * 10 su cold01, 9 su cold05 perche' la fase d'attesa sposta di uno.
-	 * Lista e non periodo perche' il marcatore nella cattura non e' pulito
-	 * dentro la regione delle calibrazioni, e una lista tollera la voce in
-	 * piu' che ne esce.
-	 *
-	 * L'indice e' quello globale, giri d'attesa compresi, come per
-	 * @cac_poll_tick[]: erano due slot perche' i segmenti vecchi non
-	 * passavano i ventisei giri, e cold05 ne ha dodici fino al 119.
-	 */
-	u16 probe_watchdog_tick[32];
-	u8  probe_watchdog_n;
-	/*
-	 * Ricariche del template beacon che cadono dentro la fase probe. Lo
-	 * stack sopra il driver ripubblica il beacon quando vuole, e quante
-	 * volte lo faccia non e' del driver: sui 26 segmenti a freddo dello
-	 * stesso albero il conteggio va da 7 a 21, senza relazione con la
-	 * durata. Quindi vengono dal chiamante come @probe_ticks, e per la
-	 * stessa ragione -- l'harness non ha lo stack sopra di se'.
-	 *
-	 * @beacon_reload_pre sono quelle che cadono prima che la fase parta,
-	 * @beacon_reload_tick i tick su cui cadono le altre -- una ricarica sta
-	 * dentro il tick il cui gruppo probe la segue, perche' il gruppo chiude
-	 * il tick, e possono ripetersi sullo stesso tick.
-	 * reverse-tools/beacon_reloads.py li legge dalla cattura.
-	 */
-	u16 beacon_reload_pre;
-	/*
-	 * Quelle che cadono dopo la cella a 0xffff e prima che la fase parta.
-	 * Stanno a parte perche' il confine e' la cella e non l'inizio della
-	 * fase: su cold04 una delle tre pre-fase sta dopo il latch e il blocco
-	 * E, e messa con le altre sfasa il flusso di una ricarica intera. Sui
-	 * 26 segmenti a freddo e' zero ovunque tranne li'.
-	 */
-	u8  beacon_reload_pre_late;
-	u16 beacon_reload_tick[24];
-	u8  beacon_reload_n;
-	u8  beacon_reload_done;
-	/*
-	 * Quanti turni del poll di CAC cadono dove, per le tre posizioni che
-	 * b43_phy_ac_cac_poll() serve: @cac_poll_pre prima del latch delle
-	 * statistiche e @cac_poll_tick[i] sul tick i, piu' quello che va con
-	 * l'arming, che non si conta qui. Cosa sia la fase e perche' sia il
-	 * flusso e non un timer sta sul gruppo cac in phy_ac.c.
-	 *
-	 * Viene dal chiamante perche' quanti turni ci stiano non segue da
-	 * niente che il driver abbia: e' quanto dura la finestra che il tracer
-	 * ha catturato. La discriminazione e' totale e la porta tutto lo sweep
-	 * del d6220 -- zero turni sui sette segmenti a freddo sotto i 5250,
-	 * 134 su diciotto dei diciannove sopra e 108 su cold15, zero su ogni
-	 * segmento a caldo qualunque sia il canale -- e 0x0251 non compare da
-	 * nessun'altra parte. reverse-tools/cac_polls.py li legge dalla
-	 * cattura.
-	 */
+	u16 wd_turns;
+	u16 wd_switch_turns;
 	/* L'avviso di campione fuori dal misurato si emette una volta sola. */
 	bool crs_noise_warned;
-
-	u8  cac_poll_pre;
-	u8  cac_poll_tick[160];
-	u8  cac_poll_n;
-
 	/*
-	 * Quanti dei giri in @cac_poll_tick[] cadono nella fase d'attesa del
-	 * controllo di disponibilita', prima delle calibrazioni, e quanti
-	 * restano per la fase probe che viene dopo. Le catture DFS vecchie
-	 * hanno zero: la' il controllo non si chiudeva entro la finestra di
-	 * cattura e la fase d'attesa non finiva mai. Quelle ricatturate lo
-	 * chiudono a meta' segmento -- su cold05 sono 58 giri d'attesa e 65 di
-	 * fase probe -- e i due gruppi si consumano in due punti diversi del
-	 * bring-up, percio' vanno contati separatamente.
+	 * Ricariche del template beacon che il vendor mette fra la host-flag
+	 * clear e la cella 0x0026, cioe' dentro la coda del bring-up. Sono
+	 * dello stack sopra il driver e il conteggio viene dal chiamante;
+	 * reverse-tools/beacon_reloads.py lo legge dalla cattura. Le ricariche
+	 * che cadono dopo, nella fase del watchdog, non passano di qui: sono
+	 * eventi del core e li emette chi guida il flusso, al loro istante.
 	 */
-	u16 cac_wait_ticks;
+	u16 beacon_reload_pre;
+	u8  beacon_reload_done;
 	/*
 	 * Count of calibration cycles this session, gating the cold bump in
 	 * the crsmin path of pwork_60sec(): the blob bumps the ladder for the
@@ -741,12 +649,24 @@ u16  b43_phy_ac_classifier(struct b43_wldev *dev, u16 mask, u16 val);
 void b43_phy_ac_reset_cca(struct b43_wldev *dev);
 
 /*
- * I giri del watchdog che scorrono mentre il controllo di disponibilita' del
- * canale e' pendente, prima che le calibrazioni possano partire. Senza
- * chiamanti su hardware: la' quei giri sono il periodic work e @cac_pending lo
- * azzera CAC_FINISHED. Vedi il commento sulla funzione.
+ * Un turno del poll del rivelatore radar: mac_suspend, PHY 0x0251 e 0x0252,
+ * mac_enable. E' il callback di un timer da 150 ms che parte con l'arm del
+ * channel availability check e gira finche' il canale ha la guardia radar,
+ * anche dopo che il check si e' chiuso: e' in-service monitoring. Cosa
+ * portino i due registri non e' stabilito -- ogni lettura dello sweep torna
+ * zero -- quindi qui si legge e non si decide.
  */
-void b43_phy_ac_cac_wait(struct b43_wldev *dev);
+void b43_phy_ac_radar_poll(struct b43_wldev *dev);
+
+/*
+ * Il BSS e' su: chiamata da bss_info_changed(BEACON_ENABLED) o da start_ap.
+ * Su un canale con la guardia radar arriva dopo il channel availability
+ * check, e porta con se' quello che il check teneva fuori: il ripristino
+ * della riga AMT del BSS (del core, via b43_ac_cac_match_gate()) e le
+ * calibrazioni che trasmettono. Su un canale senza guardia non c'e' niente da
+ * fare: le calibrazioni sono gia' passate allo switch.
+ */
+void b43_phy_ac_bss_up(struct b43_wldev *dev);
 
 /*
  * Post-channel-setup calibrations, in the order
@@ -821,13 +741,13 @@ void b43_phy_ac_gainctrl_final_apply(struct b43_wldev *dev,
 				     const u16 r734_vals[3]);
 
 /*
- * Steady-state periodic watchdog: poll TSSI and the SHM statistics every tick,
- * with a single pass of the measure block, noise_cal true, on the longer
- * cadence. The op sequence follows the vendor's roughly 5 s tick from the
- * d6220 sweep; in this driver it hangs off pwork_15sec. See the comment in
- * phy_ac.c.
+ * Un giro del watchdog, a cadenza di un secondo dal bring-up alla discesa
+ * della radio: fase di campionamento, statistiche, ogni dieci giri il measure
+ * block, ogni trenta il dump della regione. Decide da solo cosa portare sul
+ * giro, dal contatore @wd_turns; il chiamante da' solo il tick. Vedi il
+ * commento in phy_ac.c.
  */
-void b43_phy_ac_watchdog(struct b43_wldev *dev, bool noise_cal);
+void b43_phy_ac_watchdog(struct b43_wldev *dev);
 bool b43_phy_ac_txpwr_recalc(struct b43_wldev *dev);
 
 /*
@@ -837,10 +757,9 @@ bool b43_phy_ac_txpwr_recalc(struct b43_wldev *dev);
  * da beacon0.
  *
  * Non e' codice del PHY e il PHY non decide di ricaricare un beacon: nel driver
- * la chiama mac80211 quando il beacon cambia. Che la chiami la fase probe e' lo
- * stesso compromesso di @probe_watchdog_tick -- un evento asincrono che cade
- * dentro un ciclo che l'harness non puo' interrompere. Il TODO per rimetterla
- * al suo posto e' in docs/retrace-todo.md.
+ * la chiama mac80211 quando il beacon cambia. Il PHY la chiama solo per le
+ * ricariche che il vendor mette dentro la coda del bring-up, vedi
+ * @beacon_reload_pre; il debito e' in docs/retrace-todo.md.
  */
 void b43_ac_beacon_reload(struct b43_wldev *dev, unsigned int which);
 
@@ -851,7 +770,7 @@ void b43_ac_beacon_reload(struct b43_wldev *dev, unsigned int which);
  * patches/0011, che e' static in main.c e che il PHY non chiama -- e sta qui
  * per la stessa ragione di b43_ac_beacon_reload(): il momento lo conosce
  * questa fase, l'operazione no. Su hardware i due momenti sono l'avvio del
- * check e l'evento CAC_FINISHED di mac80211.
+ * check e il bss-up che lo segue.
  */
 void b43_ac_cac_match_gate(struct b43_wldev *dev, bool restore);
 
