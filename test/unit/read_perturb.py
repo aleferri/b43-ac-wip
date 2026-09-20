@@ -24,8 +24,15 @@ Usage, after a gates.sh run that kept its working files:
 import subprocess, re, sys, os
 
 AC_TRACE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ac_trace')
+
+# Every bit, because a consumer that keeps one field and drops the rest is
+# invisible to any smaller set: PHY 0x0140, which the port consumes as
+# (read & 0x0800) | 0x05f4, only flips to CONSUMED under the bit 11 mask. The
+# full sweep costs 89 s against 58 on the cold01 census, which is not a reason
+# to miss one.
 MASKS = os.environ.get('MASKS',
-    '0x0001 0x0002 0x0004 0x0010 0x0040 0x0100 0x0400 0x1000 0x4000 0x8000').split()
+    '0x0001 0x0002 0x0004 0x0008 0x0010 0x0020 0x0040 0x0080 '
+    '0x0100 0x0200 0x0400 0x0800 0x1000 0x2000 0x4000 0x8000').split()
 
 # candidates: every read key in the census
 cands=[]

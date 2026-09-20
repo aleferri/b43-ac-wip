@@ -344,6 +344,12 @@ struct b43_phy_ac {
 	/* L'avviso di campione fuori dal misurato si emette una volta sola. */
 	bool crs_noise_warned;
 	/*
+	 * Il blocco E delle soglie CRS e' dovuto al prossimo campione di
+	 * rumore che arriva: la coda del bring-up arma, e
+	 * b43_phy_ac_noise_sample_done() lo emette e azzera il flag.
+	 */
+	bool crs_update_pending;
+	/*
 	 * Ricariche del template beacon che il vendor mette fra la host-flag
 	 * clear e la cella 0x0026, cioe' dentro la coda del bring-up. Sono
 	 * dello stack sopra il driver e il conteggio viene dal chiamante;
@@ -773,6 +779,15 @@ void b43_ac_beacon_reload(struct b43_wldev *dev, unsigned int which);
  * check e il bss-up che lo segue.
  */
 void b43_ac_cac_match_gate(struct b43_wldev *dev, bool restore);
+
+/*
+ * Il completamento del campione di rumore: il core lo chiama dal suo percorso
+ * di interruzione, non il PHY dalla coda di una funzione. Vedi il commento
+ * sulla definizione.
+ */
+void b43_phy_ac_noise_sample_done(struct b43_wldev *dev);
+
+/* Il valore di shm 0x00ce, che anche l'harness emette; derivazione in phy_ac.c. */
 u16 b43_phy_ac_beacon_pwr_offset(struct b43_wldev *dev);
 
 /* Helper trasversali al confine MAC/PHY; razionale in helpers_phy_ac.c. */

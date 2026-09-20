@@ -82,7 +82,7 @@ directory di segmenti.
 ```sh
 ./gates.sh                                             # cold01 ch36 bw20
 ./gates.sh /tmp/cold/cold05-ch52-bw20.txt     # un altro segmento
-./gates.sh /tmp/cold/cold[0-9][0-9]-ch*.txt   # tutti e 26
+./gates.sh /tmp/cold/cold[0-9][0-9]-ch*.txt   # tutti e 43
 
 unzip -d /tmp/hot ../../router-data/d6220/hot-sweep.zip
 ./gates.sh --hot                                       # tre segmenti up
@@ -217,9 +217,9 @@ valere sull'agcombo, che quell'hook non lo ha.
 ### `VAL_NONDET` — celle il cui valore non e' prevedibile
 
 Oggi due: **BSLOTS** e **REGGAP** dei quattro blocchi EDCFQ. BSLOTS e' il
-backoff estratto a caso all'inizio del contention window -- misurato su 26
+backoff estratto a caso all'inizio del contention window -- misurato su 43
 segmenti e quattro code, cade uniformemente in `[0, CWMIN]` -- e REGGAP e'
-`AIFS + BSLOTS`, verificato su tutti e 104 i punti. Si confrontano indirizzo,
+`AIFS + BSLOTS`, verificato su tutti e 172 i punti. Si confrontano indirizzo,
 classe e posizione, non il valore.
 
 Il criterio per entrare qui e' stretto: il valore deve essere **nondeterministico

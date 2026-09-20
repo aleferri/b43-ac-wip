@@ -318,9 +318,24 @@ Due correzioni che i dati impongono sulla descrizione di riferimento:
 La finestra invece e' confermata: 4142 vi cade dentro e le tre misure
 precedenti sono tutte sopra.
 
-Verificato su **tutti i 52 segmenti** dello sweep d6220: la simulazione del
-criterio riproduce la sequenza di indici osservata. La convergenza dipende dalla
-larghezza, e i dati la spiegano:
+Rifatto sul set corrente con `reverse-tools/rxiq_points.py`: 43 segmenti a
+freddo e 44 `up`, **148 punti di soluzione**, potenza calcolata dai round come
+sopra. La sequenza di indici e' `4, 2, 1, 0` e compare tale e quale su 37 dei 43
+segmenti a freddo -- i sei che non la fanno sono i radar-meteo, che la cal non
+la eseguono affatto.
+
+Il criterio regge su **128 punti su 148**: tutti i passi prima dell'arresto
+stanno sopra la finestra e il passo d'arresto ci cade dentro. Per larghezza,
+22 su 22 a 80 MHz, 39 su 40 a 40 MHz, 67 su 86 a 20.
+
+I 19 che restano sono tutti lo stesso caso: catena 1, 20 MHz, da ch100 in su.
+La ricerca arriva a indice 0 -- il fondo scala -- e li' si ferma con la potenza
+appena sopra il bordo alto: da 5808 a 6780 contro 5790, cioe' fra lo 0.3% e il
+17% oltre. Non e' il criterio che sbaglia, e' il fondo scala che arriva prima
+della finestra, e i dati non dicono se il vendor accetti quel residuo o se il
+bordo alto sia un po' piu' in su di 5790.
+
+La convergenza dipende dalla larghezza, e i dati la spiegano:
 
 | BW | ultimo passo | esito |
 |---|---|---|
@@ -357,8 +372,9 @@ di misura rumore/RSSI del PHY, usata dalla finalize in 4 round convergenti e dal
 watchdog in round singoli.
 
 I 4 campi gain dell'arming RX sono selezionati dalla **larghezza**, identici fra
-fase di cal e tick periodico. Misurato sullo sweep d6220 (52 segmenti,
-26 configurazioni):
+fase di cal e tick periodico. Rimisurato sugli 87 segmenti del set corrente,
+freddo e caldo: la tabella regge senza eccezioni, l'unico altro valore che
+compare su quei campi e' lo zero del disarmo.
 
 | campo | BW20 | BW40 | BW80 |
 |---|---|---|---|

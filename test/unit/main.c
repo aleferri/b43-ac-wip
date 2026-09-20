@@ -632,6 +632,9 @@ static void emit_core_conf_tx_passes(void);
  *   TPL     bss_info_changed del core     -> la ricarica del template, che e'
  *                                            del core e la emette l'harness
  *   BSS_UP  start_ap dopo il CAC          -> b43_phy_ac_bss_up()
+ *   NOISE   il campione di rumore pronto   -> b43_phy_ac_noise_sample_done(),
+ *                                            che su hardware arriva dal
+ *                                            tasklet del core
  *
  * Quanti siano e quando cadano non e' del driver: e' quanto e' durata la
  * cattura e cosa ha fatto lo stack nel frattempo. Il driver decide solo cosa
@@ -664,6 +667,8 @@ static void run_timeline(void)
 			b43_ac_beacon_reload(&g_wldev, g_ac.beacon_reload_done++);
 		else if (!strcmp(kind, "BSS_UP"))
 			b43_phy_ac_bss_up(&g_wldev);
+		else if (!strcmp(kind, "NOISE"))
+			b43_phy_ac_noise_sample_done(&g_wldev);
 		else {
 			fprintf(stderr, "test: unknown timeline event %s\n", kind);
 			exit(1);

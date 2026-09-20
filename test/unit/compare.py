@@ -647,9 +647,9 @@ VAL_TOK = re.compile(r'val=(?:0x[0-9a-fA-F]+|UNDEFINED)')
 #
 # BSLOTS e REGGAP dei quattro blocchi EDCFQ: BSLOTS e' il backoff estratto a
 # caso all'inizio del contention window, e REGGAP e' AIFS + BSLOTS. Misurati su
-# tutti e 26 i segmenti e tutte e quattro le code, 104 punti: BSLOTS cade
+# tutti e 43 i segmenti e tutte e quattro le code, 172 punti: BSLOTS cade
 # uniformemente in [0, CWMIN] -- 0..15 su best effort e background, 0..7 su
-# video, 0..3 su voce -- e la relazione di REGGAP regge su ognuno dei 104.
+# video, 0..3 su voce -- e la relazione di REGGAP regge su ognuno dei 172.
 # Non e' un'eccezione che nasconde un difetto: e' una cella nondeterministica,
 # e pretenderne il valore vorrebbe dire indovinare un numero casuale.
 VAL_NONDET = [

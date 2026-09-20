@@ -909,15 +909,18 @@ void b43_phy_ac_rxiqcal_dds_seed_tone(struct b43_wldev *dev, int step)
  * nessuno ha visto. Un conteggio di catene fuori tabella prende percio'
  * coremask e lo dichiara, invece di estrapolare.
  *
- * Il predicato e' il primo bring-up piu' la sotto-banda sotto i 5250 MHz,
- * cioe' il gruppo 0 di b43_phy_ac_pa5g_group(). Lo separa dalla guardia radar
- * -- che qui stava e che sui 26 segmenti vecchi dava lo stesso risultato,
- * perche' la' ogni canale con la guardia stava sopra la soglia e nessun canale
- * senza guardia stava sopra -- lo sweep a 43 segmenti: ch144-165 non hanno la
- * guardia e stanno sopra i 5250, e il vendor ci porta coremask su tutti e
- * otto i segmenti che li coprono (sei a 20 MHz, due a 40). A caldo la coppia
- * e' coremask su tutti e 52 i segmenti, dove il primo bring-up e' finito da un
- * pezzo, e quel termine resta.
+ * Il predicato e' la sola sotto-banda, il gruppo 0 di b43_phy_ac_pa5g_group().
+ * Lo separa dalla guardia radar -- che qui stava e che sul set di catture
+ * precedente dava lo stesso risultato, perche' la' ogni canale con la guardia
+ * stava sopra i 5250 e nessun canale senza guardia stava sopra -- lo sweep a
+ * 43 segmenti: ch144-165 non hanno la guardia e stanno sopra i 5250, e il
+ * vendor ci porta coremask su tutti e otto i segmenti che li coprono (sei a
+ * 20 MHz, due a 40).
+ *
+ * Non c'e' un termine sul primo bring-up. Sui 44 segmenti up dello sweep a
+ * caldo la coppia parziale c'e', sugli stessi sei canali dei freddi; sui 52 up
+ * del set precedente era coremask ovunque, ed e' quella assenza ad avere
+ * giustificato il termine.
  */
 enum b43_phy_ac_chain_site {
 	B43_PHY_AC_CHAIN_SETUP,		/* channel setup (x2) e down */
@@ -945,8 +948,7 @@ static void b43_phy_ac_chainmask_block(struct b43_wldev *dev,
 	u16 mask = ac->coremask;
 	const u16 *pair = NULL;
 
-	if ((ac->status_mask & B43_PHY_AC_STATE_FIRST_BRINGUP) &&
-	    b43_phy_ac_pa5g_group(dev, 5000 + 5 * ac->cal_channel) == 0) {
+	if (b43_phy_ac_pa5g_group(dev, 5000 + 5 * ac->cal_channel) == 0) {
 		/*
 		 * Le catene popolate, non i core del silicio: la prova che
 		 * lega la tabella alle board e' aa5g/txchain, cioe' coremask.
@@ -1018,6 +1020,34 @@ static void b43_phy_ac_chainmask_block(struct b43_wldev *dev,
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   8703-8762, 9313-9372, 28607-28634]
  */
+static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev)
+{
+	B43_AC_FN();
+	struct b43_phy_ac *ac = dev->phy.ac;
+	const struct b43_ppr_ac *ppr = &ac->txpwr_ppr;
+	const u8 *row = b43_ppr_ac_row_for_width(ppr, ac->cal_width);
+	u8 max = b43_ppr_ac_get_max(ppr);
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_prb_rsp_rates); i++) {
+		const struct b43_phy_ac_prb_rsp_rate *r =
+			&b43_phy_ac_prb_rsp_rates[i];
+		u16 tab = r->cck ? B43_AC_RT_DIRMAP_B : B43_AC_RT_DIRMAP_A;
+		u16 ptr = b43_shm_read16(dev, B43_SHM_SHARED,
+					 tab + r->dirmap * 2);
+		u16 cell = (u16)(2 * ptr + B43_AC_RT_RATE_PO);
+		u16 val;
+
+		if (r->cck)
+			val = b43_phy_ac_cck_rate_po(ac);
+		else
+			val = (u16)((max - row[r->mcs]) * 4);
+
+		b43_shm_read16(dev, B43_SHM_SHARED, cell);
+		b43_shm_write16(dev, B43_SHM_SHARED, cell, val);
+	}
+}
+
 /*
  * shm 0x00ce: la potenza del rate del beacon, misurata sulla riga a 20 MHz.
  *
@@ -1050,34 +1080,6 @@ u16 b43_phy_ac_beacon_pwr_offset(struct b43_wldev *dev)
 	u8 max = b43_ppr_ac_get_max(ppr);
 
 	return (u16)((max - ppr->rates.mcs_20[0]) * 4);
-}
-
-static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev)
-{
-	B43_AC_FN();
-	struct b43_phy_ac *ac = dev->phy.ac;
-	const struct b43_ppr_ac *ppr = &ac->txpwr_ppr;
-	const u8 *row = b43_ppr_ac_row_for_width(ppr, ac->cal_width);
-	u8 max = b43_ppr_ac_get_max(ppr);
-	unsigned int i;
-
-	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_prb_rsp_rates); i++) {
-		const struct b43_phy_ac_prb_rsp_rate *r =
-			&b43_phy_ac_prb_rsp_rates[i];
-		u16 tab = r->cck ? B43_AC_RT_DIRMAP_B : B43_AC_RT_DIRMAP_A;
-		u16 ptr = b43_shm_read16(dev, B43_SHM_SHARED,
-					 tab + r->dirmap * 2);
-		u16 cell = (u16)(2 * ptr + B43_AC_RT_RATE_PO);
-		u16 val;
-
-		if (r->cck)
-			val = b43_phy_ac_cck_rate_po(ac);
-		else
-			val = (u16)((max - row[r->mcs]) * 4);
-
-		b43_shm_read16(dev, B43_SHM_SHARED, cell);
-		b43_shm_write16(dev, B43_SHM_SHARED, cell, val);
-	}
 }
 
 /*
@@ -1701,7 +1703,7 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
  * reproduce the 20 MHz ceilings and, through the minimum over the block, will
  * bound 40 and 80 MHz where the vendor does not. That is the regulatory
  * domain's policy, not a port defect. The harness reproduces the vendor's
- * first bring-up through AC_MAX_POWER_MAP; see test/unit/gates.sh.
+ * ceiling through AC_MAX_POWER_MAP, in both conditions; see test/unit/gates.sh.
  */
 static u16 b43_phy_ac_reg_ceiling(struct b43_wldev *dev)
 {
@@ -1986,17 +1988,18 @@ static void b43_phy_ac_txpwrctrl_setup(struct b43_wldev *dev, u16 freq)
 	 * pa5g sub-band. The rest of the table is zero: rev 11 has no 20 MHz
 	 * field, and pdoffsetcckma is zero on the one board that declares it.
 	 *
-	 * Read off all 104 segments of the three sweeps, which write three
-	 * payloads and no other: 0x0202 on entries 1/5/6 on the d6220 (two
-	 * cores), 0x020202 on agcombo (three), and on agcombo alone entry 10 =
-	 * 0x010101 on ch100 and up at every width -- exactly the board whose
-	 * pdoffset80ma is 0x0100, with the 1 in the sub-band-2 nibble, against
-	 * 0 on the other two. The 80 MHz link is therefore measured on two
-	 * boards and three sub-bands. The 40 MHz link is by the same encoding:
-	 * all three boards carry pdoffset40ma = 0x3222, so 2 on sub-bands 0-2
-	 * is what they write and sub-band 3 (nibble 3) is not captured. It is
-	 * not the mcsbw*po table: those nibbles differ between the two boards
-	 * and between their bands, and the payload does not follow them.
+	 * Read off all 139 segments of the four sweeps -- d6220 cold and hot,
+	 * agcombo cold and hot -- which write four payloads and no other:
+	 * 0x0202 on entries 1/5/6 on the d6220 (two cores) below UNII-3 and
+	 * 0x0303 on ch149-165, 0x020202 on agcombo (three cores), and on
+	 * agcombo alone entry 10 = 0x010101 on ch100 and up at every width --
+	 * exactly the board whose pdoffset80ma is 0x0100, with the 1 in the
+	 * sub-band-2 nibble, against 0 on the other two. The 40 MHz link is by
+	 * the same encoding: all three boards carry pdoffset40ma = 0x3222, and
+	 * the 17 UNII-3 segments of the d6220 write the 3 of sub-band 3, so
+	 * every nibble of that field is now observed. It is not the mcsbw*po
+	 * table: those nibbles differ between the two boards and between their
+	 * bands, and the payload does not follow them.
 	 */
 	for (core = 0; core < num_cores; core++) {
 		const struct ssb_sprom *sp = dev->dev->bus_sprom;
@@ -10292,10 +10295,17 @@ void b43_phy_ac_watchdog(struct b43_wldev *dev)
 		if (ac->wd_turns % 30 == 29)
 			b43_phy_ac_wd_region_dump(dev);
 
-		b43_phy_ac_wd_body(dev, ac->wd_turns % 10 == 9, true);
+		b43_phy_ac_wd_body(dev, ac->wd_turns % 10 == 9, false);
 
+		/*
+		 * Dove il check di disponibilita' e' pendente il blocco E non
+		 * esce dalla coda del bring-up, e tocca al primo giro armarlo:
+		 * lo emette il campione che arriva, come nell'altro caso, non
+		 * la fine del giro. Emetterlo qui lo mette otto op prima del
+		 * latch e con il campione del giro precedente.
+		 */
 		if (k == 1 && !b43_phy_ac_may_calibrate_tx(dev))
-			b43_phy_ac_crs_block_e(dev);
+			ac->crs_update_pending = true;
 	}
 
 	ac->wd_turns++;
@@ -10595,6 +10605,40 @@ static void b43_phy_ac_crs_block_e(struct b43_wldev *dev)
 	b43_mac_enable(dev);
 }
 
+/*
+ * Il completamento del campione di rumore: la finestra statistiche si legge
+ * qui, e qui esce il blocco E delle soglie CRS se la coda del bring-up lo ha
+ * armato. Non e' la coda di un'altra funzione del PHY: e' un punto di rientro
+ * che il core chiama dal suo tasklet, l'equivalente di quel che in brcmsmac
+ * fa brcms_c_dpc() su MI_BG_NOISE.
+ *
+ * Perche' sia un contesto a parte lo dice la CPU della cattura, ed e' l'unica
+ * cosa in tutta la traccia che lo dica: delle classi con almeno venti
+ * occorrenze, le sole viste su una CPU sola sono le otto letture di questo
+ * blocco -- 0x008c e la finestra 0x0308-0x0314, 2665 volte ciascuna, tutte su
+ * cpu1 -- mentre il setup, la spazzata, il clear, il cambio di modo, il poll
+ * del CAC e le scritture CRS della coda del channel setup si distribuiscono su
+ * entrambe. L'etichetta non e' rumore: dentro 1567 spazzate contigue da 18
+ * letture non cambia mai. E il contesto cambia fra due op adiacenti:
+ * `OBJ.RD 0x014e`, l'ultima lettura del poll, sta su cpu0 1298 volte e il
+ * latch che la segue di una op sta su cpu1 tutte e 4255.
+ *
+ * Che il campione sia proprio quello di rumore resta un'ipotesi: brcmsmac non
+ * ha la AC PHY, e li' il campione lo arma il watchdog e la callback non tocca
+ * le soglie CRS. Quel che e' misurato e' il contesto, non il nome.
+ */
+void b43_phy_ac_noise_sample_done(struct b43_wldev *dev)
+{
+	struct b43_phy_ac *ac = dev->phy.ac;
+
+	B43_AC_FN();
+	b43_phy_ac_wd_stats_tail(dev);
+
+	if (ac->crs_update_pending) {
+		ac->crs_update_pending = false;
+		b43_phy_ac_crs_block_e(dev);
+	}
+}
 
 /*
  * Everything the driver emits once the bring-up is over: the host-flag clear
@@ -10670,16 +10714,37 @@ static void b43_phy_ac_post_bringup_tail(struct b43_wldev *dev)
 
 	/*
 	 * Il latch della finestra e il blocco E delle soglie CRS: dietro la
-	 * cella a 0xffff quando le calibrazioni sono corse (cold26, cold04, e
-	 * ogni canale senza guardia tranne cold01, che ha il primo giro del
-	 * watchdog in ritardo e collassato). Dove il check e' pendente non c'e'
-	 * niente da latchare qui e il blocco E arriva dietro il latch del primo
-	 * giro pieno del watchdog, vedi b43_phy_ac_watchdog().
+	 * cella a 0xffff quando le calibrazioni sono corse. Dove il check e'
+	 * pendente non c'e' niente da latchare qui e il blocco E arriva dietro
+	 * il latch del primo giro pieno del watchdog, vedi
+	 * b43_phy_ac_watchdog().
+	 *
+	 * TODO: questi due non stanno qui. Sono il completamento del campione
+	 * di rumore, che questa coda arma e che arriva quando il campione e'
+	 * pronto, e vanno spostati su un punto di rientro che il core chiami --
+	 * l'equivalente di wlc_phy_noise_sample_intr() del vendor. Qui stanno
+	 * perche' su 29 segmenti a freddo su 43 il completamento cade a una op
+	 * da questa cella e l'ordine torna lo stesso.
+	 *
+	 * Che siano un contesto a parte, e non la coda di questa funzione, lo
+	 * dice la CPU: la lettura di 0x008c che apre il latch sta su cpu1 su
+	 * **tutte e 4758** le sue occorrenze dei tre sweep, d6220 a freddo e a
+	 * caldo e agcombo, mentre tutto quel che le sta intorno -- le tabelle
+	 * del setup, la spazzata, il clear, il cambio di modo, il poll del CAC
+	 * e la scrittura CRS di chanspec_tail -- si distribuisce su entrambe.
+	 * Su 21 dei 43 segmenti a freddo la cella qui sopra e' su cpu0 e il
+	 * latch che la segue di una op e' su cpu1: una continuazione sincrona
+	 * non cambia CPU. E le 63 scritture CRS che seguono un latch sono tutte
+	 * su cpu1, mentre le 86 che non lo seguono si dividono 28/58 come il
+	 * resto del setup.
+	 *
+	 * Finche' il completamento non e' un evento, i tre ordini che la
+	 * cattura mostra nei 3 ms dopo questa cella non sono riproducibili:
+	 * latch, blocco E, poll su 29 segmenti; poll, latch, blocco E su ch36 a
+	 * 80 MHz; un giro di watchdog intero in mezzo su ch36 a 20 MHz.
 	 */
-	if (b43_phy_ac_may_calibrate_tx(dev)) {
-		b43_phy_ac_wd_stats_tail(dev);
-		b43_phy_ac_crs_block_e(dev);
-	}
+	if (b43_phy_ac_may_calibrate_tx(dev))
+		dev->phy.ac->crs_update_pending = true;
 
 	/*
 	 * Qui la coda del bring-up finisce. Da questo punto il flusso e' fatto
@@ -10738,8 +10803,9 @@ static void b43_phy_ac_down(struct b43_wldev *dev)
 
 	/*
 	 * Third and last pass of the twelve-rate loop, with the same shm
-	 * prologue as the second one: the double rewrite of 0x00cc and the two
-	 * zeroes on 0x00ce/0x00d0, then the chain-mask block.
+	 * prologue as the second one: the double rewrite of 0x00cc, the beacon
+	 * power offset on 0x00ce and the zero on 0x00d0, then the chain-mask
+	 * block.
 	 *
 	 * The count is an invariant of the hardware and not of this capture: all
 	 * 43 cold segments have exactly three writes of 0x00ce and all 44 up
@@ -10747,8 +10813,13 @@ static void b43_phy_ac_down(struct b43_wldev *dev)
 	 * every channel and every bandwidth. That is what separates this pass
 	 * from the beacon template reloads a few thousand ops earlier, whose
 	 * count runs from 7 to 21 over the cold segments because the host
-	 * decides it. Only 0x00d0 is a zero in the vendor: 0x00ce carries a
-	 * value, see docs/retrace-todo.md.
+	 * decides it.
+	 *
+	 * 0x00ce is derived, see b43_phy_ac_beacon_pwr_offset(). 0x00d0 is the
+	 * one zero left: the ucode slices it as a bitfield, so it is not
+	 * padding, but the vendor leaves it at zero on all 849 writes of the
+	 * three boards, cold and hot, and no condition these captures cover
+	 * turns it on. A condition that does means this site has to be revised.
 	 */
 	/*
 	 * The maccontrol bracket that opens the block: clear bit 20, then

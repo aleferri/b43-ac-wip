@@ -7,7 +7,9 @@ programming. Il valore era il residuo non spiegato dei due gate `full` e
 **Risolto per la configurazione validata.** Il banco porta un **offset sulla
 scala della soglia CRS** scritta immediatamente prima: la quantità con
 significato è la somma `crs + off`, cioè una soglia assoluta, e l'offset è
-`max(0, target − crs)`. Con `target` per sito di chiamata e per chip il banco
+`target − crs` **con segno** -- il vendor scrive il caso negativo come byte
+esteso (`0xfffe` per -2), e la forma `max(0, ...)` che questa riga portava
+azzerava proprio quei casi. Con `target` per sito di chiamata e per chip il banco
 combacia op-per-op su entrambi i gate. La derivazione è in §4.
 
 Il §5 identifica cosa sono quelle soglie: **entry di un ladder discreto**,
@@ -15,14 +17,67 @@ trovato nel blob D6220 a `.rodata +0x040e84` e attribuito a
 `wlc_phy_crs_min_pwr_cal_acphy`. La cal misura una potenza di rumore e ne
 ricava un **indice** nella riga.
 
-**Lo sweep chiude la questione dell'indice.** Le 32 osservazioni su 16 canali
-BW20 danno il ladder completo, `{45, 48, 53, 60}` grezzo, che con il bump a
-freddo di 4 compare come `{49, 52, 57, 64}`. E la misura che seleziona l'indice
-e' identificata: **`OBJ 0x0308`**, la statistica di rumore che il watchdog
-latcha dalla finestra SHM `0x0308-0x0314`.
+## Rimisurato sul set corrente: cosa regge e cosa no
 
-La regola, esatta su tutte le 66 scritture CRS dei 32 segmenti e verificata dal
-port che gira su 32/32:
+Tre misure sugli 87 segmenti del d6220 (43 a freddo, 44 `up`), da leggere prima
+di tutto quel che segue.
+
+**Il ladder regge, e piu' largo di prima.** Ogni valore CRS osservato sul byte
+basso di `0x0324`, in entrambe le condizioni, e' una entry della riga della
+propria larghezza piu' il bump di 4, senza una sola eccezione:
+
+| larghezza | valori osservati | indici nella riga |
+| --- | --- | --- |
+| 20 MHz | 52, 55, 57, 58 | 1, 2, 3, 4 |
+| 40 MHz | 54, 58, 60 | 3, 5, 6 |
+| 80 MHz | 50, 52, 54, 56, 59, 61 | 2, 3, 4, 5, 6, 7 |
+
+Gli indici usati sono dunque da 1 a 7, non i tre di prima, e all'80 MHz la riga
+e' percorsa quasi tutta. Cade insieme a questo l'idea che a 20 MHz alcuni valori
+vengano da un altro percorso perche' non stanno nella riga: col bump ci stanno
+tutti, `49` e `64` del set precedente compresi (`LUT20[0]+4` e `LUT20[6]+4`). Se
+i percorsi sono due va deciso per sito, non per valore.
+
+**I due byte del banco non portano lo stesso valore.** Su 582 coppie
+alto/basso della stessa scrittura, 456 coincidono e **126 no** -- per esempio
+alto `0x00` con basso `0xfb`, o alto `0xfb` con basso `0xfe`. Le due meta' sono
+due catene, e che divergano e' la cosa da spiegare: finche' si leggevano come
+un valore solo, il caso non si poneva.
+
+**Il port riproduce il banco su 19 segmenti a freddo su 43.** Confronto
+op-per-op della sequenza sul byte basso di `0x0910`, port contro vendor, su
+tutti e 43:
+
+| larghezza | esatti | divergenti |
+| --- | --- | --- |
+| 20 MHz | 9 su 25 | 16 |
+| 40 MHz | 4 su 12 | 8 |
+| 80 MHz | 6 su 6 | — |
+
+I modi di sbagliare sono due e vanno separati. **Conteggio**: su ch104-116 e
+ch140 a 20 MHz il vendor scrive tre valori e il port tre zeri, su ch60 il vendor
+quattro e il port tre, su ch132-136 il port ne scrive uno in piu'. **Valore**:
+sui canali DFS a 20 MHz il vendor scrive la firma `00, fb, fe` che sul set
+precedente non compariva, e il port scrive zeri; su ch149, ch153 e ch161 il port
+scrive `ff` dove il vendor scrive `00`, mentre su ch157 e ch165 scrivono
+entrambi `ff` -- cioe' dentro UNII-3 il port non sbaglia per banda, sbaglia per
+canale.
+
+L'80 MHz esatto su 6 di 6, `cold43` con il suo `0xfc` compreso, dice che la
+forma implementata non e' sbagliata in se': e' l'indice che manca, esattamente
+come il TODO in `phy_ac.c` dichiara.
+
+**Lo sweep precedente sembrava chiudere la questione dell'indice.** Le sue 32
+osservazioni su 16 canali BW20 davano `{45, 48, 53, 60}` grezzo, cioe' quattro
+indici, e la misura che li seleziona e' identificata: **`OBJ 0x0308`**, la
+statistica di rumore che il watchdog latcha dalla finestra SHM `0x0308-0x0314`.
+Il set corrente conferma la misura e allarga gli indici a sette, quindi la
+regola a tre soglie qui sotto e' sotto-dimensionata: vale per il campione dei 26
+segmenti di allora e non copre i valori nuovi.
+
+La regola di allora, esatta su tutte le 66 scritture CRS dei 32 segmenti di
+quel set e verificata dal port che girava 32/32, e che oggi il port riproduce su
+19 segmenti di 43:
 
     campione < 1526    indice 1
     campione < 1800    indice 3
@@ -48,26 +103,29 @@ basta: ch36 con `crs` 49 da' offset 0, ch40-48 con `crs` 52 danno +5, e ch48 nei
 suoi due cicli da' 0 e +5 a parita' di `crs`. Tre somme distinte, non due, e un
 target che non e' costante nel sito.
 
-**Sul d6220 a freddo la somma e' invece costante per larghezza.** I 26 segmenti
-dello sweep, sito finalize (il secondo blocco; il primo, `chanspec_tail`, scrive
-sempre `off = 0` come gia' detto):
+**La somma per larghezza, rimisurata sui 43 segmenti a freddo.** Sito finalize
+(il secondo blocco; il primo, `chanspec_tail`, scrive sempre `off = 0` come gia'
+detto). Dei 43 segmenti, 30 hanno un secondo blocco:
 
-| larghezza | somma | su quanti | eccezioni |
+| larghezza | somma prevalente | su quanti | altre somme |
 | --- | --- | --- | --- |
-| 20 MHz | 52 | 15 su 16 | `cold01` da' 57 |
-| 40 MHz | 54 | 6 su 7 | `cold19` da' 58 |
-| 80 MHz | 52 | 3 su 3 | — |
+| 20 MHz | 57 | 11 su 15 | 52, 55, 58 (uno, uno, due) |
+| 40 MHz | 54 | 7 su 10 | 58 (due), 60 (uno) |
+| 80 MHz | 52 | 5 su 5 | — |
 
-Il `crs` che entra varia (52 su ch36-64, 57 su ch104-136, 58 su ch140 a 20 MHz)
-e l'offset lo compensa fino alla somma, con segno: `(57,-5,52)` su sei segmenti,
-`(58,-6,52)` su `cold16`, `(58,-4,54)` su due a 40 MHz.
+Sul set precedente la prevalente a 20 MHz era 52 su 15 di 16, con `cold01` a 57
+come unica eccezione; oggi la prevalente e' 57, cioe' il valore che allora era
+l'eccezione. **La somma non e' una costante di larghezza**: e' costante solo
+all'80 MHz, e alle altre due larghezze e' una distribuzione. Il `target` per
+sito del §4 va quindi riaperto, perche' poggiava su quella costanza.
 
 Due cose che questo dice e che valgono per il §4. La prima: il `target = 57` del
-sito finalize per il 4352 e' fittato su `cold01`, **l'unico segmento fuori scala
-della sua famiglia**; su 15 dei 16 a 20 MHz la somma e' 52 e su tutti e tre gli
-80 MHz pure. La seconda: 54 non sta nel ladder `{49, 52, 57, 64}` del §5, quindi
-o il ladder a 40 MHz e' un altro, o la somma non e' la entry come il §5.4
-sostiene.
+sito finalize per il 4352, che sul set precedente sembrava fittato sull'unico
+segmento fuori scala, sul set corrente e' il caso prevalente a 20 MHz -- cioe'
+il fit era giusto per caso e la giustificazione era sbagliata. La seconda: 54
+non sta nel ladder a 20 MHz del §5, ma sta in quello a 40 (`LUT40[3] + 4`), e la
+misura qui sotto lo conferma: **ogni** valore CRS osservato e' una entry della
+riga della propria larghezza, piu' il bump di 4.
 
 Gli scarti di `cold01` (+5) e `cold19` (+4) non si spiegano con il campione di
 rumore del tick in cui il blocco cade: ne' il rapporto ne' la differenza fra

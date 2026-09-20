@@ -15,6 +15,9 @@ does on each event is the driver's, and none of it is in this file.
           head word of that read, OBJ.RD 0x010e after the host-flag clear.
   POLL    a turn of the 150 ms radar-detector timer: PHY.RD 0x0251. The one
           glued to the arm is the driver's own and is not an event.
+  NOISE   the noise sample completion, which the core delivers from its
+          tasklet. Marker: the read of 0x008c that opens the window latch.
+
   TPL     a beacon template reload by the core (mac80211's bss_info_changed):
           the length write in BTL0/BTL1 followed by a mac_suspend, which is
           what tells these from the ones inside the BSS configuration. Only
@@ -102,6 +105,13 @@ def events(ops):
                     and re.search(r"\ba3=0x0*[1-9a-f]", rest)):
                 out.append((ops[i][0], ops[i][1], "BSS_UP"))
                 break
+
+    # NOISE: il completamento del campione, cioe' il latch della finestra. Il
+    # marcatore e' la lettura di 0x008c, che apre il blocco: e' l'unica cosa
+    # della traccia pinnata su una sola CPU -- 4255 occorrenze su 4255 -- e
+    # quindi un contesto a parte da chi la precede.
+    out += [(ops[i][0], ops[i][1], "NOISE") for i in range(mhf, len(ops))
+            if match(ops[i][2], ops[i][3], "OBJ.RD", 0x8c)]
 
     pre = 0
     for i in range(mhf, len(ops) - 1):
