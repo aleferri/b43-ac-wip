@@ -436,14 +436,126 @@ solo sull'indice 0 e non e' stato rimisurato per sotto-banda.
 partizione di pa5g invece di un'altra non ha prove. Quel che si sa e' che segue
 quella, su 43 segmenti.
 
-### Quel che resta: le LUT si riempiono piu' di una volta
+### Lo scalino segue la sotto-banda anche lui — chiuso
 
-Sul residuo di UNII-3 restano ~200 parole per LUT, e non sono della base: sono
-di una **seconda passata di riempimento**. Su cold23 il port scrive `0xf7fb`
-su `0x0062`, che e' il valore giusto della prima passata, dove il vendor a
-quel punto scrive `0xed00`. Cambia la parola LO, non la base, quindi e' il
-secondo giro di calibrazione a produrre un risultato diverso -- e nell'harness
-quella parola viene dall'oracolo. Da guardare li', non sulla base.
+La sezione sopra lascia in sospeso proprio quella riga, e il residuo era li'.
+Sui segmenti di UNII-3 restavano ~200 parole sbagliate per LUT su `0x0062` e
+`0x0082` -- 400 dei 427 valori sbagliati di cold21, cioe' quasi tutto il suo
+debito -- e su quelli del gruppo 2 ne restavano ~330 su `0x0082`.
+
+**Le due passate non sono due riempimenti.** La lettura precedente -- "il
+vendor riempie la LUT due volte con parole LO diverse" -- e' sbagliata, e il
+controllo e' il core 0: li' la seconda passata scrive `0x0000` su tutte e 128
+le celle, che e' la base nuda e non un risultato di calibrazione. Le due
+passate sono il riempimento di `rxcal_afe_finalize_gain_luts()` e, quattromila
+op piu' tardi, il reset di `iqcal_coeff_tables_reset()`. La seconda quindi
+**misura la base direttamente**, senza doverla dedurre da una differenza:
+
+```
+cold21   0x0042  0x00-0x7f = 0x0000
+         0x0062  0x00-0x1a = 0xf6fb   0x1b-0x7f = 0xec00
+         0x0082  0x00-0x1c = 0xfafb   0x1d-0x7f = 0xf6f6
+```
+
+Letta cosi' su tutti gli 87 segmenti dei due sweep che eseguono la fase -- 36 a
+freddo e 37 `up`, i restanti non la eseguono -- la tabella e' questa, senza
+eccezioni:
+
+| | gruppo 0 e 1 | gruppo 2, ch100-144 | gruppo 3, ch149-165 |
+| --- | --- | --- | --- |
+| `0x0042` | 0 | 0 | 0 |
+| `0x0062` | 0 | 0 | `f6fb`, `ec00` da 0x1b |
+| `0x0082` | `f8fc`, `f6f2` da 0x21 | `fafb`, `f6f6` da 0x1d | `fafb`, `f6f6` da 0x1d |
+
+Cioe' **anche lo scalino segue il gruppo**, sia dove cade sia quanto vale: il
+core 2 passa da `(-8, -4)` a `(-10, -14)` con un gradino di `(-2, -10)` a 0x21
+sotto i 5250, e da `(-6, -5)` a `(-10, -10)` con un gradino di `(-4, -5)` a
+0x1d sopra; il core 1, solo su UNII-3, va da `(-10, -5)` a `(-20, 0)` con un
+gradino di `(-10, +5)` a 0x1b. Il port ne aveva uno solo, `(-2, -10)` a 0x21,
+applicato a tutti i gruppi.
+
+```
+valori sbagliati sui 43 segmenti   9359 -> 3189
+minimo 96.93 -> 99.16   mediana 98.58 -> 99.44   massimo 99.90 invariato
+cold01 e gli altri undici del gruppo 0/1 invariati -- il controllo negativo
+gate periodico MATCH; 10-up-ch104 93.55 -> 95.49, gli altri due fermi
+```
+
+I gradini cadono a 0x21, 0x1d e 0x1b e le loro taglie non hanno una relazione
+visibile fra loro: qui sono tabellati, non derivati, e vale lo stesso **SALAME**
+della sezione sopra.
+
+### Il residuo del gruppo 2 non e' fatto di valori sbagliati
+
+Chiusa la base, il segmento peggiore dello sweep e' cold12 (99.16%) con 163
+valori sbagliati, di cui 127 sono letture: `OBJ.RD 0x0308` e `0x030c`, la
+finestra delle statistiche. **Non sono sbagliate.** Estratte le due sequenze
+di valori latchati e confrontate elemento per elemento, vendor e port danno
+125 valori su 125 identici. Quei 127 sono il conto di `classify()` dopo uno
+spostamento: da un certo punto in poi `difflib` appaia il latch *k* del vendor
+col latch *k+1* del port, stessa chiave e valore diverso, e ogni latch a valle
+ne produce due. **Una** divergenza strutturale, non centoventisette valori.
+
+La divergenza e' il blocco E delle soglie CRS. Ridotto il segmento alla sola
+sequenza latch (`L`) / blocco CRS (`C`):
+
+```
+vendor  C C L L L L L L L L L L L L L L L L L L L L L L L L L L C L L …
+port    C C L C L L L L L L L L L L L L L L L L L L L L L L L L L L L …
+```
+
+Il port lo emette al primo completamento di campione dopo il bring-up -- e'
+l'arm di `k == 1` in `b43_phy_ac_watchdog()` -- il vendor al ventiseiesimo.
+Sedici op fuori posto.
+
+#### Quanto vale davvero, sui 43 segmenti
+
+Contati i blocchi CRS (`PHY.MOD 0x0321` sotto maschera `0x00ff`) e la loro
+posizione in latch su ogni segmento a freddo:
+
+| forma | segmenti |
+| --- | --- |
+| latch 0, valore funzione della sola larghezza (`3a`/`3c`/`3d`) | 43 su 43 |
+| un blocco al latch 1 | 35 su 43 |
+| un blocco al latch 61-62 | tutti e 19 quelli che ci arrivano |
+| blocchi irregolari (latch 12, 21, 26, 40, 45, 50, 53, 70) | 6 segmenti |
+
+Il blocco tardivo e' il **bss-up**: su cold12 sta a 154 ms dall'evento
+`BSS_UP` della timeline, compare su tutti e soli i segmenti DFS che chiudono
+il CAC -- che dura 60 s, da cui il latch ~61 -- e **non** e' un periodico da
+60 s, perche' nessuno dei segmenti che arrivano a 125 giri ne ha uno al giro
+121. Quello il port lo emette gia', da `b43_phy_ac_bss_up()`.
+
+Resta il blocco di mezzo, e il port lo mette al latch 1. Ci azzecca su 35
+segmenti su 43. Sbaglia su quattro -- ch112 (latch 26), ch116 (53), ch132 e
+ch136 (il vendor non ne ha nessuno, due blocchi in tutto) -- piu' due dei sei
+radar-meteo. Il costo e' sedici op per segmento, su sei segmenti.
+
+#### Cosa non lo spiega
+
+Quattro strade provate e chiuse, per non rifarle:
+
+- **non e' un periodico** e non e' `pwork_60sec`: vedi il controllo al giro
+  121 sopra, e il commento di `b43_phy_ac_op_pwork_60sec()`, la cui
+  giustificazione vecchia ("due scritture su 76 dei 78 segmenti") era misurata
+  sul set precedente;
+- **non e' il campione**, e questa e' la prova piu' netta. Con la scala di
+  `b43_phy_ac_crs_note_noise()` il valore di cold12 dipende solo dal campione
+  sopra o sotto 1526: i suoi latch 10 e 21 leggono 1522 e 1532, quindi il
+  valore calcolato passerebbe a `0x34` e tornerebbe a `0x39`, e il vendor su
+  cold12 `0x34` non lo scrive mai. Nessuna regola "emetti quando il valore
+  cambia" sopravvive a questo;
+- **non e' un minimo o una soglia attraversata**: il campione che precede il
+  blocco di cold12 e' 1567, e sei campioni precedenti sono piu' bassi;
+- **non e' `0x008c`**, il puntatore letto in testa a ogni latch: e' costante
+  dentro il segmento (cambia col canale, `0xd06c` su ch108, `0xd070` su ch112)
+  e non si muove mai dove il blocco esce;
+- **non e' il canale**: ch100, ch104, ch108, ch140 e ch144 ce l'hanno al latch
+  1, ch112, ch116, ch128, ch132 e ch136 no, e a 40 MHz ch124 ce l'ha e ch116
+  no.
+
+Finche' non c'e' un testimone, l'arm a `k == 1` resta: sbagliarlo su sei
+segmenti costa meno che toglierlo e sbagliarlo su trentacinque.
 
 ## Il coefficiente b della RX IQ: non e' l'arrotondamento
 
@@ -862,6 +974,15 @@ della probe response dichiarato fuori scopo, non da lavoro sul port: vedi il
 TODO post-WIP piu' sotto.
 
 ### Lo sweep a freddo intero, sullo stesso albero
+
+**Questa tabella e' una fotografia, non lo stato di oggi.** Le colonne "di
+troppo" e "mancanti" sono scese di un ordine di grandezza da quando e' stata
+presa -- `cold02` stava a 98.09% e sta a 99.90%, `cold38` a 98.16% e sta a
+99.40% -- e le due osservazioni che la seguono, sulle famiglie e sui sei
+radar-meteo, si reggono su quei numeri. I numeri correnti, con la stessa
+procedura, sono nel README: minimo 99.16%, mediana 99.44%, massimo 99.90%. Qui
+si tiene la fotografia perche' il ragionamento che porta e' quello che ha
+sciolto la separazione a 5250 MHz, non perche' i numeri valgano ancora.
 
 Tutti e 43 i segmenti, non un campione, rimisurati sul set corrente. Le colonne
 sono la riga `grezzo` del gate, le sue tre voci e il verdetto posizionale:
@@ -2737,6 +2858,65 @@ canale senza guardia la metterebbe alla prova, e non c'e'.
 Da fare: emetterlo fra il pezzo 5 e il pezzo 1 di `b43_phy_ac_wd_turn()`. Il
 dump e' il marcatore bulk piu' le 64 parole, che e' la forma con cui la cattura
 traccia una lettura di regione, non 64 letture separate.
+
+### La fase del dump era il giro d'ingresso contato due volte — chiuso
+
+Emesso il dump, su `cold01` ne usciva uno che il vendor non ha: 64 op di
+troppo, che erano **tutto** il debito di op di troppo del segmento e la prima
+divergenza posizionale, a `@28213`.
+
+Il conto dice dov'era. Misurando su tutti e 43 i segmenti l'indice di giro del
+measure block e del dump, 42 danno `meas=[9, 19, 29, …]` e `dump=[29, 59, 89,
+119]`; `cold01` da' `meas=[10, 20]` e nessun dump. E' l'unico sfasato di uno, e
+l'unico in cui il giro sintetico che `timeline.py` inserisce prima del primo
+cambio di modo dista 1 ms invece di 1.0-1.3 s: li' la testa e il cambio di modo
+sono **una callback sola del vendor** -- il giro d'ingresso -- che il driver
+spezza su due eventi dell'harness. Da quel punto `wd_turns` correva un giro
+avanti a quello del vendor. `AC_WD_PHASE=9` rimetteva a posto il measure block,
+che e' mod 10, e non il dump, che e' mod 30; e `timeline.py`, che il residuo lo
+cercava fra `phase`, `phase+10` e `phase+20`, con 27 giri non ne trovava
+nessuno che tenesse il dump fuori e usciva dal ciclo lasciando quello che ce lo
+metteva.
+
+La fase, del resto, veniva dalla posizione del measure block, che l'evento in
+piu' aveva gia' spostato: anche il predicato che sceglieva il giro d'ingresso,
+`wd_turns % 10 == 9`, era quindi circolare, e sui segmenti a caldo scattava a
+caso -- su `05-up` e `10-up` (fase 19) si', su `01-up` (fase 21) no.
+
+Chiuso cosi': il giro d'ingresso e' mezza callback e **non incrementa
+`wd_turns`**, e a sceglierlo e' `@wd_entry_turn`, che viene dalla cattura come
+`probe_ticks` e le ricariche del beacon. Il testimone e' l'ordine delle quattro
+celle di testa -- `0x010e 0x010c 0x0158 0x015e` d'ingresso contro `0x010e
+0x0158 0x010c 0x015e` a regime -- e `timeline.py` lo legge e lo passa come
+`AC_WD_ENTRY_TURN`; la fase la calcola un giro piu' indietro dove c'e'.
+
+Il censimento dice che non e' un caso isolato, e correla con quando arriva il
+primo callback:
+
+| | giro d'ingresso | spazzata sola | distanza dalla coda del bring-up |
+| --- | --- | --- | --- |
+| 44 `up` a caldo | 44 | 0 | 0.000-0.001 s |
+| 43 a freddo | 1 (cold01) | 42 | 0.001 s / 1.001-1.334 s |
+
+Sugli 87 segmenti non c'e' una eccezione: forma piena se e solo se il callback
+cade entro il millisecondo. Che sia perche' a caldo il timer da un secondo gira
+gia' dal ciclo precedente, mentre a freddo parte col driver e `cold01` e'
+l'unico dove il tick era gia' scaduto, e' la lettura naturale ma non e'
+dimostrata.
+
+Risultato. `cold01` da 99.68% a **99.89%**, 64 op di troppo a zero e
+`compare.py` senza divergenze sul prefisso -- le due tracce differiscono solo
+per le tre op in coda. I tre gate a caldo salgono tutti, perche' li' il
+predicato vecchio sbagliava: `01-up` 91.77 -> **93.55**, `05-up` 93.51 ->
+**95.60**, `10-up` 91.77 -> **94.12**. Gli altri 42 segmenti a freddo non si
+muovono di un'op -- con `AC_WD_ENTRY_TURN=0` il percorso e' lo stesso e la fase
+non cambia -- e il gate periodico non cambia.
+
+Trappola da non ripetere: il primo censimento dell'ordine delle celle di testa
+sui segmenti a caldo diceva 44 su 44 a regime, cioe' l'opposto. Era lo script
+usa-e-getta, che non aveva il fallback di `gates.sh` per quando
+`strip_other_core.py` esce con errore e quindi rileggeva il file del segmento
+precedente. Chi rifa' quel conto a mano copi il fallback.
 
 ## L'header BSS `0x00cc`-`0x00d0`: cosa si sa, su cinque catture
 

@@ -383,6 +383,18 @@ static void mount_board(const struct board_profile *p)
 		if (e && *e)
 			g_ac.wd_turns = (u16)strtoul(e, NULL, 10);
 	}
+
+	/*
+	 * La forma del primo giro dopo il bring-up: piena invece della sola
+	 * spazzata. La cattura lo dice dall'ordine delle quattro celle di
+	 * testa, e reverse-tools/timeline.py lo passa. Vedi @wd_entry_turn.
+	 */
+	{
+		const char *e = getenv("AC_WD_ENTRY_TURN");
+
+		if (e && *e)
+			g_ac.wd_entry_turn = strtoul(e, NULL, 10) != 0;
+	}
 	{
 		const char *e = getenv("AC_SSID_LEN");
 
@@ -2018,9 +2030,17 @@ int main(int argc, char **argv)
 		g_ac.status_mask = B43_PHY_AC_STATE_RX_WAITED |
 				   B43_PHY_AC_STATE_RX_OFDM;
 		g_ac.probe_mode = 0x0004;
-		g_ac.wd_turns = 8;
+		g_ac.wd_turns = 9;
 		g_ac.wd_switch_turns = 9;
 		b43_phy_ac_watchdog(&g_wldev);
+		/*
+		 * Il latch della finestra non e' la coda del giro: arriva col
+		 * campione di rumore, 2 ms dopo e su un'altra CPU, e a freddo
+		 * lo porta l'evento NOISE della timeline. Qui la timeline non
+		 * c'e' e lo consegna il flow, o le ultime otto op
+		 * dell'estratto non hanno chi le emetta.
+		 */
+		b43_phy_ac_noise_sample_done(&g_wldev);
 	} else if (!strcmp(flow, "crsmin")) {
 		/*
 		 * Self-test della catena crsmin (non usa oracolo). Esercita

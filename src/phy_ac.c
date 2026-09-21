@@ -4994,13 +4994,13 @@ static void b43_phy_ac_op_pwork_60sec(struct b43_wldev *dev)
 
 	/*
 	 * Solo se la soglia cambia. Il core chiama questo hook da
-	 * b43_periodic_every60sec() ogni minuto, mentre il vendor riscrive la
-	 * soglia solo quando l'indice della scala si muove: su 76 dei 78
-	 * segmenti degli sweep le scritture CRS sono esattamente due, quelle
-	 * di chanspec_tail() e del blocco E di rxiqcal_finalize(), e nessuna
-	 * cade nei 9-20 s di tick del watchdog che seguono. I due segmenti che
-	 * ne hanno una terza -- cold09 e 03-up -- la fanno quando il campione
-	 * di rumore attraversa la soglia della scala, non a cadenza.
+	 * b43_periodic_every60sec() ogni minuto, e il vendor a cadenza non
+	 * riscrive: contate sui 43 segmenti a freddo del set corrente, le
+	 * scritture CRS sono due sui 22 segmenti corti -- chanspec_tail() e il
+	 * blocco E -- e tre o quattro sui 21 lunghi, dove la terza cade al
+	 * bss-up e non a un multiplo di 60 s. Nessuno dei sei che superano i
+	 * 120 giri ne ha una al giro 121, che e' il controllo: non e' un
+	 * periodico.
 	 *
 	 * Il confronto e' quello che rende questo un ricalcolo che decide:
 	 * `DONE` significa che non c'e' altro da fare, e senza di esso ogni
@@ -7638,40 +7638,42 @@ static u16 b43_phy_ac_loft_add(u16 a, u16 b)
  * Base LOFT LUT entry per core and index, the value iqcal_coeff_tables_reset()
  * writes and the one the calibrated word is added onto.
  *
- * Core 0 never has a base. Core 2 always does, and core 1 has one on the top
- * sub-band only. Both depend on the pa5g group of the channel, which is what
- * the whole 43-segment sweep says once the LUTs are read on every segment
- * instead of on ch36 alone:
+ * E' una funzione a gradino, e il gradino -- dove cade e quanto vale -- segue
+ * il gruppo pa5g del canale insieme alla base. Letta sulla passata di reset,
+ * che scrive la base nuda, su tutti gli 87 segmenti dei due sweep che
+ * eseguono la fase (36 a freddo, 37 `up`), la partizione e' netta e senza
+ * eccezioni:
  *
- *   gruppo 0 e 1, sotto i 5500 MHz     core 1: nessuna   core 2: (-8, -4)
- *   gruppo 2, ch100-144                core 1: nessuna   core 2: (-6, -5)
- *   gruppo 3, ch149-165                core 1: (-10, -5) core 2: (-6, -5)
+ *   gruppo      0x0042      0x0062                    0x0082
+ *   0 e 1       0           0                         f8fc, f6f2 da 0x21
+ *   2           0           0                         fafb, f6f6 da 0x1d
+ *   3           0           f6fb, ec00 da 0x1b        fafb, f6f6 da 0x1d
  *
- * Misurato come differenza fra la parola che il vendor scrive nella LUT e
- * quella che il port ci scrive: sui ventitre segmenti che divergono lo scarto
- * del core 2 e' `(+2, -1)` **identico**, e su tutti e otto quelli di UNII-3
- * quello del core 1 e' `(-10, -5)` identico. Cinque canali per tre larghezze
- * ciascuno, quindi non e' un fit su un punto.
+ * Cioe' per campo: il core 2 parte da `(-8, -4)` sotto i 5250 e da `(-6, -5)`
+ * sopra, e il gradino vale `(-2, -10)` nel primo caso e `(-4, -5)` nel
+ * secondo; il core 1 ha base solo su UNII-3, `(-10, -5)` che diventa
+ * `(-20, 0)`. Il core 0 non ha mai niente.
  *
- * Lo scalino a 0x21 -- `(-2, -10)` in piu' da quell'indice -- resta quello
- * misurato su ch36 e non e' stato rimisurato per sotto-banda.
- *
- * SALAME: perche' la base esista, perche' scatti a 0x21 e perche' segua la
- * partizione di pa5g invece di un'altra non ha prove nelle catture. Quel che
- * si sa e' che segue quella, su 43 segmenti.
+ * SALAME: perche' la base esista, perche' il gradino cada a 0x21, 0x1d o 0x1b
+ * e perche' segua la partizione di pa5g invece di un'altra non ha prove nelle
+ * catture. Quel che si sa e' che segue quella, sugli 87 segmenti.
  */
 static u16 b43_phy_ac_loft_lut_base(struct b43_wldev *dev, unsigned int core,
 				    unsigned int off)
 {
 	unsigned int grp = b43_phy_ac_pa5g_group(dev,
 			5000 + 5 * dev->phy.ac->cal_channel);
-	u16 base;
 
-	if (core < 2)
-		return (core == 1 && grp >= 3) ? 0xf6fb : 0x0000;
-
-	base = (grp >= 2) ? 0xfafb : 0xf8fc;
-	return off <= 0x20 ? base : b43_phy_ac_loft_add(base, 0xfef6);
+	if (core == 0)
+		return 0x0000;
+	if (core == 1) {
+		if (grp < 3)
+			return 0x0000;
+		return off <= 0x1a ? 0xf6fb : 0xec00;
+	}
+	if (grp < 2)
+		return off <= 0x20 ? 0xf8fc : 0xf6f2;
+	return off <= 0x1c ? 0xfafb : 0xf6f6;
 }
 
 /*
@@ -9999,10 +10001,8 @@ static void b43_phy_ac_measure_block(struct b43_wldev *dev)
  * others are read for the clear alone, because without it the counters
  * saturate and the op stream would diverge from the vendor's.
  *
- * Out of scope, documented and not implemented: the 64-word OBJ read sweep of
- * 0x00e0-0x015e that heads the statistics poll in some instances of the tick
- * but not others. The rule for when it appears is not established; the
- * candidate is the DFS channel-availability check.
+ * Every thirtieth turn the poll is headed by the 64-word read sweep of
+ * 0x00e0-0x015e; see b43_phy_ac_wd_region_dump().
  */
 
 /* Rollover-safe read of a 32-bit SHM counter: hi, lo, hi. Always three reads,
@@ -10319,18 +10319,19 @@ void b43_phy_ac_watchdog(struct b43_wldev *dev)
 {
 	struct b43_phy_ac *ac = dev->phy.ac;
 	unsigned int k = ac->wd_switch_turns;
+	bool half_turn = false;
 
 	B43_AC_FN();
 
-	if (k == 0 && ac->crs_update_pending && ac->wd_turns % 10 == 9) {
+	if (k == 0 && ac->wd_entry_turn) {
 		/*
-		 * Il campione armato dalla coda del bring-up non e' ancora
-		 * arrivato, quindi la finestra ha contato e il giro e' pieno:
-		 * le quattro celle sparse, il peek col tono, il cambio di modo
-		 * e poi la spazzata intera. E' la forma che il commento di
-		 * b43_phy_ac_wd_peek() descrive per l'ingresso della fase --
-		 * peek fra le celle sparse e il cambio di modo, invece che
-		 * dopo entrambi come a regime.
+		 * Il primo giro porta la forma piena: le quattro celle sparse,
+		 * il peek col tono, il cambio di modo e poi la spazzata
+		 * intera. Il campione armato dalla coda del bring-up non e'
+		 * ancora arrivato e la finestra ha contato. E' la forma che il
+		 * commento di b43_phy_ac_wd_peek() descrive per l'ingresso
+		 * della fase -- peek fra le celle sparse e il cambio di modo,
+		 * invece che dopo entrambi come a regime.
 		 */
 		b43_phy_ac_wd_head_words(dev, true);
 		b43_phy_ac_wd_peek(dev, true);
@@ -10347,6 +10348,15 @@ void b43_phy_ac_watchdog(struct b43_wldev *dev)
 		 * stato, che costa su tutti gli altri segmenti.
 		 */
 		ac->peek_skip_one = true;
+		/*
+		 * Questa e' meta' di una callback del vendor: il cambio di modo
+		 * e il corpo stanno nello stesso istante e arrivano col
+		 * prossimo evento. Il contatore dei giri quindi non avanza,
+		 * o da qui in poi correrebbe un giro avanti a quello del
+		 * vendor -- il measure block si rimetterebbe a posto con la
+		 * fase, il dump della regione no.
+		 */
+		half_turn = true;
 	} else if (k == 0) {
 		b43_phy_ac_wd_stats_poll(dev);
 	} else {
@@ -10359,22 +10369,14 @@ void b43_phy_ac_watchdog(struct b43_wldev *dev)
 		b43_phy_ac_wd_sample_phase_opt(dev, peek, k == 1);
 
 		/*
-		 * TODO: la fase di questo dump non e' quella del contatore che
-		 * la cattura semina. Misurato sui 43 segmenti a freddo, il
-		 * vendor lo emette ai giri 28, 58, 88 e 118 contati dai cambi
-		 * di modo dopo il bring-up -- periodo 30, fase la stessa su
-		 * tutti -- e i 40 segmenti che di giri ne hanno meno di 28 non
-		 * lo emettono mai. Sui 44 up il periodo e' lo stesso e la fase
-		 * no: [7], [6], [9,39], [3,33,63], [27,57], [21,51] a seconda
-		 * del segmento, cioe' un contatore che non si azzera al cambio
-		 * di canale e che a freddo parte da zero solo perche' li' il
-		 * modulo e' appena stato caricato.
-		 *
-		 * Legarlo a @wd_switch_turns mette a posto il freddo -- ch36
-		 * arriva a MATCH posizionale -- e costa sui tre gate a caldo,
-		 * perche' li' la fase e' quella di prima del bring-up e
-		 * l'harness non la passa. Serve un secondo ingresso come
-		 * AC_WD_PHASE, o l'evento nella timeline.
+		 * Misurato sui 43 segmenti a freddo: il vendor lo emette ai
+		 * giri 29, 59, 89 e 119 contati dal primo giro della fase, e i
+		 * 22 segmenti che di giri ne hanno meno di 30 non lo emettono
+		 * mai. Sui 44 up il periodo e' lo stesso e la fase no, perche'
+		 * il contatore non si azzera al cambio di canale e a freddo
+		 * parte da zero solo perche' li' il modulo e' appena stato
+		 * caricato: la fase la porta AC_WD_PHASE, come per il measure
+		 * block.
 		 */
 		if (ac->wd_turns % 30 == 29)
 			b43_phy_ac_wd_region_dump(dev);
@@ -10392,7 +10394,8 @@ void b43_phy_ac_watchdog(struct b43_wldev *dev)
 			ac->crs_update_pending = true;
 	}
 
-	ac->wd_turns++;
+	if (!half_turn)
+		ac->wd_turns++;
 	if (ac->wd_switch_turns < 0xffff)
 		ac->wd_switch_turns++;
 }

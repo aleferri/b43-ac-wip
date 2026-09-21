@@ -334,7 +334,7 @@ struct b43_phy_ac {
 	 * Giri del watchdog dal bring-up in qua. Il measure block cade ogni
 	 * dieci giri e il dump della regione statistiche ogni trenta, contati su
 	 * questo: sulla cattura il measure block sta sul nono giro della fase e
-	 * poi ogni dieci, su 42 dei 43 segmenti a freddo, e il dump sul
+	 * poi ogni dieci, su tutti e 43 i segmenti a freddo, e il dump sul
 	 * trentesimo. E' periodico del driver e non del canale, quindi il
 	 * contatore non si azzera al cambio canale: sui cicli a caldo la fase
 	 * comincia a un punto qualunque del periodo.
@@ -362,6 +362,24 @@ struct b43_phy_ac {
 	bool tpl_refresh_due;
 	/* Un giro senza peek in piu', dopo il giro d'ingresso. */
 	bool peek_skip_one;
+	/*
+	 * Il primo giro dopo il bring-up ha la forma piena -- le quattro celle
+	 * sparse in ordine d'ingresso, il peek col tono, il cambio di modo --
+	 * invece della sola spazzata.
+	 *
+	 * Non lo decide il driver, lo decide quando arriva il primo callback:
+	 * sugli 87 segmenti dei due sweep la forma piena e la distanza fra la
+	 * coda del bring-up e il primo giro vanno insieme senza eccezioni --
+	 * 44 su 44 negli `up` a caldo, dove il timer gira gia' e il callback
+	 * cade entro un millisecondo, e 1 su 43 a freddo, cold01, l'unico dove
+	 * il tick era gia' scaduto; sugli altri 42 il primo callback arriva
+	 * 1.0-1.3 s dopo ed e' la spazzata sola. Il testimone che la cattura
+	 * porta e' l'ordine delle quattro celle -- 0x010e 0x010c 0x0158 0x015e
+	 * d'ingresso contro 0x010e 0x0158 0x010c 0x015e a regime -- quindi il
+	 * valore viene dal chiamante, come @cac_pending e le ricariche del
+	 * beacon; reverse-tools/timeline.py lo legge.
+	 */
+	bool wd_entry_turn;
 	/*
 	 * Ricariche del template beacon che il vendor mette fra la host-flag
 	 * clear e la cella 0x0026, cioe' dentro la coda del bring-up. Sono

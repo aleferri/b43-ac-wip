@@ -74,9 +74,17 @@ dove si documenta come si produce un numero citabile.
 Su `cold01-ch36-bw20`, il segmento di riferimento:
 
 ```
-grezzo: 29250/30525 = 95.82%
-        101 col valore sbagliato, 498 op di wl mancanti, 575 op del port di troppo
+grezzo: 29818/29851 = 99.89%
+        2 col valore sbagliato, 29 op di wl mancanti, 0 op del port di troppo
 ```
+
+Su `cold01` il confronto posizionale non si ferma piu': `compare.py` non trova
+nessuna divergenza sul prefisso e le due tracce differiscono solo in coda, per
+le tre op che mancano dentro il perimetro. Delle 29 mancanti, 26 sono
+dichiarate di altri dal perimetro -- OTP e SROM, celle di shared memory del
+core, template RAM, i LED sul chipcommon -- e le tre che restano sono la coda
+di `wlc_bmac_led_hw_deinit()` al rmmod, che la regola del perimetro non prende
+perche' li' la maschera GPIO e' zero.
 
 Contro lo sweep precedente lo stesso albero dava `28553/28582 = 99.90%` con 29
 op mancanti e nient'altro. Il numero non e' peggiorato perche' il driver sia
@@ -90,9 +98,9 @@ Il denominatore e' l'unione dei due flussi, quindi fa 100% solo se il port
 emette esattamente le op del driver stock: ne' meno, ne' di piu', ne' con
 valori diversi. Le tre voci sono tre lavori distinti — una formula da trovare,
 del codice da scrivere, un gate da mettere — e stanno in
-[`docs/retrace-todo.md`](docs/retrace-todo.md). Su `cold01` la voce piu' grossa
-e' il varco del watchdog all'ingresso della fase probe, che vale la prima
-divergenza posizionale e che sei tentativi documentati non hanno chiuso.
+[`docs/retrace-todo.md`](docs/retrace-todo.md). Su `cold01` restano due valori
+e le 29 mancanti dette sopra, quindi il debito che il segmento di riferimento
+misura oggi e' quasi tutto fuori da `src/`.
 
 Lo sweep a freddo e' ora di 43 segmenti, e la tabella per famiglie che stava
 qui non e' piu' valida: si reggeva su una separazione a 5250 MHz che lo sweep
@@ -118,24 +126,27 @@ arrivano dal kernel e da mac80211; nell'harness li replaya `timeline.py` dai
 timestamp della cattura, e nessuna lista di tick attraversa il confine di
 `src/`. Il measure block e il dump della regione sono contatori del driver
 (dieci e trenta giri), il bss-up e' un evento dello stack e cade dove la
-cattura lo mette, fra due giri. Sui 43 segmenti a freddo la tabella sta fra
-95.4% e 98.5% (mediana 96.6); il costo rispetto al modello a tick, da 0.4 a 1.7
-punti, sono le ricariche del template che wl fa dentro il giro del watchdog e
-b43 no. Sugli up a caldo dei canali con la guardia radar, dove `wl up` rifa' il
-CAC ogni volta e l'harness lo negava, si passa dal 37% all'86-90%. Dettagli e
-misure in
+cattura lo mette, fra due giri. Dalla cattura viene anche la forma del primo
+giro dopo il bring-up -- pieno o la sola spazzata -- che non dipende dal
+driver ma da quando scade il tick: `AC_WD_ENTRY_TURN`. Il costo rispetto al
+modello a tick, da 0.4 a 1.7 punti, sono le ricariche del template che wl fa
+dentro il giro del watchdog e b43 no. Sugli up a caldo dei canali con la
+guardia radar, dove `wl up` rifa' il CAC ogni volta e l'harness lo negava, si
+passa dal 37% al 93-96%. Dettagli e misure in
 [`docs/retrace-todo.md`](docs/retrace-todo.md).
 
 Lo stato dei 43 segmenti, con `gates.sh` su ognuno:
 
 ```
-minimo 95.82%   mediana 98.25%   massimo 99.83%
+minimo 99.16%   mediana 99.44%   massimo 99.90%
 ```
 
-Somma sui 43: 9445 valori sbagliati, e nessun segmento sotto il 95%. Il
-segmento con piu' op fuori posto e' `cold01`, il riferimento, per via del varco
-del watchdog; i piu' bassi come punteggio sono quelli di UNII-3, dove il debito
-e' di valori e non di ordine.
+Somma sui 43: 3189 valori sbagliati, 1510 op mancanti, 430 op di troppo, e
+nessun segmento sotto il 99.1%. Una parte di quei valori pero' non e' un
+valore: su cold12, il segmento piu' basso, 127 dei 163 sono letture di
+`0x0308`/`0x030c` che il port fa giuste -- 125 su 125 identiche a quelle del
+vendor -- e che il confronto appaia sfasate di un latch dietro a una sola op
+fuori posto.
 
 Delle op di troppo che restano, quelle della famiglia bassa sono in parte il
 debito delle costanti per-canale. Il resto, e tutte quelle di cold15, e' la
@@ -224,7 +235,7 @@ Mappa file sorgente → patch: [`docs/driver-status.md`](docs/driver-status.md).
 | LED (`ledbh10` da NVRAM) | portato nel core, `patches/0016-0017` | Il blocco GPIO che il vendor intercala nel preambolo freddo, i toggle al bss-up/down e il rilascio al rmmod sono `wlc_bmac_hw_up`/`wlc_bmac_led`/`wlc_bmac_led_hw_deinit` sul chipcommon: LED, senza effetto sul PHY. b43 li fa in `leds.c` per la sua via (MMIO `GPIO_CONTROL` del MAC); la 0016 porta `ledbh4..15` da NVRAM in `ssb_sprom`, anche sopra la SROM letta dal device (bcma), la 0017 gli insegna quei pin e piu' LED per ruolo. Le op del vendor stanno nel `PERIMETER` di `compare.py`, le `GPIO_CONTROL` di b43 in `SOLO_PORT`. Gira in `test/integration`, non provata su hardware |
 | BW40 / BW80 | `switch_channel` ritorna `-EOPNOTSUPP` | Il codice c'e' ed e' confrontato contro i segmenti a 40 e 80 MHz con `make AC_ANY_CHANNEL=1`; quello che manca e' la validazione che apra il guard |
 | 2.4 GHz | `op_switch_channel` ritorna `-EOPNOTSUPP` | Mappa radio 2G non validata |
-| Canali ≠ 36 | 50 voci in channeltab (5170–5825 MHz), solo ch36 in `b43_phy_ac_validated_configs[]` | Il confronto gira su tutti e 26 i segmenti con `AC_ANY_CHANNEL=1`, che scavalca il guard e lo dice con un `b43warn`. Piano in [`docs/channel-generalization.md`](docs/channel-generalization.md) |
+| Canali ≠ 36 | 50 voci in channeltab (5170–5825 MHz), solo ch36 in `b43_phy_ac_validated_configs[]` | Il confronto gira su tutti e 43 i segmenti con `AC_ANY_CHANNEL=1`, che scavalca il guard e lo dice con un `b43warn`. Piano in [`docs/channel-generalization.md`](docs/channel-generalization.md) |
 
 ### Bug aperti
 
@@ -255,7 +266,7 @@ cd test/unit
 unzip -d /tmp/cold ../../router-data/d6220/cold-sweep.zip
 make
 ./gates.sh                                    # cold a freddo: grezzo + prima divergenza
-./gates.sh /tmp/cold/cold*.txt       # tutti e 26
+./gates.sh /tmp/cold/cold[0-9][0-9]-ch*.txt   # tutti e 43
 
 AC_READ_ORACLE=../../router-data/d6220/wl-diag-wl1-steady-tick-ch36-bw20.txt \
     ./ac_trace periodic d6220 > /tmp/p.out

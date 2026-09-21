@@ -40,10 +40,18 @@ cannot know them otherwise:
                 off the first dump, or the first measure block when the
                 segment has no dump.
 
+  AC_WD_ENTRY_TURN
+                whether the first turn of the segment carries the full shape
+                -- head, peek and mode change in one callback -- instead of
+                the bare statistics poll. Read off the order of the four
+                scattered head cells. The driver splits that callback over two
+                events, so this also says that its turn counter advances once
+                over the two, which is what keeps the region dump in phase.
+
   ./timeline.py <capture> <outfile>
 
-prints `AC_TIMELINE=<outfile> AC_WD_PHASE=<n> AC_BEACON_RELOADS=<pre>` for the
-caller's environment.
+prints `AC_TIMELINE=<outfile> AC_WD_PHASE=<n> AC_BEACON_RELOADS=<pre>
+AC_WD_ENTRY_TURN=<0|1>` for the caller's environment.
 A capture with no watchdog turn produces an empty file and exit status 1.
 """
 
@@ -72,7 +80,7 @@ def events(ops):
              if op == "PHY.MOD"
              and re.match(r"^addr=0x0*520\b.*\bmask=0x0*c\b", rest)]
     if not turns:
-        return [], 0, 0
+        return [], 0, 0, False
 
     # The host-flag clear that ends the channel switch. The first turn after
     # it reads the statistics window without latching it and carries no
@@ -82,6 +90,23 @@ def events(ops):
     first = next(i for i in range(mhf, turns[0])
                  if match(ops[i][2], ops[i][3], "OBJ.RD", 0x10e))
     turns = [first] + turns
+
+    # The four scattered cells that head the poll come in one of two orders:
+    # 0x010e 0x010c 0x0158 0x015e entering the phase, 0x010e 0x0158 0x010c
+    # 0x015e in steady state. The entry order on that first turn means the
+    # turn carries the full shape -- head, peek and the mode change -- in one
+    # callback, which the driver splits over two events and which therefore
+    # advances its turn counter once, not twice.
+    head = []
+    for i in range(first, min(first + 12, len(ops))):
+        if ops[i][2] != "OBJ.RD":
+            continue
+        v = int(re.match(r"^addr=0x0*([0-9a-f]+)\b", ops[i][3]).group(1), 16)
+        if v in (0x10e, 0x10c, 0x158, 0x15e):
+            head.append(v)
+        if len(head) == 4:
+            break
+    entry = head == [0x10e, 0x10c, 0x158, 0x15e]
 
     out = [(ops[i][0], ops[i][1], "WD") for i in turns]
     t_first = ops[first][0]
@@ -131,14 +156,18 @@ def events(ops):
     # dump pins the phase mod 30; without one in the segment the measure block
     # pins it mod 10 and the residue is chosen so that no dump falls inside
     # the segment, which is what the capture shows.
+    # An entry turn is two events for one callback, so the counter is one
+    # behind the event index from there on, and the segment advances it once
+    # less than it has events.
+    off = 1 if entry else 0
     phase = None
     turn_t = [ops[i][0] for i in turns]
-    nturns = len(turns)
+    advances = len(turns) - off
     for t, _, op, rest in ops:
         if (op == "OBJ.BULKR" and t >= t_first
                 and re.match(r"^addr=0x0*e0 len=128\b", rest)):
             idx = sum(1 for x in turn_t if x <= t) - 1
-            phase = (29 - idx) % 30
+            phase = (29 - idx + off) % 30
             break
     if phase is None:
         phase = 0
@@ -150,13 +179,13 @@ def events(ops):
             idx = sum(1 for x in turn_t if x <= t) - 1
             if t - turn_t[idx] > 1.5:
                 continue
-            phase = (9 - idx) % 10
+            phase = (9 - idx + off) % 10
             break
         for cand in (phase, phase + 10, phase + 20):
-            if (29 - cand) % 30 >= nturns:
+            if (29 - cand) % 30 >= advances:
                 phase = cand
                 break
-    return out, phase, pre
+    return out, phase, pre, entry
 
 
 def main():
@@ -165,13 +194,14 @@ def main():
     ap.add_argument("outfile")
     a = ap.parse_args()
 
-    out, phase, pre = events(load(a.capture))
+    out, phase, pre, entry = events(load(a.capture))
     with open(a.outfile, "w") as f:
         for t, n, kind in out:
             f.write(f"{t:.6f} {n} {kind}\n")
     if not out:
         return 1
-    print(f"AC_TIMELINE={a.outfile} AC_WD_PHASE={phase} AC_BEACON_RELOADS={pre}")
+    print(f"AC_TIMELINE={a.outfile} AC_WD_PHASE={phase} AC_BEACON_RELOADS={pre}"
+          f" AC_WD_ENTRY_TURN={int(entry)}")
     return 0
 
 
