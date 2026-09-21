@@ -194,6 +194,17 @@ segmenti dove il fenomeno non c'e' deve dare la risposta vuota. Su
   che nessuna manomissione della struct del PHY riprodurrebbe: azzerare il byte
   della cal lascerebbe come sono i flag 250 ("phy_init fatto") e 249 (POR).
   Procedura in `wl-diag/README.md`.
+- **capture_cold_tg789vac.sh** — lo stesso ciclo a freddo sul TG789vac v2, dove
+  il ricarico di `wl` da solo crasha il router: la regione riservata dei
+  moduli wireless non si libera (serve `wl_diag` con `bump_ptr=` e
+  `restore_alloc=1`), hostapd tiene aperto `/dev/wl_event` dentro il blocco di
+  `wl` (va fermato via init script prima e rilanciato dopo), e
+  `init_broadcom.sh` configura l'istanza una volta sola per boot. Dettagli e
+  misure in `router-data/tg789vac-v2/README.md`.
+- **memfind.c** — cerca in `/dev/mem` le word con un valore dato: e' come si
+  trova una variabile del kernel di cui si conosce il valore ma non il simbolo
+  (con `KALLSYMS` senza `KALLSYMS_ALL` i dati non hanno simbolo). Ha trovato il
+  cursore dell'allocatore riservato del TG789vac v2.
 - **split_trace.py** — taglia una traccia in un segmento per configurazione.
   Il criterio del confine si sceglie con `--on`, e quale sia quello giusto
   dipende da come la cattura e' stata presa:

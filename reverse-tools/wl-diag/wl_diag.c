@@ -16,18 +16,27 @@
  *
  * read_radio_reg has a branch in its 4th instruction (beq), so the classic
  * 4-word detour is impossible. It is hooked with the "short-j" variant (the
- * shortj field): only the entry word is overwritten, with 'j stub' (an atomic
- * patch); the 2nd word stays as the delay slot and is re-run by the stub
- * anyway, which re-runs o[0..1] and returns to func+8. This needs the stub in
- * the same 256MB region, checked in init. osl_delay (usec=a1) and
+ * shortj field): the entry word becomes 'j stub' and the 2nd word becomes a
+ * nop, so that the delay slot of that jump does not run the original word with
+ * the registers as they were before the entry word. The stub re-runs o[0..1],
+ * relocated, and returns to func+8. This needs the stub in the same 256MB
+ * region, checked in the plan. The only condition on a short-j hook is
+ * therefore the same as on a 4-word one, that no word of the window is a
+ * branch, over a window of 2 words instead of 4. osl_delay (usec=a1) and
  * wlc_phy_table_{read,write}_acphy (id/len/off = a1/a2/a3) use the classic
  * 4-word detour.
  *
+ * When the window holds an unconditional absolute `j`, that jump is diverted
+ * instead: it is on the entry path by construction, since nothing before it
+ * branched, so overwriting that ONE word catches every call, and the stub exits
+ * by re-executing the saved jump. That is the route for the tail-call thunks,
+ * whose own prologue is the jump and which therefore fit neither detour.
+ *
  * Safety: arm=0 by default (dry run, the plan is only logged). With arm=1 the
- * patches are applied, writing the entry word LAST -- the transients are
- * benign, since t9 is not used by the prologues, checked on the binary. The
- * stub pool is static and never freed, so a stub still in flight at unload
- * still runs valid code.
+ * patches are applied from inside stop_machine, writing the entry word LAST:
+ * no intermediate state of a multi-word patch is a valid prologue, so no other
+ * cpu may execute one. The stub pool is freed only when THIS module unloads,
+ * so a stub still in flight when the target unloads still runs valid code.
  *
  * Runtime assumption (MIPS32R1, no NX/RODATA for module text): module memory
  * is RWX plus an explicit flush_icache_range. To be confirmed on the device.
@@ -61,6 +70,8 @@
 #include <linux/kallsyms.h>
 #include <linux/kfifo.h>
 #include <linux/vmalloc.h>
+#include <linux/mm.h>		/* high_memory */
+#include <linux/slab.h>
 #include <linux/proc_fs.h>
 #include <linux/fs.h>
 #include <linux/uaccess.h>
@@ -69,6 +80,7 @@
 #include <linux/spinlock.h>
 #include <linux/poll.h>
 #include <asm/cacheflush.h>
+#include <asm/page.h>		/* PAGE_OFFSET, per il controllo su module_core */
 /* Needed for BRK_KPROBE_BP, which tells whether the kernel has the
  * notify_die(DIE_BREAK) branch in do_bp: without this include the #ifdef
  * further down would always be false and the break path would compile away
@@ -76,6 +88,7 @@
 #include <asm/break.h>
 #include <linux/kdebug.h>
 #include <linux/notifier.h>
+#include <linux/stop_machine.h>
 
 static int arm;
 module_param(arm, int, 0444);
@@ -95,6 +108,27 @@ MODULE_PARM_DESC(target, "name of the module to hook (default wl)");
 static int delay;
 module_param(delay, int, 0444);
 MODULE_PARM_DESC(delay, "0=do not hook osl_delay (default), 1=hook it");
+
+/* The firmware loads the wireless modules through a reserved allocator -- the
+ * one behind "Load wl module core" -- that advances a cursor and never rewinds
+ * it, so after an rmmod the target's block is not available to the next
+ * insmod. bump_ptr is the KSEG0 address of that cursor, found with
+ * reverse-tools/memfind and confirmed on the code of module_alloc: kallsyms
+ * cannot give it, the variable is data and this kernel has no KALLSYMS_ALL.
+ *
+ * At the target's GOING the cursor is rewound to module_core, provided the
+ * block is the last one allocated: the cursor must equal the block's
+ * page-aligned end, otherwise nothing is touched. With restore_alloc=0 the
+ * check runs and is logged, nothing is written. The next COMING compares the
+ * fresh module_core with the value written, so the reuse is verified here and
+ * not by reading the dmesg. */
+static unsigned long bump_ptr;
+module_param(bump_ptr, ulong, 0444);
+MODULE_PARM_DESC(bump_ptr, "KSEG0 address of the reserved allocator's cursor (0=off)");
+
+static int restore_alloc;
+module_param(restore_alloc, int, 0444);
+MODULE_PARM_DESC(restore_alloc, "0=check and log only (default), 1=rewind the cursor at the target's GOING");
 
 /* flush_icache_range is not exported to modules, and on this kernel (KALLSYMS
  * without KALLSYMS_ALL) the pointer variable is not even visible to kallsyms,
@@ -339,6 +373,11 @@ struct hook {
 	bool shortj;		/* true: 1-word 'j' detour (branch inside the 4-word window) */
 	bool retcap;		/* true: capture the return value through the ra trampoline */
 	u8 nargx;		/* # arg extra su stack da catturare: arg5@16(sp), arg6@20(sp) */
+	/* Where aux comes from when the hook is armed as a tail call: there the
+	 * arguments seen are those of the function being jumped to, not those of
+	 * the thunk's entry, and the delay slot has already set the ones it sets.
+	 * 0 = same as @aux_src. Set by name, like the three above. */
+	u8 tail_aux_src;
 	unsigned long addr;
 	u32 saved[4];
 	bool armed;
@@ -349,6 +388,9 @@ struct hook {
 	bool use_bp;		/* hook through 'break' + die notifier (not detourable) */
 	bool use_sites;		/* patch the lui/addiu pairs at the call sites */
 	u32 *bp_stub;		/* resume stub for the break path */
+	bool use_tailj;		/* divert the unconditional tail call at word @tailw */
+	u8 tailw;
+	bool use_shortj;	/* @shortj AND the stub is reachable with a `j` */
 };
 static struct hook hooks[] = {
 	{ "phy_reg_read",       OP_PHY_R,     1, 0, 0, .retcap = true },
@@ -413,11 +455,19 @@ static struct hook hooks[] = {
 	 * split afterwards. */
 	/* Template RAM: where the PHY loads the tone waveforms, the input of
 	 * RXIQ, PAPD and do_dummy_tx. No op class covered it.
-	 * On 6.30 the ptr/data accessors do not exist: there, only the bulk. */
-	{ "wlc_bmac_templateptr_wreg",  OP_TPL_PTRW, 1, 0, 0 },
-	{ "wlc_bmac_templatedata_wreg", OP_TPL_DATW, 1, 0, 0 },
-	{ "wlc_bmac_templateptr_rreg",  OP_TPL_PTRR, 0, 0, 0, .retcap = true },
-	{ "wlc_bmac_templatedata_rreg", OP_TPL_DATR, 0, 0, 0, .retcap = true },
+	 * On 6.30 the ptr/data accessors do not exist: there, only the bulk.
+	 *
+	 * short-j on all four: on 7.14.89 the branch sits in word 2 of every one
+	 * of them -- `beq` on the corerev test for ptr_wreg, `jr $ra` for
+	 * data_wreg, `bne` on the byte at +2 for the two rreg -- so the 4-word
+	 * window does not hold while the 2-word one does. The re-entry stays on
+	 * $t9: the first two words write $v0 and $v1 only. */
+	{ "wlc_bmac_templateptr_wreg",  OP_TPL_PTRW, 1, 0, 0, .shortj = true },
+	{ "wlc_bmac_templatedata_wreg", OP_TPL_DATW, 1, 0, 0, .shortj = true },
+	{ "wlc_bmac_templateptr_rreg",  OP_TPL_PTRR, 0, 0, 0,
+	  .shortj = true, .retcap = true },
+	{ "wlc_bmac_templatedata_rreg", OP_TPL_DATR, 0, 0, 0,
+	  .shortj = true, .retcap = true },
 	{ "wlc_bmac_write_template_ram", OP_TPL_RAMW, 1, 2, 3 },
 	/* OTP: the generic layer has the same names on 6.30 and 7.14 and a clean
 	 * prologue, while the hndotp_ and ipxotp_ ones change. The content is the
@@ -475,11 +525,12 @@ static struct hook hooks[] = {
 	/* The BULK object-memory pair. It is needed for two independent reasons.
 	 *
 	 * The first: it covers the regions the 16-bit pair does not show. The two
-	 * `*_objmem16` accessors are LOCAL symbols, that is static, while
-	 * `copyfrom/copyto_objmem` are GLOBAL, and kallsyms_lookup_name finds a
-	 * module's local symbols only with CONFIG_KALLSYMS_ALL. Shared-memory ops
-	 * are visible anyway through the read/write_shm thunks, which are global;
-	 * what goes through the bulk without touching them is not.
+	 * `*_objmem16` accessors are LOCAL symbols, that is static, which does not
+	 * hide them from kallsyms -- is_core_symbol() filters on section flags and
+	 * not on binding -- but they are missing from the symbol table altogether
+	 * in some blobs. Shared-memory ops are visible anyway through the
+	 * read/write_shm thunks; what goes through the bulk without touching them
+	 * is not.
 	 *
 	 * The second: the bulk carries the SELECTOR, and with it the region. In
 	 * the current captures every OBJ op is shared memory, and nothing is seen
@@ -504,11 +555,29 @@ static struct hook hooks[] = {
 	 * in brcmsmac, index in a1. TO BE CONFIRMED on the first capture. */
 	/* set_addrmatch has a branch in word 2 of the prologue (the test on
 	 * hw+72), so the 4-word detour does not fit: short-j. Words 0 and 1 are
-	 * `lw` and `sltiu`, not PC-relative and with no side effects, so
-	 * re-running them in the stub is harmless.
-	 * a1 = index, a2 = pointer to the address (`lbu 1($a2)` reads it). */
+	 * `lw` and `sltiu`, not PC-relative.
+	 * a1 = index, a2 = pointer to the address (`lbu 1($a2)` reads it).
+	 *
+	 * ORDER, and it is not a matter of taste. On 7.14.89 the bmac-level name
+	 * is set_rxe_addrmatch, but it sits on the branch wlc_set_addrmatch takes
+	 * only for corerev < 40:
+	 *
+	 *     lw    $v0, 16($v0)          ; corerev
+	 *     sltiu $v0, $v0, 0x28
+	 *     bne   $v0, $zero, <legacy>  ; and inside <legacy>, and only there,
+	 *                                 ; the calls to set_rcmta and to
+	 *                                 ; set_rxe_addrmatch
+	 *
+	 * The AC core is corerev 42, so that branch is never taken and the hook
+	 * arms clean and stays mute for the whole run -- measured: ADDRM.SET at 0
+	 * over 45 cycles on the TG789vac v2, against 5280 on the D6220 where the
+	 * op went to the wlc level. It is the same reason RCMTA.WR cannot appear
+	 * on this core, already written down in router-data/CLASS-COVERAGE.md.
+	 * So the wlc-level entries come first and set_rxe_addrmatch stays as the
+	 * last resort, for a build where neither of the two above resolves. */
 	{ "wlc_bmac_set_addrmatch", OP_ADDRMATCH, 1, 0, 0, .shortj = true },
 	{ "wlc_set_addrmatch",      OP_ADDRMATCH, 1, 0, 0 },
+	{ "wlc_bmac_set_rxe_addrmatch", OP_ADDRMATCH, 1, 0, 0, .shortj = true },
 	/* write_amt: a1 = index (`sll a1,1`), a3 = a signed 16-bit value the
 	 * function does `bltz` on. Prologue clear. */
 	{ "wlc_bmac_write_amt",     OP_AMT_W,     1, 0, 3 },
@@ -608,19 +677,27 @@ static struct hook hooks[] = {
 	 *   wlc_bmac_read_shm(hw, offset)         offset=a1, value in the RETVAL
 	 *   wlc_bmac_write_shm(hw, offset, val)   offset=a1, val=a2
 	 *
-	 * val arrives ALREADY truncated to 16 bits, unlike read_radio_reg: there
-	 * the andi is word 0, which the short-j replaces with the `j`, here it is
-	 * word 1, that is the delay slot of the `j`, which runs BEFORE the stub.
-	 * The stub re-runs it, and it is idempotent. */
+	 * val arrives ALREADY truncated to 16 bits: the andi is word 1, which the
+	 * short-j nops and the stub re-runs before returning to +8.
+	 *
+	 * On 7.14.89.14 the two thunks are 8 B `j body` + `lui $a2,1` and 12 B
+	 * `andi` + `j body` + `lui $a3,1`, and the 16-bit accessors they jump to
+	 * carry no symbol at all: nothing resolves by name, so `ripiego_di` has
+	 * nothing to prefer and these two are all there is. There the tail call
+	 * is what gets diverted, and `tail_aux_src` is why: at the jump the delay
+	 * slot has already put the selector in a2 (read) and a3 (write), which is
+	 * the signature of the accessor and not of the thunk, so aux carries the
+	 * real selector instead of 0 and the records come out in the same shape
+	 * as those from read/write_objmem16 on the other boards. */
 	{ "wlc_bmac_read_shm",  OP_MAC_OBJ_R, 1, 0, 0,
-	  .shortj = true, .retcap = true,
+	  .shortj = true, .retcap = true, .tail_aux_src = 2,
 	  .ripiego_di = "wlc_bmac_read_objmem16" },
 	{ "wlc_bmac_write_shm", OP_MAC_OBJ_W, 1, 2, 0, .shortj = true,
+	  .tail_aux_src = 3,
 	  .ripiego_di = "wlc_bmac_write_objmem16" },
-	/* branch in slot 3 (beq): the classic 4-word detour is impossible. 1-word
-	 * short-j: o[0]=j stub; o[1] (addiu $v0,1) stays as the delay slot; the
-	 * stub re-runs o[0..1] and returns to +8 (v0 re-set AFTER the hook).
-	 * addr=a1 raw (the andi 0xffff is o[0], re-run in the stub). */
+	/* branch in slot 3 (beq): the classic 4-word detour is impossible, the
+	 * short-j holds. addr=a1 raw: the andi 0xffff is o[0], re-run in the
+	 * stub, as is o[1] (addiu $v0,1), so $v0 is re-set AFTER the hook. */
 	{ "read_radio_reg",     OP_RADIO_R,   1, 0, 0, .shortj = true, .retcap = true },
 };
 #define NHOOK ARRAY_SIZE(hooks)
@@ -634,6 +711,8 @@ u32 __used noinline
 wl_diag_hook(u32 id, u32 a1, u32 a2, u32 a3)
 {
 	struct hook *h = &hooks[id];
+	u8 aux_src = (h->use_tailj && h->tail_aux_src) ? h->tail_aux_src :
+							 h->aux_src;
 
 	/* CAL.INIT carries the state of the switch in the record, so the trace says
 	 * by itself which cycles were forced. Without this the experiment cannot be
@@ -646,7 +725,7 @@ wl_diag_hook(u32 id, u32 a1, u32 a2, u32 a3)
 
 	return emit(h->op, pick(h->addr_src, a1, a2, a3),
 			   pick(h->val_src,  a1, a2, a3),
-			   pick(h->aux_src,  a1, a2, a3));
+			   pick(aux_src,     a1, a2, a3));
 }
 
 /* Follow-on record for stack arguments (o32): a second ARGX record tied to the
@@ -808,9 +887,35 @@ static bool is_branch(u32 insn)
 	return false;
 }
 
-/* ---- executable stub pool (static: lives in the module, never freed) --- */
+/* An unconditional absolute jump: `j target`, with no link. The 26-bit field
+ * is relative to the 256MB region of the PC, so the same word re-executed from
+ * a stub in that region lands on the same target. */
+static bool is_j_abs(u32 insn)
+{
+	return (insn >> 26) == 0x02;
+}
+
+/* ---- executable stub pool ---------------------------------------------
+ *
+ * kmalloc and not a static array, and the reason is the `j`. A one-word patch
+ * can only be a `j`, whose 26-bit field keeps the top 4 bits of the PC, so the
+ * short-j and the tail-call diversion work only if the stub sits in the same
+ * 256MB region as the code being diverted. A static array lives in the
+ * module's .data, which the module loader puts in the ordinary module area --
+ * around 0xc3e5b000 on this family -- while the vendor loader puts `wl` in
+ * KSEG0, around 0x80b9a000: different regions, and both one-word routes fall
+ * back to the 4-word detour or the break. kmalloc returns KSEG0 too, so the
+ * pool lands next to the target and the one-word routes become usable.
+ *
+ * Nothing depends on this working: pianifica() checks the region hook by hook
+ * and falls back on its own, so an allocation in the wrong region costs
+ * coverage, not correctness.
+ *
+ * Freed only in wd_exit, never when the TARGET unloads: a stub still in flight
+ * at the target's GOING has to keep running valid code. */
 #define STUB_WORDS 48
-static u32 stub_pool[NHOOK][STUB_WORDS] __attribute__((aligned(8)));
+#define STUB_POOL_BYTES (NHOOK * STUB_WORDS * sizeof(u32))
+static u32 (*stub_pool)[STUB_WORDS];
 static u32 ret_tramp[16] __attribute__((aligned(8)));	/* trampolino di ritorno condiviso */
 
 /* The 'break' path for prologues that cannot be detoured (a branch in the
@@ -868,10 +973,19 @@ static void build_bp_stub(int idx)
 {
 	u32 *s = stub_pool[idx];
 	unsigned long ret = hooks[idx].addr + 4;
+	u8 rj = scrive_reg(hooks[idx].saved, 1, R_T9) ? R_T8 : R_T9;
 
+	/* The return is a 32-bit jump and NOT a `j`: the 26-bit field keeps the
+	 * top 4 bits of the PC, and the stub does not live in the target's 256MB
+	 * region whenever the two modules are allocated in different areas. On
+	 * this family the vendor loader puts `wl` in KSEG0 (0x80b9a000) while a
+	 * normal module lands around 0xc3e5b000, so a `j 0x80d7ced4` from the
+	 * stub goes to 0xc0d7ced4, which is somebody else's text. */
 	s[0] = hooks[idx].saved[0];
-	s[1] = 0x08000000U | ((ret >> 2) & 0x03ffffffU);	/* j ret */
-	s[2] = 0x00000000U;					/* nop */
+	s[1] = i_lui(rj, ret >> 16);
+	s[2] = i_ori(rj, rj, ret & 0xffff);
+	s[3] = i_jr(rj);
+	s[4] = I_NOP;
 	hooks[idx].bp_stub = s;
 }
 #else
@@ -911,30 +1025,147 @@ static struct module *target_mod;
 
 /* A purely arithmetic filter, no list walking: it applies once the first symbol
  * has established which module is the target. */
+/* The target's text range, and whether it can be trusted.
+ *
+ * module_core and core_text_size are the ONLY fields of struct module this
+ * code reads past the name, and they sit behind enough of the structure that a
+ * vendor patch to module.h moves them. Read at the wrong offset, module_core
+ * is not a pointer and find_sites scans from it: an oops with no hint of why.
+ *
+ * The path that reads them is the COMING notifier, which hands over the
+ * struct. Arming from wd_init against an already loaded target does not get
+ * here at all: the vendor loader puts `wl` in KSEG0, outside
+ * module_addr_min/max, so __module_text_address gives NULL and target_mod
+ * stays NULL. The two paths are therefore NOT equivalent, and the first
+ * insmod of the target is where these offsets get used for the first time.
+ *
+ * So they are checked once per plan, against the first symbol that resolves:
+ * that address has to be inside the range the structure claims. If it is not,
+ * the range is unusable and it costs the call-site scan and the out-of-module
+ * filter, not the run. */
+#define TESTO_DA_DECIDERE	0
+#define TESTO_BUONO		1
+#define TESTO_INUTILIZZABILE	2
+static u8 testo_stato;
+static unsigned long testo_base, testo_size;
+
+static void valuta_testo(unsigned long a)
+{
+	unsigned long b = (unsigned long)target_mod->module_core;
+	unsigned long n = target_mod->core_text_size;
+
+	if (b >= PAGE_OFFSET && !(b & 3) && n && n <= (32UL << 20) &&
+	    a >= b && a < b + n) {
+		testo_base = b;
+		testo_size = n;
+		testo_stato = TESTO_BUONO;
+		pr_info("wl_diag: target text %px + %lu B\n", (void *)b, n);
+		return;
+	}
+	testo_stato = TESTO_INUTILIZZABILE;
+	pr_warn("wl_diag: struct module says module_core=%px core_text_size=%lu, and %px is not inside it: the offsets do not match this kernel. No call-site scan, no out-of-module filter.\n",
+		(void *)b, n, (void *)a);
+}
+
 static bool dentro_bersaglio(unsigned long a)
+{
+	if (!target_mod)
+		return true;
+	if (testo_stato == TESTO_DA_DECIDERE)
+		valuta_testo(a);
+	if (testo_stato != TESTO_BUONO)
+		return true;	/* cannot tell: better than dropping every hook */
+	return a >= testo_base && a < testo_base + testo_size;
+}
+
+/* ---- reserved allocator: rewind at GOING, verify at COMING -------------- */
+static unsigned long alloc_rewound;	/* module_core written at the last GOING */
+
+static inline unsigned long bump_read(void)
+{
+	return *(volatile unsigned long *)bump_ptr;
+}
+
+/* core_size sits next to core_text_size in struct module, so the offset check
+ * that valuta_testo did for this cycle covers it: without TESTO_BUONO the block
+ * bounds cannot be trusted and the cursor is left alone. */
+static void alloc_rewind(struct module *m)
+{
+	unsigned long base, fine, fine_raw, cur;
+	int i;
+
+	if (!bump_ptr)
+		return;
+	/* Not yet decided when the plan ran without target_mod: decide it now on
+	 * the first resolved hook, the same way pianifica does. */
+	if (testo_stato == TESTO_DA_DECIDERE)
+		for (i = 0; i < NHOOK; i++)
+			if (hooks[i].addr) {
+				dentro_bersaglio(hooks[i].addr);
+				break;
+			}
+	if (testo_stato != TESTO_BUONO) {
+		pr_warn("wl_diag: rewind skipped: struct module offsets not verified in this cycle\n");
+		return;
+	}
+	base = (unsigned long)m->module_core;
+	fine_raw = base + m->core_size;
+	fine = PAGE_ALIGN(fine_raw);
+	if (base < PAGE_OFFSET || (base & ~PAGE_MASK) || fine <= base ||
+	    fine - base > (32UL << 20)) {
+		pr_warn("wl_diag: rewind skipped: implausible block %px + %u B\n",
+			(void *)base, m->core_size);
+		return;
+	}
+	/* The block is on top whether the allocator aligns the cursor after
+	 * the allocation (cursor == page-aligned end) or before the next one
+	 * (cursor == raw end): the three boot addresses do not tell which. */
+	cur = bump_read();
+	if (cur != fine && cur != fine_raw) {
+		pr_warn("wl_diag: rewind skipped: cursor %px, block %px..%px is not on top\n",
+			(void *)cur, (void *)base, (void *)fine);
+		return;
+	}
+	if (!restore_alloc) {
+		pr_info("wl_diag: cursor %px is the block end; restore_alloc=1 would rewind it to %px\n",
+			(void *)cur, (void *)base);
+		return;
+	}
+	*(volatile unsigned long *)bump_ptr = base;
+	alloc_rewound = base;
+	pr_info("wl_diag: cursor rewound %px -> %px\n", (void *)cur, (void *)base);
+}
+
+static void alloc_verify(struct module *m)
 {
 	unsigned long base;
 
-	if (!target_mod)
-		return true;
-	base = (unsigned long)target_mod->module_core;
-	return a >= base && a < base + target_mod->core_text_size;
+	if (!alloc_rewound)
+		return;
+	base = (unsigned long)m->module_core;
+	if (testo_stato != TESTO_BUONO)
+		pr_warn("wl_diag: reuse unverified: struct module offsets not verified in this cycle\n");
+	else if (base == alloc_rewound)
+		pr_info("wl_diag: block reused: module_core %px\n", (void *)base);
+	else
+		pr_warn("wl_diag: block NOT reused: module_core %px, cursor was rewound to %px\n",
+			(void *)base, (void *)alloc_rewound);
+	alloc_rewound = 0;
 }
 
 static int find_sites(int idx, unsigned long fnaddr)
 {
-	struct module *m = target_mod ? target_mod : __module_text_address(fnaddr);
 	u32 *base;
 	unsigned long words;
 	int n = 0, i, k;
 
-	if (!m) {
-		pr_warn("wl_diag: '%s' is not in a module, no call-site scan\n",
+	if (testo_stato != TESTO_BUONO) {
+		pr_warn("wl_diag: no usable text range for '%s', no call-site scan\n",
 			hooks[idx].name);
 		return 0;
 	}
-	base = (u32 *)m->module_core;
-	words = m->core_text_size / 4;
+	base = (u32 *)testo_base;
+	words = testo_size / 4;
 
 	for (i = 0; i + 1 < (int)words && n < MAX_SITES; i++) {
 		u32 wi = base[i];
@@ -1060,10 +1291,18 @@ static int wd_mod_notify(struct notifier_block *nb, unsigned long ev, void *data
 		target_mod = m;
 		mark("mod COMING");
 		arma();
+		alloc_verify(m);
 		break;
 	case MODULE_STATE_GOING:
 		mark("mod GOING");
 		disarma();
+		/* Armed from wd_init against an already loaded target, target_mod
+		 * is still NULL here: __module_text_address does not see a module
+		 * the vendor loader put in KSEG0. The notifier hands over the
+		 * struct, and alloc_rewind needs it. */
+		if (!target_mod)
+			target_mod = m;
+		alloc_rewind(m);
 		target_mod = NULL;
 		break;
 	default:
@@ -1083,9 +1322,10 @@ static void build_stub(int idx)
 	unsigned long enterfn = (unsigned long)&wl_diag_enter_ret;
 	/* on the call-site route the function is intact: nothing to re-run, the
 	 * re-entry is from 0 */
-	int rep = hooks[idx].use_sites ? 0 : (hooks[idx].shortj ? 2 : 4);
+	int rep = (hooks[idx].use_sites || hooks[idx].use_tailj) ? 0 :
+		  (hooks[idx].use_shortj ? 2 : 4);
 	unsigned long ret = hooks[idx].use_sites ? hooks[idx].addr :
-		hooks[idx].addr + (hooks[idx].shortj ? 8 : 16);
+		hooks[idx].addr + (hooks[idx].use_shortj ? 8 : 16);
 	int n = 0, k;
 	u8 rj;
 
@@ -1136,6 +1376,17 @@ static void build_stub(int idx)
 	s[n++] = i_lw(R_A3, R_SP, 12);
 	s[n++] = i_lw(R_RA, R_SP, hooks[idx].retcap ? 24 : 16);
 	s[n++] = i_addiu(R_SP, R_SP, 32);
+	/* Armed on a tail call, the stub exits by RE-EXECUTING that jump: the
+	 * saved word itself, so the target is the one the driver had, with no
+	 * address recomputed here. Nothing else is re-run -- the words before it
+	 * and its delay slot have already gone by -- and no register is needed,
+	 * because the jump is absolute. The return does not come back through
+	 * here: $ra is the caller's, or the trampoline's when retcap is on. */
+	if (hooks[idx].use_tailj) {
+		s[n++] = hooks[idx].saved[hooks[idx].tailw];
+		s[n++] = I_NOP;
+		return;
+	}
 	for (k = 0; k < rep; k++)
 		s[n++] = o[k];	/* re-run the displaced words (o[1] of the short-j re-sets v0) */
 	/* Register for the re-entry jump: $t9 if no re-run word writes it,
@@ -1175,18 +1426,31 @@ static void build_ret_trampoline(void)
 	s[n++] = I_NOP;
 }
 
-/* write the entry, head word LAST (classic) or a single 'j' (short-j) */
+/* Write the entry, head word LAST. No i-cache flush here: the caller runs it
+ * outside the stopped context, see scrivi_ingressi(). */
 static void patch_entry(int idx)
 {
 	u32 *o = (u32 *)hooks[idx].addr;
 	unsigned long stub = (unsigned long)stub_pool[idx];
 
-	if (hooks[idx].shortj) {
-		/* atomic 1-word patch: o[0]=j stub. o[1] stays (delay slot, re-run
-		 * by the stub as well). Needs the stub in the same 256MB j region
-		 * (checked in wd_init). */
+	if (hooks[idx].use_tailj) {
+		/* One word, and the only one: the words before the jump and its
+		 * delay slot keep running as they are, which is what puts the
+		 * arguments in place. Single store, so no intermediate state. */
+		o[hooks[idx].tailw] = i_j(stub);
+		return;
+	}
+	if (hooks[idx].use_shortj) {
+		/* o[1] is nopped: left in place it would run as the delay slot of
+		 * the `j`, with the registers as they were BEFORE o[0], and then a
+		 * second time inside the stub. Nopped, o[0] and o[1] are both
+		 * re-run by the stub as in the 4-word case, so the only condition
+		 * on the window is the one pianifica() already checks, that
+		 * neither word is a branch. Needs the stub in the same 256MB j
+		 * region, checked in pianifica(). */
+		o[1] = I_NOP;
+		wmb();
 		o[0] = i_j(stub);
-		flush_i(hooks[idx].addr, hooks[idx].addr + 8);
 		return;
 	}
 	o[3] = I_NOP;
@@ -1194,7 +1458,6 @@ static void patch_entry(int idx)
 	o[1] = i_ori(R_T9, R_T9, stub & 0xffff);
 	wmb();
 	o[0] = i_lui(R_T9, stub >> 16);
-	flush_i(hooks[idx].addr, hooks[idx].addr + 16);
 }
 
 static void restore_entry(int idx)
@@ -1202,15 +1465,44 @@ static void restore_entry(int idx)
 	u32 *o = (u32 *)hooks[idx].addr;
 	u32 *sv = hooks[idx].saved;
 
-	if (hooks[idx].shortj) {
+	if (hooks[idx].use_tailj) {
+		o[hooks[idx].tailw] = sv[hooks[idx].tailw];
+		return;
+	}
+	if (hooks[idx].use_shortj) {
+		o[1] = sv[1];
+		wmb();
 		o[0] = sv[0];
-		flush_i(hooks[idx].addr, hooks[idx].addr + 8);
 		return;
 	}
 	o[1] = sv[1]; o[2] = sv[2]; o[3] = sv[3];
 	wmb();
 	o[0] = sv[0];
-	flush_i(hooks[idx].addr, hooks[idx].addr + 16);
+}
+
+/* The words patch_entry/restore_entry touch, for the flush. */
+static void flush_ingresso(int idx)
+{
+	unsigned long a = hooks[idx].addr;
+
+	if (hooks[idx].use_tailj) {
+		a += 4 * hooks[idx].tailw;
+		flush_i(a, a + 4);
+		return;
+	}
+	flush_i(a, a + (hooks[idx].use_shortj ? 8 : 16));
+}
+
+/* Diverted at the entry, as opposed to at its call sites or with a break. */
+static bool ingresso_patchato(const struct hook *h)
+{
+	if (h->use_sites)
+		return false;
+#if WD_HAVE_BP
+	if (h->use_bp)
+		return false;
+#endif
+	return true;
 }
 
 /* ---- char device ------------------------------------------------------ */
@@ -1321,6 +1613,48 @@ static void elegge(int i)
 }
 
 /*
+ * Entry words go in with the other cpu parked.
+ *
+ * Neither the 2-word nor the 4-word patch has a valid intermediate state: with
+ * the head word still original and the tail already rewritten, a caller runs a
+ * prologue that is half one thing and half the other. The stopped context is
+ * what keeps the other cpu from executing one, and it is paid only here and in
+ * ripristina_ingressi(), never per captured op. It matters because arming does
+ * not only happen at the target's COMING, where nothing of it has run yet:
+ * wd_init() arms straight away when the target is already loaded, and there
+ * the accessors are under traffic.
+ *
+ * The i-cache flush stays OUT of the callback on purpose. The flush resolved in
+ * wd_init() is r4k_flush_icache_range, which on a non-MT SMP kernel goes
+ * through smp_call_function(..., wait=1), and from inside stop_machine that
+ * call cannot complete: the other cpu is spinning in the stopper with
+ * interrupts off. Between the stores and the flush the other cpu reads the old
+ * words, which is the exposure the 4-word detour has always had.
+ *
+ * No #ifdef needed: without CONFIG_STOP_MACHINE the header defines
+ * stop_machine as local_irq_save + fn.
+ */
+static int scrivi_ingressi(void *unused)
+{
+	int i;
+
+	for (i = 0; i < n_elig; i++)
+		if (ingresso_patchato(&hooks[eligible[i]]))
+			patch_entry(eligible[i]);
+	return 0;
+}
+
+static int ripristina_ingressi(void *unused)
+{
+	int i;
+
+	for (i = 0; i < NHOOK; i++)
+		if (hooks[i].armed && ingresso_patchato(&hooks[i]))
+			restore_entry(i);
+	return 0;
+}
+
+/*
  * State that depends on the target being LOADED: addresses, saved words, the
  * outcome of eligibility, the call sites found. It has to be cleared before
  * every new plan, because after a re-insmod of the target the addresses are
@@ -1335,11 +1669,18 @@ static void azzera_stato(void)
 	unsigned long f;
 	int i, j;
 
+	testo_stato = TESTO_DA_DECIDERE;
+	testo_base = 0;
+	testo_size = 0;
+
 	for (i = 0; i < NHOOK; i++) {
 		hooks[i].addr = 0;
 		hooks[i].armed = false;
 		hooks[i].use_bp = false;
 		hooks[i].use_sites = false;
+		hooks[i].use_tailj = false;
+		hooks[i].tailw = 0;
+		hooks[i].use_shortj = false;
 		hooks[i].bp_stub = NULL;
 		for (j = 0; j < 4; j++)
 			hooks[i].saved[j] = 0;
@@ -1400,12 +1741,34 @@ static int pianifica(void)
 		}
 		hooks[i].addr = a;
 		o = (u32 *)a;
-		win = hooks[i].shortj ? 2 : 4;	/* words touched / re-run */
+		/* The short-j and the tail-call diversion both need the stub in
+		 * the target's 256MB `j` region. When it is not there the hook is
+		 * not lost: it falls back on the 4-word window and, from there,
+		 * on the sites or the break, which jump with a full 32-bit
+		 * address. */
+		hooks[i].use_shortj = hooks[i].shortj &&
+			!(((unsigned long)stub_pool[i] ^ a) >> 28);
+		win = hooks[i].use_shortj ? 2 : 4;	/* words touched / re-run */
 		for (j = 0; j < 4; j++)
 			hooks[i].saved[j] = o[j];
 		for (j = 0; j < win; j++)
 			if (branch < 0 && is_branch(o[j]))
 				branch = j;
+		if (branch >= 0 && is_j_abs(o[branch]) &&
+		    !((((unsigned long)stub_pool[i]) ^ (a + 4 * branch)) >> 28)) {
+			/* The entry path always reaches an unconditional jump
+			 * found in the window -- nothing before it branched --
+			 * so diverting that one word catches every call, with
+			 * the arguments the jump target is about to receive.
+			 * Preferred over the sites and over the break: one word,
+			 * no register, no trap per call. */
+			hooks[i].use_tailj = true;
+			hooks[i].tailw = (u8)branch;
+			elegge(i);
+			pr_info("wl_diag: hook plan '%s' @%px [tail-call at insn %d]\n",
+				hooks[i].name, o, branch);
+			continue;
+		}
 		if (branch >= 0 && find_sites(i, hooks[i].addr) > 0) {
 			/* Not detourable in the prologue, but the call sites are
 			 * patchable: the function stays intact. Preferred over the
@@ -1435,12 +1798,6 @@ static int pianifica(void)
 			}
 			continue;
 		}
-		if (hooks[i].shortj &&
-		    (((unsigned long)stub_pool[i] ^ a) >> 28)) {
-			pr_warn("wl_diag: skipping '%s' (stub outside the 256MB j region)\n",
-				hooks[i].name);
-			continue;
-		}
 		/* The stub needs ONE register for the re-entry jump, and it cannot be
 		 * one of those the re-run words write. With both t8 and t9 taken
 		 * nothing safe is left: better no hook than a re-entry that jumps
@@ -1453,7 +1810,8 @@ static int pianifica(void)
 		}
 		elegge(i);
 		pr_info("wl_diag: hook plan '%s' @%px%s\n", hooks[i].name, o,
-			hooks[i].shortj ? " [short-j]" : "");
+			hooks[i].use_shortj ? " [short-j]" :
+			hooks[i].shortj ? " [4 parole: stub fuori regione j]" : "");
 	}
 
 	/* Drop the fallbacks whose underlying accessor got hooked: see
@@ -1517,7 +1875,7 @@ static int arma(void)
 		build_stub(eligible[i]);
 	}
 	flush_i((unsigned long)stub_pool,
-		(unsigned long)stub_pool + sizeof(stub_pool));
+		(unsigned long)stub_pool + STUB_POOL_BYTES);
 	{
 		int any_retcap = 0;
 
@@ -1571,9 +1929,15 @@ static int arma(void)
 			continue;
 		}
 #endif
-		patch_entry(eligible[i]);
-		hooks[eligible[i]].armed = true;
 	}
+	/* The break is a single word and needs no stopped context; the entry
+	 * detours do, and they all go in inside one stop_machine. */
+	stop_machine(scrivi_ingressi, NULL, NULL);
+	for (i = 0; i < n_elig; i++)
+		if (ingresso_patchato(&hooks[eligible[i]])) {
+			flush_ingresso(eligible[i]);
+			hooks[eligible[i]].armed = true;
+		}
 	armato = true;
 	pr_info("wl_diag: ARMED (%d hooks) -> /proc/wl_diag\n", n_elig);
 	return 0;
@@ -1618,7 +1982,11 @@ static void disarma(void)
 				continue;
 			}
 #endif
-			restore_entry(i);
+		}
+	stop_machine(ripristina_ingressi, NULL, NULL);
+	for (i = 0; i < NHOOK; i++)
+		if (hooks[i].armed && ingresso_patchato(&hooks[i])) {
+			flush_ingresso(i);
 			hooks[i].armed = false;
 		}
 #if WD_HAVE_BP
@@ -1641,7 +2009,33 @@ static int __init wd_init(void)
 {
 	int err;
 
+	if (bump_ptr) {
+		/* virt_addr_valid() is out: on MIPS it pulls in min_low_pfn,
+		 * which the kernel does not export. KSEG0 below high_memory is
+		 * the RAM the cursor can live in. */
+		if ((bump_ptr & 3) || bump_ptr < PAGE_OFFSET ||
+		    bump_ptr >= (unsigned long)high_memory) {
+			pr_err("wl_diag: bump_ptr %px is not a word-aligned KSEG0 address below high_memory\n",
+			       (void *)bump_ptr);
+			return -EINVAL;
+		}
+		pr_info("wl_diag: allocator cursor @%px = %px (restore_alloc=%d)\n",
+			(void *)bump_ptr, (void *)bump_read(), restore_alloc);
+	} else if (restore_alloc) {
+		pr_warn("wl_diag: restore_alloc=1 without bump_ptr does nothing\n");
+	}
+
 	parse_skipphyrd();
+
+	stub_pool = kmalloc(STUB_POOL_BYTES, GFP_KERNEL);
+	if (!stub_pool) {
+		pr_err("wl_diag: kmalloc of %u B for the stub pool failed\n",
+		       (unsigned int)STUB_POOL_BYTES);
+		return -ENOMEM;
+	}
+	pr_info("wl_diag: stub pool @%px (%u B): the one-word routes need it in "
+		"the target's 256MB j region\n",
+		stub_pool, (unsigned int)STUB_POOL_BYTES);
 
 	if (fifo_recs < 4096) {
 		pr_warn("wl_diag: fifo_recs=%d too small, using 4096\n", fifo_recs);
@@ -1653,6 +2047,8 @@ static int __init wd_init(void)
 		pr_err("wl_diag: vmalloc of %d KB for the queue failed. "
 		       "Retry with a lower fifo_recs.\n",
 		       (int)(fifo_recs * sizeof(struct wldiag_rec) / 1024));
+		kfree(stub_pool);
+		stub_pool = NULL;
 		return -ENOMEM;
 	}
 	err = kfifo_init(&fifo, fifo_buf, fifo_recs * sizeof(struct wldiag_rec));
@@ -1660,6 +2056,8 @@ static int __init wd_init(void)
 		pr_err("wl_diag: kfifo_init: %d\n", err);
 		vfree(fifo_buf);
 		fifo_buf = NULL;
+		kfree(stub_pool);
+		stub_pool = NULL;
 		return err;
 	}
 	pr_info("wl_diag: queue %d records (%d KB)\n", fifo_recs,
@@ -1671,6 +2069,8 @@ static int __init wd_init(void)
 		pr_err("wl_diag: proc_create(/proc/%s) failed\n", WD_PROC);
 		vfree(fifo_buf);
 		fifo_buf = NULL;
+		kfree(stub_pool);
+		stub_pool = NULL;
 		return -ENOMEM;
 	}
 
@@ -1708,6 +2108,8 @@ static int __init wd_init(void)
 		remove_proc_entry(WD_PROC, NULL);
 		vfree(fifo_buf);
 		fifo_buf = NULL;
+		kfree(stub_pool);
+		stub_pool = NULL;
 		return err;
 	}
 	mod_nb_registered = true;
@@ -1731,6 +2133,10 @@ static void __exit wd_exit(void)
 	remove_proc_entry(WD_PROC, NULL);
 	vfree(fifo_buf);
 	fifo_buf = NULL;
+	/* after disarma(), which restores the words and then waits with
+	 * synchronize_sched for the stubs already in flight */
+	kfree(stub_pool);
+	stub_pool = NULL;
 	pr_info("wl_diag: unloaded (lost: %d, filtered: %d)\n",
 		atomic_read(&drops), atomic_read(&filtered));
 }

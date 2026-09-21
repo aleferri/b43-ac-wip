@@ -8,12 +8,15 @@ Replica is_branch() del modulo, niente disassemblatore: bastano i primi 4 opcode
   ASSENTE       il simbolo non c'e' in questa build: l'hook non si armera' mai e
                 dmesg dira' "non trovato".
   SALTATO       branch nella finestra: il detour non regge. NON significa nessun
-                hook -- il modulo prova prima i siti di chiamata e poi il
-                percorso a break, ed e' per questo che si conta anche `siti`.
-  siti          coppie di rilocazioni HI16/LO16 verso il simbolo, cioe' i punti
-                dove l'indirizzo viene materializzato per una chiamata
-                indiretta. Questi driver chiamano quasi tutto cosi', non con
-                jal, ed e' la via che find_sites patcha.
+                hook -- il modulo prova prima la deviazione della tail call, poi
+                i siti di chiamata, poi il percorso a break.
+  tail-call     la parola che ferma il detour e' una `j` assoluta: sta sul
+                percorso d'ingresso per costruzione, quindi il modulo devia
+                quella sola parola. E' il caso dei thunk.
+  siti          punti in cui l'indirizzo del simbolo compare in un chiamante:
+                coppie HI16/LO16, che e' la via che find_sites patcha, piu' le
+                `jal`/`j` (R_MIPS_26). Le due forme si contano separate perche'
+                **solo le prime sono patchabili** da find_sites com'e' oggi.
                 **Zero siti non e' un dettaglio**: GCC emette la copia
                 out-of-line di una funzione GLOBAL anche quando la inlinea in
                 tutti i chiamanti, quindi il simbolo si risolve, il prologo si
@@ -22,6 +25,10 @@ Replica is_branch() del modulo, niente disassemblatore: bastano i primi 4 opcode
   t8/t9         lo stub ha bisogno di un registro per il salto di rientro: se le
                 parole spiazzate scrivono sia t8 sia t9, pianifica() scarta
                 l'hook e qui si legge prima di andare sul router.
+  BERSAGLIO     una parola dentro la finestra e' il bersaglio di un branch che
+                arriva da dentro la funzione: spiazzarla la fa saltare a chi ci
+                arriva da li'. Vale per il detour a 4 parole quanto per lo
+                short-j, e nessuno dei due lo verifica a runtime.
 
 Prima del piano controlla anche la forma della tabella -- che ogni `.campo =`
 esista in struct hook, che nessuna voce abbia piu' inizializzatori posizionali
@@ -30,10 +37,15 @@ errori che da questa parte non li trova nessuno, perche' il tracer si compila
 con gli header del kernel del router: si scoprono a build fallita in fondo a un
 ciclo di flash. E' successo due volte.
 
-Un oggetto **pre-link** basta: `.text` e le rilocazioni sono gia' quelle
-definitive, e il piano esce identico a quello sul .ko estratto dal firmware.
-Un simbolo LOCAL (static) qui si vede sempre, sul device solo con
-CONFIG_KALLSYMS_ALL: viene segnalato.
+Il verdetto su prologo e registro esce identico su un oggetto pre-link e sul
+.ko estratto dal firmware. Il conteggio dei siti e la presenza dei simboli no:
+in un .ko i riferimenti ai simboli locali possono passare per il simbolo di
+sezione, e la symtab puo' essere molto piu' povera di quella del pre-link.
+
+Un simbolo LOCAL (static) di TESTO si risolve sul device anche senza
+CONFIG_KALLSYMS_ALL: `is_core_symbol()` in kernel/module.c filtra sui flag di
+sezione -- SHF_ALLOC piu' SHF_EXECINSTR quando l'opzione e' spenta -- e non sul
+binding. Quello che serve KALLSYMS_ALL e' un simbolo DATO.
 
   ./audit_hooks.py wl.ko [wl-diag/wl_diag.c]
 """
@@ -73,9 +85,21 @@ def simboli(ko):
     return out
 
 
-def siti(ko):
-    """coppie HI16/LO16 per simbolo: i punti di chiamata indiretta"""
-    fuori = {}
+def siti(ko, blob, se, sy):
+    """Siti di chiamata per simbolo: (coppie HI16/LO16, jal/j).
+
+    Le due forme non sono intercambiabili: find_sites patcha solo le coppie.
+    In un .ko un riferimento a un simbolo LOCAL puo' passare per il simbolo di
+    sezione, con il bersaglio nell'addendo dentro l'istruzione, quindi non
+    basta guardare il nome nella colonna della rilocazione.
+    """
+    idx_txt = next((i for i, (n, _, _) in se.items() if n == '.text'), None)
+    per_val = {}
+    for nome, (val, _dim, sec) in sy.items():
+        if sec == idx_txt:
+            per_val.setdefault(val, nome)
+    pair = {}
+    jal = {}
     sec = None
     for l in subprocess.run(['readelf', '-rW', ko], capture_output=True,
                             text=True).stdout.split('\n'):
@@ -83,11 +107,59 @@ def siti(ko):
         if m:
             sec = m.group(1)
             continue
+        if not (sec and sec.startswith('.rel.text')):
+            continue
         p = l.split()
-        if sec == '.rel.text' and len(p) >= 5 and re.fullmatch(r'[0-9a-f]{8}', p[0]):
-            if p[2] in ('R_MIPS_HI16', 'R_MIPS_LO16'):
-                fuori[p[4]] = fuori.get(p[4], 0) + 1
-    return {k: v // 2 for k, v in fuori.items()}
+        if len(p) < 5 or not re.fullmatch(r'[0-9a-f]{8}', p[0]):
+            continue
+        if p[2] in ('R_MIPS_HI16', 'R_MIPS_LO16'):
+            pair[p[4]] = pair.get(p[4], 0) + 1
+        elif p[2] == 'R_MIPS_26':
+            nome = p[4]
+            if nome == '.text':
+                ospite = se_per_nome(se, sec[4:])
+                if ospite is None:
+                    continue
+                _, sh_addr, sh_off = ospite
+                o = sh_off + (int(p[0], 16) - sh_addr)
+                tgt = (struct.unpack('>I', blob[o:o + 4])[0] & 0x03ffffff) << 2
+                nome = per_val.get(tgt)
+                if nome is None:
+                    continue
+            jal[nome] = jal.get(nome, 0) + 1
+    return {n: (pair.get(n, 0) // 2, jal.get(n, 0))
+            for n in set(pair) | set(jal)}
+
+
+def se_per_nome(se, nome):
+    for _, v in se.items():
+        if v[0] == nome:
+            return v
+    return None
+
+
+def bersaglio_in_finestra(blob, off, addr, dim, n):
+    """Indice di una parola della finestra raggiunta da un branch interno.
+
+    Spiazzarla la farebbe sparire per chi ci arriva da li'. Il controllo vale
+    per il detour a 4 parole quanto per lo short-j, e nessuno dei due lo fa a
+    runtime: qui si vede da fermi.
+    """
+    for i in range(dim // 4):
+        w = struct.unpack('>I', blob[off + 4 * i:off + 4 * i + 4])[0]
+        op = w >> 26
+        if op == 0x01 or 0x04 <= op <= 0x07 or 0x14 <= op <= 0x17:
+            imm = w & 0xffff
+            if imm >= 0x8000:
+                imm -= 0x10000
+            tgt = addr + 4 * i + 4 + 4 * imm
+        elif op == 0x02:
+            tgt = (w & 0x03ffffff) << 2
+        else:
+            continue
+        if addr < tgt < addr + 4 * n:
+            return (tgt - addr) // 4
+    return None
 
 
 def sezioni(ko):
@@ -213,42 +285,52 @@ def main(ko, sorgente=None):
         print('\nIl tracer non compilerebbe. Il piano qui sotto non vale.\n')
 
     sy = simboli(ko)
-    st = siti(ko)
     se = sezioni(ko)
+    blob = open(ko, 'rb').read()
+    st = siti(ko, blob, se, sy)
     ops = leggi_enum(testo)
     classi = leggi_classi()
-    blob = open(ko, 'rb').read()
     tabella = re.findall(r'\{\s*"([^"]+)",\s*(OP_\w+)([^}]*)\}', testo)
 
     preso = set()
-    print(f"{'simbolo':<32} {'esito':<11} {'dim':>5} {'siti':>5}  dettaglio")
+    print(f"{'simbolo':<32} {'esito':<11} {'dim':>5} {'siti':>7}  dettaglio")
     for nome, op, resto in tabella:
         shortj = '.shortj' in resto
         opn = ops.get(op)
         if opn in preso:
             continue                       # un op, un hook: vedi op_preso
         if nome not in sy:
-            print(f"{nome:<32} {'ASSENTE':<11} {'-':>5} {'-':>5}")
+            print(f"{nome:<32} {'ASSENTE':<11} {'-':>5} {'-':>7}")
             continue
         addr, dim, sec = sy[nome]
         _, sh_addr, sh_off = se[sec]
         off = sh_off + (addr - sh_addr)
         n = 2 if shortj else 4
-        ns = st.get(nome, 0)
+        np, nj = st.get(nome, (0, 0))
+        ns = f"{np}+{nj}"
         if dim < 4 * n:
-            print(f"{nome:<32} {'TROPPO CORTA':<11} {dim:>5} {ns:>5}  "
+            print(f"{nome:<32} {'TROPPO CORTA':<11} {dim:>5} {ns:>7}  "
                   f"funzione di {dim} B: piu' corta della finestra di {4*n} B")
             continue
         w = struct.unpack('>%dI' % n, blob[off:off + 4 * n])
         br = next((j for j in range(n) if is_branch(w[j])), None)
         note = []
-        if ns == 0:
+        if np + nj == 0:
             note.append("NESSUN chiamante: inlineata ovunque o morta, "
                         "l'hook si pianifica e non emettera' mai")
-        if br is not None:
+        tail = br is not None and (w[br] >> 26) == 0x02
+        if tail:
+            esito = 'ok'
+            come = f"tail-call alla parola {br}: si devia quella sola parola"
+            preso.add(opn)
+        elif br is not None:
             esito, come = ('siti', f"branch alla parola {br} (0x{w[br]:08x}), "
-                                   f"{ns} siti da patchare")
-            if ns:
+                                   f"{np} coppie patchabili")
+            if np:
+                preso.add(opn)
+            elif not is_branch(w[0]):
+                esito, come = ('ok', f"branch alla parola {br}, nessuna coppia "
+                                     f"HI16/LO16: resta il percorso a break")
                 preso.add(opn)
             else:
                 esito = 'SALTATO'
@@ -260,11 +342,18 @@ def main(ko, sorgente=None):
             rientro = 8 if any(reg_dest(x) == 25 for x in w) else 9
             come = (f"{'short-j' if shortj else 'detour 4 parole'}, "
                     f"rientro su $t{rientro}")
-            if ns:
+            if np + nj:
                 preso.add(opn)
-        print(f"{nome:<32} {esito:<11} {dim:>5} {ns:>5}  {come}")
+        if not tail and esito == 'ok' and 'break' not in come:
+            k = bersaglio_in_finestra(blob, off, addr, dim, n)
+            if k is not None:
+                esito = 'BERSAGLIO'
+                come = (f"la parola {k} della finestra e' bersaglio di un "
+                        f"branch interno: spiazzarla la fa sparire")
+                preso.discard(opn)
+        print(f"{nome:<32} {esito:<11} {dim:>5} {ns:>7}  {come}")
         for x in note:
-            print(f"{'':<32} {'':<11} {'':>5} {'':>5}  ({x})")
+            print(f"{'':<32} {'':<11} {'':>5} {'':>7}  ({x})")
 
     vive = sorted(classi[n] for n in preso if n in classi)
     print('\nclassi che la cattura conterrebbe:\n  ' + ', '.join(vive))

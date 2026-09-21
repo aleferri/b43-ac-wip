@@ -164,6 +164,62 @@ dal file di mappa: e' un segnaposto, non l'indirizzo di fabbrica. Nota per chi
 legge la SROM a mano: `srom[4]-[6]` **non** e' il MAC -- quelle tre word qui
 sono identiche a quelle del d6220 mentre i due `macaddr` differiscono.
 
+## Ricaricare `wl` senza uccidere il router
+
+Su questo firmware `rmmod wl` + `insmod wl` da soli mandano il router in crash.
+Non e' una sola causa, sono tre indipendenti, e la procedura che le copre tutte
+e' `reverse-tools/capture_cold_tg789vac.sh`. Misurato su questa unita':
+
+**1. La memoria dei moduli wireless e' riservata e non si libera.** Il kernel
+Technicolor (variante del meccanismo `CONFIG_BCM_KF_DSP` per `dspdd` che sta in
+`kernel/module.c` dell'SDK Broadcom 4.16L, mirror pubblico
+`unofficial-inteno-public-mirror/bcmlinux`) seleziona `wl`, `wlemf` e `wfd` per
+nome e li mette in una regione fisica contigua fuori da vmalloc: 5 MiB per i
+core da `0x80b8e000` a `0x8108e000`, poi ~1.45 MiB per gli init, da
+`0x8108e000` a `0x81200000`, che in `/proc/iomem` compaiono come buco. Il core
+e' un bump allocator page-aligned che non torna mai indietro, l'init e' un
+puntatore fisso riusato:
+
+```
+Load wl module core 80b8e000 (size 9614)      wfd
+Load wl module core 80b91000 (size 36789)     wlemf
+Load wl module core 80b9a000 (size 4101315)   wl      -> cursore a 0x80f84000, liberi 1.04 MiB
+Load wl module core   (null) (size 4101315)   dopo un rmmod: 3.91 MiB richiesti, 1.04 liberi
+```
+
+Il cursore e' la word a **`0x80575464`** (trovata con `memfind`: unico hit del
+valore `0x80f84000` in tutta la RAM, adiacente ai due puntatori dell'init a
+`0x8108e000`). `wl_diag` con `bump_ptr=0x80575464 restore_alloc=1` lo riporta a
+`module_core` al `GOING` di `wl`, se e solo se il blocco e' in testa, e al
+`COMING` successivo verifica che il nuovo `module_core` coincida. Riuso
+confermato su tre cicli consecutivi. L'indirizzo vale per questa build del
+kernel e non e' portabile: si ritrova con
+`memfind 0x2000 0xb8c000 0x8108e000 0x80f84000`.
+
+**2. hostapd tiene aperto `/dev/wl_event`** (char device major 229, nodo statico
+creato da `init_broadcom.sh`), la cui `file_operations` sta dentro il blocco di
+`wl`; il `rmmod` passa lo stesso. Riscrivere il blocco con il ricarico produce
+due firme a seconda di quando hostapd fa la `read()`: durante la rilocazione,
+`Oops in vfs_read` con `epc` uguale a un offset dell'immagine (word `R_MIPS_32`
+non ancora rilocata: misurato, `epc == 0x001fe34c`, 91 ms dopo `Load wl module
+core`); dopo, `private_data` liberata e crash al primo evento, cioe' al primo
+`up`. Per questo i cicli passavano a caso. Si ferma con
+`/etc/init.d/hostapd stop` (kill del pid, nessun respawn) prima del primo
+`rmmod`; con lui fermo cade anche il 2.4 GHz.
+
+**3. `/lib/wireless/init_broadcom.sh` configura l'istanza e gira una volta per
+boot** (`/tmp/hostapd_init_once`): `nar 0`, `phycal_tempdelta 40` (la nvram qui
+ha 0, vedi tabella sopra), soglie radar per `wl1` con up/down, affinita' del
+kthread. Un `wl` ricaricato senza rifarle ha i default Broadcom e ricalibra in
+momenti diversi dal boot. Lo script riapplica nar e tempdelta per ciclo, e a
+fine corsa rimuove il file e rilancia hostapd, che rifa' tutto sull'istanza che
+resta in esercizio.
+
+Da tenere d'occhio, non risolto: a ogni `rmmod` il FAP stampa
+`dqmHandlerRegisterHost: Exceeded maximum number of DQM IRQ Handlers! (8)`, due
+volte per interfaccia. E' un leak di handler all'unbind di `wfd` con un tetto di
+8: il numero di ricarichi per boot ha un limite, lo script lo conta.
+
 ## Prima di usarle come prova, quando ci saranno le catture
 
 1. `reverse-tools/check_class_coverage.py`, e la riga in

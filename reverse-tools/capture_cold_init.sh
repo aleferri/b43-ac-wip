@@ -56,7 +56,14 @@
 # Uso:
 #   sh cold_capture.sh 20 36                     un canale
 #   sh cold_capture.sh 20 36 40 44 48            piu' canali, un ciclo ognuno
+#   sh cold_capture.sh 20dfs                     un profilo di capture_profiles.sh
 #   IF=wl1 SETTLE=10 SSID=test-ap sh cold_capture.sh 40 36 44
+#
+# I profili sono gli stessi dello sweep a caldo e stanno in
+# capture_profiles.sh, che va copiato sul device accanto a questo script: un
+# freddo e un caldo sullo stesso nome coprono gli stessi canali, che e' la
+# condizione per confrontarli. Con un profilo la larghezza arriva da li' e non
+# va passata.
 #
 # Variabili d'ambiente:
 #   IF         interfaccia                                   (default wl1)
@@ -64,7 +71,8 @@
 #   SETTLE_BSS attesa dopo bss up, secondi                    (default $SETTLE)
 #   SSID       se impostato: ssid + bss up prima dell'attesa  (default vuoto)
 #   WL_KO      percorso di wl.ko: OBBLIGATORIO, vedi sotto
-#   DEVID      deviceid atteso su IF, da `wl revinfo`         (default 0x43b3)
+#   DEVID      deviceid ammessi su IF, da `wl revinfo`, separati da spazio
+#              (default: i core AC della collezione, 0x43b3 0x43a2)
 #   BR         bridge da cui staccare l'interfaccia           (default vuoto)
 #   KILL       demoni da terminare prima del ricarico         (default vuoto)
 #
@@ -73,32 +81,59 @@
 # builtin della shell piu' wl, insmod, rmmod, sleep, grep.
 #
 # WL=/lib/modules/3.4.11-rt19/extra/wl.ko
-# IF=wl1 SETTLE=12 SSID=test-ap5 WL_KO=$WL ./capture_cold_init.sh 20 36 40 44 48 52 56 60 64 100 104 108 112 116 120 124 128 132 136 140 144 149 153 157 161 165
-# IF=wl1 SETTLE=12 SSID=test-ap5 WL_KO=$WL ./capture_cold_init.sh 40 36 44 52 60 100 108 116 124 132 140 149 157
-# IF=wl1 SETTLE=12 SSID=test-ap5 WL_KO=$WL ./capture_cold_init.sh 80 36 52 100 116 132 149
+# IF=wl1 SETTLE=12 SSID=test-ap5 WL_KO=$WL ./capture_cold_init.sh 20
+# IF=wl1 SETTLE=12 SSID=test-ap5 WL_KO=$WL ./capture_cold_init.sh 40
+# IF=wl1 SETTLE=12 SSID=test-ap5 WL_KO=$WL ./capture_cold_init.sh 80
 #
 # Sui canali con guardia radar il BSS non sale finche' il CAC non e' passato, e
 # il CAC scorre dentro la prima attesa: e' SETTLE che lo deve coprire, 60 s piu'
 # margine, e 600 s sui blocchi che toccano i 5600-5650 MHz del radar meteo.
 # SETTLE_BSS invece serve solo a lasciare in traccia il blocco BSS e qualche
 # giro di watchdog, quindi resta corto: tenerlo legato a SETTLE raddoppia
-# l'attesa senza aggiungere niente alla cattura.
-# IF=wl1 SETTLE=70 SETTLE_BSS=15 SSID=test-ap5 WL_KO=$WL ./capture_cold_init.sh 20 52 56 60 64 100 104 108 112 116 132 136 140
+# l'attesa senza aggiungere niente alla cattura. E' anche il motivo per cui i
+# canali con guardia stanno in profili loro: con un SETTLE da 70 s addosso a
+# tutti, uno sweep a 20 MHz senza radar butta via venti minuti di attesa.
+# IF=wl1 SETTLE=70  SETTLE_BSS=15 SSID=test-ap5 WL_KO=$WL ./capture_cold_init.sh 20dfs
+# IF=wl1 SETTLE=620 SETTLE_BSS=15 SSID=test-ap5 WL_KO=$WL ./capture_cold_init.sh 20meteo
 
-BW="$1"
-[ -n "$BW" ] || { echo "uso: sh cold_capture.sh <20|40|80> <canale> [canale...]" >&2; exit 1; }
-shift
-[ -n "$1" ] || { echo "manca almeno un canale" >&2; exit 1; }
+DIR="${0%/*}"
+[ "$DIR" = "$0" ] && DIR=.
+if [ ! -f "$DIR/capture_profiles.sh" ]; then
+    echo "manca $DIR/capture_profiles.sh: va copiato sul device accanto a questo script" >&2
+    exit 1
+fi
+. "$DIR/capture_profiles.sh"
+
+[ -n "$1" ] || { echo "uso: sh cold_capture.sh {$PROFILI} | <20|40|80> <canale> [canale...]" >&2; exit 1; }
+
+# Un profilo porta con se' larghezza e canali; altrimenti il primo argomento e'
+# la larghezza e il resto sono i canali.
+if profilo "$1"; then
+    shift
+    [ -n "$1" ] && { echo "col profilo non si passano canali: '$*'" >&2; exit 1; }
+    set -- $LIST
+else
+    BW="$1"
+    shift
+    [ -n "$1" ] || { echo "manca almeno un canale" >&2; exit 1; }
+    case "$BW" in
+        20|40|80) ;;
+        *) echo "primo argomento: un profilo ($PROFILI) o una larghezza (20, 40, 80), non '$BW'" >&2; exit 1 ;;
+    esac
+fi
 
 [ -n "$IF" ]     || IF=wl1
 [ -n "$SETTLE" ] || SETTLE=10
-[ -n "$SETTLE_BSS" ] || SETTLE_BSS=$SETTLE
-[ -n "$DEVID" ]  || DEVID=0x43b3
-
-case "$BW" in
-    20|40|80) ;;
-    *) echo "larghezza non valida: '$BW' (20, 40 o 80)" >&2; exit 1 ;;
-esac
+# Non legata a SETTLE, che sui canali con guardia radar vale 70 s o 620: qui
+# bastano pochi secondi per lasciare in traccia il blocco BSS e qualche giro di
+# watchdog, ed e' quello che il commento in testa diceva gia' mentre il default
+# faceva il contrario.
+[ -n "$SETTLE_BSS" ] || SETTLE_BSS=10
+# I core AC di cui abbiamo un revinfo: 0x43b3 e' il BCM4352 (D6220, DSL-3580L),
+# 0x43a2 il BCM4360 (AGCombo, TG789vac v2). Restano fuori i core 2.4 GHz che
+# lo stesso `wl` serve -- 0x435f e 0x4354 sul 6362 -- ed e' il punto del
+# controllo: catturare l'altra radio produce una traccia plausibile e sbagliata.
+[ -n "$DEVID" ]  || DEVID="0x43b3 0x43a2"
 
 case "$SETTLE" in
     ''|*[!0-9]*) echo "attesa non numerica: '$SETTLE'" >&2; exit 1 ;;
@@ -165,15 +200,17 @@ attendi_if() {
 # deviceid invece di fidarsi del nome, perche' catturare l'altra radio produce
 # una traccia plausibile e sbagliata.
 verifica_identita() {
-    if ! wl -i "$IF" revinfo 2>/dev/null | grep -qi "deviceid $DEVID"; then
-        echo "" >&2
-        echo "'$IF' non e' il device atteso ($DEVID). Cosa risponde:" >&2
-        wl -i "$IF" revinfo 2>&1 | grep -i "deviceid\|chipnum" >&2
-        echo "Passa IF=<nome giusto>, o DEVID=<atteso> se e' il default a" >&2
-        echo "essere sbagliato per questa board." >&2
-        return 1
-    fi
-    return 0
+    for d in $DEVID; do
+        if wl -i "$IF" revinfo 2>/dev/null | grep -qi "deviceid $d"; then
+            return 0
+        fi
+    done
+    echo "" >&2
+    echo "'$IF' non e' fra i device ammessi ($DEVID). Cosa risponde:" >&2
+    wl -i "$IF" revinfo 2>&1 | grep -i "deviceid\|chipnum" >&2
+    echo "Passa IF=<nome giusto>, o DEVID='<lista>' se questa board porta un" >&2
+    echo "core AC che la lista non conosce ancora." >&2
+    return 1
 }
 
 # Il modulo appena caricato deve trovarsi con l'interfaccia GIU'. Se qualcuno
@@ -288,7 +325,7 @@ ciclo() {
     return 0
 }
 
-echo "cold_capture: $IF, BW$BW, attesa ${SETTLE}s + ${SETTLE_BSS}s bss, deviceid atteso $DEVID"
+echo "cold_capture: $IF, BW$BW, attesa ${SETTLE}s + ${SETTLE_BSS}s bss, deviceid ammessi: $DEVID"
 echo "modulo: $WL_KO"
 [ -n "$SSID" ] || echo "SSID non impostato: la bss non sale e mancheranno le tabelle per-core"
 echo "il rmmod di wl porta giu' anche il 2.4 GHz: non guidare questa procedura in wifi"

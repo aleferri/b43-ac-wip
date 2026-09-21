@@ -18,7 +18,7 @@ prima di flashare invece di scoprirlo dal log:
 | funzione | perche' |
 |---|---|
 | `wlc_bmac_mhf_get` | `beq` alla parola 1: nemmeno lo short-j sta in piedi. Risolta patchando i **siti di chiamata**, vedi sotto. |
-| `wlc_bmac_read_shm` / `_write_shm` | wrapper di 16 e 20 byte con `jr` alla parola 2. Per questo si aggancia il bersaglio della tail call, `read/write_objmem16`, che ha prologo pulito. |
+| `wlc_bmac_read_shm` / `_write_shm` | wrapper di 16 e 20 byte con `jr` alla parola 2 su 6.30/7.14.43, dove si aggancia il bersaglio della tail call, `read/write_objmem16`, che ha prologo pulito. Su 7.14.89 sono 8 e 12 byte con una `j`, quel bersaglio non ha simbolo, e si devia la **tail call** stessa. |
 
 ### Il registro di rientro dello stub
 
@@ -93,9 +93,8 @@ Il verdetto su prologo e registro di rientro e' **definitivo**: il linker non
 tocca le parole del prologo, e nessuna regola del pianificatore guarda gli
 immediati con rilocazione. Il conteggio dei siti di chiamata e' invece un
 **minimo**, perche' un simbolo GLOBAL puo' averne altri in oggetti che il
-prelink non contiene; e un simbolo LOCAL che qui si vede sempre, sul device si
-risolve solo con `CONFIG_KALLSYMS_ALL` -- lo strumento lo segnala voce per
-voce.
+prelink non contiene. Il conteggio va anche letto diviso: `find_sites` patcha
+le coppie HI16/LO16 e non le `jal`, e lo strumento le stampa separate.
 
 Cio' che lo strumento **non** dice e' se la funzione agganciata venga poi
 chiamata sul percorso che interessa. Quello lo dice `callsites_pic.py`, che
@@ -453,11 +452,22 @@ gli accessi a SCR e IHR non compaiono.
 
 I due thunk sono brevi (16 e 20 B) e hanno `jr $t9` dentro la finestra a 4
 parole, quindi vanno di **short-j** a 2 parole; per i siti di chiamata non si
-puo' passare, perche' `read_shm` ne ha ~34 e `MAX_SITES` e' 8. Una conseguenza
-del meccanismo, non ovvia: in `write_shm` l'`andi 0xffff` e' la parola 1, cioe'
-il delay slot della `j`, e si esegue **prima** dello stub -- quindi il valore
-arriva gia' troncato a 16 bit. In `read_radio_reg` lo stesso `andi` e' la parola
-0, che lo short-j sostituisce, e per questo la' `addr` e' grezzo.
+puo' passare, perche' `read_shm` ne ha ~34 e `MAX_SITES` e' 8. In `write_shm`
+l'`andi 0xffff` e' la parola 1: lo short-j la noppa e lo stub la riesegue prima
+di rientrare a +8, quindi il valore arriva troncato a 16 bit comunque. In
+`read_radio_reg` lo stesso `andi` e' la parola 0, e anche quella viene
+rieseguita dallo stub.
+
+Su 7.14.89.14 i due thunk sono 8 B `j corpo` + `lui $a2,1` e 12 B `andi` +
+`j corpo` + `lui $a3,1`, e i due accessor a 16 bit su cui saltano **non hanno
+simbolo**, quindi per nome non si risolve niente e `ripiego_di` non ha nulla da
+preferire. La' si devia la **tail call**: si riscrive la sola parola della `j`,
+le parole prima e il suo delay slot restano e continuano a mettere a posto gli
+argomenti, e lo stub esce rieseguendo la `j` salvata. Il campo `tail_aux_src`
+serve a questo: al momento del salto il selettore e' gia' in `a2` (lettura) e
+`a3` (scrittura), cioe' la firma dell'accessor e non quella del thunk, quindi
+`sel` porta il valore vero -- `0x10000` -- e i record escono nella stessa forma
+di quelli da `read/write_objmem16` degli altri board.
 
 Quando in una build esistono entrambe le vie, ne viene armata **una sola**: un
 op ha un hook, e vince il primo della tabella che risolve e risulta
@@ -487,12 +497,15 @@ restano sono imposte dai simboli dei due blob, non da scelte:
 | `wlc_bmac_set_shm` | `GLOBAL` | `GLOBAL` |
 
 Verificato con `readelf -s` sui due oggetti di riferimento. Gli accessor a 16
-bit sono `LOCAL` in entrambi i blob, cioe' static, e `kallsyms_lookup_name`
-trova i locali di un modulo solo con `CONFIG_KALLSYMS_ALL`: se non si
-risolvono, la shared memory si vede comunque dai thunk `read/write_shm`, che
-sono globali, mentre le altre regioni di object memory si vedono solo dalla
-coppia bulk. Il log di `wd_init` dice quali hook si sono installati, e va
-guardato prima di dedurre qualcosa da un'assenza.
+bit sono `LOCAL` in entrambi i blob, cioe' static, e questo **non** impedisce a
+`kallsyms_lookup_name` di trovarli: `is_core_symbol()` in `kernel/module.c`
+filtra sui flag di sezione, `SHF_ALLOC` piu' `SHF_EXECINSTR` quando
+`CONFIG_KALLSYMS_ALL` e' spento, e non sul binding, quindi una funzione static
+in `.text` entra comunque nelle kallsyms del modulo. Quel che si perde senza
+quell'opzione sono i simboli **dato**. Cio' che invece li fa sparire davvero e'
+una symtab povera nel blob, come nel `wl.ko` del TG789vac v2 dove i due
+accessor non hanno simbolo affatto. Il log di `wd_init` dice quali hook si sono
+installati, e va guardato prima di dedurre qualcosa da un'assenza.
 
 ### Le firme si leggono dal prologo, non dal nome
 
@@ -502,9 +515,9 @@ e quale la lunghezza, e se il prologo e' agganciabile. `reverse-tools/mipsdis.py
 branch nella finestra delle quattro parole, che e' cio' che decide fra detour
 classico, short-j e patch dei siti.
 
-Gli accessor a 16 bit di object memory sono `LOCAL` in entrambi i blob, ma sul
-firmware DSL si risolvono comunque: `kallsyms_lookup_name` li trova, quindi quel
-kernel ha `CONFIG_KALLSYMS_ALL`. Da cui una conseguenza che va gestita: i thunk
+Gli accessor a 16 bit di object memory sono `LOCAL` in entrambi i blob e sul
+firmware DSL si risolvono, come ci si aspetta per una funzione static in `.text`.
+Da cui una conseguenza che va gestita: i thunk
 `wlc_bmac_read/write_shm` tail-callano quegli accessor, e agganciare entrambi
 darebbe DUE record per ogni accesso alla shared memory -- uno dal thunk, con
 `aux = 0` per costruzione, e uno dall'ingresso dell'accessor, col selettore

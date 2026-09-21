@@ -11,7 +11,10 @@ sbagliate: sono in questa condizione la collocazione del chanspec
 delle scritture probe-response `0x0180-0x0186`, e il rifiuto del campione di
 rumore `OBJ.RD 0x0308` davanti al blocco E.
 
-`reverse-tools/check_class_coverage.py` rigenera questa tabella e la verifica.
+`reverse-tools/check_class_coverage.py` rigenera le tabelle di questo file e le
+verifica. Legge anche gli archivi: gli sweep stanno li' dentro, e una versione
+che guardava solo i `.txt` sciolti e' gia' costata a questo file una
+conclusione sbagliata.
 
 ## Complete
 
@@ -42,23 +45,47 @@ Verificata a freddo, non solo per etichetta: 6 letture OTP, 1 `SROMCTL`, 8 op
 PMU, 1 `CAL.INIT` e un select della tabella `0x01` in **ognuno** dei 28
 segmenti, e un solo chanspec programmato per segmento.
 
-## Le classi che il DSL ha e il d6220 no
+## Le classi per cattura
 
-Sette classi compaiono nelle catture DSL-3580L e in nessuna del d6220:
-`AMT.WR`, `RCMTA.WR`, `OBJ.BULKW`, `OBJ.SET`, `SROMCTL.WR`, `PHY.WARR`,
-`CS.SHM`. La spiegazione che questo file dava prima -- le catture sono piu'
-vecchie degli hook -- **non regge**, e il conteggio lo dice:
+Il conteggio, rigenerato con
+`check_class_coverage.py --conta AMT.WR,RCMTA.WR,ADDRM.SET,OBJ.BULKW,OBJ.SET,SROMCTL.WR,PHY.WARR,CS.SHM`:
 
-| cattura | driver | `AMT.WR` | `OBJ.BULKW` | `OBJ.SET` | `SROMCTL.WR` | `CS.SHM` |
-| --- | --- | --- | --- | --- | --- | --- |
-| d6220 cold sweep | 7.14.89.14 | 0 | 0 | 0 | 0 | 0 |
-| d6220 hot sweep | 7.14.89.14 | 0 | 0 | 0 | 0 | 0 |
-| agcombo cold sweep | 7.14.43.21 | 0 | 0 | 0 | 0 | 0 |
-| DSL-3580L | 6.30.102.7 | 122 | 7 | 1 | 4 | 1 |
+| cattura | driver | `AMT.WR` | `RCMTA.WR` | `ADDRM.SET` | `OBJ.BULKW` | `OBJ.SET` | `SROMCTL.WR` | `PHY.WARR` | `CS.SHM` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `d6220/cold-sweep.zip` | 7.14.89.14 | 5407 | 0 | 2580 | 6680 | 43 | 0 | 86 | 43 |
+| `d6220/hot-sweep.zip` | 7.14.89.14 | 10868 | 0 | 5280 | 12236 | 88 | 0 | 0 | 88 |
+| `agcombo/cold-sweep.zip` | 7.14.43.21 | 0 | 0 | 0 | 0 | 0 | 52 | 0 | 26 |
+| `agcombo/hot-sweep.zip` | 7.14.43.21 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 26 |
+| `agcombo/cold-sweep-partial.tar.gz` | 7.14.43.21 | 0 | 0 | 0 | 0 | 0 | 56 | 0 | 0 |
+| `dsl3580l/out-cold-dsl-*.txt` | 6.30.102.7 | 122 | 54 | 0 | 7 | 1 | 4 | 4 | 1 |
+| `dsl3580l/full-sweep.zip` | 6.30.102.7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 
-Tre sweep, **due board diverse**, tutte a 7.14, tutte a zero; il 6.30 le ha
-tutte. E' uno spartiacque di versione, non una data. Le stesse dieci classi
-mancano in blocco, comprese `ADDRM.SET` e `IHR.WR` che mancano anche sul DSL.
+Questa tabella diceva prima che le sette classi in testa erano **a zero su
+tutte le catture 7.14** e presenti solo sul 6.30, e ne concludeva uno
+spartiacque di versione. Il conteggio la smentisce su sei classi su sette, e la
+ragione dello sbaglio e' meccanica: `check_class_coverage.py` faceva glob solo
+su `*/*.txt` e gli sweep stanno negli archivi, quindi vedeva le catture sciolte
+piccole e non gli sweep. Ora legge anche `.zip` e `.tar.gz`.
+
+Cosa resta in piedi:
+
+- **`RCMTA.WR` e' davvero solo del DSL**, e la ragione e' nella sezione sulle
+  assenze legittime piu' sotto: dipende dalla corerev, non dalla versione del
+  driver;
+- **`SROMCTL.WR` non e' uno spartiacque di versione**: manca sugli sweep del
+  d6220 ma c'e' sull'agcombo, che e' 7.14.43, e sul DSL, che e' 6.30;
+- `AMT.WR`, `ADDRM.SET`, `OBJ.BULKW`, `OBJ.SET` e `PHY.WARR` **ci sono sul
+  d6220**, alcune a migliaia di record, e mancano sull'agcombo;
+- `CS.SHM` c'e' su tutte e tre le board.
+
+La linea di separazione che resta e' fra gli sweep dell'agcombo e quelli del
+d6220, che sono la stessa versione del driver. **SALAME**: l'ipotesi naturale
+e' quella che questo file aveva scartato, cioe' che le catture dell'agcombo
+siano di un tracer piu' vecchio di quegli hook, ma con quali `hooks[]` sia
+stato preso ogni archivio non e' registrato da nessuna parte, quindi resta
+un'ipotesi. Si chiude in un modo solo, ed e' lo stesso di sempre: il log di
+`pianifica()` all'insmod, che dice hook per hook cosa e' stato armato. Da qui
+in avanti conviene archiviarlo insieme alla cattura.
 
 ## Quello che si verifica da fermi, e quello che no
 
@@ -80,19 +107,19 @@ capita a due simboli:
 | `phy_reg_write_wide` | 0 | `PHY.WRW` non comparira' mai su questa build |
 | `wlc_write_amtinfo_by_idx` | 0 | non e' agganciato, e il suo corpo e' il dispatch AMT |
 
-**Per l'AMT l'inlining pero' non spiega niente**, e va detto perche' e' la
-prima ipotesi che viene in mente: `wlc_bmac_write_amt` ha 12 chiamanti reali,
-fra cui `wlc_bmac_init`. E la scrittura passa comunque da
-`wlc_bmac_copyto_objmem`, 568 byte con 13 chiamanti, certamente sul percorso di
-attach: se il suo hook fosse stato armato, `OBJ.BULKW` non sarebbe zero.
+**Per l'AMT l'inlining non spiega niente**, e va detto perche' e' la prima
+ipotesi che viene in mente: `wlc_bmac_write_amt` ha 12 chiamanti reali, fra cui
+`wlc_bmac_init`, e la scrittura passa comunque da `wlc_bmac_copyto_objmem`, 568
+byte con 13 chiamanti, certamente sul percorso di attach. Il conteggio lo
+conferma: sugli sweep del d6220 `AMT.WR` e `OBJ.BULKW` ci sono entrambe, a
+migliaia di record. Dove mancano e' sull'agcombo, e li' la domanda non e'
+l'inlining ma quali hook fossero armati.
 
 **La misura che manca non e' statica.** `pianifica()` stampa una riga per hook
-all'insmod: rimettere il tracer corrente sul d6220 e leggere il dmesg dice se
-l'hook e' stato pianificato, cosa che nessuna analisi sull'oggetto puo' dire
-perche' dipende da quale binario girava quel giorno. Se risulta pianificato e
-muto, il candidato da guardare e' `wlc_write_amtinfo_by_idx` inlineata, e
-l'unica via e' agganciare la funzione che la contiene -- `wlc_set_addrmatch`,
-gia' in tabella e che si pianifica.
+all'insmod, e dice se l'hook e' stato pianificato: e' cio' che nessuna analisi
+sull'oggetto puo' dire, perche' dipende da quale tracer girava quel giorno.
+Sull'agcombo si risolve rifacendo una cattura corta col tracer corrente e
+leggendo il dmesg, non rileggendo gli archivi.
 
 ## Due assenze che restano legittime
 
@@ -108,7 +135,10 @@ una funzione `*_acphy`: sono LCN, LCN40, LP, G, A, N piu' una decina di
 dispatcher generici che si diramano per tipo di PHY. Nella cattura DSL tutte e
 quattro le occorrenze sono `cpu0` e cadono nella finestra dell'attach di wl0.
 Non e' una prova -- i dispatcher generici non sono stati seguiti dentro -- ma
-le due evidenze puntano dalla stessa parte.
+le due evidenze puntano dalla stessa parte. **Le 86 occorrenze nel cold sweep
+del d6220 non sono state attribuite a un core**, e finche' non lo sono non
+contano ne' a favore ne' contro: si fa con la cpu e coi registri nominati, come
+per gli altri board a due core.
 
 ## `PHY.FGC`, la classe che non c'era
 

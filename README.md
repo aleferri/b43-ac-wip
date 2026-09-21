@@ -1,8 +1,8 @@
 # b43 AC-PHY / radio 2069 — BCM4352-family bring-up
 
 Porting `b43` per AC-PHY rev 1 / radio 2069 rev 4, reverse dal binario `wl`
-OEM. Le code-path sono rifatte con dispatch chip-aware
-`{4352, 4360, default}`. Tre board testimoni, con ruoli distinti:
+OEM. Le code-path sono rifatte con dispatch chip-aware `{4352, 4360}`. 
+Tre board testimoni, con ruoli distinti:
 
 - **Netgear D6220** (BCM4352, 2×2) — cattura di riferimento: è contro la sua
   trace che il flow è validato op-per-op, ed è il target del primo bring-up.
