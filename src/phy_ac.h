@@ -350,6 +350,19 @@ struct b43_phy_ac {
 	 */
 	bool crs_update_pending;
 	/*
+	 * Un campione e' in volo: armato e non ancora consumato. Finche' e'
+	 * alto il giro non ne arma un altro, che e' la guardia
+	 * `sampling_in_progress` di wlc_phy_noise_sample_request().
+	 */
+	bool noise_pending;
+	/*
+	 * In questo giro tocca anche rinfrescare i template. La spazzata si
+	 * spezza in due e il rinfresco va in mezzo, col MAC sospeso dal giro.
+	 */
+	bool tpl_refresh_due;
+	/* Un giro senza peek in piu', dopo il giro d'ingresso. */
+	bool peek_skip_one;
+	/*
 	 * Ricariche del template beacon che il vendor mette fra la host-flag
 	 * clear e la cella 0x0026, cioe' dentro la coda del bring-up. Sono
 	 * dello stack sopra il driver e il conteggio viene dal chiamante;

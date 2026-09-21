@@ -654,13 +654,35 @@ static void run_timeline(void)
 		exit(1);
 	}
 
+	/*
+	 * Il rinfresco dei template non e' un callback a se': la cattura lo
+	 * mostra dentro la spazzata di un giro, col MAC sospeso da quel giro.
+	 * Quindi un TPL che cade prima del giro successivo non si consegna da
+	 * solo: si dice al giro che tocca a lui, e il giro lo fa in mezzo.
+	 */
 	while (fgets(line, sizeof(line), f)) {
 		char kind[16];
 
 		if (sscanf(line, "%*f %*d %15s", kind) != 1)
 			continue;
-		if (!strcmp(kind, "WD"))
+		if (!strcmp(kind, "WD")) {
+			long pos = ftell(f);
+			char peek[128], pkind[16];
+			bool carried = false;
+
+			while (fgets(peek, sizeof(peek), f)) {
+				if (sscanf(peek, "%*f %*d %15s", pkind) != 1)
+					continue;
+				carried = !strcmp(pkind, "TPL");
+				break;
+			}
+			if (!carried)
+				fseek(f, pos, SEEK_SET);
+			g_ac.tpl_refresh_due = carried;
 			b43_phy_ac_watchdog(&g_wldev);
+			g_ac.tpl_refresh_due = false;
+			continue;
+		}
 		else if (!strcmp(kind, "POLL"))
 			b43_phy_ac_radar_poll(&g_wldev);
 		else if (!strcmp(kind, "TPL"))

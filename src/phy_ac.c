@@ -371,17 +371,24 @@ static void b43_phy_ac_measure_block(struct b43_wldev *dev);
  * 0x0768-0x078a. Due funzioni e non una perche' all'ingresso della fase probe
  * fra loro cadono le letture di fase e il cambio di modo -- a regime no.
  *
- * L'ordine delle quattro e' quello del giro a regime. All'ingresso la cattura
- * ne ha un altro, `0x010e 0x010c 0x0158 0x015e`, e quello va con il riordino,
- * non qui: va con la lunghezza del varco, che e' 4, 98, 100 o 157 op a seconda
- * del segmento. Vedi docs/retrace-todo.md.
+ * Le quattro hanno due ordini, ed e' il giro a sceglierlo: all'ingresso della
+ * fase `0x010e 0x010c 0x0158 0x015e`, a regime `0x010e 0x0158 0x010c 0x015e`.
+ * Non e' un riordino della cattura. Sugli 87 segmenti il primo ordine compare
+ * 45 volte, una per ognuno dei 44 segmenti up e una su ch36 a 20 MHz a
+ * freddo, ed e' seguito dal peek in **tutte e 45**; il secondo 4639 volte e
+ * non e' mai seguito dal peek. I due ordini marcano quindi i due percorsi, e
+ * l'unica altra disposizione che si vede nella traccia -- `0x015e 0x010e
+ * 0x0158 0x010c` -- e' la finestra di ricerca a cavallo di due quartetti
+ * consecutivi, non una terza forma.
  */
-static void b43_phy_ac_wd_head_words(struct b43_wldev *dev)
+static void b43_phy_ac_wd_head_words(struct b43_wldev *dev, bool entry)
 {
-	static const u16 head[4] = { 0x010e, 0x0158, 0x010c, 0x015e };
+	static const u16 head_entry[4] = { 0x010e, 0x010c, 0x0158, 0x015e };
+	static const u16 head_steady[4] = { 0x010e, 0x0158, 0x010c, 0x015e };
+	const u16 *head = entry ? head_entry : head_steady;
 	unsigned int i;
 
-	for (i = 0; i < ARRAY_SIZE(head); i++)
+	for (i = 0; i < 4; i++)
 		b43_shm_read16(dev, B43_SHM_SHARED, head[i]);
 }
 
@@ -10079,6 +10086,7 @@ static void b43_phy_ac_wd_mode_next(struct b43_wldev *dev)
 static void b43_phy_ac_wd_sample_phase_opt(struct b43_wldev *dev, bool peek,
 					   bool arm_tone)
 {
+	struct b43_phy_ac *ac = dev->phy.ac;
 	B43_AC_FN();
 	unsigned int k;
 
@@ -10099,7 +10107,17 @@ static void b43_phy_ac_wd_sample_phase_opt(struct b43_wldev *dev, bool peek,
 	if (peek)
 		b43_phy_ac_wd_peek(dev, arm_tone);
 
-	b43_phy_ac_wd_stats_clear(dev);
+	/*
+	 * Il clear della finestra e' l'arm del campione successivo -- in
+	 * brcmsmac le quattro M_PWRIND_MAP azzerate e poi MCMD_BG_NOISE, nella
+	 * stessa funzione -- quindi non si arma sopra un campione gia' in
+	 * volo: la' e' il `sampling_in_progress` che fa uscire la richiesta
+	 * senza toccare niente.
+	 */
+	if (!ac->noise_pending) {
+		b43_phy_ac_wd_stats_clear(dev);
+		ac->noise_pending = true;
+	}
 	b43_phy_ac_wd_mode_next(dev);
 }
 
@@ -10153,7 +10171,7 @@ static void b43_phy_ac_wd_stats_poll_opt(struct b43_wldev *dev,
 	u16 off;
 
 	if (head_sweep) {
-		b43_phy_ac_wd_head_words(dev);
+		b43_phy_ac_wd_head_words(dev, false);
 		b43_phy_ac_wd_flat_sweep(dev);
 	}
 
@@ -10218,7 +10236,24 @@ static void b43_phy_ac_wd_stats_poll(struct b43_wldev *dev)
 static void b43_phy_ac_wd_body(struct b43_wldev *dev, bool noise_cal,
 			       bool tail)
 {
-	b43_phy_ac_wd_stats_poll(dev);
+	struct b43_phy_ac *ac = dev->phy.ac;
+
+	/*
+	 * Il rinfresco dei template, quando tocca a questo giro, sta **dentro**
+	 * la spazzata, fra le due passate sui contatori a 32 bit, e dentro la
+	 * sospensione del MAC che il giro ha aperto: sui 498 giri a freddo che
+	 * lo portano, in 497 non c'e' un MAC.MCTRL di riabilitazione fra la
+	 * prima passata e la TPL.RAMW. Non e' quindi un altro contesto che si
+	 * infila -- e' questo percorso che fa anche quello.
+	 */
+	if (ac->tpl_refresh_due) {
+		ac->tpl_refresh_due = false;
+		b43_phy_ac_wd_stats_poll_opt(dev, true, 1, false);
+		b43_ac_beacon_reload(dev, ac->beacon_reload_done++);
+		b43_phy_ac_wd_stats_poll_opt(dev, false, 1, true);
+	} else {
+		b43_phy_ac_wd_stats_poll(dev);
+	}
 
 	if (noise_cal) {
 		b43_mac_suspend(dev);
@@ -10287,11 +10322,60 @@ void b43_phy_ac_watchdog(struct b43_wldev *dev)
 
 	B43_AC_FN();
 
-	if (k == 0) {
+	if (k == 0 && ac->crs_update_pending && ac->wd_turns % 10 == 9) {
+		/*
+		 * Il campione armato dalla coda del bring-up non e' ancora
+		 * arrivato, quindi la finestra ha contato e il giro e' pieno:
+		 * le quattro celle sparse, il peek col tono, il cambio di modo
+		 * e poi la spazzata intera. E' la forma che il commento di
+		 * b43_phy_ac_wd_peek() descrive per l'ingresso della fase --
+		 * peek fra le celle sparse e il cambio di modo, invece che
+		 * dopo entrambi come a regime.
+		 */
+		b43_phy_ac_wd_head_words(dev, true);
+		b43_phy_ac_wd_peek(dev, true);
+		/*
+		 * Il giro d'ingresso ha gia' fatto il peek col tono, cioe' il
+		 * lavoro che a regime tocca al giro 1: il prossimo e' il 2.
+		 */
+		ac->wd_switch_turns = 1;
+		/*
+		 * Dopo il giro d'ingresso i giri senza peek sono tre, non due:
+		 * il vendor ricomincia a fare il peek un giro piu' tardi. Con
+		 * la sola fase k se ne ottengono due, e allungare la regola a
+		 * k == 4 la applica anche dove il giro d'ingresso non c'e'
+		 * stato, che costa su tutti gli altri segmenti.
+		 */
+		ac->peek_skip_one = true;
+	} else if (k == 0) {
 		b43_phy_ac_wd_stats_poll(dev);
 	} else {
-		b43_phy_ac_wd_sample_phase_opt(dev, k != 2 && k != 3, k == 1);
+		bool peek = k != 2 && k != 3;
 
+		if (peek && ac->peek_skip_one) {
+			peek = false;
+			ac->peek_skip_one = false;
+		}
+		b43_phy_ac_wd_sample_phase_opt(dev, peek, k == 1);
+
+		/*
+		 * TODO: la fase di questo dump non e' quella del contatore che
+		 * la cattura semina. Misurato sui 43 segmenti a freddo, il
+		 * vendor lo emette ai giri 28, 58, 88 e 118 contati dai cambi
+		 * di modo dopo il bring-up -- periodo 30, fase la stessa su
+		 * tutti -- e i 40 segmenti che di giri ne hanno meno di 28 non
+		 * lo emettono mai. Sui 44 up il periodo e' lo stesso e la fase
+		 * no: [7], [6], [9,39], [3,33,63], [27,57], [21,51] a seconda
+		 * del segmento, cioe' un contatore che non si azzera al cambio
+		 * di canale e che a freddo parte da zero solo perche' li' il
+		 * modulo e' appena stato caricato.
+		 *
+		 * Legarlo a @wd_switch_turns mette a posto il freddo -- ch36
+		 * arriva a MATCH posizionale -- e costa sui tre gate a caldo,
+		 * perche' li' la fase e' quella di prima del bring-up e
+		 * l'harness non la passa. Serve un secondo ingresso come
+		 * AC_WD_PHASE, o l'evento nella timeline.
+		 */
 		if (ac->wd_turns % 30 == 29)
 			b43_phy_ac_wd_region_dump(dev);
 
@@ -10638,6 +10722,8 @@ void b43_phy_ac_noise_sample_done(struct b43_wldev *dev)
 		ac->crs_update_pending = false;
 		b43_phy_ac_crs_block_e(dev);
 	}
+
+	ac->noise_pending = false;
 }
 
 /*
@@ -10713,18 +10799,16 @@ static void b43_phy_ac_post_bringup_tail(struct b43_wldev *dev)
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x0026, 0xffff);
 
 	/*
-	 * Il latch della finestra e il blocco E delle soglie CRS: dietro la
-	 * cella a 0xffff quando le calibrazioni sono corse. Dove il check e'
-	 * pendente non c'e' niente da latchare qui e il blocco E arriva dietro
-	 * il latch del primo giro pieno del watchdog, vedi
-	 * b43_phy_ac_watchdog().
+	 * L'arm del campione di rumore, quando le calibrazioni sono corse. Dove
+	 * il check di disponibilita' e' pendente non c'e' niente da armare qui
+	 * e il blocco E arriva dietro il latch del primo giro pieno del
+	 * watchdog, vedi b43_phy_ac_watchdog().
 	 *
-	 * TODO: questi due non stanno qui. Sono il completamento del campione
-	 * di rumore, che questa coda arma e che arriva quando il campione e'
-	 * pronto, e vanno spostati su un punto di rientro che il core chiami --
-	 * l'equivalente di wlc_phy_noise_sample_intr() del vendor. Qui stanno
-	 * perche' su 29 segmenti a freddo su 43 il completamento cade a una op
-	 * da questa cella e l'ordine torna lo stesso.
+	 * Questa coda **arma** e basta: il latch e il blocco E li emette
+	 * b43_phy_ac_noise_sample_done(), che il core chiama quando il campione
+	 * e' pronto -- l'equivalente di wlc_phy_noise_sample_intr() del vendor.
+	 * Il clear della finestra e' l'arm del campione successivo e non si
+	 * sovrappone a uno gia' in volo: vedi @noise_pending.
 	 *
 	 * Che siano un contesto a parte, e non la coda di questa funzione, lo
 	 * dice la CPU: la lettura di 0x008c che apre il latch sta su cpu1 su
@@ -10738,13 +10822,15 @@ static void b43_phy_ac_post_bringup_tail(struct b43_wldev *dev)
 	 * su cpu1, mentre le 86 che non lo seguono si dividono 28/58 come il
 	 * resto del setup.
 	 *
-	 * Finche' il completamento non e' un evento, i tre ordini che la
-	 * cattura mostra nei 3 ms dopo questa cella non sono riproducibili:
-	 * latch, blocco E, poll su 29 segmenti; poll, latch, blocco E su ch36 a
-	 * 80 MHz; un giro di watchdog intero in mezzo su ch36 a 20 MHz.
+	 * Col completamento come evento i tre ordini che la cattura mostra nei
+	 * 3 ms dopo questa cella escono dallo stesso codice: latch, blocco E,
+	 * poll su 29 segmenti; poll, latch, blocco E su ch36 a 80 MHz; un giro
+	 * d'ingresso in mezzo su ch36 a 20 MHz.
 	 */
-	if (b43_phy_ac_may_calibrate_tx(dev))
+	if (b43_phy_ac_may_calibrate_tx(dev)) {
 		dev->phy.ac->crs_update_pending = true;
+		dev->phy.ac->noise_pending = true;
+	}
 
 	/*
 	 * Qui la coda del bring-up finisce. Da questo punto il flusso e' fatto
