@@ -1,0 +1,58 @@
+# dmesg | grep wl
+[   22.901000] Load wl module core 80b8e000 (size 9614)
+[   22.906000] Load wl module init 8108e000 (size 2433)
+[   22.923000] Load wl module core 80b91000 (size 36789)
+[   22.928000] Load wl module init 8108e000 (size 7705)
+[   25.120000] Load wl module core 80b9a000 (size 4101315)
+[   25.151000] Load wl module init 8108e000 (size 193638)
+[   25.235000] wl: dsl_tx_pkt_flush_len=338
+[   25.239000] wl: norm_wmark_tot=10524, pktc_wmark_tot=10524
+[   25.256000] wl 0000:00:00.0: setting latency timer to 64
+[   25.260000] wl: passivemode=1
+[   25.263000] wl0: creating kthread wl0-kthrd
+[   25.290000] wl: napimode=0
+[   25.301000] wl:srom/otp not programmed, using main memory mapped srom info(wombo board)
+[   25.309000] wl: ID=sb/0/
+[   25.312000] wl: ID=sb/0/
+[   25.409000] wl: loading /etc/wlan/bcm6362_map.bin
+[   25.495000] wl: reading /etc/wlan/bcmcmn_nvramvars.bin, file size=32
+[   25.533000] wl0: allocskbmode=1 currallocskbsz=1024
+[   25.551000]  wfd_bind: Dev wl%d wfd_idx 0 Type skb configured WFD thread wfd0-thrd RxQId (20), status (0) number_of_queues 2 qmask 0x3
+[   25.574000] +++++ Added gso loopback support for dev=wl0 <89a58000>
+[   25.581000] wl0: Broadcom BCM435f 802.11 Wireless Controller 7.14.89.14.cpe4.16L03.0-kdb
+[   25.589000] dgasp: kerSysRegisterDyingGaspHandler: wl0 registered 
+[   25.601000] wl: passivemode=1
+[   25.604000] wl1: creating kthread wl1-kthrd
+[   25.623000] wl: napimode=0
+[   25.667000] wl:srom/otp not programmed, using main memory mapped srom info(wombo board)
+[   25.675000] wl: ID=pci/2/0/
+[   25.678000] wl: ID=pci/2/0/
+[   25.680000] wl: loading /etc/wlan/bcm4360_map.bin
+[   25.713000] wl: reading /etc/wlan/bcmcmn_nvramvars.bin, file size=32
+[   25.814000] wl1: allocskbmode=1 currallocskbsz=3500
+[   25.877000]  wfd_bind: Dev wl%d wfd_idx 1 Type skb configured WFD thread wfd1-thrd RxQId (21), status (0) number_of_queues 2 qmask 0xc
+[   25.900000] +++++ Added gso loopback support for dev=wl1 <890d0800>
+[   25.908000] wl1: Broadcom BCM4360 802.11 Wireless Controller 7.14.89.14.cpe4.16L03.0-kdb
+[   25.915000] dgasp: kerSysRegisterDyingGaspHandler: wl1 registered 
+[   63.638000] wl_event_open
+[   63.640000] wl_event_open COMPLETED
+[   66.439000] wl1: wlc_dfs_cacstate_init: state to IDLE channel 44 
+[   74.787000] wl1: wlc_dfs_cacstate_init: state to IDLE channel 36 
+[   75.115000] wl1: wlc_dfs_cacstate_init: state to IDLE channel 36 
+[   75.454000] wl1: wlc_dfs_cacstate_init: state to IDLE channel 36 
+[   85.429000] device wl0_1 entered promiscuous mode
+[   85.481000] br-guest: port 1(wl0_1) entered forwarding state
+[   85.486000] br-guest: port 1(wl0_1) entered forwarding state
+[   85.561000] device wl1_1 entered promiscuous mode
+[   85.572000] br-guest: port 2(wl1_1) entered forwarding state
+[   85.577000] br-guest: port 2(wl1_1) entered forwarding state
+[   87.489000] br-guest: port 1(wl0_1) entered forwarding state
+[   87.584000] br-guest: port 2(wl1_1) entered forwarding state
+[   88.955000] device wl1 entered promiscuous mode
+[   88.993000] br-lan: port 5(wl1) entered forwarding state
+[   88.998000] br-lan: port 5(wl1) entered forwarding state
+[   89.037000] device wl0 entered promiscuous mode
+[   89.061000] br-lan: port 6(wl0) entered forwarding state
+[   89.066000] br-lan: port 6(wl0) entered forwarding state
+[   91.000000] br-lan: port 5(wl1) entered forwarding state
+[   91.072000] br-lan: port 6(wl0) entered forwarding state
