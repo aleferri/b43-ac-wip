@@ -209,16 +209,69 @@ core`); dopo, `private_data` liberata e crash al primo evento, cioe' al primo
 
 **3. `/lib/wireless/init_broadcom.sh` configura l'istanza e gira una volta per
 boot** (`/tmp/hostapd_init_once`): `nar 0`, `phycal_tempdelta 40` (la nvram qui
-ha 0, vedi tabella sopra), soglie radar per `wl1` con up/down, affinita' del
-kthread. Un `wl` ricaricato senza rifarle ha i default Broadcom e ricalibra in
-momenti diversi dal boot. Lo script riapplica nar e tempdelta per ciclo, e a
-fine corsa rimuove il file e rilancia hostapd, che rifa' tutto sull'istanza che
-resta in esercizio.
+ha 0, vedi tabella sopra), soglie radar per `wl1` scritte con un `up`/`down`
+sul chanspec di default, affinita' del kthread. Quell'`up` e' il primo
+`phy_init` del boot, sul canale 44 e non su quello configurato: nel dmesg di
+boot `wlc_dfs_cacstate_init` passa per il 44 a 66 s e per il 36 a 74 s, quindi
+**il vendor non fa mai un init freddo sul canale in esercizio**, e l'`up` di
+hostapd e' un caldo. Le istanze catturate dallo script restano ai default
+Broadcom, per scelta: sono confrontabili con gli altri board e il freddo non
+viene bruciato. A fine corsa lo script rimuove il file e rilancia hostapd, che
+rifa' `init_broadcom.sh` per intero sull'istanza che resta in esercizio.
+`fix_uci_config.sh`, che gira di nuovo in quel momento, e' idempotente.
 
 Da tenere d'occhio, non risolto: a ogni `rmmod` il FAP stampa
 `dqmHandlerRegisterHost: Exceeded maximum number of DQM IRQ Handlers! (8)`, due
 volte per interfaccia. E' un leak di handler all'unbind di `wfd` con un tetto di
 8: il numero di ricarichi per boot ha un limite, lo script lo conta.
+
+## cold-sweep.zip
+
+Quarantatre' segmenti a freddo piu' il preambolo, stessa numerazione e stesso
+elenco di configurazioni del D6220: per larghezza e poi per canale,
+`cold01-ch36-bw20` … `cold25-ch165-bw20`, `cold26-ch36-bw40` …
+`cold37-ch157-bw40`, `cold38-ch36-bw80` … `cold43-ch149-bw80`. Presi con
+`capture_cold_tg789vac.sh` su due boot: il primo con sette corse consecutive
+(`20`, `40`, `80`, `20dfs`, `40dfs`, `80dfs`, `20meteo`) e hostapd fermato e
+rilanciato fra una corsa e l'altra; il secondo, dopo il blocco descritto
+sotto, con `20 36` di nuovo (per avere la testa che nella prima traccia
+mancava), `40meteo` e `80meteo`. Ogni segmento ha una sola scrittura
+`CS.SHM`, sul canale chiesto (centro del blocco per 40 e 80), e la
+dispersione del numero di op dentro una corsa e' dell'1-2 %.
+
+Taglio riproducibile, per ciascuna delle due tracce:
+
+```
+python3 reverse-tools/split_trace.py --on mod --drop-between-runs --prefix cold cold.txt split/
+python3 reverse-tools/trace_filter.py --retvals split/<seg>.txt <seg>.txt
+```
+
+`--drop-between-runs` toglie quel che sta fra una `fine corsa` e il `mod
+COMING` successivo: e' il restart di hostapd, che tira su entrambe le radio e
+traccia mezzo milione di op che non appartengono a nessun ciclo. I segmenti
+delle due tracce sono poi uniti e rinumerati per (bw, canale), e ognuno e'
+passato per `--retvals` come quelli del D6220: nessuna riga `RETVAL` o `ARGX`
+residua, nessun `val=UNDEFINED`. `cold00-preambolo.txt` e' quello della
+seconda traccia: le op di wl_diag prima della corsa, l'etichetta, il `down`
+dell'istanza di boot e il suo `GOING`.
+
+Da sapere:
+
+- **`cold20-ch144-bw20` ha un init dimezzato**: 12.3k op nella fase di up
+  contro 33.6k dei canali vicini, con 232 toggle di `MAC.MCTRL` contro 75, e
+  poi watchdog normale. Il chanspec e' stato scritto e la radio e' salita; e'
+  un ramo di init diverso. Il 144 sotto ETSI non e' allocato e il driver non lo
+  tratta come gli altri: e' l'unico segmento che esercita quel ramo.
+- **Il primo boot si e' bloccato al primo ciclo di `40meteo`**, dopo sette
+  corse e quaranta ricarichi puliti. Non e' nella traccia (il lettore e' morto
+  col router) e la causa non e' indagata. Al secondo boot `40meteo` e
+  `80meteo` sono passati al primo colpo, quindi non e' un problema di quei
+  canali: e' qualcosa che si accumula, e i candidati misurabili sono il leak
+  di handler DQM del FAP (sezione precedente) e il numero di ricarichi per
+  boot.
+- I `fine corsa` restano in coda all'ultimo segmento di ogni corsa, seguiti
+  dall'etichetta della corsa successiva: e' dove `--on mod` mette le etichette
+  anche nelle catture normali.
 
 ## Prima di usarle come prova, quando ci saranno le catture
 

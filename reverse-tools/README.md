@@ -217,6 +217,11 @@ segmenti dove il fenomeno non c'e' deve dare la risposta vuota. Su
     l'unico che li riproduce. Attenzione a cosa comporta: dentro un ciclo il
     chanspec cade dopo la testa del ciclo, quindi quella testa finisce in coda
     al segmento precedente.
+  - `--drop-between-runs`, con `mark` o `mod`: toglie quel che sta fra una
+    `fine corsa` e il `mod COMING` successivo, tenendo solo l'etichetta del
+    canale. Serve dove il driver torna in esercizio fra una corsa e l'altra
+    (il TG789vac v2 rilancia hostapd) e quella attivita' finirebbe in coda
+    all'ultimo segmento della corsa.
   - `--on gaps` sui **salti temporali** (soglia 1.03 s), per una traccia che
     non porta ne' MARK ne' chanspec. Taglia piu' avanti di `chanspec` e tiene
     la testa del ciclo col ciclo, che e' il verso giusto, ma non riproduce lo

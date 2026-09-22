@@ -26,14 +26,15 @@
 #    Con hostapd fermo cade anche il 2.4 GHz: si guida da seriale o ethernet.
 #
 # 3. /lib/wireless/init_broadcom.sh configura L'ISTANZA del driver -- `nar 0`,
-#    `phycal_tempdelta 40` (la nvram di questo board ha 0), soglie radar -- e
-#    gira una volta sola per boot (/tmp/hostapd_init_once). Un wl ricaricato
-#    ha i default Broadcom, non quelli Technicolor. Qui si riapplicano nar e
-#    tempdelta per l'interfaccia catturata; le soglie radar no, perche' il
-#    vendor le imposta con un up/down sul chanspec di default, che brucerebbe
-#    il primo phy_init. A fine corsa /tmp/hostapd_init_once viene rimosso,
-#    cosi' `hostapd start` rifa' init_broadcom.sh completo sull'istanza che
-#    resta in esercizio.
+#    `phycal_tempdelta 40`, soglie radar scritte con un up/down sul chanspec
+#    di default -- e gira una volta sola per boot (/tmp/hostapd_init_once).
+#    Le istanze catturate qui NON la ricevono, per scelta: sono wl con i
+#    default Broadcom, confrontabili con gli altri board della collezione, e
+#    quell'up/down sarebbe comunque il primo phy_init del boot, cioe' il
+#    freddo bruciato prima della cattura (nel dmesg di boot: cacstate ch 44
+#    a 66 s da init_broadcom.sh, poi ch 36 a 74 s da hostapd). A fine corsa
+#    /tmp/hostapd_init_once viene rimosso, cosi' `hostapd start` rifa'
+#    init_broadcom.sh completo sull'istanza che resta in esercizio.
 #
 # 4. A ogni rmmod il FAP stampa `dqmHandlerRegisterHost: Exceeded maximum
 #    number of DQM IRQ Handlers! (8)`: qualcuno, all'unbind di wfd, registra
@@ -69,7 +70,6 @@
 #                lo stesso di /etc/modules.d/57-bcm63xx-tch-wireless)
 #   DEVID        deviceid ammessi su IF                        (default 0x43a2)
 #   HOSTAPD_INIT script di init di hostapd          (default /etc/init.d/hostapd)
-#   TUNE         1 = riapplica nar/tempdelta di init_broadcom.sh (default 1)
 #   NO_RESTART   1 = a fine corsa NON rilanciare hostapd        (default vuoto)
 #
 # Niente `set -u`, niente head/awk/sed/tr: il busybox di questi firmware non li
@@ -86,9 +86,11 @@ fi
 
 [ -n "$1" ] || { echo "uso: sh capture_cold_tg789vac.sh {$PROFILI} | <20|40|80> <canale> [canale...]" >&2; exit 1; }
 
-if profilo "$1"; then
-    shift
-    [ -n "$1" ] && { echo "col profilo non si passano canali: '$*'" >&2; exit 1; }
+# I profili 20, 40 e 80 hanno lo stesso nome delle larghezze: e' un profilo
+# solo se e' l'unico argomento, altrimenti il primo argomento e' la larghezza.
+# Gli altri profili (20dfs, 20meteo...) non prendono mai canali, quindi la
+# regola non ha ambiguita'.
+if [ $# -eq 1 ] && profilo "$1"; then
     set -- $LIST
 else
     BW="$1"
@@ -106,7 +108,6 @@ fi
 [ -n "$WL_KO" ]        || WL_KO=/lib/modules/3.4.11/wl.ko
 [ -n "$DEVID" ]        || DEVID="0x43a2"
 [ -n "$HOSTAPD_INIT" ] || HOSTAPD_INIT=/etc/init.d/hostapd
-[ -n "$TUNE" ]         || TUNE=1
 INIT_ONCE=/tmp/hostapd_init_once
 
 case "$SETTLE" in
@@ -250,24 +251,6 @@ verifica_freddo() {
     return 0
 }
 
-# Le righe 27-38 di /lib/wireless/init_broadcom.sh, per la sola IF e senza
-# up/down: nar a 0 e, sui PHY della famiglia 'v' con tempdelta 0 in nvram,
-# tempdelta 40. Cambia QUANDO il driver ricalibra, quindi una cattura senza
-# questo differirebbe dal boot per una ragione che non c'entra col canale.
-riapplica_tunable() {
-    [ "$TUNE" = "1" ] || return 0
-    wl -i "$IF" nar 0 > /dev/null 2>&1
-    PHY=`wl -i "$IF" phylist 2>/dev/null`
-    case "$PHY" in
-        v*)
-            if [ "`wl -i "$IF" phycal_tempdelta 2>/dev/null`" = "0" ]; then
-                wl -i "$IF" phycal_tempdelta 40 > /dev/null 2>&1
-            fi ;;
-    esac
-    echo "tunable: nar=`wl -i "$IF" nar 2>/dev/null` phycal_tempdelta=`wl -i "$IF" phycal_tempdelta 2>/dev/null`"
-    return 0
-}
-
 scarica_wl() {
     APERTI=`fd_wl_event`
     if [ -n "$APERTI" ]; then
@@ -317,7 +300,6 @@ carica_wl() {
     attendi_if || return 1
     verifica_identita || return 1
     verifica_freddo || return 1
-    riapplica_tunable
     return 0
 }
 
@@ -366,7 +348,7 @@ ciclo() {
 # ---- corsa ---------------------------------------------------------------
 
 echo "cold tg789vac: $IF, BW$BW, attesa ${SETTLE}s + ${SETTLE_BSS}s bss, deviceid ammessi: $DEVID"
-echo "modulo: $WL_KO, cursore: `cat $P/bump_ptr`, tunable init_broadcom: TUNE=$TUNE"
+echo "modulo: $WL_KO, cursore: `cat $P/bump_ptr`; istanze catturate con i default Broadcom, senza init_broadcom.sh"
 [ -n "$SSID" ] || echo "SSID non impostato: la bss non sale e mancheranno le tabelle per-core"
 echo "hostapd viene fermato: cadono ENTRAMBE le radio. Non guidare questa procedura in wifi."
 echo "il lettore di /proc/wl_diag deve essere gia' attivo"

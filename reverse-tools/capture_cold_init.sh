@@ -108,9 +108,11 @@ fi
 
 # Un profilo porta con se' larghezza e canali; altrimenti il primo argomento e'
 # la larghezza e il resto sono i canali.
-if profilo "$1"; then
-    shift
-    [ -n "$1" ] && { echo "col profilo non si passano canali: '$*'" >&2; exit 1; }
+# I profili 20, 40 e 80 hanno lo stesso nome delle larghezze: e' un profilo
+# solo se e' l'unico argomento, altrimenti il primo argomento e' la larghezza.
+# Gli altri profili (20dfs, 20meteo...) non prendono mai canali, quindi la
+# regola non ha ambiguita'.
+if [ $# -eq 1 ] && profilo "$1"; then
     set -- $LIST
 else
     BW="$1"

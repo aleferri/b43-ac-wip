@@ -172,6 +172,36 @@ def cut_on_mod(lines):
     return segments, found
 
 
+def drop_between_runs(lines):
+    """Drop what lies between one run and the next: from a `fine corsa` MARK
+    to the following `mod COMING`, keeping only the channel label in between.
+
+    On a board where the driver goes back into service between runs -- the
+    TG789vac v2 restarts hostapd, which brings both radios up and traces
+    half a million ops -- that stretch is not part of any cycle, yet `mod`
+    would append it to the tail of the last segment of the run, together
+    with the `down` of the in-service instance that the next run's first
+    cycle performs before its rmmod. The `fine corsa` line itself stays, as
+    the terminator of the run it closes."""
+    out, dropping = [], False
+    for line in lines:
+        m = RE_MARK.search(line)
+        if m:
+            mark = m.group(1)
+            if mark == "fine corsa":
+                out.append(line)
+                dropping = True
+                continue
+            if dropping and mark == "mod COMING":
+                dropping = False
+            elif dropping and RE_MOD.match(mark):
+                continue
+        if dropping and not m:
+            continue
+        out.append(line)
+    return out
+
+
 def filter_bringup(segments):
     """Keep among the numbered ones only the segments whose bring-up reaches
     the radio, and renumber, so the numbers follow the channels.
@@ -317,6 +347,10 @@ def main():
     ap.add_argument("--bringup-only", action="store_true",
                     help="on mark: number only the segments that reach the "
                          "radio; the others go to 00-scartati.txt")
+    ap.add_argument("--drop-between-runs", action="store_true",
+                    help="on mark/mod: drop what lies between a 'fine corsa' "
+                         "and the next 'mod COMING' (driver back in service "
+                         "between runs), keeping the channel label")
     ap.add_argument("--gap", type=float, default=1.03,
                     help="on gaps: threshold in seconds (default 1.03)")
     ap.add_argument("--channels", default="",
@@ -332,6 +366,8 @@ def main():
     channels = a.channels.split(",") if a.channels else []
 
     if a.on in ("mark", "mod"):
+        if a.drop_between_runs:
+            lines = drop_between_runs(lines)
         if a.on == "mark":
             segments, found = cut_on_mark(lines, a.skip_mod)
         else:
