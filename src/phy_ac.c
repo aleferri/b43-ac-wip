@@ -1965,27 +1965,24 @@ static u8 b43_phy_ac_tssi_visible_qdbm(struct b43_wldev *dev)
 	return floor < 0 ? 0 : (u8)floor;
 }
 
-/* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
+/*
+ * The programming half of txpwrctrl_setup(), for the sub-band grp: current
+ * index, target power, the est_pwr LUT of every active core and table 0x21.
+ * Kept apart because b43_phy_ac_down() issues the same sequence again, on
+ * the sub-band setup() cached.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   13072-13404, 13746-14078]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   8766-9098, 9376-9708]
  */
-static void b43_phy_ac_txpwrctrl_setup(struct b43_wldev *dev, u16 freq)
+static void b43_phy_ac_txpwrctrl_program(struct b43_wldev *dev,
+					 unsigned int grp)
 {
 	B43_AC_FN();
-	static const struct { s16 a1, b0, b1; } pwrdet_def[3] = {
-		{ (s16)0xff49, (s16)0x12d9, (s16)0xfd99 },
-		{ (s16)0xff54, (s16)0x1212, (s16)0xfd89 },
-		{ (s16)0xff53, (s16)0x11b7, (s16)0xfdc0 },
-	};
 	static const u16 est_pwr_tbl_id[3] = { 0x40, 0x60, 0x80 };
-	const struct ssb_sprom *sprom = dev->dev->bus_sprom;
 	u8 num_cores = dev->phy.ac->num_cores;
-	unsigned int grp = b43_phy_ac_pa5g_group(dev, freq);
 	u32 ppr[24] = { 0 };
 	u8 core;
-
-	dev->phy.ac->pa5g_grp = (u8)grp;
 
 	/*
 	 * Table 0x21, 24 u32s: the power-detector offsets by rate group, one
@@ -1995,18 +1992,16 @@ static void b43_phy_ac_txpwrctrl_setup(struct b43_wldev *dev, u16 freq)
 	 * pa5g sub-band. The rest of the table is zero: rev 11 has no 20 MHz
 	 * field, and pdoffsetcckma is zero on the one board that declares it.
 	 *
-	 * Read off all 139 segments of the four sweeps -- d6220 cold and hot,
-	 * agcombo cold and hot -- which write four payloads and no other:
-	 * 0x0202 on entries 1/5/6 on the d6220 (two cores) below UNII-3 and
-	 * 0x0303 on ch149-165, 0x020202 on agcombo (three cores), and on
-	 * agcombo alone entry 10 = 0x010101 on ch100 and up at every width --
-	 * exactly the board whose pdoffset80ma is 0x0100, with the 1 in the
-	 * sub-band-2 nibble, against 0 on the other two. The 40 MHz link is by
-	 * the same encoding: all three boards carry pdoffset40ma = 0x3222, and
-	 * the 17 UNII-3 segments of the d6220 write the 3 of sub-band 3, so
-	 * every nibble of that field is now observed. It is not the mcsbw*po
-	 * table: those nibbles differ between the two boards and between their
-	 * bands, and the payload does not follow them.
+	 * The d6220 and the agcombo carry pdoffset40ma = 0x3222 on every core,
+	 * so on their four sweeps only the sub-band nibble moves: 0x0202 below
+	 * UNII-3 and 0x0303 on ch149-165 on the d6220 (two cores), 0x020202 on
+	 * the agcombo, whose pdoffset80ma 0x0100 puts 0x010101 in entry 10 from
+	 * ch100 up. The tg789vac-v2 has a different nibble per core and per
+	 * sub-band in both fields (0x5444/0x5444/0x5344, 0x2111/0x0111/0x2011)
+	 * and all 129 writes of its 43 cold segments follow this formula, so
+	 * the core byte and the sub-band nibble are both observed. It is not the
+	 * mcsbw*po table: those nibbles differ between boards and bands, and the
+	 * payload does not follow them.
 	 */
 	for (core = 0; core < num_cores; core++) {
 		const struct ssb_sprom *sp = dev->dev->bus_sprom;
@@ -2021,25 +2016,6 @@ static void b43_phy_ac_txpwrctrl_setup(struct b43_wldev *dev, u16 freq)
 		ppr[6] |= o40 << (8 * core);
 		ppr[10] |= o80 << (8 * core);
 	}
-
-	/*
-	 * Preconditions, the vendor's state on entry to txpwrctrl_setup():
-	 *   CLASSCTL 0x0140 = 0x0df6, released: RX_WAITED and RX_OFDM set,
-	 *     RX_CCK clear
-	 *   0x?d4 bit 14 clear, so clip detect is enabled on every core
-	 *   0x0001 bit 14 clear, the CCA_RESET pulse having finished
-	 *   MAC.MCTRL bit 0 clear, MAC suspended
-	 * The vendor does not run this with the gate armed or clip detect
-	 * disabled: txpwrctrl is setup with the RX classifier live, not a
-	 * calibration.
-	 */
-	B43_PHY_AC_REQUIRE(dev,
-			   B43_PHY_AC_STATE_RX_WAITED |
-			   B43_PHY_AC_STATE_RX_OFDM,
-			   B43_PHY_AC_STATE_RX_CCK |
-			   B43_PHY_AC_STATE_CLIP_ALL_DIS |
-			   B43_PHY_AC_STATE_CCA_RESET |
-			   B43_PHY_AC_STATE_MAC_EN);
 
 	b43_phy_maskset(dev, 0x0072, (u16)~(0x0001), (0x0001));
 	b43_phy_maskset(dev, 0x0070, (u16)~0x8000, 0);
@@ -2093,6 +2069,41 @@ static void b43_phy_ac_txpwrctrl_setup(struct b43_wldev *dev, u16 freq)
 		b43_actab_write_bulk(dev, est_pwr_tbl_id[core], 0, 16, 128, lut);
 	}
 	b43_actab_write_bulk(dev, 0x21, 0, 32, 24, ppr);
+}
+
+static void b43_phy_ac_txpwrctrl_setup(struct b43_wldev *dev, u16 freq)
+{
+	B43_AC_FN();
+	static const struct { s16 a1, b0, b1; } pwrdet_def[3] = {
+		{ (s16)0xff49, (s16)0x12d9, (s16)0xfd99 },
+		{ (s16)0xff54, (s16)0x1212, (s16)0xfd89 },
+		{ (s16)0xff53, (s16)0x11b7, (s16)0xfdc0 },
+	};
+	const struct ssb_sprom *sprom = dev->dev->bus_sprom;
+	unsigned int grp = b43_phy_ac_pa5g_group(dev, freq);
+
+	dev->phy.ac->pa5g_grp = (u8)grp;
+
+	/*
+	 * Preconditions, the vendor's state on entry to txpwrctrl_setup():
+	 *   CLASSCTL 0x0140 = 0x0df6, released: RX_WAITED and RX_OFDM set,
+	 *     RX_CCK clear
+	 *   0x?d4 bit 14 clear, so clip detect is enabled on every core
+	 *   0x0001 bit 14 clear, the CCA_RESET pulse having finished
+	 *   MAC.MCTRL bit 0 clear, MAC suspended
+	 * The vendor does not run this with the gate armed or clip detect
+	 * disabled: txpwrctrl is setup with the RX classifier live, not a
+	 * calibration.
+	 */
+	B43_PHY_AC_REQUIRE(dev,
+			   B43_PHY_AC_STATE_RX_WAITED |
+			   B43_PHY_AC_STATE_RX_OFDM,
+			   B43_PHY_AC_STATE_RX_CCK |
+			   B43_PHY_AC_STATE_CLIP_ALL_DIS |
+			   B43_PHY_AC_STATE_CCA_RESET |
+			   B43_PHY_AC_STATE_MAC_EN);
+
+	b43_phy_ac_txpwrctrl_program(dev, grp);
 }
 
 /*
@@ -10929,86 +10940,23 @@ static void b43_phy_ac_down(struct b43_wldev *dev)
 	b43_phy_ac_prb_rsp_rate_po(dev);
 
 	/*
-	 * Post-probe final AFE configuration, 16 ops, closing the calibration:
-	 * peek the gate, lock it, then a sequence of MODs on the gain registers
-	 * 0x0070-0x0072 (mixed thresholds and enables) and the per-core
-	 * 0x0644-0x0846. The 0x019e gate stays locked on exit for the bulk
-	 * table writes that follow.
+	 * Post-probe final AFE configuration, closing the calibration: peek the
+	 * gate, lock it, then the programming of txpwrctrl_setup() again, on the
+	 * sub-band it cached. The 0x019e gate stays locked on exit. In every
+	 * cold segment of the three boards the three writes of table 0x21 carry
+	 * the same payload, and on the 3-core boards this pass covers 0x0a44 and
+	 * the core-2 LUT 0x80 as well.
 	 *
 	 * SALAME: reading this as the final AFE teardown is ours. What the
 	 * specific bits do -- 0x8000, 0x4000, 0x0100 and 0x0700 on 0x0070 and
 	 * 0x0072 -- is undocumented; they line up with threshold and enable bits
 	 * of the gain front end.
+	 * [capture-ref: router-data/tg789vac-v2/cold-sweep.zip!cold01-ch36-bw20.txt;
+	 *   #42170-#42579]
 	 */
 	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
-	b43_phy_maskset(dev, 0x0072, (u16)~0x0001, 0x0001);
-	b43_phy_maskset(dev, 0x0070, (u16)~0x8000, 0);
-	b43_phy_maskset(dev, 0x0070, (u16)~0x0100, 0x0100);
-	b43_phy_maskset(dev, 0x0072, (u16)~0x4000, 0);
-	b43_phy_maskset(dev, 0x0072, (u16)~0x4000, 0x4000);
-	b43_phy_maskset(dev, 0x0070, (u16)~0x8000, 0);
-	b43_phy_maskset(dev, 0x0644, (u16)~0x007f, 0x0014);
-	b43_phy_maskset(dev, 0x0844, (u16)~0x007f, 0x0014);
-	b43_phy_maskset(dev, 0x0071, (u16)~0x00ff, 0x00c8);
-	b43_phy_maskset(dev, 0x0071, (u16)~0x0700, 0x0400);
-	b43_phy_maskset(dev, 0x0070, (u16)~0x0800, 0);
-	b43_phy_maskset(dev, 0x0070, (u16)~0x0400, 0x0400);
-	/*
-	 * The target power again, the same value txpwrctrl_setup() wrote. The
-	 * 0x38 the stock driver writes here on a first bring-up is the
-	 * regulatory ceiling binding under its default locale, not a constant
-	 * of the phase.
-	 */
-	b43_phy_ac_txpwr_target_write(dev);
-
-	/*
-	 * The two est_pwr LUTs again, cores 0 and 1.
-	 *
-	 * Each takes three payloads across the 16 sweep channels, grouped by
-	 * sub-band at 5250 and 5500 MHz, which is the grouping pa5ga[] has.
-	 * The two differ from each other in 77 of 128 positions because they
-	 * are two cores: pa5ga0 and pa5ga1 are distinct SPROM triples.
-	 *
-	 * pa5g_grp is the sub-band cached by txpwrctrl_setup(), which runs
-	 * twice before this point in the same channel setup.
-	 */	{
-		u16 lut[128];
-
-		b43_phy_ac_est_pwr_lut(dev, 0, dev->phy.ac->pa5g_grp, lut);
-		b43_actab_write_bulk(dev, 0x0040, 0x0000, 16,
-				     ARRAY_SIZE(lut), lut);
-		b43_phy_ac_est_pwr_lut(dev, 1, dev->phy.ac->pa5g_grp, lut);
-		b43_actab_write_bulk(dev, 0x0060, 0x0000, 16,
-				     ARRAY_SIZE(lut), lut);
-	}
-
-	/*
-	 * Bulk write of table 0x0021, 24 entries, 52 ops: 24 32-bit entries of
-	 * which only [1], [5] and [6] are non-zero, all 0x0202. The gate stays
-	 * locked, with no MOD of B43_PHY_AC_REG_TBL_WRITE_GATE before or after.
-	 *
-	 * Checked channel- and bandwidth-invariant on ch36, ch44 and ch36 at
-	 * 40 MHz. Unlike tables 0x0040 and 0x0060 above, this one does hold
-	 * across the wider sweep sample.
-	 *
-	 * SALAME: the three non-zero entries could be IQ correction flags or a
-	 * compensation id, with the rest as padding. The exact meaning is not
-	 * known, though the values are fixed.
-	 */
-	{
-		static const u32 lut_0021[24] = {
-			0x00000000, 0x00000202, 0x00000000, 0x00000000,
-			0x00000000, 0x00000202, 0x00000202, 0x00000000,
-			0x00000000, 0x00000000, 0x00000000, 0x00000000,
-			0x00000000, 0x00000000, 0x00000000, 0x00000000,
-			0x00000000, 0x00000000, 0x00000000, 0x00000000,
-			0x00000000, 0x00000000, 0x00000000, 0x00000000,
-		};
-
-		b43_actab_write_bulk(dev, 0x0021, 0x0000, 32,
-				     ARRAY_SIZE(lut_0021), lut_0021);
-	}
+	b43_phy_ac_txpwrctrl_program(dev, dev->phy.ac->pa5g_grp);
 
 	/*
 	 * Final tail, 72 ops: closes the RX-IQ scope and programs the per-core
