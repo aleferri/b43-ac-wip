@@ -162,6 +162,16 @@ static const struct board_profile PROFILE_AGCOMBO = {
 	.ledbh = { [0] = 0xff, [1] = 0xff, [2] = 0xff, [3] = 0xff,
 		   [10] = 0x88 },
 	.num_cores = 3, .coremask = 0x7, .rxchain = 7,
+	.subband5gver = 0x4,
+	/* pa5ga{0,1,2} (NVRAM agcombo). */
+	.pa5ga = {
+		{ 0xff3e, 0x167e, 0xfd20, 0xff80, 0x17e5, 0xfd50,
+		  0xff3d, 0x16fd, 0xfd02, 0xff4c, 0x16bb, 0xfd29 },
+		{ 0xff4f, 0x1693, 0xfd26, 0xff6a, 0x17a6, 0xfd1e,
+		  0xff4c, 0x171f, 0xfd0d, 0xff5a, 0x1724, 0xfd27 },
+		{ 0xff70, 0x1805, 0xfd2f, 0xff63, 0x17e4, 0xfd1b,
+		  0xff60, 0x17ae, 0xfd1b, 0xff67, 0x1840, 0xfd13 },
+	},
 	/* Same 5gl values as d6220 (NVRAM agcombo). */
 	.rxgains_5gl_elnagain = { 3, 3, 3 },
 	.rxgains_5gl_triso    = { 6, 6, 6 },
@@ -241,6 +251,61 @@ static const struct board_profile PROFILE_DSL = {
 	},
 };
 
+/*
+ * TG789vac v2: BCM4360 3x3 su wl 7.14.89, lo stesso driverrev del d6220.
+ * Valori da router-data/tg789vac-v2/wl1_nvram.txt, verificati word per word
+ * contro wl1_srom_raw.txt: la SROM qui e' la NVRAM mappata in memoria, quindi
+ * le due fonti sono la stessa board.
+ */
+static const struct board_profile PROFILE_TG789 = {
+	.name = "tg789", .chip_id = 0x4360, .radio_rev = 4,
+	/* macaddr=12:13:31:f6:da:77, il segnaposto del file di mappa. */
+	.macaddr = { 0x12, 0x13, 0x31, 0xf6, 0xda, 0x77 },
+	/* corerev 0x2a (wl1_revinfo) e MACHW_L/H come li scrive il vendor:
+	 * cold01-ch36-bw20 #590-#592. */
+	.core_rev = 42, .mac_hw_cap = 0x30518c05,
+	/* srom[55-56] = 0xffff e nessun ledbh nella NVRAM: il vendor pilota
+	 * solo i gpio 0-2 (maschera 0x7 su GPIO.OE/OUT/CTL, senza 0x400). */
+	.ledbh = { [0] = 0xff, [1] = 0xff, [2] = 0xff, [3] = 0xff },
+	.radio_ver = 0x2069, .phy_rev = 1,
+	.num_cores = 3, .coremask = 0x7, .rxchain = 7,
+	.subband5gver = 0x4,
+	/* srom[85-86]: femctrl=6 tssiposslope=1 come gli altri, pdgain=19
+	 * invece di 10 su entrambe le bande. */
+	.fem_cfg1     = 0x3131,
+	.fem_cfg2     = 0x0131,
+	.tssifloor5g  = { 0x3ff, 0x3ff, 0x3ff, 0x3ff },
+	.pa5ga = {
+		{ 0xff1f, 0x1763, 0xfd10, 0xff30, 0x184d, 0xfd03,
+		  0xff26, 0x1773, 0xfd19, 0xff29, 0x1862, 0xfcfd },
+		{ 0xff3f, 0x1927, 0xfd01, 0xff2b, 0x181a, 0xfd0d,
+		  0xff2f, 0x1824, 0xfd13, 0xff2f, 0x183a, 0xfd05 },
+		{ 0xff42, 0x18cf, 0xfd0e, 0xff33, 0x180a, 0xfd12,
+		  0xff2a, 0x17c8, 0xfd15, 0xff2a, 0x17be, 0xfd17 },
+	},
+	.rxgains_5gl_elnagain = { 3, 3, 3 },
+	.rxgains_5gl_triso    = { 6, 6, 6 },
+	/* RETVAL di cold01-ch36-bw20: E #893, F #895, G post-apply #1037. */
+	.rccal_e = 0x0ac3, .rccal_f = 0x0ba5,
+	.rccal_g = 0x01c9,  /* -> dacbuf_cap 0xe */
+	.maxp5ga = {
+		{ 90, 88, 92, 88 },
+		{ 90, 88, 92, 88 },
+		{ 90, 88, 92, 88 },
+		},
+	/* agbg0=0, aga0=68. Qui aga2=67 differisce da aga0/aga1: quale dei
+	 * tre legga wl non e' stato verificato. */
+	.antgain_raw = { 0, 68 },
+	.pdoffset40ma = { 0x5444, 0x5444, 0x5344 },
+	.pdoffset80ma = { 0x2111, 0x0111, 0x2011 },
+	.mcsbw5g_po = {
+		/* mcsbw{20,40,80}5g{l,m,h}po, in decimale nella NVRAM. */
+		{ 0x77542222, 0x97542211, 0x98542222 },
+		{ 0x66432000, 0x86531000, 0x76532222 },
+		{ 0x99752200, 0x98653112, 0x97543333 },
+	},
+};
+
 /* One-shot mock storage. Lives for the whole run. */
 /* Il profilo per nome, come lo passano le due suite (argv o B43_BOARD). */
 static inline const struct board_profile *board_profile_lookup(const char *name)
@@ -249,6 +314,8 @@ static inline const struct board_profile *board_profile_lookup(const char *name)
 		return &PROFILE_AGCOMBO;
 	if (name && !strcmp(name, "dsl"))
 		return &PROFILE_DSL;
+	if (name && !strcmp(name, "tg789"))
+		return &PROFILE_TG789;
 	return &PROFILE_D6220;
 }
 

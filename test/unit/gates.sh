@@ -58,6 +58,7 @@
 #   ./gates.sh [segment...]                     cold, default ch36 bw20
 #   ./gates.sh --hot [segment...]               hot, three default segments
 #   ./gates.sh --hot --flow switch_channel DIR  one row per channel, over a dir
+#   ./gates.sh --board tg789 [segment...]      another board's profile
 #
 # Environment: COLD, HOT override the segment directories; GATE_TMP keeps the
 # working files (seg, merged, full, cmp) in that directory instead of a
@@ -82,12 +83,14 @@ HOT=${HOT:-/tmp/hot/segmenti}
 COND=cold
 FLOW=
 TABLE=0
+BOARD=d6220
 while [ $# -gt 0 ]; do
 	case $1 in
 	--cold) COND=cold; shift ;;
 	--hot)  COND=hot;  shift ;;
 	--flow) FLOW=$2;   shift 2 ;;
 	--table) TABLE=1;  shift ;;
+	--board) BOARD=$2;  shift 2 ;;
 	--) shift; break ;;
 	-*) echo "unknown option: $1" >&2; exit 2 ;;
 	*) break ;;
@@ -135,7 +138,12 @@ fi
 
 if [ ! -d "$DIR" ]; then
 	echo "missing $DIR:"
-	echo "  unzip -d $(dirname "$DIR") $REPO/router-data/d6220/$ARCHIVE"
+	case $BOARD in
+	dsl)   DATA=dsl3580l ;;
+	tg789) DATA=tg789vac-v2 ;;
+	*)     DATA=$BOARD ;;
+	esac
+	echo "  unzip -d $(dirname "$DIR") $REPO/router-data/$DATA/$ARCHIVE"
 	exit 1
 fi
 
@@ -245,7 +253,7 @@ PY
 	if ! env AC_CHANNEL=$ch AC_BW=$bw AC_MAC_WIDTH=$macw \
 	     AC_FIRST_INIT=$FIRST_INIT \
 	     AC_READ_ORACLE="$TMP/merged" AC_READ_ORACLE_FROM=$oracle $sched \
-		"$HERE/ac_trace" "$FLOW" d6220 2>/dev/null > "$TMP/full"; then
+		"$HERE/ac_trace" "$FLOW" "$BOARD" 2>/dev/null > "$TMP/full"; then
 		if [ "$TABLE" = 1 ]; then
 			printf '%5s %8s %8s %10s %10s %s\n' \
 				"$ch" - - - - "flow failed"
@@ -293,8 +301,8 @@ PY
 	# comparable: the first tolerates insertions, the second does not.
 	echo "  --- cmp_skip ---"
 	python3 "$HERE/cmp_skip.py" "$TMP/merged" "$TMP/full" \
-		"$from:$last" --board d6220 \
-		| grep -E 'grezzo|nel perimetro|CON  ecce|fuori perimetro|op saltate|valore sbagliato|op di wl mancanti|solo vendor|solo port|invisibili'
+		"$from:$last" --board "$BOARD" \
+		| grep -E 'grezzo|nel perimetro|CON  ecce|fuori perimetro|op saltate|valore sbagliato|op di wl mancanti|solo vendor|solo port|invisibili|bulk espanse'
 	echo "  --- compare ---"
 	python3 "$HERE/compare.py" "$TMP/merged" "$TMP/full" \
 		--range "$from:$last" --auto-align \
