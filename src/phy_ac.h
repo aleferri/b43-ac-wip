@@ -287,8 +287,11 @@ void b43_phy_ac_write_chanspec(struct b43_wldev *dev);
 struct b43_phy_ac {
 	/* active RF-chain count (PHY reg 0x0B & 0x07), set at op_init */
 	u8 num_cores;
-	/* populated-chain bitmask (1 bit per present core), set at op_init */
-	u8 coremask;
+	/*
+	 * Populated-chain bitmask, one bit per wired core, set at op_init.
+	 * unsigned long so that for_each_set_bit() walks it directly.
+	 */
+	unsigned long coremask;
 	/* Analog LPF / DAC-buffer caps; attach defaults, set in op_allocate. */
 	u8 lpf_cap0;	/* default 0x80 */
 	u8 lpf_cap1;	/* default 0x80 */
@@ -449,8 +452,8 @@ struct b43_phy_ac {
 	 * cannot tell the two rules apart on its own: one channel per module
 	 * load means the save either ran in that same segment or never.
 	 */
-	u16 lo_dac[2][4];
-	u16 txiqlo_coef[2][3];
+	u16 lo_dac[B43_PHY_AC_MAX_CORES][4];
+	u16 txiqlo_coef[B43_PHY_AC_MAX_CORES][3];
 	bool iqlo_saved;
 	u16 rxgain_cfg_saved[B43_PHY_AC_MAX_CORES][26];
 	u16 rfseq_gain_saved[B43_PHY_AC_MAX_CORES][3];
@@ -493,11 +496,14 @@ struct b43_phy_ac {
 	 */
 	u16 cal_freq;
 	/*
-	 * CRS minimum-power state: the ladder entry in force and the sub-band it
-	 * was measured in. The threshold carries across channel changes within
-	 * a sub-band, so it has to outlive a single set_channel.
+	 * CRS minimum-power state: per chain, the ladder index of the last four
+	 * noise samples, and the sub-band they were taken in. The rings carry
+	 * across channel changes within a sub-band, so they have to outlive a
+	 * single set_channel. See b43_phy_ac_crs_note_noise().
 	 */
-	u8 crs_index;
+	u8 crs_ring[B43_PHY_AC_MAX_CORES][4];
+	u8 crs_ring_head;
+	u8 crs_ring_len;
 	/* CRS value chanspec_tail() last wrote, reused by the Block E site. */
 	u8 crs_written;
 	/* Operating width the MAC was last told about, 0 when never. */

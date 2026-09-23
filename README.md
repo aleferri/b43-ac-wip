@@ -233,9 +233,9 @@ Mappa file sorgente → patch: [`docs/driver-status.md`](docs/driver-status.md).
 | Base index idle-TSSI | seed catturato, il readback viene scartato | Errore non dominante, ma non è board-independent |
 | PA bias per-core, PMU regctl enable finale | non implementati | Sono le op che il vendor emette solo a steady state |
 | LED (`ledbh10` da NVRAM) | portato nel core, `patches/0016-0017` | Il blocco GPIO che il vendor intercala nel preambolo freddo, i toggle al bss-up/down e il rilascio al rmmod sono `wlc_bmac_hw_up`/`wlc_bmac_led`/`wlc_bmac_led_hw_deinit` sul chipcommon: LED, senza effetto sul PHY. b43 li fa in `leds.c` per la sua via (MMIO `GPIO_CONTROL` del MAC); la 0016 porta `ledbh4..15` da NVRAM in `ssb_sprom`, anche sopra la SROM letta dal device (bcma), la 0017 gli insegna quei pin e piu' LED per ruolo. Le op del vendor stanno nel `PERIMETER` di `compare.py`, le `GPIO_CONTROL` di b43 in `SOLO_PORT`. Gira in `test/integration`, non provata su hardware |
-| BW40 / BW80 | `switch_channel` ritorna `-EOPNOTSUPP` | Il codice c'e' ed e' confrontato contro i segmenti a 40 e 80 MHz con `make AC_ANY_CHANNEL=1`; quello che manca e' la validazione che apra il guard |
+| BW40 / BW80 | portati | Confrontati contro i 12 segmenti a 40 MHz e i 6 a 80 dello sweep a freddo |
 | 2.4 GHz | `op_switch_channel` ritorna `-EOPNOTSUPP` | Mappa radio 2G non validata |
-| Canali ≠ 36 | 50 voci in channeltab (5170–5825 MHz), solo ch36 in `b43_phy_ac_validated_configs[]` | Il confronto gira su tutti e 43 i segmenti con `AC_ANY_CHANNEL=1`, che scavalca il guard e lo dice con un `b43warn`. Piano in [`docs/channel-generalization.md`](docs/channel-generalization.md) |
+| Canali ≠ 36 | portati | 50 voci in channeltab (5170–5825 MHz); lo sweep ne copre 25 a 20 MHz. Piano in [`docs/channel-generalization.md`](docs/channel-generalization.md) |
 
 ### Bug aperti
 

@@ -21,7 +21,6 @@ CFLAGS  := -O0 -g -Wall -Wno-unused-parameter -Wno-unused-function \
            -Wno-unused-variable -Wno-unused-but-set-variable \
            -Wno-pointer-sign -Wno-sign-compare \
            -DB43_AC_FN_TRACE \
-           $(if $(AC_ANY_CHANNEL),-DCONFIG_B43_PHY_AC_ANY_CHANNEL=1) \
            -I$(STUBS) -I$(SCRATCH) \
            -include stubs/linux/types.h \
            -include stubs/linux/errno.h \
@@ -73,25 +72,12 @@ vpath %.c $(SCRATCH):.
 
 BIN := ac_trace
 
-# AC_ANY_CHANNEL cambia i CFLAGS ma non un prerequisito, quindi make lascia
-# gli oggetti dove sono: un `make AC_ANY_CHANNEL=1` dopo una build canonica
-# non ricompila niente e il binario continua a rifiutare ogni canale fuori
-# dalle configurazioni validate. Il flow abortisce, gates.sh lo dice con un
-# WARNING, e chi ha rediretto stderr legge un punteggio di una corsa mai
-# avvenuta. Lo stamp qui sotto rende la configurazione un prerequisito vero.
-CONFIG := $(if $(AC_ANY_CHANNEL),any-channel,validati)
-STAMP  := build/.config-$(CONFIG)
-
 all: $(BIN)
 
 build:
 	mkdir -p build
 
-$(STAMP): | build
-	rm -f build/.config-* $(OBJS) $(OBJS:.o=.d) $(BIN)
-	touch $@
-
-build/%.o: %.c $(STAMP) | build
+build/%.o: %.c | build
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(BIN): $(OBJS)

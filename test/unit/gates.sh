@@ -50,10 +50,6 @@
 #           to start from -- the OTPs and the core probe are outside the
 #           segment.
 #
-# Anything but ch36 bw20 currently needs the validated-configs guard in
-# set_channel() defeated at build time:
-#     make clean && make AC_ANY_CHANNEL=1
-#
 # Usage:
 #   ./gates.sh [segment...]                     cold, default ch36 bw20
 #   ./gates.sh --hot [segment...]               hot, three default segments
@@ -264,9 +260,7 @@ PY
 
 	# A flow that bails out early still produces a score, and that score
 	# looks like a regression of the port rather than a run that never
-	# happened, so it is said. The known cause today is the validated-configs
-	# guard in set_channel(), which rejects anything but ch36 BW20 unless the
-	# build defeats it; any other early exit deserves the same warning.
+	# happened, so it is said.
 	# In --table mode it goes to stderr, because a line on stdout would
 	# break the table; in detail mode it stays on stdout, next to the score
 	# it disclaims -- a reader who redirects stderr away would otherwise see
@@ -276,8 +270,7 @@ PY
 		{
 		echo "  WARNING: the port emitted only $nport ops on ch$ch/bw$bw:"
 		echo "  the flow bailed out early, the score below is not a"
-		echo "  measurement of the port. If it is the channel guard:"
-		echo "  make clean && make AC_ANY_CHANNEL=1"
+		echo "  measurement of the port."
 		} >&$([ "$TABLE" = 1 ] && echo 2 || echo 1)
 	fi
 

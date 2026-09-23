@@ -866,14 +866,10 @@ che il driver non conosce. `subsystem_stub.c` compila coi flag del kernel e
 non ha `getenv`, quindi la lettura passa da `b43_test_env_long()` in
 `trace_out.c`, che e' codice utente.
 
-Fuori da ch36 BW20 serve anche `AC_ANY_CHANNEL=1` **al build**, come in
-`../unit`, perche' il guard delle configurazioni validate di
-`op_switch_channel()`
-altrimenti rifiuta e la probe torna `-95` prima di emettere il bring-up:
+Un canale diverso da ch36 si passa al run:
 
 ```sh
-make clean && make AC_ANY_CHANNEL=1 b43-trace
-make AC_ANY_CHANNEL=1 run ORACLE=/tmp/m05 B43_CHANNEL=52 TRACE_OUT=/tmp/t
+make run ORACLE=/tmp/m05 B43_CHANNEL=52 TRACE_OUT=/tmp/t
 ```
 
 Con quello ch52 arriva in fondo come ch36 -- `start: 0`, 28395 op contro

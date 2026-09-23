@@ -80,6 +80,21 @@ static void plan_rxiq_poll(const char *board, bool first_init)
 	b43_test_plan_phy_reads(0x0270, plan, n);
 }
 
+/*
+ * Every chain's noise ring full of @idx: the ladder index in force is @idx on
+ * each chain, and the 0x0910 bank carries no offset.
+ */
+static void seed_crs_rings(u8 idx)
+{
+	unsigned int c, i;
+
+	for (c = 0; c < B43_PHY_AC_MAX_CORES; c++)
+		for (i = 0; i < ARRAY_SIZE(g_ac.crs_ring[0]); i++)
+			g_ac.crs_ring[c][i] = idx;
+	g_ac.crs_ring_head = 0;
+	g_ac.crs_ring_len = ARRAY_SIZE(g_ac.crs_ring[0]);
+}
+
 /* Profilo montato, per i pochi punti che servono a modellare il core. */
 
 static const struct board_profile *g_profile;
@@ -172,10 +187,9 @@ static void mount_board(const struct board_profile *p)
 	g_bus_dev.bdev     = &g_bcma_dev;
 
 	/*
-	 * ch36 unless AC_CHANNEL says otherwise. Driving another channel also
-	 * needs the driver built with CONFIG_B43_PHY_AC_ANY_CHANNEL
-	 * (make AC_ANY_CHANNEL=1), and only makes sense against a capture of
-	 * that channel supplied through AC_READ_ORACLE.
+	 * ch36 unless AC_CHANNEL says otherwise. Driving another channel only
+	 * makes sense against a capture of that channel supplied through
+	 * AC_READ_ORACLE.
 	 */
 	g_chan.band = NL80211_BAND_5GHZ;
 	g_chan.hw_value = 36;
@@ -261,14 +275,16 @@ static void mount_board(const struct board_profile *p)
 	 * CRS minimum-power state carried in from the previous cycle. The sweep
 	 * is a continuous chain of channel changes, so running one segment on
 	 * its own needs the state the chain would have left: AC_CRS_INDEX and
-	 * AC_CRS_SUBBAND are the ladder entry and sub-band in force. The default
-	 * sub-band of 0xff forces the reset to the floor, which is what a cold
-	 * start does.
+	 * AC_CRS_SUBBAND are the ladder entry, seeded into every chain's ring,
+	 * and the sub-band in force. Without AC_CRS_INDEX the rings start
+	 * empty, and the default sub-band of 0xff forces the reset to the
+	 * floor: both are what a cold start does.
 	 */
 	{
 		const char *e = getenv("AC_CRS_INDEX");
 
-		g_ac.crs_index = e ? (u8)strtoul(e, NULL, 0) : 0;
+		if (e)
+			seed_crs_rings((u8)strtoul(e, NULL, 0));
 		e = getenv("AC_CRS_SUBBAND");
 		g_ac.crs_subband = e ? (u8)strtoul(e, NULL, 0) : 0xff;
 	}
@@ -280,10 +296,6 @@ static void mount_board(const struct board_profile *p)
 	 * so +10 MHz at 40 and +30 at 80, which is what the sweep's segment
 	 * names imply -- ch36-bw40 is the 36/40 pair centred on 5190, and
 	 * ch36-bw80 is 36 to 48 centred on 5210.
-	 *
-	 * Driving anything but 20 also needs the driver built with
-	 * CONFIG_B43_PHY_AC_ANY_CHANNEL, since no wider configuration is in
-	 * the validated list.
 	 */
 	{
 		const char *e = getenv("AC_BW");
@@ -2084,7 +2096,7 @@ int main(int argc, char **argv)
 		 * sub-band che il channel setup avrebbe lasciato in forza.
 		 */
 		g_ac.crs_subband = 0;
-		g_ac.crs_index = 1;
+		seed_crs_rings(1);
 		g_ac.cal_cycles = 0;
 
 		for (k = 0; k < 3; k++) {

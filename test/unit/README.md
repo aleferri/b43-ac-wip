@@ -62,16 +62,11 @@ non ripiegato non trova nessuna lettura e sembra che l'op non ci sia.
 ### 2. Compilare
 
 ```sh
-make                     # ch36 BW20, la configurazione validata
-make AC_ANY_CHANNEL=1    # per ogni altro canale o larghezza
+make
 ```
 
-Il guard di `op_switch_channel()` rifiuta tutto cio' che non e' fra le configurazioni
-validate, salvo il secondo build. Se il port emette poche migliaia di op invece
-di ventimila e' quello, e `gates.sh` lo dice da se'.
-
-**Ricompilare senza `AC_ANY_CHANNEL=1` prima di chiudere**, o il gate di
-riferimento gira su un binario che difende meno.
+Un solo build per ogni canale e larghezza. Se il port emette poche migliaia di
+op invece di ventimila il flow e' uscito presto, e `gates.sh` lo dice da se'.
 
 ### 3. I tre gate, che sono la verifica canonica
 

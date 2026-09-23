@@ -2,18 +2,12 @@
 
 ## Cosa il driver accetta
 
-`op_switch_channel()` ammette **solo ch36 a 20 MHz**: `b43_phy_ac_validated_configs[]`
-ha quella sola voce, e ogni altra combinazione di canale e larghezza esce con
-`-EOPNOTSUPP` e un `b43warn` che dice perche'. Non e' una lacuna di
-implementazione da riempire -- il codice emette gia' le op giuste su ogni
-canale e larghezza catturati -- ma un guard sul front-end RF: diverse tabelle
-sono trascritte da ch36 a 20 MHz e non hanno evidenza altrove (gli stadi
-passa-basso dell'AFE, la scala del CRS minimum power, le voci per larghezza del
-blocco `0x00ec-0x00f5`). `CONFIG_B43_PHY_AC_ANY_CHANNEL` lo scavalca, e' sotto
-`B43_DEBUG`, default `n`, e serve al lavoro di bring-up per far girare una
-configurazione non coperta contro la sua cattura.
+`op_switch_channel()` accetta ogni canale e larghezza a 5 GHz che la channel
+table conosce. Il port non ha un filtro per configurazione: niente va upstream
+finche' la radio non e' a posto su tutti i canali, e il punteggio per canale
+dello sweep e' la misura di quanto manca.
 
-Fuori dal guard: chip `0x4352` e `0x4360`, altrimenti `-EOPNOTSUPP`. Board di
+Chip `0x4352` e `0x4360`, altrimenti `-EOPNOTSUPP`. Board di
 riferimento NetGear D6220 (radio 2069 rev 4), piu' DSL-3580L e agcombo nelle
 catture.
 
@@ -72,12 +66,9 @@ ha 29 e zero di troppo -- e molte di piu' sui quattro sotto il 98%.
 - **La spazzata dei contatori sui giri in ritardo**: 12-36 op di troppo su
   cinque segmenti, il residuo del latch della finestra statistiche che e'
   chiuso. Misure e due tentativi falliti in `retrace-todo.md`.
-- **La ri-emissione del blocco CRS**: 16 op su `cold09`, l'unico segmento a
-  freddo che ne ha una quarta passata. Due eccezioni su 78 segmenti e una
-  regola di isteresi che il test negativo scarta; vedi `retrace-todo.md`.
-- **La scala del banco `0x0910`**: il `target` del sito finalize e' fittato su
-  `cold01`, che e' l'unico fuori scala della sua famiglia. Misure e ipotesi in
-  `bank-0910-analysis.md`.
+- **Quando cade il blocco CRS**: il valore delle soglie e del banco `0x0910`
+  torna ovunque, il punto in cui il vendor le scrive no, su 12 segmenti a
+  freddo tutti con la guardia radar. Vedi `crs-min-power.md`.
 - **Il bit `0x80` di shm `0x00cc`**: non e' il canale, la banda, la larghezza,
   il CAC ne' il beaconing, e nessuna altra cella della cattura ha la sua
   partizione. Vedi `retrace-todo.md`.

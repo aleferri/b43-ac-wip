@@ -3416,6 +3416,16 @@ static void b43_phy_ac_set_pdet_on_reset(struct b43_wldev *dev, bool full)
 }
 
 /*
+ * The low word of the RX-LPF cell in table 7, by operating width (20, 40,
+ * 80 MHz) and core.
+ */
+static const u16 b43_phy_ac_rxlpf_lo_cell[3][3] = {
+	{ 0x140, 0x150, 0x160 },
+	{ 0x141, 0x151, 0x161 },
+	{ 0x441, 0x443, 0x445 },
+};
+
+/*
  * Analog reset-time sub-setups, run under the caller's table-write lock. FEM
  * control and TX-LPF stay as helpers; RX-LPF and dacbuf-cap have a single
  * call site each and are inline here.
@@ -3495,35 +3505,31 @@ static void b43_phy_ac_analog_on_reset(struct b43_wldev *dev, u16 *saved_outer_o
 	}
 
 	/*
-	 * RX-LPF: like the TX-LPF, the table-7 {lo,hi} cells carry a per-stage
-	 * base (lo bit0-5 = 0x00/0x09/0x12 per stage, hi 0x0000) that the RMW
+	 * RX-LPF: like the TX-LPF, the table-7 {lo,hi} cells carry a per-row
+	 * base (lo bit0-5 = 0x00/0x09/0x12 per row, hi 0x0000) that the RMW
 	 * preserves, rewriting only the cap fields f6 (bits 6..13) and f17
-	 * (bits 17..). f17 is lpf_cap1 directly; f6 is lpf_cap0 scaled by a
-	 * per-section RX/TX capacitance ratio, since the 3 RX-LPF sections have
-	 * different corners: f6 = (lpf_cap0 * rx_k[stage]) >> 8 with rx_k =
-	 * {221, 215, 215}. Verified on d6220 (0xa8 -> 0x91/0x8d/0x8d) and
-	 * agcombo (0xae -> 0x96/0x92/0x92), same coefficients on both chips;
-	 * f17 confirmed by hi (d6220 0x0150, agcombo 0x015c). The DSL (wl6.30)
-	 * applies no scaling (rx_k = 256 on all stages), an older-wl behaviour.
+	 * (bits 17..). f17 is lpf_cap1 directly; f6 is lpf_cap0 scaled per row:
+	 * f6 = (lpf_cap0 * rx_k[row]) >> 8 with rx_k = {221, 215, 215}.
+	 * Verified on d6220 (0xa8 -> 0x91/0x8d/0x8d) and agcombo (0xae ->
+	 * 0x96/0x92/0x92), same coefficients on both chips; f17 confirmed by hi
+	 * (d6220 0x0150, agcombo 0x015c). The DSL (wl6.30) applies no scaling
+	 * (rx_k = 256 on all rows), an older-wl behaviour.
+	 *
+	 * The rows are the three operating widths: the row
+	 * b43_phy_ac_rxgain_config_apply() reads back is the one of the
+	 * current width.
 	 *
 	 * TODO: validate on third board -- the coefficients are fit from two
 	 * cap samples (221/222 and 215/216 both match the known values); a
 	 * third distinct lpf_cap0, or other-channel captures, would pin them.
 	 */
 	{
-		static const u16 lo_off[3][3] = {
-			{ 0x140, 0x150, 0x160 },
-			{ 0x141, 0x151, 0x161 },
-			{ 0x441, 0x443, 0x445 },
-		};
+		const u16 (*lo_off)[3] = b43_phy_ac_rxlpf_lo_cell;
 		static const u16 hi_off[3][3] = {
 			{ 0x360, 0x370, 0x380 },
 			{ 0x361, 0x371, 0x381 },
 			{ 0x440, 0x442, 0x444 },
 		};
-		/* f6 scale per stage: the 3 RX-LPF sections have different corners,
-		 * so the cap is scaled by a per-section RX/TX ratio ~221/256
-		 * (stage 0) and ~215/256 (stages 1,2). */
 		static const u16 rx_k[3] = { 221, 215, 215 };
 		unsigned int stage;
 
@@ -4757,24 +4763,19 @@ static void b43_phy_ac_crs_regs_write(struct b43_wldev *dev, u16 val)
 }
 
 /*
- * CRS min-power recalculation, the low byte of 0x0324 through 0x0333:
- * crs = ladder[bw][clamp(threshold + anchor[bw], 0, 14)], plus 4 when cold.
+ * CRS min-power threshold, the low byte of 0x0321 through 0x0336: an entry of
+ * the current width's row, plus 4 when cold.
  *
- * The row follows the operating width, the entry is b43_phy_ac_crs_index() out
- * of the noise statistic the watchdog latches; the observed values are the
- * entry plus the cold bump of 4, so 45, 48, 53 and 60 appear as 49, 52, 57
- * and 64.
- */
-/*
  * La scala e' quella del D6220: tre righe di quindici voci u8 terminate da
  * zero, lette dal `.rodata` del blob 7.14.89 a +0x40e84, +0x40e94 e +0x40ea4,
- * passo 16. Vedi docs/crsminpwr-d6220.md.
+ * passo 16. Vedi docs/crs-min-power.md. L'agcombo usa la stessa: sui suoi
+ * due sweep ogni soglia e ogni valore del banco 0x0910 e' una voce di queste
+ * righe.
  *
- * Aperto: si applica a ogni board e non lo e'. Nel blob del DSL-3580L (6.30)
- * le stesse tre righe stanno a 0x1fa19c, 0x1fa1a8 e 0x1fa1b4 con passo 12 --
- * undici voci, non quindici -- e i valori differiscono: la riga a 40 MHz e'
- * identica, quella a 20 MHz per due voci, quella a 80 per nove. L'agcombo ha
- * a sua volta la propria riga. Su quelle due board questa tabella programma
+ * Aperto: nel blob del DSL-3580L (6.30) le stesse tre righe stanno a
+ * 0x1fa19c, 0x1fa1a8 e 0x1fa1b4 con passo 12 -- undici voci, non quindici --
+ * e i valori differiscono: la riga a 40 MHz e' identica, quella a 20 MHz per
+ * due voci, quella a 80 per nove. Su quella board questa tabella programma
  * valori sbagliati, e il gate non lo vede perche' lo sweep e' del D6220.
  */
 static const u8 b43_phy_ac_crs_ladder[3][15] = {
@@ -4784,100 +4785,53 @@ static const u8 b43_phy_ac_crs_ladder[3][15] = {
 };
 
 /*
- * Ladder index, chosen from the noise statistic the watchdog latches out of
- * SHM 0x0308.
+ * Dal campione di rumore all'indice della scala, per catena.
  *
- * Three thresholds and a floor reproduce all 66 CRS writes of the 32 BW20
- * sweep segments:
+ * Il watchdog latcha la finestra SHM 0x0308-0x0314, una cella da 32 bit per
+ * catena: 0x0308 la catena 0, 0x030c la 1, 0x0310 la 2, che sui 4352 vale
+ * zero. Ogni campione diventa un indice
  *
- *   no sample       the index in force stays
- *   sub-band change index 0
+ *   n      = campione >> passo di banda
+ *   v      = quante soglie di b43_phy_ac_crs_noise_th[] n raggiunge
+ *   indice = b43_phy_ac_crs_noise_idx[v] + ancora della larghezza
  *
- * Le soglie e gli indici stanno in b43_phy_ac_crs_steps[], una riga per
- * larghezza: il campione scala con la banda e le soglie con lui.
+ * e l'indice in forza per la catena e' la media degli ultimi quattro,
+ * arrotondata per eccesso. La catena 0 da' la soglia comune agli otto
+ * registri CRS, le altre il banco 0x0910; vedi b43_phy_ac_prog_bank_0910().
  *
- * The indices are not contiguous, which is why this is a threshold table
- * rather than arithmetic on the sample.
+ * Verificato su ogni blocco CRS con almeno un campione davanti, nei due
+ * sweep del D6220 e nei due dell'agcombo: 125 soglie comuni e 148 valori del
+ * banco, senza eccezioni. La finestra e' netta: con tre, cinque o sei
+ * campioni il freddo del D6220 ne sbaglia da 3 a 10 su 126.
  *
- * Non e' la forma che docs/crsminpwr-d6220.md ricava, e che una versione
- * precedente di questo commento portava:
+ * Gli indici del singolo campione hanno dei buchi -- 2 e 5 non escono da
+ * nessuno -- e li riempie la media: 55 a 20 MHz e 56 a 40 compaiono solo
+ * dietro una finestra in cui il rumore sta a cavallo di 1536.
  *
- *   crs = ladder[bw][clamp(v + anchor[bw], 0, 14)], +4 a freddo
+ * La normalizzazione: il campione e' una potenza integrata sul canale e
+ * scala con la banda, mediana 1384 a 20 MHz, 2525 a 40, 3832 a 80. Diviso per
+ * la banda, le soglie sono le stesse a ogni larghezza; l'ancora e' zero a 20
+ * MHz e +2 sulle due aggregate.
  *
- * la' l'indice viene da un parametro del chiamante piu' un'ancora per
- * larghezza, e il documento misura solo le differenze fra le ancore --
- * o20-o40 = 1, o40-o80 = 3 -- perche' spostarle tutte insieme sposta v della
- * stessa quantita' e non e' osservabile. Delle due forme nessuna e'
- * verificata: la soglia qui sotto riproduce i 66 CRS dei 32 segmenti BW20 ma
- * non ha niente da dire sulle altre larghezze, e la forma con l'ancora non e'
- * mai stata implementata -- era un segnaposto che tornava 1.
- *
- * The state outlives set_channel deliberately. In the sweep the threshold
- * carries from one channel to the next within a sub-band -- the first block
- * of a cycle takes no sample and rewrites what the previous cycle left -- and
- * only crossing a sub-band boundary resets it to the floor. That is what puts
- * index 0 on ch36, ch52 and ch100 and nowhere else.
- *
- * Neither existing gate exercises the carry: both run one channel, so the
- * sub-band never changes and the floor is what they see.
+ * Quanto e' vincolato ogni pezzo: 1536 e 2048 sono inchiodate a tre unita'
+ * dalle catture, 1024 fra 1001 e 1025, 3072 fra 2914 e 3147; la voce 4096 -> 7
+ * poggia su un solo campione, 4279 dell'agcombo a caldo; sopra, il rumore
+ * puo' crescere e l'indice no, e nessuna cattura dice come continui.
  */
-
-/*
- * Dal campione di rumore all'indice della scala.
- *
- *   n   = campione >> passo di banda          normalizzazione
- *   v   = quante soglie di b43_phy_ac_crs_noise_th[] n supera
- *   idx = b43_phy_ac_crs_noise_idx[v] + ancora della larghezza
- *
- * che e' la forma che docs/crsminpwr-d6220.md ricava dal blob,
- * `ladder[bw][clamp(v + anchor[bw], 0, 14)]`, con v e le ancore ora misurati.
- * Riproduce tutte e 77 le coppie (campione, soglia scritta) dei segmenti `up`
- * dei due board -- 54 del D6220 e 23 dell'agcombo -- dove il meccanismo gira
- * davvero invece di essere forzato al letterale come al primo bring-up.
- *
- * La normalizzazione e' il pezzo che mancava. Il campione e' una potenza
- * integrata sul canale e scala con la banda: mediana 1384 a 20 MHz, 2525 a 40,
- * 3832 a 80. Prima le soglie venivano applicate al campione grezzo a ogni
- * larghezza, e a 40 e 80 MHz qualunque campione le superava tutte. Diviso per
- * la banda, i confini dei tre gruppi cadono uno sull'altro:
- *
- *   soglia 1020   bw40 fra 1015 e 1024, bw80 fra 1018 e 1037
- *   soglia 1526   bw20 fra 1525 e 1579, bw40 fra 1502 e 1640,
- *                 bw80 fra 1510 e 1610
- *   soglia 2100   bw20 fra 2047 e 2300, bw40 fra 1870 e 2288
- *
- * L'ancora e' zero a 20 MHz e +2 sulle due larghezze aggregate: gli indici
- * osservati sono {1,3,4,6} a 20 MHz e {2,3,5,6} a 40 e 80, cioe' la stessa
- * successione spostata di due.
- *
- * Quanto e' vincolato ogni pezzo, perche' non lo e' allo stesso modo: la
- * soglia 1526 la reggono 41 osservazioni da tre larghezze e due board; la 1020
- * e la 2100 poggiano su intervalli stretti ma pochi punti; la quarta, qui
- * 4000, e' NON vincolata -- fra 2312 e 9486 non c'e' una sola osservazione, e
- * serve solo perche' l'unico campione a 9486 esca dall'ultimo gruppo. Il primo
- * gruppo a 20 MHz e l'ultimo a 80 non si osservano mai.
- *
- * Il verso e' quello di una soglia sopra il rumore, la proporzione no: dentro
- * un gruppo a 20 MHz il rumore varia di 1.6 dB e la soglia non si muove, al
- * confine varia di 0.15 dB e salta di 5. E' una classificazione a pochi stati,
- * non "pavimento piu' margine" -- che per un carrier sense ha senso, perche'
- * una soglia che insegue il rumore fa oscillare il CCA. brcmsmac fa lo stesso
- * in modo ancora piu' netto: NPHY_ADJUSTED_MINCRSPOWER e' una costante.
- */
-static const u16 b43_phy_ac_crs_noise_th[] = { 1020, 1526, 2100, 4000 };
-static const u8 b43_phy_ac_crs_noise_idx[] = { 0, 1, 3, 4, 6 };
+static const u16 b43_phy_ac_crs_noise_th[] = { 1024, 1536, 2048, 3072, 4096 };
+static const u8 b43_phy_ac_crs_noise_idx[] = { 0, 1, 3, 4, 6, 7 };
 static const u8 b43_phy_ac_crs_noise_anchor[3] = { 0, 2, 2 };
 
 /*
- * Il tratto di scala che le catture hanno davvero percorso, per larghezza.
- * Fuori di qui la formula continua a produrre una voce della scala, ma
- * nessuno ha mai visto il vendor scriverla: quello che c'e' oltre e'
- * estrapolazione, e il driver non deve spacciarla per misura.
+ * I livelli v che le catture hanno davvero percorso, per larghezza, contati
+ * su ogni campione di ogni catena dei quattro sweep. Fuori di qui la formula
+ * continua a produrre una voce della scala, ma nessuno ha mai visto il
+ * vendor scriverla: quello che c'e' oltre e' estrapolazione, e il driver non
+ * deve spacciarla per misura.
  *
- * A 20 MHz non si e' mai visto il gruppo piu' basso -- il campione piu' quieto
- * dei 77 e' 1053 -- e a 80 MHz i due piu' alti. E' rumore ambientale: nessuna
- * delle catture e' stata presa in una camera anecoica ne' accanto a un forno a
- * microonde.
+ * A 20 MHz non si e' mai visto il livello piu' basso, a 80 il piu' alto. E'
+ * rumore ambientale: nessuna delle catture e' stata presa in una camera
+ * anecoica ne' accanto a un forno a microonde.
  *
  * Fuori intervallo il driver avvisa una volta e lascia che la formula
  * estrapoli. Non appiattisce sull'estremo osservato: sarebbe una seconda
@@ -4888,66 +4842,72 @@ static const u8 b43_phy_ac_crs_noise_anchor[3] = { 0, 2, 2 };
  * non trasmette mai. Guasti funzionali, reversibili, e il log dice perche'.
  */
 static const u8 b43_phy_ac_crs_noise_seen[3][2] = {
-	/* BW20 */ { 1, 4 },
-	/* BW40 */ { 0, 3 },
-	/* BW80 */ { 0, 2 },
+	/* BW20 */ { 1, 5 },
+	/* BW40 */ { 0, 5 },
+	/* BW80 */ { 0, 4 },
 };
 
 /*
- * Fold a noise sample into the standing ladder index. Called from the
- * watchdog, where the sample is latched.
+ * Fold one latch of the noise window into the per-chain rings. Called from
+ * the watchdog, where the window is latched; @sample holds one value per
+ * chain.
  */
-static void b43_phy_ac_crs_note_noise(struct b43_wldev *dev, u16 sample)
+static void b43_phy_ac_crs_note_noise(struct b43_wldev *dev, const u16 *sample)
 {
 	struct b43_phy_ac *ac = dev->phy.ac;
 	unsigned int bw = b43_phy_ac_bw_step(dev);
-	unsigned int n = sample >> bw;
-	unsigned int v = 0, idx;
+	unsigned int slot = ac->crs_ring_head;
+	unsigned int core;
 
-	while (v < ARRAY_SIZE(b43_phy_ac_crs_noise_th) &&
-	       n >= b43_phy_ac_crs_noise_th[v])
-		v++;
+	for_each_set_bit(core, &ac->coremask, ac->num_cores) {
+		unsigned int n = sample[core] >> bw;
+		unsigned int v = 0;
+		while (v < ARRAY_SIZE(b43_phy_ac_crs_noise_th) &&
+		       n >= b43_phy_ac_crs_noise_th[v])
+			v++;
 
-	if ((v < b43_phy_ac_crs_noise_seen[bw][0] ||
-	     v > b43_phy_ac_crs_noise_seen[bw][1]) &&
-	    !ac->crs_noise_warned) {
-		ac->crs_noise_warned = true;
-		b43warn(dev->wl,
-			"AC-PHY: noise sample %u at %u MHz falls outside "
-			"everything the captures cover, so the carrier sense "
-			"threshold here is extrapolated and not measured. "
-			"Carrier sense may be wrong in either direction: too "
-			"deaf and the radio transmits over others, too "
-			"sensitive and it never gets to transmit. Nothing is "
-			"damaged and the setting is not sticky. A capture of "
-			"this environment is what would fix it.\n",
-			sample, 20u << bw);
+		if ((v < b43_phy_ac_crs_noise_seen[bw][0] ||
+		     v > b43_phy_ac_crs_noise_seen[bw][1]) &&
+		    !ac->crs_noise_warned) {
+			ac->crs_noise_warned = true;
+			b43warn(dev->wl,
+				"AC-PHY: noise sample %u at %u MHz falls outside "
+				"everything the captures cover, so the carrier "
+				"sense threshold here is extrapolated and not "
+				"measured. Carrier sense may be wrong in either "
+				"direction: too deaf and the radio transmits over "
+				"others, too sensitive and it never gets to "
+				"transmit. Nothing is damaged and the setting is "
+				"not sticky. A capture of this environment is "
+				"what would fix it.\n",
+				sample[core], 20u << bw);
+		}
+
+		ac->crs_ring[core][slot] = b43_phy_ac_crs_noise_idx[v] +
+					   b43_phy_ac_crs_noise_anchor[bw];
 	}
 
-	idx = b43_phy_ac_crs_noise_idx[v] + b43_phy_ac_crs_noise_anchor[bw];
-	ac->crs_index = min_t(unsigned int, idx,
-			      ARRAY_SIZE(b43_phy_ac_crs_ladder[0]) - 1);
+	ac->crs_ring_head = (slot + 1) % ARRAY_SIZE(ac->crs_ring[0]);
+	if (ac->crs_ring_len < ARRAY_SIZE(ac->crs_ring[0]))
+		ac->crs_ring_len++;
 }
 
 /*
- * Standing ladder index, reset to the floor when the sub-band changes.
+ * The rings are emptied when the sub-band changes.
  *
  * The partition is pa5g_group's, at 5250 and 5500 MHz -- not the one
  * b43_ppr_ac_subband() uses for the power target, whose first boundary
- * is 5210. Using that one puts ch44 and ch48 in a different sub-band from
- * ch36 and resets the index where the vendor carries it.
+ * is 5210.
  *
- * The index in force here is the one the previous cycle left: the sample is
- * latched by the watchdog, which runs after the channel setup, so a cycle
- * writes with what it inherited and the new sample only tells on the next.
- */
-/*
- * Il reset di sottobanda sta al cambio di canale e non nella lettura
- * dell'indice, perche' l'ordine conta: nella coda post-bring-up il latch del
- * campione precede di poche op il blocco che legge l'indice, quindi un reset
- * pigro dentro il getter azzererebbe quello che il campione ha appena
- * stabilito. Con il reset qui, un campione fresco vince sempre sul
- * riportato -- che e' quello che le catture mostrano.
+ * Il reset sta al cambio di canale e non nella lettura dell'indice, perche'
+ * l'ordine conta: nella coda post-bring-up il latch del campione precede di
+ * poche op il blocco che legge l'indice, quindi un reset pigro dentro il
+ * getter butterebbe il campione appena preso.
+ *
+ * Aperto: il freddo non dice niente su questo reset, perche' ogni segmento e'
+ * un caricamento del modulo e i ring partono vuoti comunque. Sul caldo il
+ * primo blocco di un `up` non si spiega ne' con i ring svuotati ne' con i
+ * ring riportati dal segmento precedente.
  */
 static void b43_phy_ac_crs_note_channel(struct b43_wldev *dev)
 {
@@ -4956,13 +4916,28 @@ static void b43_phy_ac_crs_note_channel(struct b43_wldev *dev)
 
 	if (sb != ac->crs_subband) {
 		ac->crs_subband = sb;
-		ac->crs_index = 0;
+		ac->crs_ring_len = 0;
+		ac->crs_ring_head = 0;
 	}
 }
 
-static unsigned int b43_phy_ac_crs_index(struct b43_wldev *dev)
+/*
+ * Ladder index in force for @core: the ceiling of the mean of its ring. An
+ * empty ring gives the floor.
+ */
+static unsigned int b43_phy_ac_crs_index(struct b43_wldev *dev,
+					 unsigned int core)
 {
-	return dev->phy.ac->crs_index;
+	struct b43_phy_ac *ac = dev->phy.ac;
+	unsigned int i, sum = 0;
+
+	if (!ac->crs_ring_len)
+		return 0;
+
+	for (i = 0; i < ac->crs_ring_len; i++)
+		sum += ac->crs_ring[core][i];
+
+	return DIV_ROUND_UP(sum, ac->crs_ring_len);
 }
 
 static u8 b43_phy_ac_crs_min_pwr(struct b43_wldev *dev, unsigned int idx,
@@ -4984,7 +4959,7 @@ static void b43_phy_ac_op_pwork_60sec(struct b43_wldev *dev)
 
 	B43_AC_FN();
 
-	idx = b43_phy_ac_crs_index(dev);
+	idx = b43_phy_ac_crs_index(dev, 0);
 	crs = b43_phy_ac_crs_min_pwr(dev, idx, cold);
 
 	if (dev->phy.ac->cal_cycles < 2)
@@ -5011,112 +4986,37 @@ static void b43_phy_ac_op_pwork_60sec(struct b43_wldev *dev)
 }
 
 /*
- * The 0x0910-0x0913 bank: a per-chain offset on the same scale as the CRS
- * threshold written immediately before it. The quantity that means something
- * is the sum crs + off, an absolute threshold drawn from a discrete ladder:
- * the CRS carries the part common to all eight registers and the bank the
- * per-chain correction. Write-only, four registers per core with a 0x200
- * stride.
+ * The 0x0910-0x0913 bank: for every chain past chain 0, the distance between
+ * its own CRS threshold and the common one written immediately before, which
+ * is chain 0's. Four registers per chain on a 0x200 stride from 0x0710, which
+ * would be chain 0 and is never written: one chain carries the common
+ * threshold, the others the correction. Only the chains the board wires, the
+ * coremask and not the cores 0x000b declares: the d6220 has three cores and
+ * two chains, and writes one bank. Write-only; the value is a signed
+ * byte -- 0xfb is -5 -- repeated in both halves of all four registers.
  *
- * The direction here is the reverse of the mechanism: a rule over bandwidth
- * and phase computes the CRS and the offset follows from it. That reproduces
- * ch36 at 20 MHz op-for-op because both terms are fitted to that one
- * configuration.
+ * Both thresholds come out of b43_phy_ac_crs_index(), and the cold bump
+ * cancels in the difference.
  *
- * Scaffolding: these are transcribed thresholds, not derived values. Off
- * ch36 they are wrong CCA thresholds, and the filter in op_switch_channel() is
- * what keeps the code from getting there.
- *
- * TODO: the rule for the ladder index, and the transformation that produces
- * the per-chain offset, are both still missing.
- *
- * Findings, excluded hypotheses and the derivation: docs/bank-0910-analysis.md.
+ * Derivation and verification: docs/crs-min-power.md.
  */
-enum b43_phy_ac_crs_site {
-	B43_PHY_AC_CRS_SITE_CHANSPEC = 0,
-	B43_PHY_AC_CRS_SITE_FINALIZE = 1,
-};
-
 /* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   7509-7516, 30910-30917]
  */
-static void b43_phy_ac_prog_bank_0910(struct b43_wldev *dev, u16 crs,
-				      enum b43_phy_ac_crs_site site)
+static void b43_phy_ac_prog_bank_0910(struct b43_wldev *dev)
 {
+	const u8 *row = b43_phy_ac_crs_ladder[b43_phy_ac_bw_step(dev)];
+	unsigned int ref = row[b43_phy_ac_crs_index(dev, 0)];
+	unsigned int core;
+	unsigned long others = dev->phy.ac->coremask & ~BIT(0);
+
 	B43_AC_FN();
-	bool is4360 = dev->dev->chip_id == 0x4360;
 
-	/*
-	 * Il target e' la soglia CRS assoluta: il registro 0x0324 porta un
-	 * valore e questo banco porta l'offset per catena sulla stessa scala,
-	 * cosi' che quello che conta sia crs + off. Il crs cambia col canale e
-	 * il target no, percio' la differenza serve in entrambe le direzioni --
-	 * ch104-136 a 20 MHz danno crs 57 e off -5, ch44 e ch60 a 40 MHz crs 52
-	 * e off +2 -- e il vendor scrive il caso negativo come 0xfb, un byte
-	 * con segno: clampare a zero non scriverebbe niente dove serve -5.
-	 *
-	 * Ed e' una voce della stessa scala del CRS, col medesimo bump a
-	 * freddo, non un numero per chip. La scala e' una sola: sul D6220 il
-	 * target vale 57 a 20 MHz, 54 a 40 e 52 a 80, che sono LUT[bw][3]+4
-	 * tutte e tre; sull'agcombo vale 58 su ogni canale del suo sweep, che
-	 * e' LUT20[4]+4 sulla medesima riga. Cambia l'indice, non la tabella,
-	 * ed e' l'indice a essere per board -- il parametro che
-	 * docs/crsminpwr-d6220.md chiama v e di cui misura solo le differenze.
-	 *
-	 * Quello che c'era prima -- due coppie di valori scritti a mano,
-	 * scelte da un test sul chip id -- diceva che le due board hanno scale
-	 * diverse, e non e' vero.
-	 *
-	 * Attenzione a cosa NON e' una prova. A 20 MHz quindici segmenti su
-	 * sedici mostrano somma 52, che non e' una voce della scala: il
-	 * documento le attribuisce all'altro meccanismo che scrive gli stessi
-	 * registri, la configurazione di canale, e avverte che "guardando la
-	 * sequenza come un INSIEME, {52, 54} sembra nessun aggiornamento e
-	 * {52, 54, 57} sembra aggiornato, mentre sono la stessa procedura con
-	 * risultato diverso". cold01, l'unico che mostra 57, e' quindi l'unico
-	 * segmento a 20 MHz in cui il risultato del calcolo si vede: prenderlo
-	 * per l'eccezione e fittare il target su 52 riproduce meglio le catture
-	 * e programma il valore sbagliato.
-	 *
-	 * Aperto: chi scelga l'indice. Sul D6220 e' 3 su venticinque segmenti e
-	 * 5 su cold19; il documento ha gia' cercato esaustivamente -- nessuna
-	 * delle 403 chiavi (op, indirizzo) con valore leggibile separa i gruppi
-	 * a nessuna larghezza -- e la ricerca rifatta qui su tutte le celle dei
-	 * 26 segmenti conferma: zero. Non e' osservabile nelle catture.
-	 */
-	u16 target = b43_phy_ac_crs_min_pwr(dev, is4360 ? 4 : 3, true);
-	s16 off = (s16)target - (s16)crs;
-	u16 hi, lo, base;
-
-	/*
-	 * On a first bring-up the chanspec_tail site writes zero whatever the
-	 * target and the CRS are: the noise calibration has not run yet, so
-	 * there is no offset to apply. Five attach captures, two boards and two
-	 * chips agree:
-	 *
-	 *   d6220   attach ch36 BW20   [0] [5]
-	 *   d6220   attach ch36 BW40   [0] [6] [0]
-	 *   d6220   attach ch44        [0] [0]
-	 *   agcombo attach ch36        [0] [6,9]
-	 *   agcombo attach (wl-diag)   [0] [6,9] [6,9]
-	 *
-	 * On the down-to-up path the first block is not zero -- [3] [5] on the
-	 * d6220, [15] [18] on agcombo -- so what this discriminates is the
-	 * phase, not the call site.
-	 *
-	 * The condition is explicit rather than left to the arithmetic: on the
-	 * 4352 target 52 minus crs 58 is negative and would come out zero
-	 * anyway, but on the 4360 64 minus 58 is 6, so nothing but this test
-	 * produces the zero there.
-	 */
-	if (site == B43_PHY_AC_CRS_SITE_CHANSPEC &&
-	    (dev->phy.ac->status_mask & B43_PHY_AC_STATE_FIRST_BRINGUP))
-		off = 0;
-
-	hi = (u16)((off & 0xff) << 8);
-	lo = (u16)(off & 0xff);
-
-	for (base = 0x0910; base <= (is4360 ? 0x0b10 : 0x0910); base += 0x200) {
+	for_each_set_bit(core, &others, dev->phy.ac->num_cores) {
+		u16 base = 0x0710 + core * 0x200;
+		s16 off = (s16)row[b43_phy_ac_crs_index(dev, core)] - (s16)ref;
+		u16 hi = (u16)((off & 0xff) << 8);
+		u16 lo = (u16)(off & 0xff);
 		b43_phy_maskset(dev, base + 0, (u16)~0xff00, hi);
 		b43_phy_maskset(dev, base + 0, (u16)~0x00ff, lo);
 		b43_phy_maskset(dev, base + 2, (u16)~0xff00, hi);
@@ -5243,7 +5143,7 @@ static void b43_phy_ac_chanspec_tail(struct b43_wldev *dev)
 			: (dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_40)
 				? 0x003c : 0x003a;
 	else
-		crs = b43_phy_ac_crs_min_pwr(dev, b43_phy_ac_crs_index(dev),
+		crs = b43_phy_ac_crs_min_pwr(dev, b43_phy_ac_crs_index(dev, 0),
 					     true);
 
 	dev->phy.ac->crs_written = (u8)crs;
@@ -5263,7 +5163,7 @@ static void b43_phy_ac_chanspec_tail(struct b43_wldev *dev)
 	b43_phy_write(dev, 0x031f, gain);
 
 	b43_phy_ac_crs_regs_write(dev, crs);
-	b43_phy_ac_prog_bank_0910(dev, crs, B43_PHY_AC_CRS_SITE_CHANSPEC);
+	b43_phy_ac_prog_bank_0910(dev);
 
 	b43_phy_read_log(dev, 0x03a9);
 	b43_phy_maskset(dev, 0x03a9, (u16)~0x007f, 0x0000);
@@ -5608,58 +5508,6 @@ static void b43_phy_ac_post_switch_calibrations(struct b43_wldev *dev)
 
 
 /*
- * Configurations the port is known to reproduce op-for-op against a vendor
- * capture. ch36 at 20 MHz is covered on both the 4352 and the 4360.
- *
- * Width belongs in here alongside the channel because a large part of what
- * the channel setup programs is bandwidth-dependent: the coefficient bank,
- * the CRS thresholds, the chanspec gain, the farrow mode. ch44 and the 40 and
- * 80 MHz configurations are captured but not covered -- the ch36 40 MHz trace
- * carries some 500 ops this port does not emit -- and the crs_min_pwr
- * thresholds are already known to move with the sub-band: in the d6220 sweep
- * the low byte of 0x0321/0x0324/0x032d/0x0330/0x0333 reads 0x34 on ch36 and
- * 0x39 on ch100 and ch140.
- *
- * An entry earns its place by a capture, not by looking plausible.
- */
-static const struct {
-	u16 channel;
-	enum nl80211_chan_width width;
-} b43_phy_ac_validated_configs[] = {
-	{ 36, NL80211_CHAN_WIDTH_20 },
-};
-
-static bool b43_phy_ac_config_validated(struct b43_wldev *dev, u16 chan,
-					enum nl80211_chan_width width)
-{
-	unsigned int i;
-
-	/*
-	 * CONFIG_B43_PHY_AC_ANY_CHANNEL exists so the bring-up work can drive
-	 * an uncovered configuration against its capture and grow the list
-	 * above. It defeats a guard that protects the PA, hence
-	 * B43_DEBUG-only and default n.
-	 */
-	if (IS_ENABLED(CONFIG_B43_PHY_AC_ANY_CHANNEL)) {
-		b43_phy_ac_todo(dev,
-			"channel guard defeated by CONFIG_B43_PHY_AC_ANY_CHANNEL. "
-			"Several tables are fitted to ch36 at 20 MHz and have no "
-			"evidence elsewhere: the AFE low-pass stages, the CRS "
-			"minimum power ladder, and the per-bandwidth entries of "
-			"the 0x00ec-0x00f5 block. Transmit power and receive "
-			"sensitivity may be wrong here.\n");
-		return true;
-	}
-
-	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_validated_configs); i++)
-		if (b43_phy_ac_validated_configs[i].channel == chan &&
-		    b43_phy_ac_validated_configs[i].width == width)
-			return true;
-
-	return false;
-}
-
-/*
  * The TX power adjust that follows a channel switch: adjust_txpower.
  *
  * b43 reaches it from b43_op_config() through b43_phy_txpower_check() and the
@@ -5883,7 +5731,7 @@ static void b43_phy_ac_probe_cores(struct b43_wldev *dev)
 	if (!ac->coremask)
 		ac->coremask = 3;
 
-	b43dbg(dev->wl, "phy-ac: num_cores=%u coremask=0x%x\n",
+	b43dbg(dev->wl, "phy-ac: num_cores=%u coremask=0x%lx\n",
 	       ac->num_cores, ac->coremask);
 }
 
@@ -6715,6 +6563,8 @@ enum {
 	B2J_73A_08,
 	B2J_73A_60,
 	B2J_SITE,
+	/* f6 of the current width's RX-LPF cell, read back by the caller. */
+	B2J_LPF,
 };
 
 static u16 b43_phy_ac_rxgain_field(const struct b43_phy_ac_rxgain_bw *g,
@@ -7841,8 +7691,8 @@ void b43_phy_ac_radio_chain_range_setup(struct b43_wldev *dev, bool with_tune)
 	};
 	unsigned int core, k;
 
-	/* 3a: 7 RAD.WR per core × 2 core */
-	for (core = 0; core < 2; core++) {
+	/* 3a: 7 RAD.WR per chain */
+	for_each_set_bit(core, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
 		u16 stride = (u16)(core * 0x200);
 
 		for (k = 0; k < ARRAY_SIZE(radio_wr); k++)
@@ -7914,11 +7764,11 @@ void b43_phy_ac_radio_chain_range_setup(struct b43_wldev *dev, bool with_tune)
 	b43_phy_ac_classctl_write_peeked(dev, true);
 
 	/*
-	 * 3o-3r: per-core (2 core) 7 RAD.RD + 6 RAD.MOD tuning.
+	 * 3o-3r: per chain, 7 RAD.RD + 6 RAD.MOD tuning.
 	 * Le 6 MOD alterano bit-field specifici di 0x001a (0x00f0, 0x0300),
 	 * 0x001f (0x0004), 0x0170 (0x0100, 0x4000), 0x001e (0x0004).
 	 */
-	for (core = 0; core < 2; core++) {
+	for_each_set_bit(core, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
 		u16 s = (u16)(core * 0x200);
 
 		/* 3o/3q: 7 RAD.RD readback */
@@ -8366,13 +8216,10 @@ void b43_phy_ac_rxiqcal_apply_tx_bbmult_kick(struct b43_wldev *dev)
 	b43_phy_mask(dev, 0x0460, (u16)~0x0004);
 
 	/* Sub-batch per-core: preamble + 2× fast TBL.WR bbmult + postamble */
-	for (core = 0; core < 2; core++) {
+	for_each_set_bit(core, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
 		u16 lo = (u16)(0x0063 + 4 * core);
 		u16 hi = (u16)(0x0073 + 4 * core);
 		const u16 *bbmult = &ac->bbmult_cal[core];
-
-		if (!((ac->coremask >> core) & 1))
-			continue;
 
 		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
 		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
@@ -8520,7 +8367,9 @@ void b43_phy_ac_rxgain_config_readback(struct b43_wldev *dev)
 			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
 
 	/* The order the capture shows, which is not sorted by address. */
-	static const u16 bbmult_off[2] = { 0x0063, 0x0067 };
+	static const u16 bbmult_off[B43_PHY_AC_MAX_CORES] = {
+		0x0063, 0x0067, 0x006b
+	};
 	static const u16 gain_lut_off[2][3] = {
 		{ 0x0100, 0x0103, 0x0106 },  /* core 0 */
 		{ 0x0101, 0x0104, 0x0107 },  /* core 1 */
@@ -8533,11 +8382,8 @@ void b43_phy_ac_rxgain_config_readback(struct b43_wldev *dev)
 	b43_phy_read_log(dev, 0x040f);
 	b43_phy_maskset(dev, 0x040f, (u16)~0x0200, 0);
 
-	for (core = 0; core < 2; core++) {
+	for_each_set_bit(core, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
 		u16 stride = (u16)(core * 0x200);
-
-		if (!((ac->coremask >> core) & 1))
-			continue;
 
 		/* 25 gain-register peeks, in the observed order. */
 		for (i = 0; i < ARRAY_SIZE(b43_phy_ac_rxgain_cfg_regs); i++)
@@ -8608,13 +8454,14 @@ void b43_phy_ac_rxgain_config_apply(struct b43_wldev *dev)
 	/*
 	 * Phase 2: 12 MODs after the table read. 0x0735[10:8] e [13:11] valgono
 	 * il passo di banda, 0/1/2 nel proprio peso, su tutti i 43 segmenti a
-	 * freddo del d6220. 0x0737 no: fa 0x91 quasi ovunque a 20 MHz, 0x8d a 40
-	 * e 0x8d/0x8e a 80 a seconda del canale, e una legge non c'e'.
+	 * freddo del d6220. 0x0737[7:0] e' il campo f6 della cella RX-LPF della
+	 * larghezza corrente, quella appena riletta: (cella >> 6) & 0xff su
+	 * ogni segmento del d6220 e dell'agcombo, a freddo e a caldo.
 	 */
 	static const struct mod_op phase2[12] = {
 		{ 0x0735, 0x0700, 0x0000, .bw_step = 0x0100 }, { 0x0723, 0x0008, 0x0008 },
 		{ 0x0735, 0x3800, 0x0000, .bw_step = 0x0800 }, { 0x0723, 0x0010, 0x0010 },
-		{ 0x0737, 0x00ff, 0x0091 }, { 0x0723, 0x0200, 0x0200 },
+		{ 0x0737, 0x00ff, 0x0000, .from = B2J_LPF }, { 0x0723, 0x0200, 0x0200 },
 		{ 0x0735, 0x4000, 0x0000 }, { 0x0723, 0x0020, 0x0020 },
 		{ 0x0735, 0x0001, 0x0001 }, { 0x0723, 0x0001, 0x0001 },
 		{ 0x0729, 0x0100, 0x0100 }, { 0x0721, 0x0100, 0x0100 },
@@ -8623,7 +8470,7 @@ void b43_phy_ac_rxgain_config_apply(struct b43_wldev *dev)
 	unsigned int bw = b43_phy_ac_bw_step(dev);
 	struct b43_phy_ac *ac = dev->phy.ac;
 	unsigned int core, i;
-	u16 discard;
+	u16 lpf;
 
 	/* Header (3 op): peek + 2 MOD 0x0401 */
 	b43_phy_read_log(dev, 0x0401);
@@ -8643,17 +8490,18 @@ void b43_phy_ac_rxgain_config_apply(struct b43_wldev *dev)
 					b43_phy_ac_rxgain_field(g, phase1[i].from,
 								phase1[i].val));
 
-		/* 1× fast TBL.RD readback (5 op) */
 		b43_actab_read_bulk(dev, 0x0007,
-				    (u16)(0x0140 + core * 0x10),
-				    16, 1, &discard);
+				    b43_phy_ac_rxlpf_lo_cell[bw][core],
+				    16, 1, &lpf);
 
-		/* Phase 2: 12 MOD (bit-field config) */
-		for (i = 0; i < ARRAY_SIZE(phase2); i++)
+		for (i = 0; i < ARRAY_SIZE(phase2); i++) {
+			u16 val = phase2[i].from == B2J_LPF
+				? (u16)((lpf >> 6) & 0xff)
+				: (u16)(phase2[i].val + phase2[i].bw_step * bw);
+
 			b43_phy_maskset(dev, phase2[i].reg + stride,
-					(u16)~phase2[i].mask,
-					(u16)(phase2[i].val +
-					      phase2[i].bw_step * bw));
+					(u16)~phase2[i].mask, val);
+		}
 
 		/* 2 op: peek + MOD 0x?78 clr bit 0 */
 		b43_phy_read_log(dev, 0x0678 + stride);
@@ -8700,11 +8548,8 @@ void b43_phy_ac_radio_iqcal_config(struct b43_wldev *dev)
 	struct b43_phy_ac *ac = dev->phy.ac;
 	unsigned int core, i;
 
-	for (core = 0; core < 2; core++) {
+	for_each_set_bit(core, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
 		u16 stride = (u16)(core * 0x200);
-
-		if (!((ac->coremask >> core) & 1))
-			continue;
 
 		/* 6 RAD.RD (readback) */
 		for (i = 0; i < ARRAY_SIZE(rad_regs); i++)
@@ -8897,14 +8742,14 @@ void b43_phy_ac_iqcal_meas_post_dds_apply(struct b43_wldev *dev)
 
 	/* Block F, 12 ops: gain-register peeks, 0x?c0 to 0x?c5 over two cores,
 	 * in the observed order 0x?c3, 0x?c2, 0x?c5, 0x?c4, 0x?c1, 0x?c0. */
-	for (c = 0; c < 2; c++)
+	for_each_set_bit(c, &dev->phy.ac->coremask, dev->phy.ac->num_cores)
 		b43_phy_ac_iq_acc_peek(dev, c, false);
 
 	/* Blocco G (29 op): apply bbmult per-core (variante) */
 	b43_phy_read_log(dev, 0x0464);
 	b43_phy_set(dev,      0x0460, 0x0002);
 	b43_phy_mask(dev,     0x0460, (u16)~0x0004);
-	for (c = 0; c < 2; c++) {
+	for_each_set_bit(c, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
 		u16 lo = (u16)(0x0063 + 4 * c);
 		u16 hi = (u16)(0x0073 + 4 * c);
 		const u16 *bbmult = &dev->phy.ac->bbmult_meas;
@@ -9025,11 +8870,11 @@ static bool b43_phy_ac_loopback_step(struct b43_wldev *dev, unsigned int core,
  * both cores: on ch132 at 40 MHz, round 4 writes only core 1 but still reads
  * core 0.
  *
- * Core 2 is never measured -- no read of 0x0ac0-0x0ac5 appears in the loop --
- * and follows a fixed three-round schedule of {4, 1, 0}, invariant across all
- * 52 runs of the d6220 sweep, every channel and every width. It is not a
- * search, and the rule that produces it is unknown: transcribed, not derived.
- *
+ * A core the board does not wire is never measured and follows a fixed
+ * three-round schedule of {4, 1, 0}: core 2 on the d6220, invariant across
+ * every channel and width of its sweeps. The rule that produces it is
+ * unknown: transcribed, not derived. The tg789vac and the agcombo wire core 2
+ * and search it like the other two. *
  * The starting index is the 5 GHz one; the port refuses 2.4 GHz, where it
  * would start from 0. With a read oracle the measurements are the vendor's
  * and the search converges on the same indices: on the d6220 ch36 BW20 gate
@@ -9043,17 +8888,19 @@ static bool b43_phy_ac_loopback_step(struct b43_wldev *dev, unsigned int core,
 static void b43_phy_ac_loopback_gain_search(struct b43_wldev *dev)
 {
 	B43_AC_FN();
-	static const u16 c2_sched[3] = { 4, 1, 0 };
-	u16 r734[3] = { 0, 0, 0 };
-	u8 idx[2] = {
-		B43_PHY_AC_LOOPBACK_IDX_5G,
-		B43_PHY_AC_LOOPBACK_IDX_5G,
-	};
-	bool searching[2] = { true, true };
+	static const u16 unwired_sched[3] = { 4, 1, 0 };
+	struct b43_phy_ac *ac = dev->phy.ac;
+	unsigned long searching = ac->coremask;
+	unsigned long unwired = GENMASK(ac->num_cores - 1, 0) & ~ac->coremask;
+	u16 r734[B43_PHY_AC_MAX_CORES] = { 0 };
+	u8 idx[B43_PHY_AC_MAX_CORES];
 	unsigned int round, c;
 
-	for (round = 0; searching[0] || searching[1]; round++) {
-		u8 mask = 0;
+	for (c = 0; c < B43_PHY_AC_MAX_CORES; c++)
+		idx[c] = B43_PHY_AC_LOOPBACK_IDX_5G;
+
+	for (round = 0; searching; round++) {
+		u8 mask = (u8)searching;
 
 		if (round >= 8) {
 			b43err(dev->wl,
@@ -9061,26 +8908,21 @@ static void b43_phy_ac_loopback_gain_search(struct b43_wldev *dev)
 			break;
 		}
 
-		for (c = 0; c < 2; c++) {
-			if (!searching[c])
-				continue;
-			mask |= (u8)(1u << c);
+		for_each_set_bit(c, &searching, ac->num_cores)
 			r734[c] = idx[c];
-		}
-		if (round < ARRAY_SIZE(c2_sched)) {
-			mask |= 1u << 2;
-			r734[2] = c2_sched[round];
+		if (round < ARRAY_SIZE(unwired_sched)) {
+			mask |= (u8)unwired;
+			for_each_set_bit(c, &unwired, ac->num_cores)
+				r734[c] = unwired_sched[round];
 		}
 
 		b43_phy_ac_gainctrl_final_apply(dev, round == 0, mask, r734);
 		b43_phy_ac_rxiqcal_dds_seed_tone(dev, 1);
 		b43_phy_ac_iqcal_meas_post_dds_apply(dev);
 
-		for (c = 0; c < 2; c++)
-			if (searching[c])
-				searching[c] =
-					!b43_phy_ac_loopback_step(dev, c,
-								  &idx[c]);
+		for_each_set_bit(c, &searching, ac->num_cores)
+			if (b43_phy_ac_loopback_step(dev, c, &idx[c]))
+				__clear_bit(c, &searching);
 	}
 }
 
@@ -9170,8 +9012,12 @@ void b43_phy_ac_iqcal_meas_post_dds_apply_v2(struct b43_wldev *dev)
 	/* Blocchi A+B+C+D (47 op) */
 	iqcal_meas_readback_kick_tail(dev);
 
-	/* Setup (3 op) — nota: WR 0x0272 = 0x4000 (invece di 0x0400 del v1) */
-	b43_phy_write(dev,   0x0272, 0x4000);
+	/*
+	 * Setup (3 op). 0x0272 is 0x4000 at 20 and 40 MHz and 0x3000 at 80,
+	 * on the d6220, the agcombo and the tg789vac.
+	 */
+	b43_phy_write(dev,   0x0272,
+		      b43_phy_ac_bw_step(dev) == 2 ? 0x3000 : 0x4000);
 	b43_phy_maskset(dev, 0x0271, (u16)~0x00ff, 0x0020);
 	b43_phy_maskset(dev, 0x0270, (u16)~0x0002, 0);
 
@@ -9186,7 +9032,7 @@ void b43_phy_ac_iqcal_meas_post_dds_apply_v2(struct b43_wldev *dev)
 	b43_phy_read_log(dev, 0x0464);
 	b43_phy_set(dev,      0x0460, 0x0002);
 	b43_phy_mask(dev,     0x0460, (u16)~0x0004);
-	for (c = 0; c < 2; c++) {
+	for_each_set_bit(c, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
 		u16 lo = (u16)(0x0063 + 4 * c);
 		u16 hi = (u16)(0x0073 + 4 * c);
 		const u16 *bbmult = &dev->phy.ac->bbmult_meas;
@@ -9414,7 +9260,7 @@ void b43_phy_ac_rxiq_apply_coefficients(struct b43_wldev *dev)
 		"rejection on that core may be slightly worse.\n");
 
 	/* Per core [c]: 0x?a0 (coeff a) e 0x?a1 (coeff b) */
-	for (c = 0; c < 2; c++) {
+	for_each_set_bit(c, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
 		u16 stride = (u16)(c * 0x200);
 		s16 a, b;
 
@@ -9448,7 +9294,7 @@ void b43_phy_ac_radio_iqcal_teardown(struct b43_wldev *dev)
 	static const u16 rad_vals[6] = { 0, 0, 0, 0, 0, 0x000f };
 	unsigned int c, i;
 
-	for (c = 0; c < 2; c++) {
+	for_each_set_bit(c, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
 		u16 stride = (u16)(c * 0x200);
 
 		for (i = 0; i < ARRAY_SIZE(rad_regs); i++)
@@ -9496,7 +9342,7 @@ void b43_phy_ac_rxiq_teardown_apply_defaults(struct b43_wldev *dev)
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
 	b43_phy_write(dev,   0x0401, 0x7733);
 
-	for (c = 0; c < 2; c++) {
+	for_each_set_bit(c, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
 		u16 stride = (u16)(c * 0x200);
 		struct b43_phy_ac_gaincurve gc;
 
@@ -9698,7 +9544,8 @@ static void b43_phy_ac_measure_block(struct b43_wldev *dev)
 {
 	B43_AC_FN();
 	/* Per-core 0x?024/0x?025 baseline, restored by the radio reset. */
-	u16 rad_restore[2][2];
+	u16 rad_restore[B43_PHY_AC_MAX_CORES][2];
+	struct b43_phy_ac *ac = dev->phy.ac;
 	B43_PHY_AC_REQUIRE(dev,
 			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_RX_OFDM,
 			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_CLIP_ALL_DIS |
@@ -9720,13 +9567,13 @@ static void b43_phy_ac_measure_block(struct b43_wldev *dev)
 		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0080, 0);
 		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0100, 0);
 
-		for (c = 0; c < 2; c++)
+		for_each_set_bit(c, &ac->coremask, ac->num_cores)
 			b43_phy_ac_rx_gain_regs_program(dev, c, 0x0154);
 	}
 
 	/*
-	 * Second 2069 radio IQ-cal configuration, 68 ops: 34 per core over two
-	 * cores, being seven baseline radio reads plus nine MOD/RD/WR groups.
+	 * Second 2069 radio IQ-cal configuration, 34 ops per chain: seven
+	 * baseline radio reads plus nine MOD/RD/WR groups.
 	 *
 	 * b43_radio_maskset() emits three ops, MOD then RD then WR, with the
 	 * written value computed as (read & ~mask) | set. Reproducing the
@@ -9763,7 +9610,7 @@ static void b43_phy_ac_measure_block(struct b43_wldev *dev)
 		};
 		unsigned int c, i;
 
-		for (c = 0; c < 2; c++) {
+		for_each_set_bit(c, &ac->coremask, ac->num_cores) {
 			u16 s = (u16)(c * 0x200);
 
 			/*
@@ -9813,8 +9660,8 @@ static void b43_phy_ac_measure_block(struct b43_wldev *dev)
 	b43_phy_ac_arm_tone_gen(dev, 0x0110);
 
 	/*
-	 * TX AFE poll blocks, 163 ops: two cores by four iterations by 20 ops,
-	 * plus three ops to re-arm between cores.
+	 * TX AFE poll blocks: four iterations of 20 ops per chain, with a
+	 * three-op re-arm before every chain past the first.
 	 *
 	 * Each iteration emits four MOD/RD/WR groups, 12 ops, plus eight peeks
 	 * of 0x0013:
@@ -9829,9 +9676,9 @@ static void b43_phy_ac_measure_block(struct b43_wldev *dev)
 	 * RX-IQ four-configuration sweep in rxiq-cal-analysis.md, but on a
 	 * different register -- 0x000e rather than 0x0734.
 	 *
-	 * Between core 0 and core 1 there is a re-arm writing 0x0394 = 0x0111,
-	 * against 0x0110 in the first arm: bit 0 changes, which looks like an
-	 * arm core selector.
+	 * The re-arm writes 0x0394 = 0x0110 | core: 0x0111 before core 1 and
+	 * 0x0112 before core 2 on the tg789vac, against the 0x0110 of the first
+	 * arm, so the low bits select the core.
 	 *
 	 * SALAME: reading this as a TX AFE cal sweep is ours, and the relation
 	 * to the 0x0734 sweep is not confirmed -- different registers,
@@ -9846,14 +9693,13 @@ static void b43_phy_ac_measure_block(struct b43_wldev *dev)
 		};
 		unsigned int core, iter, p;
 
-		for (core = 0; core < 2; core++) {
+		for_each_set_bit(core, &ac->coremask, ac->num_cores) {
 			u16 s = (u16)(core * 0x200);
 			u16 reg_16e = 0x016e + s;
 			u16 reg_00e = 0x000e + s;
 
-			/* Re-arm before core 1, writing 0x0394 = 0x0111. */
-			if (core == 1)
-				b43_phy_ac_arm_tone_gen(dev, 0x0111);
+			if (core)
+				b43_phy_ac_arm_tone_gen(dev, (u16)(0x0110 | core));
 
 			for (iter = 0; iter < 4; iter++) {
 				b43_radio_maskset(dev, reg_16e,
@@ -9872,15 +9718,15 @@ static void b43_phy_ac_measure_block(struct b43_wldev *dev)
 	}
 
 	/*
-	 * PHY gain-register reset, 29 ops: write 0x019e = 0x03d0 for the gate
-	 * configuration, then 14 writes per core resetting 0x?720-0x?73e to
+	 * PHY gain-register reset: write 0x019e = 0x03d0 for the gate
+	 * configuration, then 14 writes per chain resetting 0x?720-0x?73e to
 	 * their post-cal defaults.
 	 */
 	b43_phy_write(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, 0x03d0);
 	{
 		unsigned int c, i;
 
-		for (c = 0; c < 2; c++) {
+		for_each_set_bit(c, &ac->coremask, ac->num_cores) {
 			u16 s = (u16)(c * 0x200);
 
 			for (i = 0; i < ARRAY_SIZE(b43_phy_ac_rxgain_regs); i++)
@@ -9890,7 +9736,7 @@ static void b43_phy_ac_measure_block(struct b43_wldev *dev)
 	}
 
 	/*
-	 * Radio reset, 14 ops: seven radio writes per core. The first five are
+	 * Radio reset: seven radio writes per chain. The first five are
 	 * post-cal constants, with bit 4 of 0x0017 left set at 0x0011; 0x0024
 	 * and 0x0025 restore the baseline read at the head of the block, as
 	 * noted there.
@@ -9905,7 +9751,7 @@ static void b43_phy_ac_measure_block(struct b43_wldev *dev)
 		};
 		unsigned int c, i;
 
-		for (c = 0; c < 2; c++) {
+		for_each_set_bit(c, &ac->coremask, ac->num_cores) {
 			u16 s = (u16)(c * 0x200);
 
 			for (i = 0; i < ARRAY_SIZE(radio_reset); i++)
@@ -10148,20 +9994,24 @@ static void b43_phy_ac_wd_stats_poll_opt(struct b43_wldev *dev,
 /* Closing re-read of the window zeroed at the head, plus 0x008c. */
 static void b43_phy_ac_wd_stats_tail(struct b43_wldev *dev)
 {
+	u16 noise[B43_PHY_AC_MAX_CORES] = { 0 };
 	u16 off;
 
 	b43_shm_read16(dev, B43_SHM_SHARED, 0x008c);
 	for (off = 0x0308; off <= 0x0314; off += 2) {
 		u16 v = b43_shm_read16(dev, B43_SHM_SHARED, off);
+		unsigned int core = (off - 0x0308) / 4;
 
 		/*
-		 * 0x0308 is the noise statistic the CRS minimum-power ladder
-		 * is chosen from; see b43_phy_ac_crs_min_pwr(). The rest of
-		 * the window is read for the latch-and-clear and not consumed.
+		 * One 32-bit cell per chain from 0x0308, the noise statistic
+		 * the CRS thresholds are chosen from; see
+		 * b43_phy_ac_crs_note_noise(). The high words and 0x0314 are
+		 * read for the latch-and-clear and not consumed.
 		 */
-		if (off == 0x0308)
-			b43_phy_ac_crs_note_noise(dev, v);
+		if (!(off & 2) && core < B43_PHY_AC_MAX_CORES)
+			noise[core] = v;
 	}
+	b43_phy_ac_crs_note_noise(dev, noise);
 }
 
 static void b43_phy_ac_wd_stats_poll(struct b43_wldev *dev)
@@ -10451,7 +10301,7 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 		b43_actab_write_bulk_scoped(dev, 0x000c, 0x005f, 16, 1,
 					    &tbl_5f_val);
 
-		for (c = 0; c < 2; c++) {
+		for_each_set_bit(c, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
 			u16 stride = (u16)(c * 0x200);
 
 			/* TBL.RD off=0x60+c*4 len=2 (8 op) */
@@ -10595,36 +10445,17 @@ static void b43_phy_ac_crs_block_e(struct b43_wldev *dev)
 	/*
 	 * Eight MODs on the CRS registers, the clip-detector thresholds, under
 	 * mask 0x00ff. See b43_phy_ac_crs_regs() for the order: a +0xc stride,
-	 * interleaved between cores.
+	 * interleaved between cores. Then the per-chain bank.
 	 *
-	 * The value is the ladder entry the sample just latched selects, which
-	 * is why the statistics are read immediately above: on a warm cycle
-	 * exactly one sample falls between the CRS write of chanspec_tail() and
-	 * this one, and this one follows it.
-	 *
-	 * A first bring-up keeps the literal: there chanspec_tail() writes 0x3a
-	 * and this block 0x34, and no sample explains the pair.
+	 * Both come out of the noise rings, which is why the statistics are
+	 * latched immediately above: the sample just taken is the newest of
+	 * the four the index is averaged over.
 	 */
-	{
-		/*
-		 * Anche al primo bring-up il valore esce dal campione: il
-		 * latch qui sopra lo ha appena preso e b43_phy_ac_crs_index()
-		 * lo ha gia' piegato in un indice. Qui stava un letterale
-		 * 0x34 perche' "nessun campione spiega la coppia", e non era
-		 * vero -- mancava la normalizzazione per la banda. Con la
-		 * formula i 26 segmenti a freddo tornano tutti e 26, e il
-		 * letterale sbagliava su 23: scriveva 52 dove il vendor
-		 * scrive 57 o 58 sopra i 5250, 54 a 40 MHz e 50 a 80.
-		 */
-		u16 crs = b43_phy_ac_crs_min_pwr(dev,
-				b43_phy_ac_crs_index(dev), true);
-
-		b43_phy_ac_crs_regs_write(dev, crs);
-
-		/* Noise floor clear, 8 ops, same pattern as chanspec_tail. */
-		b43_phy_ac_prog_bank_0910(dev, crs,
-					  B43_PHY_AC_CRS_SITE_FINALIZE);
-	}
+	b43_phy_ac_crs_regs_write(dev,
+				  b43_phy_ac_crs_min_pwr(dev,
+							 b43_phy_ac_crs_index(dev, 0),
+							 true));
+	b43_phy_ac_prog_bank_0910(dev);
 
 	/*
 	 * Il MAC torna attivo e ci resta: quel che segue -- il poll delle
@@ -10934,7 +10765,7 @@ static void b43_phy_ac_down(struct b43_wldev *dev)
 	if (dev->phy.ac->iqlo_saved) {
 		unsigned int c;
 
-		for (c = 0; c < 2; c++) {
+		for_each_set_bit(c, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
 			u16 stride = (u16)(c * 0x200);
 			s16 a, b;
 
@@ -11051,41 +10882,6 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	if (!e2069)
 		return -ESRCH;
 
-	/*
-	 * Scaffolding, not a capability limit.
-	 *
-	 * Part of what the channel setup programs is not derived: the values
-	 * were transcribed from captures and exist only to get the bring-up
-	 * moving. Gains, gain-LUT defaults and the CRS thresholds are among
-	 * them, and on an RF chain other than the one they were read from
-	 * they are not slightly wrong, they can overdrive the PA. The TX
-	 * power index is no longer one of them: it comes from the SROM, the
-	 * regulatory ceiling and the margin.
-	 *
-	 * The channel table accepts all of 5 GHz, so it is no protection on
-	 * its own: without this filter, tuning ch100 would write the ch36
-	 * constants.
-	 *
-	 * The width is checked from chandef.width and not through
-	 * cfg80211_get_chandef_type(): that helper only knows the HT widths
-	 * and answers NL80211_CHAN_NO_HT for anything wider, which would let
-	 * an 80 MHz chandef through.
-	 *
-	 * A configuration joins the list once a capture shows the port
-	 * reproducing it, and the list disappears once the values are derived
-	 * rather than transcribed.
-	 */
-	if (!b43_phy_ac_config_validated(dev, channel->hw_value, width)) {
-		b43warn(dev->wl,
-			"AC-PHY: refusing ch%u at %s: its programming has not "
-			"been checked against a capture, and several of the "
-			"values written are transcribed from ch36 at 20 MHz. "
-			"Writing them here can damage the RF front-end.\n",
-			channel->hw_value,
-			width == NL80211_CHAN_WIDTH_80 ? "80 MHz" :
-			width == NL80211_CHAN_WIDTH_40 ? "40 MHz" : "20 MHz");
-		return -EOPNOTSUPP;
-	}
 	if (dev->dev->chip_id != 0x4352 && dev->dev->chip_id != 0x4360) {
 		b43warn(dev->wl,
 			"AC-PHY: chip 0x%04x non validato: nessuna cattura di riferimento, "

@@ -42,7 +42,6 @@ KFLAGS := -nostdinc -I$(CURDIR)/$(UP) $(KINC) -D__KERNEL__ -DMODULE -DKBUILD_MOD
           -include $(K)/include/linux/kconfig.h \
           -include $(K)/include/linux/compiler_types.h \
           -DCONFIG_B43_BCMA=1 -DCONFIG_B43_PHY_AC=1 -DCONFIG_B43_LEDS=1 \
-          $(if $(AC_ANY_CHANNEL),-DCONFIG_B43_PHY_AC_ANY_CHANNEL=1) \
           -O2 -fno-strict-aliasing -fno-common -std=gnu11 -w \
           -mno-red-zone \
           -Werror=implicit-function-declaration \

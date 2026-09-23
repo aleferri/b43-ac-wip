@@ -9,6 +9,26 @@
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 #define BIT(n)        (1UL << (n))
+#define GENMASK(h, l) (((~0UL) << (l)) & (~0UL >> (sizeof(long) * 8 - 1 - (h))))
+
+static inline unsigned long find_next_bit(const unsigned long *addr,
+					  unsigned long size,
+					  unsigned long offset)
+{
+	while (offset < size && !(*addr & (1UL << offset)))
+		offset++;
+	return offset;
+}
+
+static inline void __clear_bit(unsigned long nr, unsigned long *addr)
+{
+	*addr &= ~(1UL << nr);
+}
+
+#define for_each_set_bit(bit, addr, size)				\
+	for ((bit) = find_next_bit((addr), (size), 0);			\
+	     (bit) < (size);						\
+	     (bit) = find_next_bit((addr), (size), (bit) + 1))
 #define BIT_ULL(n)    (1ULL << (n))
 
 #ifndef min

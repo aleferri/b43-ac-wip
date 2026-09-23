@@ -84,10 +84,7 @@ globale perche' quale punto si e' toccato e' l'informazione utile. Non e'
 accadono per costruzione, e il messaggio serve a chi legge un dmesg dopo che
 qualcosa non ha funzionato.
 
-Oggi sono due: il residuo per banda sul coefficiente `b` della RX IQ del core
-1, e il guard di canale
-scavalcato da `CONFIG_B43_PHY_AC_ANY_CHANNEL`, che elenca quali tabelle sono
-fittate su ch36 a 20 MHz e non hanno prove altrove.
+Oggi `grep -n b43_phy_ac_todo src/*.c` elenca i siti.
 
 ## L'oracolo cieco, e perche' gli ancoraggi vanno verificati
 
@@ -3502,8 +3499,8 @@ per il punteggio e per il TX power reale, che e' post-MVP.
 
   Le celle a passo `0x1c` sono il **gruppo B** gia' aperto sopra, e il muro
   posizionale si ferma la', a `OBJ.RD 0x0a3a` seguita dalla sua riscrittura.
-  Non sono le soglie CRS di `crsminpwr-d6220.md`: quella specifica riguarda i
-  registri PHY `0x324` e il banco `0x910-0x913`, un altro spazio di indirizzi.
+  Non sono le soglie CRS di `crs-min-power.md`, che stanno sui registri PHY
+  `0x0321-0x0336` e sul banco `0x0910`: un altro spazio di indirizzi.
 
   **E' una funzione di canale e larghezza, non una misura.** Lo dimostrava lo
   sweep a caldo precedente, 26 configurazioni per due cicli: era l'unico dataset
@@ -4556,91 +4553,9 @@ inaffidabile
   Regola operativa: per i conteggi usare la `down-to-bss-ch36-bw20`. La vecchia
   resta utile per gli indirizzi e come secondo testimone qualitativo.
 
-- **0x0910-0x0913 -- riprodotto per ch36 BW20, meccanismo identificato.** Il
-  banco porta un **offset per catena** su una soglia assoluta presa da un ladder
-  discreto (`.rodata +0x040e84` nel blob D6220, tre righe da 15 entry u8,
-  attribuito a `wlc_phy_crs_min_pwr_cal_acphy`). La relazione e'
-  `CRS = ladder[indice] - offset`: il CRS porta la parte comune agli 8 registri,
-  il banco la correzione per catena. Verificato 4/4 sul d6220, e risolve
-  l'anomalia del `CRS = 49`, che nel ladder non c'e' mentre `49 + 3 = 52` si'.
-
-  Il port implementa `off = max(0, target - crs)`, che ha la **causalita' al
-  contrario** e riproduce i numeri solo perche' entrambi i termini sono fittati
-  sulla configurazione validata. Resta aperto: la regola dell'indice, la
-  trasformazione che genera l'offset per catena, e la verifica agcombo (le sue
-  somme non sono nel ladder del d6220, ma e' un chip diverso). Derivazione,
-  tabelle e controesempi in
-  [`bank-0910-analysis.md`](bank-0910-analysis.md). Nota che il nome
-  "noise floor" non e' fondato. Viene dal nome della
-  funzione nel port e non compare in `brcmsmac`, in nessun header, ne' in
-  nessuna fonte. Cio' che e' accertato del blocco e' solo strutturale: il driver
-  stock **non lo legge mai** (write-only in entrambe le catture con retval),
-  quattro registri per catena con stride `0x200` -- ma **mai** per la catena 0,
-  che in 12 catture non compare: i banchi sono `catene - 1`. Lo stesso scalare
-  in entrambi i byte, e un ordine asimmetrico -- pari hi-poi-lo, dispari
-  lo-poi-hi -- che
-  suggerisce due quantita' a 32 bit scritte a byte piuttosto che quattro
-  registri indipendenti.
-
-  Il nome ha condizionato l'indagine: si e' cercata una *misura* da cui derivare
-  il valore, guardando le letture vicine. Ma essendo write-only e senza letture
-  vicine che lo spieghino, il valore viene plausibilmente da **stato lato
-  driver** -- un contatore o un indice -- non da un registro. Coerente con la
-  crescita dentro la sessione e col fatto che l'agcombo (3 core) arrivi piu' in
-  alto: banco core-2 con valori 0, 6, 9, 14, 15, 18, 25.
-
-- **Valore del blocco: cresce nella sessione, non costante.**
-  `b43_phy_ac_prog_bank_0910` scrive uno scalare fisso su tutte e otto le
-  posizioni -- `0` sul 4352, `0x0f` sul 4360 -- e l'ordine delle op e' giusto
-  (`0x910` hi/lo, `0x912` hi/lo, `0x911` lo/hi, `0x913` lo/hi). Il valore no:
-  cresce a ogni invocazione dentro la stessa sessione.
-
-      DSL down→up            0, 0, 0
-      d6220 attach           0, 0x05
-      d6220 down→up          0x03, 0x05
-      agcombo attach         0, 0x06, 0x09
-      agcombo down→bss       0x0f, 0x12
-
-  Le costanti attuali riproducono la **prima** occorrenza di alcune catture
-  (`0` per d6220 attach, `0x0f` per agcombo down→bss) e sbagliano le successive.
-  Gli incrementi non sono uniformi (+5, +2, +6/+3, +3) e nessuna lettura nelle
-  100 op precedenti determina il valore, quindi dipende da storia di sessione
-  che il driver a quel punto non ha. Da riprendere se salta fuori una cattura
-  che copra due invocazioni con le letture in mezzo.
-
-  Nota anche che il nome della funzione descrive cio' che fa il port (azzerare),
-  non cio' che fa il driver stock (programmare).
-
-  Contesto della prima occorrenza (`down-to-bss-ch36-bw20`), per chi riprende:
-
-      #3102        RD 0x0601 = 0x49, riscritto su 0x1601
-      #3111-3133   tabella 7, due RMW: off 0x3cd e 0x3dd, 0x0c02 letto,
-                   0x04c2 e 0x04e2 scritti
-      #3135-3140   prefregs 0x0371-0x0376
-      #3143-3146   gain 0x031c-0x031f = 0x00bf
-      #3147-3154   CRS, otto registri a 0x31
-      #3155-3162   noise floor, otto op a 0x03      <-- divergenza
-      #3163        peek 0x03a9
-
-  Ipotesi **respinta**: `0x0c02 >> 10 = 3` combacia con la prima occorrenza, ma
-  in tutta la cattura non esiste una lettura di tabella 7 con `>>10 = 5`.
-  Coincidenza su un valore piccolo.
-
-  Ipotesi `b // 10` **respinta**: correlava su 10 punti di 13, con tre
-  controesempi da entrambi i lati -- `ch36 #52556` e `DSL #155080` scrivono zero
-  con `b` disponibile (55 e 48, scritti centinaia di episodi prima), `d2u #3155`
-  scrive 3 con tutti i coefficienti a zero. La correlazione era temporale: banco
-  e coefficienti partono da zero e crescono insieme.
-
-  Altri candidati esclusi provando contro le catture: il base index idle-TSSI,
-  ogni coppia di registri per-core `0x06xx`/`0x08xx` letta o scritta prima del
-  banco, i campi SROM per-core (identici su tutte e tre le board), e
-  `0x073d + core*0x200` che legge zero in tutte e quattro. Vedi §8 di
-  `rxiq-cal-analysis.md`.
-
-  Il valore resta non spiegato. Le costanti attuali (`0` sul 4352, `0xf` sul
-  4360) riproducono la prima occorrenza di alcune catture e sbagliano le altre.
-
+- **Soglie CRS e banco 0x0910: il valore e' chiuso, il momento no.** Regola,
+  verifica e i 12 segmenti a freddo dove il blocco E cade in un punto diverso
+  da quello del vendor in [`crs-min-power.md`](crs-min-power.md).
 - **Coefficienti RXIQ — chiuso.** `b43_phy_ac_iq_solve` e' collegato ai tre
   call site e la formula e' quella verificata sul blob (§8 di
   `rxiq-cal-analysis.md`). Bit-exact in attach; resta un residuo di 1 LSB sul
@@ -4687,14 +4602,6 @@ inaffidabile
   Strumentare funzioni interne farebbe cadere quella distinzione. Leggere
   `.rodata`/`.data` dai blob e' invece lettura di dati, ammissibile.
 
-- **[PARZIALE] indice del ladder crs_min_pwr.** La catena e' chiusa e
-  implementata (ladder + ancoraggio per-BW {34,33,30} + clamp[0,14] + bump
-  a freddo, verificata sul blob D6220 7.14): vedi `crsminpwr-d6220.md` e
-  `b43_phy_ac_op_recalc_txpower`. Resta aperto SOLO il campione
-  d'interferenza per freq_range che seleziona la soglia (l'indice concreto
-  del canale), non misurabile senza hardware -- `crs_index_for_chan` e' un
-  placeholder. Su hardware: verificare se la misura passa da un accessor di
-  I/O non coperto, o via iovar `phy_force_crsmin` sul driver stock.
 
 ## Doppia programmazione dell'analogico durante l'attach
 
@@ -4924,14 +4831,11 @@ di potenza TX non e' piu' trascritto: viene da `txpwr_target()`, che parte da
 
 Non c'e' un marcatore greppabile: i tag `SCAFFOLD(...)` e `TODO(formula)` di
 cui parlavano le versioni precedenti di questo file non sono piu' nel sorgente.
-I siti si trovano con `grep -n -i scaffold src/*.c`, che oggi ne da' tre, e il
+I siti si trovano con `grep -n -i scaffold src/*.c`, che oggi ne da' due, e il
 commento di ognuno dice cosa e' trascritto e da dove:
 
 - la tabella di controllo FEM, che e' quella di `femctrl=6`, il solo valore
   osservato (`b43_phy_ac_set_regtbl_on_femctrl`);
-- le soglie `crs_min_pwr` e il banco `0x0910`, trascritti da ch36 a 20 MHz,
-  tenuti fuori dagli altri canali dal filtro di `op_switch_channel()`
-  (`docs/bank-0910-analysis.md`);
 - il filtro delle configurazioni validate in `op_switch_channel()`, che e'
   impalcatura per costruzione, non un limite del chip.
 

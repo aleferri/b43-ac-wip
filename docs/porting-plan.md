@@ -152,16 +152,15 @@ quella che richiede il campionamento del rumore per la crsmin cal. Se si
 strumenta il driver in profondita', l'argomento "intercettiamo solo l'I/O" non
 regge piu': si passa dall'osservare l'hardware a osservare l'implementazione.
 
-**Conseguenza, sul caso concreto** (l'indice del ladder crsmin, vedi
-`bank-0910-analysis.md`)**.** L'indice **non** va inseguito hookando la funzione
-che lo produce. Le strade dentro il confine sono:
+**Il caso concreto** e' l'indice del ladder crsmin, che si e' chiuso dentro il
+confine (vedi `crs-min-power.md`): la misura passava da un accessor gia'
+coperto, le letture SHM `0x0308`-`0x0310`, una cella per catena, e il valore
+era nelle catture da sempre. Le strade dentro il confine, in quest'ordine:
 
-1. Verificare se la misura passa da un accessor di I/O non ancora coperto — in
-   quel caso il valore e' osservabile legittimamente e basta estendere la
-   copertura.
-2. Interrogare il driver stock dall'esterno, se esiste un iovar
-   (`phy_force_crsmin`): e' un'interfaccia pubblica, non strumentazione.
-3. Leggere altre tabelle da `.rodata`, incluso il ladder di un secondo blob per
-   la verifica agcombo.
+1. Verificare se la misura passa da un accessor di I/O coperto o copribile: in
+   quel caso il valore e' osservabile legittimamente.
+2. Interrogare il driver stock dall'esterno, se esiste un iovar: e'
+   un'interfaccia pubblica, non strumentazione.
+3. Leggere tabelle da `.rodata`.
 
 Se nessuna delle tre basta, l'incognita resta aperta. E' un esito accettabile.

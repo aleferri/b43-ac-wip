@@ -230,11 +230,9 @@ le sei scritture vendor, azzeramento iniziale compreso.
 
 ## 9. Banco 0x0910 / 0x0b10
 
-Il banco viene scritto durante questa fase, ma non c'e' evidenza che consumi il
-risultato della misura: sta qui per vicinanza nel flusso, non per dipendenza
-dimostrata. Reperti strutturali, ipotesi escluse e la relazione con la soglia
-CRS sono in [`bank-0910-analysis.md`](bank-0910-analysis.md), che e' il file
-dedicato.
+Il banco viene scritto durante questa fase ma non consuma la misura RX IQ: e'
+l'offset per catena della soglia CRS, e viene dal campione di rumore. Vedi
+[`crs-min-power.md`](crs-min-power.md).
 
 ## 10. Stato reale del port: la calibrazione e' un replay
 
