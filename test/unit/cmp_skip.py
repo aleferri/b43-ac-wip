@@ -327,10 +327,15 @@ def classify(V, T):
     registro piu' il marcatore TBL per le porte delle tabelle. Senza quella
     distinzione due scritture sulla porta dati verrebbero appaiate solo perche'
     l'indirizzo e' lo stesso, e l'indirizzo di una porta e' sempre lo stesso.
+
+    Un'op del vendor col valore jolly (`val=*`, vedi canon()) appaiata cosi'
+    non ha un valore da sbagliare: per ops_equal() di compare.py e' uguale, e
+    torna a parte come quarto valore perche' il chiamante la conti fra le
+    uguali. L'allineamento esatto non la vede, perche' confronta stringhe.
     """
     kv, kt = chiavi(V), chiavi(T)
     sm = difflib.SequenceMatcher(None, V, T, autojunk=False)
-    wrong = missing = surplus = 0
+    wrong = missing = surplus = jolly = 0
     for k, a, b, c, d in sm.get_opcodes():
         if k == 'equal':
             continue
@@ -339,14 +344,17 @@ def classify(V, T):
             if x is not None:
                 avail[x] = avail.get(x, 0) + 1
         paired = 0
-        for x in kv[a:b]:
+        for i, x in enumerate(kv[a:b]):
             if x is not None and avail.get(x):
                 avail[x] -= 1
                 paired += 1
-        wrong += paired
+                if 'val=*' in V[a + i]:
+                    jolly += 1
+                else:
+                    wrong += 1
         missing += (b - a) - paired
         surplus += (d - c) - paired
-    return wrong, missing, surplus
+    return wrong, missing, surplus, jolly
 
 
 def main():
@@ -363,7 +371,8 @@ def main():
     C = load_compare()
     lo, hi = (int(x) for x in args.range.split(':'))
     profile = 'bus' if args.bus else None
-    v = C.load_vendor(args.vendor, (lo, hi), profile)
+    espanse = {}
+    v = C.load_vendor(args.vendor, (lo, hi), profile, espanse)
     t = C.load_test(args.test, profile)
     off = C.find_offset(t, v[0])
     if off > 0:
@@ -389,7 +398,8 @@ def main():
         if args.bus:
             return bus_stats(V, T, C)
         eq, nreg, diff = lcs_stats(V, T)
-        return (eq, nreg, diff) + classify(V, T)
+        wrong, missing, surplus, jolly = classify(V, T)
+        return (eq + jolly, nreg, diff, wrong, missing, surplus)
 
     eq0, nreg0, _, *cls0 = stats(V0, T)
     VP, outside, keys = C.apply_perimeter(V0)
@@ -398,6 +408,8 @@ def main():
     eq1, nreg1, diff1, *cls1 = stats(V1, T)
 
     print(f"board {args.board}, finestra {lo}:{hi}")
+    if espanse:
+        print(f"bulk espanse    : {C.format_espanse(espanse)}")
     if sv:
         print(f"solo vendor     : {len(sv)} op che nessun codice b43 "
               f"puo' emettere")

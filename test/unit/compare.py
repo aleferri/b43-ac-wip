@@ -200,6 +200,85 @@ def resolve_wide_reads(ops):
     return out
 
 
+# Le intestazioni bulk senza le word sotto.
+#
+# Sul d6220 le copie in shared memory (selettore 1) e nello SCR (selettore 2)
+# sono sempre seguite dalle loro word, e drop_shadow_ops scarta l'intestazione.
+# Sul tg789vac-v2 non lo sono mai: 2510 BULKW, 423 BULKR e 43 SET con quei
+# selettori sui 43 segmenti a freddo, senza una sola word sotto. Che la word
+# sotto sia l'espansione lo dice anche il selettore: dopo `BULKW 0x0010 len=2`
+# col selettore 2 il d6220 ha la word con sel=0x20000 e poi una scrittura SHM
+# alla stessa cella, il tg789 solo la seconda. La testa pero' fissa gia' la
+# forma dell'evento, perche' sui segmenti del d6220 ogni espansione e'
+# esattamente len/2 op a 16 bit consecutive da addr, in ordine crescente. Qui
+# la si ricostruisce da quella:
+#
+#   OBJ.SET    len/2 scritture di val: e' un memset, il valore e' nella testa.
+#   OBJ.BULKR  len/2 letture val=UNDEFINED: il valore letto non c'e', e per
+#              ops_equal() una lettura UNDEFINED vincola indirizzo e classe.
+#   OBJ.BULKW  len/2 scritture val=UNDEFINED: `buf` il tracer non lo registra,
+#              quindi di queste scritture si confrontano indirizzo e ordine e
+#              NON il valore. Per questo il conto esce a parte: una scrittura
+#              qui combacia con qualunque valore il port scriva.
+#
+# Il selettore 4 (RCMTA, le righe da 8 byte della address match table) resta
+# com'e': non e' espanso su nessuna board, e il port quell'intestazione la
+# emette -- vedi b43_test_emit_amt(). Una testa senza a5, cioe' con l'ARGX non
+# ripiegato, resta anch'essa com'e': il selettore non si conosce.
+BULK_RAW = re.compile(r'^OBJ\.BULK([RW])\s+addr=(0x[0-9a-fA-F]+)\s+len=(\d+)'
+                      r'.*?\ba5=(0x[0-9a-fA-F]+)')
+SET_RAW = re.compile(r'^OBJ\.SET\s+addr=(0x[0-9a-fA-F]+)\s+val=(0x[0-9a-fA-F]+)'
+                     r'\s+len=(\d+)')
+BULK_EXPAND_SEL = (0x10000, 0x20000)
+
+
+def _same_sel(head, word):
+    """La word sotto porta il selettore della testa, o non ne porta uno."""
+    a5 = re.search(r'\ba5=(0x[0-9a-fA-F]+)', head)
+    sel = re.search(r'\bsel=(0x[0-9a-fA-F]+)', word)
+    return not a5 or not sel or int(a5.group(1), 16) == int(sel.group(1), 16)
+
+
+def expand_bulk_heads(raws, espanse=None):
+    """Sostituisce le intestazioni bulk non espanse con le loro word."""
+    out = []
+    for i, raw in enumerate(raws):
+        nraw = raws[i + 1] if i + 1 < len(raws) else None
+        nxt = normalize_op(nraw) if nraw is not None else None
+        head = normalize_op(raw)
+        if _set_head_is_shadow(head, nxt) or \
+                (_bulk_head_is_shadow(head, nxt) and _same_sel(raw, nraw)):
+            out.append(raw)
+            continue
+        m = SET_RAW.match(raw)
+        if m:
+            a, val, n = int(m.group(1), 16), m.group(2), int(m.group(3)) // 2
+            kind, words = 'SET', [f"OBJ.WR addr=0x{a + 2 * k:04x} val={val}"
+                                  for k in range(n)]
+        else:
+            m = BULK_RAW.match(raw)
+            if not m or int(m.group(4), 16) not in BULK_EXPAND_SEL:
+                out.append(raw)
+                continue
+            rw, a, n = m.group(1), int(m.group(2), 16), int(m.group(3)) // 2
+            kind = 'BULK' + rw
+            words = [f"OBJ.{'RD' if rw == 'R' else 'WR'} "
+                     f"addr=0x{a + 2 * k:04x} val=UNDEFINED" for k in range(n)]
+        out.extend(words)
+        if espanse is not None:
+            espanse[kind] = espanse.get(kind, 0) + len(words)
+    return out
+
+
+def format_espanse(espanse):
+    parti = [f"{espanse[k]} word da {k}" for k in ('SET', 'BULKR', 'BULKW')
+             if k in espanse]
+    s = ", ".join(parti)
+    if 'BULKW' in espanse:
+        s += f"; delle {espanse['BULKW']} da BULKW il valore non e' confrontato"
+    return s
+
+
 def drop_shadow_ops(ops):
     """Scarta le op di alto livello di cui le seguenti sono l'attuazione."""
     out = []
@@ -797,7 +876,7 @@ def op_forms(raws, profile):
         return tracelib.unfold_bus_seq(raws)
     return [normalize_op(r) for r in raws]
 
-def load_vendor(path, ep_range, profile=None):
+def load_vendor(path, ep_range, profile=None, espanse=None):
     lo, hi = ep_range or (0, 10**9)
     raws = []
     for line in open(path):
@@ -808,6 +887,7 @@ def load_vendor(path, ep_range, profile=None):
         if not (lo <= ep <= hi):
             continue
         raws.append(m.group(1))
+    raws = expand_bulk_heads(raws, espanse)
     return drop_shadow_ops(resolve_wide_reads(op_forms(raws, profile)))
 
 def load_test(path, profile=None):
@@ -854,8 +934,11 @@ def main():
         rng = (int(lo), int(hi))
 
     profile = 'bus' if args.bus else None
-    vendor = load_vendor(args.vendor, rng, profile)
+    espanse = {}
+    vendor = load_vendor(args.vendor, rng, profile, espanse)
     test = load_test(args.test, profile)
+    if espanse:
+        print(f"bulk espanse: {format_espanse(espanse)}")
 
     vendor, sv = drop_solo_vendor(vendor)
     test, sp = drop_solo_port(test, vendor)
