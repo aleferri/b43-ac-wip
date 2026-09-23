@@ -461,6 +461,17 @@ static unsigned int b43_phy_ac_bw_step(struct b43_wldev *dev)
 }
 
 /*
+ * The 0x0463 word of the RX-IQ correlator kick: 0x27 at 20 MHz, 0x4f at 40,
+ * 0x9f at 80, at every kick site of a segment. The value plus one doubles
+ * with the bandwidth, which is the shape of a count of samples over a fixed
+ * time rather than three separate numbers.
+ */
+static u16 b43_phy_ac_rxiq_kick_len(struct b43_wldev *dev)
+{
+	return (u16)(0x28 * (1u << b43_phy_ac_bw_step(dev)) - 1);
+}
+
+/*
  * Load one of the tone tables the vendor puts in table 0x000e.
  *
  * All four of them have a period of 20 entries -- a dump of 40 is the first
@@ -6713,7 +6724,34 @@ struct b43_ac_b2j_op {
 	 * [13:11] di 0x800.
 	 */
 	u16 bw_step;
+	/*
+	 * Da dove viene il valore quando non e' il letterale: uno dei campi per
+	 * larghezza di b43_phy_ac_rxgain_bw(), o la costante del sito che
+	 * chiama, che su 0x0736 e' diversa fra i due siti della stessa cattura.
+	 */
+	u8 from;
 };
+
+enum {
+	B2J_LIT = 0,
+	B2J_73A_07,
+	B2J_739_7E,
+	B2J_73A_08,
+	B2J_73A_60,
+	B2J_SITE,
+};
+
+static u16 b43_phy_ac_rxgain_field(const struct b43_phy_ac_rxgain_bw *g,
+				   u8 from, u16 lit)
+{
+	switch (from) {
+	case B2J_73A_07: return g->f73a_07;
+	case B2J_739_7E: return g->f739_7e;
+	case B2J_73A_08: return g->f73a_08;
+	case B2J_73A_60: return g->f73a_60;
+	}
+	return lit;
+}
 
 static const struct b43_ac_b2j_op b43_phy_ac_b2j_ops[] = {
 
@@ -6748,17 +6786,17 @@ static const struct b43_ac_b2j_op b43_phy_ac_b2j_ops[] = {
 	{ 0x0727, 0x0004, 0x0004 },
 	{ 0x073c, 0x0010, 0x0010 },
 	{ 0x0724, 0x0000, 0x03ff },
-	{ 0x0736, 0x0000, 0x0152 },
+	{ 0x0736, 0x0000, 0x0000, .from = B2J_SITE },
 
-	{ 0x073a, 0x0007, 0x0003 },
+	{ 0x073a, 0x0007, 0x0000, .from = B2J_73A_07 },
 	{ 0x0725, 0x0020, 0x0020 },
-	{ 0x0739, 0x007e, 0x007a },
+	{ 0x0739, 0x007e, 0x0000, .from = B2J_739_7E },
 	{ 0x0725, 0x0002, 0x0002 },
-	{ 0x073a, 0x0008, 0x0000 },
+	{ 0x073a, 0x0008, 0x0000, .from = B2J_73A_08 },
 	{ 0x0725, 0x0040, 0x0040 },
 	{ 0x073a, 0x0010, 0x0010 },
 	{ 0x0725, 0x0080, 0x0080 },
-	{ 0x073a, 0x0060, 0x0040 },
+	{ 0x073a, 0x0060, 0x0000, .from = B2J_73A_60 },
 	{ 0x0725, 0x0100, 0x0100 },
 
 	{ 0x0723, 0x0008, 0x0008 },
@@ -6803,9 +6841,10 @@ static const struct b43_ac_b2j_op b43_phy_ac_b2j_ops[] = {
  *   12045-12139, 12140-12234]
  */
 static void b43_phy_ac_rxiqcal_apply_body_core(struct b43_wldev *dev,
-					       u16 core_off)
+					       u16 core_off, u16 site_0736)
 {
 	B43_AC_FN();
+	const struct b43_phy_ac_rxgain_bw *g = b43_phy_ac_rxgain_bw(dev);
 	unsigned int i;
 
 	/* B2h: 0x073e config (8 op) — clr bit 4-7, set bit 10/12 */
@@ -6844,6 +6883,8 @@ static void b43_phy_ac_rxiqcal_apply_body_core(struct b43_wldev *dev,
 		if (op->bw_step)
 			val = (u16)(val + op->bw_step *
 				    b43_phy_ac_bw_step(dev));
+		val = op->from == B2J_SITE ? site_0736 :
+		      b43_phy_ac_rxgain_field(g, op->from, val);
 
 		if (op->mask_bits == 0)
 			b43_phy_write(dev, addr, val);
@@ -6979,7 +7020,7 @@ void b43_phy_ac_rxiqcal_apply(struct b43_wldev *dev)
 			u16 s = (u16)(c * 0x200);
 			if (!((mask >> c) & 1))
 				continue;
-			b43_phy_ac_rxiqcal_apply_body_core(dev, s);
+			b43_phy_ac_rxiqcal_apply_body_core(dev, s, 0x0152);
 		}
 
 		/* B2k (3 op): setta bit 6/7/8 di B43_PHY_AC_REG_TBL_WRITE_GATE (gate config extra). */
@@ -7185,13 +7226,7 @@ void b43_phy_ac_post_rxiqcal_stage2(struct b43_wldev *dev)
 		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
 
 		b43_phy_mask(dev, 0x0471, (u16)~0x0001);
-		/*
-		 * 0x27 at 20 MHz, 0x4f at 40, 0x9f at 80: the value plus one
-		 * doubles with the bandwidth, which is the shape of a count of
-		 * samples over a fixed time rather than three separate numbers.
-		 */
-		b43_phy_write(dev, 0x0463,
-			      (u16)(0x28 * (1u << b43_phy_ac_bw_step(dev)) - 1));
+		b43_phy_write(dev, 0x0463, b43_phy_ac_rxiq_kick_len(dev));
 		b43_phy_write(dev, 0x0461, 0xffff);
 		b43_phy_write(dev, 0x0462, 0x003c);
 		b43_phy_read_log(dev, 0x0400);
@@ -8002,114 +8037,25 @@ void b43_phy_ac_rxgain_perchan_config(struct b43_wldev *dev)
 			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
 			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
 
-	enum { OP_MOD, OP_WR };
-	struct gain_op {
-		u8 kind;
-		u16 reg;    /* core-0 relative */
-		u16 mask;   /* trace mask (bit da modificare) — 0 se OP_WR */
-		u16 val;
-	};
-
-	/* 54 MODs plus two writes, 56 body ops per core, in the observed order. */
-	static const struct gain_op body[56] = {
-		{ OP_MOD, 0x0728, 0x0002, 0x0000 },
-		{ OP_MOD, 0x0720, 0x0002, 0x0002 },
-		{ OP_MOD, 0x0721, 0x0040, 0x0040 },
-		{ OP_MOD, 0x0729, 0x0040, 0x0000 },
-		{ OP_MOD, 0x0721, 0x0080, 0x0080 },
-		{ OP_MOD, 0x0729, 0x0080, 0x0000 },
-		{ OP_MOD, 0x0721, 0x0020, 0x0020 },
-		{ OP_MOD, 0x0729, 0x0020, 0x0000 },
-		{ OP_MOD, 0x0721, 0x2000, 0x2000 },
-		{ OP_MOD, 0x0729, 0xe000, 0x0000 },
-		{ OP_MOD, 0x0721, 0x0800, 0x0800 },
-		{ OP_MOD, 0x0729, 0x0800, 0x0000 },
-		{ OP_MOD, 0x0721, 0x0400, 0x0400 },
-		{ OP_MOD, 0x0729, 0x0400, 0x0000 },
-		{ OP_MOD, 0x0721, 0x4000, 0x4000 },
-		{ OP_MOD, 0x0728, 0x3800, 0x0000 },
-		{ OP_MOD, 0x0721, 0x1000, 0x1000 },
-		{ OP_MOD, 0x0729, 0x1000, 0x0000 },
-		{ OP_MOD, 0x0720, 0x0020, 0x0020 },
-		{ OP_MOD, 0x0728, 0x0020, 0x0020 },
-		{ OP_MOD, 0x0720, 0x0040, 0x0040 },
-		{ OP_MOD, 0x0728, 0x0040, 0x0040 },
-		{ OP_MOD, 0x0720, 0x0010, 0x0010 },
-		{ OP_MOD, 0x0728, 0x0010, 0x0010 },
-		{ OP_MOD, 0x0721, 0x0100, 0x0100 },
-		{ OP_MOD, 0x0729, 0x0100, 0x0100 },
-		{ OP_MOD, 0x0727, 0x0004, 0x0004 },
-		{ OP_MOD, 0x073c, 0x0010, 0x0010 },
-		{ OP_WR,  0x0724, 0,      0x03ff },
-		{ OP_WR,  0x0736, 0,      0x022a },
-		{ OP_MOD, 0x073a, 0x0007, 0x0003 },
-		{ OP_MOD, 0x0725, 0x0020, 0x0020 },
-		{ OP_MOD, 0x0739, 0x007e, 0x007a },
-		{ OP_MOD, 0x0725, 0x0002, 0x0002 },
-		{ OP_MOD, 0x073a, 0x0008, 0x0000 },
-		{ OP_MOD, 0x0725, 0x0040, 0x0040 },
-		{ OP_MOD, 0x073a, 0x0010, 0x0010 },
-		{ OP_MOD, 0x0725, 0x0080, 0x0080 },
-		{ OP_MOD, 0x073a, 0x0060, 0x0040 },
-		{ OP_MOD, 0x0725, 0x0100, 0x0100 },
-		{ OP_MOD, 0x0723, 0x0008, 0x0008 },
-		{ OP_MOD, 0x0723, 0x0010, 0x0010 },
-		{ OP_MOD, 0x0723, 0x0800, 0x0800 },
-		{ OP_MOD, 0x0735, 0x0700, 0x0300 },
-		{ OP_MOD, 0x0735, 0x3800, 0x1800 },
-		{ OP_MOD, 0x0738, 0x0007, 0x0003 },
-		{ OP_MOD, 0x0723, 0x0001, 0x0001 },
-		{ OP_MOD, 0x0735, 0x0001, 0x0000 },
-		{ OP_MOD, 0x0723, 0x0020, 0x0020 },
-		{ OP_MOD, 0x0735, 0x4000, 0x0000 },
-		{ OP_MOD, 0x0723, 0x0002, 0x0002 },
-		{ OP_MOD, 0x0735, 0x001e, 0x0008 },
-		{ OP_MOD, 0x0727, 0x0002, 0x0002 },
-		{ OP_MOD, 0x073c, 0x000e, 0x0004 },
-		{ OP_MOD, 0x0727, 0x0001, 0x0001 },
-		{ OP_MOD, 0x073c, 0x0001, 0x0001 },
-	};
-	/* 15 per-core readback registers, in the observed order. */
-	static const u16 readback_regs[15] = {
-		0x0725, 0x0739, 0x073a, 0x0721, 0x0729, 0x0720, 0x0728,
-		0x0724, 0x0736, 0x0723, 0x0735, 0x0737, 0x0738, 0x0727,
-		0x073c,
-	};
-	unsigned int core, k;
+	struct b43_phy_ac *ac = dev->phy.ac;
+	unsigned int core;
 
 	/* Global preamble */
 	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
 	b43_phy_read_log(dev, 0x040f);
 	b43_phy_maskset(dev, 0x040f, (u16)~0x0200, 0);
 
-	/* Per-core loop */
-	for (core = 0; core < 2; core++) {
-		u16 s = (u16)(core * 0x200);
-
-		/* Preamble per-core: peek + WR + 6 MOD su 0x?73e */
-		b43_phy_read_log(dev, 0x073e + s);
-		b43_phy_write(dev, 0x073e + s, 0x0000);
-		b43_phy_maskset(dev, 0x073e + s, (u16)~0x0010, 0);
-		b43_phy_maskset(dev, 0x073e + s, (u16)~0x0020, 0);
-		b43_phy_maskset(dev, 0x073e + s, (u16)~0x0040, 0);
-		b43_phy_maskset(dev, 0x073e + s, (u16)~0x0080, 0);
-		b43_phy_maskset(dev, 0x073e + s, (u16)~0x1000, 0x1000);
-		b43_phy_maskset(dev, 0x073e + s, (u16)~0x0400, 0x0400);
-
-		/* 15 peek readback */
-		for (k = 0; k < ARRAY_SIZE(readback_regs); k++)
-			b43_phy_read_log(dev, readback_regs[k] + s);
-
-		/* 56 op body */
-		for (k = 0; k < ARRAY_SIZE(body); k++) {
-			u16 reg = body[k].reg + s;
-
-			if (body[k].kind == OP_MOD)
-				b43_phy_maskset(dev, reg,
-						(u16)~body[k].mask, body[k].val);
-			else
-				b43_phy_write(dev, reg, body[k].val);
-		}
+	/*
+	 * Per core, lo stesso corpo della B2 dell'RX-IQ apply: 0x073e, le 15
+	 * letture e le 56 op di b43_phy_ac_b2j_ops, con 0x022a su 0x0736. Su ogni
+	 * core attivo: il tg789vac-v2 lo fa anche sul core 2.
+	 * [capture-ref: router-data/tg789vac-v2/cold-sweep.zip!cold01-ch36-bw20.txt]
+	 */
+	for (core = 0; core < ac->num_cores; core++) {
+		if (!((ac->coremask >> core) & 1))
+			continue;
+		b43_phy_ac_rxiqcal_apply_body_core(dev, (u16)(core * 0x200),
+						   0x022a);
 	}
 
 	/* Bridge (3 op): 3 MOD B43_PHY_AC_REG_TBL_WRITE_GATE set bit 6/7/8 */
@@ -8292,7 +8238,7 @@ void b43_phy_ac_rxiqcal_prep_second_iter(struct b43_wldev *dev)
 
 	/* Seg B (19 op): kick sequence per il correlatore RXIQ */
 	b43_phy_mask(dev,      0x0471, (u16)~0x0001);
-	b43_phy_write(dev,     0x0463, 0x0027);
+	b43_phy_write(dev,     0x0463, b43_phy_ac_rxiq_kick_len(dev));
 	b43_phy_write(dev,     0x0461, 0xffff);
 	b43_phy_write(dev,     0x0462, 0x003c);
 	b43_phy_read_log(dev,  0x0400);
@@ -8654,15 +8600,15 @@ void b43_phy_ac_rxgain_config_apply(struct b43_wldev *dev)
 	 * Per-core MODs. The registers are core 0's; core 1 adds 0x0200. The
 	 * order is the one phase 1 of the capture shows.
 	 */
-	struct mod_op { u16 reg; u16 mask; u16 val; };
+	struct mod_op { u16 reg; u16 mask; u16 val; u16 bw_step; u8 from; };
 	static const struct mod_op phase1[52] = {
 		{ 0x073e, 0x0010, 0x0000 }, { 0x073e, 0x0020, 0x0000 },
 		{ 0x073e, 0x1000, 0x1000 }, { 0x0721, 0x0001, 0x0001 },
-		{ 0x0729, 0x0001, 0x0001 }, { 0x073a, 0x0007, 0x0003 },
-		{ 0x0725, 0x0020, 0x0020 }, { 0x0739, 0x007e, 0x007a },
-		{ 0x0725, 0x0002, 0x0002 }, { 0x073a, 0x0008, 0x0000 },
+		{ 0x0729, 0x0001, 0x0001 }, { 0x073a, 0x0007, 0, .from = B2J_73A_07 },
+		{ 0x0725, 0x0020, 0x0020 }, { 0x0739, 0x007e, 0, .from = B2J_739_7E },
+		{ 0x0725, 0x0002, 0x0002 }, { 0x073a, 0x0008, 0, .from = B2J_73A_08 },
 		{ 0x0725, 0x0040, 0x0040 }, { 0x073a, 0x0010, 0x0010 },
-		{ 0x0725, 0x0080, 0x0080 }, { 0x073a, 0x0060, 0x0040 },
+		{ 0x0725, 0x0080, 0x0080 }, { 0x073a, 0x0060, 0, .from = B2J_73A_60 },
 		{ 0x0725, 0x0100, 0x0100 }, { 0x0729, 0x0020, 0x0000 },
 		{ 0x0721, 0x0020, 0x0020 }, { 0x0729, 0x0040, 0x0000 },
 		{ 0x0721, 0x0040, 0x0040 }, { 0x0729, 0x1000, 0x0000 },
@@ -8683,15 +8629,22 @@ void b43_phy_ac_rxgain_config_apply(struct b43_wldev *dev)
 		{ 0x0736, 0x0002, 0x0000 }, { 0x0724, 0x0002, 0x0002 },
 		{ 0x0736, 0x0001, 0x0001 }, { 0x0724, 0x0001, 0x0001 },
 	};
-	/* Phase 2: 12 MODs after the table read. */
+	/*
+	 * Phase 2: 12 MODs after the table read. 0x0735[10:8] e [13:11] valgono
+	 * il passo di banda, 0/1/2 nel proprio peso, su tutti i 43 segmenti a
+	 * freddo del d6220. 0x0737 no: fa 0x91 quasi ovunque a 20 MHz, 0x8d a 40
+	 * e 0x8d/0x8e a 80 a seconda del canale, e una legge non c'e'.
+	 */
 	static const struct mod_op phase2[12] = {
-		{ 0x0735, 0x0700, 0x0000 }, { 0x0723, 0x0008, 0x0008 },
-		{ 0x0735, 0x3800, 0x0000 }, { 0x0723, 0x0010, 0x0010 },
+		{ 0x0735, 0x0700, 0x0000, .bw_step = 0x0100 }, { 0x0723, 0x0008, 0x0008 },
+		{ 0x0735, 0x3800, 0x0000, .bw_step = 0x0800 }, { 0x0723, 0x0010, 0x0010 },
 		{ 0x0737, 0x00ff, 0x0091 }, { 0x0723, 0x0200, 0x0200 },
 		{ 0x0735, 0x4000, 0x0000 }, { 0x0723, 0x0020, 0x0020 },
 		{ 0x0735, 0x0001, 0x0001 }, { 0x0723, 0x0001, 0x0001 },
 		{ 0x0729, 0x0100, 0x0100 }, { 0x0721, 0x0100, 0x0100 },
 	};
+	const struct b43_phy_ac_rxgain_bw *g = b43_phy_ac_rxgain_bw(dev);
+	unsigned int bw = b43_phy_ac_bw_step(dev);
 	struct b43_phy_ac *ac = dev->phy.ac;
 	unsigned int core, i;
 	u16 discard;
@@ -8701,7 +8654,7 @@ void b43_phy_ac_rxgain_config_apply(struct b43_wldev *dev)
 	b43_phy_maskset(dev, 0x0401, (u16)~0x0007, 0x0003);
 	b43_phy_maskset(dev, 0x0401, (u16)~0x7000, 0x0000);
 
-	for (core = 0; core < 2; core++) {
+	for (core = 0; core < ac->num_cores; core++) {
 		u16 stride = (u16)(core * 0x200);
 
 		if (!((ac->coremask >> core) & 1))
@@ -8710,7 +8663,9 @@ void b43_phy_ac_rxgain_config_apply(struct b43_wldev *dev)
 		/* Phase 1: 52 MOD (bit-field config) */
 		for (i = 0; i < ARRAY_SIZE(phase1); i++)
 			b43_phy_maskset(dev, phase1[i].reg + stride,
-					(u16)~phase1[i].mask, phase1[i].val);
+					(u16)~phase1[i].mask,
+					b43_phy_ac_rxgain_field(g, phase1[i].from,
+								phase1[i].val));
 
 		/* 1× fast TBL.RD readback (5 op) */
 		b43_actab_read_bulk(dev, 0x0007,
@@ -8720,7 +8675,9 @@ void b43_phy_ac_rxgain_config_apply(struct b43_wldev *dev)
 		/* Phase 2: 12 MOD (bit-field config) */
 		for (i = 0; i < ARRAY_SIZE(phase2); i++)
 			b43_phy_maskset(dev, phase2[i].reg + stride,
-					(u16)~phase2[i].mask, phase2[i].val);
+					(u16)~phase2[i].mask,
+					(u16)(phase2[i].val +
+					      phase2[i].bw_step * bw));
 
 		/* 2 op: peek + MOD 0x?78 clr bit 0 */
 		b43_phy_read_log(dev, 0x0678 + stride);
@@ -8900,7 +8857,7 @@ static void iqcal_meas_readback_kick_tail(struct b43_wldev *dev)
 
 	/* Blocco C (13 op): kick sequence variante */
 	b43_phy_mask(dev,      0x0471, (u16)~0x0001);
-	b43_phy_write(dev,     0x0463, 0x0027);
+	b43_phy_write(dev,     0x0463, b43_phy_ac_rxiq_kick_len(dev));
 	b43_phy_write(dev,     0x0461, 0xffff);
 	b43_phy_write(dev,     0x0462, 0x003c);
 	b43_phy_read_log(dev,  0x0400);
