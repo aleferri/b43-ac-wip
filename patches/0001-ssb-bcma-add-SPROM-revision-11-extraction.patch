@@ -1,4 +1,4 @@
-From da44f4e2d714bb93fac3dc4fecb474ae47447bcd Mon Sep 17 00:00:00 2001
+From 641623e9637fad75e0fd2194e9b8e1bcbb9d066c Mon Sep 17 00:00:00 2001
 From: Alessio Ferri <alessio.ferri@mythread.it>
 Date: Wed, 17 Jun 2026 20:55:58 +0000
 Subject: [PATCH 1/9] ssb: bcma: add SPROM revision 11 extraction
@@ -26,17 +26,25 @@ mcslr5g*; SROM11 words 200-218 of bcmsrom_fmt.h) and decodes the antenna
 gain (agbg0/aga0, whole dB in [5:0] plus quarter dB in [7:6]) into
 antenna_gain_qdb[], which the regulatory ceiling subtracts from EIRP, and pdoffset80ma, the
 per-chain power-detector offsets of the 80 MHz rate groups.
+
+The temperature fields -- tempthresh, tempoffset, rawtempsense, measpower,
+tempsense_slope, tempcorrx, tempsense_option, phycal_tempdelta,
+temps_period and temps_hysteresis -- sit in rev 11 four bytes below their
+rev-8 words with the same layout, so the SPROM8 masks apply. The
+TG789vac v2 dump, the one board here that programs them, has THERMAL =
+0x7800 and TEMPDELTA = 0x5500, matching tempthresh=120 and
+temps_period=5 in its NVRAM.
 ---
- drivers/bcma/sprom.c         | 164 ++++++++++++++++++++++++++++++++++-
- include/linux/ssb/ssb.h      |  68 +++++++++++++++
- include/linux/ssb/ssb_regs.h |  93 ++++++++++++++++++++
- 3 files changed, 324 insertions(+), 1 deletion(-)
+ drivers/bcma/sprom.c         | 189 ++++++++++++++++++++++++++++++++++-
+ include/linux/ssb/ssb.h      |  68 +++++++++++++
+ include/linux/ssb/ssb_regs.h | 105 +++++++++++++++++++
+ 3 files changed, 361 insertions(+), 1 deletion(-)
 
 diff --git a/drivers/bcma/sprom.c b/drivers/bcma/sprom.c
-index e668ad7..46df8ba 100644
+index e668ad7..6e2d25d 100644
 --- a/drivers/bcma/sprom.c
 +++ b/drivers/bcma/sprom.c
-@@ -474,6 +474,165 @@ static void bcma_sprom_extract_r8(struct bcma_bus *bus, const u16 *sprom)
+@@ -474,6 +474,190 @@ static void bcma_sprom_extract_r8(struct bcma_bus *bus, const u16 *sprom)
  	     SSB_SPROM8_TEMPDELTA_HYSTERESIS_SHIFT);
  }
  
@@ -189,6 +197,31 @@ index e668ad7..46df8ba 100644
 +	SPEX(dot11agduphrpo,        SSB_SPROM11_DOT11AGDUPHRPO,        ~0, 0);
 +	SPEX(dot11agduplrpo,        SSB_SPROM11_DOT11AGDUPLRPO,        ~0, 0);
 +
++	SPEX(tempthresh, SSB_SPROM11_THERMAL, SSB_SPROM8_THERMAL_TRESH,
++	     SSB_SPROM8_THERMAL_TRESH_SHIFT);
++	SPEX(tempoffset, SSB_SPROM11_THERMAL, SSB_SPROM8_THERMAL_OFFSET,
++	     SSB_SPROM8_THERMAL_OFFSET_SHIFT);
++	SPEX(rawtempsense, SSB_SPROM11_RAWTS, SSB_SPROM8_RAWTS_RAWTEMP,
++	     SSB_SPROM8_RAWTS_RAWTEMP_SHIFT);
++	SPEX(measpower, SSB_SPROM11_RAWTS, SSB_SPROM8_RAWTS_MEASPOWER,
++	     SSB_SPROM8_RAWTS_MEASPOWER_SHIFT);
++	SPEX(tempsense_slope, SSB_SPROM11_OPT_CORRX,
++	     SSB_SPROM8_OPT_CORRX_TEMP_SLOPE,
++	     SSB_SPROM8_OPT_CORRX_TEMP_SLOPE_SHIFT);
++	SPEX(tempcorrx, SSB_SPROM11_OPT_CORRX, SSB_SPROM8_OPT_CORRX_TEMPCORRX,
++	     SSB_SPROM8_OPT_CORRX_TEMPCORRX_SHIFT);
++	SPEX(tempsense_option, SSB_SPROM11_OPT_CORRX,
++	     SSB_SPROM8_OPT_CORRX_TEMP_OPTION,
++	     SSB_SPROM8_OPT_CORRX_TEMP_OPTION_SHIFT);
++	SPEX(phycal_tempdelta, SSB_SPROM11_TEMPDELTA,
++	     SSB_SPROM8_TEMPDELTA_PHYCAL,
++	     SSB_SPROM8_TEMPDELTA_PHYCAL_SHIFT);
++	SPEX(temps_period, SSB_SPROM11_TEMPDELTA, SSB_SPROM8_TEMPDELTA_PERIOD,
++	     SSB_SPROM8_TEMPDELTA_PERIOD_SHIFT);
++	SPEX(temps_hysteresis, SSB_SPROM11_TEMPDELTA,
++	     SSB_SPROM8_TEMPDELTA_HYSTERESIS,
++	     SSB_SPROM8_TEMPDELTA_HYSTERESIS_SHIFT);
++
 +	/* Whole dB in bits [5:0], sign-extended, quarter dB in bits [7:6]. */
 +	for (i = 0; i < 2; i++) {
 +		u8 raw = i ? (sprom[SSB_SPROM11_AGBG2A0 / 2] >> 8) & 0xff
@@ -202,7 +235,7 @@ index e668ad7..46df8ba 100644
  /*
   * Indicates the presence of external SPROM.
   */
-@@ -640,7 +799,10 @@ int bcma_sprom_get(struct bcma_bus *bus)
+@@ -640,7 +824,10 @@ int bcma_sprom_get(struct bcma_bus *bus)
  		bcma_warn(bus, "Invalid SPROM read from the PCIe card, trying to use fallback SPROM\n");
  		err = bcma_fill_sprom_with_fallback(bus, &bus->sprom);
  	} else {
@@ -301,10 +334,10 @@ index 1f326da..6f2f8df 100644
  
  /* Information about the PCB the circuitry is soldered on. */
 diff --git a/include/linux/ssb/ssb_regs.h b/include/linux/ssb/ssb_regs.h
-index 210f464..9644ece 100644
+index 210f464..961354a 100644
 --- a/include/linux/ssb/ssb_regs.h
 +++ b/include/linux/ssb/ssb_regs.h
-@@ -606,6 +606,99 @@
+@@ -606,6 +606,111 @@
  #define SSB_SPROM8_BW40PO		0x0196
  #define SSB_SPROM8_BWDUPPO		0x0198
  
@@ -337,6 +370,18 @@ index 210f464..9644ece 100644
 +#define SSB_SPROM11_FEM_CTRL_SHIFT	11
 +#define SSB_SPROM11_FEM_GAINCTRLSPH	0xF800	/* CFG2: gainctrlsph */
 +#define SSB_SPROM11_FEM_GAINCTRLSPH_SHIFT	11
++/*
++ * Temperature words: SROM8's, four bytes lower, with the same field layout,
++ * so the SSB_SPROM8_THERMAL, _RAWTS, _OPT_CORRX and _TEMPDELTA masks apply.
++ * Verified on the TG789vac v2 dump, which programs THERMAL = 0x7800
++ * (tempthresh=120, tempoffset=0) and TEMPDELTA = 0x5500 (temps_period=5,
++ * temps_hysteresis=5, phycal_tempdelta=0) as its NVRAM says; the D6220 and
++ * DSL-3580L dumps leave all four at 0xffff.
++ */
++#define SSB_SPROM11_THERMAL		0x00AE
++#define SSB_SPROM11_RAWTS		0x00B0
++#define SSB_SPROM11_OPT_CORRX		0x00B2
++#define SSB_SPROM11_TEMPDELTA		0x00B8
 +/* TSSI floor, mask 0x03ff. 2G single, 5G array of 4 (5GL/5GM/5GH/5GU).
 + * Word indices 95..99 per bcmsrom_fmt.h; verified 0xffff (unprogrammed,
 + * masks to 0x3ff) on DSL-3580L and D6220 raw dumps.

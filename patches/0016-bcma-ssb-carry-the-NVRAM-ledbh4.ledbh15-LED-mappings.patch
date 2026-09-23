@@ -1,4 +1,4 @@
-From 2c36dc8d07239faba3c752c156bbf9813e74fa08 Mon Sep 17 00:00:00 2001
+From ea63cf398f107e6df345a10d2468f94bdc5ea6ef Mon Sep 17 00:00:00 2001
 From: Alessandro Ferri <aleferri@example.invalid>
 Date: Fri, 11 Sep 2026 11:16:11 +0000
 Subject: [PATCH 16/17] bcma: ssb: carry the NVRAM ledbh4..ledbh15 LED mappings
@@ -33,7 +33,7 @@ Signed-off-by: Alessandro Ferri <aleferri@example.invalid>
  4 files changed, 93 insertions(+), 22 deletions(-)
 
 diff --git a/drivers/bcma/sprom.c b/drivers/bcma/sprom.c
-index 46df8ba..acba77d 100644
+index 6e2d25d..3b2c43d 100644
 --- a/drivers/bcma/sprom.c
 +++ b/drivers/bcma/sprom.c
 @@ -11,6 +11,7 @@
@@ -44,7 +44,7 @@ index 46df8ba..acba77d 100644
  #include <linux/pci.h>
  #include <linux/io.h>
  #include <linux/dma-mapping.h>
-@@ -804,6 +805,11 @@ int bcma_sprom_get(struct bcma_bus *bus)
+@@ -829,6 +830,11 @@ int bcma_sprom_get(struct bcma_bus *bus)
  		else
  			bcma_sprom_extract_r8(bus, sprom);
  		kfree(sprom);

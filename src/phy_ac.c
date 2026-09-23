@@ -9846,6 +9846,24 @@ static void b43_phy_ac_wd_body(struct b43_wldev *dev, bool noise_cal,
 }
 
 /*
+ * Watchdog turns between two temperature checks of the periodic
+ * calibration, which is where the measure block falls: the SROM's
+ * temps_period, or 10 when the field is unprogrammed. The field is four
+ * bits, so unprogrammed reads 0xf; 0 would be a check on every turn and is
+ * no programmed value either.
+ *
+ * The d6220, the agcombo and the DSL-3580L leave it at 0xf and measure every
+ * 10 s; the tg789vac programs 5 and measures every 5 s, on every segment of
+ * its sweep.
+ */
+static unsigned int b43_phy_ac_temps_period(struct b43_wldev *dev)
+{
+	u8 p = dev->dev->bus_sprom->temps_period;
+
+	return (p == 0 || p == 0xf) ? 10 : p;
+}
+
+/*
  * La regione 0x00e0-0x015e riletta per intero, un giro ogni trenta.
  *
  * Nella cattura e' un `OBJ.BULKR len=128` seguito dalle 64 parole, che e' la
@@ -9876,11 +9894,12 @@ static void b43_phy_ac_wd_region_dump(struct b43_wldev *dev)
  * rivelatore cadono fra un callback e l'altro.
  *
  * Due contatori decidono cosa porta il giro. @wd_turns conta dal bring-up e
- * non si azzera al cambio canale: il measure block cade ogni dieci giri, il
- * dump della regione ogni trenta, e sui cicli a caldo la fase comincia a un
- * punto qualunque del periodo, come per un timer libero (sui 43 segmenti a
- * freddo il measure block sta sul decimo giro dopo lo switch in 42 casi;
- * sugli up a caldo ovunque). @wd_switch_turns conta dal cambio canale e dice
+ * non si azzera al cambio canale: il measure block cade ogni
+ * b43_phy_ac_temps_period() giri, il dump della regione ogni trenta, e sui
+ * cicli a caldo la fase comincia a un punto qualunque del periodo, come per
+ * un timer libero (sui 43 segmenti a freddo del d6220 il measure block sta
+ * sul decimo giro dopo lo switch in 42 casi, sul tg789vac sul quinto; sugli
+ * up a caldo ovunque). @wd_switch_turns conta dal cambio canale e dice
  * la forma dei primi giri, letta marcatore per marcatore:
  *
  *   giro 0        solo le statistiche, senza latch: la finestra e' stata
@@ -9961,7 +9980,10 @@ void b43_phy_ac_watchdog(struct b43_wldev *dev)
 		if (ac->wd_turns % 30 == 29)
 			b43_phy_ac_wd_region_dump(dev);
 
-		b43_phy_ac_wd_body(dev, ac->wd_turns % 10 == 9, false);
+		b43_phy_ac_wd_body(dev,
+				   ac->wd_turns % b43_phy_ac_temps_period(dev) ==
+				   b43_phy_ac_temps_period(dev) - 1u,
+				   false);
 
 		/*
 		 * Dove il check di disponibilita' e' pendente il blocco E non

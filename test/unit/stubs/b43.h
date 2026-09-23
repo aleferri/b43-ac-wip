@@ -220,6 +220,9 @@ struct ssb_sprom {
 	/* Blocco FEM/PA (SROM11_FEM_CFG1/2), decodificato come in bcma. */
 	u8 tssiposslope2g, epagain2g, pdgain2g, tworangetssi2g, papdcap2g, femctrl;
 	u8 tssiposslope5g, epagain5g, pdgain5g, tworangetssi5g, papdcap5g, gainctrlsph;
+	/* Campi della temperatura, gia' in ssb.h upstream. */
+	u8 tempthresh, tempoffset;
+	u8 phycal_tempdelta, temps_period, temps_hysteresis;
 	u16 tssifloor2g;
 	u16 tssifloor5g[4];
 	struct ssb_sprom_core_pwr_info core_pwr_info[4];

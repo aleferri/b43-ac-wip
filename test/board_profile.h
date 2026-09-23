@@ -30,6 +30,10 @@ struct board_profile {
 	/* Word raw del blocco FEM/PA, come lette dai dump SROM. */
 	u16 fem_cfg1;
 	u16 fem_cfg2;
+	/* Word raw della temperatura: 87 (tempthresh, tempoffset) e 92
+	 * (phycal_tempdelta, temps_period, temps_hysteresis). */
+	u16 thermal;
+	u16 tempdelta;
 	u16 tssifloor5g[4];
 	/* pa5ga per-core (3 core), 12 u16 = 4 gruppi (5g band) × 3 (a1,b0,b1).
 	 * Dal file NVRAM del router, keys pa5ga0/pa5ga1/pa5ga2. Se tutti 0,
@@ -103,6 +107,8 @@ static const struct board_profile PROFILE_D6220 = {
 	.subband5gver = 0x4,
 	.fem_cfg1     = 0x30a1,
 	.fem_cfg2     = 0x00a1,
+	.thermal      = 0xffff,
+	.tempdelta    = 0xffff,
 	/* word 96..99 = 0xffff, mascherate 0x03ff: campo non programmato. */
 	.tssifloor5g  = { 0x3ff, 0x3ff, 0x3ff, 0x3ff },
 	.pa5ga = {
@@ -154,6 +160,9 @@ static const struct board_profile PROFILE_AGCOMBO = {
 	 * controllo FEM non veniva scritta su questa board.
 	 */
 	.fem_cfg1 = 0x30a1, .fem_cfg2 = 0x00a1,
+	/* Dall'NVRAM: tempthresh=255 tempoffset=255, phycal_tempdelta=255
+	 * temps_period=15 temps_hysteresis=15, cioe' tutto non programmato. */
+	.thermal = 0xffff, .tempdelta = 0xffff,
 	.tssifloor5g = { 0x3ff, 0x3ff, 0x3ff, 0x3ff },
 	.radio_ver = 0x2069, .phy_rev = 1,
 	/* NVRAM ledbh10=0x88 as on the D6220. agcombo_srom.txt is all zeros
@@ -216,6 +225,8 @@ static const struct board_profile PROFILE_DSL = {
 	.subband5gver = 0x4,
 	.fem_cfg1     = 0x30a1,
 	.fem_cfg2     = 0x00a1,
+	.thermal      = 0xffff,
+	.tempdelta    = 0xffff,
 	/* word 96..99 = 0xffff, mascherate 0x03ff: campo non programmato. */
 	.tssifloor5g  = { 0x3ff, 0x3ff, 0x3ff, 0x3ff },
 	.pa5ga = {
@@ -274,6 +285,10 @@ static const struct board_profile PROFILE_TG789 = {
 	 * invece di 10 su entrambe le bande. */
 	.fem_cfg1     = 0x3131,
 	.fem_cfg2     = 0x0131,
+	/* tempthresh=120 tempoffset=0; phycal_tempdelta=0 temps_period=5
+	 * temps_hysteresis=5: l'unica board con la temperatura programmata. */
+	.thermal      = 0x7800,
+	.tempdelta    = 0x5500,
 	.tssifloor5g  = { 0x3ff, 0x3ff, 0x3ff, 0x3ff },
 	.pa5ga = {
 		{ 0xff1f, 0x1763, 0xfd10, 0xff30, 0x184d, 0xfd03,
@@ -352,6 +367,12 @@ static inline void board_profile_to_sprom(const struct board_profile *p,
 	s->tworangetssi5g = (c2 & 0x0200) >> 9;
 	s->papdcap5g      = (c2 & 0x0400) >> 10;
 	s->gainctrlsph    = (c2 & 0xf800) >> 11;
+
+	s->tempthresh       = p->thermal >> 8;
+	s->tempoffset       = p->thermal & 0xff;
+	s->phycal_tempdelta = p->tempdelta & 0xff;
+	s->temps_period     = (p->tempdelta >> 8) & 0xf;
+	s->temps_hysteresis = p->tempdelta >> 12;
 
 	memcpy(s->tssifloor5g, p->tssifloor5g, sizeof(s->tssifloor5g));
 	s->gpio0 = p->ledbh[0];

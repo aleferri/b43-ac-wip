@@ -1,4 +1,4 @@
-From 6edde2bb032f989d45674e1799662145c17368f9 Mon Sep 17 00:00:00 2001
+From a60c7a4ac5725d0a04b4fbd28888b3ff780e0121 Mon Sep 17 00:00:00 2001
 From: c <c@l>
 Date: Tue, 8 Sep 2026 14:29:02 +0000
 Subject: [PATCH] b43: AC-PHY bring-up from the reverse-engineered port
@@ -12,7 +12,7 @@ of sync with the tree the unit suite measures.
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     5 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |    66 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 11371 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 11393 +++++++++++++++-
  drivers/net/wireless/broadcom/b43/phy_ac.h    |   851 +-
  drivers/net/wireless/broadcom/b43/ppr_ac.c    |   261 +
  drivers/net/wireless/broadcom/b43/ppr_ac.h    |    59 +
@@ -22,7 +22,7 @@ of sync with the tree the unit suite measures.
  .../wireless/broadcom/b43/rxiqcal_phy_ac.h    |    60 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1153 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    79 +
- 12 files changed, 16264 insertions(+), 23 deletions(-)
+ 12 files changed, 16286 insertions(+), 23 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -122,7 +122,7 @@ index 0000000..5d18443
 +	b43_maskset32(dev, B43_MMIO_MACCTL, mask, set);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index 756cd44..7025fd9 100644
+index 756cd44..94ebdfd 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -1,23 +1,51 @@
@@ -184,7 +184,7 @@ index 756cd44..7025fd9 100644
  	if (!phy_ac)
  		return -ENOMEM;
  	dev->phy.ac = phy_ac;
-@@ -62,27 +90,11330 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -62,27 +90,11352 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -9957,6 +9957,24 @@ index 756cd44..7025fd9 100644
 +}
 +
 +/*
++ * Watchdog turns between two temperature checks of the periodic
++ * calibration, which is where the measure block falls: the SROM's
++ * temps_period, or 10 when the field is unprogrammed. The field is four
++ * bits, so unprogrammed reads 0xf; 0 would be a check on every turn and is
++ * no programmed value either.
++ *
++ * The d6220, the agcombo and the DSL-3580L leave it at 0xf and measure every
++ * 10 s; the tg789vac programs 5 and measures every 5 s, on every segment of
++ * its sweep.
++ */
++static unsigned int b43_phy_ac_temps_period(struct b43_wldev *dev)
++{
++	u8 p = dev->dev->bus_sprom->temps_period;
++
++	return (p == 0 || p == 0xf) ? 10 : p;
++}
++
++/*
 + * La regione 0x00e0-0x015e riletta per intero, un giro ogni trenta.
 + *
 + * Nella cattura e' un `OBJ.BULKR len=128` seguito dalle 64 parole, che e' la
@@ -9987,11 +10005,12 @@ index 756cd44..7025fd9 100644
 + * rivelatore cadono fra un callback e l'altro.
 + *
 + * Due contatori decidono cosa porta il giro. @wd_turns conta dal bring-up e
-+ * non si azzera al cambio canale: il measure block cade ogni dieci giri, il
-+ * dump della regione ogni trenta, e sui cicli a caldo la fase comincia a un
-+ * punto qualunque del periodo, come per un timer libero (sui 43 segmenti a
-+ * freddo il measure block sta sul decimo giro dopo lo switch in 42 casi;
-+ * sugli up a caldo ovunque). @wd_switch_turns conta dal cambio canale e dice
++ * non si azzera al cambio canale: il measure block cade ogni
++ * b43_phy_ac_temps_period() giri, il dump della regione ogni trenta, e sui
++ * cicli a caldo la fase comincia a un punto qualunque del periodo, come per
++ * un timer libero (sui 43 segmenti a freddo del d6220 il measure block sta
++ * sul decimo giro dopo lo switch in 42 casi, sul tg789vac sul quinto; sugli
++ * up a caldo ovunque). @wd_switch_turns conta dal cambio canale e dice
 + * la forma dei primi giri, letta marcatore per marcatore:
 + *
 + *   giro 0        solo le statistiche, senza latch: la finestra e' stata
@@ -10072,7 +10091,10 @@ index 756cd44..7025fd9 100644
 +		if (ac->wd_turns % 30 == 29)
 +			b43_phy_ac_wd_region_dump(dev);
 +
-+		b43_phy_ac_wd_body(dev, ac->wd_turns % 10 == 9, false);
++		b43_phy_ac_wd_body(dev,
++				   ac->wd_turns % b43_phy_ac_temps_period(dev) ==
++				   b43_phy_ac_temps_period(dev) - 1u,
++				   false);
 +
 +		/*
 +		 * Dove il check di disponibilita' e' pendente il blocco E non
