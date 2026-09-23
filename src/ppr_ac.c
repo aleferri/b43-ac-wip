@@ -61,22 +61,6 @@ void b43_ppr_ac_apply_min(struct b43_ppr_ac *ppr, u8 min)
 		*rate = max(*rate, min);
 }
 
-/*
- * Rates the closed loop cannot regulate are not floored, they are switched
- * off: a target below the power the TSSI detector resolves would make the
- * loop chase a reading it does not have. Zero is the disabled marker, and
- * get_max() skips it by construction.
- */
-void b43_ppr_ac_force_disabled(struct b43_ppr_ac *ppr, u8 threshold)
-{
-	unsigned int i;
-	u8 *rate;
-
-	ppr_ac_for_each_entry(ppr, i, rate)
-		if (*rate < threshold)
-			*rate = 0;
-}
-
 u8 b43_ppr_ac_get_max(const struct b43_ppr_ac *ppr)
 {
 	unsigned int i;
@@ -128,6 +112,11 @@ const u8 *b43_ppr_ac_row_for_width(const struct b43_ppr_ac *ppr,
  * The 20 MHz boundary rests on one board: it is pinned by ch40 giving 66 and
  * ch44 giving 64 with maxp5ga = {72, 70, ...}, and only the d6220 has those
  * two entries distinct.
+ *
+ * ch149-165 are the fourth entry. The tg789vac-v2 (maxp5ga 90/88/92/88)
+ * writes 0x52 on all nine of its UNII-3 configurations, 88 less the margin,
+ * where the third entry would give 0x56. The d6220 carries 0 there
+ * (72/70/86/0) and writes 0x04 on all eight of its own.
  */
 unsigned int b43_ppr_ac_subband(u16 chan, enum nl80211_chan_width width)
 {
@@ -138,7 +127,9 @@ unsigned int b43_ppr_ac_subband(u16 chan, enum nl80211_chan_width width)
 		return 0;
 	if (freq < 5500)
 		return 1;
-	return 2;
+	if (freq < 5745)
+		return 2;
+	return 3;
 }
 
 static u8 b43_ppr_ac_off(u32 po, unsigned int mcs)
@@ -165,10 +156,8 @@ static u8 b43_ppr_ac_sub(u8 maxp, u8 off)
  * row through the mapping the SHM per-rate offsets were inverted against:
  * 6, 9, 12 and 18 Mb/s on MCS0, then 24, 36, 48 and 54 on MCS1-4.
  */
-u8 b43_ppr_ac_load_max_from_sprom(const struct ssb_sprom *sprom, u8 coremask,
-				  unsigned int num_cores,
-				  struct b43_ppr_ac *ppr, u16 chan,
-				  enum nl80211_chan_width width, u8 ceiling)
+static void b43_ppr_ac_fill_rows(const struct ssb_sprom *sprom,
+				 struct b43_ppr_ac *ppr, u16 chan, u8 top)
 {
 	static const u8 ofdm_on_mcs[B43_PPR_AC_RATES] = { 0, 0, 0, 0, 1, 2, 3, 4 };
 	const u32 po[3][3] = {
@@ -177,9 +166,30 @@ u8 b43_ppr_ac_load_max_from_sprom(const struct ssb_sprom *sprom, u8 coremask,
 		{ sprom->mcsbw205ghpo, sprom->mcsbw405ghpo, sprom->mcsbw805ghpo },
 	};
 	struct b43_ppr_ac_rates *rates = &ppr->rates;
-	unsigned int sb = b43_ppr_ac_subband(chan, width);
 	unsigned int band = chan < 52 ? 0 : chan < 100 ? 1 : 2;
-	unsigned int c, i;
+	unsigned int i;
+
+	for (i = 0; i < B43_PPR_AC_RATES; i++) {
+		rates->mcs_20[i] = b43_ppr_ac_sub(top,
+						  b43_ppr_ac_off(po[band][0], i));
+		if (ppr->num > 2 * B43_PPR_AC_RATES)
+			rates->mcs_40[i] = b43_ppr_ac_sub(top,
+					b43_ppr_ac_off(po[band][1], i));
+		if (ppr->num > 3 * B43_PPR_AC_RATES)
+			rates->mcs_80[i] = b43_ppr_ac_sub(top,
+					b43_ppr_ac_off(po[band][2], i));
+	}
+	for (i = 0; i < B43_PPR_AC_RATES; i++)
+		rates->ofdm[i] = rates->mcs_20[ofdm_on_mcs[i]];
+}
+
+u8 b43_ppr_ac_load_max_from_sprom(const struct ssb_sprom *sprom, u8 coremask,
+				  unsigned int num_cores,
+				  struct b43_ppr_ac *ppr, u16 chan,
+				  enum nl80211_chan_width width, u8 ceiling)
+{
+	unsigned int sb = b43_ppr_ac_subband(chan, width);
+	unsigned int c;
 	u8 maxp = 0xff, maxp_eff;
 
 	b43_ppr_ac_clear(ppr, width);
@@ -207,20 +217,24 @@ u8 b43_ppr_ac_load_max_from_sprom(const struct ssb_sprom *sprom, u8 coremask,
 	if (ceiling && ceiling < maxp)
 		maxp_eff = ceiling;
 
-	for (i = 0; i < B43_PPR_AC_RATES; i++) {
-		rates->mcs_20[i] = b43_ppr_ac_sub(maxp_eff,
-						  b43_ppr_ac_off(po[band][0], i));
-		if (ppr->num > 2 * B43_PPR_AC_RATES)
-			rates->mcs_40[i] = b43_ppr_ac_sub(maxp_eff,
-					b43_ppr_ac_off(po[band][1], i));
-		if (ppr->num > 3 * B43_PPR_AC_RATES)
-			rates->mcs_80[i] = b43_ppr_ac_sub(maxp_eff,
-					b43_ppr_ac_off(po[band][2], i));
-	}
-	for (i = 0; i < B43_PPR_AC_RATES; i++)
-		rates->ofdm[i] = rates->mcs_20[ofdm_on_mcs[i]];
-
+	b43_ppr_ac_fill_rows(sprom, ppr, chan, maxp_eff);
 	return maxp;
+}
+
+/*
+ * The rate spacing of the channel's SROM table, with nothing saturated: the
+ * rows filled from the top of the scale, so no rate hits zero. Where the
+ * power table saturates -- a sub-band whose maxp5ga is 0 -- the distances
+ * between rates are still the SROM's, and those are what the vendor writes
+ * in the per-rate offsets. Everywhere else the two tables differ by a
+ * constant and give the same distances.
+ */
+void b43_ppr_ac_load_spacing(const struct ssb_sprom *sprom,
+			     struct b43_ppr_ac *ppr, u16 chan,
+			     enum nl80211_chan_width width)
+{
+	b43_ppr_ac_clear(ppr, width);
+	b43_ppr_ac_fill_rows(sprom, ppr, chan, 0x7f);
 }
 
 /*

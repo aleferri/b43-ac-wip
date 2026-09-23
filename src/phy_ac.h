@@ -526,6 +526,7 @@ struct b43_phy_ac {
 	 * periodic hook can tell a change from a repeat.
 	 */
 	struct b43_ppr_ac txpwr_ppr;
+	struct b43_ppr_ac txpwr_spacing;	/* distances, never saturated */
 	u8 txpwr_max[B43_PHY_AC_MAX_CORES];
 	u16 txpwr_calc_chan;
 	enum nl80211_chan_width txpwr_calc_width;

@@ -406,7 +406,6 @@ static void b43_phy_ac_wd_stats_poll_opt(struct b43_wldev *dev,
 					 bool ctr32_tail);
 static unsigned int b43_phy_ac_po_band(u16 chan);
 static void b43_phy_ac_txpwr_target_write(struct b43_wldev *dev);
-static u8 b43_phy_ac_tssi_visible_qdbm(struct b43_wldev *dev);
 static void b43_phy_ac_farrow_setup(struct b43_wldev *dev,
 				    struct ieee80211_channel *channel);
 
@@ -1007,8 +1006,11 @@ static void b43_phy_ac_chainmask_block(struct b43_wldev *dev,
  * 10, 12 and 16 of the same block -- probe-response PLCP and duration -- and
  * not 14.
  *
- * The value is the rate's distance from the target in the per-rate table, in
- * quarter dBm times four, so the field is in sixteenths of a dB. What changes
+ * The value is the rate's distance from the top of the per-rate table, in
+ * quarter dBm times four, so the field is in sixteenths of a dB. It is read
+ * on the spacing table, which never saturates: on the d6220's UNII-3, where
+ * maxp5ga is 0 and the power table is flat at the floor, the vendor still
+ * writes the SROM spacing, 0x10/0x20/0x30 on 36/48/54 Mb/s. What changes
  * per rate is which row of the table it is read on, and the sweep decides it:
  * the legacy OFDM rates sit on the row of the **operating width**, not on the
  * 20 MHz one. On the six 80 MHz segments that is the difference between exact
@@ -1042,9 +1044,9 @@ static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev)
 {
 	B43_AC_FN();
 	struct b43_phy_ac *ac = dev->phy.ac;
-	const struct b43_ppr_ac *ppr = &ac->txpwr_ppr;
-	const u8 *row = b43_ppr_ac_row_for_width(ppr, ac->cal_width);
-	u8 max = b43_ppr_ac_get_max(ppr);
+	const struct b43_ppr_ac *sp = &ac->txpwr_spacing;
+	const u8 *row = b43_ppr_ac_row_for_width(sp, ac->cal_width);
+	u8 max = b43_ppr_ac_get_max(sp);
 	unsigned int i;
 
 	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_prb_rsp_rates); i++) {
@@ -1796,9 +1798,17 @@ static unsigned int b43_phy_ac_po_band(u16 chan)
  * This is wlc_phy_txpower_recalc_target() of brcmsmac, and the body of
  * b43_nphy_op_recalc_txpower() in b43, with the rev 11 table: for every rate
  * the channel carries, min(SROM limit, regulatory limit) less the 6-unit
- * margin, floored at 8 dBm; the maximum over the rates is what the PHY closes
- * its power loop on, written to 0x0646[7:0] per core, and the per-rate
- * distances from it are the power offsets. The 6 + antenna gain that phy_n.c
+ * margin, floored at 1 dBm; the maximum over the rates is what the PHY closes
+ * its power loop on, written to 0x0646[7:0] per core.
+ *
+ * The floor is not brcmsmac's 8 dBm. It binds in one place only, the d6220's
+ * UNII-3, where maxp5ga is 0 and every rate saturates: there the vendor writes
+ * 0x04 on all eight configurations, cold and hot, which with nothing else left
+ * in the chain is the floor itself. For the same reason there is no stage that
+ * switches off the rates below the TSSI-visible power: that threshold, taken
+ * from the est_pwr LUT, is 17 quarters on that sub-band, and the vendor
+ * programs 4 there all the same.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!cold21-ch149-bw20.txt] The 6 + antenna gain that phy_n.c
  * keeps under "#if 0 / TODO: Enable this once we get gains working" is what
  * the AC captures reproduce, with the antenna gain on the regulatory side
  * only: the hot sweep is exact from the SROM alone on all 26 configurations.
@@ -1840,9 +1850,15 @@ bool b43_phy_ac_txpwr_recalc(struct b43_wldev *dev)
 	maxp = b43_ppr_ac_load_max_from_sprom(sprom, ac->coremask, ac->num_cores,
 					      ppr, ac->cal_channel, ac->cal_width,
 					      (u8)min_t(u16, ceiling, 0xff));
+	b43_ppr_ac_load_spacing(sprom, &ac->txpwr_spacing, ac->cal_channel,
+				ac->cal_width);
+	if (!maxp)
+		b43warn(dev->wl,
+			"AC-PHY: maxp5ga e' 0 per la sotto-banda del canale %u: "
+			"la SROM non dichiara potenza, target al minimo.\n",
+			ac->cal_channel);
 	b43_ppr_ac_add(ppr, -6);
-	b43_ppr_ac_apply_min(ppr, B43_PHY_AC_QDB(8));
-	b43_ppr_ac_force_disabled(ppr, b43_phy_ac_tssi_visible_qdbm(dev));
+	b43_ppr_ac_apply_min(ppr, B43_PHY_AC_QDB(1));
 	max = b43_ppr_ac_get_max(ppr);
 
 	if (b43_ppr_ac_sprom_has_subband_po(sprom) && !ac->txpwr_calc_chan)
@@ -1934,46 +1950,6 @@ static void b43_phy_ac_est_pwr_lut(struct b43_wldev *dev, unsigned int core,
 		lut[j] = (u16)(v & 0xff);
 		den += a1;
 	}
-}
-
-/*
- * The lowest power the closed loop can see, in quarter dBm.
- *
- * recalc_target disables the rates whose target falls below the power the
- * TSSI detector resolves (wlc_phy_tssivisible_thresh in the vendor driver,
- * whose value is not in any open source). What is in hand is the
- * est_pwr transfer function above: the TSSI index runs it downwards and the
- * table clamps at -8 where the detector has nothing left to say, so the
- * smallest unclamped entry over the active cores is the floor the hardware
- * itself declares. Taking it from the LUT and not from a constant is the
- * derivation available; whether the vendor's threshold sits exactly there is
- * not established -- SALAME -- and on every capture in the repository the
- * targets are far above it, so it does not bind. The one place it would is
- * the 4 the vendor writes on ch149-165, and that is not established to be a
- * target at all: see docs/retrace-todo.md.
- */
-static u8 b43_phy_ac_tssi_visible_qdbm(struct b43_wldev *dev)
-{
-	struct b43_phy_ac *ac = dev->phy.ac;
-	unsigned int grp = b43_phy_ac_pa5g_group(dev, 5000 + 5 * ac->cal_channel);
-	unsigned int core, j;
-	int floor = 0x7f;
-
-	for (core = 0; core < ac->num_cores; core++) {
-		u16 lut[128];
-
-		if (!(ac->coremask & (1u << core)))
-			continue;
-		b43_phy_ac_est_pwr_lut(dev, core, grp, lut);
-		for (j = 0; j < ARRAY_SIZE(lut); j++) {
-			int v = (s8)lut[j];
-
-			if (v > -8 && v < floor)
-				floor = v;
-		}
-	}
-
-	return floor < 0 ? 0 : (u8)floor;
 }
 
 /*
