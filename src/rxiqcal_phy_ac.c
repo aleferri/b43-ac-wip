@@ -228,10 +228,8 @@ void b43_phy_ac_rxcal_tone_setup(struct b43_wldev *dev)
 	b43_phy_read_log(dev, 0x0393);
 
 	/* Pass 1: forward core, forward reg */
-	for (c = 0; c < num_cores; c++) {
+	for_each_set_bit(c, &dev->phy.ac->coremask, num_cores) {
 		u16 s = (u16)(c * 0x200);
-		if (!((mask >> c) & 1))
-			continue;
 		for (i = 0; i < 3; i++) {
 			b43_phy_read_log(dev, 0x0700 + reg_off[i] + s);
 			b43_phy_write(dev,    0x0700 + reg_off[i] + s, pass1_vals[i]);
@@ -556,11 +554,9 @@ void b43_phy_ac_rxiq_est_debug(struct b43_wldev *dev)
 	       num_cores);
 
 	/* Save gain and tone registers. */
-	for (core = 0; core < num_cores; core++) {
+	for_each_set_bit(core, &dev->phy.ac->coremask, num_cores) {
 		u16 s = (u16)(core * 0x200);
 
-		if (!((dev->phy.ac->coremask >> core) & 1))
-			continue;
 
 		save_gain[core * 3 + 0] = b43_phy_read(dev, 0x0739 + s);
 		save_gain[core * 3 + 1] = b43_phy_read(dev, 0x073a + s);
@@ -663,11 +659,9 @@ void b43_phy_ac_rxiq_est_debug(struct b43_wldev *dev)
 		b43_phy_write(dev, 0x0734 + s, save_tone[core * 3 + 2]);
 	}
 	/* Restore gain registers. */
-	for (core = 0; core < num_cores; core++) {
+	for_each_set_bit(core, &dev->phy.ac->coremask, num_cores) {
 		u16 s = (u16)(core * 0x200);
 
-		if (!((dev->phy.ac->coremask >> core) & 1))
-			continue;
 
 		b43_phy_write(dev, 0x0739 + s, save_gain[core * 3 + 0]);
 		b43_phy_write(dev, 0x073a + s, save_gain[core * 3 + 1]);

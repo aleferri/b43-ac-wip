@@ -419,6 +419,11 @@ struct b43_phy_ac {
 	 * the cell as read before a cal and written back after it.
 	 */
 	u16 bbmult_cal[B43_PHY_AC_MAX_CORES];
+	/*
+	 * The rest of the same GAINCTRLBBMULT entry: the three TX gain code
+	 * cells the cal writes into table 0x0007 at 0x100 + core + 3 * i.
+	 */
+	u16 gaincurve_coeff[B43_PHY_AC_MAX_CORES][3];
 	u16 bbmult_meas;
 	u16 bbmult_saved[B43_PHY_AC_MAX_CORES];
 	/*

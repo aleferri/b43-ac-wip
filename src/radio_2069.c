@@ -1256,12 +1256,9 @@ void b43_radio_2069_afecal(struct b43_wldev *dev)
 	r2069_mod(dev, R2069_RCCAL_EN1, 0x0080, 0x0080);
 
 	/* Pass 1: arm every active core with the cal clock gated off. */
-	for (core = 0; core < ac->num_cores; core++) {
+	for_each_set_bit(core, &ac->coremask, ac->num_cores) {
 		u16 rbase = (u16)(core << 9);	/* per-core radio window */
 		u16 pbase = (u16)(core << 9);	/* per-core PHY window */
-
-		if (!((ac->coremask >> core) & 1))
-			continue;
 
 		/*
 		 * The three gain regs the arming masksets below perturb, read
@@ -1281,13 +1278,11 @@ void b43_radio_2069_afecal(struct b43_wldev *dev)
 	udelay(1);
 
 	/* Pass 2: launch every active core, then finalize its PHY regs. */
-	for (core = 0; core < ac->num_cores; core++) {
+	for_each_set_bit(core, &ac->coremask, ac->num_cores) {
 		u16 rbase = (u16)(core << 9);
 		u16 pbase = (u16)(core << 9);
 		u16 post[2] = { 0, 0 }, ctrl = 0;
 
-		if (!((ac->coremask >> core) & 1))
-			continue;
 
 		/*
 		 * Clock un-gate is the AFE_CAL_CLK[12] bit toggled by the two
