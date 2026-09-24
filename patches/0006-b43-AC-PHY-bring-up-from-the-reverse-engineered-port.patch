@@ -1,4 +1,4 @@
-From a60c7a4ac5725d0a04b4fbd28888b3ff780e0121 Mon Sep 17 00:00:00 2001
+From 21f5e1ae092102cfdacf62655e316a2cfe613756 Mon Sep 17 00:00:00 2001
 From: c <c@l>
 Date: Tue, 8 Sep 2026 14:29:02 +0000
 Subject: [PATCH] b43: AC-PHY bring-up from the reverse-engineered port
@@ -12,17 +12,17 @@ of sync with the tree the unit suite measures.
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     5 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |    66 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 11393 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 11379 +++++++++++++++-
  drivers/net/wireless/broadcom/b43/phy_ac.h    |   851 +-
  drivers/net/wireless/broadcom/b43/ppr_ac.c    |   261 +
  drivers/net/wireless/broadcom/b43/ppr_ac.h    |    59 +
  .../net/wireless/broadcom/b43/radio_2069.c    |  1554 +++
  .../net/wireless/broadcom/b43/radio_2069.h    |    47 +
- .../wireless/broadcom/b43/rxiqcal_phy_ac.c    |   781 ++
+ .../wireless/broadcom/b43/rxiqcal_phy_ac.c    |   787 ++
  .../wireless/broadcom/b43/rxiqcal_phy_ac.h    |    60 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1153 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    79 +
- 12 files changed, 16286 insertions(+), 23 deletions(-)
+ 12 files changed, 16278 insertions(+), 23 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -122,7 +122,7 @@ index 0000000..5d18443
 +	b43_maskset32(dev, B43_MMIO_MACCTL, mask, set);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index 756cd44..94ebdfd 100644
+index 756cd44..e534624 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -1,23 +1,51 @@
@@ -184,7 +184,7 @@ index 756cd44..94ebdfd 100644
  	if (!phy_ac)
  		return -ENOMEM;
  	dev->phy.ac = phy_ac;
-@@ -62,27 +90,11352 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -62,27 +90,11338 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -1218,16 +1218,17 @@ index 756cd44..94ebdfd 100644
 +/*
 + * The invariant part of the MAC config block, right after the two zeroings.
 + *
-+ * Every value here is the same on all 26 segments of the d6220 cold sweep, at
-+ * every channel and every width -- classified `invariante` by
-+ * reverse-tools/decorrelate_channels.py, which finds no dynamic key at all on
-+ * those captures. They are transcribed: what they are for is not known.
++ * Every value here is the same on every segment of the d6220 cold sweep, at
++ * every channel and every width, and the tg789vac writes the same ones except
++ * for the chain-count cells below. They are transcribed: what they are for is
++ * not known.
 + *
 + * Two non-invariant families of the same block are not here and remain to be
 + * done: the fifteen cells at stride 0x14 that follow the width, and the twelve
 + * at stride 0x1c that follow the centre frequency. Outside as well are the
 + * read of 0x00b0, which b43.h declares the core's EXTNPHYCTL, and 0x05dc,
-+ * which falls in the KEYIDXBLOCK block; who should emit those two is not
++ * which falls in the KEYIDXBLOCK block and carries the coremask -- 3 on the
++ * d6220, 7 on the three-chain boards; who should emit those two is not
 + * settled.
 + * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
 + *   12860-12892]
@@ -1250,9 +1251,19 @@ index 756cd44..94ebdfd 100644
 +
 +	b43_shm_write16(dev, B43_SHM_SHARED, 0x0020, 0x0800);
 +	b43_shm_write16(dev, B43_SHM_SHARED, 0x08ec, 0x186a);
-+	b43_shm_write16(dev, B43_SHM_SHARED, 0x0910, 0x80c3);
-+	b43_shm_write16(dev, B43_SHM_SHARED, 0x08f4, 0x80c2);
-+	b43_shm_write16(dev, B43_SHM_SHARED, 0x08f0, 0x0001);
++	/*
++	 * The d6220, which leaves one of its three cores unwired, writes
++	 * 0x0910 and 0x08f4 and then 0x08f0 = 1; the agcombo and the tg789vac,
++	 * with all three wired, skip the pair and write 0x08f0 = 2. Two
++	 * boards, so "a core is unwired" and "two chains" cannot be told
++	 * apart, nor "chains - 1" from other readings of 1 and 2.
++	 */
++	if (hweight8((u8)dev->phy.ac->coremask) != dev->phy.ac->num_cores) {
++		b43_shm_write16(dev, B43_SHM_SHARED, 0x0910, 0x80c3);
++		b43_shm_write16(dev, B43_SHM_SHARED, 0x08f4, 0x80c2);
++	}
++	b43_shm_write16(dev, B43_SHM_SHARED, 0x08f0,
++			(u16)(hweight8((u8)dev->phy.ac->coremask) - 1));
 +
 +	/*
 +	 * Lettura e riscrittura del valore appena letto, come il gruppo A di
@@ -1362,6 +1373,23 @@ index 756cd44..94ebdfd 100644
 +	u16 m = (u16)dev->phy.ac->coremask;
 +
 +	return (u16)(0x7700 | (m << 4) | m);
++}
++
++/*
++ * Read back each wired chain's bbmult cell, 0x63 + 4 * core, and discard it.
++ * The vendor's read is self-contained -- lock, read, unlock -- and
++ * actab_read_bulk() does not unlock, so the unlock is here.
++ */
++static void b43_phy_ac_bbmult_peek(struct b43_wldev *dev)
++{
++	unsigned int c;
++	u16 discard;
++
++	for_each_set_bit(c, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
++		b43_actab_read_bulk(dev, 0x000c, (u16)(0x0063 + 4 * c), 16, 1,
++				    &discard);
++		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
++	}
 +}
 +
 +/*
@@ -3122,16 +3150,6 @@ index 756cd44..94ebdfd 100644
 +	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
 +	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
 +
-+	/*
-+	 * On the 4360 only: the 6-bit field of 0x02e4 goes to 0x0800 here,
-+	 * between the gate relock and the 0x01ec write. In the agcombo capture
-+	 * it sits immediately before the 0x01ec and the table 0x20 load, so
-+	 * the position is constrained rather than free. No 4352 capture emits
-+	 * it.
-+	 */
-+	if (dev->dev->chip_id == 0x4360)
-+		b43_phy_maskset(dev, 0x02e4, (u16)~0x3f00, 0x0800);
-+
 +	b43_phy_write(dev, 0x01ec, 0x9c40);
 +}
 +
@@ -4015,26 +4033,31 @@ index 756cd44..94ebdfd 100644
 +	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
 +
 +	/*
-+	 * RFSEQ 0x03cd and 0x03dd: read, then write 0x04c2 and 0x04e2. The
-+	 * read returns 0x0c02 -- the value the RFSEQ init load put there -- on
-+	 * every capture there is, d6220 cold and hot and agcombo, and the
-+	 * write is the same on all of them, so nothing pins how the write
-+	 * depends on the read: a field write clearing 0x0800 and setting
-+	 * 0x00c0/0x00e0 fits, and so does a constant.
++	 * RFSEQ 0x03cd + 0x10 * core, one cell per wired chain: read, then
++	 * write. The read returns 0x0c02 everywhere.
 +	 *
-+	 * SALAME: kept as the constant the captures show; a board whose init
-+	 * load differs at these cells would tell the two apart.
-+	 * 20 ops, 10 per cell.
++	 * Transcribed, not derived. The d6220 writes 0x04c2 on core 0 and
++	 * 0x04e2 on core 1 at every channel, and the agcombo the same with
++	 * 0x04e2 on core 2. The tg789vac writes something else and per
++	 * sub-band: 0x0529 on all three up to ch48, 0x0501 from ch52, and
++	 * 0x04c1, 0x04b1, 0x0501 on UNII-3 -- with the same rxgains on every
++	 * core and board, so they are not what picks it. Core 2 is also the
++	 * odd one in the gain-curve entry on UNII-3, see
++	 * b43_phy_ac_gaincurve_off[], which suggests the two come from the same
++	 * per-core quantity.
 +	 */
 +	{
-+		u16 tmp;
-+		u16 val_cd = 0x04c2;
-+		u16 val_dd = 0x04e2;
++		struct b43_phy_ac *ac = dev->phy.ac;
++		unsigned int c;
 +
-+		b43_actab_read_bulk(dev, 7, 0x03cd, 16, 1, &tmp);
-+		b43_actab_write_bulk(dev, 7, 0x03cd, 16, 1, &val_cd);
-+		b43_actab_read_bulk(dev, 7, 0x03dd, 16, 1, &tmp);
-+		b43_actab_write_bulk(dev, 7, 0x03dd, 16, 1, &val_dd);
++		for_each_set_bit(c, &ac->coremask, ac->num_cores) {
++			u16 off = (u16)(0x03cd + 0x10 * c);
++			u16 val = c ? 0x04e2 : 0x04c2;
++			u16 tmp;
++
++			b43_actab_read_bulk(dev, 7, off, 16, 1, &tmp);
++			b43_actab_write_bulk(dev, 7, off, 16, 1, &val);
++		}
 +	}
 +
 +	/*
@@ -4132,6 +4155,14 @@ index 756cd44..94ebdfd 100644
 +	 * The other tables -- 0x0b glim, 0x15 nvar and the per-core 0x44/0x45
 +	 * nshp -- are not here; noise_shaping_table_init() emits those.
 +	 */
++	/*
++	 * The 7.14.89 driver loads it on the 4352 and not on the 4360: the
++	 * d6220 writes it on every segment and the tg789vac, same driver, on
++	 * none. The agcombo, a 4360 on 7.14.43, does load it.
++	 */
++	if (dev->dev->chip_id != 0x4352)
++		return;
++
 +	b43_actab_write_r11(dev, 0x11, 0, ARRAY_SIZE(b43_acphy_tbl11_head),
 +			    b43_acphy_tbl11_head);
 +	b43_actab_fill_r11(dev, 0x11, B43_PHY_AC_TBL11_FILL_OFF,
@@ -6258,20 +6289,7 @@ index 756cd44..94ebdfd 100644
 +}
 +
 +/*
-+ * The analog block is programmed twice during attach on agcombo and once on
-+ * the d6220. The condition below is on chip_id because that is the only
-+ * variable distinguishing the two witnesses, not because the discriminant is
-+ * established: the stock driver's code is identical between the two versions
-+ * involved, so the difference arises at runtime.
-+ *
-+ * These are two power-ons, not an off cycle: between them the PLL is
-+ * rewritten with the same values. The bus ops in between -- SI.COREREG,
-+ * PMU.PLL, MAC.MCTRL -- belong to bcma and to the b43 core and are not
-+ * reproduced here.
-+ *
-+ * Evidence, the checks that ruled other explanations out, and the two open
-+ * TODOs (a second 4360 is needed, and one running the d6220's version):
-+ * docs/retrace-todo.md.
++ * The analog block, once per entry.
 + * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
 + *   528-645]
 + */
@@ -6282,32 +6300,6 @@ index 756cd44..94ebdfd 100644
 +	B43_AC_FN();
 +	b43_phy_ac_switch_analog_once(dev, on, cold);
 +
-+	if (cold && dev->dev->chip_id == 0x4360) {
-+		/*
-+		 * TODO: between the two entries the stock driver emits nine bus
-+		 * ops -- two GPIO reads, SI.COREREG offset 0x80, PMU.PLL 0x2 and
-+		 * 0x3, SI.COREREG offset 0x88, two MAC.MCTRL writes and a
-+		 * re-read of 0x000b. That is a PLL re-init, and it has to happen
-+		 * here: bcma has already finished by the time this runs, so
-+		 * nothing else can emit it.
-+		 *
-+		 * They are deliberately not open-coded. The values, 0xc31 and
-+		 * 0x100e, are the ones bcma_pmu_pll_init() writes for this chip,
-+		 * so the right shape is to call into that rather than copy its
-+		 * constants into the PHY. That needs a bcma entry point callable
-+		 * from here and matching harness stubs; today only
-+		 * bcma_chipco_pll_read() exists. Until then the two entries stay
-+		 * 13 ops apart.
-+		 */
-+		b43_phy_ac_switch_analog_once(dev, on, cold);
-+	}
-+
-+	/*
-+	 * The front-end GPIO setup closes the sequence once, not on every entry:
-+	 * in the agcombo capture GPIO.OUT = 0x400 appears exactly once, after
-+	 * the second entry. On the 4352, which enters once, the distinction is
-+	 * invisible.
-+	 */
 +	if (!cold)
 +		return;
 +
@@ -6939,8 +6931,8 @@ index 756cd44..94ebdfd 100644
 +
 +	/*
 +	 * B4c, 33 ops:
-+	 *   - two self-contained table reads of 0x000c at offsets 0x63 and
-+	 *     0x67, dummy readbacks. The vendor emits lock, read and unlock;
++	 *   - one self-contained table read of 0x000c per wired chain, at
++	 *     0x63 + 4 * core, dummy readbacks. The vendor emits lock, read and unlock;
 +	 *     actab_read_bulk() emits only lock and read, so the unlock is
 +	 *     done by hand after the call.
 +	 *   - 19 individual PHY configuration ops: clear bit 0 of 0x0471,
@@ -6952,13 +6944,9 @@ index 756cd44..94ebdfd 100644
 +	 *     stride.
 +	 */
 +	{
-+		u16 dummy_rd;
 +		u8 c2;
 +
-+		b43_actab_read_bulk(dev, 0x000c, 0x0063, 16, 1, &dummy_rd);
-+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
-+		b43_actab_read_bulk(dev, 0x000c, 0x0067, 16, 1, &dummy_rd);
-+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
++		b43_phy_ac_bbmult_peek(dev);
 +
 +		b43_phy_mask(dev, 0x0471, (u16)~0x0001);
 +		b43_phy_write(dev, 0x0463, b43_phy_ac_rxiq_kick_len(dev));
@@ -7188,6 +7176,18 @@ index 756cd44..94ebdfd 100644
 +	 * uses.
 +	 */
 +
++	/* The commit batches' values, cores 0 and 1 of table 0x000c. */
++	static const u16 batch_c0[18] = {
++		0x0100, 0x0200, 0x0300, 0x0500, 0x0700, 0x0a00, 0x0f00,
++		0x0f01, 0x0f02, 0x0f03, 0x0f04, 0x0f05, 0x0f06, 0x0f07,
++		0x1507, 0x1e07, 0x2a07, 0x3c07,
++	};
++	static const u16 batch_c1[18] = {
++		0x0100, 0x0200, 0x0300, 0x0500, 0x0700, 0x0a00, 0x0f00,
++		0x1500, 0x1e00, 0x2a00, 0x3c00, 0x3c01, 0x3c02, 0x3c03,
++		0x3c04, 0x3c05, 0x3c06, 0x3c07,
++	};
++
 +	/* ==== Gruppo core-0 (cmd 0x8XXX, RAD.RD 0x0144) ==== */
 +
 +	/* Iter 1: cmd=0x8434, result 0x0301, pre-clears [0x43, 0x44] */
@@ -7225,16 +7225,6 @@ index 756cd44..94ebdfd 100644
 +	 * to 6.
 +	 */
 +	{
-+		static const u16 batch_c0[18] = {
-+			0x0100, 0x0200, 0x0300, 0x0500, 0x0700, 0x0a00, 0x0f00,
-+			0x0f01, 0x0f02, 0x0f03, 0x0f04, 0x0f05, 0x0f06, 0x0f07,
-+			0x1507, 0x1e07, 0x2a07, 0x3c07,
-+		};
-+		static const u16 batch_c1[18] = {
-+			0x0100, 0x0200, 0x0300, 0x0500, 0x0700, 0x0a00, 0x0f00,
-+			0x1500, 0x1e00, 0x2a00, 0x3c00, 0x3c01, 0x3c02, 0x3c03,
-+			0x3c04, 0x3c05, 0x3c06, 0x3c07,
-+		};
 +		b43_phy_ac_rxcal_afe_iter(dev, 0x8234, 0x0000,
 +					  NULL, 0, 0x0083, 1, 0x0043);
 +		b43_phy_ac_rxcal_afe_commit_batch(dev, 0x00, 0x20,
@@ -7282,8 +7272,11 @@ index 756cd44..94ebdfd 100644
 +
 +	/*
 +	 * A second commit batch between the core-1 and core-2 groups, on the
-+	 * first bring-up only: the same cells and structure as the first, but
-+	 * carrying the low byte alone -- the index ramp without the gain.
++	 * first bring-up only, in the same cells. The d6220, whose core 2 is
++	 * unwired, writes the low byte alone -- the index ramp without the
++	 * gain; the agcombo and the tg789vac, with core 2 wired, write the
++	 * full values of the first batch. SALAME: that core 2's wiring is what
++	 * selects them is the reading that fits both, from two boards.
 +	 */
 +	if (dev->phy.ac->status_mask & B43_PHY_AC_STATE_FIRST_BRINGUP) {
 +		static const u16 ramp_c0[18] = {
@@ -7294,9 +7287,11 @@ index 756cd44..94ebdfd 100644
 +			0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 +			1, 2, 3, 4, 5, 6, 7,
 +		};
++		bool c2 = dev->phy.ac->coremask & BIT(2);
 +
 +		b43_phy_ac_rxcal_afe_commit_batch(dev, 0x00, 0x20,
-+						  ramp_c0, ramp_c1, 18);
++						  c2 ? batch_c0 : ramp_c0,
++						  c2 ? batch_c1 : ramp_c1, 18);
 +	}
 +
 +	/* ==== Gruppo core-2 (cmd 0xaXXX, RAD.RD 0x0544) ==== */
@@ -7919,17 +7914,12 @@ index 756cd44..94ebdfd 100644
 +		{ 0x0010, 0x2d07 }, { 0x0030, 0x4006 },
 +		{ 0x0011, 0x4007 }, { 0x0031, 0x4007 },
 +	};
-+	u16 discard;
 +	unsigned int core, i;
 +
-+	/* Segment A, 14 ops: two self-contained table reads plus an explicit
-+	 * unlock, reading back the per-core bbmult after compensation. On entry
-+	 * the gate is unlocked, the previous function having ended on the unlock
-+	 * MOD of write_bulk_scoped(). */
-+	b43_actab_read_bulk(dev, 0x000c, 0x0063, 16, 1, &discard);
-+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
-+	b43_actab_read_bulk(dev, 0x000c, 0x0067, 16, 1, &discard);
-+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
++	/* Segment A: read back the per-core bbmult after compensation. On
++	 * entry the gate is unlocked, the previous function having ended on the
++	 * unlock MOD of write_bulk_scoped(). */
++	b43_phy_ac_bbmult_peek(dev);
 +
 +	/* Seg B (19 op): kick sequence per il correlatore RXIQ */
 +	b43_phy_mask(dev,      0x0471, (u16)~0x0001);
@@ -8152,12 +8142,13 @@ index 756cd44..94ebdfd 100644
 +			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
 +
 +	/*
-+	 * The results iteration 20 measured on core 0 and iteration 22 on
-+	 * core 1 -- see b43_phy_ac_rxiqcal_run_meas_iters() -- reapplied at
-+	 * offsets 0x60 and 0x64 of table 0x000c instead of 0x40 and 0x48. They
-+	 * come out of afe_res, not from a capture.
++	 * The results the second AFE pass measured on each chain -- see
++	 * b43_phy_ac_rxiqcal_run_meas_iters() -- reapplied at 0x60 + 4 * core
++	 * of table 0x000c instead of 0x40 + 8 * core. They come out of afe_res,
++	 * not from a capture.
 +	 */
 +	u16 cell[2];
++	unsigned int c;
 +
 +	/* Kick sequence (7 op) */
 +	b43_phy_read_log(dev, 0x0400);
@@ -8181,17 +8172,16 @@ index 756cd44..94ebdfd 100644
 +	 * un AND normalizzato — usiamo maskset. */
 +	b43_phy_maskset(dev, 0x0211, (u16)~0x0001, 0);
 +
-+	/* Pair 1 (16 op): TBL.RD + TBL.WR len=2 off=0x60 */
-+	b43_actab_read_bulk(dev, 0x000c, 0x0060, 16, 2, cell);
-+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
-+	b43_actab_write_bulk_scoped(dev, 0x000c, 0x0060, 16, 2,
-+				    dev->phy.ac->afe_res[0].v);
++	/* One pair per wired chain: TBL.RD + TBL.WR len=2, 16 ops. afe_res
++	 * holds each chain's result at 2 * core, see afe_res_store(). */
++	for_each_set_bit(c, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
++		u16 off = (u16)(0x0060 + 4 * c);
 +
-+	/* Pair 2 (16 op): TBL.RD + TBL.WR len=2 off=0x64 */
-+	b43_actab_read_bulk(dev, 0x000c, 0x0064, 16, 2, cell);
-+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
-+	b43_actab_write_bulk_scoped(dev, 0x000c, 0x0064, 16, 2,
-+				    dev->phy.ac->afe_res[2].v);
++		b43_actab_read_bulk(dev, 0x000c, off, 16, 2, cell);
++		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
++		b43_actab_write_bulk_scoped(dev, 0x000c, off, 16, 2,
++					    dev->phy.ac->afe_res[2 * c].v);
++	}
 +
 +	/* Close (2 op): sync peek + gate re-lock */
 +	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
@@ -8527,20 +8517,15 @@ index 756cd44..94ebdfd 100644
 + * iqcal_meas_post_dds_apply() and its _v2 variant -- the fifth cycle, whose
 + * blocks E to H differ -- share them.
 + *
-+ *   A, 14 ops: two self-contained bbmult table reads, cores 0 and 1
++ *   A: one self-contained bbmult table read per wired chain
 + *   B,  2 ops: pulse bit 14 of 0x0001, the commit
 + *   C, 13 ops: the kick sequence variant
 + *   D, 18 ops: the rxgain_perchan_config-style tail
 + */
 +static void iqcal_meas_readback_kick_tail(struct b43_wldev *dev)
 +{
-+	u16 discard;
 +
-+	/* Blocco A (14 op): 2× TBL.RD auto-contained bbmult per core 0/1 */
-+	b43_actab_read_bulk(dev, 0x000c, 0x0063, 16, 1, &discard);
-+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
-+	b43_actab_read_bulk(dev, 0x000c, 0x0067, 16, 1, &discard);
-+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
++	b43_phy_ac_bbmult_peek(dev);
 +
 +	/* Blocco B (2 op): MOD 0x0001 pulse bit 14 (commit) */
 +	b43_phy_ac_cca_pulse(dev);
@@ -9327,16 +9312,21 @@ index 756cd44..94ebdfd 100644
 +}
 +
 +/*
-+ * Take the current value of the toggle in 0x0520[3:2] and flip it. The counter
-+ * lives in ac->probe_mode because the stock driver does not reset it between
-+ * one probe block and the next: the alternation runs continuously across the
-+ * whole phase.
++ * Take the current value of 0x0520[3:2] and step it to the next wired chain:
++ * the field selects a chain, and the vendor walks them in turn -- 0, 1 on the
++ * d6220, 0, 1, 2 on the tg789vac. The counter lives in ac->probe_mode because
++ * the stock driver does not reset it between one probe block and the next:
++ * the walk runs continuously across the whole phase.
 + */
 +static u16 probe_mode_next(struct b43_phy_ac *ac)
 +{
 +	u16 cur = ac->probe_mode;
++	unsigned int c = find_next_bit(&ac->coremask, ac->num_cores,
++				       (cur >> 2) + 1);
 +
-+	ac->probe_mode = cur ? 0x0000 : 0x0004;
++	if (c >= ac->num_cores)
++		c = find_next_bit(&ac->coremask, ac->num_cores, 0);
++	ac->probe_mode = (u16)(c << 2);
 +	return cur;
 +}
 +
@@ -10186,16 +10176,19 @@ index 756cd44..94ebdfd 100644
 +	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
 +
 +	/*
-+	 * Block B, 16 ops: two self-contained two-word table writes to id
-+	 * 0x000c. Reapplies the AFE cal's pass-1 results, the afe_res_cal
-+	 * snapshot of the 0x?056 iterations, at offset 0x0060 for core 0 and
-+	 * 0x0064 for core 1. The attach capture shows (0x0066, 0x000e) and
-+	 * (0x0027, 0x0003).
++	 * Block B: one self-contained two-word table write to id 0x000c per
++	 * wired chain. Reapplies the AFE cal's pass-1 results, the afe_res_cal
++	 * snapshot of the 0x?056 iterations, at 0x60 + 4 * core. The d6220
++	 * attach capture shows (0x0066, 0x000e) and (0x0027, 0x0003).
 +	 */
-+	b43_actab_write_bulk_scoped(dev, 0x000c, 0x0060, 16, 2,
-+				    dev->phy.ac->afe_res_cal[0].v);
-+	b43_actab_write_bulk_scoped(dev, 0x000c, 0x0064, 16, 2,
-+				    dev->phy.ac->afe_res_cal[2].v);
++	{
++		unsigned int c;
++
++		for_each_set_bit(c, &dev->phy.ac->coremask, dev->phy.ac->num_cores)
++			b43_actab_write_bulk_scoped(dev, 0x000c,
++						    (u16)(0x0060 + 4 * c), 16, 2,
++						    dev->phy.ac->afe_res_cal[2 * c].v);
++	}
 +
 +	/*
 +	 * Block C, 10 ops: the final post-cal RX release plus a gate open. This
@@ -10894,16 +10887,11 @@ index 756cd44..94ebdfd 100644
 +
 +		/*
 +		 * Per-core nvar, three writes to table 0x15, which the vendor
-+		 * emits before table 0x0b. On the 4352 only: wl 7.14 on the 4360
-+		 * writes ta and tb directly with no staging through 0x15, and
-+		 * the agcombo capture has zero ops on table 0x15.
-+		 *
-+		 * SALAME: without a third witness -- a 4352 on 7.14, or a 4360 on
-+		 * the newer driver -- chip and version cannot be told apart here.
++		 * emits before table 0x0b, on the d6220 and the tg789vac alike.
++		 * The agcombo's older driver has no op on table 0x15 at all.
 +		 */
-+		if (dev->dev->chip_id != 0x4360)
-+			for (core = 0; core < dev->phy.ac->num_cores; core++)
-+				b43_actab_write_bulk(dev, 0x15, nvar_off[core], 16, 5, nvar_data);
++		for (core = 0; core < dev->phy.ac->num_cores; core++)
++			b43_actab_write_bulk(dev, 0x15, nvar_off[core], 16, 5, nvar_data);
 +
 +		/* Gain-limit (2× TBL.WR id=0x0b). */
 +		b43_actab_write_bulk(dev, 0x0b, 0x0008, 16, 6, glim_a);
@@ -10921,9 +10909,7 @@ index 756cd44..94ebdfd 100644
 +			u16 tb = 0x45 + core * 0x20;
 +			u16 rd6[6];
 +
-+			if (dev->dev->chip_id != 0x4360)
-+				b43_actab_read_bulk(dev, 0x15, nvar_off[core],
-+						    16, 6, rd6);
++			b43_actab_read_bulk(dev, 0x15, nvar_off[core], 16, 6, rd6);
 +			b43_actab_write_bulk(dev, ta, 0x0008, 16, 6, nshp_a8);
 +			b43_actab_write_bulk(dev, tb, 0x0008, 16, 6, nshp_b8);
 +		}
@@ -14387,10 +14373,10 @@ index 0000000..c50ac9e
 +#endif /* B43_RADIO_2069_H_ */
 diff --git a/drivers/net/wireless/broadcom/b43/rxiqcal_phy_ac.c b/drivers/net/wireless/broadcom/b43/rxiqcal_phy_ac.c
 new file mode 100644
-index 0000000..0fc97b7
+index 0000000..dce6686
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/rxiqcal_phy_ac.c
-@@ -0,0 +1,781 @@
+@@ -0,0 +1,787 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +/*
 + * Broadcom B43 AC-PHY -- RX I/Q calibration.
@@ -14825,18 +14811,24 @@ index 0000000..0fc97b7
 +void b43_phy_ac_rxcal_cleanup(struct b43_wldev *dev, u8 rx_core)
 +{
 +	B43_AC_FN();
-+	static const struct { u16 off; u16 val; } wr[14] = {
++	static const struct { u16 off; u16 val; } wr[] = {
 +		{ 0x073e, 0x0000 }, { 0x0727, 0x0004 }, { 0x073c, 0x0000 },
 +		{ 0x0721, 0x5000 }, { 0x0729, 0x1000 }, { 0x0720, 0x0180 },
 +		{ 0x0728, 0x0880 }, { 0x0724, 0x0000 }, { 0x0736, 0x0000 },
 +		{ 0x0725, 0x0600 }, { 0x0739, 0x0000 }, { 0x073a, 0x0180 },
-+		{ 0x0722, 0x0000 }, { 0x0734, 0x0000 },
++		{ 0x0722, 0x0000 },
 +	};
 +	u16 s = (u16)(rx_core * 0x200);
 +	unsigned int i;
 +
 +	for (i = 0; i < ARRAY_SIZE(wr); i++)
 +		b43_phy_write(dev, wr[i].off + s, wr[i].val);
++	/*
++	 * 0x?734 goes back to what rx_gain_regs_program() found there, the last
++	 * of its saved registers: 0x0000 on the d6220, 0x0029 on the tg789vac.
++	 * The thirteen above are constants on every board.
++	 */
++	b43_phy_write(dev, 0x0734 + s, dev->phy.ac->rxgain_saved[rx_core][13]);
 +}
 +
 +/*

@@ -432,18 +432,24 @@ static void b43_phy_ac_stopplayback(struct b43_wldev *dev)
 void b43_phy_ac_rxcal_cleanup(struct b43_wldev *dev, u8 rx_core)
 {
 	B43_AC_FN();
-	static const struct { u16 off; u16 val; } wr[14] = {
+	static const struct { u16 off; u16 val; } wr[] = {
 		{ 0x073e, 0x0000 }, { 0x0727, 0x0004 }, { 0x073c, 0x0000 },
 		{ 0x0721, 0x5000 }, { 0x0729, 0x1000 }, { 0x0720, 0x0180 },
 		{ 0x0728, 0x0880 }, { 0x0724, 0x0000 }, { 0x0736, 0x0000 },
 		{ 0x0725, 0x0600 }, { 0x0739, 0x0000 }, { 0x073a, 0x0180 },
-		{ 0x0722, 0x0000 }, { 0x0734, 0x0000 },
+		{ 0x0722, 0x0000 },
 	};
 	u16 s = (u16)(rx_core * 0x200);
 	unsigned int i;
 
 	for (i = 0; i < ARRAY_SIZE(wr); i++)
 		b43_phy_write(dev, wr[i].off + s, wr[i].val);
+	/*
+	 * 0x?734 goes back to what rx_gain_regs_program() found there, the last
+	 * of its saved registers: 0x0000 on the d6220, 0x0029 on the tg789vac.
+	 * The thirteen above are constants on every board.
+	 */
+	b43_phy_write(dev, 0x0734 + s, dev->phy.ac->rxgain_saved[rx_core][13]);
 }
 
 /*
