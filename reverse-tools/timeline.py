@@ -33,12 +33,12 @@ state at the start of the flow come out of the same pass, because the harness
 cannot know them otherwise:
 
   AC_WD_PHASE   the value of the watchdog's turn counter, mod 30, at the first
-                turn of the segment. The measure block (every 10 turns) and the
-                region dump (every 30) are periodic on that counter since the
-                driver came up; on a cold attach the measure lands on the tenth
-                turn, on a hot cycle wherever the period happens to be. Read
-                off the first dump, or the first measure block when the
-                segment has no dump.
+                turn of the segment. The measure block (every temps_period
+                turns, 10 when unprogrammed) and the region dump (every 30) are
+                periodic on that counter since the driver came up; on a cold
+                attach the measure lands on the last turn of its first period,
+                on a hot cycle wherever the period happens to be. Read off the
+                first dump, or the measure blocks when the segment has no dump.
 
   AC_WD_ENTRY_TURN
                 whether the first turn of the segment carries the full shape
@@ -152,10 +152,10 @@ def events(ops):
     out.sort(key=lambda e: (e[0], e[1]))
 
     # The watchdog counter's phase: the measure block falls where the
-    # counter reads 9 mod 10, the region dump where it reads 29 mod 30. The
-    # dump pins the phase mod 30; without one in the segment the measure block
-    # pins it mod 10 and the residue is chosen so that no dump falls inside
-    # the segment, which is what the capture shows.
+    # counter reads period - 1 mod period, the region dump where it reads 29
+    # mod 30. The dump pins the phase mod 30; without one in the segment the
+    # measure blocks pin it mod their period and the residue is chosen so that
+    # no dump falls inside the segment, which is what the capture shows.
     # An entry turn is two events for one callback, so the counter is one
     # behind the event index from there on, and the segment advances it once
     # less than it has events.
@@ -170,7 +170,10 @@ def events(ops):
             phase = (29 - idx + off) % 30
             break
     if phase is None:
-        phase = 0
+        # The measure block's period is the board's temps_period, 10 turns
+        # where the SROM leaves it unprogrammed and 5 on the tg789vac: read
+        # it off the segment, as the spacing between two measure blocks.
+        measures = []
         for i, (t, _, op, rest) in enumerate(ops):
             if not match(op, rest, "PHY.RD", 0x73c) or t < t_first:
                 continue
@@ -179,9 +182,12 @@ def events(ops):
             idx = sum(1 for x in turn_t if x <= t) - 1
             if t - turn_t[idx] > 1.5:
                 continue
-            phase = (9 - idx + off) % 10
-            break
-        for cand in (phase, phase + 10, phase + 20):
+            if not measures or idx != measures[-1]:
+                measures.append(idx)
+        gaps = [b - a for a, b in zip(measures, measures[1:])]
+        period = min(gaps) if gaps else 10
+        phase = (period - 1 - measures[0] + off) % period if measures else 0
+        for cand in range(phase, 30, period):
             if (29 - cand) % 30 >= advances:
                 phase = cand
                 break
