@@ -34,6 +34,7 @@
 extern enum nl80211_band b43_test_band;
 
 #include "../board_profile.h"
+#include "leds.h"
 
 static struct b43_phy_ac       g_ac;
 static struct b43_wl           g_wl;
@@ -1297,6 +1298,40 @@ static void emit_core_hostflags(void)
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00d4, 0x0080);
 }
 
+/*
+ * The GPIO pins b43 registers a LED on, from the mounted SPROM: the rule of
+ * b43_led_get_sprominfo() in leds.c with patches/0017, and b43_map_led(),
+ * which registers nothing for OFF, ON and INACTIVE. compare.py uses them to
+ * tell the vendor's LED ops from the other GPIO ones; they match the
+ * mask the stock driver writes to chipcommon 0x8c in the LED block of the
+ * attach, on every board.
+ */
+static u16 led_pins(const struct ssb_sprom *s)
+{
+	static const u8 defaults[4] = {
+		B43_LED_ACTIVITY, B43_LED_RADIO_B, B43_LED_RADIO_A, B43_LED_OFF,
+	};
+	u8 bh[4 + ARRAY_SIZE(s->gpio_ext)] = { s->gpio0, s->gpio1, s->gpio2, s->gpio3 };
+	bool none = (bh[0] & bh[1] & bh[2] & bh[3]) == 0xff;
+	u16 pins = 0;
+	unsigned int i;
+
+	memcpy(&bh[4], s->gpio_ext, sizeof(s->gpio_ext));
+	for (i = 0; i < ARRAY_SIZE(bh); i++) {
+		u8 b;
+
+		if (i < 4 && none)
+			b = defaults[i];
+		else if (bh[i] == 0xff || (i >= 4 && !bh[i]))
+			b = B43_LED_OFF;
+		else
+			b = bh[i] & B43_LED_BEHAVIOUR;
+		if (b != B43_LED_OFF && b != B43_LED_ON && b != B43_LED_INACTIVE)
+			pins |= 1u << i;
+	}
+	return pins;
+}
+
 static void emit_core_shm_macaddr(const struct board_profile *p)
 {
 	unsigned int i;
@@ -1761,6 +1796,10 @@ int main(int argc, char **argv)
 
 	fprintf(stderr, "test: board=%s flow=%s\n", p->name, flow);
 	mount_board(p);
+	if (!strcmp(flow, "led_pins")) {
+		printf("0x%04x\n", led_pins(&g_sprom));
+		return 0;
+	}
 	b43_test_plans_reset();
 	plan_rxiq_poll(p->name, g_wldev.phy.do_full_init);
 	g_wldev.mac_suspended = 1;

@@ -365,6 +365,8 @@ def main():
     ap.add_argument('--bus', action='store_true',
                     help='profilo bus di compare.py: MOD svolti, TBL.* scartati')
     ap.add_argument('--board', default='agcombo')
+    ap.add_argument('--led-pins', type=lambda v: int(v, 0), default=0,
+                    help='pin GPIO dei LED, da ./ac_trace led_pins BOARD')
     ap.add_argument('--verbose', action='store_true')
     args = ap.parse_args()
 
@@ -402,7 +404,7 @@ def main():
         return (eq + jolly, nreg, diff, wrong, missing, surplus)
 
     eq0, nreg0, _, *cls0 = stats(V0, T)
-    VP, outside, keys = C.apply_perimeter(V0)
+    VP, outside, keys = C.apply_perimeter(V0, args.led_pins)
     eqp, nregp, _, *clsp = stats(VP, T)
     V1, skipped, used = apply_skips(VP, rules, args.verbose)
     eq1, nreg1, diff1, *cls1 = stats(V1, T)

@@ -647,8 +647,8 @@ PERIMETER = [
                 "che serve il --range di questo strumento. Se non lo sono, e' "
                 "un buco della patch."),
 
-    dict(pattern=r'^(GPIO\.(CTL|OUT|OE) val=0x[0-9a-f]+ mask=0x(407|4|400)'
-                 r'|SI\.COREREG core=0x0 off=0x8c\b)',
+    dict(pattern=r'^(GPIO\.(CTL|OUT|OE) |SI\.COREREG core=0x0 off=0x8c\b)',
+         led=True,
          motivo="i LED. Nel blob (wlD6220.o) sono quattro funzioni del core, "
                 "tutte su chipcommon: wlc_bmac_hw_up() all'attach -- "
                 "si_gpiocontrol(mask, 0), si_gpioled(mask, mask) che e' la "
@@ -658,9 +658,11 @@ PERIMETER = [
                 "LED al bss-up e al down (gpio 2 e gpio 10, quest'ultimo "
                 "active-low: 0x0004 e 0x0400), e wlc_bmac_led_hw_deinit() al "
                 "rmmod, che rilascia la maschera con out, outen e gpioled a "
-                "zero. La maschera e' dato di board: SROM ledbh0-3 a 0xff, "
-                "quindi i default di wl su gpio 0-2, piu' NVRAM ledbh10=0x88 "
-                "per gpio 10; da qui 0x407. Sul PHY non hanno effetto, e in "
+                "zero. Ognuna tocca un sottoinsieme non vuoto dei pin LED "
+                "della board, che l'harness ricava dalla SROM del profilo "
+                "(./ac_trace led_pins BOARD) e arrivano con --led-pins; le "
+                "GPIO con maschera fuori da quei pin restano nel confronto. "
+                "Sul PHY non hanno effetto, e in "
                 "b43 i LED li fa leds.c dai campi gpio0-3 della SROM, per la "
                 "sua via (MMIO GPIO_CONTROL del MAC) e non per quella del "
                 "vendor; i pin 4-15 da NVRAM ledbh glieli insegnano "
@@ -691,7 +693,18 @@ def _core_shm(op):
     return any(lo <= a <= hi for lo, hi, _ in CORE_SHM)
 
 
-def apply_perimeter(ops):
+GPIO_MASK = re.compile(r'^GPIO\.\w+ .*\bmask=(0x[0-9a-f]+)')
+
+
+def _led(op, pins):
+    m = GPIO_MASK.match(op)
+    if not m:
+        return True
+    mask = int(m.group(1), 16)
+    return mask != 0 and not mask & ~pins
+
+
+def apply_perimeter(ops, led_pins=0):
     """Togli le op vendor di cui si puo' mostrare che sono di altri.
 
     Ritorna (dentro, scartate, celle). La terza voce e' l'insieme
@@ -706,6 +719,8 @@ def apply_perimeter(ops):
             if not re.search(r['pattern'], op):
                 continue
             if r.get('core_shm') and not _core_shm(op):
+                continue
+            if r.get('led') and not _led(op, led_pins):
                 continue
             hit = k
             break
@@ -913,6 +928,10 @@ def main():
     ap.add_argument('--bus', action='store_true',
                     help='profilo bus: MOD svolti in RD+WR, TBL.* scartati; '
                          'per una traccia presa al bus MMIO (test/integration)')
+    ap.add_argument('--led-pins', type=lambda v: int(v, 0), default=None,
+                    help='pin GPIO dei LED della board, da ./ac_trace '
+                         'led_pins BOARD. Senza, il blocco LED del vendor '
+                         'resta nel confronto')
     ap.add_argument('--auto-align', action='store_true',
                     help='skip test prologue by aligning on vendor[0]')
     ap.add_argument('--align-on', help='align test on this exact op string')
@@ -950,7 +969,10 @@ def main():
               f"non le puo' contenere; vedi SOLO_PORT in questo file")
 
     if not args.senza_perimetro:
-        vendor, outside, keys = apply_perimeter(vendor)
+        if args.led_pins is None:
+            print("pin LED non dati: le op LED del vendor restano nel "
+                  "confronto; vedi --led-pins")
+        vendor, outside, keys = apply_perimeter(vendor, args.led_pins or 0)
         print(f"fuori perimetro: {len(outside)} op vendor scartate su "
               f"{len(keys)} celle dichiarate di altri; "
               f"vedi PERIMETER in questo file")

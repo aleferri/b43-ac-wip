@@ -144,7 +144,8 @@ non a dare un punteggio. Il numero da citare e' `grezzo`.
 ### 5. Trovare la prossima divergenza
 
 ```sh
-python3 compare.py /tmp/m01 /tmp/gate/full --range 528:36542 --auto-align
+python3 compare.py /tmp/m01 /tmp/gate/full --range 528:36542 --auto-align \
+    --led-pins $(./ac_trace led_pins d6220)
 ```
 
 `compare.py` e' posizione-per-posizione e si ferma alla prima divergenza col

@@ -153,6 +153,10 @@ else
 	SEGS=$DEFAULT
 fi
 
+# I pin dei LED, che il perimetro usa per riconoscere le op LED del vendor.
+# Li ricava l'harness dalla SROM del profilo, con la regola di leds.c.
+LED_PINS=$("$HERE/ac_trace" led_pins "$BOARD" 2>/dev/null)
+
 [ "$TABLE" = 1 ] && printf '%5s %8s %8s %10s %10s %s\n' \
 	ch vendor port full phy-rad-tbl status
 
@@ -294,11 +298,11 @@ PY
 	# comparable: the first tolerates insertions, the second does not.
 	echo "  --- cmp_skip ---"
 	python3 "$HERE/cmp_skip.py" "$TMP/merged" "$TMP/full" \
-		"$from:$last" --board "$BOARD" \
+		"$from:$last" --board "$BOARD" --led-pins "$LED_PINS" \
 		| grep -E 'grezzo|nel perimetro|CON  ecce|fuori perimetro|op saltate|valore sbagliato|op di wl mancanti|solo vendor|solo port|invisibili|bulk espanse'
 	echo "  --- compare ---"
 	python3 "$HERE/compare.py" "$TMP/merged" "$TMP/full" \
-		--range "$from:$last" --auto-align \
+		--range "$from:$last" --auto-align --led-pins "$LED_PINS" \
 		> "$TMP/cmp" || fail=1
 	if [ "$COND" = cold ]; then
 		sed -n '1,4p;/^  @/{p;q}' "$TMP/cmp"

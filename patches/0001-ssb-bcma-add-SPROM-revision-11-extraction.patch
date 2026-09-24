@@ -14,9 +14,13 @@ the dispatch. Revisions <= 10 keep the extract_r8 path.
 The rev-11 field set and word offsets follow the public bcmdhd SROM
 parser table (include/bcmsrom_tbl.h, GPLv2).
 
-Header fields (IL0MAC/ANTAVAIL/TXRXC/CCODE) reuse the rev-8 masks/shifts;
-only the absolute offsets moved. CCODE uses 0x96, since rev-8 0x92 collides
-with the middle word of the rev-11 IL0MAC block.
+Header fields (IL0MAC/ANTAVAIL/TXRXC/CCODE and the ledbh0-3 LED
+behaviours in gpio0-3) reuse the rev-8 masks/shifts; only the absolute
+offsets moved. CCODE uses 0x96, since rev-8 0x92 collides with the middle
+word of the rev-11 IL0MAC block. The LED words are 0x9A/0x9C: extract_r8
+would read them from 0x96/0x98, which on rev 11 are CCODE and REGREV, and
+leaving them unset gives b43 zeros instead of the 0xff that selects its
+LED defaults.
 
 Signed-off-by: Alessio Ferri <alessio.ferri@mythread.it>
 
@@ -35,16 +39,16 @@ TG789vac v2 dump, the one board here that programs them, has THERMAL =
 0x7800 and TEMPDELTA = 0x5500, matching tempthresh=120 and
 temps_period=5 in its NVRAM.
 ---
- drivers/bcma/sprom.c         | 189 ++++++++++++++++++++++++++++++++++-
+ drivers/bcma/sprom.c         | 195 ++++++++++++++++++++++++++++++++++-
  include/linux/ssb/ssb.h      |  68 +++++++++++++
- include/linux/ssb/ssb_regs.h | 105 +++++++++++++++++++
- 3 files changed, 361 insertions(+), 1 deletion(-)
+ include/linux/ssb/ssb_regs.h | 107 +++++++++++++++++++
+ 3 files changed, 369 insertions(+), 1 deletion(-)
 
 diff --git a/drivers/bcma/sprom.c b/drivers/bcma/sprom.c
 index e668ad7..6e2d25d 100644
 --- a/drivers/bcma/sprom.c
 +++ b/drivers/bcma/sprom.c
-@@ -474,6 +474,190 @@ static void bcma_sprom_extract_r8(struct bcma_bus *bus, const u16 *sprom)
+@@ -474,6 +474,196 @@ static void bcma_sprom_extract_r8(struct bcma_bus *bus, const u16 *sprom)
  	     SSB_SPROM8_TEMPDELTA_HYSTERESIS_SHIFT);
  }
  
@@ -79,6 +83,12 @@ index e668ad7..6e2d25d 100644
 +	SPEX(board_type, SSB_SPROM1_SPID, ~0, 0);
 +
 +	SPEX(country_code, SSB_SPROM11_CCODE, ~0, 0);
++	SPEX(gpio0, SSB_SPROM11_GPIOA, SSB_SPROM8_GPIOA_P0, 0);
++	SPEX(gpio1, SSB_SPROM11_GPIOA, SSB_SPROM8_GPIOA_P1,
++	     SSB_SPROM8_GPIOA_P1_SHIFT);
++	SPEX(gpio2, SSB_SPROM11_GPIOB, SSB_SPROM8_GPIOB_P2, 0);
++	SPEX(gpio3, SSB_SPROM11_GPIOB, SSB_SPROM8_GPIOB_P3,
++	     SSB_SPROM8_GPIOB_P3_SHIFT);
 +	SPEX(ant_available_a, SSB_SPROM11_ANTAVAIL, SSB_SPROM8_ANTAVAIL_A,
 +	     SSB_SPROM8_ANTAVAIL_A_SHIFT);
 +	SPEX(ant_available_bg, SSB_SPROM11_ANTAVAIL, SSB_SPROM8_ANTAVAIL_BG,
@@ -337,7 +347,7 @@ diff --git a/include/linux/ssb/ssb_regs.h b/include/linux/ssb/ssb_regs.h
 index 210f464..961354a 100644
 --- a/include/linux/ssb/ssb_regs.h
 +++ b/include/linux/ssb/ssb_regs.h
-@@ -606,6 +606,111 @@
+@@ -606,6 +606,113 @@
  #define SSB_SPROM8_BW40PO		0x0196
  #define SSB_SPROM8_BWDUPPO		0x0198
  
@@ -346,6 +356,8 @@ index 210f464..961354a 100644
 + */
 +#define SSB_SPROM11_IL0MAC		0x0090	/* 6 byte MAC address */
 +#define SSB_SPROM11_CCODE		0x0096	/* 2 byte country code */
++#define SSB_SPROM11_GPIOA		0x009A	/* ledbh0 low byte, ledbh1 high */
++#define SSB_SPROM11_GPIOB		0x009C	/* ledbh2 low byte, ledbh3 high */
 +#define SSB_SPROM11_ANTAVAIL		0x00A0
 +#define SSB_SPROM11_AGBG10		0x00A2	/* agbg0 low byte, agbg1 high */
 +#define SSB_SPROM11_AGBG2A0		0x00A4	/* agbg2 low byte, aga0 high */

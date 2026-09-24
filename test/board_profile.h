@@ -76,7 +76,7 @@ struct board_profile {
 	 * MMIO di B43_MMIO_MAC_HW_CAP che l'harness non modella. */
 	u16 core_rev;
 	u32 mac_hw_cap;
-	/* LED behaviour per GPIO pin: 0-3 from SROM ledbh0-3 (words 55-56 on
+	/* LED behaviour per GPIO pin: 0-3 from SROM ledbh0-3 (words 77-78 on
 	 * rev 11), 4-15 from NVRAM ledbh4..15. 0xff is "no field", and on
 	 * 0-3 it is what selects b43's defaults, as it does the stock
 	 * driver's. Consumed by leds.c; the pins end up in b43_gpio_init(). */
@@ -97,7 +97,7 @@ static const struct board_profile PROFILE_D6220 = {
 	.macaddr = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x03 },
 	/* WLCOREREV e MACHW_L/H come li scrive il vendor: cold01 #652-#654 */
 	.core_rev = 42, .mac_hw_cap = 0x30518c05,
-	/* SROM words 55-56 = 0xffff; NVRAM ledbh10=0x88: gpio 10, active-low,
+	/* SROM words 77-78 = 0xffff; NVRAM ledbh10=0x88: gpio 10, active-low,
 	 * activity. Together with the gpio 0-2 defaults this is the 0x407
 	 * the vendor writes on the chipcommon. */
 	.ledbh = { [0] = 0xff, [1] = 0xff, [2] = 0xff, [3] = 0xff,
@@ -275,7 +275,7 @@ static const struct board_profile PROFILE_TG789 = {
 	/* corerev 0x2a (wl1_revinfo) e MACHW_L/H come li scrive il vendor:
 	 * cold01-ch36-bw20 #590-#592. */
 	.core_rev = 42, .mac_hw_cap = 0x30518c05,
-	/* srom[55-56] = 0xffff e nessun ledbh nella NVRAM: il vendor pilota
+	/* srom[77-78] = 0xffff e nessun ledbh nella NVRAM: il vendor pilota
 	 * solo i gpio 0-2 (maschera 0x7 su GPIO.OE/OUT/CTL, senza 0x400). */
 	.ledbh = { [0] = 0xff, [1] = 0xff, [2] = 0xff, [3] = 0xff },
 	.radio_ver = 0x2069, .phy_rev = 1,
