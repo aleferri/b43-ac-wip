@@ -330,7 +330,7 @@ Le due passate sulle tre tabelle, estratte dalla cattura:
 | port, prima | `0x0002` | `0x0200` | `0x0962` | `0x0758` |
 | vendor e port, 2ª passata | `0x0000` | `0x0000` | `0xf8fc` | `0xf6f2` |
 
-La seconda passata, l'azzeramento di `iqcal_coeff_tables_reset()`, combaciava
+La seconda passata, l'azzeramento di `rxiqcal_coeff_tables_reset()`, combaciava
 gia'. La prima aveva tre valori su quattro sbagliati, e i valori che il port
 portava non corrispondono a nessuna delle catture presenti.
 
@@ -376,7 +376,7 @@ Verifica su cold01 e sul flow a caldo `01-up-ch36-bw20`:
 | 01-up | 0xff01 | 0xff01 | 0x0201 | 0x0201 | 0x93f1 | 0x8bed / 0x89e3 |
 
 Il core 2 e' la stessa relazione con una **base** sotto: la LUT vale la parola
-LO piu' la base per campo, e la base e' quella che `iqcal_coeff_tables_reset()`
+LO piu' la base per campo, e la base e' quella che `rxiqcal_coeff_tables_reset()`
 scrive dopo -- zero per i core 0 e 1, `(-8, -4)` fino all'indice 0x20 e
 `(-10, -14)` da 0x21 per il core 2. Il passo `(-2, -10)` fra le due voci e' il
 passo della base, non della cal. L'agcombo, che la terza catena la ha, dice
@@ -445,7 +445,7 @@ vendor riempie la LUT due volte con parole LO diverse" -- e' sbagliata, e il
 controllo e' il core 0: li' la seconda passata scrive `0x0000` su tutte e 128
 le celle, che e' la base nuda e non un risultato di calibrazione. Le due
 passate sono il riempimento di `rxcal_afe_finalize_gain_luts()` e, quattromila
-op piu' tardi, il reset di `iqcal_coeff_tables_reset()`. La seconda quindi
+op piu' tardi, il reset di `rxiqcal_coeff_tables_reset()`. La seconda quindi
 **misura la base direttamente**, senza doverla dedurre da una differenza:
 
 ```
@@ -1635,7 +1635,7 @@ CAC completato, quindi quello che questa misura separa e' la disponibilita' del
 canale, non la frequenza. Sulle
 celle di guadagno lo stesso: `TBL.WR id=0x07 off=0x100` 11 volte sotto e **1**
 sopra, `TBL.WR id=0x0c off=0x63` 43-45 sotto e **1** sopra. La singola passata
-che sopravvive e' `b43_phy_ac_rxiq_teardown_apply_defaults()`, la cui forma
+che sopravvive e' `b43_phy_ac_rxiqcal_teardown_apply_defaults()`, la cui forma
 combacia con il blocco del vendor a `#155558` e seguenti.
 
 ### Il blocco 0x05d4-0x05dc non e' KEYIDXBLOCK
@@ -1898,7 +1898,7 @@ decidere -- la catena che porta A e' la 0 su una board e la 2 sull'altra. Un
 conteggio di catene fuori tabella non emette il blocco e lo dichiara con
 `b43_phy_ac_todo()`: meglio nessun filtro che un ritardo di gruppo preso dalla
 catena sbagliata. Lo emette `b43_phy_ac_bw80_fir_write()` in coda a
-`b43_phy_ac_rxiq_apply_coefficients()`. cold24 passa da 98.65% a **98.73%**,
+`b43_phy_ac_rxiqcal_apply_coefficients()`. cold24 passa da 98.65% a **98.73%**,
 31 op mancanti chiuse, e nessun altro segmento si muove.
 
 ### La ri-emissione del blocco CRS, e una regola che non regge
@@ -3981,7 +3981,7 @@ per il punteggio e per il TX power reale, che e' post-MVP.
   | `rxcal_afe_calibrate` + `finalize_gain_luts` | PHY `0x0380` | 209-912 | **0** |
   | `rxiqcal_run_meas_iters` | PHY `0x0380` | idem | **0** |
   | `loopback_gain_search` | PHY `0x0b22` | 9 | **0** |
-  | `iqcal_coeff_tables_reset` | tab. `0x42`/`0x62`/`0x82` | 256 ciascuna | **0** |
+  | `rxiqcal_coeff_tables_reset` | tab. `0x42`/`0x62`/`0x82` | 256 ciascuna | **0** |
   | `post_rxiqcal_stage2` | tab. `0x000e` | 8-12 | **0** |
 
   **La colonna vuota non e' piu' "da ch52 in su".** Sul set precedente le tre
@@ -3997,7 +3997,7 @@ per il punteggio e per il TX power reale, che e' post-MVP.
   campionamenti a ch36 contro 192 a ch52: gira su entrambe) e
   `rxiqcal_finalize` (19 e 19).
 
-  Una da guardare: `iqcal_meas_post_dds_apply_v2`, il cui testimone PHY
+  Una da guardare: `rxiqcal_meas_post_dds_apply_v2`, il cui testimone PHY
   `0x0270` fa 110-202 accessi sotto i 5250 MHz ed esattamente **1** sopra, su
   ogni segmento. Quasi assente ma non del tutto, e quell'uno va spiegato prima
   di gatare la fase intera.
@@ -4046,7 +4046,7 @@ per il punteggio e per il TX power reale, che e' post-MVP.
   **Le nove fasi dietro `may_calibrate_tx()`.** Le quattro aggiunte dopo le
   cinque originali sono `radio_iqcal_config` e `radio_iqcal_teardown`, la
   catena di semina del tono (`rxiqcal_dds_seed` e le due varianti tone) e
-  `iqcal_meas_post_dds_apply_v2`, cioe' tutto quello che pilota il generatore
+  `rxiqcal_meas_post_dds_apply_v2`, cioe' tutto quello che pilota il generatore
   di tono. Le prove per ognuna sono nel commento al predicato in
   `src/phy_ac.c` e nel messaggio del commit; il caso piu' netto sono i dodici
   registri radio di `radio_iqcal_config`, tutti e dodici a zero sopra la
@@ -4063,7 +4063,7 @@ per il punteggio e per il TX power reale, che e' post-MVP.
   cosi', dopo che il solo testimone le dava candidate:
   `post_cal_finalize_iter3` (2 indirizzi a zero su 10, e la sua finestra
   statistiche `0x0308-0x0312` fa 38 accessi sopra contro 40 sotto),
-  `iqcal_apply_second_stage` (1 su 12) e `rxiqcal_apply_tx_bbmult_kick`, che ha
+  `rxiqcal_apply_second_stage` (1 su 12) e `rxiqcal_apply_tx_bbmult_kick`, che ha
   i suoi tre registri PHY a zero ma le sue quattro scritture sulla tabella
   `0x000c` presenti una volta -- sono quattro delle otto superstiti.
 
@@ -4107,7 +4107,7 @@ per il punteggio e per il TX power reale, che e' post-MVP.
   | `idle_tssi_meas` | 1557 | forma ridotta, vedi sotto |
   | `rxiqcal_prep_second_iter` | 178 | |
   | `rxgain_perchan_config` | 164 | |
-  | `rxiq_teardown_apply_defaults` | 163 | |
+  | `rxiqcal_teardown_apply_defaults` | 163 | |
   | `rxiqcal_apply_body_core` | 158 | |
   | il resto | ~1230 | ventina di fasi sotto le 160 op |
 

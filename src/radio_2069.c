@@ -1322,10 +1322,8 @@ void b43_radio_2069_afecal(struct b43_wldev *dev)
 /*
  * Band-preferred radio register block for radio_rev 4, run from
  * b43_radio_2069_init right after the power-on setup pulse, before the
- * chip-id-gated body. Moved here from phy_ac.c: this table and its writer
- * only ever touch radio registers (b43_radio_write), same as the rest of
- * this file -- it was added to phy_ac.c by mistake in the patch that
- * introduced it.
+ * chip-id-gated body. Table and writer touch only radio registers
+ * (b43_radio_write), like the rest of this file.
  */
 static const u16 b43_r2069_prefregs_rev4[][2] = {
 	{ 0x063a, 0x0000 }, { 0x063d, 0x000f }, { 0x0645, 0x3000 },
@@ -1355,11 +1353,10 @@ static void b43_r2069_prefregs_init(struct b43_wldev *dev)
 }
 
 /*
- * Radio 2069 power-on init. Called once from op_init. Moved here from
- * phy_ac.c (see comment on b43_r2069_prefregs_init above): the only PHY
- * register touches in here are the save/restore of 0x0728 and the fixed
- * gating writes around the radio body, the same pattern already used by
- * b43_radio_2069_afecal in this file.
+ * Radio 2069 power-on init. Called once from op_init. The only PHY-register
+ * touches here are the save/restore of 0x0728 and the fixed gating writes
+ * around the radio body, the same pattern as b43_radio_2069_afecal in this
+ * file.
  */
 
 /*
@@ -1501,10 +1498,8 @@ void b43_radio_2069_init(struct b43_wldev *dev)
 
 /*
  * Radio power-on sequence, run once right after b43_radio_2069_init
- * during software-rfkill unblock (op_software_rfkill). Moved here from
- * phy_ac.c: it was inlined between b43_radio_2069_init and
- * b43_radio_2069_rccal -- pure radio-register block, no PHY touches,
- * same misplacement as the prefregs/init functions above.
+ * during software-rfkill unblock (op_software_rfkill). Pure radio-register
+ * block, no PHY touches.
  * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   851-910]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;

@@ -233,7 +233,7 @@ because it is not a matter of sensitivity:
    are indistinguishable by construction, whatever the perturbation.
 
 And a category the test conflates with a real bug: a read consumed only on a
-branch that is never taken. 0x06a0 and 0x06a1 feed `rx_iq_comp_update`'s
+branch that is never taken. 0x06a0 and 0x06a1 feed `rxiqcal_comp_update`'s
 give-up path, which needs the measured power below B43_PHY_AC_MIN_RXIQ_PWR --
 never true in any capture.
 

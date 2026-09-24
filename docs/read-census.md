@@ -120,7 +120,7 @@ scritture consecutive e le letture degli stessi registri prima:
   (`b43_phy_ac_rxgain_regs[]`) e `measure_block()` li riscrive nello stesso
   ordine ~500 op dopo, 3 volte per corsa: `rxgain_saved[core][14]`.
 - `rxgain_config_readback()` legge 25 registri piu' `0x073e` e le tre righe
-  RFSEQ `0x07[0x100/0x103/0x106 + core]`, e `rxiq_teardown_apply_defaults()`
+  RFSEQ `0x07[0x100/0x103/0x106 + core]`, e `rxiqcal_teardown_apply_defaults()`
   riscrive tutti e 26 (0x0727 prima di 0x0726) e le tre righe due volte:
   `rxgain_cfg_saved[core][26]` e `rfseq_gain_saved[core][3]`. Il nome
   "defaults" era sbagliato: i valori sono quelli letti.

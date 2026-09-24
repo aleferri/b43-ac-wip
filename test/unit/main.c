@@ -1908,7 +1908,7 @@ int main(int argc, char **argv)
 
 	if (!strcmp(flow, "rxiq_est_debug")) {
 		register_rxiq_read_plans();
-		b43_phy_ac_rxiq_est_debug(&g_wldev);
+		b43_phy_ac_rxiqcal_est_debug(&g_wldev);
 	} else if (!strcmp(flow, "rxiq_comp")) {
 		/*
 		 * Vettori misura->coeff dalla cattura agcombo
@@ -1956,7 +1956,7 @@ int main(int argc, char **argv)
 		b43_test_plan_phy_reads(0x0ac4, acc_0ac4, 2);
 		b43_test_plan_phy_reads(0x0ac5, acc_0ac5, 2);
 
-		int r = b43_phy_ac_rx_iq_comp_update(&g_wldev, 0x07);
+		int r = b43_phy_ac_rxiqcal_comp_update(&g_wldev, 0x07);
 		fprintf(stderr, "test: rx_iq_comp_update returned %d\n", r);
 	} else if (!strcmp(flow, "op_init")) {
 		run_op_init();

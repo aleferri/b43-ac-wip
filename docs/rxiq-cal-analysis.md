@@ -108,7 +108,7 @@ verifica bit-exact in §8.
 L'estimator hardware usa lo stesso layout dell'N-PHY, con lo stesso ordine di
 lettura hi-prima-di-lo per le tre coppie. La differenza e' **a monte**: sweep a
 quattro configurazioni invece di una misura sola. A valle no, e il solve in
-`b43_phy_ac_rx_iq_comp_update` riproduce i coefficienti bit-exact.
+`b43_phy_ac_rxiqcal_comp_update` riproduce i coefficienti bit-exact.
 
 ## 6. Cosa i dati hanno escluso
 
@@ -139,10 +139,12 @@ su un chip poco squilibrato.
 
 ## 7. Cosa resta aperto
 
-1. Riempire `rxcal_radio_setup` / `rxcal_cleanup` / `rxcal_radio_cleanup`
-   (~300 op di RMW) a pezzi verificati col correlatore. Sono chiamate da
-   `channel_setup_tail2()`, quindi quello che non emettono manca al path
-   vivo.
+1. Verificare sui **valori** le `rxcal_radio_setup` / `rxcal_tone_setup` /
+   `rxcal_gainctrl` / `rxcal_cleanup` / `rxcal_radio_cleanup`. La sequenza di
+   op e' implementata in `phy_ac.c`, gira in `rxgainctrl_cal()` e combacia con
+   la cattura (gate a 99.89%); quello che l'harness non copre sono i valori che
+   `rxcal_gainctrl` legge dal correlatore, indefiniti senza hardware. La
+   correttezza sui valori resta da confermare su hardware.
 2. Determinare lo scopo dello sweep tone-mode. I coefficienti **non** ne
    dipendono numericamente -- li riproducono le sole misure di precisione -- ma
    il driver stock lo esegue sempre. Ipotesi: sanity check o warm-up; per
@@ -222,7 +224,7 @@ Dettagli discriminati dai vettori:
 
 ### 8.4 Riscontro nel driver
 
-`b43_phy_ac_rx_iq_comp_update` (src/rxiqcal_phy_ac.c) implementa il
+`b43_phy_ac_rxiqcal_comp_update` (src/rxiqcal_phy_ac.c) implementa il
 solve confermato; il flow `rxiq_comp` del test harness
 (`./ac_trace rxiq_comp agcombo`) inietta i 36 valori raw degli
 accumulatori come read plan e verifica che il codice emetta esattamente
@@ -237,7 +239,7 @@ l'offset per catena della soglia CRS, e viene dal campione di rumore. Vedi
 ## 10. Stato reale del port: la calibrazione e' un replay
 
 Il solve dei coefficienti esiste e la sua matematica e' verificata bit-exact
-(`b43_phy_ac_rx_iq_comp_update`), ma **non viene mai invocato dal driver**:
+(`b43_phy_ac_rxiqcal_comp_update`), ma **non viene mai invocato dal driver**:
 zero marker `FN` nel flow completo. L'unico chiamante e' il flow `rxiq_comp`
 dell'harness, che lo esercita da solo; nel path vivo non e' wirato.
 
@@ -285,8 +287,8 @@ un'altra sessione.
 
 Il register-map che manca agli stub di setup e cleanup resta l'unico ostacolo
 al percorso completo, ma non serve per questo passo: gli accumulatori sono gia'
-letti da `iqcal_meas_post_dds_apply_v2` subito prima di
-`rxiq_apply_coefficients`, che e' dove stanno le costanti.
+letti da `rxiqcal_meas_post_dds_apply_v2` subito prima di
+`rxiqcal_apply_coefficients`, che e' dove stanno le costanti.
 
 ## 11. Ricerca del guadagno di loopback
 

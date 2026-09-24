@@ -78,7 +78,7 @@ Segmentazione slittata (conteggi artefatti) o firma non trovata nel DSL
 down-to-bss — servirebbe un **attach del DSL** per un confronto affidabile:
 
 `phy_channel_setup`, `post_noise_shaping`, `afecal`, `idle_tssi_meas`,
-`txpwrctrl_setup`, `rxgainctrl_regs`, `rxcal_gaincal`, `rxiq_est`.
+`txpwrctrl_setup`, `rxgainctrl_regs`, `rxcal_gaincal`, `rxiqcal_est`.
 
 Nota: `rxgain_init` (dsl≈1005 vs 44) e `adc_reset` (dsl≈10020 vs 70) mostrano
 conteggi gonfi = slittamento, **non** differenze reali.

@@ -41,6 +41,24 @@ struct ieee80211_channel;
  */
 #define  B43_PHY_AC_RF_SEQ_RST2RX		0x0020	/* force_rfseq cmd 2 */
 /* force_rfseq cmd->bit: 0=0x01 1=0x02 2=0x20(RST2RX) 3=0x04 4=0x08 5=0x10 */
+
+/*
+ * PHY-side sample-play (tone) engine. The CORDIC tone / IQ buffer lives in
+ * table 0x000e; this block mirrors the N-PHY runsamples control registers
+ * (brcmsmac 0xc3-0xc6) by behaviour, not by address -- same fields in the same
+ * order below NSAMP. NSAMP is verified: it tracks the tone-table length across
+ * the three bandwidths (0x27/0x4f/0x9f = num_samps-1), see
+ * b43_phy_ac_rxiqcal_kick_len().
+ */
+#define B43_PHY_AC_SAMP_PLAY_CTL		0x460	/* start (bit0) / stop (bit1) */
+#define  B43_PHY_AC_SAMP_PLAY_START		0x0001
+#define  B43_PHY_AC_SAMP_PLAY_STOP		0x0002
+/* SALAME: loops/wait named from the N-PHY block order and, for loops, its
+ * 0xffff = continuous convention; the wait value (0x3c) is not cross-checked. */
+#define B43_PHY_AC_SAMP_PLAY_LOOPS		0x461
+#define B43_PHY_AC_SAMP_PLAY_WAIT		0x462
+#define B43_PHY_AC_SAMP_PLAY_NSAMP		0x463	/* num_samps - 1 */
+
 /* Per-channel PHY resampler and bandwidth registers 0x371-0x376. The values
  * come from chan_tuning u16[52..57], the phy_bw[] field, not from the radio's
  * chan_raw6. */
@@ -524,10 +542,8 @@ struct b43_phy_ac {
 	 * driver vero arriva dal template che mac80211 fornisce; qui la mette
 	 * il core, o chi ne fa le veci.
 	 *
-	 * Prima era dentro i letterali di b43_phy_ac_prb_rsp_len(), tarati sui
-	 * sette caratteri di `test-ap` dello sweep vecchio. La ricattura usa
-	 * `test-ap5`, otto, e quel byte in piu' sposta i PLCP di tutti e tre i
-	 * bandwidth: vedi docs/retrace-todo.md.
+	 * L'SSID della ricattura e' `test-ap5`, otto caratteri; la lunghezza
+	 * fissa i PLCP di tutti e tre i bandwidth. Vedi docs/retrace-todo.md.
 	 */
 	u8 ssid_len;
 	/*
@@ -743,17 +759,17 @@ void b43_phy_ac_rxiqcal_dds_seed(struct b43_wldev *dev);
 void b43_phy_ac_rxiqcal_prep_second_iter(struct b43_wldev *dev);
 void b43_phy_ac_rxiqcal_run_meas_iters(struct b43_wldev *dev);
 void b43_phy_ac_rxiqcal_apply_tx_bbmult_kick(struct b43_wldev *dev);
-void b43_phy_ac_iqcal_coeff_tables_reset(struct b43_wldev *dev);
-void b43_phy_ac_iqcal_apply_second_stage(struct b43_wldev *dev);
+void b43_phy_ac_rxiqcal_coeff_tables_reset(struct b43_wldev *dev);
+void b43_phy_ac_rxiqcal_apply_second_stage(struct b43_wldev *dev);
 void b43_phy_ac_rxgain_config_readback(struct b43_wldev *dev);
 void b43_phy_ac_rxgain_config_apply(struct b43_wldev *dev);
 void b43_phy_ac_radio_iqcal_config(struct b43_wldev *dev);
 void b43_phy_ac_rxiqcal_dds_seed_tone(struct b43_wldev *dev, int step);
-void b43_phy_ac_iqcal_meas_post_dds_apply(struct b43_wldev *dev);
-void b43_phy_ac_iqcal_meas_post_dds_apply_v2(struct b43_wldev *dev);
-void b43_phy_ac_rxiq_apply_coefficients(struct b43_wldev *dev);
+void b43_phy_ac_rxiqcal_meas_post_dds_apply(struct b43_wldev *dev);
+void b43_phy_ac_rxiqcal_meas_post_dds_apply_v2(struct b43_wldev *dev);
+void b43_phy_ac_rxiqcal_apply_coefficients(struct b43_wldev *dev);
 void b43_phy_ac_radio_iqcal_teardown(struct b43_wldev *dev);
-void b43_phy_ac_rxiq_teardown_apply_defaults(struct b43_wldev *dev);
+void b43_phy_ac_rxiqcal_teardown_apply_defaults(struct b43_wldev *dev);
 void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev);
 
 /* I quattro campi del blocco RX gain che seguono la larghezza; vedi phy_ac.c. */
