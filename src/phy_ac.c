@@ -3669,6 +3669,71 @@ static void b43_phy_ac_set_reg_on_reset(struct b43_wldev *dev)
 	 */
 }
 
+/*
+ * AvVmid: the gain and mid-point voltage of each chain's power-detector
+ * input, one pair per chain and per 5 GHz sub-band, written into RFSEQ
+ * 0x03cd + 0x10 * core as (Vmid << 3) | Av.
+ *
+ * The encoding is read off the captures: every value written there splits
+ * into an Av of 1 or 2 and a Vmid of 150 to 165, the range of the AvVmid_c0..2
+ * variables in public Broadcom NVRAM files (e.g. 1,165 or 2,140 per band, in
+ * the order 2g, 5gl, 5gml, 5gmu, 5gh). Those variables are read only when
+ * boardflags3 has BFL3_AvVim (0x40000000), as the same files document, and
+ * all four boards here have boardflags3=0, so what lands in the cell is the
+ * driver's default -- which is not the same on every board:
+ *
+ *   d6220, DSL-3580L, agcombo    2,152 on chain 0 and 2,156 on the others,
+ *                                every channel and width
+ *   tg789vac                     5gl  1,165  1,165  1,165
+ *                                5gml 1,160  1,160  1,160
+ *                                5gmu 1,152  1,150  1,160   (ch100-144)
+ *                                5gh  1,152  1,150  1,160   (ch149-165)
+ *
+ * The four sub-bands follow b43_phy_ac_pa5g_group(), measured on all 43 cold
+ * segments of the tg789vac and 43 of the d6220 plus the DSL's sweep. What
+ * picks one default table or the other is not established: of the fields
+ * that separate the tg789vac from the other three, pdgain5g -- 19 against 10
+ * -- is the one that belongs to the power detector, so it is the selector
+ * here. SALAME on that choice, from two values; a board with another
+ * pdgain5g gets the pdgain-10 table and a warning.
+ */
+struct b43_phy_ac_avvmid {
+	u8 av;
+	u8 vmid;
+};
+
+static const struct b43_phy_ac_avvmid
+b43_phy_ac_avvmid_pdgain10[B43_PHY_AC_MAX_CORES][4] = {
+	{ { 2, 152 }, { 2, 152 }, { 2, 152 }, { 2, 152 } },
+	{ { 2, 156 }, { 2, 156 }, { 2, 156 }, { 2, 156 } },
+	{ { 2, 156 }, { 2, 156 }, { 2, 156 }, { 2, 156 } },
+};
+
+static const struct b43_phy_ac_avvmid
+b43_phy_ac_avvmid_pdgain19[B43_PHY_AC_MAX_CORES][4] = {
+	{ { 1, 165 }, { 1, 160 }, { 1, 152 }, { 1, 152 } },
+	{ { 1, 165 }, { 1, 160 }, { 1, 150 }, { 1, 150 } },
+	{ { 1, 165 }, { 1, 160 }, { 1, 160 }, { 1, 160 } },
+};
+
+static u16 b43_phy_ac_avvmid_cell(struct b43_wldev *dev, unsigned int core,
+				  unsigned int grp)
+{
+	u8 pdgain = dev->dev->bus_sprom->pdgain5g;
+	const struct b43_phy_ac_avvmid *e;
+
+	if (pdgain == 19) {
+		e = &b43_phy_ac_avvmid_pdgain19[core][grp];
+	} else {
+		if (pdgain != 10)
+			b43warn(dev->wl,
+				"AC-PHY: no AvVmid default known for pdgain5g=%u, using pdgain5g=10's\n",
+				pdgain);
+		e = &b43_phy_ac_avvmid_pdgain10[core][grp];
+	}
+	return (u16)((e->vmid << 3) | (e->av & 0x7));
+}
+
 /* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   5128-7533]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -4000,26 +4065,18 @@ static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
 
 	/*
-	 * RFSEQ 0x03cd + 0x10 * core, one cell per wired chain: read, then
-	 * write. The read returns 0x0c02 everywhere.
-	 *
-	 * Transcribed, not derived. The d6220 writes 0x04c2 on core 0 and
-	 * 0x04e2 on core 1 at every channel, and the agcombo the same with
-	 * 0x04e2 on core 2. The tg789vac writes something else and per
-	 * sub-band: 0x0529 on all three up to ch48, 0x0501 from ch52, and
-	 * 0x04c1, 0x04b1, 0x0501 on UNII-3 -- with the same rxgains on every
-	 * core and board, so they are not what picks it. Core 2 is also the
-	 * odd one in the gain-curve entry on UNII-3, see
-	 * b43_phy_ac_gaincurve_off[], which suggests the two come from the same
-	 * per-core quantity.
+	 * The AvVmid of each wired chain, into RFSEQ 0x03cd + 0x10 * core: read,
+	 * then write. The read returns 0x0c02 everywhere. See
+	 * b43_phy_ac_avvmid_cell().
 	 */
 	{
 		struct b43_phy_ac *ac = dev->phy.ac;
+		unsigned int grp = b43_phy_ac_pa5g_group(dev, new_channel->center_freq);
 		unsigned int c;
 
 		for_each_set_bit(c, &ac->coremask, ac->num_cores) {
 			u16 off = (u16)(0x03cd + 0x10 * c);
-			u16 val = c ? 0x04e2 : 0x04c2;
+			u16 val = b43_phy_ac_avvmid_cell(dev, c, grp);
 			u16 tmp;
 
 			b43_actab_read_bulk(dev, 7, off, 16, 1, &tmp);
