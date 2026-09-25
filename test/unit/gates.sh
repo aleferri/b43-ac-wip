@@ -46,9 +46,14 @@
 #           which b43/phy_n.h calls AFECTL_C1). Those are the other core's,
 #           not the b43 core's, and strip_other_core.py removes them.
 #   oracle  cold: the insmod, so the per-address queues also cover the OTP and
-#           the core probe. Hot: the window start, because there is no insmod
-#           to start from -- the OTPs and the core probe are outside the
-#           segment.
+#           the core probe. Hot: the segment's first op, since there is no
+#           insmod. Not the window start: the `up` flow emits a prologue
+#           before the op the comparison aligns on -- 5717 ops on
+#           01-up-ch36-bw20, enable_afe among them -- whose vendor
+#           counterparts sit in the segment ahead of the window. An oracle
+#           that starts at the window hands those reads the window's values
+#           and every queue they touch runs one read ahead from there on,
+#           which is what the value-restoring phases then write back.
 #
 # Usage:
 #   ./gates.sh [segment...]                     cold, default ch36 bw20
@@ -107,6 +112,15 @@ done
 # It holds in both conditions: on the 44 up segments the vendor writes the same
 # target as on the cold segment of the same channel and width, every
 # configuration, so the map is exported for --hot as well.
+#
+# The tg789vac says the vendor's ceilings are conducted, not EIRP less the
+# board's antenna gain: with aga0 = 68 (4.25 dB) it writes the same 56 on
+# ch36-48/20, 76 on ch100/20 and /80, 60 on ch60/40 and 68 on ch100/40 as the
+# d6220 with 5.5 dB. The map reproduces them through an integer EIRP only on
+# a 5.5 dB board; on the tg789vac the conducted 15.5 dBm would need 19.75, and
+# its targets on those channels come out a quarter to five quarters of a dB
+# off. It also binds on ch64/20 there (76), where the d6220 is under its own
+# SROM limit and never shows it.
 REG_MAP="36:21,40:21,44:21,48:21,100:26"
 : "${AC_MAX_POWER_MAP:=$REG_MAP}"
 export AC_MAX_POWER_MAP
@@ -211,7 +225,7 @@ for line in open(path, errors='replace'):
 
 start = first_op if flow == 'switch_channel' else first_phy
 print(f"from={start or ''}")
-print(f"oracle={insmod or start or ''}")
+print(f"oracle={insmod or first_op or ''}")
 PY
 )"
 	[ -n "$from" ] || { echo "$seg: no PHY op"; fail=1; continue; }

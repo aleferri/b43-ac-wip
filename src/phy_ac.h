@@ -427,8 +427,8 @@ struct b43_phy_ac {
 	/* RX-IQ accumulators gathered by the measurement, consumed by the
 	 * solve. */
 	struct b43_phy_ac_iq_acc iq_acc[B43_PHY_AC_MAX_CORES];
-	/* Salvati da rxcal_radio_setup, riscritti da rxcal_radio_cleanup. */
-	u16 rxcal_radio_saved[B43_PHY_AC_MAX_CORES][7];
+	/* Salvati da tempsense_radio_setup, riscritti da tempsense_radio_restore. */
+	u16 tempsense_radio_saved[B43_PHY_AC_MAX_CORES][7];
 	/*
 	 * TX baseband multiplier, IQLOCAL 0x63 + 4*core mirrored at 0x73 +
 	 * 4*core. The vendor never invents it: bbmult_cal[core] is the entry
@@ -447,7 +447,7 @@ struct b43_phy_ac {
 	/*
 	 * The fourteen RX gain-control registers of each core that
 	 * rx_gain_regs_program() reads before driving them, in
-	 * b43_phy_ac_rxgain_regs[] order, written back by measure_block().
+	 * b43_phy_ac_rxgain_regs[] order, written back by b43_phy_ac_tempsense().
 	 */
 	u16 rxgain_saved[B43_PHY_AC_MAX_CORES][14];
 	/*
@@ -574,24 +574,15 @@ struct b43_phy_ac {
 	 */
 	bool tuned;
 	/*
-	 * RX-IQ imbalance accumulator readings from the probe sweep in
-	 * b43_phy_ac_rxcal_gainctrl(), indexed [core][step_idx][sample]:
-	 *   step_idx is the vendor's order of the four {bit1, bit2} combinations
-	 *     of radio 0x000e plus stride:
-	 *       [0]: bit1 set, bit2 clear
-	 *       [1]: both clear -- the baseline, injection off
-	 *       [2]: both set
-	 *       [3]: bit1 clear, bit2 set
-	 *   sample 0 to 7 are the eight consecutive reads of PHY 0x0013, the
-	 *     global accumulator, that the vendor uses for settling.
-	 *
-	 * Intended use: computing the I/Q compensation coefficients; the formula
-	 * is still open. Not used for the
-	 * op-for-op match, which only looks at the ops emitted. On real hardware
-	 * these are the values the cal finds, to be consumed by the next phase,
-	 * the RX-IQ compensation write.
+	 * The last temperature reading of each chain, from
+	 * b43_phy_ac_tempsense_chain(), indexed [core][step][sample]: the four
+	 * {bit1, bit2} configurations of radio 0x?00e in the vendor's order --
+	 * (1,0), (0,0), (1,1), (0,1) -- and the eight reads of PHY 0x0013 each.
+	 * The reading is the difference between the steps with bit 1 set and
+	 * those with it clear. Nothing consumes it yet: the conversion to degrees
+	 * needs two calibration points from the stock driver's phy_tempsense.
 	 */
-	u16 rxcal_imbalance[B43_PHY_AC_MAX_CORES][4][8];
+	u16 tempsense_samples[B43_PHY_AC_MAX_CORES][4][8];
 	/*
 	 * Shadow of the five HOSTFn shared-memory words, and whether a change
 	 * to it is written through to the cell.

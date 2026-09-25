@@ -71,6 +71,13 @@
 #   DEVID        deviceid ammessi su IF                        (default 0x43a2)
 #   HOSTAPD_INIT script di init di hostapd          (default /etc/init.d/hostapd)
 #   NO_RESTART   1 = a fine corsa NON rilanciare hostapd        (default vuoto)
+#   TEMPDELTA    se impostato: `wl phycal_tempdelta` forzato a questo valore
+#                dopo l'insmod e prima dell'up                (default vuoto)
+#
+# In ogni ciclo il valore di phycal_tempdelta dell'istanza appena caricata
+# finisce nella traccia come marcatore, prima e dopo l'eventuale forzatura:
+# e' la variabile che decide se il bss-up legge la temperatura prima delle
+# calibrazioni, e l'NVRAM non la dice (0 in NVRAM, 40 su istanze in esercizio).
 #
 # Niente `set -u`, niente head/awk/sed/tr: il busybox di questi firmware non li
 # ha tutti. Qui servono i builtin della shell piu' wl, insmod, rmmod, sleep,
@@ -107,6 +114,10 @@ fi
 [ -n "$SETTLE_BSS" ]   || SETTLE_BSS=10
 [ -n "$WL_KO" ]        || WL_KO=/lib/modules/3.4.11/wl.ko
 [ -n "$DEVID" ]        || DEVID="0x43a2"
+case "$TEMPDELTA" in
+    ''|[0-9]|[0-9][0-9]|[0-9][0-9][0-9]) ;;
+    *) echo "TEMPDELTA non numerico: '$TEMPDELTA'" >&2; exit 1 ;;
+esac
 [ -n "$HOSTAPD_INIT" ] || HOSTAPD_INIT=/etc/init.d/hostapd
 INIT_ONCE=/tmp/hostapd_init_once
 
@@ -316,6 +327,12 @@ ciclo() {
 
     scarica_wl || return 1
     carica_wl  || return 1
+
+    marca "phycal_tempdelta `wl -i "$IF" phycal_tempdelta 2>&1`"
+    if [ -n "$TEMPDELTA" ]; then
+        wl -i "$IF" phycal_tempdelta "$TEMPDELTA"
+        marca "phycal_tempdelta forzato `wl -i "$IF" phycal_tempdelta 2>&1`"
+    fi
 
     if ! wl -i "$IF" chanspec "$cs" > /dev/null 2>&1; then
         msg=`wl -i "$IF" chanspec "$cs" 2>&1`

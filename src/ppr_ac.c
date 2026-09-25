@@ -190,7 +190,7 @@ u8 b43_ppr_ac_load_max_from_sprom(const struct ssb_sprom *sprom, u8 coremask,
 {
 	unsigned int sb = b43_ppr_ac_subband(chan, width);
 	unsigned int c;
-	u8 maxp = 0xff, maxp_eff;
+	u8 maxp = 0xff;
 
 	b43_ppr_ac_clear(ppr, width);
 
@@ -203,21 +203,22 @@ u8 b43_ppr_ac_load_max_from_sprom(const struct ssb_sprom *sprom, u8 coremask,
 		maxp = 0;
 
 	/*
-	 * The regulatory ceiling caps the band's power, not each rate against
-	 * it: it enters here, on maxp, so the mcsbw*po spacing below survives
-	 * it whole. Capping the finished rows instead saturates the rates that
-	 * would sit above the ceiling into one another, and on ch100 at 20 MHz
-	 * -- the only configuration of the cold sweep where a ceiling binds on
-	 * a row whose nibbles are not all equal -- that loses the top step of
-	 * the per-rate offsets the vendor writes. The returned maxp is the
-	 * uncapped one, because the caller's per-core add-back is a distance to
-	 * that core's own maxp5ga.
+	 * The regulatory ceiling caps each finished rate, so the rates that
+	 * would sit above it saturate into one another. It is what the stock
+	 * driver shows of itself: `wl curpower` on the DSL-3580L at ch52/80
+	 * (router-data/dsl3580l/wl1_curpower_ch52-bw80.txt) has every power
+	 * target at min(board limit, regulatory limit) - 1.5 dB, with OFDM6 to
+	 * OFDM24 all at 15.0 under a 16.5 limit and a board ramp of 0 to 2 dB.
+	 * The tg789vac's 0x38 on ch36-48 at 20 MHz points the same way: its
+	 * row starts 1 dB below maxp, and only a cap on the rows gives the
+	 * value the d6220 writes there. On the d6220's sweep the two forms give
+	 * the same stream on every segment where a ceiling binds. The returned
+	 * maxp is the uncapped one, because the caller's per-core add-back is a
+	 * distance to that core's own maxp5ga.
 	 */
-	maxp_eff = maxp;
-	if (ceiling && ceiling < maxp)
-		maxp_eff = ceiling;
-
-	b43_ppr_ac_fill_rows(sprom, ppr, chan, maxp_eff);
+	b43_ppr_ac_fill_rows(sprom, ppr, chan, maxp);
+	if (ceiling)
+		b43_ppr_ac_apply_max(ppr, ceiling);
 	return maxp;
 }
 

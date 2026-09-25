@@ -17,11 +17,11 @@ SIG = [
  ('idle_tssi_meas',        'PHY.MOD addr=0x0072 val=0x0004 mask=0x0004'),
  ('txpwrctrl_setup_1',     'PHY.MOD addr=0x0071 val=0x00c8 mask=0x00ff'),
  ('txpwrctrl_setup_2',     'PHY.MOD addr=0x0071 val=0x00c8 mask=0x00ff'),
- ('rxgainctrl_regs',       'PHY.WR addr=0x073e val=0x0440'),
- ('rxcal_radio_setup',     'RAD.MOD addr=0x0161 val=0x4000 mask=0x4000'),
- ('rxcal_tone_setup',      'PHY.WR addr=0x0739 val=0x00fa'),
+ ('tempsense',             'PHY.WR addr=0x073e val=0x0440'),
+ ('tempsense_radio_setup', 'RAD.MOD addr=0x0161 val=0x4000 mask=0x4000'),
+ ('tempsense_tone',        'PHY.WR addr=0x0739 val=0x00fa'),
  ('rxcal_gaincal_core0',   'TBL.WR id=0x000c off=0x0063'),
- ('rxcal_cleanup',         'PHY.WR addr=0x073e val=0x0000'),
+ ('tempsense_restore',     'PHY.WR addr=0x073e val=0x0000'),
  ('rxiq_est_debug',        'PHY.WR addr=0x0272 val=0x0400'),
 ]
 def ck(op):

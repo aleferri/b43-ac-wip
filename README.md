@@ -124,7 +124,7 @@ il timer da 150 ms del rivelatore radar, le ricariche del template che sono del
 core, il bss-up che chiude il check e porta le calibrazioni. Su hardware
 arrivano dal kernel e da mac80211; nell'harness li replaya `timeline.py` dai
 timestamp della cattura, e nessuna lista di tick attraversa il confine di
-`src/`. Il measure block e il dump della regione sono contatori del driver
+`src/`. La lettura di temperatura e il dump della regione sono contatori del driver
 (dieci e trenta giri), il bss-up e' un evento dello stack e cade dove la
 cattura lo mette, fra due giri. Dalla cattura viene anche la forma del primo
 giro dopo il bring-up -- pieno o la sola spazzata -- che non dipende dal
@@ -205,8 +205,8 @@ word-per-word.
   farrow, chanspec tail, coeff bank) → `chan_tables` → noise shaping
   (tbl 0x15/0x0b/0x44/0x45 + `rxgain_init` per-core) → BW select →
   `reset_cca` → `afecal` → `adc_reset` → idle-TSSI → 2× `txpwrctrl_setup`
-  (LUT est_pwr da `pa5ga` SROM) → `rxgainctrl_regs` → setup radio/tone e
-  sweep `gainctrl` per-core → cleanup.
+  (LUT est_pwr da `pa5ga` SROM) → lettura di temperatura del bss-up
+  (`b43_phy_ac_tempsense()`).
 - **Calibrazioni post-channel**, invocate da `op_switch_channel` dopo
   `mac_enable`: `post_cal_finalize` iter 2/3, RXIQ apply + stage 2, cal AFE
   RX, i due round `txpwr`/`rxgain` con misura RXIQ, il loop
@@ -215,8 +215,8 @@ word-per-word.
   TSSI/statistiche SHM con latch-and-clear della finestra SHM: il latch
   legge fino a 0x0314 e la clear si ferma a 0x0312, asimmetria che ogni
   cattura mostra e che e' voluta. Piu'
-  una tornata singola del measure block a MAC sospeso — il ciclo su
-  `0x0725/0x0925` che il vendor esegue ogni ~5 s a regime. Op-per-op
+  la lettura di temperatura a MAC sospeso ogni `temps_period` giri — il
+  ciclo su `0x0725/0x0925`, 10 s sulle board col campo non programmato. Op-per-op
   contro il tick vendor (vedi [Verifica](#verifica-riproducibile)).
 - **Core b43**: TX/RX wiring (`patches/0008`), allineamento DMA a 64 KB
   (0004), channel set 5 GHz dedicato (0003), PCI bridge ID (0009), bcma PMU
