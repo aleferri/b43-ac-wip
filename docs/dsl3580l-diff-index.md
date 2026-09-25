@@ -68,8 +68,8 @@ Confermano i condizionali `is4360` già presenti nel port: sono registri che il
 | fase | registri 4360-only | classe | stato |
 |---|---|---|---|
 | `chan_tables` | banco PHY `0x0b10..0x0b13`, `0x0b27`, `0x0b3c`; `0x0aa0/0aa1` (coeff core-2); RAD `0x0402..0405`; TBL 0x07 off `0x016a/038a/03ed`; TBL 0x0c off `0x0068/006a` | [CHIP] | attesa (core-2 / 4360) |
-| `rxcal_radio_setup` | RAD `0x040e/0417/0424/0425/055f/0561/056e` (read+mod+write) | [CHIP] | attesa |
-| `rxcal_tone_setup` | banco PHY `0x0b2x/0x0b3x`; RAD `0x040e`(×8), `0x056e`(×8), `0x041a`(×3) | [CHIP] | attesa |
+| `tempsense_radio_setup` | RAD `0x040e/0417/0424/0425/055f/0561/056e` (read+mod+write) | [CHIP] | attesa |
+| `tempsense_tone` | banco PHY `0x0b2x/0x0b3x`; RAD `0x040e`(×8), `0x056e`(×8), `0x041a`(×3) | [CHIP] | attesa |
 | `chan_tables` / `rxcal_*` | `0x0072` toccato 2/6/3 volte (d6220/dsl/agcombo) | [tutti diversi] | **DA VERIFICARE** |
 
 ## Fasi non confrontabili con le catture attuali
@@ -78,7 +78,7 @@ Segmentazione slittata (conteggi artefatti) o firma non trovata nel DSL
 down-to-bss — servirebbe un **attach del DSL** per un confronto affidabile:
 
 `phy_channel_setup`, `post_noise_shaping`, `afecal`, `idle_tssi_meas`,
-`txpwrctrl_setup`, `rxgainctrl_regs`, `rxcal_gaincal`, `rxiqcal_est`.
+`txpwrctrl_setup`, `tempsense`, `rxcal_gaincal`, `rxiqcal_est`.
 
 Nota: `rxgain_init` (dsl≈1005 vs 44) e `adc_reset` (dsl≈10020 vs 70) mostrano
 conteggi gonfi = slittamento, **non** differenze reali.

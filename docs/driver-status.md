@@ -139,7 +139,7 @@ schema previsto, con `switch_channel` stub al passo 1 e riempito via via:
 | f | op_init + op_software_rfkill: wira il PHY nel framework b43 | e |
 | g | rxgain: sezione rxgain_init/rxgainctrl di phy_ac.c | e |
 | h | farrow: b43_phy_ac_farrow_setup + tabelle (da phy_ac.c) | a |
-| i | RX-IQ cal di produzione (rxcal_radio_setup/tone_setup/tone_arm/gainctrl/cleanup/radio_cleanup): in `phy_ac.c`, gira in `rxgainctrl_cal()` | e, g |
+| i | lettura di temperatura (`b43_phy_ac_tempsense()` e le sue foglie `tempsense_*`): in `phy_ac.c`, la chiamano il bss-up, `op_channel_calibrate()` e il watchdog | e, g |
 | j | `rxiqcal_phy_ac.c/h`: stimatore/validatore da harness (funzioni `rxiqcal_est_debug`, `rxiqcal_comp_update`), fuori dal percorso del driver — non gated, ma raggiungibile solo dai flow `ac_trace rxiq_est_debug`/`rxiq_comp`; valida la matematica RX-IQ contro le catture, vedi docs/rxiq-cal-analysis.md | a |
 
 ## Note sulle scelte di implementazione

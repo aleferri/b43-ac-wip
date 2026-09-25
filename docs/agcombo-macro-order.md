@@ -39,11 +39,11 @@ riferimento, zero permutazioni.
 | 8 | idle_tssi_meas | #64179..#65372 | 100% |
 | 9 | txpwrctrl_setup (1a chiamata) | #65373..#65865 | 100% |
 | 10 | txpwrctrl_setup (2a chiamata) | #65866..#66343 | 100% |
-| 11 | rxgainctrl_regs | #66344..#66472 | 100% |
-| 12 | rxcal_radio_setup | #66473..#66573 | 100% |
-| 13 | rxcal_tone_setup | #66574..#67063 | 100% |
+| 11 | tempsense | #66344..#66472 | 100% |
+| 12 | tempsense_radio_setup | #66473..#66573 | 100% |
+| 13 | tempsense_tone | #66574..#67063 | 100% |
 | 14 | rxcal gaincal (core 0..) | #67066..#69433 | 100% |
-| 15 | rxcal_cleanup | #69434..#79279 | 100% |
+| 15 | tempsense_restore | #69434..#79279 | 100% |
 | 16 | blocco est rxiq finale | #79280..#82786 | 54% |
 
 ## La differenza macro NON e' una permutazione

@@ -22,9 +22,8 @@
  *     registers are only saved and restored around the measurement.
  *
  * The RX-IQ path in use is the transcribed one in phy_ac.c, orchestrated by
- * b43_phy_ac_set_channel_calibrations(); its leaves (rxcal_radio_setup,
- * rxcal_tone_setup/arm, rxcal_gainctrl, rxcal_cleanup, rxcal_radio_cleanup)
- * live there too. What remains in this file is the harness-only
+ * b43_phy_ac_set_channel_calibrations(), and lives there too. What remains
+ * in this file is the harness-only
  * estimator/validator -- rxiqcal_est/rxiqcal_coeffs, the tone play (tx_tone,
  * stopplayback, rxiqcal_set_tone, rxiqcal_apply_gain) and the two entry points
  * rxiqcal_est_debug and rxiqcal_comp_update -- reachable only from the
@@ -82,14 +81,8 @@ struct b43_phy_ac_iq_comp {
 /*
  * Register map taken from the capture.
  *
- * Filled in and confirmed: rxiq_est, rxiq_coeffs, rxcal_tone_setup/arm,
- * rxcal_gainctrl and its step helper, rxcal_apply_gain, tx_tone,
+ * Filled in and confirmed: rxiq_est, rxiq_coeffs, rxcal_apply_gain, tx_tone,
  * stopplayback.
- *
- * Still stubs: rxcal_radio_setup, rxcal_cleanup and rxcal_radio_cleanup,
- * some 300 RMW ops to be done in verified pieces. They are called from
- * channel_setup_tail2() in phy_ac.c, so what they do not emit is missing
- * from the live path.
  */
 
 /*
@@ -289,8 +282,8 @@ static void b43_phy_ac_rxiqcal_apply_gain(struct b43_wldev *dev, u8 core)
  * only reads what the hardware reports, so the results can validate (or
  * falsify) the register-map and accumulator-layout assumptions.
  *
- * Call point: after txpwr_by_index, before rxgainctrl_regs in op_switch_channel:
- * in the trace it sits between the txpwr tail and the rxgainctrl block.
+ * Call point: after txpwr_by_index, before the bss-up's tempsense: in the
+ * trace it sits between the txpwr tail and the tempsense block.
  */
 void b43_phy_ac_rxiqcal_est_debug(struct b43_wldev *dev)
 {

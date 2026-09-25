@@ -386,8 +386,8 @@ static void mount_board(const struct board_profile *p)
 	/*
 	 * Stato del watchdog all'ingresso: il contatore del periodo da dieci
 	 * giri, che nel driver gira dal bring-up e che un segmento a caldo
-	 * prende a meta'. reverse-tools/timeline.py lo legge dal primo measure
-	 * block della cattura. Senza, zero: il measure block sul nono giro,
+	 * prende a meta'. reverse-tools/timeline.py lo legge dalla prima
+	 * tempsense della cattura. Senza, zero: la tempsense sul nono giro,
 	 * che e' l'attach a freddo.
 	 */
 	{
@@ -1051,8 +1051,8 @@ static void run_switch_channel(void)
 		 * quindi il piano di lettura deve seguirlo slot per slot.
 		 *
 		 *   [0] [1]  bit 4 basso, dopo una WR a 0
-		 *   [2]      peek di rxcal_radio_setup. Finisce in
-		 *            rxcal_radio_saved[] e il cleanup lo riscrive: la
+		 *   [2]      peek di tempsense_radio_setup. Finisce in
+		 *            tempsense_radio_saved[] e il restore lo riscrive: la
 		 *            cattura ch36 ripristina 0x0011, quindi il peek deve
 		 *            leggere quello
 		 *   [3] [4]  RD interne dei maskset che seguono
@@ -1887,7 +1887,7 @@ int main(int argc, char **argv)
 	b43_test_mirror_radio_set(0x024e, 0x8000);
 
 	/*
-	 * Radio pre-state per rxcal_radio_setup (vendor #39641-#39708).
+	 * Radio pre-state per tempsense_radio_setup (vendor #39641-#39708).
 	 * Derivati dalle triplette MOD+RD+WR: il WR emette (cur & mask) | set.
 	 *
 	 * Solo i registri SENZA op vendor precedenti hanno pre-seed statico
@@ -2070,7 +2070,7 @@ int main(int argc, char **argv)
 		 * derivabile) sia da riferimento per compare.py.
 		 *
 		 * Stato entrante: MAC attivo (come switch_channel), PHY in
-		 * release — il REQUIRE del measure block vuole
+		 * release — il REQUIRE della tempsense vuole
 		 * RX_WAITED|RX_OFDM e niente CLIP_ALL_DIS/CCA_RESET/RX_CCK.
 		 *
 		 * Il toggle di 0x0520[3:2] fa parte dello stato entrante come

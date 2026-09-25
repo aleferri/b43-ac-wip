@@ -3031,7 +3031,15 @@ il modello e' esatto su 24 segmenti su 43, con la riga della larghezza su 28, e
 non e' mai peggiore -- i quattro in piu' sono ch52, ch100, ch132 e ch149 a 80
 MHz.
 
-**Il tetto.** Il tetto regolatorio entra su `maxp`, prima che si sottraggano
+**Il tetto.** *Superato:* il tetto taglia le righe finite. Lo dice `wl
+curpower` del DSL-3580L (`router-data/dsl3580l/wl1_curpower_ch52-bw80.txt`),
+dove ogni target e' `min(limite di board, limite regolatorio) - 1.5 dB`, e lo
+conferma lo `0x38` del tg789vac su ch36-48, la cui riga parte 1 dB sotto
+`maxp`; sullo sweep del d6220 le due forme danno lo stesso flusso su tutti i
+segmenti dove un tetto lega, ch100/20 compreso. Quel che segue e' la lettura
+di allora.
+
+Il tetto regolatorio entra su `maxp`, prima che si sottraggano
 gli offset, non sulle righe finite. Tagliare le righe finite satura fra loro i
 rate che starebbero sopra il tetto, e su ch100 a 20 MHz questo perde il gradino
 di testa degli offset che il vendor scrive. **Lo decide quella configurazione e
@@ -3095,6 +3103,47 @@ un nibble.
 
 Sbagliare questo campo di un dB non impedisce nessuna fase dell'attach: vale
 per il punteggio e per il TX power reale, che e' post-MVP.
+
+## La lettura di temperatura al bss-up
+
+`b43_phy_ac_tempsense()` gira in tre punti, sempre a MAC sospeso: al bss-up
+prima della calibrazione piena (`op_channel_calibrate()` sui canali subito
+disponibili, `bss_up()` dopo il check), e nel watchdog ogni `temps_period`
+giri. Il blocco e' lo stesso nei tre punti: 579 op sui tre core del tg789vac,
+391 sui due del d6220, e su tutti i 100 blocchi dei due sweep a freddo ogni
+registro che tocca torna al valore letto in testa (277 passate per catena su
+277).
+
+La lettura del bss-up non e' incondizionata. Contata sul testimone -- dopo la
+chiusura dell'ultima passata conf_tx (`OBJ.WR 0x0a24 = 0x0050`, MAC enable)
+viene o un MAC suspend con `PHY.RD 0x019e` e i tre clear, o direttamente
+`PHY.RD 0x0140` delle calibrazioni:
+
+| sweep | con lettura | senza |
+| --- | --- | --- |
+| d6220 freddo | 43 | 0 |
+| d6220 caldo, up | 44 | 0 |
+| tg789vac freddo | 39 | 1, cold01 |
+
+cold32, cold33 e cold41 sono meteo e il CAC non si chiude: non contano. In
+cold01 le calibrazioni ci sono e hanno la forma dei vicini; manca solo la
+lettura. Fino al punto di decisione cold01 e cold02-04 sono strutturalmente
+identici in tutte le classi tracciate, e i valori letti coincidono: la
+condizione non passa per niente che il tracer veda.
+
+Il riferimento GPL ha la stessa forma: in brcmsmac, `wlc_phy_cal_perical()` su
+`PHY_PERICAL_UP_BSS` legge la temperatura prima della cal piena solo se
+`phycal_tempdelta` non e' zero. Il valore con cui gira un'istanza pero' non e'
+quello dell'NVRAM: il tg789vac ha 0 in NVRAM e 40 sulle istanze in esercizio,
+che `init_broadcom.sh` configura; il DSL-3580L ha 255 in NVRAM e 40 a runtime.
+cold01 e' l'unico segmento osservabile del secondo boot e il primo ricarico
+dopo il boot, quindi due candidati -- il valore dell'istanza e uno stato del
+boot -- danno lo stesso conto.
+
+Si decide sul device: `capture_cold_tg789vac.sh` registra in traccia il
+`phycal_tempdelta` di ogni istanza appena caricata e con `TEMPDELTA=` lo
+forza. Finche' non c'e' la misura il port legge sempre, che e' il caso di 130
+segmenti su 131.
 
 ## Punti aperti
 

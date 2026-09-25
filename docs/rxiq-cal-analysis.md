@@ -9,12 +9,12 @@ ch36 (`ch36-annotated.txt`, episodio #50526–52448) e D6220 ch36
 ## 1. Localizzazione nella sequenza `down → bss-up`
 
 Il blocco RXIQ compare una sola volta nel percorso deterministico, dopo
-`txpwr_by_index` e prima di `rxgainctrl_regs`:
+`txpwr_by_index` e prima della lettura di temperatura del bss-up:
 
 ```
 ... txpwrctrl_setup → txpwr_by_index → rx_gate(release)
 ───── RXIQ block (#50526 – #52213, DSL ch36) ─────
-rxgainctrl_regs → rx_enable → mac_enable
+tempsense → mac_enable
 ```
 
 Il pattern è identico nella trace D6220 (#82271–#84501), confermando che
@@ -139,12 +139,13 @@ su un chip poco squilibrato.
 
 ## 7. Cosa resta aperto
 
-1. Verificare sui **valori** le `rxcal_radio_setup` / `rxcal_tone_setup` /
-   `rxcal_gainctrl` / `rxcal_cleanup` / `rxcal_radio_cleanup`. La sequenza di
-   op e' implementata in `phy_ac.c`, gira in `rxgainctrl_cal()` e combacia con
-   la cattura (gate a 99.89%); quello che l'harness non copre sono i valori che
-   `rxcal_gainctrl` legge dal correlatore, indefiniti senza hardware. La
-   correttezza sui valori resta da confermare su hardware.
+1. Il blocco a quattro passi su radio `0x?00e` con le otto letture di PHY
+   `0x0013` per passo non fa parte della cal RX-IQ: e' la lettura di
+   temperatura, `b43_phy_ac_tempsense()`. Cade ogni `temps_period` giri del
+   watchdog e al bss-up prima della calibrazione piena, dove brcmsmac legge la
+   temperatura; la differenza fra i passi con bit 1 alto e basso deriva con lo
+   stato termico. Per convertirla in gradi servono punti di taratura da
+   `wl phy_tempsense`.
 2. Determinare lo scopo dello sweep tone-mode. I coefficienti **non** ne
    dipendono numericamente -- li riproducono le sole misure di precisione -- ma
    il driver stock lo esegue sempre. Ipotesi: sanity check o warm-up; per
@@ -296,8 +297,12 @@ Criterio del driver stock, ricostruito dai dati e implementato in
 `b43_phy_ac_loopback_step` / `b43_phy_ac_loopback_gain_search`.
 
 La potenza media per campione e' `round(ii/1024) + round(qq/1024)` (1024 = il
-numero di campioni, `0x400`) e va portata nella finestra `[0xb57, 0x169e]` =
-`[2903, 5790]`. Sotto si alza l'indice, sopra si abbassa, con clamp `[1,10]`.
+numero di campioni, `0x400`): sopra `0x169e` = 5790 l'indice si dimezza, e la
+ricerca si ferma appena la potenza e' a o sotto quel valore, o l'indice e' 0.
+L'indice non sale mai: sulle 323 ricerche degli sweep a freddo di d6220 e
+tg789vac ogni sequenza di scritture di `0x?734` e' non crescente, anche dove a
+indice 0 la potenza cade sotto `0xb57` (catena 1 del tg789vac a ch104). Il
+bordo basso `0xb57` letto all'inizio non ha nessun effetto osservato.
 L'indice di partenza e' 4 in 5 GHz e 0 in 2 GHz, e sta in `0x0734 + core*0x200`.
 
 Sequenza letta intercalata alle misure (d6220 ch36 BW20, segmento 01):
@@ -357,22 +362,20 @@ valore fuori campo -- ma non e' misurato.
 Con `AC_READ_ORACLE` il port riceve le stesse letture del driver stock e
 converge sugli stessi indici senza hardware.
 
-## 12. Measure block: struttura e dipendenza dalla larghezza
+## 12. La lettura di temperatura: struttura e dipendenza dalla larghezza
 
-Blocco ricorrente (393 op) eseguito dopo ogni probe cycle della finalize, in
-nove sotto-blocchi: RX AFE per-core reconfig (86), radio 2069 second IQ-cal
-(68), rxcal cleanup preamble (5), tail perchan (18), arm tone gen (3), poll
-blocks TX AFE (163), reset gain regs PHY (29), radio reset (14), finalize (5),
-piu' 2 MAC toggle di arm.
+`b43_phy_ac_tempsense()`, 391 op su due catene e 579 su tre. Per catena: il
+blocco RX gain `0x?720-0x?73e` programmato da `rx_gain_regs_program()` e la
+radio da `tempsense_radio_setup()`, poi il preambolo della porta e
+`rxgain_perchan_tail()`, poi per catena l'arm e i quattro passi su radio
+`0x?00e` con otto letture di PHY `0x0013` ciascuno, infine il ripristino dei 14
+registri PHY e dei 7 radio al valore letto in testa. Non fa parte della cal
+RXIQ: la chiamano il bss-up, prima della calibrazione piena, e il watchdog ogni
+`temps_period` giri. Vedi "La lettura di temperatura al bss-up" in
+`docs/retrace-todo.md`.
 
-Non e' esclusivo della cal RXIQ: a regime il driver stock lo riesegue tal quale
-dentro il tick periodico ~5 s (`b43_phy_ac_watchdog`), con lo stesso
-inquadramento interno e **senza** i due MAC toggle finali. E' quindi la tornata
-di misura rumore/RSSI del PHY, usata dalla finalize in 4 round convergenti e dal
-watchdog in round singoli.
-
-I 4 campi gain dell'arming RX sono selezionati dalla **larghezza**, identici fra
-fase di cal e tick periodico. Rimisurato sugli 87 segmenti del set corrente,
+I 4 campi gain del blocco RX sono selezionati dalla **larghezza**, identici al
+bss-up e nel watchdog. Rimisurato sugli 87 segmenti del set corrente,
 freddo e caldo: la tabella regge senza eccezioni, l'unico altro valore che
 compare su quei campi e' lo zero del disarmo.
 
@@ -383,8 +386,7 @@ compare su quei campi e' lo zero del disarmo.
 | `0x?73a` mask `0x0008` | `0x0000` | `0x0000` | `0x0008` |
 | `0x?73a` mask `0x0060` | `0x0040` | `0x0000` | `0x0000` |
 
-Il port cabla la colonna BW20, coerente col fatto che `switch_channel` rifiuta
-BW40/80. Le altre colonne vanno prese da qui quando il supporto arrivera'.
+Nel port la tabella e' `b43_phy_ac_rxgain_bw()`.
 
 ## 13. Tabelle `0x0042`/`0x0062`/`0x0082`: coefficienti TX IQ/LO, non default di gain
 
