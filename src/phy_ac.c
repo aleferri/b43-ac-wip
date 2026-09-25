@@ -4500,15 +4500,27 @@ static void b43_phy_ac_read_gaincurve(struct b43_wldev *dev, u16 offset,
 }
 
 /*
- * The GAINCTRLBBMULT entry each chain's TX cal uses: 0x14 on core 0, 0x1e on
- * the others. Transcribed, not derived: it holds on every segment of the
- * d6220 and the agcombo, while the tg789vac reads 0x14 for core 2 on UNII-3
- * (ch149-165) and 0x1e elsewhere, with the same rxgains and maxp5ga on all
- * three cores. What selects the entry is open.
+ * Whether chain @c is calibrated with chain 0's settings: chain 0 itself, and
+ * on the tg789vac chain 2 from ch149 up. There the vendor reads chain 0's
+ * GAINCTRLBBMULT entry for chain 2's TX cal and loads chain 0's ladder in
+ * table 0x000c before measuring it, at 20, 40 and 80 MHz, on all nine UNII-3
+ * segments and on none of the others; the d6220's chain 2 is unwired and the
+ * agcombo has no UNII-3 capture. The two settings move together, so they are
+ * one rule. The rxgains and maxp5ga the port reads are the same on the three
+ * chains, so what makes the upper sub-band different is not in them: the
+ * rule is transcribed, not derived, and SALAME on why.
  */
-static const u16 b43_phy_ac_gaincurve_off[B43_PHY_AC_MAX_CORES] = {
-	0x0014, 0x001e, 0x001e,
-};
+static bool b43_phy_ac_cal_like_chain0(struct b43_wldev *dev, unsigned int c)
+{
+	return c == 0 || (c == 2 && dev->phy.ac->pa5g_grp == 3);
+}
+
+/* The GAINCTRLBBMULT entry of a chain's TX cal: 0x14 for chain 0's
+ * settings, 0x1e otherwise. */
+static u16 b43_phy_ac_gaincurve_off(struct b43_wldev *dev, unsigned int c)
+{
+	return b43_phy_ac_cal_like_chain0(dev, c) ? 0x0014 : 0x001e;
+}
 
 /*
  * Read each wired chain's entry: the bbmult and the three TX gain code cells
@@ -4522,7 +4534,7 @@ static void b43_phy_ac_read_chain_gaincurves(struct b43_wldev *dev)
 	unsigned int c, i;
 
 	for_each_set_bit(c, &ac->coremask, ac->num_cores) {
-		b43_phy_ac_read_gaincurve(dev, b43_phy_ac_gaincurve_off[c], &gc);
+		b43_phy_ac_read_gaincurve(dev, b43_phy_ac_gaincurve_off(dev, c), &gc);
 		ac->bbmult_cal[c] = gc.bbmult;
 		for (i = 0; i < ARRAY_SIZE(gc.coeff); i++)
 			ac->gaincurve_coeff[c][i] = gc.coeff[i];
@@ -7082,6 +7094,85 @@ void b43_phy_ac_rxiqcal_apply(struct b43_wldev *dev)
 }
 
 /*
+ * The ladders the calibrations load into table 0x000c before measuring a
+ * chain: eighteen cells per chain, at 0x00-0x11 for chain 0 and 0x20-0x31 for
+ * chain 1, a gain in the high byte and an index in the low one. The stock
+ * driver writes one of three, whole, six times per cold segment on a board
+ * with three wired chains and five on one with two:
+ *
+ *   after stage 2 of the RX IQ cal                    ladder A
+ *   after chain 0 of the AFE cal                      ladder B
+ *   before chain 2 of the AFE cal, first bring-up     see below
+ *   before the second RX IQ iteration                 ladder A
+ *   after chain 0 of the frequency-dependent pass     ladder B
+ *   before chain 2 of that pass                       see below
+ *
+ * Ladder A precedes chain 0 and ladder B chain 1. The two "before chain 2"
+ * loads are the ramp on the d6220, whose chain 2 is unwired, and on the
+ * tg789vac ladder B up to ch144 and ladder A from ch149, at 20, 40 and 80 MHz
+ * alike: ABBABB on its 37 segments below UNII-3, ABAABA on its 9 in it. The
+ * agcombo writes ABBABB on the six configurations it was captured on, all in
+ * U-NII-1. See b43_phy_ac_cal_like_chain0().
+ *
+ * Every load is the same shape: peek and lock the gate, the eighteen pairs
+ * interleaved, unlock.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
+ *   17999-18218, 18723-18942]
+ */
+struct b43_phy_ac_gain_ladder {
+	u16 c0[18];
+	u16 c1[18];
+};
+
+static const struct b43_phy_ac_gain_ladder b43_phy_ac_ladder_a = {
+	{ 0x0100, 0x0200, 0x0300, 0x0500, 0x0800, 0x0b00, 0x1000,
+	  0x1001, 0x1002, 0x1003, 0x1004, 0x1005, 0x1006, 0x1007,
+	  0x1607, 0x2007, 0x2d07, 0x4007 },
+	{ 0x0100, 0x0200, 0x0300, 0x0500, 0x0800, 0x0b00, 0x1000,
+	  0x1600, 0x2000, 0x2d00, 0x4000, 0x4001, 0x4002, 0x4003,
+	  0x4004, 0x4005, 0x4006, 0x4007 },
+};
+
+static const struct b43_phy_ac_gain_ladder b43_phy_ac_ladder_b = {
+	{ 0x0100, 0x0200, 0x0300, 0x0500, 0x0700, 0x0a00, 0x0f00,
+	  0x0f01, 0x0f02, 0x0f03, 0x0f04, 0x0f05, 0x0f06, 0x0f07,
+	  0x1507, 0x1e07, 0x2a07, 0x3c07 },
+	{ 0x0100, 0x0200, 0x0300, 0x0500, 0x0700, 0x0a00, 0x0f00,
+	  0x1500, 0x1e00, 0x2a00, 0x3c00, 0x3c01, 0x3c02, 0x3c03,
+	  0x3c04, 0x3c05, 0x3c06, 0x3c07 },
+};
+
+/* The index alone, no gain: ladder A's low bytes. */
+static const struct b43_phy_ac_gain_ladder b43_phy_ac_ladder_ramp = {
+	{ 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 7, 7, 7, 7 },
+	{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7 },
+};
+
+static const struct b43_phy_ac_gain_ladder *
+b43_phy_ac_ladder_before_chain2(struct b43_wldev *dev)
+{
+	if (!(dev->phy.ac->coremask & BIT(2)))
+		return &b43_phy_ac_ladder_ramp;
+	return b43_phy_ac_cal_like_chain0(dev, 2) ? &b43_phy_ac_ladder_a :
+						    &b43_phy_ac_ladder_b;
+}
+
+static void b43_phy_ac_gain_ladder_write(struct b43_wldev *dev,
+				const struct b43_phy_ac_gain_ladder *l)
+{
+	unsigned int i;
+
+	B43_AC_FN();
+	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+	for (i = 0; i < ARRAY_SIZE(l->c0); i++) {
+		b43_actab_write_bulk(dev, 0x000c, 0x00 + i, 16, 1, &l->c0[i]);
+		b43_actab_write_bulk(dev, 0x000c, 0x20 + i, 16, 1, &l->c1[i]);
+	}
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+}
+
+/*
  * Close the gate scope rxiqcal_apply() opened and clear 12 slots of table
  * 0x000c, self-contained: every table write locks, writes and unlocks within
  * its own scope.
@@ -7197,46 +7288,7 @@ void b43_phy_ac_post_rxiqcal_stage2(struct b43_wldev *dev)
 		}
 	}
 
-	/*
-	 * B4d, 183 ops: fast bulk table writes to 0x000c at offsets 0x00-0x11
-	 * for core 0 and 0x20-0x31 for core 1. The 0x019e gate is locked
-	 * externally by the preamble and unlocked by the epilogue, so each
-	 * inner table write emits only five ops -- peek the gate, write the id,
-	 * the offset and the data -- which is exactly b43_actab_write_bulk().
-	 *
-	 * The values are per core: the first seven and the last are identical
-	 * between cores 0 and 1, while slots 0x07 to 0x10 differ. Two cores,
-	 * and not the coremask: agcombo wires three chains and still writes
-	 * only 0x00-0x11 and 0x20-0x31, with the same values as the d6220.
-	 */
-	{
-		static const u16 b4d_core0_vals[18] = {
-			0x0100, 0x0200, 0x0300, 0x0500, 0x0800, 0x0b00, 0x1000,
-			0x1001, 0x1002, 0x1003, 0x1004, 0x1005, 0x1006, 0x1007,
-			0x1607, 0x2007, 0x2d07, 0x4007,
-		};
-		static const u16 b4d_core1_vals[18] = {
-			0x0100, 0x0200, 0x0300, 0x0500, 0x0800, 0x0b00, 0x1000,
-			0x1600, 0x2000, 0x2d00, 0x4000, 0x4001, 0x4002, 0x4003,
-			0x4004, 0x4005, 0x4006, 0x4007,
-		};
-		unsigned int i;
-
-		/* B4d preamble: peek gate + lock esterno */
-		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
-
-		/* Body: 18 core-0/core-1 pairs, interleaved. */
-		for (i = 0; i < 18; i++) {
-			b43_actab_write_bulk(dev, 0x000c, 0x00 + i, 16, 1,
-					     &b4d_core0_vals[i]);
-			b43_actab_write_bulk(dev, 0x000c, 0x20 + i, 16, 1,
-					     &b4d_core1_vals[i]);
-		}
-
-		/* B4d epilogue: unlock */
-		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
-	}
+	b43_phy_ac_gain_ladder_write(dev, &b43_phy_ac_ladder_a);
 }
 
 /*
@@ -7347,38 +7399,6 @@ void b43_phy_ac_rxcal_afe_iter(struct b43_wldev *dev,
 	b43_phy_ac_afe_res_store(dev, wr_off, result, rw_len);
 }
 
-/*
- * Commit batch, the tail of B5 iterations 6, 12 and 18: after a commit
- * iteration's main result, emit N pairs of fast table writes interleaved
- * between cores 0 and 1, with a 0x20 offset stride. The 0x019e gate is locked
- * and unlocked externally, by the preamble and epilogue.
- * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
- *   17999-18218, 18723-18942]
- * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
- *   13419-13638]
- */
-static void b43_phy_ac_rxcal_afe_commit_batch(struct b43_wldev *dev,
-					      u16 base_c0, u16 base_c1,
-					      const u16 *c0_vals,
-					      const u16 *c1_vals,
-					      u8 n)
-{
-	B43_AC_FN();
-	u8 i;
-
-	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
-
-	for (i = 0; i < n; i++) {
-		b43_actab_write_bulk(dev, 0x000c, base_c0 + i, 16, 1,
-				     &c0_vals[i]);
-		b43_actab_write_bulk(dev, 0x000c, base_c1 + i, 16, 1,
-				     &c1_vals[i]);
-	}
-
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
-}
-
 /* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   17423-19694]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -7401,18 +7421,6 @@ void b43_phy_ac_rxcal_afe_calibrate(struct b43_wldev *dev)
 	 * notes below are observations from the capture, not constants the code
 	 * uses.
 	 */
-
-	/* The commit batches' values, cores 0 and 1 of table 0x000c. */
-	static const u16 batch_c0[18] = {
-		0x0100, 0x0200, 0x0300, 0x0500, 0x0700, 0x0a00, 0x0f00,
-		0x0f01, 0x0f02, 0x0f03, 0x0f04, 0x0f05, 0x0f06, 0x0f07,
-		0x1507, 0x1e07, 0x2a07, 0x3c07,
-	};
-	static const u16 batch_c1[18] = {
-		0x0100, 0x0200, 0x0300, 0x0500, 0x0700, 0x0a00, 0x0f00,
-		0x1500, 0x1e00, 0x2a00, 0x3c00, 0x3c01, 0x3c02, 0x3c03,
-		0x3c04, 0x3c05, 0x3c06, 0x3c07,
-	};
 
 	/* ==== Gruppo core-0 (cmd 0x8XXX, RAD.RD 0x0144) ==== */
 
@@ -7445,16 +7453,12 @@ void b43_phy_ac_rxcal_afe_calibrate(struct b43_wldev *dev)
 	}
 	/*
 	 * Iteration 6, cmd 0x8234, observed result 0xfe02. Ends the core-0 group
-	 * with a commit batch: 36 interleaved fast table writes updating the
-	 * gain override table 0x000c at offsets 0x00-0x11 for core 0 and
-	 * 0x20-0x31 for core 1, with the final coefficients from iterations 1
-	 * to 6.
+	 * with ladder B; see b43_phy_ac_gain_ladder_write().
 	 */
 	{
 		b43_phy_ac_rxcal_afe_iter(dev, 0x8234, 0x0000,
 					  NULL, 0, 0x0083, 1, 0x0043);
-		b43_phy_ac_rxcal_afe_commit_batch(dev, 0x00, 0x20,
-						  batch_c0, batch_c1, 18);
+		b43_phy_ac_gain_ladder_write(dev, &b43_phy_ac_ladder_b);
 	}
 
 	/* ==== Gruppo core-1 (cmd 0x9XXX, RAD.RD 0x0344) ==== */
@@ -7496,29 +7500,10 @@ void b43_phy_ac_rxcal_afe_calibrate(struct b43_wldev *dev)
 					  NULL, 0, 0x008a, 1, 0x004b);
 	}
 
-	/*
-	 * A second commit batch between the core-1 and core-2 groups, on the
-	 * first bring-up only, in the same cells. The d6220, whose core 2 is
-	 * unwired, writes the low byte alone -- the index ramp without the
-	 * gain; the agcombo and the tg789vac, with core 2 wired, write the
-	 * full values of the first batch. SALAME: that core 2's wiring is what
-	 * selects them is the reading that fits both, from two boards.
-	 */
-	if (dev->phy.ac->status_mask & B43_PHY_AC_STATE_FIRST_BRINGUP) {
-		static const u16 ramp_c0[18] = {
-			0, 0, 0, 0, 0, 0, 0,
-			1, 2, 3, 4, 5, 6, 7, 7, 7, 7, 7,
-		};
-		static const u16 ramp_c1[18] = {
-			0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-			1, 2, 3, 4, 5, 6, 7,
-		};
-		bool c2 = dev->phy.ac->coremask & BIT(2);
-
-		b43_phy_ac_rxcal_afe_commit_batch(dev, 0x00, 0x20,
-						  c2 ? batch_c0 : ramp_c0,
-						  c2 ? batch_c1 : ramp_c1, 18);
-	}
+	/* The load before chain 2, on the first bring-up only. */
+	if (dev->phy.ac->status_mask & B43_PHY_AC_STATE_FIRST_BRINGUP)
+		b43_phy_ac_gain_ladder_write(dev,
+					     b43_phy_ac_ladder_before_chain2(dev));
 
 	/* ==== Gruppo core-2 (cmd 0xaXXX, RAD.RD 0x0544) ==== */
 
@@ -8115,31 +8100,6 @@ void b43_phy_ac_rxiqcal_prep_second_iter(struct b43_wldev *dev)
 			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
 			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
 
-	/*
-	 * A 36-value LUT. The observed pattern is pairs of offsets
-	 * (i, i + 0x20) for i from 0 to 17; the first seven pairs are identical
-	 * and they diverge from the eighth on.
-	 */
-	static const struct { u16 off; u16 val; } lut36[36] = {
-		{ 0x0000, 0x0100 }, { 0x0020, 0x0100 },
-		{ 0x0001, 0x0200 }, { 0x0021, 0x0200 },
-		{ 0x0002, 0x0300 }, { 0x0022, 0x0300 },
-		{ 0x0003, 0x0500 }, { 0x0023, 0x0500 },
-		{ 0x0004, 0x0800 }, { 0x0024, 0x0800 },
-		{ 0x0005, 0x0b00 }, { 0x0025, 0x0b00 },
-		{ 0x0006, 0x1000 }, { 0x0026, 0x1000 },
-		{ 0x0007, 0x1001 }, { 0x0027, 0x1600 },
-		{ 0x0008, 0x1002 }, { 0x0028, 0x2000 },
-		{ 0x0009, 0x1003 }, { 0x0029, 0x2d00 },
-		{ 0x000a, 0x1004 }, { 0x002a, 0x4000 },
-		{ 0x000b, 0x1005 }, { 0x002b, 0x4001 },
-		{ 0x000c, 0x1006 }, { 0x002c, 0x4002 },
-		{ 0x000d, 0x1007 }, { 0x002d, 0x4003 },
-		{ 0x000e, 0x1607 }, { 0x002e, 0x4004 },
-		{ 0x000f, 0x2007 }, { 0x002f, 0x4005 },
-		{ 0x0010, 0x2d07 }, { 0x0030, 0x4006 },
-		{ 0x0011, 0x4007 }, { 0x0031, 0x4007 },
-	};
 	unsigned int core, i;
 
 	/* Segment A: read back the per-core bbmult after compensation. On
@@ -8169,14 +8129,8 @@ void b43_phy_ac_rxiqcal_prep_second_iter(struct b43_wldev *dev)
 		b43_phy_maskset(dev, 0x0725 + s, (u16)~0x0400, 0x0400);
 	}
 
-	/* Seg C (183 op): preamble (2) + 36× fast TBL.WR (180) + unlock (1) */
-	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
-
-	for (i = 0; i < ARRAY_SIZE(lut36); i++)
-		b43_actab_write_bulk(dev, 0x000c, lut36[i].off, 16, 1, &lut36[i].val);
-
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+	/* Seg C: ladder A. */
+	b43_phy_ac_gain_ladder_write(dev, &b43_phy_ac_ladder_a);
 }
 
 /*
@@ -8223,31 +8177,6 @@ void b43_phy_ac_rxiqcal_run_meas_iters(struct b43_wldev *dev)
 		{ 0xa084, 0x0400, 0x008e, 0x0050 }, /* 23 */
 		{ 0xa056, 0x0400, 0x008e, 0x0050 }, /* 24 */
 	};
-	/*
-	 * The batch after a chain's iterations: 36 fast single-word table
-	 * writes to id 0x000c, in pairs (i, i + 0x20) for i from 0 to 17. The
-	 * values differ from prep_second_iter()'s.
-	 */
-	static const struct { u16 off; u16 val; } iter20_batch[36] = {
-		{ 0x0000, 0x0100 }, { 0x0020, 0x0100 },
-		{ 0x0001, 0x0200 }, { 0x0021, 0x0200 },
-		{ 0x0002, 0x0300 }, { 0x0022, 0x0300 },
-		{ 0x0003, 0x0500 }, { 0x0023, 0x0500 },
-		{ 0x0004, 0x0700 }, { 0x0024, 0x0700 },
-		{ 0x0005, 0x0a00 }, { 0x0025, 0x0a00 },
-		{ 0x0006, 0x0f00 }, { 0x0026, 0x0f00 },
-		{ 0x0007, 0x0f01 }, { 0x0027, 0x1500 },
-		{ 0x0008, 0x0f02 }, { 0x0028, 0x1e00 },
-		{ 0x0009, 0x0f03 }, { 0x0029, 0x2a00 },
-		{ 0x000a, 0x0f04 }, { 0x002a, 0x3c00 },
-		{ 0x000b, 0x0f05 }, { 0x002b, 0x3c01 },
-		{ 0x000c, 0x0f06 }, { 0x002c, 0x3c02 },
-		{ 0x000d, 0x0f07 }, { 0x002d, 0x3c03 },
-		{ 0x000e, 0x1507 }, { 0x002e, 0x3c04 },
-		{ 0x000f, 0x1e07 }, { 0x002f, 0x3c05 },
-		{ 0x0010, 0x2a07 }, { 0x0030, 0x3c06 },
-		{ 0x0011, 0x3c07 }, { 0x0031, 0x3c07 },
-	};
 	unsigned int i;
 
 	for (i = 0; i < ARRAY_SIZE(iters); i++) {
@@ -8261,18 +8190,10 @@ void b43_phy_ac_rxiqcal_run_meas_iters(struct b43_wldev *dev)
 		 * chain is wired: once after chain 0 on the d6220, after
 		 * chains 0 and 1 on the agcombo and the tg789vac.
 		 */
-		if ((i & 1) && (dev->phy.ac->coremask & ~GENMASK(i / 2, 0))) {
-			unsigned int j;
-
-			b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-			b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
-			for (j = 0; j < ARRAY_SIZE(iter20_batch); j++)
-				b43_actab_write_bulk(dev, 0x000c,
-						     iter20_batch[j].off,
-						     16, 1,
-						     &iter20_batch[j].val);
-			b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
-		}
+		if ((i & 1) && (dev->phy.ac->coremask & ~GENMASK(i / 2, 0)))
+			b43_phy_ac_gain_ladder_write(dev, i == 1 ?
+					&b43_phy_ac_ladder_b :
+					b43_phy_ac_ladder_before_chain2(dev));
 	}
 }
 
