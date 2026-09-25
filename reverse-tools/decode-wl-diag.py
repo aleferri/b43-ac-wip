@@ -69,6 +69,7 @@ OPS = {
     46: "PHY.WARR",  47: "PHY.RDW",   48: "PHY.WRW",
     49: "IHR.WR",    50: "OBJ.SET",
     51: "PHY.FGC",
+    52: "IOCTL",      53: "IOVAR.NAME", 54: "IOVAR.SET",
     26: "CHANSPEC",
     27: "TPL.PTRW",  28: "TPL.DATW",
     29: "TPL.PTRR",  30: "TPL.DATR",  31: "TPL.RAMW",
@@ -142,9 +143,19 @@ def unmark(addr, val, aux):
     return b.split(b"\x00")[0].decode("ascii", "replace")
 
 
+# Il comando dello userspace, dall'hook su wlc_ioctl. IOVAR.NAME porta il nome
+# di una WLC_SET_VAR a pezzi da dodici byte, impacchettati come MARK, e precede
+# la sua IOVAR.SET: i pezzi si accumulano per CPU, perche' fra due record della
+# stessa chiamata puo' cadere un record di un'altra CPU, e la riga esce con la
+# SET. Il valore e' il primo u32 dopo il NUL, nell'ordine di byte del driver.
+IOCTL, IOVAR_NAME, IOVAR_SET = 52, 53, 54
+IOCTL_NAMES = {2: "UP", 3: "DOWN", 26: "SET_SSID"}
+
+
 def main():
     f = sys.stdin.buffer
     buf = b""
+    iovar_name = {}
     while True:
         chunk = f.read(4096)
         if not chunk:
@@ -156,7 +167,17 @@ def main():
             name = OPS.get(op, f"op{op}")
             t = ts / 1e9
             wide = op in WIDE
-            if op == MARK:
+            if op == IOVAR_NAME:
+                iovar_name[cpu] = iovar_name.get(cpu, "") + unmark(addr, val, aux)
+                continue
+            if op == IOVAR_SET:
+                print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<9} "
+                      f"name={iovar_name.pop(cpu, '')} val={h(addr, True)} len={val}")
+            elif op == IOCTL:
+                cmd = IOCTL_NAMES.get(addr, str(addr))
+                print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<9} "
+                      f"cmd={cmd} arg={h(val, True)} len={aux}")
+            elif op == MARK:
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} "
                       f"{unmark(addr, val, aux)!r}")
             elif op in (CHANSPEC, CS_SHM):

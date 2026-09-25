@@ -74,10 +74,12 @@
 #   TEMPDELTA    se impostato: `wl phycal_tempdelta` forzato a questo valore
 #                dopo l'insmod e prima dell'up                (default vuoto)
 #
-# In ogni ciclo il valore di phycal_tempdelta dell'istanza appena caricata
-# finisce nella traccia come marcatore, prima e dopo l'eventuale forzatura:
-# e' la variabile che decide se il bss-up legge la temperatura prima delle
-# calibrazioni, e l'NVRAM non la dice (0 in NVRAM, 40 su istanze in esercizio).
+# I comandi dati al driver li registra wl_diag stesso, con l'hook su
+# wlc_ioctl: ogni `wl <variabile> <valore>` compare nella traccia come
+# IOVAR.SET, gli altri ioctl come IOCTL, quindi lo script non marca ne' il
+# canale ne' phycal_tempdelta. split_trace.py --on mod ricava il nome del
+# segmento dal `wl chanspec` registrato. Serve un wl_diag con quell'hook: se il
+# dmesg non ne riporta il piano lo script lo dice prima di partire.
 #
 # Niente `set -u`, niente head/awk/sed/tr: il busybox di questi firmware non li
 # ha tutti. Qui servono i builtin della shell piu' wl, insmod, rmmod, sleep,
@@ -323,15 +325,11 @@ ciclo() {
 
     FAP0=`conta_dmesg 'Exceeded maximum number of DQM IRQ Handlers'`
 
-    marca "ch$ch bw$BW"
-
     scarica_wl || return 1
     carica_wl  || return 1
 
-    marca "phycal_tempdelta `wl -i "$IF" phycal_tempdelta 2>&1`"
     if [ -n "$TEMPDELTA" ]; then
         wl -i "$IF" phycal_tempdelta "$TEMPDELTA"
-        marca "phycal_tempdelta forzato `wl -i "$IF" phycal_tempdelta 2>&1`"
     fi
 
     if ! wl -i "$IF" chanspec "$cs" > /dev/null 2>&1; then
@@ -369,6 +367,11 @@ echo "modulo: $WL_KO, cursore: `cat $P/bump_ptr`; istanze catturate con i defaul
 [ -n "$SSID" ] || echo "SSID non impostato: la bss non sale e mancheranno le tabelle per-core"
 echo "hostapd viene fermato: cadono ENTRAMBE le radio. Non guidare questa procedura in wifi."
 echo "il lettore di /proc/wl_diag deve essere gia' attivo"
+
+if [ "`conta_dmesg "wl_diag: hook plan 'wlc_ioctl'"`" = "0" ]; then
+    echo "ATTENZIONE: wl_diag non riporta il piano dell'hook su wlc_ioctl:" >&2
+    echo "i comandi a wl non finiranno nella traccia e i segmenti non avranno nome." >&2
+fi
 
 ferma_hostapd || exit 1
 

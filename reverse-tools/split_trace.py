@@ -146,29 +146,61 @@ def cut_on_mark(lines, skip_mod):
     return segments, found
 
 
+RE_IOVAR_CHANSPEC = re.compile(r"\bIOVAR\.SET\s+name=chanspec\s+val=(0x[0-9a-fA-F]+)")
+_CS_BW = {0x1000: 20, 0x1800: 40, 0x2000: 80}
+
+
+def iovar_label(lines):
+    """'chN bwB' from the first `wl chanspec` the segment records, N being the
+    primary channel: the chanspec carries the centre in bits 0-7 and the
+    sideband of the primary in bits 8-10, lowest first."""
+    for l in lines:
+        m = RE_IOVAR_CHANSPEC.search(l)
+        if not m:
+            continue
+        cs = int(m.group(1), 16) & 0xffff
+        bw = _CS_BW.get(cs & 0x3800)
+        if bw is None:
+            return None
+        sb = (cs >> 8) & 7
+        prim = (cs & 0xff) + {20: 0, 40: -2, 80: -6}[bw] + (4 * sb if bw > 20 else 0)
+        return f"ch{prim} bw{bw}"
+    return None
+
+
 def cut_on_mod(lines):
     """[(name, lines)]: one segment per life of the module, from `mod COMING`
-    to the line before the next. The channel label is the last one seen
-    before the COMING. What precedes the first COMING goes to
-    00-preambolo.txt."""
+    to the line before the next. The name comes from the channel label seen
+    last before the COMING, or, where the capture writes none, from the
+    `wl chanspec` the segment records through the wlc_ioctl hook. What
+    precedes the first COMING goes to 00-preambolo.txt."""
     segments, current = [], []
-    name, n, found, label = "00-preambolo.txt", 0, 0, "senza-etichetta"
+    n, found, label, seg_label = 0, 0, None, None
+    in_seg = False
+
+    def close():
+        if not current:
+            return
+        if not in_seg:
+            segments.append(("00-preambolo.txt", current))
+            return
+        segments.append((name_from_mark(n, seg_label or iovar_label(current)
+                                        or "senza-etichetta"), current))
+
     for line in lines:
         m = RE_MARK.search(line)
         if m:
             found += 1
             mark = m.group(1)
             if mark == "mod COMING":
-                if current:
-                    segments.append((name, current))
+                close()
                 n += 1
-                name = name_from_mark(n, label)
+                in_seg, seg_label, label = True, label, None
                 current = []
             elif not RE_MOD.match(mark) and mark != "fine corsa":
                 label = mark
         current.append(line)
-    if current:
-        segments.append((name, current))
+    close()
     return segments, found
 
 

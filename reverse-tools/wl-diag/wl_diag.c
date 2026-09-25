@@ -168,6 +168,7 @@ enum wldiag_op {
 	OP_PHY_WARR, OP_PHY_RDW, OP_PHY_WRW,		/* 46,47,48 (append) */
 	OP_IHR_W, OP_OBJ_SET,				/* 49,50 (append) */
 	OP_PHY_FGC,					/* 51 (append) */
+	OP_IOCTL, OP_IOVAR_NAME, OP_IOVAR_SET,		/* 52,53,54 (append) */
 	OP_DROP = 255,
 };
 struct wldiag_rec {
@@ -657,6 +658,22 @@ static struct hook hooks[] = {
 	 * says so. Checked with reverse-tools/audit_hooks.py on the module pulled
 	 * out of the firmware, which is the same code as the prelink object. */
 	{ "wlc_bmac_phyclk_fgc", OP_PHY_FGC,  0, 1, 0, .shortj = true },
+	/* The configuration userspace gives the driver: `wl <cmd>` and every other
+	 * ioctl. wl_ioctl() copies the user buffer into one of its own (osl_malloc
+	 * of max(len, 0x2000), then __copy_user) and calls
+	 *
+	 *   wlc_ioctl(wlc, cmd, buf, len, wlcif)   cmd=a1, buf=a2, len=a3
+	 *
+	 * so the payload is kernel memory by the time it gets here. A command that
+	 * only sets a driver variable -- `wl phycal_tempdelta 40`, `wl chanspec`
+	 * before the up -- touches no register, and without this hook it is not in
+	 * the trace at all. ioctl_rec() decodes the payload; see it for the records.
+	 *
+	 * wlc_ioctl is a thunk: lui/addiu $t9, jr $t9, nop (read with mipsdis.py on
+	 * wlD6220.o, 7.14.89). The first two words are not PC-relative, so the
+	 * short-j re-runs them and returns to the jr; word 0 writes $t9, so the
+	 * re-entry goes through $t8. */
+	{ "wlc_ioctl",          OP_IOCTL,    1, 2, 3, .shortj = true },
 	/* Variants for builds where the two above do NOT exist. On 7.14.43 there is
 	 * no 16-bit accessor at all: only the bulk copyfrom/copyto_objmem pair, and
 	 * the 16-bit ones go through here. They cover the SHM selector only, not
@@ -707,6 +724,59 @@ static inline u32 pick(u8 src, u32 a1, u32 a2, u32 a3)
 {
 	return src == 1 ? a1 : src == 2 ? a2 : src == 3 ? a3 : 0;
 }
+/*
+ * One wlc_ioctl() call as records. The two variable commands carry a string:
+ *
+ *   WLC_GET_VAR (262)  "name\0" + room for the answer. Not recorded: the value
+ *                      only exists after the call, and the name alone says
+ *                      that somebody asked, not what the driver runs with.
+ *   WLC_SET_VAR (263)  "name\0" + value. The name goes out in IOVAR_NAME
+ *                      records, twelve bytes each packed big-endian like MARK,
+ *                      then one IOVAR_SET with the first u32 of the value in
+ *                      the driver's byte order (addr) and the value's length
+ *                      (val). Names are cut at 36 bytes; past that the value
+ *                      is not read.
+ *
+ * Every other command is one IOCTL record: cmd, the first u32 of the payload
+ * (0 below four bytes) and the length. The payload is read with
+ * probe_kernel_read(), so a bad pointer costs a record, not an oops.
+ */
+#define WD_WLC_GET_VAR	262
+#define WD_WLC_SET_VAR	263
+#define WD_IOVAR_NAME_MAX	36
+
+static u32 ioctl_rec(u32 cmd, u32 buf, u32 len)
+{
+	u8 b[WD_IOVAR_NAME_MAX + 1 + 4];
+	u32 n = len < sizeof(b) ? len : sizeof(b);
+	u32 nl, i, v = 0;
+
+	if (cmd == WD_WLC_GET_VAR)
+		return 0;
+	if (!buf || probe_kernel_read(b, (void *)(unsigned long)buf, n))
+		n = 0;
+
+	if (cmd != WD_WLC_SET_VAR) {
+		if (n >= 4)
+			memcpy(&v, b, 4);
+		return emit(OP_IOCTL, cmd, v, len);
+	}
+
+	for (nl = 0; nl < n && nl < WD_IOVAR_NAME_MAX && b[nl]; nl++)
+		;
+	for (i = 0; i < nl; i += 12) {
+		u32 w[3] = { 0, 0, 0 };
+		u32 k;
+
+		for (k = 0; k < 12 && i + k < nl; k++)
+			w[k / 4] |= (u32)b[i + k] << (24 - 8 * (k % 4));
+		emit(OP_IOVAR_NAME, w[0], w[1], w[2]);
+	}
+	if (nl < n && !b[nl] && nl + 1 + 4 <= n)
+		memcpy(&v, b + nl + 1, 4);
+	return emit(OP_IOVAR_SET, v, len > nl + 1 ? len - nl - 1 : 0, 0);
+}
+
 u32 __used noinline
 wl_diag_hook(u32 id, u32 a1, u32 a2, u32 a3)
 {
@@ -722,6 +792,8 @@ wl_diag_hook(u32 id, u32 a1, u32 a2, u32 a3)
 	 * also the anchor for segmenting a sweep, one per cycle. */
 	if (h->op == OP_CAL_INIT)
 		return emit(h->op, 0, 0, 0);
+	if (h->op == OP_IOCTL)
+		return ioctl_rec(a1, a2, a3);
 
 	return emit(h->op, pick(h->addr_src, a1, a2, a3),
 			   pick(h->val_src,  a1, a2, a3),

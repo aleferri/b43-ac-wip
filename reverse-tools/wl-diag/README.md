@@ -209,6 +209,7 @@ Per spazio di memoria, non per nome di funzione:
 | **template RAM** | coperto da questo giro (`TPL.*`) |
 | **OTP** | coperto (`OTP.*`) |
 | I/O inline via `R_REG`/`W_REG` | **non agganciabile**: sono macro, non funzioni |
+| comandi dallo userspace | coperto (`IOVAR.SET`, `IOCTL`), dall'hook su `wlc_ioctl` |
 
 Il template RAM e' dove il PHY carica le forme d'onda dei toni, ingresso di
 RXIQ, PAPD e `do_dummy_tx` (`wlc_phy_loadsampletable_acphy`,
@@ -226,6 +227,17 @@ SROM -- statica e gia' nota dai dump raw -- quindi serve per sapere **quando**
 viene letta e **quali word**, cioe' dove i valori vengono consumati. Il valore
 finisce in un puntatore, non nel ritorno, quindi nel record c'e' il numero di
 word e non il dato.
+
+I comandi dati al driver non toccano per forza un registro: `wl
+phycal_tempdelta 40` scrive una variabile, `wl chanspec` prima dell'up anche, e
+senza un hook non lasciano traccia. `wl_ioctl()` copia il buffer dello
+userspace in uno suo e chiama `wlc_ioctl(wlc, cmd, buf, len, wlcif)`, quindi
+l'hook ha tutto nei registri: una `WLC_SET_VAR` esce come `IOVAR.SET
+name=<variabile> val=<primo u32 del valore> len=<byte>`, ogni altro comando
+come `IOCTL cmd=<n> arg=<primo u32> len=<byte>`. Le `WLC_GET_VAR` non si
+registrano, perche' il valore c'e' solo al ritorno: il valore con cui
+un'istanza parte, se nessuno lo imposta, dalla traccia non si legge. Nel
+confronto sono `SOLO_VENDOR`: sono ingressi del driver, non sue operazioni.
 
 ### Lo sweep non contiene un attach, e non associa
 

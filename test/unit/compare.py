@@ -480,6 +480,12 @@ PHY_ANCHE = [
 #            Non c'e' nessun registro dietro, quindi nessun codice puo'
 #            emetterlo. Entra nella finestra solo da quando i segmenti a freddo
 #            arrivano fino a 'mod GOING'.
+#   IOCTL, IOVAR.SET
+#            i comandi dello userspace, dall'hook su wlc_ioctl(): `wl up`,
+#            `wl chanspec`, `wl phycal_tempdelta`. Sono ingressi del driver,
+#            non sue operazioni: in b43 lo stesso ingresso arriva da
+#            mac80211/cfg80211, e il suo effetto -- se ne ha uno sui registri --
+#            sta nelle op che seguono e si confronta la'.
 #   probe response offload   PRTLEN (0x004a), PRSSID (0x0160-0x017e),
 #            PRSSIDLEN (0x0048), le temporizzazioni 0x0180-0x0186 e la word di
 #            template RAM 0x0700. b43 non fa rispondere il firmware ai probe:
@@ -501,6 +507,8 @@ PHY_ANCHE = [
 SOLO_VENDOR = (
     r'^MAC\.BW\b',
     r"^MARK\b",
+    r"^IOCTL\b",
+    r"^IOVAR\.SET\b",
     r'^OBJ\.WR addr=0x(?:48|4a|18[0246])(?: |$)',
     r'^OBJ\.WR addr=0x1(?:6[02468ace]|7[02468ace])(?: |$)',
     r'^TPL\.RAMW addr=0x700(?: |$)',
