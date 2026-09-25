@@ -891,6 +891,26 @@ def op_forms(raws, profile):
         return tracelib.unfold_bus_seq(raws)
     return [normalize_op(r) for r in raws]
 
+VENDOR_MOD = re.compile(r'^((?:PHY|RAD)\.MOD addr=\S+) val=(0x[0-9a-f]+) mask=(0x[0-9a-f]+)$')
+
+def mask_vendor_mod(op):
+    """Il valore di un MOD del vendor ristretto alla sua mask.
+
+    L'hook registra l'argomento `val` di mod_phy_reg()/mod_radio_reg() cosi'
+    come il chiamante lo passa, e l'hardware ne vede solo i bit sotto la mask:
+    in brcmsmac `val &= mask` in mod_phy_reg() e `(rval & ~mask) | (val &
+    mask)` in mod_radio_reg() (phy_cmn.c). Il vendor passa per esempio un
+    offset negativo del banco 0x0910 come 0xffff sotto mask 0x00ff, che e' la
+    stessa scrittura dello 0x00ff del port. Solo dal lato vendor: sul port un
+    bit fuori mask e' una scrittura vera di b43_phy_maskset() e va vista."""
+    m = VENDOR_MOD.match(op)
+    if not m:
+        return op
+    mask = int(m.group(3), 16)
+    if not mask:
+        return op
+    return f"{m.group(1)} val={int(m.group(2), 16) & mask:#x} mask={m.group(3)}"
+
 def load_vendor(path, ep_range, profile=None, espanse=None):
     lo, hi = ep_range or (0, 10**9)
     raws = []
@@ -903,7 +923,8 @@ def load_vendor(path, ep_range, profile=None, espanse=None):
             continue
         raws.append(m.group(1))
     raws = expand_bulk_heads(raws, espanse)
-    return drop_shadow_ops(resolve_wide_reads(op_forms(raws, profile)))
+    ops = [mask_vendor_mod(o) for o in op_forms(raws, profile)]
+    return drop_shadow_ops(resolve_wide_reads(ops))
 
 def load_test(path, profile=None):
     raws = [m.group(1) for line in open(path) for m in [TEST_LINE.match(line)] if m]
