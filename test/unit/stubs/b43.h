@@ -217,6 +217,10 @@ struct ssb_sprom {
 	 * board_profile.h li riempie per la suite di integrazione. */
 	u8 gpio0, gpio1, gpio2, gpio3;
 	u8 gpio_ext[12];
+	/* boardflags3 e AvVmid_c0..2 dalla NVRAM, di patches/0018. */
+	u32 boardflags3;
+	u8 avvmid[3][5][2];
+	u8 avvmid_valid;
 	/* Blocco FEM/PA (SROM11_FEM_CFG1/2), decodificato come in bcma. */
 	u8 tssiposslope2g, epagain2g, pdgain2g, tworangetssi2g, papdcap2g, femctrl;
 	u8 tssiposslope5g, epagain5g, pdgain5g, tworangetssi5g, papdcap5g, gainctrlsph;

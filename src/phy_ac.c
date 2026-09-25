@@ -3671,67 +3671,218 @@ static void b43_phy_ac_set_reg_on_reset(struct b43_wldev *dev)
 
 /*
  * AvVmid: the gain and mid-point voltage of each chain's power-detector
- * input, one pair per chain and per 5 GHz sub-band, written into RFSEQ
- * 0x03cd + 0x10 * core as (Vmid << 3) | Av.
+ * input, one pair per chain and per band, written into RFSEQ 0x03cd + 0x10 *
+ * core as (Vmid << 3) | Av.
  *
- * The encoding is read off the captures: every value written there splits
- * into an Av of 1 or 2 and a Vmid of 150 to 165, the range of the AvVmid_c0..2
- * variables in public Broadcom NVRAM files (e.g. 1,165 or 2,140 per band, in
- * the order 2g, 5gl, 5gml, 5gmu, 5gh). Those variables are read only when
- * boardflags3 has BFL3_AvVim (0x40000000), as the same files document, and
- * all four boards here have boardflags3=0, so what lands in the cell is the
- * driver's default -- which is not the same on every board:
+ * The pair comes from the board or from a default table. The board gives it
+ * in NVRAM as AvVmid_c0..2 -- Av,Vmid for 2g, 5gl, 5gml, 5gmu, 5gh, as in
+ * public Broadcom NVRAM files -- and the stock driver takes it from there only
+ * when boardflags3 has BFL3_AvVim, which the same files document as "load
+ * AvVim from nvram". Otherwise the pair is the default set indexed by
+ * pdgain5g. All four boards here have boardflags3=0 and no AvVmid in NVRAM.
  *
- *   d6220, DSL-3580L, agcombo    2,152 on chain 0 and 2,156 on the others,
- *                                every channel and width
- *   tg789vac                     5gl  1,165  1,165  1,165
- *                                5gml 1,160  1,160  1,160
- *                                5gmu 1,152  1,150  1,160   (ch100-144)
- *                                5gh  1,152  1,150  1,160   (ch149-165)
- *
- * The four sub-bands follow b43_phy_ac_pa5g_group(), measured on all 43 cold
- * segments of the tg789vac and 43 of the d6220 plus the DSL's sweep. What
- * picks one default table or the other is not established: of the fields
- * that separate the tg789vac from the other three, pdgain5g -- 19 against 10
- * -- is the one that belongs to the power detector, so it is the selector
- * here. SALAME on that choice, from two values; a board with another
- * pdgain5g gets the pdgain-10 table and a warning.
+ * The default sets are the stock driver's avvmid_set[] (wlD6220.o, 7.14.89,
+ * a named 720-byte .rodata object): 24 sets, five bands each, the three
+ * chains' Av then the three chains' Vmid. Set 10 is what the d6220, the
+ * DSL-3580L and the agcombo write, all with pdgain5g=10, on every channel;
+ * set 19 is what the tg789vac writes, with pdgain5g=19, band by band on all
+ * 43 of its cold segments. Band 0 is 2.4 GHz, bands 1-4 follow
+ * b43_phy_ac_pa5g_group().
  */
-struct b43_phy_ac_avvmid {
-	u8 av;
-	u8 vmid;
-};
+#define B43_BFL3_AVVIM	0x40000000
 
-static const struct b43_phy_ac_avvmid
-b43_phy_ac_avvmid_pdgain10[B43_PHY_AC_MAX_CORES][4] = {
-	{ { 2, 152 }, { 2, 152 }, { 2, 152 }, { 2, 152 } },
-	{ { 2, 156 }, { 2, 156 }, { 2, 156 }, { 2, 156 } },
-	{ { 2, 156 }, { 2, 156 }, { 2, 156 }, { 2, 156 } },
-};
-
-static const struct b43_phy_ac_avvmid
-b43_phy_ac_avvmid_pdgain19[B43_PHY_AC_MAX_CORES][4] = {
-	{ { 1, 165 }, { 1, 160 }, { 1, 152 }, { 1, 152 } },
-	{ { 1, 165 }, { 1, 160 }, { 1, 150 }, { 1, 150 } },
-	{ { 1, 165 }, { 1, 160 }, { 1, 160 }, { 1, 160 } },
+static const u8 b43_phy_ac_avvmid_set[24][5][2][3] = {
+	/*  0 */ {
+		{ { 2, 1, 2 }, { 107, 150, 110 } },
+		{ { 2, 2, 1 }, { 157, 153, 160 } },
+		{ { 2, 2, 1 }, { 157, 153, 161 } },
+		{ { 2, 2, 0 }, { 157, 153, 186 } },
+		{ { 2, 2, 0 }, { 157, 153, 187 } },
+	},
+	/*  1 */ {
+		{ { 1, 0, 1 }, { 159, 174, 161 } },
+		{ { 1, 0, 1 }, { 160, 185, 156 } },
+		{ { 1, 0, 1 }, { 163, 185, 162 } },
+		{ { 1, 0, 1 }, { 169, 187, 167 } },
+		{ { 1, 0, 1 }, { 152, 188, 160 } },
+	},
+	/*  2 */ {
+		{ { 1, 1, 1 }, { 159, 166, 166 } },
+		{ { 2, 2, 4 }, { 140, 151, 100 } },
+		{ { 2, 2, 3 }, { 143, 153, 116 } },
+		{ { 2, 2, 2 }, { 143, 153, 140 } },
+		{ { 2, 2, 2 }, { 145, 160, 154 } },
+	},
+	/*  3 */ {
+		{ { 1, 1, 2 }, { 130, 131, 106 } },
+		{ { 1, 1, 2 }, { 130, 131, 106 } },
+		{ { 1, 1, 2 }, { 128, 127,  97 } },
+		{ { 0, 1, 3 }, { 159, 137,  75 } },
+		{ { 0, 0, 3 }, { 164, 162,  76 } },
+	},
+	/*  4 */ {
+		{ { 1, 1, 1 }, { 156, 160, 158 } },
+		{ { 1, 1, 1 }, { 156, 160, 158 } },
+		{ { 1, 1, 1 }, { 156, 160, 158 } },
+		{ { 1, 1, 1 }, { 156, 160, 158 } },
+		{ { 1, 1, 1 }, { 156, 160, 158 } },
+	},
+	/*  5 */ {
+		{ { 2, 2, 2 }, { 104, 108, 106 } },
+		{ { 2, 2, 2 }, { 104, 108, 106 } },
+		{ { 2, 2, 2 }, { 104, 108, 106 } },
+		{ { 2, 2, 2 }, { 104, 108, 106 } },
+		{ { 2, 2, 2 }, { 104, 108, 106 } },
+	},
+	/*  6 */ {
+		{ { 2, 0, 2 }, { 102, 170, 104 } },
+		{ { 3, 4, 3 }, {  82, 102,  82 } },
+		{ { 1, 3, 1 }, { 134, 122, 136 } },
+		{ { 1, 3, 1 }, { 134, 124, 136 } },
+		{ { 2, 3, 2 }, { 104, 122, 108 } },
+	},
+	/*  7 */ {
+		{ { 0, 0, 0 }, { 180, 180, 180 } },
+		{ { 0, 0, 0 }, { 180, 180, 180 } },
+		{ { 0, 0, 0 }, { 180, 180, 180 } },
+		{ { 0, 0, 0 }, { 180, 180, 180 } },
+		{ { 0, 0, 0 }, { 180, 180, 180 } },
+	},
+	/*  8 */ {
+		{ { 2, 1, 2 }, { 102, 138, 104 } },
+		{ { 3, 5, 3 }, {  82, 100,  82 } },
+		{ { 1, 4, 1 }, { 134, 116, 136 } },
+		{ { 1, 3, 1 }, { 134, 136, 136 } },
+		{ { 2, 3, 2 }, { 104, 136, 108 } },
+	},
+	/*  9 */ {
+		{ { 3, 2, 3 }, {  90, 106,  86 } },
+		{ { 3, 1, 3 }, {  90, 158,  90 } },
+		{ { 2, 1, 2 }, { 114, 158, 112 } },
+		{ { 2, 1, 1 }, { 116, 158, 142 } },
+		{ { 2, 1, 1 }, { 116, 158, 142 } },
+	},
+	/* 10 */ {
+		{ { 2, 2, 2 }, { 152, 156, 156 } },
+		{ { 2, 2, 2 }, { 152, 156, 156 } },
+		{ { 2, 2, 2 }, { 152, 156, 156 } },
+		{ { 2, 2, 2 }, { 152, 156, 156 } },
+		{ { 2, 2, 2 }, { 152, 156, 156 } },
+	},
+	/* 11 */ {
+		{ { 1, 1, 1 }, { 134, 134, 134 } },
+		{ { 1, 1, 1 }, { 136, 136, 136 } },
+		{ { 1, 1, 1 }, { 136, 136, 136 } },
+		{ { 1, 1, 1 }, { 136, 136, 136 } },
+		{ { 1, 1, 1 }, { 136, 136, 136 } },
+	},
+	/* 12 */ {
+		{ { 3, 3, 3 }, {  90,  92,  86 } },
+		{ { 3, 3, 3 }, {  90,  86,  90 } },
+		{ { 2, 3, 2 }, { 114,  86, 112 } },
+		{ { 2, 2, 1 }, { 116, 109, 142 } },
+		{ { 2, 2, 1 }, { 116, 110, 142 } },
+	},
+	/* 13 */ {
+		{ { 2, 2, 2 }, { 112, 114, 112 } },
+		{ { 2, 2, 2 }, { 114, 114, 114 } },
+		{ { 2, 2, 2 }, { 114, 114, 114 } },
+		{ { 2, 2, 2 }, { 113, 114, 112 } },
+		{ { 2, 2, 2 }, { 113, 114, 112 } },
+	},
+	/* 14 */ {
+		{ { 1, 1, 1 }, { 134, 134, 134 } },
+		{ { 0, 0, 0 }, { 168, 168, 168 } },
+		{ { 0, 0, 0 }, { 168, 168, 168 } },
+		{ { 0, 0, 0 }, { 168, 168, 168 } },
+		{ { 0, 0, 0 }, { 168, 168, 168 } },
+	},
+	/* 15 */ {
+		{ { 0, 0, 0 }, { 172, 172, 172 } },
+		{ { 0, 0, 0 }, { 168, 168, 168 } },
+		{ { 0, 0, 0 }, { 168, 168, 168 } },
+		{ { 0, 0, 0 }, { 168, 168, 168 } },
+		{ { 0, 0, 0 }, { 168, 168, 168 } },
+	},
+	/* 16 */ {
+		{ { 3, 2, 3 }, {  90, 106,  86 } },
+		{ { 3, 0, 3 }, {  90, 186,  90 } },
+		{ { 2, 0, 2 }, { 114, 186, 112 } },
+		{ { 2, 0, 1 }, { 116, 186, 142 } },
+		{ { 2, 0, 1 }, { 116, 186, 142 } },
+	},
+	/* 17 */ {
+		{ { 4, 4, 4 }, {  50,  45,  50 } },
+		{ { 3, 3, 3 }, {  82,  82,  82 } },
+		{ { 3, 3, 3 }, {  82,  82,  82 } },
+		{ { 3, 3, 3 }, {  82,  82,  82 } },
+		{ { 3, 3, 3 }, {  82,  82,  82 } },
+	},
+	/* 18 */ {
+		{ { 5, 5, 5 }, {  61,  61,  61 } },
+		{ { 2, 2, 2 }, { 122, 122, 122 } },
+		{ { 2, 2, 2 }, { 122, 122, 122 } },
+		{ { 2, 2, 2 }, { 122, 122, 122 } },
+		{ { 2, 2, 2 }, { 122, 122, 122 } },
+	},
+	/* 19 */ {
+		{ { 2, 2, 2 }, { 152, 156, 156 } },
+		{ { 1, 1, 1 }, { 165, 165, 165 } },
+		{ { 1, 1, 1 }, { 160, 160, 160 } },
+		{ { 1, 1, 1 }, { 152, 150, 160 } },
+		{ { 1, 1, 1 }, { 152, 150, 160 } },
+	},
+	/* 20 */ {
+		{ { 3, 3, 3 }, { 108, 108, 108 } },
+		{ { 1, 1, 1 }, { 160, 160, 160 } },
+		{ { 1, 1, 1 }, { 160, 160, 160 } },
+		{ { 1, 1, 1 }, { 160, 160, 160 } },
+		{ { 1, 1, 1 }, { 160, 160, 160 } },
+	},
+	/* 21 */ {
+		{ { 2, 2, 2 }, { 110, 110, 110 } },
+		{ { 0, 0, 0 }, { 168, 168, 168 } },
+		{ { 0, 0, 0 }, { 168, 168, 168 } },
+		{ { 0, 0, 0 }, { 168, 168, 168 } },
+		{ { 0, 0, 0 }, { 168, 168, 168 } },
+	},
+	/* 22 */ {
+		{ { 6, 6, 6 }, {  40,  40,  40 } },
+		{ { 2, 2, 1 }, { 115, 115, 142 } },
+		{ { 1, 2, 1 }, { 142, 115, 142 } },
+		{ { 1, 1, 1 }, { 142, 142, 142 } },
+		{ { 1, 1, 1 }, { 142, 142, 142 } },
+	},
+	/* 23 */ {
+		{ { 1, 1, 1 }, { 156, 160, 158 } },
+		{ { 6, 6, 6 }, {  47,  45,  48 } },
+		{ { 1, 1, 1 }, { 147, 146, 148 } },
+		{ { 1, 1, 1 }, { 146, 146, 152 } },
+		{ { 1, 1, 1 }, { 146, 146, 152 } },
+	},
 };
 
 static u16 b43_phy_ac_avvmid_cell(struct b43_wldev *dev, unsigned int core,
 				  unsigned int grp)
 {
-	u8 pdgain = dev->dev->bus_sprom->pdgain5g;
-	const struct b43_phy_ac_avvmid *e;
+	const struct ssb_sprom *sprom = dev->dev->bus_sprom;
+	unsigned int band = 1 + grp;
+	u8 av, vmid;
 
-	if (pdgain == 19) {
-		e = &b43_phy_ac_avvmid_pdgain19[core][grp];
+	if ((sprom->boardflags3 & B43_BFL3_AVVIM) &&
+	    (sprom->avvmid_valid & BIT(core))) {
+		av = sprom->avvmid[core][band][0];
+		vmid = sprom->avvmid[core][band][1];
+	} else if (sprom->pdgain5g < ARRAY_SIZE(b43_phy_ac_avvmid_set)) {
+		av = b43_phy_ac_avvmid_set[sprom->pdgain5g][band][0][core];
+		vmid = b43_phy_ac_avvmid_set[sprom->pdgain5g][band][1][core];
 	} else {
-		if (pdgain != 10)
-			b43warn(dev->wl,
-				"AC-PHY: no AvVmid default known for pdgain5g=%u, using pdgain5g=10's\n",
-				pdgain);
-		e = &b43_phy_ac_avvmid_pdgain10[core][grp];
+		b43warn(dev->wl,
+			"AC-PHY: pdgain5g=%u has no AvVmid default set and the board gives none; chain %u left at reset\n",
+			sprom->pdgain5g, core);
+		return 0x0c02;
 	}
-	return (u16)((e->vmid << 3) | (e->av & 0x7));
+	return (u16)((vmid << 3) | (av & 0x7));
 }
 
 /* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
