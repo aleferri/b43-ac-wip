@@ -1,0 +1,2 @@
+# wl -i wl1 phy_txpwrindex
+txpwrindex for core{0...3}: 23 23 0 0

@@ -1,0 +1,33 @@
+# wl -i wl1 curppr
+Current channel:         52/80
+BSS channel:             52/80
+Power/Rate Dump (in 1/4dB): Channel 58
+20MHz:
+OFDM          2  2  2  2  2  2  2  3
+OFDM-CDD      8  8  8  8  8  8  8  8
+1 Nsts 1 Tx   2  2  2  2  2  2  3  5  7  7
+1 Nsts 2 Tx   8  8  8  8  8  8  8  8  8  8
+1 Nsts 3 Tx  12 12 12 12 12 12 12 12 12 12
+2 Nsts 2 Tx   8  8  8  8  8  8  8  8  8  8
+2 Nsts 3 Tx  12 12 12 12 12 12 12 12 12 12
+3 Nsts 3 Tx  12 12 12 12 12 12 12 12 12 12
+
+40MHz:
+OFDM          0  0  0  0  0  1  3  5
+OFDM-CDD      6  6  6  6  6  6  6  6
+1 Nsts 1 Tx   0  0  0  0  0  1  3  5  7  7
+1 Nsts 2 Tx   6  6  6  6  6  6  6  6  7  7
+1 Nsts 3 Tx  10 10 10 10 10 10 10 10 10 10
+2 Nsts 2 Tx   6  6  6  6  6  6  6  6  7  7
+2 Nsts 3 Tx  10 10 10 10 10 10 10 10 10 10
+3 Nsts 3 Tx  10 10 10 10 10 10 10 10 10 10
+
+20 in 40MHz:
+OFDM          2  2  2  2  2  2  2  3
+OFDM-CDD      8  8  8  8  8  8  8  8
+1 Nsts 1 Tx   2  2  2  2  2  2  3  5  7  7
+1 Nsts 2 Tx   8  8  8  8  8  8  8  8  8  8
+1 Nsts 3 Tx  12 12 12 12 12 12 12 12 12 12
+2 Nsts 2 Tx   8  8  8  8  8  8  8  8  8  8
+2 Nsts 3 Tx  12 12 12 12 12 12 12 12 12 12
+3 Nsts 3 Tx  12 12 12 12 12 12 12 12 12 12

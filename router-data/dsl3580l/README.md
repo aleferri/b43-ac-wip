@@ -30,6 +30,9 @@ e non c'entrano con la configurazione del canale. `0x251`/`0x252` sono tenuti.
 | `router_info.txt` | **descrive wl0**, il core N-PHY integrato nel 6362 (`chipnum 0x6362`, `corerev 0x16`, `phytype 0x4`): non contiene nessuna revinfo di wl1 |
 | `dsl3580l_pmu-trace.txt` | traccia PMU |
 | `bcm43b3_3580l_map.bin` | 480 byte, mappa |
+| `wl1_curpower_ch52-bw80.txt` | `wl -i wl1 curpower` sull'istanza su ch52/80, copiato dal terminale: limiti regolatori, di board e target per rate. Il massimo, 15.00 dBm, e' il `0x0646 = 0x3c` che il vendor scrive in `full-sweep.zip!80/seg01-ch52.txt`, quindi la cattura e questa lettura hanno lo stesso regolatorio |
+| `wl1_curppr_ch52-bw80.txt` | `wl -i wl1 curppr`, stessa sessione: distanza di ogni rate dal massimo. L'intestazione dice 1/4 dB ma i valori tornano coi target di `curpower` solo letti in mezzi dB. La sezione a 80 MHz non c'e' |
+| `wl1_phy_txpwrindex_ch52-bw80.txt` | `wl -i wl1 phy_txpwrindex`, stessa sessione: indice della tabella di guadagno TX su cui sta l'anello chiuso, 23 sui due core. Il bring-up lo programma a `0x14` e poi `0x13` |
 
 **Le catture contengono l'attach di wl0.** `wl` fa l'attach di entrambi i core
 a ogni caricamento, e gli hook sono sulle funzioni di `wl`, non per-core:
