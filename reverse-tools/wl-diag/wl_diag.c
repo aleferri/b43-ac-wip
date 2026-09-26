@@ -509,17 +509,17 @@ static struct hook hooks[] = {
 	{ "wlc_bmac_bw_set",  OP_MAC_BW,     0, 1, 0 },
 	{ "si_get_sromctl",   OP_SROMCTL_R,  0, 0, 0, .retcap = true },
 	{ "si_set_sromctl",   OP_SROMCTL_W,  0, 1, 0 },
-	{ "wlc_phy_chanspec_set", OP_CHANSPEC, 1, 0, 0 },
-	/* The chanspec written to shared memory. Needed as a BOUNDARY for
-	 * segmenting a sweep: wlc_phy_chanspec_set is not on the AC-PHY path (the
-	 * per-PHY setter is a static function with no symbol -- in these blobs no
-	 * wlc_phy_chanspec_set_acphy exists at all) and produces no records on AC.
+	/* The chanspec written to shared memory is the sweep's cycle BOUNDARY,
+	 * and on the AC-PHY it is the only one: the generic wlc_phy_chanspec_set
+	 * is off the per-PHY path (no wlc_phy_chanspec_set_acphy symbol in these
+	 * blobs) and emits no record there. It is deliberately absent from this
+	 * table for a second reason: its 4-word detour window covers the `lui`
+	 * half of the call site that loads THIS function, a site the short-j
+	 * fallback below rewrites, so hooking both would put two patches on one
+	 * word -- the collision piano_senza_collisioni() now refuses.
 	 * Prologue: lw / lw / sltiu / beq, so the branch is in word 3 and the
 	 * 4-word detour does not hold; the first two words are lw and are not
-	 * PC-relative, so the 2-word short-j does.
-	 * TO BE CONFIRMED on the first capture: that the chanspec is in a1. If the
-	 * record carries an absurd value, the signature differs from the assumed
-	 * one. */
+	 * PC-relative, so the 2-word short-j does. */
 	{ "wlc_phy_chanspec_shm_set", OP_CHANSPEC_SHM, 1, 0, 0, .shortj = true },
 	{ "wlc_bmac_read_objmem16",  OP_MAC_OBJ_R, 1, 0, 2, .retcap = true },
 	{ "wlc_bmac_write_objmem16", OP_MAC_OBJ_W, 1, 2, 3 },
@@ -1225,6 +1225,49 @@ static void alloc_verify(struct module *m)
 	alloc_rewound = 0;
 }
 
+/* How many addiu/jump epilogues consume the high half of the `lui $rt` at
+ * index i to reach fnaddr. The compiler emits one lui and several tail-call
+ * epilogues off it across a branch diamond -- wlc_pretbtt_set does exactly
+ * this for wlc_bmac_write_shm, sharing one `lui $t9` between two `addiu $t9 /
+ * jr $t9` paths. patch_sites can repoint a lui only once, so a shared one must
+ * be left alone: repointing it gives every sibling epilogue hi(stub):lo(fn), a
+ * wild jump into the stub pool. Along any control path the high half comes
+ * from the nearest preceding lui, so the reach ends at the next full write of
+ * $rt (another lui, a load, a move); an `addiu $rt,$rt` is a consumer, not a
+ * redefinition, and does not end it -- the sibling epilogues are mutually
+ * exclusive at run time even though both are present in memory. */
+static int lui_consumatori(const u32 *base, int words, int i, int rt,
+			   unsigned long fnaddr)
+{
+	int p, cnt = 0;
+
+	for (p = i + 1; p < words; p++) {
+		u32 w = base[p];
+		bool consumer = (w >> 26) == 0x09 &&
+				((w >> 21) & 31) == rt && ((w >> 16) & 31) == rt;
+		int j;
+
+		if (!consumer && dest_reg(w) == rt)
+			break;			/* $rt's high half redefined */
+		if (!consumer)
+			continue;
+		if (((unsigned long)(base[i] & 0xffff) << 16) +
+		    (long)(s16)(w & 0xffff) != fnaddr)
+			continue;
+		for (j = 1; j <= 8 && p + j < words; j++) {
+			u32 wj = base[p + j];
+
+			if ((wj >> 26) != 0 || ((wj >> 21) & 31) != rt)
+				continue;
+			if ((wj & 0x3f) == 0x08 || (wj & 0x3f) == 0x09) {
+				cnt++;
+				break;
+			}
+		}
+	}
+	return cnt;
+}
+
 static int find_sites(int idx, unsigned long fnaddr)
 {
 	u32 *base;
@@ -1273,6 +1316,11 @@ static int find_sites(int idx, unsigned long fnaddr)
 			}
 			if (!found) {
 				pr_info("wl_diag: '%s' site @%px has no jump, ignored\n",
+					hooks[idx].name, &base[i]);
+				break;
+			}
+			if (lui_consumatori(base, (int)words, i, rt, fnaddr) > 1) {
+				pr_warn("wl_diag: '%s' site @%px dropped (lui shared by several epilogues)\n",
 					hooks[idx].name, &base[i]);
 				break;
 			}
@@ -1917,6 +1965,70 @@ static int pianifica(void)
 	return n_elig;
 }
 
+/* The words this plan will overwrite in the target text for one hook: the
+ * detour window (4, or 2 for the short-j), the diverted tail-call word, the
+ * break word, or -- on the call-site route -- the hi and lo of every patched
+ * pair. Mirrors what patch_entry()/patch_sites() actually touch. The buffer
+ * holds at most 2*MAX_SITES words (the sites route is the widest). */
+static int parole_patchate(int idx, unsigned long *out)
+{
+	const struct hook *h = &hooks[idx];
+	int n = 0, k;
+
+	if (h->use_sites) {
+		for (k = 0; k < n_sites[idx]; k++) {
+			out[n++] = (unsigned long)sites[idx][k].hi;
+			out[n++] = (unsigned long)sites[idx][k].lo;
+		}
+		return n;
+	}
+	if (h->use_tailj) {
+		out[n++] = h->addr + 4 * h->tailw;
+		return n;
+	}
+#if WD_HAVE_BP
+	if (h->use_bp) {
+		out[n++] = h->addr;
+		return n;
+	}
+#endif
+	out[n++] = h->addr;
+	out[n++] = h->addr + 4;
+	if (!h->use_shortj) {
+		out[n++] = h->addr + 8;
+		out[n++] = h->addr + 12;
+	}
+	return n;
+}
+
+/* Two hooks that write the same word corrupt each other: the case that put a
+ * shm_set call-site rewrite inside the chanspec_set detour window, and two
+ * sites on one pair in general. The stores are silent and order-dependent, so
+ * the whole plan is refused here, before any of it reaches the target -- the
+ * exit is clean because nothing has been patched yet. */
+static bool piano_senza_collisioni(void)
+{
+	unsigned long wa[2 * MAX_SITES], wb[2 * MAX_SITES];
+	int a, b, na, nb, i, j;
+
+	for (a = 0; a < n_elig; a++) {
+		na = parole_patchate(eligible[a], wa);
+		for (b = a + 1; b < n_elig; b++) {
+			nb = parole_patchate(eligible[b], wb);
+			for (i = 0; i < na; i++)
+				for (j = 0; j < nb; j++)
+					if (wa[i] == wb[j]) {
+						pr_err("wl_diag: '%s' and '%s' both patch %px: refusing to arm\n",
+						       hooks[eligible[a]].name,
+						       hooks[eligible[b]].name,
+						       (void *)wa[i]);
+						return false;
+					}
+		}
+	}
+	return true;
+}
+
 static int arma(void)
 {
 	int i;
@@ -1936,6 +2048,8 @@ static int arma(void)
 		pr_err("wl_diag: no i-cache flush resolvable, staying in DRY-RUN\n");
 		return 0;
 	}
+	if (!piano_senza_collisioni())
+		return 0;
 
 	for (i = 0; i < n_elig; i++) {
 #if WD_HAVE_BP
