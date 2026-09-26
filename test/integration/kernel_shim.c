@@ -213,6 +213,27 @@ asm(
 "	.size __sw_hweight32, .-__sw_hweight32\n"
 );
 
+/*
+ * Chiamata dal wrapper inline find_next_bit() di include/linux/find.h ogni
+ * volta che size non e' una costante di compilazione -- il caso di
+ * dev->phy.ac->num_cores nei for_each_set_bit() del port. Non e' un no-op:
+ * un valore inventato sposterebbe le operazioni sul core sbagliato, lo stesso
+ * modo di sbagliare di uno stub a zero. Stessa semantica della versione del
+ * kernel (lib/find_bit.c), un bit alla volta invece che una parola alla
+ * volta: qui conta la correttezza, non la velocita'.
+ */
+unsigned long _find_next_bit(const unsigned long *addr1, unsigned long nbits,
+			      unsigned long start)
+{
+	unsigned long i;
+
+	for (i = start; i < nbits; i++)
+		if (addr1[i / (8 * sizeof(unsigned long))] &
+		    (1UL << (i % (8 * sizeof(unsigned long)))))
+			return i;
+	return nbits;
+}
+
 void __local_bh_enable_ip(unsigned long ip, unsigned int cnt) { }
 void *skb_pull(void *skb, unsigned int len) { return NULL; }
 char pcpu_hot[256];

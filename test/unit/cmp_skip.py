@@ -100,26 +100,35 @@ KNOWN = {
              max=1, cascata=False,
              motivo="meta' enable della seconda coppia."),
 
-        # L'azzeramento delle 56 righe MAC delle chiavi pairwise. Queste NON
-        # sono come le altre voci di questa lista: il port le deve emettere, e
-        # non le emette. Stanno qui come posizione d'attesa, non come
-        # assoluzione, perche' il punto in cui vanno cade dentro
-        # b43_phy_ac_shm_readback_block() -- codice del core parcheggiato nel
-        # PHY per mancanza di un aggancio, come dice il suo stesso commento --
-        # e infilarcele raddoppierebbe quel difetto per guadagnare 224 op.
-        # `grezzo` non le salta, quindi il numero citabile non se ne accorge:
-        # la differenza si vede solo sulla riga CON eccezioni. Vedi
-        # docs/retrace-todo.md, sezione ADDRM.SET.
+        # L'azzeramento delle 56 righe MAC delle chiavi pairwise. Il port lo
+        # emette: b43_clear_keys() e' raggiungibile da patches/0019 e chiama
+        # keymac_write() -> b43_amt_write() su ognuna, come il vendor.
+        # Cio' che resta qui non e' piu' un hook mancante: ADDRM.SET e AMT.WR
+        # sono le etichette che il tracer del vendor mette sull'ingresso di
+        # keymac_write()/b43_amt_write() -- niente addr=/val=, solo idx=,
+        # segno che non sono un accesso bus ma un confine di funzione C.
+        # Questo harness osserva solo il bus (bcma_stub.c) e non puo' produrre
+        # un'etichetta del genere qualunque sia l'aggancio nel flow: e'
+        # strutturale, non debito. Le due OBJ.BULKR/OBJ.BULKW sotto sono
+        # invece vero traffico bus, e restano fra le eccezioni non per lo
+        # stesso motivo ma perche' se il port le riproduce, e con quale
+        # allineamento, e' ancora da verificare: toglierle fa scendere
+        # "CON eccezioni" (73.43% -> 72.93% sul segmento di riferimento)
+        # invece di farlo salire. Vedi docs/retrace-todo.md, sezione
+        # ADDRM.SET.
         dict(pattern=r'^ADDRM\.SET idx=',
              dopo=None,
              max=60, cascata=False,
-             motivo="azzeramento righe MAC chiavi pairwise: b43_clear_keys() "
-                    "del core, che chiama keymac_write(dev, i, NULL) su "
-                    "ognuna. Da emettere, manca l'aggancio nel flow."),
+             motivo="etichetta di ingresso di keymac_write() sul vendor, non "
+                    "un accesso bus: b43_clear_keys() (patches/0019) la "
+                    "raggiunge e chiama b43_amt_write() su ognuna, ma "
+                    "l'harness vede solo MMIO, mai i confini di funzione, "
+                    "quindi resta irraggiungibile per costruzione."),
         dict(pattern=r'^AMT\.WR idx=',
              dopo=r'^ADDRM\.SET idx=',
              max=60, cascata=False,
-             motivo="il livello sotto della stessa riga: b43_amt_write()."),
+             motivo="etichetta di ingresso di b43_amt_write(): stessa "
+                    "ragione della voce sopra, non un accesso bus."),
         dict(pattern=r'^OBJ\.BULKR addr=0x[0-9a-f]+ len=8$',
              dopo=r'^AMT\.WR idx=',
              dopo2=r'^ADDRM\.SET idx=',
