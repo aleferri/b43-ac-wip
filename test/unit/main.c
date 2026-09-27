@@ -731,6 +731,38 @@ static void run_timeline(void)
 	fclose(f);
 }
 
+/*
+ * Doppione della coda di b43_wireless_core_init(), che b43 esegue dopo
+ * b43_chip_init() e quindi dopo il primo switch_channel: prima
+ * b43_upload_card_macaddress(), che via b43_macfilter_set() di patches/0011
+ * scrive BSSID e indirizzo di stazione con i flag della riga, poi
+ * b43_security_init(), che azzera le righe MAC delle chiavi pairwise.
+ *
+ * Il vendor emette le stesse op dentro il channel setup, e la prima coppia
+ * con l'ordine e i flag diversi. Qui si segue b43, e la differenza la conta
+ * il confronto.
+ *
+ * Le righe sono B43_NR_PAIRWISE_KEYS di b43.h, 50: con fw.rev >= 351 la kidx
+ * API nuova ha 4 slot di gruppo, e il ciclo di b43_clear_keys() si ferma li'.
+ */
+static void emit_core_top_row(bool self, u16 flags)
+{
+	b43_test_emit_addrm(self ? 0xffffffffu : 0xfffffffeu);
+	b43_test_emit_amt(self ? 0x3f : 0x3e, flags);
+}
+
+static void emit_core_init_tail(void)
+{
+	u16 i;
+
+	emit_core_top_row(false, 0x8002);
+	emit_core_top_row(true, 0x8008);
+	for (i = 0; i < 50; i++) {
+		b43_test_emit_addrm(i);
+		b43_test_emit_amt(i, 0);
+	}
+}
+
 static void run_switch_channel(void)
 {
 
@@ -1161,6 +1193,8 @@ static void run_switch_channel(void)
 	}
 
 	int r = b43_phyops_ac.switch_channel(&g_wldev, 36);
+
+	emit_core_init_tail();
 
 	/*
 	 * L'ordine di b43_op_config(): switch_channel, la configurazione BSS

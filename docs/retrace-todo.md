@@ -5247,36 +5247,33 @@ OBJ.BULKR addr=0x0000 len=8 a5=0x00040000
 OBJ.BULKW addr=0x0000 len=8 a5=0x00040000
 ```
 
-Il port non emette niente di tutto questo. Le 56 righe sono quelle sotto le
-otto in cima -- `B43_AMT_WIDE_ENTRIES` meno `B43_NR_GROUP_KEYS * 2` -- cioe' le
-righe MAC delle chiavi pairwise, e l'azzeramento e' `b43_clear_keys()` del core
-che chiama `keymac_write(dev, i, NULL)` su ognuna. Con `B43_AMT_KEEP_FLAGS` la
-riga viene riletta, che e' esattamente la `OBJ.BULKR` che la cattura mostra:
-i due livelli di hook del vendor, `ADDRM.SET` sopra e `AMT.WR` sotto,
-corrispondono a `keymac_write` sopra e `b43_amt_write` sotto.
+Sono op del core e le emette il core: dopo il primo switch_channel,
+`b43_wireless_core_init()` chiama `b43_upload_card_macaddress()`, che scrive le
+due righe in cima (`0x3e` con `0x8002`, `0x3f` con `0x8008`), e
+`b43_security_init()`, che azzera le righe delle chiavi. Il vendor le ha dentro
+il channel setup: stesse op, prima. L'harness di `../unit` le emette nello
+stesso punto di b43 (`emit_core_init_tail()`), e `src/` non le chiama.
 
-Il punto di inserimento non e' ambiguo. Nella cattura il blocco sta fra
-l'azzeramento di `OBJ.WR 0x0658..0x0666` e la `MAC.MHF 0x0000 mask=0x4000` che
-segue, e il port emette quelle due cose nello stesso ordine, adiacenti:
-`/tmp/p1/full` righe 11019, 11020.
+Tre differenze restano, e sono tutte del core:
 
-Non l'ho aggiunto, perche' quel punto cade **dentro**
-`b43_phy_ac_shm_readback_block()`, che il suo stesso commento dichiara codice
-del core parcheggiato nel PHY: "These are cells of the MAC, not of the PHY, so
-this belongs in the core. It sits here because the captures put it between the
-PHY write of 0x0339 and the host flag that follows, and the core has no hook at
-that point". Metterci dentro anche l'azzeramento delle chiavi raddoppia quel
-difetto invece di risolverlo.
+- **l'ordine.** Il vendor azzera le chiavi fra `OBJ.WR 0x0658..0x0666` e la
+  `MAC.MHF 0x0000 mask=0x4000`, e scrive le due righe in cima due volte
+  nell'attach. Il confronto
+  posizionale conta lo spostamento come mancanti piu' di troppo: sul gate a
+  freddo di cold01 sono 99.89% -> 98.40%.
+- **il numero di righe.** Il vendor ne azzera 56 (`0x00`-`0x37`), b43 50:
+  `B43_NR_PAIRWISE_KEYS`, con la kidx API nuova che parte dallo slot 4. Il
+  layout wide ha 64 righe, quindi il limite di b43 non e' quello della
+  tabella.
+- **la prima coppia** del vendor -- stazione con `0x8008`, BSSID senza flag --
+  b43 non la emette.
 
-E' lo stesso problema, non uno nuovo: serve un punto di aggancio per il core in
-quella posizione del flow. Con quello, ci vanno sia le celle che oggi sono
-parcheggiate la' sia le 56 righe, ognuna dal suo doppione `emit_core_*`.
-
-Le due righe in cima (`0x3e` BSSID, `0x3f` indirizzo di stazione) seguono la
-stessa strada, ma piu' tardi: `ADDRM.SET idx=0xffffffff` e `0xfffffffe` dentro
-il bss-up, due righe ciascuno. `emit_core_amt()` le emetteva in coda
-all'azzeramento del core init, dove la cattura non le ha; sono state togliate,
-perche' sei op nel punto sbagliato costano piu' che nessuna op.
+Sulla suite di integrazione anche le due meta' della chiave, il materiale a
+`0x10f4` e l'index block a `0x05e0`, compaiono due volte: `src/` le emette in
+`shm_zero_10f4`/`shm_zero_05e0` e `b43_security_init()` le rifa'. Il core pero'
+scrive l'index block con `(kidx << 4) | algo`, 54 word, dove il vendor scrive
+zero su 68: toglierle da `src/` oggi costa 548 op allineate (75.28% -> 73.65%
+su cold01).
 
 ## Il grappolo di coda: sono tutte ricariche del beacon
 

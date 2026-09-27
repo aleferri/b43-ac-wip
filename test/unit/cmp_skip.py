@@ -100,30 +100,23 @@ KNOWN = {
              max=1, cascata=False,
              motivo="meta' enable della seconda coppia."),
 
-        # L'azzeramento delle 56 righe MAC delle chiavi pairwise. Il port lo
-        # emette: b43_clear_keys() e' raggiungibile da patches/0019 e chiama
-        # keymac_write() -> b43_amt_write() su ognuna, come il vendor.
-        # Cio' che resta qui non e' piu' un hook mancante: ADDRM.SET e AMT.WR
+        # L'azzeramento delle righe MAC delle chiavi pairwise e le due righe in
+        # cima. Le emette il core: b43_upload_card_macaddress() e
+        # b43_security_init() -> b43_clear_keys() -> keymac_write() ->
+        # b43_amt_write(), dopo il primo switch_channel. ADDRM.SET e AMT.WR
         # sono le etichette che il tracer del vendor mette sull'ingresso di
-        # keymac_write()/b43_amt_write() -- niente addr=/val=, solo idx=,
-        # segno che non sono un accesso bus ma un confine di funzione C.
-        # Questo harness osserva solo il bus (bcma_stub.c) e non puo' produrre
-        # un'etichetta del genere qualunque sia l'aggancio nel flow: e'
-        # strutturale, non debito. Le due OBJ.BULKR/OBJ.BULKW sotto sono
-        # invece vero traffico bus, e restano fra le eccezioni non per lo
-        # stesso motivo ma perche' se il port le riproduce, e con quale
-        # allineamento, e' ancora da verificare: toglierle fa scendere
-        # "CON eccezioni" (73.43% -> 72.93% sul segmento di riferimento)
-        # invece di farlo salire. Vedi docs/retrace-todo.md, sezione
-        # ADDRM.SET.
+        # keymac_write()/b43_amt_write() -- niente addr=/val=, solo idx= --
+        # e la suite di integrazione, che vede solo il bus, non le puo'
+        # produrre. Le OBJ.BULKR/OBJ.BULKW invece sono traffico bus, e b43 le
+        # fa a 16 bit: stanno qui finche' il confronto non sa svolgerle.
+        # Vedi docs/retrace-todo.md, sezione ADDRM.SET.
         dict(pattern=r'^ADDRM\.SET idx=',
              dopo=None,
              max=60, cascata=False,
              motivo="etichetta di ingresso di keymac_write() sul vendor, non "
-                    "un accesso bus: b43_clear_keys() (patches/0019) la "
-                    "raggiunge e chiama b43_amt_write() su ognuna, ma "
-                    "l'harness vede solo MMIO, mai i confini di funzione, "
-                    "quindi resta irraggiungibile per costruzione."),
+                    "un accesso bus: b43 ci arriva da b43_clear_keys() e "
+                    "b43_upload_card_macaddress(), ma sul bus i confini di "
+                    "funzione non si vedono."),
         dict(pattern=r'^AMT\.WR idx=',
              dopo=r'^ADDRM\.SET idx=',
              max=60, cascata=False,

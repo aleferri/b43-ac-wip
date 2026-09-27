@@ -11011,29 +11011,6 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	B43_AC_BLOCK("shm_zero_05e0");
 	for (off = 0x05e0; off <= 0x0666; off += 2)
 		b43_shm_write16(dev, B43_SHM_SHARED, off, 0x0000);
-	/*
-	 * Azzeramento della key table, 56 righe dell'address match table da
-	 * 0x00 a 0x37, contigue e tutte senza flag. Il conto e' quello di
-	 * b43_clear_keys(): 64 slot chiave meno gli 8 di gruppo.
-	 *
-	 * Sta qui perche' qui lo mette la cattura, incastrato fra le due
-	 * zeroing di shared memory e il blocco di config MAC, allo stesso
-	 * posto a freddo e a caldo. In b43 lo chiama b43_security_init()
-	 * dall'init del core, che e' prima: riconciliare i due ordini e' in
-	 * docs/retrace-todo.md, e finche' non e' fatto la chiamata sta dove il
-	 * confronto la richiede e non dove il driver la vorrebbe.
-	 *
-	 * Solo l'azzeramento. Le due righe che portano un indirizzo vero -- la
-	 * propria e quella del BSSID, con i flag -- non sono qui: arrivano nel
-	 * bss-up, dove le chiavi esistono.
-	 */
-	/* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
-	 *   12863-13198]
-	 * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
-	 *   1240155-1240490]
-	 */
-	B43_AC_BLOCK("amt_clear_keys");
-	b43_clear_keys(dev);
 	/* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
 	 *   12859-13592]
 	 * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -11053,28 +11030,6 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	 */
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x018a, 0xffce);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x018c, 0xffba);
-	/*
-	 * Le due righe in cima all'address match table: l'indirizzo di
-	 * stazione con i suoi flag, e il BSSID azzerato -- qui il BSS non c'e'
-	 * ancora.
-	 *
-	 * Non sono roba del bss-up, anche se il posto lo farebbe pensare. Su
-	 * cold14, che il CAC non lo finisce mai e al bss-up non arriva, queste
-	 * due ci sono lo stesso, a +4.2 s dall'inizio contro i +12.8 s a cui
-	 * l'attach si sospende ad aspettare il check. Stanno nell'attach, che
-	 * ogni segmento esegue per intero.
-	 *
-	 * Fra le due la cattura ha una parola di template RAM (0x0048) che
-	 * questo port non emette: la template RAM e' indietro di suo, e
-	 * inventarne una parola sola per riempire il buco sarebbe peggio del
-	 * buco.
-	 */
-	/* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
-	 *   13301-13312]
-	 */
-	B43_AC_BLOCK("amt_top_rows");
-	b43_amt_set_top_row(dev, true, 0x8008);
-	b43_amt_set_top_row(dev, false, 0);
 	b43_phy_ac_wd_stats_poll_opt(dev, true, 0, true);
 	/*
 	 * After the sweep and after the four CCK blocks that are still not
@@ -11171,27 +11126,6 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	b43_phy_ac_mhf_maskset(dev, 1, (u16)~0x0020, 0x0020);    /* MHF1 set bit 5 */
 	b43_mac_suspend(dev);
 	b43_phy_ac_wd_stats_poll_opt(dev, true, 0, true);
-	/*
-	 * Le stesse due righe in cima all'address match table una seconda
-	 * volta: ordine invertito e BSSID coi flag, perche' qui l'indirizzo
-	 * c'e'.
-	 *
-	 * Anche questa coppia sta nell'attach e non nel bss-up: su cold14, che
-	 * il CAC non lo finisce e al bss-up non arriva, c'e' lo stesso, a
-	 * +4.2 s contro i +12.8 s a cui l'attach si sospende.
-	 *
-	 * Il punto e' fra lo sweep piatto dei contatori che chiude il poll qui
-	 * sopra e la prima cella rate-po della mappa qui sotto: la cattura ha
-	 * le dodici letture 0x0768-0x078a, poi la coppia, poi 0x01f6. Fra le
-	 * due righe ha anche una parola di template RAM (0x0048) che questo
-	 * port non emette.
-	 */
-	/* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
-	 *   13942-13952]
-	 */
-	B43_AC_BLOCK("amt_top_rows_bss");
-	b43_amt_set_top_row(dev, false, 0x8002);
-	b43_amt_set_top_row(dev, true, 0x8008);
 	b43_phy_ac_basic_rate_map(dev);
 
 	/*
