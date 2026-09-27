@@ -123,7 +123,9 @@ void *system_wq;
 /* queue_work_on() sta in subsystem_stub.c: ha bisogno di struct
  * work_struct, e questo file e' codice utente senza header kernel. */
 int cancel_work_sync(void *w) { return 0; }
-int cancel_delayed_work_sync(void *w) { return 0; }
+/* Il registro dei delayed work sta in subsystem_stub.c, coi tipi del kernel. */
+int b43_test_dwork_cancel(void *w);
+int cancel_delayed_work_sync(void *w) { return b43_test_dwork_cancel(w); }
 void complete(void *c) { }
 void wait_for_completion(void *c) { }
 
@@ -377,15 +379,42 @@ void release_firmware(const void *fw) { }
 
 /* --- interruzioni, skb, rng, rfkill: niente di tutto questo emette op -- */
 
+/*
+ * I due handler di b43, per consegnare le interruzioni che la timeline porta:
+ * il campione di rumore pronto. L'hard handler legge la causa dal registro,
+ * e la causa la serve bcma_stub.c; se chiede il thread, il thread segue
+ * subito, come fa il kernel su una sola CPU.
+ */
+static int (*irq_hard)(int, void *);
+static int (*irq_thread)(int, void *);
+static void *irq_dev;
+
 int request_threaded_irq(unsigned int irq, void *h, void *th,
 			 unsigned long flags, const char *name, void *dev)
 {
+	irq_hard = (int (*)(int, void *))h;
+	irq_thread = (int (*)(int, void *))th;
+	irq_dev = dev;
 	return 0;
 }
 
-void free_irq(unsigned int irq, void *dev) { }
+#define SHIM_IRQ_WAKE_THREAD	2
+
+void b43_test_irq(void)
+{
+	if (irq_hard && irq_hard(0, irq_dev) == SHIM_IRQ_WAKE_THREAD &&
+	    irq_thread)
+		irq_thread(0, irq_dev);
+}
+
+void free_irq(unsigned int irq, void *dev)
+{
+	irq_hard = NULL;
+	irq_thread = NULL;
+}
 void dev_kfree_skb_any_reason(void *skb, int reason) { }
-void *skb_clone(void *skb, unsigned int gfp) { return NULL; }
+/* L'unico skb che b43 clona e' il beacon, che subsystem_stub.c tiene fermo. */
+void *skb_clone(void *skb, unsigned int gfp) { return skb; }
 void *skb_dequeue(void *list) { return NULL; }
 void skb_queue_head(void *list, void *skb) { }
 void skb_queue_tail(void *list, void *skb) { }

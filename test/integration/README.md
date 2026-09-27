@@ -38,9 +38,9 @@ make check          # every file of b43 and of the port: must say "0 errori"
 make b43-trace      # compile, link, print the symbol count
 ```
 
-**`make fetch`** must end with `applicate 11, saltate 5`:
+**`make fetch`** must end with `applicate 2, saltate 5`:
 
-- the 11 patches that touch `b43/` are applied;
+- the 2 patches that touch `b43/`, the core and the PHY, are applied;
 - the 5 on bcma/ssb have nothing to apply here, but their hunks on
   `include/linux/ssb/` go into `kinc/`.
 
@@ -91,6 +91,25 @@ make run ORACLE=/tmp/m05 B43_CHANNEL=52 B43_BW=20 TRACE_OUT=/tmp/t
 The channel is looked up among those b43 registered in `b43_setup_bands()`,
 the same restriction mac80211 applies.
 
+**The environment.** After `start` the suite does what mac80211 does for an AP
+interface: `add_interface`, `config(~0)`, the four default `conf_tx`, then
+`start_ap` -- on a radar channel after the availability check, with the
+release and the retune in between. What follows comes from the capture's
+timeline, `B43_TIMELINE`, the file `reverse-tools/timeline.py` writes
+(`../unit/gates.sh` leaves it in `GATE_TMP`):
+
+```sh
+python3 ../../reverse-tools/timeline.py /tmp/m01 /tmp/tl01
+make run ORACLE=/tmp/m01 B43_TIMELINE=/tmp/tl01 TRACE_OUT=/tmp/int.trace
+```
+
+The driver's timers are jiffies, advanced only by the timeline: before each
+event the delayed works that are due run -- the periodic work, the radar poll.
+The vendor's watchdog turns set the scale, one second each, so b43's own
+periodic work produces the turns. `NOISE` raises `B43_IRQ_NOISESAMPLE_OK`
+through b43's interrupt handlers, `TPL` is `bss_info_changed(BEACON)`, and
+`BSS_UP` ends the check. Without a timeline the run stops after `start_ap`.
+
 ### Comparing
 
 Use the `../unit` tools with the **`--bus` profile**, and the window that
@@ -102,8 +121,9 @@ python3 ../unit/cmp_skip.py /tmp/m01 /tmp/int.trace 167:38445 --board d6220 --bu
 python3 ../unit/compare.py /tmp/m01 /tmp/int.trace --auto-align --bus
 ```
 
-On `cold01` this gives **79.62%** (25836/32448): 185 wrong values, 4702 missing
-stock operations, 1540 extra port operations.
+On `cold01`, with the timeline, this gives **84.29%** (28494/33804): 341 wrong
+values, 1888 missing stock operations, 2740 extra port operations. The blocks
+b43 emits elsewhere are moved first, each by its rule in `MOVED`.
 
 **Why `--bus`.** This trace is taken at the MMIO bus, and the bus has none of
 the accessor classes:

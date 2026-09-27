@@ -61,6 +61,19 @@ static u32 shm_routing_off;
 static u32 macctl;
 
 /*
+ * Le cause d'interruzione che il microcodice alzerebbe: le mette main.c
+ * quando la timeline consegna un evento, b43 le legge da
+ * B43_MMIO_GEN_IRQ_REASON e le azzera con l'ACK, che su quel registro e' una
+ * scrittura dei bit da togliere.
+ */
+static u32 irq_pending;
+
+void b43_test_raise_irq(u32 reason)
+{
+	irq_pending |= reason;
+}
+
+/*
  * Le quattro celle di b43_validate_chipaccess(), e solo quelle.
  *
  * Il self-test scrive e rilegge SHM_SHARED 0..7, e l'oracolo non lo puo'
@@ -249,6 +262,10 @@ static void note_write(struct bcma_device *core, u16 off, u32 val, int width)
 	case B43_MMIO_MACCMD:
 		b43_trace_op("MAC.MCMD", 0, val, 0, -1);
 		return;
+	case B43_MMIO_GEN_IRQ_REASON:
+		irq_pending &= ~val;
+		b43_trace_raw("REG.WR", off, val, width);
+		return;
 	default:
 		b43_trace_raw("REG.WR", off, val, width);
 		return;
@@ -336,7 +353,7 @@ static u32 note_read(struct bcma_device *core, u16 off, int width)
 	 * degli interrupt, e un latch restituirebbe l'ACK invece dello stato.
 	 */
 	case B43_MMIO_GEN_IRQ_REASON:
-		return B43_IRQ_MAC_SUSPENDED;
+		return B43_IRQ_MAC_SUSPENDED | irq_pending;
 	default:
 		return b43_trace_read_raw(off, width);
 	}

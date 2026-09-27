@@ -22,6 +22,8 @@
  */
 #include <linux/bcma/bcma.h>
 #include <linux/ssb/ssb.h>
+#include <linux/etherdevice.h>
+#include <linux/jiffies.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <net/mac80211.h>
@@ -204,6 +206,13 @@ static void apply_regdomain(struct ieee80211_supported_band *sb)
 {
 	unsigned int i, j;
 
+	/* Il dovere radar, come lo marca cfg80211: U-NII-2A e U-NII-2C. */
+	for (i = 0; i < sb->n_channels; i++) {
+		u32 f = sb->channels[i].center_freq;
+
+		if ((f >= 5260 && f <= 5320) || (f >= 5500 && f <= 5720))
+			sb->channels[i].flags |= IEEE80211_CHAN_RADAR;
+	}
 	for (i = 0; i < sb->n_channels; i++)
 		for (j = 0; j < ARRAY_SIZE(wl_default_locale_5g); j++)
 			if (sb->channels[i].hw_value == wl_default_locale_5g[j].chan &&
@@ -276,15 +285,132 @@ void ieee80211_queue_work(struct ieee80211_hw *hw, struct work_struct *work)
 	if (work && work->func)
 		work->func(work);
 }
+
+/*
+ * I delayed work sono i timer del driver: il periodic work, il poll del
+ * radar. Si tengono qui con la loro scadenza in jiffies, e li fa scattare
+ * b43_test_run_until() quando main.c porta avanti l'orologio. Un work gia'
+ * accodato non si riaccoda, come nel kernel.
+ */
+#define SHIM_DWORKS	8
+
+static struct {
+	struct delayed_work *work;
+	unsigned long due;
+} dworks[SHIM_DWORKS];
+
 void ieee80211_queue_delayed_work(struct ieee80211_hw *hw,
 				  struct delayed_work *work,
-				  unsigned long delay) { }
+				  unsigned long delay)
+{
+	int i, free = -1;
+
+	for (i = 0; i < SHIM_DWORKS; i++) {
+		if (dworks[i].work == work)
+			return;
+		if (!dworks[i].work && free < 0)
+			free = i;
+	}
+	if (free < 0) {
+		b43_trace_note("troppi delayed work in coda%d\n", 0);
+		return;
+	}
+	dworks[free].work = work;
+	dworks[free].due = jiffies + delay;
+}
+
+int b43_test_dwork_cancel(void *w)
+{
+	int i;
+
+	for (i = 0; i < SHIM_DWORKS; i++) {
+		if (dworks[i].work == w) {
+			dworks[i].work = NULL;
+			return 1;
+		}
+	}
+	return 0;
+}
+
+/* Fa scattare, in ordine di scadenza, i work che scadono entro @until. */
+void b43_test_run_until(unsigned long until)
+{
+	for (;;) {
+		struct delayed_work *w;
+		int i, next = -1;
+
+		for (i = 0; i < SHIM_DWORKS; i++)
+			if (dworks[i].work && time_before_eq(dworks[i].due, until) &&
+			    (next < 0 || time_before(dworks[i].due, dworks[next].due)))
+				next = i;
+		if (next < 0)
+			break;
+		w = dworks[next].work;
+		if (time_after(dworks[next].due, jiffies))
+			jiffies = dworks[next].due;
+		dworks[next].work = NULL;
+		w->work.func(&w->work);
+	}
+	if (time_after(until, jiffies))
+		jiffies = until;
+}
+
+/*
+ * Il beacon che mac80211 darebbe a b43_update_templates(): intestazione,
+ * SSID, rate e TIM, cioe' quel che b43_write_beacon_template() legge per
+ * TIMBPOS e DTIMPER. La lunghezza dell'SSID e' B43_SSID_LEN, come AC_SSID_LEN
+ * di ../unit, perche' entra nella lunghezza del template.
+ */
+static struct sk_buff shim_beacon_skb;
+static u8 shim_beacon[256];
+
 struct sk_buff *ieee80211_beacon_get_tim(struct ieee80211_hw *hw,
 					 struct ieee80211_vif *vif,
 					 u16 *tim_offset, u16 *tim_length,
 					 unsigned int link_id)
 {
-	return NULL;
+	static const u8 rates[] = { 0x8c, 0x12, 0x98, 0x24, 0xb0, 0x48, 0x60, 0x6c };
+	struct ieee80211_mgmt *m = (struct ieee80211_mgmt *)shim_beacon;
+	long ssid_len = b43_test_env_long("B43_SSID_LEN", 7);
+	struct ieee80211_tx_info *info;
+	u8 *p;
+
+	memset(shim_beacon, 0, sizeof(shim_beacon));
+	m->frame_control = cpu_to_le16(IEEE80211_FTYPE_MGMT |
+				       IEEE80211_STYPE_BEACON);
+	eth_broadcast_addr(m->da);
+	memcpy(m->sa, vif->addr, ETH_ALEN);
+	memcpy(m->bssid, vif->addr, ETH_ALEN);
+	m->u.beacon.beacon_int = cpu_to_le16(vif->bss_conf.beacon_int);
+	m->u.beacon.capab_info = cpu_to_le16(WLAN_CAPABILITY_ESS);
+	p = m->u.beacon.variable;
+	*p++ = WLAN_EID_SSID;
+	*p++ = (u8)ssid_len;
+	memset(p, 'X', ssid_len);
+	p += ssid_len;
+	*p++ = WLAN_EID_SUPP_RATES;
+	*p++ = sizeof(rates);
+	memcpy(p, rates, sizeof(rates));
+	p += sizeof(rates);
+	*p++ = WLAN_EID_TIM;
+	*p++ = 4;
+	*p++ = 0;				/* DTIM count */
+	*p++ = vif->bss_conf.dtim_period;
+	*p++ = 0;
+	*p++ = 0;
+
+	memset(&shim_beacon_skb, 0, sizeof(shim_beacon_skb));
+	shim_beacon_skb.data = shim_beacon;
+	shim_beacon_skb.len = p - shim_beacon;
+	info = IEEE80211_SKB_CB(&shim_beacon_skb);
+	info->band = NL80211_BAND_5GHZ;
+	info->control.rates[0].idx = 0;
+	return &shim_beacon_skb;
+}
+
+void ieee80211_radar_detected(struct ieee80211_hw *hw)
+{
+	b43_trace_note("ieee80211_radar_detected()%.0d\n", 0);
 }
 const struct ieee80211_rate *
 ieee80211_get_response_rate(struct ieee80211_supported_band *sband,
@@ -347,15 +473,6 @@ void b43_pio_tx_suspend(struct b43_wldev *dev) { }
 void b43_pio_tx_resume(struct b43_wldev *dev) { }
 void b43_dma_handle_txstatus(struct b43_wldev *dev, const void *status) { }
 void b43_pio_handle_txstatus(struct b43_wldev *dev, const void *status) { }
-
-/*
- * Il ricarico del beacon: nell'harness delle unit lo fornisce wrap.c, perche'
- * il port lo chiama a ogni tick del watchdog e la traccia del vendor mostra
- * quante volte. Qui e' un no-op: senza mac80211 non c'e' un beacon da
- * ricaricare, e le op che ne conseguono le emette il PHY.
- */
-void b43_ac_beacon_reload(struct b43_wldev *dev, unsigned int which) { }
-void b43_ac_cac_match_gate(struct b43_wldev *dev, bool restore) { }
 
 /* --- mac80211: utilita' pure, nessuna emette op ----------------------- */
 

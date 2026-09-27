@@ -41,4 +41,13 @@ long b43_test_env_long(const char *name, long def);
 /* Una riga di diagnostica della suite su stderr, con un solo intero. */
 void b43_trace_note(const char *fmt, int arg);
 
+/*
+ * La timeline dell'ambiente, da B43_TIMELINE: il file che
+ * reverse-tools/timeline.py scrive, `<t> <ep> <EVENTO>` per riga. Gli istanti
+ * sono in microsecondi. _wd() da' il primo e l'ultimo giro del watchdog del
+ * vendor e quanti sono; _next() l'evento successivo, 0 alla fine.
+ */
+int b43_test_timeline_wd(long long *first_us, long long *last_us, int *n);
+int b43_test_timeline_next(long long *t_us, char *kind, int len);
+
 #endif /* B43_TEST_TRACE_OUT_H */

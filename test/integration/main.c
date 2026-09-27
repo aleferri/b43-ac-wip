@@ -28,6 +28,7 @@
 #include <linux/slab.h>
 #include <linux/ssb/ssb.h>
 #include <linux/string.h>
+#include <linux/etherdevice.h>
 
 #include "../board_profile.h"
 #include "trace_out.h"
@@ -124,6 +125,149 @@ static void build_core(void)
 extern const struct ieee80211_ops *b43_test_hw_ops;
 extern struct ieee80211_hw *b43_test_hw;
 
+/* Il kernel e il microcodice, dagli stub. */
+void b43_test_run_until(unsigned long until);
+void b43_test_irq(void);
+void b43_test_raise_irq(u32 reason);
+
+/*
+ * Il campione di rumore pronto, bit di B43_MMIO_GEN_IRQ_REASON: e' il
+ * registro dell'hardware, lo stesso valore di b43.h.
+ */
+#define TEST_IRQ_NOISESAMPLE_OK	0x00040000
+
+static struct ieee80211_vif *test_vif;
+
+static void test_config(u32 changed)
+{
+	b43_test_hw_ops->config(b43_test_hw, changed);
+}
+
+static void test_bss(u64 changed)
+{
+	b43_test_hw_ops->bss_info_changed(b43_test_hw, test_vif,
+					  &test_vif->bss_conf, changed);
+}
+
+/*
+ * Quel che mac80211 fa all'ifup di un'interfaccia AP, dopo drv_start():
+ * drv_add_interface(), ieee80211_hw_config(~0) e i parametri WMM di default
+ * dell'AP, una conf_tx per coda.
+ */
+static void test_ifup(void)
+{
+	static const struct ieee80211_tx_queue_params wmm[IEEE80211_NUM_ACS] = {
+		[IEEE80211_AC_VO] = { .cw_min = 3,  .cw_max = 7,    .aifs = 1,
+				      .txop = 47 },
+		[IEEE80211_AC_VI] = { .cw_min = 7,  .cw_max = 15,   .aifs = 1,
+				      .txop = 94 },
+		[IEEE80211_AC_BE] = { .cw_min = 15, .cw_max = 63,   .aifs = 3 },
+		[IEEE80211_AC_BK] = { .cw_min = 15, .cw_max = 1023, .aifs = 7 },
+	};
+	unsigned int ac;
+
+	test_vif = kzalloc(sizeof(*test_vif) + b43_test_hw->vif_data_size,
+			   GFP_KERNEL);
+	test_vif->type = NL80211_IFTYPE_AP;
+	memcpy(test_vif->addr, b43_test_hw->wiphy->perm_addr, ETH_ALEN);
+	b43_test_hw_ops->add_interface(b43_test_hw, test_vif);
+	test_config(~0);
+	for (ac = 0; ac < IEEE80211_NUM_ACS; ac++)
+		b43_test_hw_ops->conf_tx(b43_test_hw, test_vif, 0, ac, &wmm[ac]);
+}
+
+/*
+ * start_ap: hostapd da' il BSS e mac80211 lo passa al driver, beacon
+ * compreso, in un solo bss_info_changed. DTIM 3 e il basic set {6, 12, 24}
+ * sono quelli della cattura.
+ */
+static void test_start_ap(void)
+{
+	struct ieee80211_bss_conf *bss = &test_vif->bss_conf;
+
+	bss->bssid = test_vif->addr;
+	bss->beacon_int = 100;
+	bss->dtim_period = 3;
+	bss->basic_rates = BIT(0) | BIT(2) | BIT(4);
+	bss->use_short_slot = true;
+	bss->enable_beacon = true;
+	test_bss(BSS_CHANGED_BSSID | BSS_CHANGED_BEACON_INT |
+		 BSS_CHANGED_BASIC_RATES | BSS_CHANGED_ERP_SLOT |
+		 BSS_CHANGED_BEACON | BSS_CHANGED_BEACON_ENABLED);
+}
+
+/*
+ * Il channel availability check come lo fa mac80211 per un driver senza
+ * channel context: il tune col radar acceso, poi a check finito il rilascio
+ * -- 20 MHz senza HT sullo stesso primario, radar spento -- e il tune di
+ * start_ap, col radar di nuovo acceso.
+ */
+static void test_cac_start(void)
+{
+	b43_test_hw->conf.radar_enabled = true;
+	test_config(IEEE80211_CONF_CHANGE_CHANNEL);
+}
+
+static void test_cac_end(void)
+{
+	struct cfg80211_chan_def def = b43_test_hw->conf.chandef;
+
+	b43_test_hw->conf.radar_enabled = false;
+	b43_test_hw->conf.chandef.width = NL80211_CHAN_WIDTH_20_NOHT;
+	b43_test_hw->conf.chandef.center_freq1 = def.chan->center_freq;
+	test_config(IEEE80211_CONF_CHANGE_CHANNEL);
+	b43_test_hw->conf.chandef = def;
+	b43_test_hw->conf.radar_enabled = true;
+	test_config(IEEE80211_CONF_CHANGE_CHANNEL);
+	test_start_ap();
+}
+
+/*
+ * L'ambiente dopo il bring-up, dalla timeline della cattura. L'orologio del
+ * driver sono i jiffies, che qui avanzano solo quando lo dice la timeline:
+ * l'istante di ogni evento si porta in jiffies e prima dell'evento scattano i
+ * delayed work scaduti -- il periodic work, il poll del radar. I giri del
+ * watchdog del vendor quindi non si consegnano, li fa il periodic work di
+ * b43; servono a mettere in scala l'orologio: il vendor dichiara un secondo e
+ * la cattura ne misura 1.004, e il primo giro cade un secondo dopo lo start,
+ * come quello di b43.
+ *
+ *   NOISE   il campione pronto: B43_IRQ_NOISESAMPLE_OK dall'hard handler
+ *   TPL     il beacon cambiato: bss_info_changed(BSS_CHANGED_BEACON)
+ *   BSS_UP  il check chiuso: il rilascio del canale e start_ap
+ *   WD, POLL  i timer del driver, che scattano da se'
+ */
+static void test_environment(bool cac)
+{
+	long long t0, t1, t;
+	char kind[16];
+	int n;
+
+	if (!b43_test_timeline_wd(&t0, &t1, &n) || n < 2) {
+		if (cac)
+			test_cac_end();
+		return;
+	}
+	while (b43_test_timeline_next(&t, kind, sizeof(kind))) {
+		long long rel = t - t0;
+		unsigned long j = HZ + (unsigned long)
+			(rel < 0 ? 0 : rel * (n - 1) * HZ / (t1 - t0));
+
+		b43_test_run_until(j);
+		if (!strcmp(kind, "NOISE")) {
+			b43_test_raise_irq(TEST_IRQ_NOISESAMPLE_OK);
+			b43_test_irq();
+		} else if (!strcmp(kind, "TPL")) {
+			test_bss(BSS_CHANGED_BEACON);
+		} else if (!strcmp(kind, "BSS_UP")) {
+			if (cac) {
+				cac = false;
+				test_cac_end();
+			}
+		}
+	}
+}
+
 int main(void)
 {
 	int err;
@@ -156,8 +300,20 @@ int main(void)
 		int up = b43_test_hw_ops->start(b43_test_hw);
 
 		b43_trace_note("start: %d\n", up);
-		if (!up && b43_test_hw_ops->stop)
-			b43_test_hw_ops->stop(b43_test_hw);
+		if (!up) {
+			bool cac = b43_test_hw->conf.chandef.chan->flags &
+				   IEEE80211_CHAN_RADAR;
+
+			test_ifup();
+			if (cac)
+				test_cac_start();
+			else
+				test_start_ap();
+			test_environment(cac);
+			b43_test_hw_ops->remove_interface(b43_test_hw, test_vif);
+			if (b43_test_hw_ops->stop)
+				b43_test_hw_ops->stop(b43_test_hw);
+		}
 	}
 
 	/*

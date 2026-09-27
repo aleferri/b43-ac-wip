@@ -288,6 +288,59 @@ void b43_ac_block_mark(const char *name)
 		fprintf(stream(), "----BLK:%s----\n", name);
 }
 
+static FILE *timeline;
+
+static FILE *timeline_file(void)
+{
+	const char *path = getenv("B43_TIMELINE");
+
+	if (!timeline && path && *path) {
+		timeline = fopen(path, "r");
+		if (!timeline)
+			fprintf(stderr, "b43-integration: B43_TIMELINE=%s non si "
+				"apre\n", path);
+	}
+	return timeline;
+}
+
+int b43_test_timeline_wd(long long *first_us, long long *last_us, int *n)
+{
+	FILE *f = timeline_file();
+	char line[128], kind[16];
+	double t;
+
+	*n = 0;
+	if (!f)
+		return 0;
+	rewind(f);
+	while (fgets(line, sizeof(line), f)) {
+		if (sscanf(line, "%lf %*d %15s", &t, kind) != 2 ||
+		    strcmp(kind, "WD"))
+			continue;
+		if (!(*n)++)
+			*first_us = (long long)(t * 1e6 + 0.5);
+		*last_us = (long long)(t * 1e6 + 0.5);
+	}
+	rewind(f);
+	return *n;
+}
+
+int b43_test_timeline_next(long long *t_us, char *kind, int len)
+{
+	FILE *f = timeline_file();
+	char line[128], k[16];
+	double t;
+
+	while (f && fgets(line, sizeof(line), f)) {
+		if (sscanf(line, "%lf %*d %15s", &t, k) != 2)
+			continue;
+		*t_us = (long long)(t * 1e6 + 0.5);
+		snprintf(kind, len, "%s", k);
+		return 1;
+	}
+	return 0;
+}
+
 /* Per i messaggi di main.c, che e' compilato senza stdio. */
 void b43_trace_note(const char *fmt, int arg)
 {

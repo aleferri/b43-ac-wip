@@ -146,11 +146,13 @@ run: b43-trace
 	    echo "uso: make run ORACLE=<cattura ripiegata> [TRACE_OUT=<file>]"; exit 1; }
 	B43_READ_ORACLE=$(ORACLE) $(if $(TRACE_OUT),B43_TRACE_OUT=$(TRACE_OUT)) \
 	    $(if $(B43_CHANNEL),B43_CHANNEL=$(B43_CHANNEL)) \
-	    $(if $(B43_BW),B43_BW=$(B43_BW)) ./b43-trace
+	    $(if $(B43_BW),B43_BW=$(B43_BW)) \
+	    $(if $(B43_TIMELINE),B43_TIMELINE=$(B43_TIMELINE)) ./b43-trace
 	$(if $(TRACE_OUT),B43_FN_MARKERS=1 B43_READ_ORACLE=$(ORACLE) \
 	    B43_TRACE_OUT=$(TRACE_OUT).fn \
 	    $(if $(B43_CHANNEL),B43_CHANNEL=$(B43_CHANNEL)) \
-	    $(if $(B43_BW),B43_BW=$(B43_BW)) ./b43-trace 2>/dev/null)
+	    $(if $(B43_BW),B43_BW=$(B43_BW)) \
+	    $(if $(B43_TIMELINE),B43_TIMELINE=$(B43_TIMELINE)) ./b43-trace 2>/dev/null)
 
 clean:
 	rm -f $(UP)/*.o *.o b43_partial.o residual.txt b43-trace
