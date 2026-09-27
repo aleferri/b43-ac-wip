@@ -338,6 +338,7 @@ static void b43_phy_ac_wd_stats_clear(struct b43_wldev *dev);
 static void b43_phy_ac_radio_percore_setup_1(struct b43_wldev *dev);
 static void b43_phy_ac_tx_gain_bbmult_load(struct b43_wldev *dev);
 static bool b43_phy_ac_may_calibrate_tx(struct b43_wldev *dev);
+static void b43_phy_ac_radar_thresh(struct b43_wldev *dev);
 
 /*
  * Avviso una volta per sito: dice che qui il driver scrive qualcosa che non sa
@@ -658,7 +659,7 @@ static void b43_phy_ac_shm_readback_block(struct b43_wldev *dev)
 	 * TODO 0x000c: written with 0xf, and b43.h does not name it either.
 	 *
 	 * The slot time, 0x03ff then 9, is the second half of what
-	 * patches/0012 introduced -- and the captures put BOTH writes here, not
+	 * patches/0003 introduced -- and the captures put BOTH writes here, not
 	 * at core init where that patch does the 9. What 0x03ff is for is not
 	 * known; writing the maximum and then the real value looks like a
 	 * deliberate two-step, so it is reproduced as one.
@@ -5602,7 +5603,6 @@ void b43_phy_ac_bss_up(struct b43_wldev *dev)
 
 	B43_AC_FN();
 	ac->cac_pending = false;
-	b43_ac_cac_match_gate(dev, true);
 
 	/*
 	 * Una lettura di temperatura a MAC sospeso apre il bss-up, prima delle
@@ -6389,13 +6389,14 @@ static void b43_phy_ac_cold_mac_preamble(struct b43_wldev *dev)
 	 * POLL events of timeline.py reach for the poll and may_calibrate_tx()
 	 * for the calibrations.
 	 *
-	 * What the field means is still not known. And on the channels with
-	 * the duty the vendor writes it three times against the port's two:
+	 * The field is the radar pulse threshold, see b43_phy_ac_radar_thresh().
+	 * On the channels with the duty the vendor writes it three times
+	 * against the port's two:
 	 * the third sits in the channel-setup tail and no site here emits it,
 	 * see docs/retrace-todo.md.
 	 */
 	if (b43_phy_ac_chan_has_radar_duty(dev))
-		b43_phy_maskset(dev, 0x02e4, (u16)~0x3f00, 0x0f00);
+		b43_phy_ac_radar_thresh(dev);
 
 	b43_phy_ac_pmu_req(dev, false);
 
@@ -6495,7 +6496,8 @@ static void b43_phy_ac_switch_analog_once(struct b43_wldev *dev, bool on,
 			   saved_417, saved_416);
 
 	/*
-	 * Cold attach only: a 6-bit field in 0x02e4 is set right after the unit
+	 * Cold attach only: the radar pulse threshold,
+	 * b43_phy_ac_radar_thresh(), is set right after the unit
 	 * above, before the MHF block and a second copy of the unit. The cold
 	 * preamble of both boards carries exactly one op on that register and
 	 * the value is 0x0f00 on the 4352 and on the 4360 alike, so it is the
@@ -6513,7 +6515,7 @@ static void b43_phy_ac_switch_analog_once(struct b43_wldev *dev, bool on,
 	if (!cold)
 		return;
 
-	b43_phy_maskset(dev, 0x02e4, (u16)~0x3f00, 0x0f00);
+	b43_phy_ac_radar_thresh(dev);
 
 
 	/*
@@ -9604,6 +9606,21 @@ static void b43_phy_ac_wd_stats_clear(struct b43_wldev *dev)
 }
 
 /*
+ * La richiesta del campione al microcodice, che risponde con
+ * B43_IRQ_NOISESAMPLE_OK; il core allora chiama
+ * b43_phy_ac_noise_sample_done(). E' MCMD_BG_NOISE di brcmsmac, lo stesso bit
+ * che b43 usa per il G-PHY. Che il microcodice AC lo onori non e' verificato:
+ * il tracer del vendor non registra i registri MMIO del MAC, quindi la
+ * cattura non puo' mostrare la scrittura.
+ */
+static void b43_phy_ac_noise_sample_request(struct b43_wldev *dev)
+{
+	b43_write32(dev, B43_MMIO_MACCMD,
+		    b43_read32(dev, B43_MMIO_MACCMD) | B43_MACCMD_BGNOISE);
+	dev->phy.ac->noise_pending = true;
+}
+
+/*
  * Sampling phase: peek TSSI and status with the MAC suspended, zero the
  * statistics window, and change the measurement mode on 0x0520[3:2]. This is
  * the same continuous toggle as the probe cycle -- 0x0000 and 0x0004
@@ -9679,7 +9696,7 @@ static void b43_phy_ac_wd_sample_phase_opt(struct b43_wldev *dev, bool peek,
 	 */
 	if (!ac->noise_pending) {
 		b43_phy_ac_wd_stats_clear(dev);
-		ac->noise_pending = true;
+		b43_phy_ac_noise_sample_request(dev);
 	}
 	b43_phy_ac_wd_mode_next(dev);
 }
@@ -9803,24 +9820,7 @@ static void b43_phy_ac_wd_stats_poll(struct b43_wldev *dev)
 static void b43_phy_ac_wd_body(struct b43_wldev *dev, bool tempsense,
 			       bool tail)
 {
-	struct b43_phy_ac *ac = dev->phy.ac;
-
-	/*
-	 * Il rinfresco dei template, quando tocca a questo giro, sta **dentro**
-	 * la spazzata, fra le due passate sui contatori a 32 bit, e dentro la
-	 * sospensione del MAC che il giro ha aperto: sui 498 giri a freddo che
-	 * lo portano, in 497 non c'e' un MAC.MCTRL di riabilitazione fra la
-	 * prima passata e la TPL.RAMW. Non e' quindi un altro contesto che si
-	 * infila -- e' questo percorso che fa anche quello.
-	 */
-	if (ac->tpl_refresh_due) {
-		ac->tpl_refresh_due = false;
-		b43_phy_ac_wd_stats_poll_opt(dev, true, 1, false);
-		b43_ac_beacon_reload(dev, ac->beacon_reload_done++);
-		b43_phy_ac_wd_stats_poll_opt(dev, false, 1, true);
-	} else {
-		b43_phy_ac_wd_stats_poll(dev);
-	}
+	b43_phy_ac_wd_stats_poll(dev);
 
 	if (tempsense) {
 		b43_mac_suspend(dev);
@@ -9989,7 +9989,7 @@ void b43_phy_ac_watchdog(struct b43_wldev *dev)
 		ac->wd_switch_turns++;
 }
 
-static void b43_phy_ac_op_pwork_15sec(struct b43_wldev *dev)
+static void b43_phy_ac_op_pwork_1sec(struct b43_wldev *dev)
 {
 	u16 sm = dev->phy.ac->status_mask;
 	static const u16 want = B43_PHY_AC_STATE_RX_WAITED |
@@ -10008,14 +10008,19 @@ static void b43_phy_ac_op_pwork_15sec(struct b43_wldev *dev)
 	 *
 	 * MAC_EN is deliberately not in the forbid set: at tick time the MAC is
 	 * active, and the watchdog suspends it itself before the tempsense.
-	 *
-	 * The vendor's cadence is one second, not fifteen: the core needs a
-	 * dedicated 1 s work for this hook, see docs/retrace-todo.md.
 	 */
 	if (sm & B43_PHY_AC_STATE_FAULTED)
 		return;
 	if ((sm & want) != want || (sm & forbid))
 		return;
+
+	/*
+	 * The core ends the channel availability check when beaconing starts;
+	 * what the check held back runs here, ahead of the turn. The vendor has
+	 * it between two turns, and this puts it at most one turn later.
+	 */
+	if (dev->phy.ac->cac_pending && !dev->cac_pending)
+		b43_phy_ac_bss_up(dev);
 
 	b43_phy_ac_watchdog(dev);
 }
@@ -10160,6 +10165,23 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 }
 
 /*
+ * La soglia di rilevazione degli impulsi radar, il campo 13:8 di PHY 0x02e4.
+ *
+ * E' la soglia perche' fra i due driver che le catture coprono e' il solo
+ * registro della zona del rilevatore con un valore diverso, e le FIFO degli
+ * impulsi lo seguono: wl 6.30 sul DSL-3580L scrive 0x08 e le FIFO si
+ * riempiono di continuo, fino a saturare, mentre wl 7.14 sul d6220 scrive 0x0f
+ * e sulle circa 22.700 letture dei due sweep, col BSS su come durante il
+ * check, non contengono mai niente. Il valore e' quello della 7.14 su ogni
+ * board, perche' e' il nostro. L'unita' e' legata ai dB, ma se il passo sia un
+ * quarto, mezzo o un dB intero due soli valori non lo dicono.
+ */
+static void b43_phy_ac_radar_thresh(struct b43_wldev *dev)
+{
+	b43_phy_maskset(dev, 0x02e4, (u16)~0x3f00, 0x0f00);
+}
+
+/*
  * The channel availability check.
  *
  * On a channel that carries the radar duty, a first bring-up may not transmit
@@ -10179,11 +10201,26 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
  * when the check closes -- 305 of the 706 fall after it -- so the condition
  * is the duty, not the calibration gate.
  *
- * What the two cells carry is not established, and the captures cannot
- * establish it: every read of the sweep returns zero. So the poll emits the
- * reads and nothing acts on them; a branch on a value never observed would be
- * invention.
+ * 0x0251 and 0x0252 are the fill levels of the two radar pulse FIFOs, in
+ * 16-bit words, and 0x0253 and 0x0254 their data ports. The DSL-3580L, whose
+ * wl sets a lower threshold, shows it: the levels are always multiples of
+ * four, one pulse being four words, they saturate at 0x05fc, and the words
+ * drained after them are as many as the two levels add up to. With this
+ * driver's threshold the FIFOs stay empty on every capture, so a pulse in
+ * them is an event, and the poll reports it; what the four words of a pulse
+ * mean is not decoded yet, so they are drained and not looked at.
  */
+#define B43_PHY_AC_RADAR_FIFO_WORDS	0x0600
+
+static void b43_phy_ac_radar_fifo_drain(struct b43_wldev *dev, u16 data,
+					u16 level)
+{
+	u16 i;
+
+	for (i = 0; i < min_t(u16, level, B43_PHY_AC_RADAR_FIFO_WORDS); i++)
+		b43_phy_read(dev, data);
+}
+
 static void b43_phy_ac_cac_poll(struct b43_wldev *dev, unsigned int turns)
 {
 	unsigned int i;
@@ -10203,16 +10240,27 @@ static void b43_phy_ac_cac_poll(struct b43_wldev *dev, unsigned int turns)
 
 	B43_AC_FN();
 	for (i = 0; i < turns; i++) {
+		u16 level0, level1;
+
 		b43_mac_suspend(dev);
-		b43_phy_read_log(dev, 0x0251);
-		b43_phy_read_log(dev, 0x0252);
+		level0 = b43_phy_read_log(dev, 0x0251);
+		level1 = b43_phy_read_log(dev, 0x0252);
+		b43_phy_ac_radar_fifo_drain(dev, 0x0253, level0);
+		b43_phy_ac_radar_fifo_drain(dev, 0x0254, level1);
 		b43_mac_enable(dev);
+		if (level0 || level1)
+			dev->phy.ac->radar_pulses = true;
 	}
 }
 
-void b43_phy_ac_radar_poll(struct b43_wldev *dev)
+bool b43_phy_ac_radar_poll(struct b43_wldev *dev)
 {
+	bool seen;
+
 	b43_phy_ac_cac_poll(dev, 1);
+	seen = dev->phy.ac->radar_pulses;
+	dev->phy.ac->radar_pulses = false;
+	return seen;
 }
 
 /* Arm the check, and the turn that goes with it. */
@@ -10222,8 +10270,7 @@ static void b43_phy_ac_cac_arm(struct b43_wldev *dev)
 		return;
 
 	B43_AC_FN();
-	b43_phy_maskset(dev, 0x02e4, (u16)~0x3f00, 0x0f00);
-	b43_ac_cac_match_gate(dev, false);
+	b43_phy_ac_radar_thresh(dev);
 	b43_phy_ac_cac_poll(dev, 1);
 }
 
@@ -10336,35 +10383,11 @@ static void b43_phy_ac_post_bringup_tail(struct b43_wldev *dev)
 	b43_phy_ac_cac_arm(dev);
 
 	/*
-	 * Le ricariche del beacon che cadono prima che la fase probe parta.
-	 * Sono le due coppie suspend/enable a 1.37 e 1.29 s dall'MHF che il
-	 * commento qui sotto dava per rumore del contesto up: non lo sono, e
-	 * la forma lo dice -- ognuna porta TIMBPOS, il template in template
-	 * RAM, la lunghezza in BTL0 o BTL1 e una passata sul PLCP, con il
-	 * suspend fra la lunghezza e il template. Quante siano lo dice il
-	 * chiamante, vedi ac->beacon_reload_pre.
-	 */
-	{
-		struct b43_phy_ac *ac = dev->phy.ac;
-		unsigned int i;
-
-		for (i = 0; i < ac->beacon_reload_pre; i++)
-			b43_ac_beacon_reload(dev, ac->beacon_reload_done++);
-	}
-
-	/*
-	 * Le due coppie suspend/enable fra la MHF e la prima GPIO sono il
-	 * suspend interno delle ricariche del beacon emesse qui sopra, non
-	 * rumore del contesto up: la forma lo dice -- TIMBPOS, il template,
-	 * BTL0/BTL1 e la passata sul PLCP -- e il conteggio lo conferma. Sui
-	 * sette segmenti sotto i 5250 MHz, dove `beacon_reload_pre` copre tutte
-	 * le ricariche, le regole di cmp_skip.py che le dichiaravano rumore non
-	 * scattano piu': zero op saltate. Sui diciannove sopra la soglia ne
-	 * resta una coppia senza controparte, due op.
-	 *
-	 * Fra le ricariche e la cella qui sotto il vendor accende i due LED
-	 * (gpio 2 e gpio 10, quest'ultimo active-low): e' wlc_bmac_led(), del
-	 * core, e sta nel perimetro del confronto.
+	 * Qui il vendor ricarica il template beacon, una o due volte: e' del
+	 * core, b43_update_templates() su richiesta di mac80211, e il PHY non ne
+	 * ha parte. Poi accende i due LED (gpio 2 e gpio 10, quest'ultimo
+	 * active-low): e' wlc_bmac_led(), del core, e sta nel perimetro del
+	 * confronto.
 	 */
 
 	/*
@@ -10405,7 +10428,7 @@ static void b43_phy_ac_post_bringup_tail(struct b43_wldev *dev)
 	 */
 	if (b43_phy_ac_may_calibrate_tx(dev)) {
 		dev->phy.ac->crs_update_pending = true;
-		dev->phy.ac->noise_pending = true;
+		b43_phy_ac_noise_sample_request(dev);
 	}
 
 	/*
@@ -10690,9 +10713,11 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 
 	if (dev->phy.ac->tuned &&
 	    dev->phy.ac->cal_channel == channel->hw_value &&
-	    dev->phy.ac->cal_width == width)
+	    dev->phy.ac->cal_width == width &&
+	    dev->phy.ac->cac_pending == dev->cac_pending)
 		return 0;
 
+	dev->phy.ac->cac_pending = dev->cac_pending;
 	dev->phy.ac->tuned = false;
 	dev->phy.ac->cal_channel = channel->hw_value;
 	dev->phy.ac->cal_width = width;
@@ -11186,9 +11211,11 @@ const struct b43_phy_operations b43_phyops_ac = {
 	.get_default_chan	= b43_phy_ac_op_get_default_chan,
 	.recalc_txpower		= b43_phy_ac_op_recalc_txpower,
 	.adjust_txpower		= b43_phy_ac_op_adjust_txpower,
-	.pwork_15sec		= b43_phy_ac_op_pwork_15sec,
+	.pwork_1sec		= b43_phy_ac_op_pwork_1sec,
 	.pwork_60sec		= b43_phy_ac_op_pwork_60sec,
 	.channel_calibrate	= b43_phy_ac_op_channel_calibrate,
+	.noise_sample_done	= b43_phy_ac_noise_sample_done,
+	.radar_poll		= b43_phy_ac_radar_poll,
 };
 
 /* ==========================================================================

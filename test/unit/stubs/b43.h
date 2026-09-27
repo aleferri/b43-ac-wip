@@ -269,6 +269,8 @@ struct b43_wldev {
 	int mac_suspended;
 	struct b43_wl *wl;
 	struct b43_phy phy;
+	/* Come in-tree: il channel availability check tiene ferma la TX. */
+	bool cac_pending;
 };
 
 /*
@@ -298,6 +300,8 @@ void b43_radio_set(struct b43_wldev *dev, u16 reg, u16 val);
 void b43_radio_maskset(struct b43_wldev *dev, u16 reg, u16 mask, u16 set);
 
 u16  b43_read16(struct b43_wldev *dev, u16 offset);
+u32  b43_read32(struct b43_wldev *dev, u16 offset);
+void b43_write32(struct b43_wldev *dev, u16 offset, u32 val);
 void b43_write16(struct b43_wldev *dev, u16 offset, u16 val);
 void b43_write16f(struct b43_wldev *dev, u16 offset, u16 val);
 
@@ -395,6 +399,8 @@ void bcma_chipco_regctl_maskset(struct bcma_drv_cc *cc, u32 offset,
 #define B43_SHM_SH_HOSTF5         0x00D4
 #define B43_SHM_SH_RFATT          0x0064
 #define B43_MMIO_MACCTL           0x120
+#define B43_MMIO_MACCMD           0x124
+#define B43_MACCMD_BGNOISE        0x00000010
 
 void b43_maskset32(struct b43_wldev *dev, u16 offset, u32 mask, u32 set);
 

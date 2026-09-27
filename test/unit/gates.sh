@@ -313,7 +313,7 @@ PY
 	echo "  --- cmp_skip ---"
 	python3 "$HERE/cmp_skip.py" "$TMP/merged" "$TMP/full" \
 		"$from:$last" --board "$BOARD" --led-pins "$LED_PINS" \
-		| grep -E 'grezzo|nel perimetro|CON  ecce|fuori perimetro|op saltate|valore sbagliato|op di wl mancanti|solo vendor|solo port|invisibili|bulk espanse'
+		| grep -E 'grezzo|spostate|nel perimetro|CON  ecce|fuori perimetro|op saltate|valore sbagliato|op di wl mancanti|solo vendor|solo port|invisibili|bulk espanse'
 	echo "  --- compare ---"
 	python3 "$HERE/compare.py" "$TMP/merged" "$TMP/full" \
 		--range "$from:$last" --auto-align --led-pins "$LED_PINS" \

@@ -37,6 +37,11 @@ extern enum nl80211_band b43_test_band;
 #include "leds.h"
 
 static struct b43_phy_ac       g_ac;
+/* Le ricariche del template beacon: quante fatte, e quante allo start_ap. */
+static unsigned int g_beacon_reloads;
+static unsigned int g_beacon_reload_pre;
+/* Il check pendente, deciso prima che g_wldev sia costruito. */
+static bool g_cac_pending;
 static struct b43_wl           g_wl;
 static struct ieee80211_hw     g_hw;
 static struct ieee80211_channel g_chan;
@@ -254,8 +259,8 @@ static void mount_board(const struct board_profile *p)
 	{
 		const char *e = getenv("AC_DFS_CAC_DONE");
 
-		g_ac.cac_pending = e ? (strtoul(e, NULL, 0) == 0)
-				     : !!(g_chan.flags & IEEE80211_CHAN_RADAR);
+		g_cac_pending = e ? (strtoul(e, NULL, 0) == 0)
+				  : !!(g_chan.flags & IEEE80211_CHAN_RADAR);
 	}
 
 	/*
@@ -334,6 +339,7 @@ static void mount_board(const struct board_profile *p)
 	g_wldev.phy.dacbuf_cap = g_ac.dacbuf_cap;
 	g_wldev.phy.lpf_cap    = g_ac.lpf_cap0;
 	g_wldev.phy.ac         = &g_ac;
+	g_wldev.cac_pending    = g_cac_pending;
 	/*
 	 * Come b43_phy_init(): il PHY guarda phy.chandef, non dentro hw->conf.
 	 * DOPO il memset di g_wldev qui sopra, o si perde.
@@ -374,14 +380,14 @@ static void mount_board(const struct board_profile *p)
 	 * Le ricariche del template beacon che il vendor mette dentro la coda
 	 * del bring-up, prima del primo giro del watchdog: sono dello stack e
 	 * il conteggio viene dalla cattura (reverse-tools/beacon_reloads.py,
-	 * il campo prima dei due punti). Quelle dopo sono eventi della
-	 * timeline e non passano di qui.
+	 * il campo prima dei due punti). Le emette il core allo start_ap, vedi
+	 * run_switch_channel(); quelle dopo sono eventi della timeline.
 	 */
 	{
 		const char *e = getenv("AC_BEACON_RELOADS");
 
 		if (e)
-			g_ac.beacon_reload_pre = (u16)strtoul(e, NULL, 10);
+			g_beacon_reload_pre = (unsigned int)strtoul(e, NULL, 10);
 	}
 
 	/*
@@ -654,17 +660,23 @@ static void run_rfkill(void)
 static void emit_core_bss_config(void);
 static void emit_core_bss_config1(void);
 static void emit_core_conf_tx_passes(void);
+static void emit_core_cac_gate(bool open);
+static void emit_core_beacon_reload(unsigned int which);
 
 /*
  * Replay degli eventi dell'ambiente dopo la coda del bring-up, nell'ordine dei
  * loro istanti sulla cattura: reverse-tools/timeline.py li estrae e dice cosa
  * sono. Ogni riga e' un callback che su hardware arriva da fuori del PHY:
  *
- *   WD      il work da un secondo         -> b43_phy_ac_watchdog()
- *   POLL    il timer da 150 ms del radar  -> b43_phy_ac_radar_poll()
+ *   WD      il tick periodico da un secondo -> pwork_1sec del PHY, che
+ *                                            riprende anche quel che il check
+ *                                            teneva fuori
+ *   POLL    il work da 150 ms del radar   -> b43_phy_ac_radar_poll()
  *   TPL     bss_info_changed del core     -> la ricarica del template, che e'
  *                                            del core e la emette l'harness
- *   BSS_UP  start_ap dopo il CAC          -> b43_phy_ac_bss_up()
+ *   BSS_UP  il beacon parte dopo il CAC   -> il core chiude il check e riapre
+ *                                            la riga AMT; il PHY lo vede al
+ *                                            tick seguente
  *   NOISE   il campione di rumore pronto   -> b43_phy_ac_noise_sample_done(),
  *                                            che su hardware arriva dal
  *                                            tasklet del core
@@ -687,42 +699,23 @@ static void run_timeline(void)
 		exit(1);
 	}
 
-	/*
-	 * Il rinfresco dei template non e' un callback a se': la cattura lo
-	 * mostra dentro la spazzata di un giro, col MAC sospeso da quel giro.
-	 * Quindi un TPL che cade prima del giro successivo non si consegna da
-	 * solo: si dice al giro che tocca a lui, e il giro lo fa in mezzo.
-	 */
 	while (fgets(line, sizeof(line), f)) {
 		char kind[16];
 
 		if (sscanf(line, "%*f %*d %15s", kind) != 1)
 			continue;
-		if (!strcmp(kind, "WD")) {
-			long pos = ftell(f);
-			char peek[128], pkind[16];
-			bool carried = false;
-
-			while (fgets(peek, sizeof(peek), f)) {
-				if (sscanf(peek, "%*f %*d %15s", pkind) != 1)
-					continue;
-				carried = !strcmp(pkind, "TPL");
-				break;
-			}
-			if (!carried)
-				fseek(f, pos, SEEK_SET);
-			g_ac.tpl_refresh_due = carried;
-			b43_phy_ac_watchdog(&g_wldev);
-			g_ac.tpl_refresh_due = false;
-			continue;
-		}
+		if (!strcmp(kind, "WD"))
+			b43_phyops_ac.pwork_1sec(&g_wldev);
 		else if (!strcmp(kind, "POLL"))
 			b43_phy_ac_radar_poll(&g_wldev);
 		else if (!strcmp(kind, "TPL"))
-			b43_ac_beacon_reload(&g_wldev, g_ac.beacon_reload_done++);
-		else if (!strcmp(kind, "BSS_UP"))
-			b43_phy_ac_bss_up(&g_wldev);
-		else if (!strcmp(kind, "NOISE"))
+			emit_core_beacon_reload(g_beacon_reloads++);
+		else if (!strcmp(kind, "BSS_UP")) {
+			if (g_wldev.cac_pending) {
+				g_wldev.cac_pending = false;
+				emit_core_cac_gate(true);
+			}
+		} else if (!strcmp(kind, "NOISE"))
 			b43_phy_ac_noise_sample_done(&g_wldev);
 		else {
 			fprintf(stderr, "test: unknown timeline event %s\n", kind);
@@ -735,7 +728,7 @@ static void run_timeline(void)
 /*
  * Doppione della coda di b43_wireless_core_init(), che b43 esegue dopo
  * b43_chip_init() e quindi dopo il primo switch_channel: prima
- * b43_upload_card_macaddress(), che via b43_macfilter_set() di patches/0011
+ * b43_upload_card_macaddress(), che via b43_macfilter_set() di patches/0003
  * scrive BSSID e indirizzo di stazione con i flag della riga, poi
  * b43_security_init(), che azzera le righe MAC delle chiavi pairwise.
  *
@@ -1197,6 +1190,10 @@ static void run_switch_channel(void)
 
 	emit_core_init_tail();
 
+	/* b43_op_config(): col check pendente il core chiude la riga AMT. */
+	if (g_wldev.cac_pending)
+		emit_core_cac_gate(false);
+
 	/*
 	 * L'ordine di b43_op_config(): switch_channel, la configurazione BSS
 	 * del core, il TX power adjust che b43_phy_txpower_check() accoda, le
@@ -1214,6 +1211,14 @@ static void run_switch_channel(void)
 		b43_phyops_ac.channel_calibrate(&g_wldev);
 	else
 		b43_mac_enable(&g_wldev);
+
+	/*
+	 * start_ap: mac80211 da' il beacon e il core lo carica. Il vendor fa
+	 * queste ricariche dentro la coda del bring-up; b43 dopo il config che
+	 * la contiene.
+	 */
+	for (unsigned int i = 0; i < g_beacon_reload_pre; i++)
+		emit_core_beacon_reload(g_beacon_reloads++);
 
 	/*
 	 * Da qui in poi il driver non decide piu' il flusso: reagisce a quello
@@ -1235,7 +1240,7 @@ static void run_switch_channel(void)
  * software_rfkill(false) -> ops->init -> switch_channel.
  */
 /*
- * Doppione di b43_shm_macaddr_set() di patches/0010, che vive in main.c del
+ * Doppione di b43_shm_macaddr_set() di patches/0003, che vive in main.c del
  * core e che l'harness non compila.
  *
  * Sta qui e non in src/ perche' NON e' codice del PHY: se finisse la' sarebbe
@@ -1252,7 +1257,7 @@ static void run_switch_channel(void)
  */
 /*
  * Host flags. b43 le scrive con b43_hf_write(), che copre le parole 1..3;
- * patches/0012 aggiunge la 4 e la 5. Il vendor le mette qui, appena prima del
+ * patches/0003 aggiunge la 4 e la 5. Il vendor le mette qui, appena prima del
  * chanspec (cold01 #686-#690), mentre b43 le scrive molto prima, fra WLCOREREV
  * e MACHW: l'ordine e' un punto di riconciliazione aperto, e qui si segue il
  * vendor perche' e' quello che il confronto misura.
@@ -1312,7 +1317,7 @@ static void emit_core_counters_first(void)
  * secondi -- e questo harness quella transizione non la modella: cac_pending
  * e' un booleano per l'intera corsa. Vedi docs/retrace-todo.md.
  *
- * Non c'e' un sito b43 che la emetta. La riga la scrive patches/0011 dal core
+ * Non c'e' un sito b43 che la emetta. La riga la scrive patches/0003 dal core
  * init, e il chiamante qui e' la sospensione del match durante il channel
  * availability check, che b43 non ha: e' il motivo per cui sta fra i doppioni
  * e non in src/.
@@ -1335,7 +1340,7 @@ static void emit_core_hostflags(void)
 
 /*
  * The GPIO pins b43 registers a LED on, from the mounted SPROM: the rule of
- * b43_led_get_sprominfo() in leds.c with patches/0017, and b43_map_led(),
+ * b43_led_get_sprominfo() in leds.c with patches/0003, and b43_map_led(),
  * which registers nothing for OFF, ON and INACTIVE. compare.py uses them to
  * tell the vendor's LED ops from the other GPIO ones; they match the
  * mask the stock driver writes to chipcommon 0x8c in the LED block of the
@@ -1377,7 +1382,7 @@ static void emit_core_shm_macaddr(const struct board_profile *p)
 }
 
 /*
- * Doppione di b43_amt_write() di patches/0011, che vive in main.c del core.
+ * Doppione di b43_amt_write() di patches/0003, che vive in main.c del core.
  *
  * Emette il record logico e il traffico della riga: l'hook del tracer su
  * wlc_bmac_write_amt da' `AMT.WR idx=`, e sotto ci sono la lettura e la
@@ -1400,7 +1405,7 @@ static void emit_core_shm_macaddr(const struct board_profile *p)
  * questo diventa sbagliato e il confronto lo dice.
  */
 /*
- * Doppione delle celle di patches/0012, che vivono nel core init.
+ * Doppione delle celle di patches/0003, che vivono nel core init.
  *
  * Divise in due perche' la traccia le mette in due punti distinti: ANTSWAP e
  * BTSFOFF nel blocco di chip init prima del chanspec (cold01 #650, #656), il
@@ -1416,7 +1421,7 @@ static void emit_core_shm_macaddr(const struct board_profile *p)
  */
 static void emit_core_shm_chipinit(const struct board_profile *p)
 {
-	/* patches/0012 */
+	/* patches/0003 */
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x0080, 8);      /* MAXBFRAMES */
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x005c, 0x000a); /* ANTSWAP */
 
@@ -1500,19 +1505,24 @@ static u16 beacon_tpl_len(void)
  * compare.py -- vedi il TODO post-WIP.
  */
 /*
- * Doppione del core: la riga AMT del BSS ai due confini del check. La forma e'
- * quella della cattura -- il record logico e il traffico della riga -- ed e'
- * la stessa di emit_core_amt_cac_suspend(), che copre la terza occorrenza, nel
- * preambolo. I flag del ripristino sono quelli che la cattura porta.
+ * Doppione di b43_ac_cac_match_gate() del core: la riga AMT del BSS ai due
+ * confini del check, chiusa dal config che sintonizza col radar e riaperta dal
+ * beacon. La forma e' quella della cattura -- il record logico e il traffico
+ * della riga -- ed e' la stessa di emit_core_amt_cac_suspend(), che copre la
+ * terza occorrenza, nel preambolo.
  */
-void b43_ac_cac_match_gate(struct b43_wldev *dev, bool restore)
+static void emit_core_cac_gate(bool open)
 {
-	(void)dev;
-	b43_test_emit_amt(0x3f, restore ? 0x8008 : 0);
+	b43_test_emit_amt(0x3f, open ? 0x8008 : 0);
 }
 
-void b43_ac_beacon_reload(struct b43_wldev *dev, unsigned int which)
+/*
+ * Doppione di b43_update_templates() del core, che mac80211 chiama quando il
+ * beacon cambia. @which alterna beacon0 e beacon1 e la serie parte da beacon0.
+ */
+static void emit_core_beacon_reload(unsigned int which)
 {
+	struct b43_wldev *dev = &g_wldev;
 	static bool late_head_done;
 	u16 btl = (which & 1) ? 0x001a : 0x0018;
 
@@ -1610,7 +1620,7 @@ static void emit_core_bss_config(void)
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00d0, 0x0000);
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x001c, 0x003a);
 	emit_core_bss_ssid(0x0018);
-	g_ac.beacon_reload_done++;
+	g_beacon_reloads++;
 	/*
 	 * I PLCP chiudono ogni caricamento di template, questo compreso:
 	 * cold01 li mette a #13625, subito dopo PRSSIDLEN, e poi di nuovo in
@@ -1630,8 +1640,8 @@ static void emit_core_bss_config1(void)
 	u16 cc = b43_shm_read16(&g_wldev, B43_SHM_SHARED, 0x00cc);
 
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00cc, cc);
-	emit_core_bss_ssid((g_ac.beacon_reload_done & 1) ? 0x001a : 0x0018);
-	g_ac.beacon_reload_done++;
+	emit_core_bss_ssid((g_beacon_reloads & 1) ? 0x001a : 0x0018);
+	g_beacon_reloads++;
 }
 
 /*

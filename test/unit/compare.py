@@ -531,7 +531,7 @@ SOLO_VENDOR = (
 # criterio e' quello del perimetro -- si scarta solo cio' di cui si mostra che
 # e' di qualcun altro -- applicato al lato test.
 #
-#   AMT.*  la address match table. Il port la scrive per via di `patches/0011`,
+#   AMT.*  la address match table. Il port la scrive per via di `patches/0003`,
 #          ricavata dalla cattura a freddo del DSL-3580L. Non e' un'op di
 #          troppo: e' un'op giusta che una cattura senza l'hook su
 #          `wlc_bmac_write_amt` non puo' contenere. Sta quindi in
@@ -583,8 +583,16 @@ SOLO_PORT = (
 # della classe la voce si spegne e il confronto diventa piu' severo, senza che
 # nessuno debba ricordarsi di venirla a togliere. Stesso criterio di
 # check_class_coverage.py e dei flag oracle_has_* di wrap.c.
+#
+#   REG.*, MAC.MCMD  i registri MMIO del MAC: il tracer del vendor aggancia le
+#          funzioni di accesso a PHY, radio e shared memory, non l'MMIO grezzo,
+#          e nessuna cattura porta una op di queste classi. Ci passano la
+#          richiesta del campione di rumore, gli ACK e le maschere degli
+#          interrupt e il valid bit dei template beacon.
 SOLO_PORT_SENZA_CLASSE = (
     (r'^AMT\.', 'AMT.'),
+    (r'^REG\.', 'REG.'),
+    (r'^MAC\.MCMD\b', 'MAC.MCMD'),
 )
 
 

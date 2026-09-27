@@ -48,9 +48,12 @@ struct b43_phy_operations {
 						bool ignore_tssi);
 	void (*adjust_txpower)(struct b43_wldev *dev);
 
+	void (*pwork_1sec)(struct b43_wldev *dev);
 	void (*pwork_15sec)(struct b43_wldev *dev);
 	void (*pwork_60sec)(struct b43_wldev *dev);
 	void (*channel_calibrate)(struct b43_wldev *dev);
+	void (*noise_sample_done)(struct b43_wldev *dev);
+	bool (*radar_poll)(struct b43_wldev *dev);
 };
 
 #endif

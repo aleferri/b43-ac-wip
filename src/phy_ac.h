@@ -343,12 +343,11 @@ struct b43_phy_ac {
 	 * channel: the calibrations that transmit wait for it, see
 	 * b43_phy_ac_may_calibrate_tx().
 	 *
-	 * The check is not this driver's, mac80211 runs it. The producer is the
-	 * config call that tunes the channel with hw->conf.radar_enabled set --
-	 * mac80211 tunes before the check and start_ap lands on the same channel
-	 * without another switch -- and the clear is b43_phy_ac_bss_up(), from
-	 * bss_info_changed(BEACON_ENABLED). Neither is wired in b43 yet; the
-	 * trace harness sets it from the channel's radar duty.
+	 * The check is not this driver's, mac80211 runs it, and the core keeps
+	 * its state in dev->cac_pending: set by the config call that tunes the
+	 * channel with hw->conf.radar_enabled, cleared when beaconing starts.
+	 * op_switch_channel() takes it from there, and the periodic tick that
+	 * finds the core's cleared runs b43_phy_ac_bss_up(), which clears this.
 	 */
 	bool cac_pending;
 	/*
@@ -376,11 +375,8 @@ struct b43_phy_ac {
 	 * `sampling_in_progress` di wlc_phy_noise_sample_request().
 	 */
 	bool noise_pending;
-	/*
-	 * In questo giro tocca anche rinfrescare i template. La spazzata si
-	 * spezza in due e il rinfresco va in mezzo, col MAC sospeso dal giro.
-	 */
-	bool tpl_refresh_due;
+	/* Un impulso radar e' arrivato dall'ultimo b43_phy_ac_radar_poll(). */
+	bool radar_pulses;
 	/* Un giro senza peek in piu', dopo il giro d'ingresso. */
 	bool peek_skip_one;
 	/*
@@ -397,20 +393,9 @@ struct b43_phy_ac {
 	 * 1.0-1.3 s dopo ed e' la spazzata sola. Il testimone che la cattura
 	 * porta e' l'ordine delle quattro celle -- 0x010e 0x010c 0x0158 0x015e
 	 * d'ingresso contro 0x010e 0x0158 0x010c 0x015e a regime -- quindi il
-	 * valore viene dal chiamante, come @cac_pending e le ricariche del
-	 * beacon; reverse-tools/timeline.py lo legge.
+	 * valore viene dal chiamante; reverse-tools/timeline.py lo legge.
 	 */
 	bool wd_entry_turn;
-	/*
-	 * Ricariche del template beacon che il vendor mette fra la host-flag
-	 * clear e la cella 0x0026, cioe' dentro la coda del bring-up. Sono
-	 * dello stack sopra il driver e il conteggio viene dal chiamante;
-	 * reverse-tools/beacon_reloads.py lo legge dalla cattura. Le ricariche
-	 * che cadono dopo, nella fase del watchdog, non passano di qui: sono
-	 * eventi del core e li emette chi guida il flusso, al loro istante.
-	 */
-	u16 beacon_reload_pre;
-	u8  beacon_reload_done;
 	/*
 	 * Count of calibration cycles this session, gating the cold bump in
 	 * the crsmin path of pwork_60sec(): the blob bumps the ladder for the
@@ -705,22 +690,20 @@ u16  b43_phy_ac_classifier(struct b43_wldev *dev, u16 mask, u16 val);
 void b43_phy_ac_reset_cca(struct b43_wldev *dev);
 
 /*
- * Un turno del poll del rivelatore radar: mac_suspend, PHY 0x0251 e 0x0252,
- * mac_enable. E' il callback di un timer da 150 ms che parte con l'arm del
- * channel availability check e gira finche' il canale ha la guardia radar,
- * anche dopo che il check si e' chiuso: e' in-service monitoring. Cosa
- * portino i due registri non e' stabilito -- ogni lettura dello sweep torna
- * zero -- quindi qui si legge e non si decide.
+ * Un turno del poll del rivelatore radar: mac_suspend, i livelli delle due FIFO
+ * degli impulsi (PHY 0x0251 e 0x0252), lo svuotamento di quelle non vuote,
+ * mac_enable. Il core lo chiama ogni 150 ms finche' mac80211 chiede la
+ * rilevazione, anche dopo che il check si e' chiuso: e' in-service monitoring.
+ * Ritorna se dall'ultimo poll e' arrivato almeno un impulso.
  */
-void b43_phy_ac_radar_poll(struct b43_wldev *dev);
+bool b43_phy_ac_radar_poll(struct b43_wldev *dev);
 
 /*
- * Il BSS e' su: chiamata da bss_info_changed(BEACON_ENABLED) o da start_ap.
- * Su un canale con la guardia radar arriva dopo il channel availability
- * check, e porta con se' quello che il check teneva fuori: il ripristino
- * della riga AMT del BSS (del core, via b43_ac_cac_match_gate()) e le
- * calibrazioni che trasmettono. Su un canale senza guardia non c'e' niente da
- * fare: le calibrazioni sono gia' passate allo switch.
+ * Il BSS e' su dopo un channel availability check: le calibrazioni che
+ * trasmettono, che il check teneva fuori. La chiama il tick periodico che
+ * trova il check chiuso dal core; la riga AMT del BSS la riapre il core. Su un
+ * canale senza guardia non c'e' niente da fare: le calibrazioni sono gia'
+ * passate allo switch.
  */
 void b43_phy_ac_bss_up(struct b43_wldev *dev);
 
@@ -805,30 +788,6 @@ void b43_phy_ac_gainctrl_final_apply(struct b43_wldev *dev,
  */
 void b43_phy_ac_watchdog(struct b43_wldev *dev);
 bool b43_phy_ac_txpwr_recalc(struct b43_wldev *dev);
-
-/*
- * Ricarica del template beacon, cioe' b43_update_templates() del core: TIMBPOS,
- * il template in template RAM, la lunghezza in BTL0 o BTL1, e la passata sul
- * PLCP della probe response. @which alterna beacon0 e beacon1 e la serie parte
- * da beacon0.
- *
- * Non e' codice del PHY e il PHY non decide di ricaricare un beacon: nel driver
- * la chiama mac80211 quando il beacon cambia. Il PHY la chiama solo per le
- * ricariche che il vendor mette dentro la coda del bring-up, vedi
- * @beacon_reload_pre; il debito e' in docs/retrace-todo.md.
- */
-void b43_ac_beacon_reload(struct b43_wldev *dev, unsigned int which);
-
-/*
- * La riga 0x3f dell'address match, sospesa quando parte il channel
- * availability check e ripristinata quando si chiude: finche' il canale non e'
- * disponibile il BSS non deve rispondere. E' del core -- b43_amt_write() di
- * patches/0011, che e' static in main.c e che il PHY non chiama -- e sta qui
- * per la stessa ragione di b43_ac_beacon_reload(): il momento lo conosce
- * questa fase, l'operazione no. Su hardware i due momenti sono l'avvio del
- * check e il bss-up che lo segue.
- */
-void b43_ac_cac_match_gate(struct b43_wldev *dev, bool restore);
 
 /*
  * Il completamento del campione di rumore: il core lo chiama dal suo percorso

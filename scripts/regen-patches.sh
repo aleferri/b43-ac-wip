@@ -10,7 +10,7 @@
 #
 # Il base non e' mainline HEAD ma il tag da cui la suite di integrazione
 # prende b43, che e' quello degli header kernel installati: la 0006 applica
-# con `git am` senza -3 su vanilla + 0003 + 0004, e riemetterla su un altro
+# con `git am` senza -3 su vanilla + 0003, e riemetterla su un altro
 # tag la rebaserebbe in silenzio. Quindi si riusa fetch-upstream.sh invece di
 # clonare il kernel: scarica i file di b43/ al tag giusto, che e' tutto quello
 # che serve.
@@ -47,10 +47,9 @@ git config user.email "regen@localhost"
 git add -A
 git commit -qm "b43 vanilla $KVER"
 
-# 0003 e 0004 sono il base della 0006 dentro b43/; 0001 tocca solo ssb/bcma.
-for n in 0003 0004; do
-	git am -q "$PATCHES"/$n-*.patch
-done
+# La 0003, il core, e' il base della 0006 dentro b43/; le altre toccano solo
+# ssb/bcma.
+git am -q "$PATCHES"/0003-*.patch
 
 # 0006: se non applica senza -3, il base e' cambiato e va capito perche' prima
 # di riemettere: un merge a tre vie qui rebaserebbe la serie in silenzio.
@@ -67,4 +66,4 @@ git commit -q --amend --no-edit
 
 git format-patch -q -1 -o "$WORK/out"
 cp "$WORK"/out/0001-*.patch "$TARGET"
-echo "regen-patches: $(basename "$TARGET") rigenerata su vanilla $KVER + 0003 + 0004"
+echo "regen-patches: $(basename "$TARGET") rigenerata su vanilla $KVER + 0003"

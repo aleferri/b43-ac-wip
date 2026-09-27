@@ -1240,6 +1240,25 @@ void __wrap_b43_maccontrol_set(struct b43_wldev *dev, u32 mask, u32 set)
 }
 
 /*
+ * I registri a 32 bit del MAC, per la richiesta del campione di rumore su
+ * MACCMD. Nessuna cattura porta la classe -- il tracer del vendor non aggancia
+ * l'MMIO del MAC -- quindi la lettura rende zero e il confronto le scarta
+ * entrambe, vedi SOLO_PORT_SENZA_CLASSE in compare.py.
+ */
+u32 b43_read32(struct b43_wldev *dev, u16 off)
+{
+	(void)dev;
+	fprintf(trace(), "cpu1 REG.RD   off=0x%04x val=0x00000000\n", off);
+	return 0;
+}
+
+void b43_write32(struct b43_wldev *dev, u16 off, u32 val)
+{
+	(void)dev;
+	fprintf(trace(), "cpu1 REG.WR   off=0x%04x val=0x%08x\n", off, val);
+}
+
+/*
  * Accessor del core che il corpo di b43_maccontrol_set() usa. Nell'harness
  * quel corpo non gira mai -- il --wrap sopra intercetta la chiamata -- ma
  * helpers_phy_ac.c ora e' nel link e il simbolo va risolto.
@@ -1441,7 +1460,7 @@ void b43_test_tplram_write16(u16 offset, u16 val)
  * per intero.
  *
  * Quello che si emette qui e' la forma che ha la cattura: una lettura e una
- * scrittura della riga intera. `b43_amt_write()` di patches/0011 fa invece due
+ * scrittura della riga intera. `b43_amt_write()` di patches/0003 fa invece due
  * b43_shm_write32() sulle due word, e rilegge solo nel caso KEEP_FLAGS. Le due
  * cose non coincidono e la patch va portata alla forma della cattura -- vedi
  * docs/retrace-todo.md. Finche' non lo e', questo doppione descrive il vendor
