@@ -1,0 +1,168 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alessandro Ferri <aleferri@example.invalid>
+Date: Sun, 27 Sep 2026 18:30:00 +0000
+Subject: [PATCH] b43: TX FIFO geometry and MAC clock fraction on core revision 42
+
+Two MAC-side blocks the OEM driver emits at core init and b43 does not. They
+were invisible in the wl-diag captures, which hook the PHY, radio and shared
+memory accessors and not raw MMIO; an mmiotrace of the hybrid wl 6.30.223 on
+a BCM4360 PCIe card (chip 0x4352 rev 3, 802.11 core rev 42) shows them.
+
+TX FIFO geometry
+----------------
+
+After the initvals and before the first PHY access, wl flushes the TX FIFO
+block pool (0x542 = 0x0600, 0x540 = 0x0005, poll bit 0), allocates blocks to
+the template FIFO and to FIFOs 0-5 through 0x54a/0x54c/0x520/0x54e/0x550
+committed by 0x548, and chains the 42 blocks of the pool: entry i names block
+i, block min(i + 2, 41) and a count of min(3, 42 - i), committed by
+0x530 = 0x8007 | i << 4. b43 has the register names since the older cores
+but never programs them, so the FIFOs keep whatever the hardware was left
+with. The values are the same on every bring-up in the trace.
+
+MAC clock fraction
+------------------
+
+The initvals set the TSF clock fraction to 0x66662 (160 MHz). wl then reads
+PLL control words 2 and 3 back from the PMU (0x0c31, 0x133333: VCO at
+40 MHz * 24.075 = 963 MHz, MAC clock 963/6 = 160.5 MHz) and writes
+2^26 / 160.5 MHz = 0x6614b. b43_mac_switch_freq() has no branch for these
+chips; this adds one, with the fraction as a constant, and calls it from
+b43_chip_init() for core revision 42, where the OEM order puts it relative to
+everything b43 does in that function.
+
+Not in this patch, seen in the same trace: the null-data template wl writes
+at template RAM 0x2c (power save), the 4-word TX status of this core (0x170-
+0x17c, b43 reads two), and a GPIO mask write (0x49e = 0) after each MACCTL
+write in the sample-collect loop, which the 7.14 reference does differently.
+---
+--- a/drivers/net/wireless/broadcom/b43/b43.h	2026-09-27 18:09:51.605636786 +0000
++++ b/drivers/net/wireless/broadcom/b43/b43.h	2026-09-27 18:28:54.649251735 +0000
+@@ -128,6 +128,10 @@
+ #define B43_MMIO_XMTFIFO_RD_PTR		0x528	/* core rev>= 16 only */
+ #define B43_MMIO_XMTFIFO_WR_PTR		0x52A	/* core rev>= 16 only */
+ #define B43_MMIO_XMTFIFODEF1		0x52C	/* core rev>= 16 only */
++#define B43_MMIO_AGGFIFODATA0		0x530
++#define B43_MMIO_AGGFIFODATA1		0x532
++#define B43_MMIO_AGGFIFODATA2		0x534
++#define B43_MMIO_AGGFIFODATA3		0x536
+ #define B43_MMIO_XMTFIFOCMD		0x540
+ #define B43_MMIO_XMTFIFOFLUSH		0x542
+ #define B43_MMIO_XMTFIFOTHRESH		0x544
+@@ -135,6 +139,7 @@
+ #define B43_MMIO_XMTFIFOPRIRDY		0x548
+ #define B43_MMIO_XMTFIFORQPRI		0x54A
+ #define B43_MMIO_XMTTPLATETXPTR		0x54C
++#define B43_MMIO_XMTFIFO_54E		0x54E	/* core rev 42, no documented name */
+ #define B43_MMIO_XMTTPLATEPTR		0x550
+ #define B43_MMIO_SMPL_CLCT_STRPTR	0x552	/* core rev>= 22 only */
+ #define B43_MMIO_SMPL_CLCT_STPPTR	0x554	/* core rev>= 22 only */
+--- a/drivers/net/wireless/broadcom/b43/main.c	2026-09-27 18:09:51.769777654 +0000
++++ b/drivers/net/wireless/broadcom/b43/main.c	2026-09-27 18:28:54.650519660 +0000
+@@ -3040,7 +3040,18 @@
+ {
+ 	u16 chip_id = dev->dev->chip_id;
+ 
+-	if (chip_id == BCMA_CHIP_ID_BCM4331) {
++	if (chip_id == BCMA_CHIP_ID_BCM4352 || chip_id == BCMA_CHIP_ID_BCM4360) {
++		/*
++		 * The PMU PLL of these chips runs the VCO at 963 MHz
++		 * (40 MHz * 24.075, pllcontrol[2..3] = 0x0c31, 0x133333) and
++		 * the MAC at a sixth of it, 160.5 MHz: 2^26/160.5 = 0x6614b.
++		 * The initvals leave 0x66662 (160 MHz) here, and the OEM
++		 * driver corrects it once after the PLL read-back, with no
++		 * spur mode involved.
++		 */
++		b43_write16(dev, B43_MMIO_TSF_CLK_FRAC_LOW, 0x614b);
++		b43_write16(dev, B43_MMIO_TSF_CLK_FRAC_HIGH, 0x6);
++	} else if (chip_id == BCMA_CHIP_ID_BCM4331) {
+ 		switch (spurmode) {
+ 		case 2: /* 168 Mhz: 2^26/168 = 0x61862 */
+ 			b43_write16(dev, B43_MMIO_TSF_CLK_FRAC_LOW, 0x1862);
+@@ -3224,6 +3235,72 @@
+ 	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_PRPHYCTL, tmp);
+ }
+ 
++
++/*
++ * TX FIFO geometry of the 802.11 core revision 42.
++ *
++ * The OEM driver programs it right after the initvals and before touching
++ * the PHY: it flushes the FIFO block pool, allocates blocks to the template
++ * FIFO (selector 0x17) and to FIFOs 0-5 (selectors 0x10-0x15), then chains
++ * the 42 blocks of the pool, each entry naming a block and the two after it.
++ * Nothing in this block is documented for this core; the register names are
++ * the ones b43.h carries for the same offsets on the older layout, and the
++ * values are the OEM driver's, the same on every bring-up of a BCM4352 and a
++ * BCM4360. The microcode does not size the FIFOs by itself, so without this
++ * they keep whatever geometry the previous driver left in the hardware.
++ *
++ * The chain commit is polled 25 times at 10 us. The OEM driver reads the
++ * register 22 times for each entry with the done bit already clear at the
++ * first read, so the budget is its, the exit condition is the plain one.
++ */
++#define B43_TXFIFO_BLOCKS_REV42		42
++#define B43_TXFIFO_CHAIN_GO		0x8000
++#define B43_TXFIFO_CHAIN_CMD		0x0007
++
++static void b43_txfifo_alloc(struct b43_wldev *dev, u16 rqpri, u16 txptr,
++			     u16 def, u16 aux, u16 sel)
++{
++	b43_write16(dev, B43_MMIO_XMTFIFORQPRI, rqpri);
++	b43_write16(dev, B43_MMIO_XMTTPLATETXPTR, txptr);
++	b43_write16(dev, B43_MMIO_XMTFIFODEF, def);
++	b43_write16(dev, B43_MMIO_XMTFIFO_54E, aux);
++	b43_write16(dev, B43_MMIO_XMTTPLATEPTR, 0x740c);
++	b43_write16(dev, B43_MMIO_XMTFIFOPRIRDY, sel);
++}
++
++static int b43_txfifo_init_rev42(struct b43_wldev *dev)
++{
++	const unsigned int n = B43_TXFIFO_BLOCKS_REV42;
++	unsigned int i, fifo, tries;
++
++	b43_write16(dev, B43_MMIO_XMTFIFOFLUSH, 0x0600);
++	b43_write16(dev, B43_MMIO_XMTFIFOCMD, 0x0005);
++	for (tries = 0; b43_read16(dev, B43_MMIO_XMTFIFOCMD) & 0x0001; tries++) {
++		if (tries >= 100)
++			return -ETIMEDOUT;
++		udelay(10);
++	}
++
++	b43_txfifo_alloc(dev, 0x002a, 0x002a, 0x002a, 0x262a, 0x17);
++	for (fifo = 0; fifo < 6; fifo++)
++		b43_txfifo_alloc(dev, 0x05d6, 0x0020, 0x000b, 0x1216, 0x10 | fifo);
++
++	for (i = 0; i < n; i++) {
++		b43_write16(dev, B43_MMIO_AGGFIFODATA2, i);
++		b43_write16(dev, B43_MMIO_AGGFIFODATA3, min(i + 2, n - 1));
++		b43_write16(dev, B43_MMIO_AGGFIFODATA1, min(3u, n - i));
++		b43_write16(dev, B43_MMIO_AGGFIFODATA0,
++			    B43_TXFIFO_CHAIN_GO | (i << 4) | B43_TXFIFO_CHAIN_CMD);
++		for (tries = 0; b43_read16(dev, B43_MMIO_AGGFIFODATA0) &
++				B43_TXFIFO_CHAIN_GO; tries++) {
++			if (tries >= 25)
++				return -ETIMEDOUT;
++			udelay(10);
++		}
++	}
++	return 0;
++}
++
+ /* This is the opposite of b43_chip_init() */
+ static void b43_chip_exit(struct b43_wldev *dev)
+ {
+@@ -3265,6 +3342,13 @@
+ 	if (err)
+ 		goto err_gpio_clean;
+ 
++	if (dev->dev->core_rev == 42) {
++		err = b43_txfifo_init_rev42(dev);
++		if (err)
++			goto err_gpio_clean;
++		b43_mac_switch_freq(dev, 0);
++	}
++
+ 	/* Turn the Analog on and initialize the PHY. */
+ 	phy->ops->switch_analog(dev, 1);
+ 	err = b43_phy_init(dev);

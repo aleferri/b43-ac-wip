@@ -175,6 +175,45 @@ pending. `AC_DFS_CAC_DONE` exercises the other case.
 At rmmod the stock driver issues `SI.COREREG core=0 off=0x80 val=4`, which is
 `pcie_watchdog_reset()` from `si_detach()`. bcma has no equivalent.
 
+## Core: MAC and DMA, from the bus capture
+
+`wl-diag` hooks the accessors and never saw raw MMIO, so nothing about the
+MAC or the DMA in the router captures is evidence of anything. The mmiotrace
+in `router-data/hybrid-4360/` is the first capture that shows them; it is
+the hybrid `wl` 6.30.223 on x86, so the 7.14 reference may differ. What it
+shows, against b43 v6.8 with the series applied:
+
+- **Covered by the core:** core reset and `MACCTL 0x04000400`, ucode upload
+  (10850 dwords, UCM auto-increment), `PSM_RUN` and the `MACSSPNDD` wait,
+  four TX rings and one RX ring at 0x200/0x240/0x280/0x2c0/0x220 (b43 also
+  sets ring 4, which `wl` never touches; data goes on FIFO 1, management on
+  FIFO 3), `intrcvlazy 0x100 = 0x01000000`, `MACCMD DFQ_VALID`, `IFSSLOT`,
+  the AMT clear (0011), interrupt mask and acks.
+- **Covered by the firmware, to be diffed:** the ~90 IHR writes after the
+  ucode (0x402-0x4e4, 0x500-0x510, 0x580-0x5a6, 0x600-0x69e, 0x800-0x8ee,
+  0xa00, 0xa40) and the SHM bulks are the initvals; the five registers
+  rewritten on every band switch (0x686, 0x680, 0x682, 0x700, 0x684) are the
+  bsinitvals. b43 takes both from `b0g0initvals42.fw`/`b0g0bsinitvals42.fw`
+  cut from 6.30.163; the list of the 6.30.223 values is in the decoded
+  capture, ops #1140-#1480, and has not been diffed against the .fw yet.
+- **Added by 0019:** the TX FIFO geometry (flush, seven allocations, the
+  42-block chain) and the MAC clock fraction 0x6614b.
+- **Still missing:** the null-data template `wl` writes at template RAM
+  0x2c at attach (power save, not needed for a beacon on air); the TX status
+  of this core, which `wl` reads as four words 0x170-0x17c where b43 reads
+  two -- check `xmit.c` of 0008 before touching it; the `REG.WR 0x49e = 0`
+  after each MACCTL write of the sample-collect loop (514 per channel set),
+  where 7.14 does `PHY.MOD 0x040f`/`0x019e` and `MCTRL bit 0` instead, so it
+  is a 6.30 form and not a target.
+- **Not classified:** the read-modify-writes on 0x6b4/0x6b8 (BT coex),
+  0x6c6 (23 per hop, `0xf0f`), 0x6f0/0x6f2, the `clk_ctl_st` 0x1e0 pass on
+  every hop and the `gptimer` 0x18 writes. Small, per hop, and without a
+  known consumer.
+
+The steady-state mask `wl` runs with is `0xb0e7a860` and its `MACCTL` is
+`0x44020402`; `ops_fold.py report` decodes which interrupt reasons actually
+fire (TBTT|GP1|DMAINT at every beacon, TFS, TO).
+
 ## PHY: values
 
 ### Third `PHY.MOD 0x02e4` on radar-duty channels

@@ -178,6 +178,7 @@ If none of the three is enough, the unknown stays open.
 | 0016 | bcma/ssb: NVRAM `ledbh4..ledbh15` over the device's own SROM | outside `b43/` |
 | 0017 | b43: LEDs on GPIO pins above 3, several LEDs per role | `leds.{c,h}`, `main.c` |
 | 0018 | bcma/ssb: `boardflags3` and `AvVmid_c0..2` from NVRAM | outside `b43/` |
+| 0019 | b43: TX FIFO geometry and MAC clock fraction on core revision 42 | `main.c`, `b43.h` |
 
 Patches other than 0006 touch files that have no counterpart in `src/` and are
 maintained by editing the patch.

@@ -38,9 +38,9 @@ make check          # every file of b43 and of the port: must say "0 errori"
 make b43-trace      # compile, link, print the symbol count
 ```
 
-**`make fetch`** must end with `applicate 2, saltate 5`:
+**`make fetch`** must end with `applicate 3, saltate 5`:
 
-- the 2 patches that touch `b43/`, the core and the PHY, are applied;
+- the 3 patches that touch `b43/` — the core, the PHY and the rev-42 MAC init — are applied;
 - the 5 on bcma/ssb have nothing to apply here, but their hunks on
   `include/linux/ssb/` go into `kinc/`.
 
