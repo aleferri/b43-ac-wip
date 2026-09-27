@@ -37,7 +37,7 @@ and moves with temperature.
 
 ## No SROM calibration on this board
 
-The agcombo NVRAM carries the tempsense fields all unprogrammed (every bit set),
+The agcombo NVRAM (`router-data/agcombo/wl1_nvram.txt`) carries the tempsense fields all unprogrammed (every bit set),
 so there is nothing to read from SROM and the vendor falls back to the AC-PHY
 firmware defaults:
 
@@ -59,8 +59,9 @@ Cold, just powered on at ambient — bss-up on ch100/80, from `bss-up.zip`:
     raw diff per core (0/1/2): 2841 / 2868 / 2843   (avg 2851)
     vendor phy_tempsense:      ~39-40
 
-Warm, chip already exercised — US session on ch36/80, from the earlier
-`up-nobss.zip` capture (clean tempsense block found mid-trace):
+Warm, chip already exercised — US session on ch36/80, from an earlier
+`up-nobss` capture that is not in the repository (clean tempsense block found
+mid-trace):
 
     raw diff per core (0/1/2): 3005 / 3048 / 3020   (avg 3024)
     vendor phy_tempsense:      ~54
@@ -96,8 +97,8 @@ Warm, US session: 54 at 36/80, 56 at 100/80.
 - More matched (raw_diff, phy_tempsense) pairs across a wider temperature span,
   each a `0x0013` block and a `phy_tempsense` read taken together, to pin the
   slope beyond two points.
-- The AC-PHY default tempsense slope/offset from the driver (brcmsmac
-  `wlc_phy_tempsense_acphy` and the built-in constants), to compare against the
+- The AC-PHY default tempsense slope/offset built into the stock driver (read
+  as data from `.rodata`; brcmsmac has no AC-PHY), to compare against the
   empirical fit, since this board provides no SROM calibration.
 - The per-core offset handling: chains differ by ~30 raw counts at the same
   state (see the anchors), so decide whether b43 averages the chains or keeps a
@@ -106,5 +107,4 @@ Warm, US session: 54 at 36/80, 56 at 100/80.
 ## Capture references
 
     router-data/agcombo/bss-up.zip!bss-up-ch100-bw80.txt   cold block, ch100/80
-    router-data/agcombo/up-nobss.zip!up-ch36-ch100-bw80.txt warm block, ch36/80
     router-data/agcombo/stats.txt                           decoded phy_tempsense

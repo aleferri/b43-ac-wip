@@ -41,11 +41,11 @@ check-d6220: test
 
 # Fourth test vector: agcombo (BCM4360 reference, 3x3, dual-band).
 # srdump returns zero on this blob (OEM omits the raw path), so the
-# vector runs in --synth mode against agcombo_nvram.txt only. Exercises
+# vector runs in --synth mode against wl1_nvram.txt only. Exercises
 # fields the BCM43b3 boards leave dormant: 2.4 GHz PA chain, aa2g=7,
 # chain 2 rxgains.
 check-agcombo: test
-	./test --synth ../../router-data/agcombo/agcombo_nvram.txt
+	./test --synth ../../router-data/agcombo/wl1_nvram.txt
 
 clean:
 	rm -f $(OBJS) test

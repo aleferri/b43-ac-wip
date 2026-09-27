@@ -54,10 +54,10 @@
 # 2.4 GHz. Questa procedura si guida da seriale o da ethernet, non in wifi.
 #
 # Uso:
-#   sh cold_capture.sh 20 36                     un canale
-#   sh cold_capture.sh 20 36 40 44 48            piu' canali, un ciclo ognuno
-#   sh cold_capture.sh 20dfs                     un profilo di capture_profiles.sh
-#   IF=wl1 SETTLE=10 SSID=test-ap sh cold_capture.sh 40 36 44
+#   sh capture_cold_init.sh 20 36                     un canale
+#   sh capture_cold_init.sh 20 36 40 44 48            piu' canali, un ciclo ognuno
+#   sh capture_cold_init.sh 20dfs                     un profilo di capture_profiles.sh
+#   IF=wl1 SETTLE=10 SSID=test-ap sh capture_cold_init.sh 40 36 44
 #
 # I profili sono gli stessi dello sweep a caldo e stanno in
 # capture_profiles.sh, che va copiato sul device accanto a questo script: un
@@ -104,7 +104,7 @@ if [ ! -f "$DIR/capture_profiles.sh" ]; then
 fi
 . "$DIR/capture_profiles.sh"
 
-[ -n "$1" ] || { echo "uso: sh cold_capture.sh {$PROFILI} | <20|40|80> <canale> [canale...]" >&2; exit 1; }
+[ -n "$1" ] || { echo "uso: sh capture_cold_init.sh {$PROFILI} | <20|40|80> <canale> [canale...]" >&2; exit 1; }
 
 # Un profilo porta con se' larghezza e canali; altrimenti il primo argomento e'
 # la larghezza e il resto sono i canali.
@@ -327,7 +327,7 @@ ciclo() {
     return 0
 }
 
-echo "cold_capture: $IF, BW$BW, attesa ${SETTLE}s + ${SETTLE_BSS}s bss, deviceid ammessi: $DEVID"
+echo "capture_cold_init: $IF, BW$BW, attesa ${SETTLE}s + ${SETTLE_BSS}s bss, deviceid ammessi: $DEVID"
 echo "modulo: $WL_KO"
 [ -n "$SSID" ] || echo "SSID non impostato: la bss non sale e mancheranno le tabelle per-core"
 echo "il rmmod di wl porta giu' anche il 2.4 GHz: non guidare questa procedura in wifi"

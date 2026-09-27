@@ -9,14 +9,14 @@ depends on how the capture was taken, not on preference:
              "ch36 bw20" > /proc/wl_diag`) and by wl_diag at the edges of each
              load of the target, so the boundary is written in the trace and
              does not have to be guessed. This is the criterion of the COLD
-             sweep of cold_capture.sh, where every cycle is an rmmod+insmod.
+             sweep of capture_cold_init.sh, where every cycle is an rmmod+insmod.
 
   mod        The module's own load markers: a segment runs from a `mod
              COMING` to just before the next one, so it is exactly one life of
              the module -- insmod, attach, up, down, rmmod -- with its `mod
              GOING` at the end and nothing of the neighbouring cycles in it.
              The name comes from the channel label that precedes the COMING,
-             which is where cold_capture.sh writes it. Cutting on the label
+             which is where capture_cold_init.sh writes it. Cutting on the label
              instead (`mark`) leaves the previous cycle's rmmod at the head of
              each segment, and the attach's two AFE_OFF banks and the down's
              one look like three different things.
@@ -29,7 +29,7 @@ depends on how the capture was taken, not on preference:
              ends up at the tail of the previous segment.
 
   gaps       The time gaps. Between a `wl down` and the next `chanspec`
-             capture_plan.sh sleeps 1 s, and no bring-up sequence has pauses
+             capture_hot_init.sh sleeps 1 s, and no bring-up sequence has pauses
              like that. Needed when the trace carries neither MARK nor
              chanspec, and it cuts later than `chanspec`: it keeps the head of
              the cycle with the cycle, which is the right way round, but it
@@ -407,7 +407,7 @@ def main():
         if found == 0 or (a.on == "mod" and
                           not any(n != "00-preambolo.txt" for n, _ in segments)):
             print("no usable MARK record in the trace. If it comes from "
-                  "capture_plan.sh (hot sweep), the right criterion is "
+                  "capture_hot_init.sh (hot sweep), the right criterion is "
                   "--on chanspec.", file=sys.stderr)
             return 1
         dropped = []

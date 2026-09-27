@@ -148,7 +148,7 @@ static const struct board_profile PROFILE_D6220 = {
 
 static const struct board_profile PROFILE_AGCOMBO = {
 	.name = "agcombo", .chip_id = 0x4360, .radio_rev = 4,
-	/* macaddr=00:c0:02:01:07:24 (agcombo_nvram.txt) */
+	/* macaddr=00:c0:02:01:07:24 (agcombo/wl1_nvram.txt) */
 	.macaddr = { 0x00, 0xc0, 0x02, 0x01, 0x07, 0x24 },
 	.core_rev = 42, .mac_hw_cap = 0x30518c05,
 	/*
@@ -165,7 +165,7 @@ static const struct board_profile PROFILE_AGCOMBO = {
 	.thermal = 0xffff, .tempdelta = 0xffff,
 	.tssifloor5g = { 0x3ff, 0x3ff, 0x3ff, 0x3ff },
 	.radio_ver = 0x2069, .phy_rev = 1,
-	/* NVRAM ledbh10=0x88 as on the D6220. agcombo_srom.txt is all zeros
+	/* NVRAM ledbh10=0x88 as on the D6220. agcombo/wl1_srom.txt is all zeros
 	 * from word 48 on, so ledbh0-3 are not readable there; 0xff follows
 	 * the 0x407 the vendor writes, which needs the gpio 0-2 defaults. */
 	.ledbh = { [0] = 0xff, [1] = 0xff, [2] = 0xff, [3] = 0xff,
@@ -198,7 +198,7 @@ static const struct board_profile PROFILE_AGCOMBO = {
 	.pdoffset80ma = { 0x0100, 0x0100, 0x0100 },
 	.mcsbw5g_po = {
 		/*
-		 * mcsbw{20,40,80}5g{l,m,h}po di agcombo_nvram.txt, che li porta
+		 * mcsbw{20,40,80}5g{l,m,h}po di agcombo/wl1_nvram.txt, che li porta
 		 * in esadecimale. Su questa board le tre larghezze hanno la
 		 * stessa word: 5gl e 5gm a 0x88644220, 5gh a 0xcca88440.
 		 */

@@ -109,7 +109,7 @@ KNOWN = {
         # e la suite di integrazione, che vede solo il bus, non le puo'
         # produrre. Le OBJ.BULKR/OBJ.BULKW invece sono traffico bus, e b43 le
         # fa a 16 bit: stanno qui finche' il confronto non sa svolgerle.
-        # Vedi docs/retrace-todo.md, sezione ADDRM.SET.
+        # Vedi docs/retrace-todo.md, "Key-table clearing (ADDRM.SET)".
         dict(pattern=r'^ADDRM\.SET idx=',
              dopo=None,
              max=60, cascata=False,
@@ -244,7 +244,7 @@ PORTE = {('PHY.WR', '0xd'), ('PHY.WR', '0xe'), ('PHY.WR', '0xf'),
 # cella HOSTF corrispondente in cinque casi su undici, quindi un MHF mancante
 # porta con se' una OBJ.WR mancante. Sono due op tracciate e contano due, ma
 # non si accoppiano fra loro -- le classi sono diverse -- quindi classify() non
-# le confonde. Vedi il TODO sulle host flag in docs/retrace-todo.md.
+# le confonde. Vedi "Host-flag order" in docs/retrace-todo.md.
 
 
 def chiavi(ops):

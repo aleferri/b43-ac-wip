@@ -498,7 +498,7 @@ PHY_ANCHE = [
 #            software, quindi non c'e' niente da emettere e l'AP resta
 #            scopribile.
 #            SCELTA DEL WIP, NON UN LIMITE: l'offload si salta per ora. Quando
-#            verra' implementato -- il TODO post-WIP in docs/retrace-todo.md --
+#            verra' implementato -- "Probe-response offload" in docs/retrace-todo.md --
 #            questa voce va togliata e il confronto diventa piu' severo, che e'
 #            il verso giusto. Nota che PRMAXTIME (0x0074) NON e' qui: il vendor
 #            la scrive una volta con 0, b43 due volte (0 in b43_chip_init poi 1),
@@ -674,7 +674,7 @@ PERIMETER = [
                 "b43 i LED li fa leds.c dai campi gpio0-3 della SROM, per la "
                 "sua via (MMIO GPIO_CONTROL del MAC) e non per quella del "
                 "vendor; i pin 4-15 da NVRAM ledbh glieli insegnano "
-                "patches/0016-0017. Vedi docs/retrace-todo.md."),
+                "patches/0016-0017. Vedi README.md, \"What is missing\"."),
 
     dict(pattern=r'^CAL\.INIT\b',
          motivo="switch di forzatura delle calibrazioni del driver stock. In "

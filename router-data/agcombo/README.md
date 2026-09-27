@@ -1,64 +1,58 @@
-# router-data/agcombo — BCM4360 r2069 reference dumps
+# router-data/agcombo — BCM4360, radio 2069
 
-Terzo board nella collezione, e il primo non-BCM43b3: chip `0x14e4:0x43a2`,
-`chipnum=0x4360`, `chiprev=0x3`, `corerev=0x2a`, AC-PHY rev 1, sromrev 11,
-boardrev `P353` (display di `0x1353`), 3×3 (`txchain=rxchain=7`), dual-band
-(`aa2g=7`, `aa5g=7`), full PA chain populato per entrambe le band. Driver
-OEM `0x70e2b15` ≈ 7.14.43.21, ucode `0x3a004b1` ≈ 3.160.4.177.
-
-## File
+The first non-BCM43b3 board of the collection.
 
 ```
-agcombo_revinfo.txt        wl -i wl1 revinfo
-agcombo_srom.txt           wl -i wl1 srdump   (zero-only su questo blob;
-                                               la SROM nominale è in nvram_dump)
-agcombo_nvram.txt          wl -i wl1 nvram_dump
-agcombo_phytable_5gl.txt   wl -i wl1 phytable 0x{44,45} {0..41} 8 +
-                            width-disambiguation probe @0x44 offset 0
+PCI ID   0x14e4:0x43a2     chipnum 0x4360   chiprev 0x3   corerev 0x2a
+PHY      AC rev 1          sromrev 11       boardrev P353 (0x1353)
+chains   3x3 (txchain=rxchain=7), dual-band (aa2g=7, aa5g=7), full PA chain on both bands
+driver   0x70e2b15 ~ 7.14.43.21   ucode 0x3a004b1 ~ 3.160.4.177
 ```
 
-## Cosa stabilisce
+## Files
 
-**Dispatch chip-side a due famiglie reali.** Il path `b43_phy_ac_*` è ora
-esercitato su BCM4360 (`0x4360`, agcombo) oltre a BCM4352-family
-(`0x43b3`, DSL-3580L + D6220), entrambi sromrev 11 / r2069 rev 1 /
-subband5gver 0x4. Il dispatch chip-aware del reverse tooling
-(`reverse-output/by-chip/`) ha `{4352, 4360, default}` come target, e ognuno
-ha un dump di campo associato.
+| file | content |
+|---|---|
+| `wl1_revinfo.txt` | `wl -i wl1 revinfo` |
+| `wl1_srom.txt` | `wl -i wl1 srdump` — all zero on this blob; the nominal SROM is in the NVRAM dump |
+| `wl1_nvram.txt` | `wl -i wl1 nvram_dump` |
+| `wl1_phytable_5gl.txt` | `wl -i wl1 phytable 0x{44,45} {0..41} 8`, plus a width-disambiguation probe at `0x44` offset 0 |
+| `wl1_pmu-trace.txt` | PMU resource masks |
+| `stats.txt` | `wl` status reads (chanspec, `curpower`, `phy_tempsense`, …) from a session on ch100/80 |
+| `cold-sweep.zip` | 26 cold segments, `coldNN-chC-bwB.txt` |
+| `hot-sweep.zip` | 26 hot `up` segments, `NN-up-chC-bwB.txt` |
+| `bss-up.zip` | one bss-up on ch100/80 with the extended hook set (AMT, ADDRM, OBJ.BULK, PHY.FGC) |
+| `cold-sweep-partial.tar.gz` | an older partial cold split, `split-agcombo/`; does not trace `OBJ` |
 
-**Triplet rxgain default radio-side.** I tre chain leggono triplet
-identico per tutte e tre le sub-band 5g (5gl `(3,6,1)`, 5gm `(7,15,1)`,
-5gh `(7,15,1)`), confermato sul terzo chain *fisico* dell'agcombo. Lo
-stesso vale per il register `phyreg 0x{6,8,a}f9` bits 14:8 = `0x16`
-identico sui tre chain. La triplet è una proprietà del radio rev 1 r2069,
-non una calibrazione board-specific.
+The sweeps lack the classes listed in `../CLASS-COVERAGE.md`.
 
-**Populator OEM 7.14 single-shot.** Su 7.14.43 sia i tre register
-rxgains sia le table 0x44/0x45 sono attach-time-frozen: phyreg `0x6f9`
-ritorna `0x1602` identico fra `5g36/20` e `5g100/20`, phytable `0x44 32 8`
-ritorna `0x07` identico fra le stesse due chanspec. Il porting `b43`
-chiama `b43_phy_ac_rxgain_init` solo a `op_init`, design coerente col
-firmware OEM moderno.
+## What it establishes
 
-**Encoding rxgains SROM-side, half triso.** Phyreg `0x16` con formula
-`(triso+4)<<1 + 2` (correzione `+2` 7.14, già osservata sul D6220 e
-qui presente in 7.14.43 quindi proprietà del ramo 7.14 nel suo insieme)
-implica `triso=6` runtime. L'unico bit-field-ordering naturale che
-mappa il byte SROM `0xb3` → triso=6 è `(b<<7)|(t<<3)|e`. Le altre
-half (elnagain, trelnabyp) restano da derivare; per il porting MVP sono
-bypassate dal dump phytable statico.
+**Chip-side dispatch.** The `b43_phy_ac_*` path is exercised on BCM4360 as
+well as on BCM4352. Both are sromrev 11, radio 2069, `subband5gver 0x4`.
 
-**Format `wl phytable` su questo blob.** Width=8 byte-stride,
-LSB del print (32 bit) è id-echo da scartare, byte high-order è il
-dato. Width=16 e width=32 sono reinterpretazione LE multi-byte dello
-stesso buffer. Coerente sui 37 byte campionati, niente maschere
-chip-specific.
+**The default rxgain triplets are the radio's.** All three chains read the same
+triplet on every 5 GHz sub-band: 5gl `(3,6,1)`, 5gm `(7,15,1)`, 5gh `(7,15,1)`.
+PHY `0x{6,8,a}f9` bits 14:8 read `0x16` on all three chains. The D6220 and the
+TG789vac v2 show the same values.
 
-**Chanspec 5g100/20 accettato.** `wl -i wl1 chanspec 5g100/20` ritorna
-`Chanspec set to 0xd064` con `ccode=""` e `regrev=0`. Sul DSL-3580L
-sotto firmware OEM 6.30, lo stesso comando con `-i wl1` accetta almeno
-UNII-1 a 20 e 80 MHz (`5g36/20`, `5g36/80`, `5g40/80` tutti `Chanspec
-set` puliti). Un `Bad Channel` sul DSL e' artefatto di `wl chanspec`
-senza `-i wl1`, che agisce sul core 2.4 GHz
-`wl0` (band-locked). UNII-2/2e/3 sul DSL non è stato testato con la
-forma corretta — ma per il bring-up MVP non interessa.
+**7.14 populates rxgains once, at attach.** PHY `0x6f9` reads `0x1602` on both
+5g36/20 and 5g100/20, and `phytable 0x44 32 8` reads `0x07` on both. The port
+calls `b43_phy_ac_rxgain_init` only at `op_init`.
+
+**The rxgains encoding.** `0x16` is `((triso+4)<<1)+2`, with the `+2` of the
+7.14 branch, which implies `triso=6` at runtime. The only natural bit layout
+that maps the SROM byte `0xb3` to `triso=6` is `(b<<7)|(t<<3)|e`.
+
+**The `wl phytable` format** on this blob:
+
+- width 8 uses a byte stride;
+- the low byte of the printed 32 bits is the table-id echo and is discarded;
+- the high-order byte is the data;
+- widths 16 and 32 are little-endian reinterpretations of the same buffer.
+
+**Chanspec 5g100/20 is accepted** (`Chanspec set to 0xd064`) with `ccode=""` and
+`regrev=0`.
+
+**The analog arm unit is entered twice in the preamble**, with the PLL
+rewritten in between; the D6220 enters it once. See `docs/retrace-todo.md`.

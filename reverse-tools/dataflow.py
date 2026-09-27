@@ -8,7 +8,7 @@ import re, sys, os
 from collections import defaultdict, Counter
 
 TRACE = sys.argv[1] if len(sys.argv) > 1 else \
-    "router-data/d6220/wl-diag-wl1-attach-to-bss-ch36.txt"
+    "/tmp/cold/cold01-ch36-bw20.txt"
 
 lp = re.compile(r'#(\d+)\s+cpu\d+\s+(\S+)\s+(.*)')
 ops = []

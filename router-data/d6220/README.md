@@ -1,176 +1,81 @@
-# router-data/d6220 — Netgear D6220 wl1 dumps
+# router-data/d6220 — Netgear D6220 wl1
 
-Secondo board family-BCM43b3 acquisito accanto al DSL-3580L. Stesso chip target
-del repo (`0x14e4:0x43b3`, BCM4352-family AC-PHY rev 1), boardid `0x668`,
-sromrev 11. Board rev `P355` vs `P353` del DSL — due rev consecutive del
-Broadcom reference design BCM43b3, OEM diversi (D-Link → Netgear).
-
-## Provenance
-
-Sessione diretta sul Netgear D6220 (kernel OEM Linux 3.4, firmware Netgear
-con driver `wl` rev `0x70e590e` ≈ 7.14.89.14, ucode `0x3a02715`).
-Acquisizione via shell del firmware OEM:
+The reference board of the repository.
 
 ```
-wl -i wl1 revinfo                 -> wl1_revinfo.txt
-wl -i wl1 srdump                  -> wl1_srom_raw.txt
-wl -i wl1 dump nvram              -> wl1_nvram.txt
-wl -i wl1 chanspec 5g{36,100}/20  + wl -i wl1 phyreg 0x{6,8,a}f9
-                                  -> wl1_phyreg_rxgain.txt
+PCI ID   0x14e4:0x43b3 (BCM4352 family)   boardid 0x668   boardrev P355   sromrev 11
+driver   wl 0x70e590e ~ 7.14.89.14        ucode 0x3a02715   kernel: OEM Linux 3.4
 ```
 
-Le letture phyreg sono prese **dopo** `wl up` + associazione a un AP 5 GHz
-(tethering telefono), così il populator OEM ha avuto modo di girare prima
-del campionamento.
+It is the same reference design as the DSL-3580L (P353), a consecutive board
+revision from a different OEM.
 
-## Cosa il D6220 risolve / non risolve / lascia ambiguo
+## Files
 
-### Risolve
+| file | content |
+|---|---|
+| `cold-sweep.zip` | the source of the cold gate: `cold00-preambolo.txt` plus 43 cold segments `coldNN-chC-bwB.txt`, one module reload per configuration (25 at 20 MHz, 12 at 40, 6 at 80) |
+| `hot-sweep.zip` | `segmenti/`: 44 hot `NN-up-chC-bwB.txt` segments, the source of `gates.sh --hot`; `hot-gaps/`: what the capture holds between consecutive `up` segments |
+| `wl-diag-wl1-steady-tick-ch36-bw20.txt` | one steady-state watchdog turn on ch36 bw20: the oracle of the periodic gate |
+| `wl1-ch36-phytables.txt`, `wl1_ch44_phytables.txt` | PHY table dumps (`wl phytable`) on ch36 and ch44 |
+| `wl1_phyreg_rxgain.txt` | `wl -i wl1 phyreg 0x{6,8,a}f9` on 5g36/20 and 5g100/20, taken after `wl up` and association to a 5 GHz AP |
+| `wl1_revinfo.txt` | `wl -i wl1 revinfo` |
+| `wl1_srom_raw.txt` | `wl -i wl1 srdump` |
+| `wl1_nvram.txt` | `wl -i wl1 dump nvram` |
+| `wl1-log.txt` | `wl` lines of the boot log |
 
-**Conferma stesse antenne / chain / subband del DSL.** PCI ID,
-chipnum, chiprev, corerev, radiorev, phytype, phyrev, sromrev,
-subband5gver, txchain/rxchain, femctrl, boardid: tutti identici al
-DSL-3580L (vedi `../dsl3580l/wl1_*.txt`). Il path
-`b43`/`bcma`/`ssb` patchato deve riconoscere e gestire entrambi senza
-distinzione device-tree-side.
+The sweep segments contain wl0's attach at their head, like the other two-core
+boards; `reverse-tools/strip_other_core.py` removes it.
 
-**Chiude la SALAME formula populator register-side.** Il delta `+2`
-osservato a phyreg bits 14:8 (`0x16` invece dell'atteso `0x14` del 6.30)
-è una differenza di comportamento del populator fra i due blob: il 7.14
-applica una correzione `+2` che il 6.30 non ha.
+## What the D6220 settles
 
-### Non risolve
+**Same topology as the DSL-3580L.** PCI ID, chipnum, chiprev, corerev,
+radiorev, phytype, phyrev, sromrev, `subband5gver`, `txchain`/`rxchain`,
+`femctrl` and boardid are all identical. The patched b43/bcma/ssb path must
+handle both without distinction.
 
-**Disambiguazione encoding rxgains SROM-side.** Triplet rxgain identici al
-DSL-3580L (5gl `(3,6,1)`, 5gm/5gh `(7,15,1)`, 2g `(0,0,0)`) → byte SROM a
-`srom[112-113]` chain 0 identici (`0xffff 0xb300`). Open question §"Encoding
-rxgains nei due word del chain block" del README master resta aperta. Per
-chiuderla serve un terzo board della famiglia 4352 con triplet diversi —
-preferibilmente con `triso` non saturo né zero su almeno una sub-band.
+**The `+2` in the rxgains populator.** PHY `0x?f9` bits 14:8 read `0x16` instead
+of the `0x14` that 6.30 gives. The 7.14 branch applies a `+2` that 6.30 does not
+(also seen on the agcombo, 7.14.43).
 
-### Lascia ambiguo
+**A second PA dataset**, different from the DSL-3580L's.
 
-**Origine del `+2` 7.x.** <span style="color:red">**SALAME**</span> — il
-`+2` osservato non è verificato come identità algebrica col `(triso+4)<<1`
-della 6.30: regge sul singolo data point osservato (`0x16 - 2 = 0x14 =
-(6+4)<<1` per `triso=6` su 5gl) ma non è formalmente confermato. Per
-chiuderlo black-box serve campionare più valori di `triso` — 5gm/5gh danno
-`triso=15` — forzando un re-populate attach-time per sub-band (`wl down`/
-`wl up` + associazione su un AP della banda) e rileggendo `phyreg
-0x{6,8,a}f9`.
+- Every `pa5ga0/1/2[12]` word differs.
+- `maxp5ga0/1` is asymmetric per sub-band (`72,70,86,0` against the DSL's
+  `76,76,76,76`).
+- `maxp5ga0[3] = 0` is a sub-band capped to zero, to be treated as "unavailable
+  on that chain", not as 0 dBm.
 
-### Aggiunge gratis
+## Open
 
-**Secondo dataset PA / power tables**, divergente dal DSL. Tutti i
-`pa5ga0/1/2[12]` differiscono word-per-word, e `maxp5ga0/1` è asimmetrico
-per sub-band sul D6220 (`72,70,86,0`) contro la simmetria del DSL
-(`76,76,76,76`). La `maxp5ga0[3]=0` introduce un edge case — quarta
-sub-band power-capped a zero — che il driver `b43` deve gestire come
-"canale non disponibile su quel chain", non come "trasmetti a 0 dBm".
-Test set utile per il post-MVP §"TX power control reale".
+**The rxgains SROM encoding** of the other halves (elnagain, trelnabyp). The
+triplets are identical to the DSL-3580L's (5gl `(3,6,1)`, 5gm/5gh `(7,15,1)`,
+2g `(0,0,0)`), and so are the SROM bytes (`0xffff 0xb300` at `srom[112-113]`).
+Closing it needs a board of the family with different triplets.
 
-**Secondo banco MVP.** Lo stesso `b43_chantab_r2069[]` per UNII-1 36..48
-funzionerà identicamente sui due board. Se solo uno dei due funziona dopo
-il porting, è bug nel singolo banco, non nel driver.
+**The `+2` as an algebraic identity** with 6.30's `(triso+4)<<1`. **SALAME**: it
+holds on the single data point (`0x16 − 2 = 0x14 = (6+4)<<1` for `triso=6` on
+5gl). Other `triso` values (5gm/5gh give 15) would test it, by forcing an
+attach-time repopulate per sub-band and re-reading `0x{6,8,a}f9`.
 
-## Catture wl-diag: quale usare per cosa
+## Raw SROM against the DSL-3580L
 
-| file | valori letti | inizio | fase | uso |
-|---|---|---|---|---|
-| `attach-to-bss-up-ch36-bw20` | **5074** | `#1` | primo bring-up | oracolo e gate del flow `full` |
-| `down-to-bss-ch36-bw20` | **5152** | `#1` | bring-up successivo | oracolo e gate del flow `switch_channel` con `AC_FIRST_INIT=0` |
-| `attach-to-bss-ch44` | 0 | `#78829` | primo bring-up, ch44 | solo diff per canale |
-| `attach-to-bss-ch36-bw40` | 0 | `#55155` | primo bring-up, BW40 | solo diff per bandwidth |
-| `down-to-bss-up_delay_only` | 0 | `#50388` | bring-up successivo | **solo i record DELAY**: sottoconta le op, vedi `docs/retrace-todo.md` |
+**Identical word for word:**
 
-Le prime due sono le sole complete e con i valori letti, e sono quelle da usare
-per qualunque confronto op-per-op. Le altre partono da un episodio arbitrario --
-sono finestre, non tracce complete -- e senza i valori letti un confronto
-verifica indirizzi e classi ma non cio' che il driver *calcola*.
+- `srom[8..15]` (chip identity) and `srom[48]` (`0x43b3`);
+- `srom[64].lo` (boardnum `0x0634`);
+- `srom[80..103]` (PA/ag) and `srom[104..111]` (`pa2gccka0` and noiselvl);
+- `srom[112-113]`, `srom[132-133]`, `srom[152-153]` (rxgains, chains 0/1/2);
+- `srom[168..175]`.
 
-Il flow e la fase devono corrispondere: `full` e' un primo bring-up,
-`switch_channel` con `AC_FIRST_INIT=0` un bring-up successivo. Confrontare un
-flow
-con la cattura dell'altra fase produce divergenze che non sono bug -- per
-esempio il cap del TX-LPF, che viene dall'rccal di `op_init`.
+**Different:**
 
-La `down-to-bss-up_delay_only` contiene record `DELAY usec=`: e' la sola fonte
-in repo sulla temporizzazione, ed e' inutilizzabile per i conteggi di op.
+- `srom[64].hi` (boardrev);
+- `srom[114-127]` (maxp5ga0 + pa5ga0), `srom[134-147]` (chain 1),
+  `srom[154-167]` (chain 2);
+- `srom[176..199]` (the `mcsbw*po` and `sb*po` power offsets);
+- the final CRC.
 
-## Diff sintetico SROM raw vs DSL-3580L
-
-Identici word-per-word su `srom[8..15]` (chip identity), `srom[48]`
-(`0x43b3`), `srom[64].lo` (boardnum `0x0634`), `srom[80..103]` (PA/ag),
-`srom[104..111]` (`pa2gccka0` + noiselvl), `srom[112-113]` (rxgains chain
-0), `srom[132-133]` (rxgains chain 1), `srom[152-153]` (rxgains chain 2),
-`srom[168..175]`.
-
-Differiscono `srom[64].hi` (boardrev), `srom[114-127]` (maxp5ga0 +
-pa5ga0), `srom[134-147]` (chain 1), `srom[154-167]` (chain 2),
-`srom[176..199]` (mcsbw*po + sb*po power offsets), CRC finale.
-
-Il DSL espone `srom[72-74]` non zero (Netgear li azzera); il D6220 espone
-`srom[18-39]` non zero (DSL li azzera). Driver OEM diversi loggano blocchi
-SROM diversi — il dato fisico sulla SROM è probabilmente sovrapponibile,
-ognuno dei due dump è parziale.
-
-## Le due catture con il set di hook esteso
-
-Aggiunte dopo che `wl-diag` ha imparato object memory, template RAM, chanspec in
-SHM, OTP, controllo SROM e `bw_set`. Le catture precedenti in questa directory
-non hanno nessuna di quelle classi, quindi come oracoli sono cieche a ~1600 op
-per cattura: usarle mentre il port comincia a emettere `OBJ.WR` mostrerebbe ogni
-scrittura in shared memory come divergenza.
-
-| cattura | record | TBL.WR parole / id | preambolo | copre |
-|---|---|---|---|---|
-| `attach-ch36-bw20-tabelle-complete` | 35108 | 3775 / 22 | **no** | l'attach con tutte le tabelle, comprese le per-core |
-| `attach-ch36-bw20-con-preambolo` | 25600 | 3069 / 18 | **sì** | il probe dall'inizio: GPIO, core enable, OTP, PLL, test SHM |
-
-Entrambe su ch36/bw20, zero record persi, RETVAL presenti.
-
-**Perche' due e non una.** L'attach completo di tabelle e' stato catturato con
-il
-modulo armato *dentro* l'attach, quindi gli manca il preambolo: `SI.COREREG
-off=0x8c` a 3 invece di 4 e `PMU.PLL` a 2 invece di 4, e zero `OTP.*`/`SROMCTL`.
-Quella col preambolo e' un caricamento successivo dove l'arming era gia' in
-posto, ma contiene due attach consecutivi (`OTP.INIT` a 2) e non arriva a
-scrivere le quattro tabelle per-core `0x0e`, `0x42`, `0x62`, `0x82`.
-
-**NON si possono cucire.** I due attach divergono 68 record dopo il punto di
-aggancio, con `OBJ.WR 0x0790` a `0x0500` in una e `0x0300` nell'altra. Una
-traccia innestata avrebbe la giunzione appena dentro, e un oracolo vale per
-l'ordine: una divergenza misurata su una cucitura non distingue un errore del
-port da un artefatto.
-
-**Si usano come due gate distinti.** La regione del preambolo -- i primi ~138
-record di quella `con-preambolo` -- e' *prima* del punto di divergenza, quindi
-e'
-incontestata e si misura per conto suo col flow `op_init`. L'attach vero e
-proprio va contro `tabelle-complete` col flow `full`.
-
-### Cosa contiene il preambolo
-
-138 record, 18 classi, nell'ordine:
-
-    GPIO.OUT   val=0 mask=0x407          spegne le linee
-    GPIO.OE    val=0 mask=0x407          e le disabilita
-    SI.COREREG off=0x64, 0x68, 0x8c, 0x80    abilitazione del core
-    OTP.RDR + OTP.INIT                   apre l'OTP
-    PMU.PLL 0x2 = 0xc31                  i due valori del PLL
-    PMU.PLL 0x3 = 0x100e
-    SI.COREREG off=0x600 (x2), core 3 off=0x1e0 (x2)
-    MAC.MCTRL  val=0x04000400
-    OBJ.RD  0x0000, 0x0002               legge
-    OBJ.WR  0x0000 = 0x55aa              scrive la firma
-    OBJ.WR  0x0002 = 0xaa55              e la controfirma
-    OBJ.RD  0x0000, 0x0002               rilegge per verifica
-
-Il `55aa`/`aa55` scritto e riletto e' il **test della shared memory**: il driver
-verifica che il MAC risponda prima di fidarsi. E i due valori del PLL sono
-`0xc31` e `0x100e`, gli stessi su cui in `phy_ac.c` c'era un controllo che
-restituiva `-ENODEV` sul d6220 -- vedi il commento in `op_init`.
-
-Il confine del preambolo a 138 e' **arbitrario**: e' dove l'arming dell'altra
-cattura e' partito, non un confine del driver. Il confine naturale va scelto
-sulla struttura, probabilmente dopo il test `55aa`/`aa55`.
+**Partial dumps.** The DSL shows `srom[72-74]` non-zero, where Netgear zeroes
+them; the D6220 shows `srom[18-39]` non-zero, where the DSL zeroes them.
+Different OEM drivers log different SROM blocks, so each dump is partial.

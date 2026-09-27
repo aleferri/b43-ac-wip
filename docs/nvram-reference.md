@@ -1,160 +1,200 @@
-# Riferimento NVRAM / SROM rev 11 — significato e consumo lato PHY
+# NVRAM / SROM rev 11 reference — meaning and use on the PHY side
 
-Questo documento ha due scopi: (1) dare il significato di ogni variabile
-NVRAM presente nei dump `router-data/*/*_nvram.txt`, e (2) registrare
-**dove** ciascun valore finisce nel programmming PHY/radio, per quanto
-stabilito confrontando sorgente driver e trace vendor.
+This file does two things:
 
-La semantica dei campi è quella canonica dello SROM rev 11 Broadcom
-(`bcmsrom_tbl.h`, citato in [`../sprom-rev11/cross_check.md`](../sprom-rev11/cross_check.md));
-le correlazioni al programming sono ricavate in questa collezione dai
-board con trace vendor (d6220, agcombo) — il dsl3580l non ha una trace di
-registro e non contribuisce alla parte di consumo.
+1. it gives the meaning of the NVRAM variables in the dumps under
+   `router-data/*/`;
+2. it records **where** each value ends up in the PHY/radio programming, as far
+   as established by comparing the driver with the stock traces.
 
-## Legenda confidenza
+The field semantics are those of Broadcom's SROM rev 11 layout (`bcmsrom_tbl.h`;
+see [`../sprom-rev11/cross_check.md`](../sprom-rev11/cross_check.md)). The
+correlations come from the boards with register traces.
 
-- **✓ verificato** — riprodotto dal driver e/o confermato op-per-op nella trace.
-- **~ standard** — significato noto da `bcmsrom_tbl.h`; footprint non verificato qui.
-- **⚠ SALAME** — ipotesi plausibile ma non confermata dai dati disponibili.
-- **TODO** — da derivare o da verificare (encoding, unità, o formula ignota).
+## Confidence legend
 
-## Convenzione dei nomi (indicizzazione)
+| mark | meaning |
+|---|---|
+| **✓ verified** | reproduced by the driver and confirmed op-for-op in the trace |
+| **~ standard** | meaning known from `bcmsrom_tbl.h`; footprint not checked here |
+| **⚠ SALAME** | plausible but not confirmed by the available data |
+| **TODO** | encoding, unit or formula still to derive or verify |
 
-Quasi tutte le variabili sono varianti indicizzate di poche famiglie. Leggere
-il suffisso è sufficiente per interpretarle:
+## Naming convention
 
-- suffisso `a0` / `a1` / `a2` → core / catena (chain) 0, 1, 2;
-- `2g` / `5g`, oppure `5gl` / `5gm` / `5gh` → banda (2.4 GHz / 5 GHz, o low/mid/high UNII);
-- `bw20` / `bw40` / `bw80` / `bw160` → larghezza di canale;
-- `po` → *power offset* (backoff), quasi sempre impaccato per-rate in nibble con segno;
-- `ma0..2` in `pdoffset*` → *modulation antenna*, cioè per core.
+Almost every variable is an indexed variant of a few families. The suffix is
+enough to read it:
 
-Gli array multi-valore separati da virgola sono indicizzati per sub-band
-(4 valori: le quattro sub-band 5 GHz) o per core.
+- `a0` / `a1` / `a2`: core (chain) 0, 1, 2;
+- `2g` / `5g`, or `5gl` / `5gm` / `5gh`: band (2.4 GHz / 5 GHz, or low/mid/high
+  U-NII);
+- `bw20` / `bw40` / `bw80` / `bw160`: channel width;
+- `po`: power offset (backoff), almost always packed per rate in nibbles;
+- `ma0..2` in `pdoffset*`: per core.
 
-## Come il driver consuma davvero la SROM
+Comma-separated arrays are indexed per sub-band (four values, the four 5 GHz
+sub-bands) or per core.
 
-Riscontro di questa sessione, importante per leggere il resto: il driver
-`phy_ac` legge **simbolicamente da `bus_sprom` solo quattro** ingressi —
-`rxchain`, `subband5gver`, `core_pwr_info[].pa5ga`, `rxgains_5gl`. Tutto il
-resto dell'NVRAM è, in questo porting: (a) hardcoded da cattura, (b)
-consumato dal *core* b43 / MAC fuori dal path AC-PHY, oppure (c) parte di
-blocchi di calibrazione che emettono op nella trace ma con valori catturati,
-non derivati. Di conseguenza per la maggior parte delle variabili il
-"consumo" documentato sotto è la destinazione osservata nella trace **vendor**,
-non necessariamente un punto in cui il driver legge il campo NVRAM.
+## What the driver reads from `bus_sprom`
 
-## Correlazioni verificate (sintesi)
+The PHY driver reads these fields; every other NVRAM value is either consumed
+by the b43 core outside the AC-PHY path, or not consumed at all.
 
-| NVRAM | trasformazione | destinazione | confidenza |
+| field | use |
+|---|---|
+| `rxchain` | `& 0x07` → coremask |
+| `subband5gver` | sub-band boundaries of `b43_phy_ac_pa5g_group()` |
+| `core_pwr_info[].pa5ga` | est_pwr transfer function |
+| `core_pwr_info[].maxp5ga` | PPR maximum per core and sub-band |
+| `mcsbw{20,40,80}5g{l,m,h}po` | PPR per-rate offsets |
+| `sb20in40*`, `sb20in80and160*`, `sb40and80*`, `dot11agdup*`, `mcslr5gpo` | read to warn: zero on every board, not applied |
+| `pdoffset40ma*`, `pdoffset80ma*` | table `0x21` |
+| `antenna_gain_qdb` (`aga0`) | regulatory ceiling |
+| `rxgains_5gl` | RX gain init |
+| `tssifloor5g` | PHY `0x0724 + c·0x200` |
+| `femctrl` | guard on the FEM control table (`femctrl=6` only) |
+| `pdgain5g`, `boardflags3`, `avvmid` | selection of the AvVmid set |
+| `temps_period` | tempsense cadence in the watchdog |
+| `gpio0` | LED pins (harness) |
+
+## Verified correlations
+
+| NVRAM | transformation | destination | confidence |
 |---|---|---|---|
-| `pa5ga{c}[grp·3..]` | transfer function est_pwr (128 voci) | tbl `0x40`/`0x60`/`0x80` (core 0/1/2) | ✓ 128/128 su d6220 e agcombo |
-| `rxgains_5gl.triso[c]` | `((triso+4)<<1)+2` | reg `0x06f9 + c·0x200`, bit 14:8 (val `0x1600`) | ✓ per core, entrambi i board |
-| `rxgains_5gl.elnagain[c]` | `(elnagain+3)<<1` | tbl `0x44 + c·0x20`, offset 0 | ✓ |
-| `maxp5ga{c}[grp]` | `min(maxp − 2·nib, tetto) − 6` | reg `0x0646 + c·0x200`, max index (mask 0x00ff) | ✓ 26/26 a caldo, 2 board; il −6 e' il margine di `wlc_phy_txpower_recalc_target()` |
-| `rxchain` | `& 0x07` → coremask | numero di blocchi per-core (tbl `0x80` solo se 3×3) | ✓ strutturale |
-| `subband5gver` | confini 5250/5500/5700 → `pa5g_group` | selettore dello slice `pa5ga`/`maxp5ga` | ✓ (indiretto) |
-| `tssifloor5g` | clamp per-chain | reg `0x0724 + c·0x200` (val `0x03ff`) | ⚠ SALAME (valore+struttura) |
-| `mcsbw*po` | — (non derivata) | tbl `0x21` ppr, slot 1/5/6 = `0x0202` fisso | ⚠ origine `mcsbw205glpo` dichiarata nel sorgente ma **falsificata** dal differenziale |
-| idle-TSSI (non NVRAM) | misura runtime | reg `0x0645 + c·0x200` (mask 0x03ff) | ✓ misurato, **non** derivabile da NVRAM |
-| `tssiposslope5g` | segno dello slope TSSI (1 bit) | config detector TSSI (non isolabile) | ~ costante ovunque |
+| `pa5ga{c}[grp·3..]` | est_pwr transfer function (128 entries) | tables `0x40`/`0x60`/`0x80` (core 0/1/2) | ✓ 128/128 on D6220 and agcombo |
+| `rxgains_5gl.triso[c]` | `((triso+4)<<1)+2` | reg `0x06f9 + c·0x200`, bits 14:8 (`0x1600`) | ✓ per core, both boards |
+| `rxgains_5gl.elnagain[c]` | `(elnagain+3)<<1` | table `0x44 + c·0x20`, offset 0 | ✓ |
+| `maxp5ga`, `mcsbw*po`, `aga0` | the PPR chain (see `txpwr-target-derivation.md`) | reg `0x0646 + c·0x200` bits 7:0; per-rate SHM offsets | ✓ on 43 cold and 44 hot configurations |
+| `pdoffset40ma`, `pdoffset80ma` | sub-band nibble per core | table `0x21`, entries 1/5/6 and 10 | ✓ on 139 segments |
+| `rxchain` | `& 0x07` → coremask | number of per-core blocks | ✓ structural |
+| `subband5gver` | boundaries 5250/5500/5745 → pa5g group | slice of `pa5ga`/`maxp5ga` | ✓ indirect |
+| `tssifloor5g` | `& 0x3ff`, per chain | reg `0x0724 + c·0x200` | ⚠ SALAME: `0xffff` on every board, so the destination is inferred |
+| idle-TSSI (not NVRAM) | runtime measurement | reg `0x0645 + c·0x200` (mask `0x03ff`) | ✓ measured; not derivable from NVRAM |
 
-Dettagli e note di derivazione: est_pwr e max index in
-[`txlpf-formula.md`](txlpf-formula.md) e nel corpo di
-`b43_phy_ac_txpwrctrl_setup`; verificatori in
-`../reverse-tools/srom.py verify` e `../reverse-tools/srom.py correlate`.
+## Details per family
 
-## Dettaglio per famiglia
+### Board and host identity
 
-### Identità board / host
-- `sromrev` — formato SROM (11). ~
-- `boardrev` — revisione board (es. `0x1355` P355, `0x1353` P353). ~
-- `boardtype` — board-id (`0x668` DSL/D6220, `0x633` agcombo). ~
-- `boardflags`, `boardflags2`, `boardflags3` — bitmask capacità/config board. ~ (singoli bit: confidenza minore)
-- `subvid` — vendor sottosistema (`0x14e4` = Broadcom). ~
-- `boardnum` — seriale board. ~
-- `macaddr` — MAC. ~
-- `devid` — PCI device-id (`0x43b3` / `0x43a2`). ~
-- `ccode` + `regrev` — dominio regolatorio (vuoto = world, regrev 0). E' il locale sotto cui gira il primo bring-up, e i suoi tetti sono quelli che legano su `0x0646` a freddo; a caldo il country lo imposta lo userspace. ~
-- `ledbh10` — comportamento/mappatura LED 0-1. Scritte reali su reg `0x0182`, `0x0202..0x0204` ma lato **core b43**, non AC-PHY. ~
-- `watchdog` — periodo watchdog in ms; `0x0bb8`→reg `0x0554/0x0555` (core, off-path). ~
-- `xtalfreq` — frequenza quarzo (`0xffff` = default). ~
+- `sromrev`: SROM format (11). ~
+- `boardrev`: board revision, for example `0x1355` P355 and `0x1353` P353. ~
+- `boardtype`: board id (`0x668` DSL/D6220, `0x633` agcombo, `0x6d8`
+  TG789vac v2). ~
+- `boardflags`, `boardflags2`, `boardflags3`: capability/config bitmasks. `boardflags3`
+  carries `BFL3_AvVim`, which selects the AvVmid source. ~
+- `subvid`: subsystem vendor (`0x14e4` = Broadcom). ~
+- `boardnum`: board serial. ~
+- `macaddr`: MAC. ~
+- `devid`: PCI device id (`0x43b3` / `0x43a2`). ~
+- `ccode` + `regrev`: regulatory domain; empty means world, regrev 0. It is the
+  locale the first bring-up runs under. ~
+- `ledbh*`: LED behaviour per GPIO. `ledbh0-3` sit in the SROM, `ledbh4-15`
+  reach `struct ssb_sprom` through `patches/0016`. Consumed by the core
+  (`leds.c`), not the AC-PHY. ~
+- `watchdog`: watchdog period in ms (3000 on D6220 and agcombo, 70000 on
+  TG789vac); whether it governs the turn cadence is not verified. ~
+- `xtalfreq`: crystal frequency (`0xffff` = default). ~
 
-### Topologia antenne / catene
-- `aa2g`, `aa5g` — bitmask antenne disponibili per banda. ~
-- `txchain`, `rxchain` — bitmask catene attive; `rxchain & 7` → coremask (3=2×2, 7=3×3). ✓ per rxchain
-- `antswitch` — config switch antenna. ~
-- `agbg0..2` — guadagno antenna 2.4 GHz per antenna. Encoding di brcmsmac: dB interi nei bit [5:0], quarti nei bit [7:6]; `71` = 7.25 dB. ✓ encoding
-- `aga0..2` — guadagno antenna 5 GHz per antenna, stesso encoding; `133` = 5.5 dB = 22 quarti. **Entra nel tetto regolatorio** di `0x0646`: `QDB(max_power) − antgain`, ed e' il termine che rende interi i quattro tetti misurati a freddo. Quale dei tre legge wl non si distingue sui board di riferimento, tutti a 133; `patches/0001` decodifica `aga0` in `antenna_gain_qdb[1]`. ✓ 2 board
+### Antenna and chain topology
 
-### Front-end / configurazione del path
-- `femctrl` — tipo/pilotaggio front-end module. **Ora è letto**: `set_regtbl_on_femctrl` porta la tabella di controllo FEM di femctrl 6 (la sola osservata, condivisa dalle tre board) e si ferma con un warning se il valore non corrisponde, invece di applicarla incondizionatamente. Vale 6 su d6220, DSL-3580L e agcombo. Il campo è in `struct ssb_sprom` come `u8 femctrl`, letto per nome dal filler NVRAM — vedi la nota sul prerequisito di build in `retrace-todo.md`. ~
-- `epagain{2g,5g}` — guadagno PA esterno. ~
-- `pdgain{2g,5g}` — guadagno power-detector. ~
-- `papdcap{2g,5g}` — capacità pre-distorsione PAPD. ~
-- `tssiposslope{2g,5g}` — **segno** dello slope TSSI (1 bit; `1` = TSSI cresce con la potenza). Costante ovunque → non isolabile per differenziale; lo slope *numerico* della potenza è invece `a1` in `pa5ga` (vedi est_pwr). ~
-- `tworangetssi{2g,5g}` — TSSI a due range on/off (1 bit; `0` ovunque). ~
-- `gainctrlsph` — modo gain-control. ~ (bassa confidenza)
-- `paparambwver` — versione formato dei parametri PA bw-specifici. ~
-- `subband5gver` — versione della suddivisione sub-band 5 GHz; fissa i confini 5250/5500/5700 usati da `pa5g_group()`. ✓ (indiretto)
+- `aa2g`, `aa5g`: available-antenna bitmasks per band. ~
+- `txchain`, `rxchain`: active-chain bitmasks; `rxchain & 7` → coremask (3 =
+  2×2, 7 = 3×3). ✓ for rxchain
+- `antswitch`: antenna switch config. ~
+- `agbg0..2`: 2.4 GHz antenna gain per antenna, in brcmsmac's encoding: whole dB
+  in bits [5:0], quarters in bits [7:6] (`71` = 7.25 dB). ✓ encoding
+- `aga0..2`: 5 GHz antenna gain, same encoding (`133` = 5.5 dB = 22 quarters).
+  It enters the regulatory ceiling as `QDB(max_power) − antgain`. Which of the
+  three `wl` reads is not distinguishable on the reference boards, all at 133;
+  `patches/0001` decodes `aga0` into `antenna_gain_qdb[1]`. ✓ 2 boards
 
-### Coefficienti PA (polinomio pdet)
-Ogni gruppo è una terna `(a1, b0, b1)` del modello pdet.
-- `pa2ga0..2` — 2.4 GHz per core. ~
-- `pa2gccka0` — variante CCK. ~
-- `pa5ga0..2` — 5 GHz, 12 valori = 4 sub-band × 3 coeff per core. **Alimenta la transfer function est_pwr** (`a1/b0/b1 = pa5ga[grp·3 .. grp·3+2]`), scritta nelle tabelle `0x40/0x60/0x80`. ✓ 128/128
-- `pa5gbw40a0`, `pa5gbw80a0`, `pa5gbw4080a{0,1}` — stessi coeff per canali 40/80 MHz; le trace bw80 usano tabelle est_pwr distinte (`0x42/0x62/0x82`). ~ (footprint bw non ancora portato)
+### Front end and path configuration
 
-### Potenza massima e offset per-rate
-- `maxp2ga0..2` — potenza max 2.4 GHz per core (quarti di dBm; es. 66 = 16.5 dBm). ~
-- `maxp5ga0..2` — potenza max 5 GHz per core, 4 valori sub-band. **Deriva il max index**: `reg 0x0646+c·0x200 = min(maxp5ga[grp] − 2·nib(mcsbw*po), tetto) − 6`. ✓ (26/26 sullo sweep a caldo; il −6 e' il margine fisso di brcmsmac, non un fit)
-- `cckbw202gpo`, `cckbw20ul2gpo` — offset CCK. ~ (packing TODO)
-- `mcsbw{20,40,80}2gpo`, `...5g{l,m,h}po` — offset per-MCS impaccati per banda/bw. Footprint: tabella ppr `0x21`. Il sorgente dichiara che `mcsbw205glpo` deriva lo slot `0x0202`, ma il differenziale d6220 vs agcombo mostra ppr **identico** con `mcsbw205glpo` diverso → la derivazione dichiarata è ⚠ falsificata; `0x0202` è un backoff per-rate fisso per il rate-set a ch36/5gl. ~ (packing per-rate TODO)
-- `mcsbw160...po` — offset 80+80/160 MHz. ~
-- `mcslr5g{l,m,h}po` — offset low-rate. ~
-- `dot11agofdmhrbw202gpo`, `ofdmlrbw202gpo` — offset OFDM legacy (high/low rate). ~
-- `sb20in40...po`, `sb20in80and160...po`, `sb40and80...po` (varianti `hr`/`lr`) — offset per sotto-canale dentro bw più larghe. ~
-- `dot11agdup{hr,lr}po` — offset modo duplicato. ~
-- `sar2g`, `sar5g` — limiti SAR. ~
-- `txidxcap{2g,5g}` — cap dell'indice di potenza TX. ~
+- `femctrl`: front-end module control scheme. The driver ports `femctrl` 6's
+  control table (the only value seen, all four boards) and stops with a warning
+  on any other value. ✓
+- `epagain{2g,5g}`: external PA gain. ~
+- `pdgain{2g,5g}`: power-detector gain; 10 on three boards, 19 on the TG789vac.
+  Selects the AvVmid set. ✓
+- `papdcap{2g,5g}`: PAPD capability. ~
+- `tssiposslope{2g,5g}`: **sign** of the TSSI slope (1 bit; `1` means TSSI grows
+  with power). Constant everywhere. ~
+- `tworangetssi{2g,5g}`: two-range TSSI (1 bit; `0` everywhere). ~
+- `gainctrlsph`: gain-control mode. ~ (low confidence)
+- `paparambwver`: format version of the width-specific PA parameters. ~
+- `subband5gver`: version of the 5 GHz sub-band split; fixes the boundaries used
+  by `pa5g_group()`. ✓ indirect
 
-### Power-detector / TSSI / temperatura
-- `pdoffset2g40ma0..2` + `pdoffset2g40mvalid`, `pdoffset40ma0..2`, `pdoffset80ma0..2`, `pdoffsetcckma0..2` — correzioni pd-offset per core/bw (impaccate). ~ (packing TODO)
-- `tssifloor{2g,5g}` — floor/clamp del TSSI per sub-band (10 bit). Footprint candidato: reg `0x0724 + c·0x200` (ciclato `0`↔`0x03ff`, per-chain, scala coi core). ⚠ SALAME: `tssifloor5g` è `0x3ff` ovunque, quindi la destinazione è inferita da valore+struttura, non provata per differenziale; servirebbe un board con `tssifloor5g ≠ 0x3ff`.
-- `measpower{,1,2}` — potenza di riferimento misurata (`0x7f` = non impostato). ~
-- `tempthresh`, `tempoffset`, `rawtempsense`, `tempsense_slope`, `tempcorrx`, `tempsense_option` — sensore di temperatura (valori `0xff`/`0x1ff`/`0x3f` = default su questi board). ~
-- `phycal_tempdelta` — delta-T che innesca una ri-calibrazione (`0xff` = disabilitato). ~
-- `temps_period`, `temps_hysteresis` — cadenza / isteresi della misura di temperatura. ~
+### PA coefficients (pdet polynomial)
 
-### RX gain / rumore
-- `rxgains{2g,5g,5gm,5gh}{elnagain,triso,trelnabyp}a0..2` — per core/banda: `elnagain` indice guadagno eLNA, `triso` isolamento T/R, `trelnabyp` bypass eLNA in T/R. Impaccati come `(trelnabyp<<7)|(triso<<3)|elnagain`. Il driver usa **solo** `rxgains_5gl` (UNII-1); il vendor lo congela ad attach per tutte le bande. Trasformazioni verificate: `triso→((·+4)<<1)+2` (reg `0x6f9+c·0x200`), `elnagain→(·+3)<<1` (tbl `0x44+c·0x20`). ✓ per 5gl
-- `rxgainerr{2g,5g}a0..2` — correzione errore di gain per core/sub-band. ~
-- `noiselvl{2g,5g}a0..2` — livello di rumore per core/sub-band. ~
-- `eu_edthresh{2g,5g}` — soglia energy-detect EU (regolatoria). ~
+Each group is a triplet `(a1, b0, b1)` of the pdet model.
 
-### Calibrazioni di path
-- `rpcal2g`, `rpcal5gb0..3` — coefficienti di calibrazione del path RX per banda 5 GHz. ~
-- `pcieingress_war` — workaround PCIe ingress (presente solo su dsl3580l). ~
+- `pa2ga0..2`: 2.4 GHz per core. ~
+- `pa2gccka0`: CCK variant. ~
+- `pa5ga0..2`: 5 GHz, 12 values = 4 sub-bands × 3 coefficients per core. Feeds
+  the est_pwr transfer function (`a1/b0/b1 = pa5ga[grp·3 .. grp·3+2]`), written
+  to tables `0x40/0x60/0x80`. ✓ 128/128
+- `pa5gbw40a0`, `pa5gbw80a0`, `pa5gbw4080a{0,1}`: the same coefficients for 40/80
+  MHz channels. ~ (not ported)
 
-### idle-TSSI (misura, non NVRAM)
-Il *base index* idle-TSSI (`reg 0x0645 + c·0x200`, mask 0x03ff) **non** è una
-variabile NVRAM: è una misura runtime del detector idle (readback di PHY
-`0x013/0x012/0x464` + radio) e varia per core, per board e per iterazione
-(deriva/jitter). Nessuna variabile `tssi*` lo determina: `tssifloor` è un
-clamp costante, `tssiposslope` è solo un segno. La derivazione
-`readback → index` resta il TODO principale del blocco txpwrctrl. ✓ (natura misurata)
+### Maximum power and per-rate offsets
 
-## Punti aperti
+- `maxp2ga0..2`: 2.4 GHz maximum power per core (quarter-dBm; 66 = 16.5 dBm). ~
+- `maxp5ga0..2`: 5 GHz maximum power per core, 4 sub-band values; the PPR
+  maximum. `maxp5ga0[3] = 0` on the D6220 is a sub-band capped to zero, to be
+  handled as "unavailable on that chain", not as 0 dBm. ✓
+- `mcsbw{20,40,80}5g{l,m,h}po`: per-MCS offsets packed per band and width, read
+  as **unsigned** nibbles in half-dB. The per-rate SHM offsets are
+  `(max − ppr[rate]) * 4`. ✓
+- `mcsbw160...po`: 80+80/160 MHz offsets. ~
+- `mcslr5g{l,m,h}po`: low-rate offsets. ~ (read, zero)
+- `cckbw202gpo`, `cckbw20ul2gpo`, `dot11agofdmhrbw202gpo`, `ofdmlrbw202gpo`:
+  2.4 GHz offsets. ~
+- `sb20in40...po`, `sb20in80and160...po`, `sb40and80...po` (`hr`/`lr`),
+  `dot11agdup{hr,lr}po`: sub-channel offsets inside wider widths. Zero on every
+  board; not applied, because which nibble goes to which rate is not in any open
+  source. TODO
+- `sar2g`, `sar5g`: SAR limits. ~
+- `txidxcap{2g,5g}`: TX power index cap. ~
 
-- **Encoding esatto delle famiglie `*po` e `pdoffset*`**: unità e layout dei
-  nibble (0.25 vs 0.5 dB, segno) da confermare su `bcmsrom_tbl.h` prima di
-  scriverci codice di derivazione.
-- **Offset `−6` del max index**: fit su 3 punti / 2 valori di `maxp`; confermare
-  con un board a `maxp5ga` distinto.
-- **Destinazione di `tssifloor5g`** (`0x0724`): inferita, non provata; serve un
-  board con `tssifloor5g ≠ 0x3ff`.
-- **`tssiposslope5g` / `tworangetssi5g`**: costanti su tutti i board; per vederne
-  il footprint serve un board con `tssiposslope5g=0` o `tworangetssi5g=1`.
-- **Derivazione base index idle-TSSI**: formula `readback → index` ignota.
-- **Bit di `boardflags*` e `gainctrlsph`**: significato dei singoli bit a bassa
-  confidenza.
+### Power detector, TSSI, temperature
+
+- `pdoffset40ma0..2`, `pdoffset80ma0..2`: power-detector offset per core and
+  width, one nibble per sub-band → table `0x21`. ✓
+- `pdoffset2g40ma*`, `pdoffsetcckma*`: 2.4 GHz and CCK variants. ~
+- `tssifloor{2g,5g}`: TSSI floor per sub-band (10 bits). ⚠ SALAME: the value is
+  `0xffff` everywhere, so the destination `0x0724` is inferred from value and
+  structure; it needs a board with a programmed floor.
+- `measpower{,1,2}`: measured reference power (`0x7f` = unset). ~
+- `tempthresh`, `tempoffset`, `rawtempsense`, `tempsense_slope`, `tempcorrx`,
+  `tempsense_option`: temperature sensor (`0xff`/`0x1ff`/`0x3f` = default on the
+  reference boards). ~
+- `phycal_tempdelta`: temperature delta that triggers a recalibration (`0xff` =
+  disabled). The runtime instance value can differ from NVRAM (40 on the
+  TG789vac and the DSL-3580L). ~
+- `temps_period`, `temps_hysteresis`: tempsense cadence and hysteresis;
+  `temps_period` is read. ✓
+
+### RX gain and noise
+
+- `rxgains{2g,5g,5gm,5gh}{elnagain,triso,trelnabyp}a0..2`, per core and band:
+  - the fields are the eLNA gain index, T/R isolation and eLNA bypass in T/R;
+  - they are packed as `(trelnabyp<<7)|(triso<<3)|elnagain`;
+  - the driver uses **only** `rxgains_5gl`, which the stock driver freezes at
+    attach for every band. ✓ for 5gl
+- `rxgainerr{2g,5g}a0..2`: per-core/sub-band gain error correction; flat
+  `31,31,31,31` on the D6220. ~
+- `noiselvl{2g,5g}a0..2`: noise level per core and sub-band. ~
+- `eu_edthresh{2g,5g}`: EU energy-detect threshold (regulatory). ~
+
+### Path calibrations
+
+- `rpcal2g`, `rpcal5gb0..3`: RX path calibration coefficients per 5 GHz band. ~
+- `pcieingress_war`: PCIe ingress workaround (DSL-3580L only). ~
+
+## Open
+
+- Exact encoding of the `pdoffset*` families beyond the nibbles observed.
+- Destination of `tssifloor5g`, which needs a board with a programmed floor.
+- `tssiposslope5g` / `tworangetssi5g`: constant on every board; a board with
+  `tssiposslope5g=0` or `tworangetssi5g=1` would show their footprint.
+- The meaning of individual `boardflags*` bits and of `gainctrlsph`.

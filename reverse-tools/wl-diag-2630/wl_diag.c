@@ -506,9 +506,8 @@ static struct hook hooks[] = {
 	/* Accessor trovati nei blob di entrambe le versioni e non coperti dagli
 	 * hook sopra. Coprono cio' di cui oggi non si vede niente:
 	 *
-	 *   phy_reg_write_array   scrittura PHY in blocco. E' l'accessor che il
-	 *                         TODO in docs/retrace-todo.md andava a cercare
-	 *                         sotto il nome phy_reg_write_list. Se dentro
+	 *   phy_reg_write_array   scrittura PHY in blocco, l'accessor che in altri
+	 *                         alberi si chiama phy_reg_write_list. Se dentro
 	 *                         chiama phy_reg_write le singole scritture si
 	 *                         vedono gia' e questo hook aggiunge un marcatore,
 	 *                         come TBL.WR fa per le tabelle; se non lo chiama,

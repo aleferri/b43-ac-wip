@@ -1,272 +1,193 @@
-# TX power target: register 0x0646
+# TX power: target `0x0646`, per-rate offsets, idle-TSSI
 
-How the per-core value in `PHY 0x0646[7:0]` (and `0x0846`, `0x0a46`) is
-derived, what the sweep pins down, and what is still open.
+How the port derives:
 
-Everything here comes from the captures, from the boards' NVRAM, and from the
-GPL `brcmsmac` sources in `drivers/net/wireless/broadcom/brcm80211`. The
-vendor object is used only where `PROVENANCE.md` already allows it: to read
-data tables. No logic is taken from it.
+- the per-core power target in `PHY 0x0646[7:0]` (and `0x0846`, `0x0a46`);
+- the per-rate offsets it writes to shared memory;
+- table `0x21`;
+- the idle-TSSI base index.
+
+The open residuals are in `retrace-todo.md`.
+
+The sources are the captures, the boards' NVRAM, and the GPL `brcmsmac` sources
+in `drivers/net/wireless/broadcom/brcm80211`. The stock object is used only to
+read data tables.
 
 ## What the register is
 
-Not a "max index", despite the name inviting that reading. The vendor names
-the function that writes it `set_target`, and it takes the value as an
-argument: it is the **TX power target** in quarter-dBm. The ceiling lives
-elsewhere, at `0xb46`, written by the power-control enable path.
+`0x0646` is the **TX power target** in quarter-dBm, not a "max index". The
+stock driver's writer takes the value as an argument. The ceiling lives
+elsewhere, at `0x0b46`, written by the power-control enable path.
 
 ## The chain
 
-`brcmsmac` already carries the computation, as
-`wlc_phy_txpower_recalc_target()` in `phy/phy_cmn.c`:
+`brcmsmac` carries the computation as `wlc_phy_txpower_recalc_target()`
+(`phy/phy_cmn.c`), and b43 already ports it for the N-PHY as
+`b43_nphy_op_recalc_txpower()` on its `struct b43_ppr`:
 
-```c
-wlc_phy_txpower_sromlimit(pi, target_chan, &mintxpwr, &maxtxpwr, rate);
-maxtxpwr = min(maxtxpwr, pi->txpwr_limit[rate]);       /* regulatory */
-maxtxpwr = (maxtxpwr > pactrl) ? maxtxpwr - pactrl : 0;
-maxtxpwr = (maxtxpwr > 6)     ? maxtxpwr - 6     : 0;  /* the margin */
-maxtxpwr = min(maxtxpwr, tx_pwr_target[rate]);         /* user target */
-tx_pwr_target[rate] = max(maxtxpwr, mintxpwr);         /* floor */
+```
+clear -> load_max_from_sprom -> apply_max(regulatory) -> add(-6)
+      -> apply_min(8 dBm) -> get_max
 ```
 
-and the per-rate SROM limit, as `wlc_phy_txpwr_nphy_srom_convert()` in
-`phy/phy_n.c`:
+`src/ppr_ac.{c,h}` is that PPR for SROM rev 11:
 
-```c
-srom_max[rate] = tmp_max_pwr - 2 * nibble(rate);
-```
+- the same primitives, and OFDM and MCS rows at 20/40/80 MHz;
+- loaded from the minimum of `maxp5ga` over the active chains, plus the per-core
+  delta, with the `mcsbw*po` nibbles per width;
+- a 40 MHz channel also loads the 20 MHz row (20-in-40), and an 80 MHz channel
+  loads the 20 and 40 MHz rows. The maximum over rates therefore takes the
+  smallest offset among the contained widths.
 
-The reduction to a single per-core number, and where the per-rate detail goes:
+The regulatory stage is `b43_phy_ac_reg_ceiling()`. It is
+`QDB(max_power) − antenna_gain`, with the antenna gain from `aga0`
+(`antenna_gain_qdb[1]`, decoded by `patches/0001`). cfg80211's `max_power` is
+per 20 MHz channel, so a bonded block is bounded by its lowest channel.
 
-```c
-pi->tx_power_max = max over rates;                       /* -> 0x0646 */
-pi->tx_power_offset[rate] = tx_power_max - target[rate];  /* -> table 0x21 */
-```
+`b43_phy_ac_txpwr_recalc()` computes the target. `recalc_txpower` returns
+`NEED_ADJUST` only when the target changed, and `adjust_txpower` re-runs
+`txpwrctrl_setup()` under `mac_suspend`, as `phy_n` does.
 
-Table 0x21 is the array this driver calls `ppr[24]`. That split explains an
-otherwise odd pair of facts measured on the sweep: `ppr` is identical across
-all 52 segments and all three widths, while `0x0646` moves with the channel.
-Changing channel moves the maximum, not the spacing between rates.
-
-## Three unit scales, and they are easy to conflate
+### Units, easy to conflate
 
 | quantity | unit | source |
 | --- | --- | --- |
 | `maxp5ga[]`, `0x0646` | quarter-dBm | SROM |
-| `mcsbw*po` nibbles | half-dB | SROM, hence the `2 *` |
-| `ch->max_power`, locale tables | whole dBm | regulatory, hence `QDB()` = `* 4` |
+| `mcsbw*po` nibbles | half-dB, hence `2 *` | SROM |
+| `ch->max_power` | whole dBm, hence `QDB()` = `* 4` | regulatory |
 
-The `-6` margin is in quarter-dBm and is a saturating subtraction, not a plain
-one: `(x > 6) ? x - 6 : 0`. Reading it as a constant margin is what made the
-old `maxp5ga[grp] - 6` look like it worked.
+The `−6` margin is a saturating subtraction, `(x > 6) ? x − 6 : 0`.
 
-## What the port computes now
+### What the captures pin down
 
-```
-grp  = txpwr_subband(primary channel, width)   /* 5210 at 20/80 MHz, 5250 at 40 */
-band = po_band(primary channel)                /* l < 52, m < 100, h */
-po   = (width == 40) ? mcsbw40_5g[band] : mcsbw20_5g[band]
-nib  = min over the eight nibbles of po
-lim  = maxp5ga[core][grp] - 2 * nib
-lim  = min(lim, QDB(max_power) - antenna_gain)  /* per 20 MHz sub-channel */
-target = lim - 6
-```
+**Same value cold and hot.** The value written is the same cold and hot on all
+43 configurations (43 cold segments, 44 `up` segments), while RX-IQ and
+idle-TSSI change between the two conditions. It is not closed-loop.
 
-with one fitted correction of `-2` for the first 40 MHz block of a sub-band
-whose `maxp5ga` entry differs from the next one's. See below.
+**The ceiling belongs to the locale, not the board.** The D6220 and the agcombo
+have different SROMs yet write the same values where the SROM model would
+differ:
 
-Exact on all 26 sweep configurations plus the agcombo captures.
-
-Two points worth keeping:
-
-- **80 MHz uses the 20 MHz offsets.** The maximum is over every rate, and the
-  20 MHz rates stay populated whatever the operating width, so they carry the
-  smallest nibble and win. The sweep's 80 MHz configurations agree with the
-  20 MHz ones channel for channel.
-- **The sub-band boundary is width-dependent**, 5210 at 20 and 80 MHz and 5250
-  at 40, and this is settled by a sign argument rather than by fitting. A
-  regulatory limit can only lower a ceiling, so any residual where the driver
-  comes out *below* the vendor cannot come from the regulatory stage. At
-  40 MHz the 5210 boundary leaves ch44 two units low, which nothing downstream
-  could raise; 5250 leaves ch36 and ch52 two units high, which a missing clamp
-  explains.
-
-`b43_phy_ac_pa5g_group()` keeps its own 5250 boundary for every width, because
-it feeds the `pa5ga` coefficients. The two partitions coincide at 40 MHz and
-differ at 20; they are kept separate rather than one being bent to fit.
-
-## The open point: two 40 MHz configurations
-
-`ch36` and `ch52` at 40 MHz come out two quarter-dB high. The residual is
-regular: the **first** 40 MHz block of each sub-band is high and the second is
-exact, which is a function of the block's ordinal position, not of any
-frequency.
-
-Both are on the hazardous side. Coming out below the vendor costs range;
-coming out above drives the PA harder than the board was characterised for.
-That is why no 40 MHz entry is in the validated list, and why the correction
-only ever lowers.
-
-### Candidates excluded, each with an argument
-
-| candidate | why not |
-| --- | --- |
-| the `corr` term at `+0x11cc` | its step is `* 4`; the residual is 2 |
-| `bw405g*po` | does not exist in SROM rev 11 — rev 11 replaced base-plus-delta with a full array per width |
-| `sb20in40`, `sb40and80` | zero on all three boards, so they cannot shift anything |
-| a fixed nibble index | the three binding cases need indices 6, 7 and 0 |
-| `min` over nibbles | always 0 in the bands concerned |
-| regulatory ceiling | per frequency range; all of U-NII-1 shares one limit |
-| `maxpwr40[]` from the locale table | indexed by `CHANNEL_POWER_IDX_5G`, and ch36 and ch44 share index 0 |
-| OFDM/MCS cross-limiting | operates on arrays that are per band: ch36 and ch44 share one `srom_max` |
-| the vendor CLM | has per-channel granularity and uses it, but the residual is ordinal, not frequency-keyed |
-| `ppr` as a witness | identical across all widths, so it carries no information about the per-rate SROM limits |
-
-### What the correction is, honestly
-
-The predicate — lowest 40 MHz block of a sub-band whose `maxp5ga` entry
-differs from the next one's — is fitted on two points, and was written after
-an unconditional correction was seen to break agcombo. So agcombo does not
-confirm it: any predicate false there and true on the d6220's ch36 and ch52
-would score identically, and there is one agcombo observation at 40 MHz.
-
-It is also not physically motivated. The grp0/grp1 boundary is at 5250 MHz,
-and it is ch44's block that touches it, 5210 to 5250, while ch36's sits well
-inside at 5170 to 5210. A "block spills into the neighbouring sub-band"
-mechanism would fire on ch44 — the configuration the derivation already gets
-right.
-
-### What would settle it
-
-A capture at 40 MHz on **every** channel. The sweep has 7 of the 16 possible,
-which is why ordinal and frequency dependence can only be separated by
-elimination. With the full set the distinction is direct.
-
-## What the CLM established, and what it did not
-
-The vendor object carries a `CLM DATA 9.6.6` blob: `locales_5g_base` 25 KB,
-`locales_5g_ht` 100 KB, `country_definitions` 29 KB. Its
-`channel_ranges_20m` table resolves range ids to channel spans, and the 5 GHz
-locale tables reference single-channel spans heavily — `36..36` 1350 times,
-`44..44` 1093, `40..48` 2080.
-
-So per-channel regulatory granularity exists in the vendor data and is used.
-That was read too quickly at first as "the mechanism is regulatory": that the
-CLM *can* distinguish ch36 from ch44 does not mean the value we see *comes*
-from there, and the ordinal shape of the residual says it does not.
-
-None of that data is needed in the driver. cfg80211 already supplies
-`max_power` per channel, which is the same granularity, and the port now looks
-it up per 20 MHz sub-channel and takes the minimum over the block — a bonded
-block is bounded by its lowest channel, not by its primary.
-
-On the hot sweep this stage does not bind: ch100 receives 86 where a 21 dBm
-ceiling would give 84. On a first bring-up it does, and the ceilings are
-board-independent -- 56 on ch36-48 at 20 MHz, 60 on ch60 at 40, 68 on ch100 at
-40, 76 on ch100 at 20 and 80, the same on the d6220 and agcombo -- which with
-the margin and the boards' 5.5 dB antenna gain are 21, 22, 24 and 26 dBm EIRP.
-The vendor's limits are per bandwidth and cfg80211's `max_power` is per 20 MHz
-channel, so the driver reproduces the 20 MHz ones and bounds bonded blocks by
-their lowest channel where the vendor does not. The cold gate feeds the
-expressible part through `AC_MAX_POWER_MAP`; see `docs/retrace-todo.md`,
-section on register `0x0646`.
-
-## The idle-TSSI base index: a latent bug the gate cannot see
-
-Register 0x0645 bits 9:0 carry the per-core idle-TSSI base index. The port
-derives it as `read(0x0012) >> 2`, and the shift is right. What is wrong is
-*which* reading it shifts.
-
-The vendor samples 0x0012 repeatedly during the measurement and writes the
-**mean**. The sweep makes the difference visible only outside 20 MHz:
-
-| configuration | samples in the first block | mean >> 2 | vendor writes |
+| configuration | D6220 SROM | agcombo SROM | written, both |
 | --- | --- | --- | --- |
-| ch36 at 20 MHz | 1 | 0x206 | 0x206 |
-| ch140 at 20 MHz | 1 | 0x208 | 0x208 |
-| ch36 at 40 MHz | 1 | 0x20d | 0x20d |
-| ch36 at 80 MHz | **256** | 0x208 | 0x208 |
-| ch52 at 80 MHz | **256** | 0x209 | 0x209 |
-| ch100 at 80 MHz | **256** | 0x209 | 0x208 |
+| ch36–48 bw20 | 66/64 | 68 | **56** |
+| ch60 bw40 | 64 | 68 | **60** |
+| ch100 bw40 | 80 | 76 | **68** |
+| ch100 bw20 and bw80 | 80 | 76 | **76** |
 
-At 20 and 40 MHz the block holds exactly one sample, so the mean and the first
-reading coincide and `>> 2` is indistinguishable from the truth. At 80 MHz
-there are 256 samples spanning 0x200 to 0x217, and taking the first gives an
-arbitrary one of them.
+With the 6-unit margin and the boards' 5.5 dB antenna gain these are 21, 22, 24
+and 26 dBm. Everywhere else the value is the SROM's.
 
-Two further details the captures settle:
+`gates.sh` feeds the expressible part as
+`AC_MAX_POWER_MAP=36:21,40:21,44:21,48:21,100:26`, in both conditions. The
+ceilings at ch60/40 and ch100/40 hold at 40 MHz only, and cfg80211 cannot
+express them.
 
-- the value is computed **once** and rewritten for iterations 2 and 3. Their
-  own sample blocks average to 0x204 while all three writes carry 0x208, so
-  the vendor does not recompute per iteration. The port does, which is why it
-  emits three different numbers where the vendor emits one three times.
-- the sample count is **not** configured by a register. The setup immediately
-  before the block -- 0x093a, 0x0925, 0x0739, then 0x0394 = 0x0110 and
-  0x0393 = 0x8000 to start -- is byte-identical between 20 and 80 MHz. So the
-  count lives in the driver's loop, and porting it means hardcoding 1 or 256
-  by width, with nothing in the data explaining the jump.
+**It is not an echo of any read.** Over the 87 D6220 segments, the only address
+read before the first write whose value determines it is `RAD 0x08dc`: the PLL
+word the driver itself wrote from the channel table, an echo of the channel.
+On the same chip and configuration (ch52/20), `wl` 6.30 on the DSL-3580L writes
+56 where 7.14 writes 62. A number that changes with the binary and not with the
+chip lives in the binary: it is the CLM.
 
-That last point is why the fix is not in yet: replacing one transcribed
-constant with another is not progress, and the count wants an explanation
-first.
+**80 MHz uses the `bw80` nibbles.** Only the D6220 has a `bw80` word that
+differs from `bw20`, and its three 80 MHz observations score 1 of 3 with either
+choice. The `bw80` branch errs **below** the stock driver (62 against 66); the
+`bw20` branch errs **above** (80 against 76). With equal scores, the side that
+does not push the PA harder is chosen.
 
-## Why the read-perturbation test could not find it
+## Per-rate offsets in shared memory
 
-`test/unit/consumed_reads.sh` perturbs the oracle's value for one address and asks
-whether the emitted trace changes. It reported 0x0012 as consumed, correctly,
-and would have reported any dependent write as tracking it. It could not
-report this bug, because at 20 MHz -- the only width the gate covers -- the
-first reading *is* the mean. The two mechanisms are indistinguishable under
-the coverage the test runs at.
+**The rule.** The per-rate field `+0x0e` of each rate block
+(`b43_phy_ac_prb_rsp_rate_po()`) is `(max − ppr[rate]) * 4` on the finished
+table.
 
-That is the fourth way the test produces a false negative, and the worst,
-because it is not a matter of sensitivity:
+**Which row.** Legacy OFDM rates take the row of the **operating width**. A
+legacy OFDM frame on a bonded channel goes out duplicated over the whole block,
+so it spends that width's budget.
 
-1. **the read's own trace line** carries the value, so a naive diff shows every
-   read as consumed; the perturbed address has to be filtered out.
-2. **a one-bit flip can be masked away.** 0x0012 is consumed as `>> 2`, which
-   discards exactly the bit a 0x0001 flip touches. Several masks are needed.
-3. **magnitude.** The RX-IQ accumulators at 0x06c0 and up are sums over 0x4000
-   samples feeding a rounded quotient; only a 0xffff perturbation moves the
-   output. Reported as discarded until then.
-4. **coverage.** Two mechanisms that agree on the configurations the gate runs
-   are indistinguishable by construction, whatever the perturbation.
+**Where the ceiling applies.** It cuts the finished rows. The DSL-3580L's
+`wl curpower` (`router-data/dsl3580l/wl1_curpower_ch52-bw80.txt`) shows every
+target as `min(board limit, regulatory limit) − 1.5 dB`.
 
-And a category the test conflates with a real bug: a read consumed only on a
-branch that is never taken. 0x06a0 and 0x06a1 feed `rxiqcal_comp_update`'s
-give-up path, which needs the measured power below B43_PHY_AC_MIN_RXIQ_PWR --
-never true in any capture.
+**`0x00ce`**, the beacon power offset (`b43_phy_ac_beacon_pwr_offset()`), has
+the same form, always on the 20 MHz row.
 
-## Measurement traps hit while doing this
+**The block address.** It is read through the direct-map table, as
+`brcms_b_rate_shm_offset()` does:
 
-Three times a wrong measurement produced a confident wrong verdict. On a
-repository whose criterion is an op-for-op match, the tooling needs the same
-scrutiny as the driver.
+    block = 2 * shm_read(DIRMAP + index * 2)
 
-- `check_channeltab.py` reported 16 mismatches on radio `0x065e` by taking the
-  first write in the segment. The vendor writes that register twice, `0x0ff4`
-  from the prefregs block and `0x0000` in channel setup. Fixed by locating the
-  channel-setup burst by its ordered register signature.
-- Adding `b43_actab_fill_r11()` without adding it to the harness `--wrap` list
-  dropped 448 `TBL.WR` labels per channel, taking the cold gate from 100% to
-  98.21% and the positional comparison from 2 mismatches to 15827. A new
-  driver helper needs a line in the harness or the gate lies loudly.
-- Dropping the `mask=0x00ff` filter from a verification grep read
-  `RAD.WR 0x0646` instead, scoring 0/26 against correct code.
+- `M_RT_DIRMAP_A` = `0x01c0`, `M_RT_DIRMAP_B` = `0x0200`.
+- The index is the low nibble of the PLCP SIGNAL field, so 6, 9, 12, 18, 24, 36,
+  48 and 54 Mbit/s sit at indices 11, 15, 10, 14, 9, 13, 8 and 12.
 
-## Which capture can refute what
+**The PLCP and duration fields** at `+8/+10/+12` are computed as
+`brcms_c_compute_ofdm_plcp()` and `brcms_c_calc_frame_time()`:
 
-The three capture sets isolate two axes, and using the wrong one costs time:
+```
+tmp      = len << 5
+plcp     = nibble_rate | (tmp & 0xff), tmp >> 8, tmp >> 16
+duration = 20 + ceil((len * 8 + 22) / NDBPS) * 4 + SIFS
+```
 
-| board | chip | driver |
-| --- | --- | --- |
-| d6220 | 4352 | 7.14.89.14 |
-| DSL-3580L | 4352 | 6.30.102.7 |
-| agcombo | 4360 | 7.14.43.21 |
+`len` is the probe-response length, 277/278/279 at 20/40/80 MHz plus the SSID
+length (`AC_SSID_LEN` in the harness). On hardware it will come from `PRTLEN`
+(`0x004a`).
 
-d6220 against DSL isolates the **driver version** at constant chip; d6220
-against agcombo isolates the **chip** at constant version. The port
-reconstructs 7.14, so the DSL cannot refute a 7.14 model — it testifies about
-a different algorithm, and it writes the cores in the opposite order. It is
-the right capture for telling a version fork from a hardware fact and the
-wrong one for anything else.
+## Table `0x21`: the power-detector offsets
+
+The 24 `u32` of table `0x21` are one byte per core (`0x0202` on the D6220,
+`0x020202` on the agcombo). Over the 139 segments of the four sweeps they take
+four payloads and no others:
+
+- entries 1, 5 and 6 carry the sub-band nibble of `pdoffset40ma[core]`. All
+  boards have `0x3222`: 2 up to U-NII-2C, 3 on U-NII-3;
+- entry 10 carries the sub-band nibble of `pdoffset80ma[core]`. The agcombo
+  alone has `0x0100`, hence 1 from ch100 up;
+- everything else is zero.
+
+The 80 MHz link is measured on two boards and three sub-bands. The 40 MHz link
+follows from the same encoding and is not discriminated by the data.
+
+## Idle-TSSI base index
+
+`0x?645[9:0]` is written as:
+
+    0x200 + sum(meas >> 2 over the passes with a non-zero measurement) / passes
+
+`meas` is `0x0012` masked to its measurement field, the division truncates, and
+the divisor is the total pass count. This is exact on 312 of 312 writes of
+`0x0645`/`0x0845` over the sweep. Each detail is needed:
+
+- **Skipping zero passes** (ch140 at 20 MHz otherwise misses three times).
+- **Dividing by the total.** Dividing by the useful count instead gives 301 of
+  312, all at 80 MHz, where 226–243 of the 256 passes carry a reading.
+- **Truncating.** Rounding also gives 301.
+
+At 20 and 40 MHz a block holds one usable pass, so a single reading and the
+mean coincide. At 80 MHz there are 256 passes per core, and the arm is repeated
+before every pair of reads.
+
+The `0x200` is bit 11 of the readback surviving the shift. Core 1 measures zero
+on every pass of every capture, which is why it writes `0x200` flat.
+
+## Why the read-perturbation test cannot see some bugs
+
+`test/unit/consumed_reads.sh` perturbs one address in the oracle and checks
+whether the emitted trace changes. It has four kinds of false negative:
+
+1. **The read's own trace line.** It carries the value, so the perturbed address
+   must be filtered out of the diff.
+2. **Masked bits.** A one-bit flip can fall in a bit the consumer drops
+   (`0x0012` is consumed as `>> 2`), so several masks are needed.
+3. **Magnitude.** The RX-IQ accumulators are sums over `0x4000` samples feeding
+   a rounded quotient; only a large perturbation moves the output.
+4. **Coverage.** Two mechanisms that agree on the configurations the gate runs
+   are indistinguishable by construction. This is how the first-reading vs mean
+   difference of the idle-TSSI would have hidden at 20 MHz.
+
+There is also a category the test conflates with a bug: a read consumed only on
+a branch never taken. `0x06a0`/`0x06a1` feed `rxiqcal_comp_update`'s give-up
+path, which needs the measured power below `B43_PHY_AC_MIN_RXIQ_PWR` — never
+true in any capture.

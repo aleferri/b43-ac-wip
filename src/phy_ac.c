@@ -5822,8 +5822,8 @@ static void b43_phy_ac_txpwr_adjust(struct b43_wldev *dev)
  *
  * The bss-up reading is not unconditional: the tg789vac skips it on one of
  * the 40 cold segments that reach the bss-up, and nothing the trace carries up
- * to that point tells that cycle from the others. See "La lettura di
- * temperatura al bss-up" in docs/retrace-todo.md.
+ * to that point tells that cycle from the others. See "Tempsense at
+ * bss-up" in docs/retrace-todo.md.
  * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   14407-14966, 32820-33379, 35466-36025]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -6385,9 +6385,9 @@ static void b43_phy_ac_cold_mac_preamble(struct b43_wldev *dev)
 	 * radar-detection duty. Counting the writes of that register per
 	 * segment gives 1 on ch36-48 and on ch144-165, 3 on everything from
 	 * ch52 to ch140. Both bandwidths agree, 43 segments out of 43. So the
-	 * family is the duty and not the frequency, the same conclusion
-	 * cac_polls.py reaches for the poll and may_calibrate_tx() for the
-	 * calibrations.
+	 * family is the duty and not the frequency, the same conclusion the
+	 * POLL events of timeline.py reach for the poll and may_calibrate_tx()
+	 * for the calibrations.
 	 *
 	 * What the field means is still not known. And on the channels with
 	 * the duty the vendor writes it three times against the port's two:
@@ -8834,8 +8834,7 @@ static void meas_v2_gain_prog_poll(struct b43_wldev *dev, unsigned long others)
  * below the 0x0b57 once read as the window's lower edge, as on the
  * tg789vac's chain 1 at ch104: nothing the vendor does depends on that edge.
  * Derivation and the check against all 52 sweep segments:
- * the "Ricerca del guadagno di loopback" section of
- * docs/rxiq-cal-analysis.md.
+ * the "Structure" section of docs/rxiq-cal-analysis.md.
  *
  * The later cal stages -- estimate, leakage, tone fit -- are not here.
  */
@@ -11066,8 +11065,8 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	 * firmware. Non e' un valore trascritto: e' quello che b43 scrive in
 	 * b43_chip_init(). b43 poi lo riporta a 1 in
 	 * b43_wireless_core_init() per spegnere l'offload, e quel secondo
-	 * write la cattura non lo ha -- vedi "TODO post-WIP: offload della
-	 * probe response in hardware" in docs/retrace-todo.md.
+	 * write la cattura non lo ha -- vedi "Probe-response
+	 * offload" in docs/retrace-todo.md.
 	 */
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x0074, 0x0000);
 	/*

@@ -1,0 +1,82 @@
+# wl -i wl1 up
+# wl -i wl1 phy_tempsense
+43 (0x2b)
+# wl -i wl1 phy_tempsense
+39 (0x27)
+# wl -i wl1 phy_tempsense
+40 (0x28)
+# wl -i wl1 phy_tempsense
+40 (0x28)
+# wl -i wl1 phy_tempsense
+41 (0x29)
+# wl -i wl1 phy_tempsense
+41 (0x29)
+# wl -i wl1 phy_tempsense
+41 (0x29)
+# wl -i wl1 phy_tempsense
+41 (0x29)
+# wl -i wl1 chanspec
+100/80 (0xe06a)
+# wl -i wl1 chanspec
+100/80 (0xe06a)
+# wl -i wl1 phy_tempsense
+42 (0x2a)
+# wl -i wl1 phy_tempsense
+43 (0x2b)
+# wl -i wl1 phy_tempsense
+44 (0x2c)
+# wl -i wl1 phy_tempsense
+44 (0x2c)
+# wl -i wl1 phy_tempsense
+45 (0x2d)
+# wl -i wl1 phy_tempsense
+47 (0x2f)
+# wl -i wl1 phy_tempsense
+49 (0x31)
+# wl -i wl1 phy_tempsense
+48 (0x30)
+# wl -i wl1 phy_tempsense
+48 (0x30)
+# wl -i wl1 phy_tempsense
+49 (0x31)
+# wl -i wl1 curppr
+Current channel:         100/80
+BSS channel:             100/80
+Power/Rate Dump (in 1/4dB): Channel 106
+
+20 in 80MHz:
+
+OFDM          0  0  0  0  4  4  8  8
+OFDM-CDD      0  0  0  0  4  4  8  8
+1 Nsts 1 Tx   0  0  0  4  4  8  8 10 12 12
+1 Nsts 2 Tx   0  0  0  4  4  8  8 10 12 12
+1 Nsts 3 Tx   0  0  0  4  4  8  8 10 12 12
+2 Nsts 2 Tx   0  0  0  4  4  8  8 10 12 12
+2 Nsts 3 Tx   0  0  0  4  4  8  8 10 12 12
+3 Nsts 3 Tx   0  0  0  4  4  8  8 10 12 12
+
+40 in 80MHz:
+
+OFDM          0  0  0  0  4  4  8  8
+OFDM-CDD      0  0  0  0  4  4  8  8
+1 Nsts 1 Tx   0  0  0  4  4  8  8 10 12 12
+1 Nsts 2 Tx   0  0  0  4  4  8  8 10 12 12
+1 Nsts 3 Tx   0  0  0  4  4  8  8 10 12 12
+2 Nsts 2 Tx   0  0  0  4  4  8  8 10 12 12
+2 Nsts 3 Tx   0  0  0  4  4  8  8 10 12 12
+3 Nsts 3 Tx   0  0  0  4  4  8  8 10 12 12
+
+80MHz:
+
+OFDM          0  0  0  0  4  4  8  8
+OFDM-CDD      0  0  0  0  4  4  8  8
+1 Nsts 1 Tx   0  0  0  4  4  8  8 10 12 12
+1 Nsts 2 Tx   0  0  0  4  4  8  8 10 12 12
+1 Nsts 3 Tx   0  0  0  4  4  8  8 10 12 12
+2 Nsts 2 Tx   0  0  0  4  4  8  8 10 12 12
+2 Nsts 3 Tx   0  0  0  4  4  8  8 10 12 12
+3 Nsts 3 Tx   0  0  0  4  4  8  8 10 12 12
+
+# wl -i wl1 phy_tempsense
+49 (0x31)
+

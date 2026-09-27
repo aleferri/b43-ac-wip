@@ -1,176 +1,170 @@
-# test/ — harness di verifica su trace
+# test/unit — trace harness for the PHY
 
-Compila il driver AC-PHY di `../../src/` in userspace e produce una trace nel
-formato di `wl-diag`, da confrontare contro le catture del vendor in
-`../../router-data/`. Non modifica nessun file di `src/`.
+Compiles the AC-PHY driver in `../../src/` in userspace and produces a trace in
+`wl-diag`'s format, to compare against the stock captures in `../../router-data/`.
+It does not modify any file in `src/`.
 
-## Obiettivo
+## Goal
 
-Che b43 emetta, una per una e nello stesso ordine, tutte le operazioni che il
-driver stock emette su un attach a freddo: senza op mancanti, senza op di
-troppo e senza valori sbagliati. Il punteggio dice quanto manca, il debito
-residuo con il perche' di ogni pezzo sta in `../../docs/retrace-todo.md`.
+b43 should emit, one by one and in the same order, every operation the stock
+driver emits on a cold attach: no missing operations, no extra ones, no wrong
+values. The score says how much is left; what is left, with the reason for each
+piece, is in `../../docs/retrace-todo.md`.
 
-## La procedura, che e' una sola
+## The procedure
 
-**Non inventarne altre.** Ogni comando qui sotto e' quello con cui il repo
-produce i numeri che cita; le varianti ad hoc danno risultati non
-confrontabili.
+Every command below is the one the repository uses for the numbers it quotes.
+Ad hoc variants give numbers that cannot be compared.
 
-### 1. Preparare le catture
+### 1. Prepare the captures
 
 ```sh
 unzip -d /tmp/cold ../../router-data/d6220/cold-sweep.zip
 ```
 
-I 43 segmenti stanno in `/tmp/cold/coldNN-chC-bwB.txt`: 25 a 20 MHz, 12 a 40 e
-6 a 80. I 21 con la guardia radar sono stati ripresi con il CAC completato,
-quindi hanno il bss-up che i primi non avevano; i sei radar-meteo (ch120, 124,
-128 a 20 MHz, 116 e 124 a 40, 116 a 80) sono ancora vecchio stile.
+**The segments.** The 43 segments are `/tmp/cold/coldNN-chC-bwB.txt`: 25 at
+20 MHz, 12 at 40 and 6 at 80. `cold00-preambolo.txt` is the capture's head, not
+a segment.
 
-Ogni segmento contiene **due** attach, non uno: `wl` al caricamento fa
-l'attach di tutti i core, quindi la testa ha prima wl0 -- l'N-PHY 2.4 GHz --
-e poi wl1, che e' l'AC. Sono 46 op, fra la prima e la seconda coppia
-`OTP.RDR`/`OTP.INIT`, e vanno via:
+- On the 21 radar-duty segments the availability check completes inside the
+  capture.
+- The six weather-radar segments (ch120, ch124, ch128 at 20 MHz, ch116 and ch124
+  at 40, ch116 at 80) end during the check.
 
-```sh
-python3 ../../reverse-tools/strip_other_core.py \
-    /tmp/cold/cold01-ch36-bw20.txt /tmp/cold01-pulito.txt
-```
+**Two attaches per segment.** `wl` attaches every core at load: first wl0, the
+2.4 GHz N-PHY, then wl1, the AC. `strip_other_core.py` removes wl0's attach. The
+comparison skips it anyway, because it starts at the AC attach's first
+`PHY.RD 0x0739`. The **oracle** needs the strip, because it starts at the insmod
+to cover OTP and the core probe. Without it the per-address queues are shifted
+and the port reads the other core's shared memory. `gates.sh` does it by itself.
 
-Il confronto quel prefisso lo salta gia', perche' parte dalla prima `PHY.RD
-0x0739` dell'attach AC. Serve all'**oracolo**, che parte dall'insmod per
-coprire l'OTP e il probe dei core e cosi' si mangia anche le letture di wl0:
-le code per (classe, indirizzo) risultano sfasate e il port legge la shared
-memory dell'altro core. Sulle celle `0x0000`/`0x0002` -- `UCODEREV` e
-`UCODEPATCH` -- e' visibile, perche' il self-test di
-`b43_validate_chipaccess` lo eseguono entrambi i core.
-`gates.sh` lo fa da se'; a mano va fatto.
-
-Poi sono catture grezze: le letture hanno `val=UNDEFINED` e il valore sta
-nella riga `RETVAL` successiva. **Prima di usarle per una grep sui valori**
-vanno ripiegate:
+**Folding.** The captures are raw: reads carry `val=UNDEFINED` and the value is
+in the following `RETVAL` line. Fold them before grepping for values:
 
 ```sh
 python3 ../../reverse-tools/trace_filter.py --retvals \
     /tmp/cold/cold01-ch36-bw20.txt /tmp/m01
 ```
 
-Dimenticarlo e' l'errore piu' facile da fare: una `grep 'val=0x...'` su un file
-non ripiegato non trova nessuna lettura e sembra che l'op non ci sia.
+A `grep 'val=0x...'` on an unfolded file finds no reads, and the operation
+looks absent.
 
-### 2. Compilare
+### 2. Build
 
 ```sh
 make
 ```
 
-Un solo build per ogni canale e larghezza. Se il port emette poche migliaia di
-op invece di ventimila il flow e' uscito presto, e `gates.sh` lo dice da se'.
+One build serves every channel and width. If the port emits a few thousand
+operations instead of tens of thousands, the flow bailed out early; `gates.sh`
+says so.
 
-### 3. I tre gate, che sono la verifica canonica
-
-`gates.sh` copre entrambe le condizioni: `--cold` (il default) e `--hot`.
-`--hot --flow switch_channel DIR` da' invece una riga per canale su una
-directory di segmenti.
+### 3. The gates
 
 ```sh
-./gates.sh                                             # cold01 ch36 bw20
-./gates.sh /tmp/cold/cold05-ch52-bw20.txt     # un altro segmento
-./gates.sh /tmp/cold/cold[0-9][0-9]-ch*.txt   # tutti e 43
+./gates.sh                                      # cold01 ch36 bw20
+./gates.sh /tmp/cold/cold05-ch52-bw20.txt       # another segment
+./gates.sh /tmp/cold/cold[0-9][0-9]-ch*.txt     # all 43
 
 unzip -d /tmp/hot ../../router-data/d6220/hot-sweep.zip
-./gates.sh --hot                                       # tre segmenti up
+./gates.sh --hot                                # three default up segments
+./gates.sh --hot --flow switch_channel DIR      # one row per channel
+./gates.sh --board tg789 SEGMENT                # another board's profile
 
 AC_READ_ORACLE=../../router-data/d6220/wl-diag-wl1-steady-tick-ch36-bw20.txt \
     ./ac_trace periodic d6220 > /tmp/p.out
 python3 compare.py \
     ../../router-data/d6220/wl-diag-wl1-steady-tick-ch36-bw20.txt /tmp/p.out
-# deve stampare MATCH
+# must print MATCH
 ```
 
-`gates.sh` fa tutto da se': ripiega la cattura, ricava la finestra dalla prima
-op PHY dell'attach, estrae con `timeline.py` gli eventi dell'ambiente dopo il
-bring-up (giri del watchdog, poll del radar, ricariche del template, bss-up) e
-con `beacon_reloads.py` le ricariche sulle passate conf_tx, lancia il flow
-`full` con l'oracolo di lettura e chiama `cmp_skip.py` e `compare.py`.
-Non serve rifarne i passi a mano, e farlo a mano sbaglia la finestra.
+For each segment `gates.sh`:
 
-**Il gate a freddo non copre il caldo, e la differenza non e' di grado.** Lo
-sweep a freddo e' tutto primo bring-up -- un modulo ricaricato per canale --
-quindi ogni predicato che distingue il primo bring-up dai successivi e'
-invisibile la': un termine mancante vale lo stesso su tutti i segmenti e i
-punteggi tornano.
+1. strips the other core and folds the capture;
+2. takes the comparison window from the attach's first PHY operation;
+3. extracts the environment's events after the bring-up with
+   `reverse-tools/timeline.py` — watchdog turns, radar polls, template reloads,
+   bss-up — plus the watchdog phase and entry-turn shape;
+4. takes the reloads on the `conf_tx` passes with `beacon_reloads.py`, and the
+   captured `0x00cc` value (`AC_BSS_CC`);
+5. exports the regulatory map `AC_MAX_POWER_MAP`;
+6. runs the flow with the read oracle;
+7. calls `cmp_skip.py` and `compare.py`.
 
-Due predicati che ci sono passati attraverso, e che valgono come promemoria.
-`may_calibrate_tx()` guardava `center_freq <= 5250`: a freddo non si distingue
-da uno corretto, e sui segmenti `up` sopra i 5250 fa la differenza fra l'80% e
-il 35%. Oggi guarda `IEEE80211_CHAN_RADAR` e il flag della guardia radar, che
-e' la regola giusta -- ma il confine superiore della sotto-banda l'ha dato solo
-la ricattura: era preso dalla spec a 5725, e il poll del rivelatore su tutti e 43 i
-segmenti lo mette a ch140. Con 5725, ch144 veniva marcato e il port saltava le
-calibrazioni che il vendor esegue: 51% invece di 95% su quel solo segmento.
+Repeating the steps by hand gets the window wrong.
 
-`gates.sh --hot` usa il flow `up` con `AC_FIRST_INIT=0` e i suoi tre segmenti
-di default sono scelti per cogliere proprio quel caso: uno sotto i 5250 MHz e
-due sopra. Se un predicato confonde le due condizioni, il primo resta fermo e
-gli altri due crollano.
+**Cold and hot are not interchangeable.**
 
-Il gate periodico va rilanciato a **ogni** modifica: e' l'unico confronto
-posizione-per-posizione che sta a `MATCH`, quindi e' il rilevatore di
-regressioni piu' sensibile che ci sia.
+- The cold sweep is all first bring-ups, one module reload per channel. Any
+  predicate that tells a first bring-up from a later one is invisible there: a
+  missing term reads the same on every segment.
+- `--hot` runs the `up` flow with `AC_FIRST_INIT=0` on three segments chosen to
+  catch that: ch36 below 5250 MHz, ch52 and ch104 above. If a predicate
+  confuses the two conditions, the first stays put and the other two collapse.
 
-### 4. Leggere il punteggio
+Run the periodic gate after **every** change. It is the only position-by-position
+comparison at `MATCH`, so it is the most sensitive regression detector there
+is.
+
+### 4. Reading the score
 
 ```
-grezzo          : 28545/28582 = 99.87%   19 regioni
-                  0 col valore sbagliato, 37 op di wl mancanti,
-                  0 op del port di troppo
+grezzo          : 29578/30059 = 98.40%   19 regioni
+                  2 col valore sbagliato, 269 op di wl mancanti, 208 op del port di troppo
 nel perimetro   : ...
+CON  eccezioni  : ...
 ```
 
-Il denominatore di **`grezzo`** e' l'unione dei due flussi: fa 100% solo se
-coincidono. Le tre voci sono tre lavori diversi e non vanno sommate a occhio:
+The tool prints Italian labels. The line to quote is **`grezzo`** ("raw"). Its
+denominator is the union of the two streams, so it reaches 100% only when they
+coincide.
 
-- **valore sbagliato** — registro giusto, numero no: c'e' una formula da
-  trovare;
-- **op di wl mancanti** — c'e' codice da scrivere;
-- **op del port di troppo** — c'e' un gate da mettere, o una fase che sul
-  vendor non gira.
+The three counts are three different jobs and are not to be added by eye:
 
-**`nel perimetro`** toglie le op di codice fuori da `src/` e serve a navigare,
-non a dare un punteggio. Il numero da citare e' `grezzo`.
+| count (label) | meaning | the job |
+|---|---|---|
+| wrong value (`col valore sbagliato`) | right register, wrong number | a formula to find |
+| missing stock ops (`op di wl mancanti`) | the stock driver emits it, the port does not | code to write |
+| extra port ops (`op del port di troppo`) | the port emits it, the stock driver does not | a gate to add, or a phase that does not run on the stock driver |
 
-### 5. Trovare la prossima divergenza
+- `nel perimetro` ("within the perimeter") removes operations of code outside
+  `src/`.
+- `CON eccezioni` ("with exceptions") also applies the `KNOWN` rules of
+  `cmp_skip.py`.
+
+Both serve navigation, not scoring.
+
+### 5. Finding the next divergence
 
 ```sh
-python3 compare.py /tmp/m01 /tmp/gate/full --range 528:36542 --auto-align \
-    --led-pins $(./ac_trace led_pins d6220)
+GATE_TMP=/tmp/gate ./gates.sh                   # keeps seg, merged, full, cmp
+python3 cmp_skip.py /tmp/gate/merged /tmp/gate/full 167:LAST --verbose
 ```
 
-`compare.py` e' posizione-per-posizione e si ferma alla prima divergenza col
-contesto: e' lo strumento per navigare. `gates.sh` lo lancia da se' e stampa il
-primo `@N`. Un'op mancante sfasa tutto quello che segue, quindi `@N` dice dove
-guardare, non quante cose sono rotte.
+`compare.py` is positional. It stops at the first divergence with context, and
+`gates.sh` prints its first `@N`. One missing operation shifts everything after
+it, so `@N` says where to look, not how much is broken.
 
-Per capire **chi** emette un'op nel port:
+`cmp_skip.py --verbose` lists the diverging regions after the exceptions, with
+`delete` and `insert` paired when a block has moved. Open it first on a
+positional divergence.
+
+To see **who** emits an operation in the port:
 
 ```sh
 AC_FN_MARKERS=1 AC_CHANNEL=36 AC_BW=20 AC_FIRST_INIT=1 ./ac_trace full d6220
 ```
 
-annota l'output con `----FN:nome----`.
+It annotates the output with nested `----FN:name----` / `----/FN:name----`
+pairs. Attribute with the stack, not with the entry marker alone.
 
-I file di lavoro di `gates.sh` -- `seg`, `merged`, `full`, `cmp` -- stanno in
-una directory temporanea per run e spariscono alla fine. Per analizzarli si
-lancia con `GATE_TMP=/tmp/gate ./gates.sh`, che li tiene li'; la directory
-viene riscritta a ogni lancio, quindi analizzarli dopo aver lanciato il gate su
-**un altro** segmento significa leggere i file del segmento sbagliato.
+`GATE_TMP` is rewritten on every run. Analysing it after running the gate on
+**another** segment reads the wrong segment's files.
 
-### 6. Prima di dire che una fase e' assente nel vendor
+### 6. Before saying a phase is absent on the stock driver
 
-Serve un **testimone**: un registro o una tabella che nel port solo quella
-funzione tocca. Si conta su tutti i segmenti, non su uno:
+You need a **witness**: a register or table that, in the port, only that
+function touches. Count it on every segment, not on one:
 
 ```sh
 for s in /tmp/cold/cold[0-9][0-9]-ch*.txt; do
@@ -178,219 +172,213 @@ for s in /tmp/cold/cold[0-9][0-9]-ch*.txt; do
 done
 ```
 
-Il metodo trova solo le fasi che hanno un testimone esclusivo: una fase che
-condivide tutti i suoi registri con altre non si vede cosi', e va detto invece
-di concludere che non c'e'.
+- **A witness at zero** proves the register absent, not the phase.
+  `reverse-tools/phase_absent.py` checks every address of the phase, with the
+  table as identity for work that goes through the data port.
+- **Phases without a witness.** The method finds only phases that have an
+  exclusive witness. A phase that shares all its registers cannot be seen this
+  way; say so instead of concluding it is not there.
+- **Traced classes only.** An absence counts only if the capture traces that
+  class (`../../router-data/CLASS-COVERAGE.md`).
 
-## Le liste di eccezione, e perche' esistono
+## The exception lists
 
-Stanno in `compare.py`, ognuna con la ragione voce per voce. Sono l'unico posto
-dove si dichiara che un'op non conta, e ogni voce e' un pezzo di obiettivo
-sospeso: vanno tenute corte e argomentate.
+They are in `compare.py`, each entry with its reason. They are the only place
+where an operation is declared not to count, and every entry suspends a piece of
+the goal, so keep them short and argued.
 
-Tre scartano op, e due dichiarano che il **valore** di una cella non si
-confronta come sta scritto: `VAL_NONDET` per i valori che nessun codice puo'
-prevedere, `VAL_TOLLERANZA` per quelli che il port calcola e sbaglia
-nell'ultimo bit.
+### `SOLO_PORT` — port operations the oracle cannot contain
 
-### `SOLO_PORT` — op del port che l'oracolo non puo' contenere
+There are two legitimate cases, kept in two lists:
 
-I casi legittimi per questa lista sono due e vanno distinti: un'op che b43 deve
-fare per la sua struttura dove wl ne fa una diversa, che e' permanente, e un'op
-giusta la cui controparte esiste ma non e' stata catturata, che e' temporanea
-per definizione e si chiude con una ricattura. Tutto il resto e' il port che fa
-qualcosa di troppo, e si corregge nel driver, non nella lista.
+- **`SOLO_PORT`** holds operations b43 must do by its structure where `wl` does
+  something else. They are permanent:
+  - the SHM cells `0x0004`/`0x0006`;
+  - the self-test patterns on `0x0000`/`0x0002`;
+  - `REG.WR 0x49c` (`GPIO_CONTROL`, how `leds.c` drives the LEDs from the MAC).
+- **`SOLO_PORT_SENZA_CLASSE`** holds correct operations whose counterpart the
+  capture does not trace. They apply only against a capture without that class,
+  and switch off by themselves when the vendor side carries it. Today:
+  `AMT.*`, active on the agcombo sweeps.
 
-I due casi stanno in due liste separate, perche' la seconda non va tenuta a
-mano: `SOLO_PORT` sono le permanenti, `SOLO_PORT_SENZA_CLASSE` le altre, e
-quelle valgono solo contro una cattura che non traccia quella classe. Appena il
-lato vendor porta una op della classe la voce si spegne da se' e il confronto
-diventa piu' severo. `AMT.*` era l'esempio: ci stava perche' l'hook su
-`wlc_bmac_write_amt` era stato aggiunto dopo le catture del d6220, e con la
-ricattura -- 124 op AMT su cold01 -- non scatta piu' la', mentre continua a
-valere sull'agcombo, che quell'hook non lo ha.
+Anything else is the port doing too much, and is fixed in the driver.
 
-### `VAL_NONDET` — celle il cui valore non e' prevedibile
+### `VAL_NONDET` — values nobody can predict
 
-Oggi due: **BSLOTS** e **REGGAP** dei quattro blocchi EDCFQ. BSLOTS e' il
-backoff estratto a caso all'inizio del contention window -- misurato su 43
-segmenti e quattro code, cade uniformemente in `[0, CWMIN]` -- e REGGAP e'
-`AIFS + BSLOTS`, verificato su tutti e 172 i punti. Si confrontano indirizzo,
-classe e posizione, non il valore.
+**BSLOTS** and **REGGAP** of the four EDCFQ blocks:
 
-Il criterio per entrare qui e' stretto: il valore deve essere **nondeterministico
-per costruzione**, non solo sconosciuto. Una cella di cui non si e' capito il
-valore va nel driver con un `b43_phy_ac_todo()`, non qui.
+- BSLOTS is the random backoff drawn at the start of the contention window,
+  uniform in `[0, CWMIN]` over 43 segments and four queues;
+- REGGAP is `AIFS + BSLOTS` on all 172 points.
 
-### `VAL_TOLLERANZA` — celle il cui valore si confronta con uno scarto
+Address, class and position are compared, the value is not.
 
-Oggi una: **PHY `0x?a1`**, il coefficiente `b` della correzione RX IQ, con
-tolleranza di 4 LSB su 10 bit in complemento a due. Il port riproduce
-esattamente gli accumulatori e il coefficiente `a`, e sbaglia `b` di un LSB su
-parte dei casi del core 1.
+The bar is strict: nondeterministic **by construction**, not merely unknown. A
+value that is not understood goes into the driver with `b43_phy_ac_todo()`, not
+here.
 
-Non e' la regola di arrotondamento, e la prova e' nel commento della lista: su
-venti punti la scelta del vendor rispetta la soglia di mezzo LSB su
-quattordici, e le eccezioni stanno tutte entro 0.1 dalla soglia. Nessuna soglia
-le separa, quindi l'errore e' nel valore sotto radice e non nel modo di
-arrotondarlo.
+### `VAL_TOLLERANZA` — values compared with a tolerance
 
-**La tolleranza vale per il gate posizionale e non per il punteggio**, ed e'
-voluto: `cmp_skip.py` continua a contare quelle op fra i valori sbagliati,
-cosi' il residuo resta visibile invece di sparire, mentre la contiguita' non si
-ferma su un LSB di calibrazione.
+PHY `0x?a1`, the RX IQ `b` coefficient, at ±1 LSB on 10-bit two's complement.
+The tolerance equals the maximum residual of the model believed correct.
 
-### `SOLO_VENDOR` — op che nessun codice b43 puo' emettere
+The tolerance applies to the positional gate, **not** to the score:
+`cmp_skip.py` still counts those operations as wrong values, so the residual
+stays visible.
 
-Tre voci. **`MAC.BW`**, l'hook su `wlc_bmac_bw_set`: il suo equivalente
-GPL in brcmsmac fa `pi->bw = bw` e nient'altro, piu' un reset e un init del
-PHY; in b43 la larghezza sta in `phy.chandef`, che `b43_phy_init()` imposta
-prima che il PHY arrivi la', e non c'e' nessun registro da scrivere. E' un
-confine di funzione che b43 non ha. **`MARK`**, i record che lo script dello
-sweep e il modulo wl-diag scrivono da soli (`'chNN bwB'`, `'mod GOING'`): non
-c'e' un registro dietro. E l'**offload della probe response**, che e' una
-scelta del WIP e non un limite: la ragione voce per voce sta in `compare.py`.
+### `SOLO_VENDOR` — operations no b43 code can emit
 
-Ogni voce qui dichiara un pezzo di obiettivo **irraggiungibile**, quindi serve
-la prova che non ci sia niente da emettere, non l'impressione.
+- **`MAC.BW`**: `wlc_bmac_bw_set` only sets state. In b43 the width lives in
+  `phy.chandef`, and there is no register to write.
+- **`MARK`**: labels written by the capture script and the tracer.
+- **`IOCTL`/`IOVAR.SET`**: commands from userspace, inputs to the driver rather
+  than its operations.
+- **The probe-response offload**: `0x0048`, `0x004a`, `0x0180`–`0x0186`, the
+  SSID at `0x0160`–`0x017e`, and `TPL.RAMW 0x0700`. This is a WIP choice, not a
+  limit; see `../../docs/retrace-todo.md`.
 
-### `PERIMETER` — op di codice fuori da `src/`
+Each entry declares a piece of the goal unreachable, so it needs proof that
+there is nothing to emit.
 
-Shared memory del MAC, template RAM, OTP, SROM, e i LED sul chipcommon
-(`GPIO.*` con le maschere di board e `gpiotimeroutmask` a `0x8c`, che nel blob
-sono `wlc_bmac_hw_up`/`wlc_bmac_led`/`wlc_bmac_led_hw_deinit` e in b43 sono
-`leds.c`). Il criterio e' l'appartenenza dimostrata da `b43.h` o dal blob,
-**non** la raggiungibilita' da `src/`: quest'ultima e'
-degenere, perche' farebbe salire il punteggio quando si toglie codice.
+### `PERIMETER` — operations of code outside `src/`
 
-Va **ristretta ogni volta che il port impara a scrivere una cella**: il
-perimetro scarta dal solo lato vendor, quindi una cella che il port emette e il
-perimetro scarta diventa un'inserzione senza controparte e rompe il confronto
-posizionale.
+- MAC shared memory, as listed in `CORE_SHM`;
+- template RAM `0x0048`;
+- `MAC.MHF.RD`, OTP and SROM control, `CAL.INIT`;
+- the LEDs on the chipcommon — `GPIO.*` with the board masks and
+  `gpiotimeroutmask` at `0x8c`, which are `wlc_bmac_hw_up`/`wlc_bmac_led`/
+  `wlc_bmac_led_hw_deinit` in the blob and `leds.c` in b43.
 
-## Come funziona l'harness
+The criterion is ownership shown by `b43.h` or the blob, **not** reachability
+from `src/`. Reachability would be degenerate: removing code would raise the
+score.
 
-- **Nessun `#ifdef` nei sorgenti di `src/`.** Ogni accessor hardware
-  (`b43_phy_read/write/mask/maskset`, `b43_radio_*`, `b43_read16`,
-  `b43_write16`, `b43_actab_*`, `b43_mac_*`, `bcma_*`) e' intercettato al linker
-  con `-Wl,--wrap=<sym>`. La lista e' in `Makefile`, variabile `WRAP_SYMS`.
-- **`wrap.c`** fornisce `__wrap_<sym>`: emette una riga wl-diag, aggiorna un
-  mirror di memoria in-process per le write, e ritorna il valore per le read.
-  Le letture vengono servite in quest'ordine: oracolo (`AC_READ_ORACLE`),
-  plan registrato, mirror. Le celle di tabella hanno oracolo e mirror propri,
-  chiavati `(id, offset)`, perche' passano tutte dalla stessa porta dati e una
-  coda per indirizzo su quella porta resta in passo solo finche' le letture
-  del port sono esattamente quelle del vendor; per le tabelle l'oracolo per
-  cella sta sopra i plan scritti a mano.
-- **`main.c`** monta un `struct b43_wldev` fittizio col profilo di board
-  (D6220 2x2, DSL-3580L 2x2, agcombo 3x3), registra i read plan e chiama uno
-  dei flow.
-- **`stubs/`** ha i minimi header kernel e b43 per compilare `src/` senza il
-  tree del kernel.
-- **`test_harness.h`** e' l'API del framework, inclusa solo da `main.c` e
-  `wrap.c`. Il codice di `src/` non vede il framework.
+**Narrow it every time the port learns to write a cell.** The perimeter drops
+operations from the vendor side only, so a cell the port emits and the perimeter
+drops becomes an insertion with no counterpart. `PHY_ANCHE` lists the core cells
+the port does emit.
 
-### Flow
+## How the harness works
 
-| flow | cosa fa |
+- **No `#ifdef` in `src/`.** Every hardware accessor (`b43_phy_*`,
+  `b43_radio_*`, `b43_read16`/`write16`, `b43_actab_*`, `b43_mac_*`) is
+  intercepted at link time with `-Wl,--wrap=<sym>`. The list is `WRAP_SYMS` in
+  the `Makefile`. A new driver helper that touches hardware needs a line there,
+  or its operations disappear from the trace.
+- **`wrap.c`** provides `__wrap_<sym>`. It emits a wl-diag line, updates an
+  in-process mirror on writes and returns a value on reads.
+  - Reads are served from the oracle (`AC_READ_ORACLE`), then any registered
+    read plan, then the mirror.
+  - Table cells have their own oracle and mirror keyed by `(id, offset)`,
+    because every cell goes through the same data port.
+- **`main.c`** builds a fake `struct b43_wldev` from a board profile — `d6220`
+  (default), `dsl`, `agcombo`, `tg789` — then registers read plans and runs one
+  of the flows.
+- **`stubs/`** holds the minimal kernel and b43 headers needed to compile `src/`
+  without a kernel tree.
+- **`test_harness.h`** is the framework API, included only by `main.c` and
+  `wrap.c`. Code in `src/` does not see the framework.
+
+### Flows
+
+| flow | what it does |
 |---|---|
-| `full` | l'attach completo: e' quello da usare contro un segmento a freddo |
-| `periodic` | un tick del watchdog, contro l'oracolo steady-tick |
-| `switch_channel` | il cambio di canale a caldo, contro un segmento dello sweep a caldo |
-| `up`, `down`, `op_init` | pezzi, per lavoro mirato |
+| `full` | the complete cold attach and bring-up, then the post-bring-up events from `AC_TIMELINE`; use it against a cold segment |
+| `up` | a bring-up on an interface that was up (use with `AC_FIRST_INIT=0` against a hot `up` segment) |
+| `periodic` | one watchdog turn, against the steady-tick oracle |
+| `switch_channel` | one warm cycle, one row per channel with `gates.sh --hot --flow switch_channel` |
+| `down`, `op_init`, `rfkill`, `crsmin` | pieces, for targeted work |
+| `rxiq_est_debug`, `rxiq_comp` | the RX IQ estimator/solver alone |
+| `led_pins` | prints the LED pins of the board profile (used by `gates.sh`) |
 
-Un segmento a freddo e' un ciclo `up` intero, e il flow da usarci e' `full`,
-non `switch_channel`.
+A cold segment is a whole attach: use `full`, not `switch_channel`.
 
-### Doppioni del core in `main.c`
+### Core mirrors in `main.c`
 
-Alcune op che il vendor emette stanno in codice del core (`main.c` del kernel),
-che l'harness non compila. Dove servono al confronto sono rispecchiate in
-`main.c` del test — `emit_core_shm_chipinit()`, `emit_core_hostflags()`,
-`emit_core_shm_macaddr()`, `emit_core_amt()` — con i valori presi dalla patch
-corrispondente, cosi' che se la patch cambia il doppione diventa sbagliato e il
-confronto lo dice.
+Some operations the stock driver emits live in b43's core, which the harness
+does not compile. Where the comparison needs them in place they are mirrored as
+`emit_core_*()` functions:
 
-### Funzioni del driver che solo l'harness chiama
+- chip-init cells, host flags and the station MAC;
+- the AMT, the BSS configuration and SSID, and the `conf_tx` passes;
+- the core-init tail (`b43_upload_card_macaddress()` and `b43_security_init()`).
 
-Distinte dai doppioni sopra: non sono codice del core rispecchiato qui, sono
-funzioni di `src/` che **nessuno in `src/` chiama**. `run_switch_channel()` le
-invoca nell'ordine della cattura: `channel_setup_tail()`, le passate di
-`conf_tx`, `channel_setup_tail2()`, `set_channel_calibrations()` e
-`b43_phy_ac_down()`. `op_switch_channel()` fa il channel setup e ritorna.
+Their values come from the corresponding patch, so if the patch changes, the
+mirror becomes wrong and the comparison says so.
 
-Ne segue un limite del punteggio che va tenuto presente leggendolo: il gate
-misura che quelle funzioni **emettono** le op giuste, non che il driver le
-esegua. Su quale hook di b43 vada agganciata ognuna si decide in
-`docs/retrace-todo.md`, e lo strumento che lo misura e' `test/integration`, che
-compila b43 intero ed esegue il probe.
+**Order matters more than value**: a single inversion drops the operation from
+the comparison.
 
-**L'ordine conta piu' del valore**: una sola inversione fa scartare l'op dal
-confronto. Su cold01 l'ordine e' AMT `#443`, chip init `#649-#658`, MAC in
-shared memory `#661-#663`, host flag `#686-#690`, chanspec `#691`.
+### Events after the bring-up
 
-## Read plans
+After the channel switch the stock driver reacts to events: the 1 s watchdog,
+the 150 ms radar timer, template reloads by the core, the bss-up that closes
+the availability check. `timeline.py` lists them with their instants (`WD`,
+`POLL`, `TPL`, `BSS_UP`), and `run_timeline()` in `main.c` delivers them to
+`b43_phy_ac_watchdog()`, `b43_phy_ac_radar_poll()`, `b43_ac_beacon_reload()`
+and `b43_phy_ac_bss_up()`.
 
-Per le letture che il driver consuma, l'harness serve valori scriptati invece
-del mirror. Due modi:
+What the driver does on each event is the driver's. No list of ticks crosses
+into `src/`.
 
-- `AC_READ_ORACLE=<cattura>` — i valori vengono dalla cattura stessa,
-  nell'ordine in cui compaiono. E' il modo canonico ed e' quello che `gates.sh`
-  usa; `AC_READ_ORACLE_FROM=<episodio>` sposta il punto di partenza.
-- `b43_test_plan_phy_reads()` e simili in `main.c`, per casi mirati.
+The only state carried in from before the segment is:
 
-A fine run, su stderr, l'oracolo stampa una riga come:
+- `AC_WD_PHASE`, the phase of the watchdog's ten-turn counter;
+- `AC_WD_ENTRY_TURN`, whether the first turn is a full one or only the counter
+  sweep, which depends on when the timer expires.
 
-```
-oracle: 7158 hit, 362 indirizzi senza voce, 0 code esaurite;
-        337 indirizzi noti, 5 non consumati del tutto
-```
+The consequence for reading the score: the gate measures that these entry
+points **emit** the right operations, not that b43 calls them. On hardware they
+are not wired yet; `test/integration` is the tool that shows what b43 actually
+calls.
 
-`code esaurite` deve essere **zero**: vuol dire che il port ha letto lo stesso
-indirizzo piu' volte di quante la cattura lo abbia, e da quel punto in avanti
-l'oracolo serve valori di un'altra lettura.
+## Read plans and the oracle
 
-`indirizzi senza voce` conta le **letture** (non gli indirizzi) che sono cadute
-sul mirror perche' la coda per quell'indirizzo era vuota. Non e' zero e non
-deve esserlo: le parole delle tabelle non stanno nella coda della data port ma
-in un oracolo chiavato `(id, offset)`, quindi ogni lettura di `PHY 0x000f` o
-`0x0011` sotto un marcatore `TBL.RD` risulta senza voce anche quando la tabella
-e' servita. Sulla corsa canonica di cold01 sono 343 letture di `0x000f` piu' 19
-di `0x0011`, che fanno esattamente i 362 riportati. Quello che va guardato e'
-il resto: **se il numero non si spiega con la data port, il port ha letto un
-indirizzo che la cattura non ha** e il confronto e' invalido da li' in avanti.
-Il conto si fa cosi':
+For reads the driver consumes, the harness serves scripted values instead of
+the mirror:
+
+- **`AC_READ_ORACLE=<capture>`** serves values from the capture itself, in the
+  order they appear. This is the canonical mode and the one `gates.sh` uses.
+  `AC_READ_ORACLE_FROM=<episode>` moves the starting point.
+- **`b43_test_plan_*_reads()` in `main.c`** is for targeted cases without an
+  oracle. Hand-written plans have a structural flaw: a wrong plan is not caught,
+  because the output is compared, not the input. New flows should use the
+  oracle.
+
+At the end of a run the oracle prints a summary line on stderr. Read it this
+way:
+
+- **exhausted queues** must be **zero**. Otherwise the port read an address more
+  times than the capture did, and from that point on the oracle serves values of
+  another read;
+- **reads with no entry** is not zero, and need not be. Table words are served
+  from the `(id, offset)` oracle, so every data-port read under a `TBL.RD`
+  marker counts here even when the table is served. If the count is not
+  explained by the data port (`grep -c 'PHY\.RD   addr=0x000f'` plus
+  `0x0011`), the port read an address the capture does not have;
+- **not fully consumed** is not zero and not a defect: the oracle loads every
+  address the capture reads, including the core's.
+
+Explicit read plans must show `iter=N/N`: an underrun means the flow ended
+early, an overrun that it ran longer than expected.
+
+## What the harness does NOT simulate
+
+- **Dynamic hardware.** A read returns the last write or the oracle's value. No
+  read-only bits respond to stimuli.
+- **Timing.** `udelay`/`msleep` are no-ops. The order is kept, the real windows
+  are not.
+- **MAC races.** The `b43_mac_*` calls are traced, not executed.
+- **Scheduling.** The harness is single-threaded, so the capture's `cpuN` column
+  is normalised away.
+
+## Coverage per function
 
 ```sh
-grep -c 'PHY\.RD   addr=0x000f' /tmp/gate/full
-grep -c 'PHY\.RD   addr=0x0011' /tmp/gate/full
-```
-
-`non consumati del tutto` **non** deve essere zero e non e' un difetto:
-l'oracolo carica ogni indirizzo che la cattura legge, compresi quelli che
-legge il core, e il port non li tocca. Sulla corsa canonica di cold01 sono 5.
-
-I read plan espliciti, quelli registrati in `main.c`, devono invece mostrare
-`iter=N/N`: la' un underrun vuol dire che il flow e' terminato in anticipo e un
-overrun che ha girato piu' del previsto.
-
-## Cosa l'harness NON simula
-
-- **Hardware dinamico**: una read ritorna l'ultimo write o il valore
-  dell'oracolo. Non ci sono bit read-only che rispondono a stimoli.
-- **Timing**: `udelay`/`msleep` sono no-op. L'ordine e' preservato, le finestre
-  reali no.
-- **Race col MAC**: le `b43_mac_*` sono no-op.
-- **Scheduling**: single-threaded, e la colonna `cpuN` della cattura e' quindi
-  normalizzata via.
-
-## Copertura per funzione
-
-```sh
-AC_FN_MARKERS=1 ./ac_trace full d6220 > /tmp/annotato.txt
-python3 ../../reverse-tools/fn_map.py coverage /tmp/annotato.txt \
+AC_FN_MARKERS=1 ./ac_trace full d6220 > /tmp/annotated.txt
+python3 ../../reverse-tools/fn_map.py coverage /tmp/annotated.txt \
     /tmp/cold/cold01-ch36-bw20.txt
 ```
 
-La copertura si misura contro la cattura **grezza**, non ripiegata: i marcatori
-si allineano agli episodi.
+Coverage is measured against the **raw** capture, not the folded one: the
+markers align on episodes.

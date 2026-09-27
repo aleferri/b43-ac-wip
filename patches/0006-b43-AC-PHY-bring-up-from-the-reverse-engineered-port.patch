@@ -1,4 +1,4 @@
-From 7ca2446d53660efcc31ed5a11a76efb293d7b41f Mon Sep 17 00:00:00 2001
+From 6f72a14406957163afb7177b4f9439c1eac070c2 Mon Sep 17 00:00:00 2001
 From: c <c@l>
 Date: Tue, 8 Sep 2026 14:29:02 +0000
 Subject: [PATCH] b43: AC-PHY bring-up from the reverse-engineered port
@@ -12,7 +12,7 @@ of sync with the tree the unit suite measures.
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     5 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |    66 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 11305 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 11304 +++++++++++++++-
  drivers/net/wireless/broadcom/b43/phy_ac.h    |   858 +-
  drivers/net/wireless/broadcom/b43/ppr_ac.c    |   262 +
  drivers/net/wireless/broadcom/b43/ppr_ac.h    |    59 +
@@ -22,7 +22,7 @@ of sync with the tree the unit suite measures.
  .../wireless/broadcom/b43/rxiqcal_phy_ac.h    |    23 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1153 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    79 +
- 12 files changed, 15915 insertions(+), 23 deletions(-)
+ 12 files changed, 15914 insertions(+), 23 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -122,7 +122,7 @@ index 0000000..5d18443
 +	b43_maskset32(dev, B43_MMIO_MACCTL, mask, set);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index 756cd44..046bd5c 100644
+index 756cd44..e228d43 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -1,23 +1,51 @@
@@ -184,7 +184,7 @@ index 756cd44..046bd5c 100644
  	if (!phy_ac)
  		return -ENOMEM;
  	dev->phy.ac = phy_ac;
-@@ -62,27 +90,11264 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -62,27 +90,11263 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -5933,8 +5933,8 @@ index 756cd44..046bd5c 100644
 + *
 + * The bss-up reading is not unconditional: the tg789vac skips it on one of
 + * the 40 cold segments that reach the bss-up, and nothing the trace carries up
-+ * to that point tells that cycle from the others. See "La lettura di
-+ * temperatura al bss-up" in docs/retrace-todo.md.
++ * to that point tells that cycle from the others. See "Tempsense at
++ * bss-up" in docs/retrace-todo.md.
 + * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
 + *   14407-14966, 32820-33379, 35466-36025]
 + * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -6496,9 +6496,9 @@ index 756cd44..046bd5c 100644
 +	 * radar-detection duty. Counting the writes of that register per
 +	 * segment gives 1 on ch36-48 and on ch144-165, 3 on everything from
 +	 * ch52 to ch140. Both bandwidths agree, 43 segments out of 43. So the
-+	 * family is the duty and not the frequency, the same conclusion
-+	 * cac_polls.py reaches for the poll and may_calibrate_tx() for the
-+	 * calibrations.
++	 * family is the duty and not the frequency, the same conclusion the
++	 * POLL events of timeline.py reach for the poll and may_calibrate_tx()
++	 * for the calibrations.
 +	 *
 +	 * What the field means is still not known. And on the channels with
 +	 * the duty the vendor writes it three times against the port's two:
@@ -8945,8 +8945,7 @@ index 756cd44..046bd5c 100644
 + * below the 0x0b57 once read as the window's lower edge, as on the
 + * tg789vac's chain 1 at ch104: nothing the vendor does depends on that edge.
 + * Derivation and the check against all 52 sweep segments:
-+ * the "Ricerca del guadagno di loopback" section of
-+ * docs/rxiq-cal-analysis.md.
++ * the "Structure" section of docs/rxiq-cal-analysis.md.
 + *
 + * The later cal stages -- estimate, leakage, tone fit -- are not here.
 + */
@@ -11177,8 +11176,8 @@ index 756cd44..046bd5c 100644
 +	 * firmware. Non e' un valore trascritto: e' quello che b43 scrive in
 +	 * b43_chip_init(). b43 poi lo riporta a 1 in
 +	 * b43_wireless_core_init() per spegnere l'offload, e quel secondo
-+	 * write la cattura non lo ha -- vedi "TODO post-WIP: offload della
-+	 * probe response in hardware" in docs/retrace-todo.md.
++	 * write la cattura non lo ha -- vedi "Probe-response
++	 * offload" in docs/retrace-todo.md.
 +	 */
 +	b43_shm_write16(dev, B43_SHM_SHARED, 0x0074, 0x0000);
 +	/*

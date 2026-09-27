@@ -1,193 +1,221 @@
-# Stato del bring-up
+# Driver status
 
-## Cosa il driver accetta
+How the port is put together, who calls what, and how the sources map onto
+the patch series. What is still open is in [`retrace-todo.md`](retrace-todo.md);
+the current scores are in the top-level README.
 
-`op_switch_channel()` accetta ogni canale e larghezza a 5 GHz che la channel
-table conosce. Il port non ha un filtro per configurazione: niente va upstream
-finche' la radio non e' a posto su tutti i canali, e il punteggio per canale
-dello sweep e' la misura di quanto manca.
+## Scope of what the driver accepts
 
-Chip `0x4352` e `0x4360`, altrimenti `-EOPNOTSUPP`. Board di
-riferimento NetGear D6220 (radio 2069 rev 4), piu' DSL-3580L e agcombo nelle
-catture.
+- **Bus and chip.** `op_init()` accepts only the BCMA bus and chips `0x4352`
+  and `0x4360`, and returns `-EOPNOTSUPP` otherwise.
+- **Band.** `op_switch_channel()` returns `-EOPNOTSUPP` on 2.4 GHz.
+- **Radio and frequency.** It returns `-ESRCH` when the radio is not 2069 rev 4
+  or the 2069 channel table has no row for the tuned frequency.
+- **The channel table.** It has 50 rows, 5170–5825 MHz, every 10 MHz where a
+  bonded block needs a centre. It is keyed on the frequency the synthesiser is
+  tuned to: the primary channel at 20 MHz, `center_freq1` at 40 and 80.
 
-## Cosa le suite misurano
+Nothing filters by configuration. Every 5 GHz channel and width in the table is
+programmed, and the per-segment scores of the sweeps measure how far each one
+is from the stock driver.
 
-Le tre condizioni di `test/unit/README.md`, piu' `test/integration`. Il numero
-citabile e' il `grezzo` di `cmp_skip.py`.
+## Entry points
 
-Tutti i numeri qui sotto sono sullo sweep **ricatturato**, che traccia nove
-classi di hook in piu' del precedente. Non sono confrontabili con quelli che
-questo documento riportava prima: il denominatore e' cresciuto di op che
-nessuno dei due lati emetteva, quindi il vecchio 99.90% e l'attuale 91.75%
-misurano confronti diversi, non due stati del driver.
+| entry | caller in b43 | what it does |
+|---|---|---|
+| `op_init` | `b43_phy_init()` | PLL check, core probe, frontend pre-init, PMU regctl, GPIO, `mode_init`, table load, `init_regs`, host flags |
+| `software_rfkill` | `b43_phy_init()`, `b43_phy_exit()` | unblocked: radio init, power-on, rccal, AFE-LPF stage. Blocked: `b43_phy_ac_down()` |
+| `switch_analog` | four sites in `main.c` plus `b43_phy_init()` | the AFE arm unit; the cold preamble is emitted once, on the first entry that has a channel (`b43_phy_ac_cold_preamble_due()`) |
+| `switch_channel` | `b43_phy_init()`, `b43_op_config()` | channel setup; returns without emitting when channel and width are already programmed |
+| `channel_calibrate` | `b43_op_config()`, in place of its final `mac_enable` (`patches/0015`) | re-enables the MAC between the RX gain-control sweep and the post-switch calibrations |
+| `recalc_txpower` / `adjust_txpower` | `b43_phy_txpower_check()` | per-rate table from the SROM (`src/ppr_ac.c`), target `0x0646` per core |
+| `pwork_15sec` | b43 periodic work | one watchdog turn, only while the PHY is in its run state |
+| `pwork_60sec` | b43 periodic work | CRS minimum-power threshold, written only when it changes |
 
-| misura | esito |
-| --- | --- |
-| freddo `cold01` ch36 bw20 | **94.64%** (28929/30567), 158 regioni |
-| freddo, non-DFS a 20 MHz | 98.47% (ch40), 98.63% (ch44); ch149 e ch153 da rimisurare |
-| freddo, i 27 segmenti con guardia radar | non misurabili: vedi sotto |
-| caldo, i tre segmenti di riferimento | 84.92% (ch36); ch52 e ch104 non misurabili |
-| tick periodico | **MATCH**, posizione per posizione |
-| integrazione, b43 intero | `probe: 0`, `start: 0`, 29853 op; 84.21% sul segmento intero, **98.78% sul solo switch di canale con zero valori sbagliati** |
+After the bring-up the stock driver no longer drives the flow: it reacts to
+events. Three entry points model that. On hardware nothing calls them yet; the
+unit harness drives them from the capture's timestamps (`reverse-tools/timeline.py`):
 
-Il freddo e il caldo non sono intercambiabili e nessuno dei due copre l'altro:
-ogni predicato che distingue il primo bring-up dai successivi e' invisibile
-nello sweep a freddo. Vedi `test/unit/gates.sh`.
+| entry | event in the stock driver | missing wiring |
+|---|---|---|
+| `b43_phy_ac_watchdog()` | 1 s watchdog callback | b43 has only the 15 s and 60 s works |
+| `b43_phy_ac_radar_poll()` | 150 ms radar-detector timer (`PHY 0x0251`/`0x0252`) | no timer; b43 does not advertise radar detection |
+| `b43_phy_ac_bss_up()` | AP start after the availability check: AMT row restored, tempsense, calibration block | `bss_info_changed(BEACON_ENABLED)` must call it |
 
-Le due famiglie di canali a freddo non sono "sotto e sopra i 5250 MHz": sono i
-canali con la guardia radar e quelli senza. Lo sweep vecchio non poteva
-distinguerle, perche' si fermava a ch140. Il driver legge il flag giusto,
-`IEEE80211_CHAN_RADAR`, e dietro `b43_phy_ac_may_calibrate_tx()` salta le
-calibrazioni post-switch finche' il check e' pendente; il poll del rivelatore
-non sta piu' dietro quel predicato, perche' e' monitoraggio in servizio e
-continua anche dopo che il check si e' chiuso.
+The CAC state is `ac->cac_pending`:
 
-I 27 segmenti con la guardia radar non producono un numero. La ricattura li ha
-presi con il CAC che si chiude a meta' segmento, e l'harness ha `cac_pending`
-come booleano per l'intera corsa: il vendor si ferma a `op_channel_calibrate`
-per tutta l'attesa facendo girare il watchdog -- su `cold05` sono 10867 op in
-62.9 s, inserite esattamente dove `cold01` ha l'entrata di quella funzione --
-e poi riprende. Serve una fase d'attesa nel flow, non una leva. Il residuo per
-canale sta in `retrace-todo.md`.
+- `b43_phy_ac_may_calibrate_tx()` is its complement on channels with radar
+  duty (`IEEE80211_CHAN_RADAR`);
+- `bss_up()` clears it;
+- nothing in the kernel sets it. On hardware the arm belongs in
+  `b43_op_config()` when `hw->conf.radar_enabled` rises.
 
-**Nessun segmento si ferma piu' su un'operazione mancante o di troppo**: la
-prima divergenza posizionale di tutti e 25 e' un valore, e sono due famiglie --
-il banco `0x0910` su nove segmenti, il blocco ppr per rate sugli altri. Questo
-non vuol dire che non resti struttura: `compare.py` si ferma alla prima
-divergenza e cio' che sta a valle non lo misura, mentre `cmp_skip.py` conta
-ancora 29 mancanti sui segmenti migliori -- lo stesso fondo di `cold01`, che ne
-ha 29 e zero di troppo -- e molte di piu' sui quattro sotto il 98%.
+Two helpers are declared in `phy_ac.h` for the core to define:
 
-## Cosa resta aperto
+- `b43_ac_cac_match_gate()` suspends and restores AMT row `0x3f` around the
+  check;
+- `b43_ac_beacon_reload()` reloads the beacon template.
 
-- **I valori sbagliati crescono con la larghezza**: 0 su ch36 bw20, 8 su ch52
-  bw20, 93 su ch36 bw80. E' la voce piu' grossa del residuo a freddo.
-- **La spazzata dei contatori sui giri in ritardo**: 12-36 op di troppo su
-  cinque segmenti, il residuo del latch della finestra statistiche che e'
-  chiuso. Misure e due tentativi falliti in `retrace-todo.md`.
-- **Quando cade il blocco CRS**: il valore delle soglie e del banco `0x0910`
-  torna ovunque, il punto in cui il vendor le scrive no, su 12 segmenti a
-  freddo tutti con la guardia radar. Vedi `crs-min-power.md`.
-- **Il bit `0x80` di shm `0x00cc`**: non e' il canale, la banda, la larghezza,
-  il CAC ne' il beaconing, e nessuna altra cella della cattura ha la sua
-  partizione. Vedi `retrace-todo.md`.
-- La generalizzazione a piu' canali validati richiede l'estrazione dei registri
-  radio-chain per canale e delle chanspec table; piano in
-  `channel-generalization.md`.
+## Driver warnings
 
-## Mappatura file sorgente → patch
+Where the driver writes something it cannot derive, it logs one `b43warn` per
+site with `b43_phy_ac_todo()`. `grep -n 'b43_phy_ac_todo(dev' src/*.c` lists the
+sites. There are three today:
 
-I sorgenti in `src/` sono la **fonte di verità**; le patch in `patches/`
-sono un artefatto rigenerato.
+- a partial chain mask for a chain count outside the measured table;
+- the 80 MHz tap bank for a chain count outside the measured table;
+- the residual on the RX IQ `b` coefficient.
 
-| File sorgente | Patch |
+## Transcribed values are scaffolding
+
+Some values are still transcribed from captures rather than derived. On an RF
+chain different from the one they were read from they can overdrive the PA, so
+they are handled as scaffolding, not data:
+
+- **The FEM control table** is `femctrl=6`'s, the only value observed (all four
+  boards). `b43_phy_ac_set_regtbl_on_femctrl()` stops with a warning on any
+  other value. `grep -in scaffold src/*.c` finds the site.
+- **Removing scaffolding.** A scaffold is removed only by deriving the value, or
+  by proving with captures that it is invariant over the whole domain — never
+  because the gate passes.
+- **The reverse is also true.** A derived value must not be replaced by the
+  constant it reduces to on the reference boards. Example: `tssifloor5g[grp] &
+  0x3ff` is `0x03ff` on every board in the repo. The trace cannot see that
+  regression, so a refactor is checked with a source diff as well.
+
+## Reading a divergence: phase, version, chip, board
+
+The stock driver has two paths where b43 has one: the first attach, and a
+bring-up on an interface that was already up. The same function writes
+different constants in the two. Before attributing a divergence to the chip,
+rule out the phase; before attributing it to the board, rule out the driver
+version.
+
+The boards isolate the axes:
+
+| comparison | isolates |
 |---|---|
-| — (ssb/bcma SPROM) | 0001 |
-| `phy_ac.h`, `tables_phy_ac.{c,h}`, `Makefile` (tables add) | 0002 |
-| — (registrazione canali 5 GHz, `main.c`) | 0003 |
-| — (DMA 64 KB alignment) | 0004 |
-| `radio_2069.{c,h}`, `Makefile` (radio add) | 0005 |
-| `phy_ac.c`, `phy_ac.h` (update), `helpers_phy_ac.c`, `rxiqcal_phy_ac.{c,h}`, `Makefile` (rxiqcal+helpers add), Kconfig | 0006 |
-| — (bcma PMU init) | 0007 |
-| — (core TX/RX wiring, `xmit.c`/`main.c`) | 0008 |
-| — (bcma PCI bridge ID) | 0009 |
-| — (MAC in shared memory, AC) | 0010 |
-| — (address match table, corerev >= 42) | 0011 |
-| — (celle SHM, corerev >= 42) | 0012 |
-| — (key index block su ucode42, `main.c`) | 0013 |
-| — (use-after-free in `b43_bcma_remove`) | 0014 |
-| — (`channel_calibrate` da `b43_op_config`, `phy_common.c`) | 0015 |
-| — (`ledbh4..15` da NVRAM sopra la SROM del device: `ssb.h`, `bcm47xx_sprom.c`, `bcma/sprom.c`) | 0016 |
-| — (LED su gpio 4-15, piu' LED per ruolo: `leds.{c,h}`, `main.c`) | 0017 |
+| D6220 vs DSL-3580L (both 4352) | driver version (7.14.89 vs 6.30) |
+| D6220 vs TG789vac v2 (same `wl`) | chip and ucode |
+| agcombo vs TG789vac v2 (both 4360) | driver version within 7.14 |
 
-Farrow e rxgain non hanno file dedicati: `b43_phy_ac_farrow_setup` e il
-blocco rxgain vivono come sezioni di `phy_ac.c` (patch 0006).
+The port reconstructs 7.14. The DSL-3580L can tell a version fork from a
+hardware fact and nothing else, so it is never an oracle.
 
-Le patch "—" toccano file fuori da `drivers/net/wireless/broadcom/b43/` e
-non hanno corrispondente in `src/`: vanno mantenute editando la patch.
+On `switch_channel`, the agcombo (7.14.43) runs the same phases in the same
+order as the D6220. Anchored on the first constant write of each phase, all 17
+anchorable phases appear in order, with no permutation. The differences are in
+repetition, not in order: the gain-cal writes on table `0x0c` recur about 55
+times through the calibration block on 7.14.43, once per step on the D6220.
 
-## Rigenerazione patch 0006
+## What may be observed
+
+**Allowed.**
+
+- Hooking the stock driver's **hardware I/O accessors** — PHY, radio, MMIO,
+  shared memory, template RAM, OTP. That traces the device, not the driver's
+  expression.
+- Reading `.rodata` and `.data` of the blob, which is data: tables, ladders,
+  constants.
+
+**Not allowed.** Hooking internal logic functions of the driver. That turns
+observing the hardware into observing the implementation.
+
+When a value is needed, the permitted routes are, in order:
+
+1. check whether it passes through an I/O accessor that is covered or can be;
+2. query the stock driver from outside through an iovar;
+3. read tables from `.rodata`.
+
+If none of the three is enough, the unknown stays open.
+
+## Implementation notes
+
+- **Analog LPF caps** come from rccal. The formulas are in
+  [`txlpf-formula.md`](txlpf-formula.md).
+- **Width laws.** Several registers follow a law in the width step
+  `b43_phy_ac_bw_step()` (0/1/2 for 20/40/80 MHz):
+
+  | register | 20 MHz | 40 | 80 | law |
+  | --- | --- | --- | --- | --- |
+  | radio `0x0122` (`AFECAL_CFG`) | from the readback | | | read, armed with `\| 0x000f`, restored |
+  | PHY `0x0381` | `0x7976` | `0x7987` | `0x7998` | `+0x11` per step |
+  | PHY `0x0463` | `0x27` | `0x4f` | `0x9f` | `(x+1)` doubles |
+  | radio `0x004e`/`0x024e` | `0x8000` | `0x8009` | `0x8012` | `+9` per step |
+  | PHY `0x0738`/`0x0938` `[2:0]` | 3 | 4 | 5 | `+1` per step |
+
+  Each law is fitted on three points; 160 MHz would be a fourth, and there is
+  no capture of it.
+- **PHY `0x0140`** is `(read & 0x0800) | 0x05f4`. Only bit 11 moves (set at
+  20 MHz); across the 139 segments of the four sweeps the register takes only
+  `0x05f4/0x05f6/0x0df4/0x0df6`. What bits [10:4] mean is unknown.
+- **Bounded polls.** Every poll in the driver has a finite budget and a
+  non-fatal `b43err`: for example `rxcal_afe_iter` on `0x0380`, 1000 ×
+  `udelay(1)`, and the PLL lock poll, 100 × 10 µs. The stock driver peeks once,
+  so the budgets are an engineering choice, not a measurement.
+- **Minor forms.** The RX freeze uses `phy_mask`/`phy_set` where a single
+  `phy_maskset` would do; six operations, identical semantics.
+
+## Source → patch map
+
+`src/` is the source of truth; `patches/` is the series applied to a kernel.
+
+| patch | content | files |
+|---|---|---|
+| 0001 | ssb/bcma: SPROM revision 11 extraction | outside `b43/` |
+| 0003 | b43: dedicated 5 GHz channel set for the AC-PHY | `main.c` |
+| 0004 | b43: 64 KB descriptor-ring alignment for the AC-PHY DMA64 | `dma.c` |
+| 0006 | b43: AC-PHY bring-up | everything in `src/`, generated |
+| 0007 | bcma: PMU init (PLL and resources) for BCM4352/BCM4360 | outside `b43/` |
+| 0008 | b43: wire the AC-PHY into the core TX/RX control path | `main.c`, `xmit.c` |
+| 0009 | bcma: BCM4352 (`0x43b3`) in the PCI bridge table | outside `b43/` |
+| 0010 | b43: station MAC in shared memory on the AC cores | `main.c`, `b43.h` |
+| 0011 | b43: address match table from core revision 42 | `main.c` |
+| 0012 | b43: shared-memory cells the AC cores expect | `main.c` |
+| 0013 | b43: key index block relocated on ucode42 | `main.c`, `xmit.h` |
+| 0014 | b43: use-after-free of `wldev` in `b43_bcma_remove` | `main.c` |
+| 0015 | b43: `channel_calibrate` phyop, called from `b43_op_config` | `phy_common.h`, `main.c` |
+| 0016 | bcma/ssb: NVRAM `ledbh4..ledbh15` over the device's own SROM | outside `b43/` |
+| 0017 | b43: LEDs on GPIO pins above 3, several LEDs per role | `leds.{c,h}`, `main.c` |
+| 0018 | bcma/ssb: `boardflags3` and `AvVmid_c0..2` from NVRAM | outside `b43/` |
+
+Patches other than 0006 touch files that have no counterpart in `src/` and are
+maintained by editing the patch.
+
+### Regenerating 0006
 
 ```sh
-scripts/regen-patches.sh          # KVER=6.8.0-139 per scegliere gli header
+scripts/regen-patches.sh          # KVER=6.8.0-142 selects the headers
 ```
 
-Lo script scarica b43 vanilla al tag degli header kernel installati con
-`test/integration/fetch-upstream.sh` (lo stesso base della suite di
-integrazione), applica 0003 e 0004, sovrascrive con tutto `src/` -- `.c`,
-`.h` e `Makefile`, che e' il Makefile del kernel con le righe della PHY AC --
-e riemette la 0006 con `git format-patch`. Un file che la 0006 corrente
-aggiunge e `src/` non ha piu' viene tolto. Messaggio e author sono presi
-dalla patch corrente via `git am`: per cambiarli si edita la patch e si
-rilancia. Un nuovo sorgente in `src/` entra nella patch aggiungendo la sua
-riga a `src/Makefile`, non alla patch.
+The script fetches vanilla b43 at the tag of the installed kernel headers with
+`test/integration/fetch-upstream.sh` — the same base as the integration suite.
+It then:
 
-## Split upstream previsto per 0006
+1. applies 0003 and 0004;
+2. overwrites the tree with all of `src/` (`.c`, `.h` and the kernel `Makefile`
+   with the AC lines);
+3. re-emits 0006 with `git format-patch`.
 
-La 0006 attuale è un monolite (~8300 righe aggiunte); prima della submission
-a `linux-wireless` va spezzata in commit da ~300-500 righe ciascuno. Lo
-schema previsto, con `switch_channel` stub al passo 1 e riempito via via:
+Message and author come from the current 0006 via `git am`; to change them,
+edit the patch and rerun. A new source file enters the patch through its line
+in `src/Makefile`.
 
-| # | contenuto | dipende da |
-|---|-----------|------------|
-| a | ops scaffold: allocate/free/prepare_structs, mode_init, init_regs, phyop r/w, ops struct con stub `switch_channel`/`op_init`/`rfkill` | 0002 |
-| b | TX power: pa5g_group, txpwrctrl_setup, txgain table, txpwr_by_index, idle_tssi_meas | a |
-| c | RF sequencer + reset-time: rfseq tables/tbl_init, set_reg_on_reset, force_rf_sequence, reset_cca | a |
-| d | Analog on reset: femctrl, tx_lpf, rx_lpf, dacbuf, pdet, analog_on_reset | c |
-| e | Channel setup: classifier, clip_det, rxcore_setstate, rx_gate, channel_setup, chanspec_tail, coeff_bank, chan_tables, rx_evm_shaping, adc_reset, rx_enable — riempie `switch_channel` | b, c, d |
-| f | op_init + op_software_rfkill: wira il PHY nel framework b43 | e |
-| g | rxgain: sezione rxgain_init/rxgainctrl di phy_ac.c | e |
-| h | farrow: b43_phy_ac_farrow_setup + tabelle (da phy_ac.c) | a |
-| i | lettura di temperatura (`b43_phy_ac_tempsense()` e le sue foglie `tempsense_*`): in `phy_ac.c`, la chiamano il bss-up, `op_channel_calibrate()` e il watchdog | e, g |
-| j | `rxiqcal_phy_ac.c/h`: stimatore/validatore da harness (funzioni `rxiqcal_est_debug`, `rxiqcal_comp_update`), fuori dal percorso del driver — non gated, ma raggiungibile solo dai flow `ac_trace rxiq_est_debug`/`rxiq_comp`; valida la matematica RX-IQ contro le catture, vedi docs/rxiq-cal-analysis.md | a |
+### Planned split of 0006
 
-## Note sulle scelte di implementazione
+0006 is a monolith and must be split into commits of roughly 300–500 lines
+before submission to `linux-wireless`:
 
-La formula `(cur & 0x0800) | 0x05f4` per reg 0x0140 assume che solo il bit
-11 si muova e che gli altri siano invarianti. L'invarianza e' misurata, non
-supposta: sui 139 segmenti in repo (freddo e caldo di d6220 e agcombo, 25
-canali a 20/40/80 MHz) il registro riceve solo `0x05f4/0x05f6/0x0df4/0x0df6`. Cosa
-significhino i bit [10:4] resta ignoto, ma non serve saperlo per emettere il
-valore giusto.
-
-**SALAME**: sul chip vero, se il PLL non locca velocemente, il poll
-100×10µs dà 1ms di budget prima di emettere `b43dbg` — nessuna evidenza
-che sia troppo o poco. Il vendor non fa polling (peek singolo), quindi
-la scelta del budget è ingegneristica arbitraria.
-
-**Divergenze cosmetiche note**:
-
-- Convenzione `phy_mask`/`phy_set` (mask=0x0000) vs `phy_maskset` — 6 op
-  residue nel freeze RX, semantica identica.
-- Bit [10:4] di 0x0140 non ancora reverse-ingegnerizzati.
-
-## Famiglia LPF analogica — risolta
-
-TX-LPF, RX-LPF e DACBUF non sono più hardcoded: il cap viene derivato da
-rccal e la RMW preserva il pre-state della cella. Formule (dettaglio e
-verifica in `txlpf-formula.md`):
-
-- TX-LPF: `cap = ((RCCAL_F - RCCAL_E) * 193) >> 8`.
-- RX-LPF: `f17 = lpf_cap1` diretto; `f6 = (lpf_cap0 * k[stage]) >> 8` con
-  `k = {221, 215, 215}` per le tre sezioni (le wl recenti scalano; la wl 6.30
-  del DSL no — differenza di versione).
-- DACBUF: `dacbuf_cap = (RCCAL_G & 0x03e0) >> 5`, dal readback post-apply.
-
-Verificate sui tre board (d6220/DSL/agcombo).
-
-## Poll con budget
-
-`b43_phy_ac_rxcal_afe_iter` attende il bit busy di `0x0380` con un budget
-finito (1000×udelay(1)) e un `b43err` non fatale, come `force_rf_sequence`.
-Un `while` senza uscita la' e' un hang del kernel se il bit non si libera:
-nessun poll del driver e' senza limite.
-
-## Copertura del bring-up (rfkill + op_init)
-
-L'harness marca ogni funzione con `B43_AC_FN()` (attivo con `AC_FN_MARKERS=1`,
-altrimenti il trace resta pulito per `compare.py`); `fn_map.py coverage`
-misura la copertura per-sequenza contro la cattura grezza. Risultato: bring-up
-radio coperto al 100% su d6220 e agcombo. Le divergenze note (tutte sul DSL
-wl 6.30: prefregs −2 scritture, afe_lpf_stage, rccal ~84%) sono in
-`retrace-todo.md`.
+| # | content | depends on |
+|---|---|---|
+| a | ops scaffold: allocate/free/prepare_structs, mode_init, init_regs, register access, ops struct with stub `switch_channel`/`op_init`/`software_rfkill`; the init tables | — |
+| b | TX power: pa5g group, `txpwrctrl_setup`, TX gain table, idle-TSSI, `ppr_ac.c` | a |
+| c | RF sequencer and reset-time setup: rfseq tables, `set_reg_on_reset`, `force_rf_sequence`, `reset_cca` | a |
+| d | analog on reset: femctrl, TX/RX LPF, DACBUF, pdet | c |
+| e | channel setup: classifier, clip detect, rxcore state, RX gate, chanspec tail, coefficient bank, per-channel tables, EVM shaping, ADC reset — fills `switch_channel` | b, c, d |
+| f | `op_init` and `software_rfkill`: wire the PHY into b43 | e |
+| g | RX gain init and gain control | e |
+| h | Farrow resampler setup and tables | a |
+| i | tempsense (`b43_phy_ac_tempsense()` and its leaves) | e, g |
+| j | post-switch calibrations and `channel_calibrate`; watchdog, radar poll and bss-up entry points | e, g, i |
+| k | `rxiqcal_phy_ac.{c,h}`: the RX IQ estimator/validator the harness flows `rxiq_est_debug`/`rxiq_comp` call | a |

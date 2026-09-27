@@ -217,9 +217,10 @@ static void mount_board(const struct board_profile *p)
 	 * Where U-NII-2C ends is the one edge the spec and this device do not
 	 * agree on, and here the captures arbitrate instead of the spec. The
 	 * stock driver polls the radar detector on a channel that carries the
-	 * duty and not on one that does not, so reverse-tools/cac_polls.py
-	 * reads the answer off each segment; run over all forty-three of the
-	 * cold sweep it draws the boundary at ch140, not at 5725:
+	 * duty and not on one that does not, so the POLL events of
+	 * reverse-tools/timeline.py read the answer off each segment; run over
+	 * all forty-three of the cold sweep they draw the boundary at ch140, not
+	 * at 5725:
 	 *
 	 *   ch36-48       no poll        ch52-140      poll
 	 *   ch144-165     no poll
@@ -899,7 +900,7 @@ static void run_switch_channel(void)
 	 * ingresso *coerente con l'uscita osservata*. Il gate resta significativo:
 	 * i coefficienti sono cio' che verifica, e se il solve regredisse l'uscita
 	 * cambierebbe. Per validare la misura vera serve AC_READ_ORACLE, vedi
-	 * porting-plan.md.
+	 * test/unit/README.md, "Read plans and the oracle".
 	 */
 	{
 		static const u16 acc_06c3[6] = {
@@ -1302,7 +1303,7 @@ static void emit_core_counters_first(void)
  * Contata sulle riscritture della riga su tutti e 43 i segmenti a freddo: tre
  * dove la guardia non c'e', sei dove c'e'. I tre radar-meteo ne hanno cinque,
  * e la mancante e' una di quelle del bss-up, che quei segmenti non hanno. Il
- * confine e' ch140, lo stesso che cac_polls.py ricava dai segmenti: ch144 sta
+ * confine e' ch140, lo stesso che danno i POLL di timeline.py: ch144 sta
  * a tre come ch36.
  *
  * Delle tre in piu' questa e' l'unica nel preambolo, subito dopo il primo
@@ -1463,7 +1464,7 @@ static void emit_core_shm_chipinit(const struct board_profile *p)
  * vendor su PRTLEN, PRSSID, PRSSIDLEN, sulle temporizzazioni 0x0180-0x0186 e
  * sulla word 0x0700 di template RAM stanno in SOLO_VENDOR di compare.py.
  *
- * E' una scelta del WIP, non un limite: il TODO post-WIP sta in
+ * E' una scelta del WIP, non un limite: vedi "Probe-response offload" in
  * docs/retrace-todo.md. Quando l'offload verra' implementato questo doppione
  * torna, la voce di SOLO_VENDOR va togliata, e il carico va scritto in
  * main.c del kernel -- non qui.

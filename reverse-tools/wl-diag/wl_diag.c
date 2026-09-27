@@ -217,7 +217,7 @@ struct wldiag_rec {
  * bytes by esize and does rounddown_pow_of_two.
  */
 /* A COLD init cycle is obtained by reloading the target module -- which is what
- * reverse-tools/cold_capture.sh does, with the hooks already armed from
+ * reverse-tools/capture_cold_init.sh does, with the hooks already armed from
  * MODULE_STATE_COMING -- not by tampering with the PHY struct from the stub.
  * The "already calibrated" byte (251 on 7.14.89, 227 on 6.30) therefore stays
  * a note only: when cold it is pi->[251] == 0 that makes cal_init complete, and
@@ -586,10 +586,10 @@ static struct hook hooks[] = {
 	/* Accessors found in the blobs of both versions and not covered by the
 	 * hooks above. They cover what nothing shows today:
 	 *
-	 *   phy_reg_write_array   bulk PHY write. This is the accessor the TODO in
-	 *                         docs/retrace-todo.md was hunting for under the
-	 *                         name phy_reg_write_list. If it calls phy_reg_write
-	 *                         inside, the individual writes are already visible
+	 *   phy_reg_write_array   bulk PHY write, the accessor that goes by the
+	 *                         name phy_reg_write_list in other trees. If it
+	 *                         calls phy_reg_write inside, the individual
+	 *                         writes are already visible
 	 *                         and this hook adds a marker, as TBL.WR does for
 	 *                         tables; if it does not, this is the only way to
 	 *                         see them. Useful either way.
@@ -786,8 +786,8 @@ wl_diag_hook(u32 id, u32 a1, u32 a2, u32 a3)
 
 	/* CAL.INIT carries the state of the switch in the record, so the trace says
 	 * by itself which cycles were forced. Without this the experiment cannot be
-	 * read afterwards: capture_plan alternates 1 and 0, so the value read from
-	 * sysfs at the end of the run is always the last one written. */
+	 * read afterwards: capture_hot_init alternates 1 and 0, so the value read
+	 * from sysfs at the end of the run is always the last one written. */
 	/* CAL.INIT carries no payload: it says WHEN cal_init was invoked, and it is
 	 * also the anchor for segmenting a sweep, one per cycle. */
 	if (h->op == OP_CAL_INIT)

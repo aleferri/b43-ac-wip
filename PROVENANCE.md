@@ -1,32 +1,32 @@
-# BLOBS PROVENANCE
+# Provenance of the stock-driver binaries
 
 ## DSL-3580L — `wlDSL-3580_EU.o_save`
 
-GPL source release D-Link per il DSL-3580L, firmware v1.01, tarball
-`DSL-3580_EU_1.01_05072014_GPL.tar.gz` (SDK Broadcom BCM963xx). Mirror:
+From the D-Link GPL source release for the DSL-3580L, firmware v1.01, tarball
+`DSL-3580_EU_1.01_05072014_GPL.tar.gz` (Broadcom BCM963xx SDK). Mirror:
 https://github.com/aleferri/dsl-3580l-sources (release `gpl-release`).
-Build di riferimento del release: `make PROFILE=DSL-3580_EU`, toolchain
-uClibc crosstools gcc-4.4.2 su Ubuntu 10.04.
+Reference build of that release: `make PROFILE=DSL-3580_EU`, uClibc crosstools
+gcc-4.4.2 toolchain on Ubuntu 10.04.
 
 ## D6220 — `wlD6220.o_save`
 
-Object del driver `wl` (rev `0x70e590e` ≈ 7.14.89.14) estratto dal GPL
-firmware release Netgear per il D6220, firmware V1.0.0.76, archivio
-`D6220-V1.0.0.76_GPL_Src_full.zip` nella collezione GPL Netgear su Internet
-Archive (mirror del download center ufficiale `downloads.netgear.com/files/GDC`):
+The `wl` driver object (rev `0x70e590e` ≈ 7.14.89.14) from Netgear's GPL
+firmware release for the D6220, firmware V1.0.0.76, archive
+`D6220-V1.0.0.76_GPL_Src_full.zip`. It is in the Netgear GPL collection on the
+Internet Archive, which mirrors the official download centre
+`downloads.netgear.com/files/GDC`:
 https://archive.org/download/netgearfirmwaresgpl/D6220-V1.0.0.76_GPL_Src_full.zip
 
-## AGSOT — `wl.ko` da `AGSOT_1_0_8.img`
+## AGSOT — `wl.ko` from `AGSOT_1_0_8.img`
 
-Modulo `wl` estratto dall'immagine firmware `AGSOT_1_0_8.img`, board Sercomm,
-senza rapporto con Netgear né con D-Link. È il terzo ramo di blob su cui è
-verificata la tabella TX-gain: il simbolo `acphy_txgain_epa_5g_2069rev4`
-combacia 128 voci su 128 con quello del D6220 (7.14.89), mentre il ramo 6.30
-del DSL diverge dall'indice 31 in poi. Due board fisicamente indipendenti che
-portano lo stesso valore è ciò che esclude la calibrazione per-board — vedi
-`b43_acphy_txgain_epa_5g_2069rev4` in `src/phy_ac.c`.
+The `wl` module extracted from the firmware image `AGSOT_1_0_8.img`, a Sercomm
+board unrelated to Netgear or D-Link. It is the third blob branch on which the
+TX-gain table is checked. Its `acphy_txgain_epa_5g_2069rev4` matches the
+D6220's (7.14.89) on 128 of 128 entries, while the DSL's 6.30 branch diverges
+from index 31 on. Two physically independent boards carrying the same values
+rules out per-board calibration; see `b43_acphy_txgain_epa_5g_2069rev4` in
+`src/phy_ac.c`.
 
-TODO: origine e mirror dell'immagine, e la revisione del driver `wl` che
-contiene. A differenza dei due blob sopra, questa voce non porta un modo di
-riottenere il file, quindi la verifica 128/128 non è oggi riproducibile da
-questo albero.
+**TODO:** origin and mirror of the image, and the `wl` revision it contains.
+Unlike the two blobs above, this entry does not say how to obtain the file
+again, so the 128/128 check cannot be reproduced from this tree today.

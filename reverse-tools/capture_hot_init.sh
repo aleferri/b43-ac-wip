@@ -19,19 +19,19 @@
 # raccoglierli in un colpo. Una fase per volta, ognuna col suo file di traccia.
 #
 # Uso:
-#   sh capture_plan.sh 20           i 20 MHz SENZA guardia radar
-#   sh capture_plan.sh 40           i 40 MHz senza guardia radar
-#   sh capture_plan.sh 80           gli 80 MHz senza guardia radar
-#   sh capture_plan.sh 20dfs        i soli canali con guardia radar, 20 MHz
-#   sh capture_plan.sh 20meteo      i soli 5600-5650, che vogliono 600 s
-#   sh capture_plan.sh 20 wl1 10    interfaccia e attesa espliciti
-#   sh capture_plan.sh 20 wl1 10 test-ap    con SSID, per programmare il BSS
+#   sh capture_hot_init.sh 20           i 20 MHz SENZA guardia radar
+#   sh capture_hot_init.sh 40           i 40 MHz senza guardia radar
+#   sh capture_hot_init.sh 80           gli 80 MHz senza guardia radar
+#   sh capture_hot_init.sh 20dfs        i soli canali con guardia radar, 20 MHz
+#   sh capture_hot_init.sh 20meteo      i soli 5600-5650, che vogliono 600 s
+#   sh capture_hot_init.sh 20 wl1 10    interfaccia e attesa espliciti
+#   sh capture_hot_init.sh 20 wl1 10 test-ap    con SSID, per programmare il BSS
 #
 # I gruppi sono disgiunti e stanno in capture_profiles.sh, che va copiato sul
 # device accanto a questo script.
 #
 # Questo e' lo sweep A CALDO: un solo insmod e N cicli down->up. Per gli init a
-# freddo, e per l'attach, lo strumento e' cold_capture.sh, che ricarica `wl` a
+# freddo, e per l'attach, lo strumento e' capture_cold_init.sh, che ricarica `wl` a
 # ogni canale con gli hook gia' armati dal MODULE_STATE_COMING.
 #
 # Niente `set -u`: il busybox di questi firmware non lo gestisce.
@@ -59,7 +59,7 @@ SSID="$4"
 # capture_profiles.sh.
 #
 # Che il check radar sia pendente lo dice la cattura, non il piano: sui
-# segmenti che lo sono reverse-tools/cac_polls.py trova i turni di poll.
+# segmenti che lo sono reverse-tools/timeline.py trova i poll del rivelatore.
 DIR="${0%/*}"
 [ "$DIR" = "$0" ] && DIR=.
 if [ ! -f "$DIR/capture_profiles.sh" ]; then
@@ -69,7 +69,7 @@ fi
 . "$DIR/capture_profiles.sh"
 
 if ! profilo "$FASE"; then
-    echo "uso: sh capture_plan.sh {$PROFILI} [interfaccia] [attesa] [ssid]" >&2
+    echo "uso: sh capture_hot_init.sh {$PROFILI} [interfaccia] [attesa] [ssid]" >&2
     exit 1
 fi
 
@@ -85,7 +85,7 @@ fi
 # /dev/kmsg e' read-only su alcuni firmware, e busybox riporta l'errore di
 # redirezione anche con 2>/dev/null: si prova una volta e si decide.
 KMSG=
-if { echo "wl_diag: capture_plan" > /dev/kmsg ; } 2>/dev/null; then
+if { echo "wl_diag: capture_hot_init" > /dev/kmsg ; } 2>/dev/null; then
     KMSG=/dev/kmsg
 fi
 

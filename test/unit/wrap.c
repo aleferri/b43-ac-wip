@@ -1258,7 +1258,7 @@ void b43_maskset32(struct b43_wldev *dev, u16 offset, u32 mask, u32 set)
  * trascritti nell'assunzione senza contatore e che col contatore il MATCH di
  * switch_channel sarebbe caduto. La misura dice altro:
  *
- *            MAC.MCTRL emesse      similarita' (compare_lcs.py)
+ *            MAC.MCTRL emesse      similarita'
  *   flow1    32 -> 113 (vendor 119)     49.50% -> 99.30%
  *   flow2    124 -> 124 (vendor 119)    99.19% -> 99.19%
  *
