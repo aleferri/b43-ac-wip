@@ -32,8 +32,8 @@ make check          # ogni file di b43 e del port: deve dire "0 errori"
 make b43-trace      # compila, linka, stampa il conto dei simboli
 ```
 
-`make fetch` deve finire con `applicate 11, saltate 4`: le 11 patch che toccano
-`b43/` e le 4 su bcma/ssb che qui non hanno niente da applicare (i loro hunk su
+`make fetch` deve finire con `applicate 11, saltate 5`: le 11 patch che toccano
+`b43/` e le 5 su bcma/ssb che qui non hanno niente da applicare (i loro hunk su
 `include/linux/ssb/` vanno pero' in `kinc/`, che li prende tutti). Se una patch
 non applica lo script **esce con errore** e l'albero in `b43-upstream/` va
 buttato (`rm -rf b43-upstream kinc`) prima di riprovare: `patch` applica un

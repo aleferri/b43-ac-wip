@@ -21,6 +21,11 @@
 # -mno-red-zone come nel kernel: gli header fanno `call` dentro inline asm
 # (arch_hweight.h), e la call scrive l'indirizzo di ritorno sotto %rsp, dove
 # senza il flag gcc tiene le variabili locali delle funzioni foglia.
+#
+# Niente -w: spegne anche i -Werror=, e una dichiarazione implicita passa
+# `make check` per morire al link. L'unico avviso che gli header danno e'
+# address-of-packed-member, che il kernel spegne allo stesso modo
+# (scripts/Makefile.extrawarn).
 
 KVER    ?= $(shell ls /usr/src/ | grep -oE '^linux-headers-[0-9.]+-[0-9]+$$' | head -1 | sed 's/linux-headers-//')
 K       := /usr/src/linux-headers-$(KVER)
@@ -42,7 +47,8 @@ KFLAGS := -nostdinc -I$(CURDIR)/$(UP) $(KINC) -D__KERNEL__ -DMODULE -DKBUILD_MOD
           -include $(K)/include/linux/kconfig.h \
           -include $(K)/include/linux/compiler_types.h \
           -DCONFIG_B43_BCMA=1 -DCONFIG_B43_PHY_AC=1 -DCONFIG_B43_LEDS=1 \
-          -O2 -fno-strict-aliasing -fno-common -std=gnu11 -w \
+          -O2 -fno-strict-aliasing -fno-common -std=gnu11 \
+          -Wno-address-of-packed-member \
           -mno-red-zone \
           -Werror=implicit-function-declaration \
           -include $(CURDIR)/compat.h \
