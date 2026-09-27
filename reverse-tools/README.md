@@ -48,6 +48,33 @@ for a gate.
 - **The comparison itself** is `test/unit/compare.py` (positional) and
   `test/unit/cmp_skip.py` (the score).
 
+### Bus-level captures (mmiotrace)
+
+A capture taken with the kernel's mmiotrace on a PCIe card has none of the
+accessor classes and none of the config-space traffic, but it has everything
+the MAC and the DMA do, which `wl-diag` never traced. Two tools bring it into
+the same vocabulary:
+
+- **mmio2ops.py** decodes the raw BAR0 accesses into `PHY.WR/RD`, `RAD.WR/RD`,
+  `OBJ.WR/RD` (with `sel=` and `OBJ.BULKW` for auto-increment runs),
+  `MAC.MCTRL`, `MAC.MCMD` and `REG.*`, plus `CC.*`, `SROM.RD`, `WRAP.*`,
+  `PCIE.*`, `EROM.RD` for what lies outside the D11 core. The sliding window
+  moves through PCI config space, which mmiotrace does not see, so the core
+  behind it is inferred from unambiguous offsets; `--mark-windows` emits a
+  `WIN` line at each inferred move, `--erom` lists the cores, `--srom` writes
+  the SROM words in the `wl1_srom.txt` layout. The output goes through
+  `split_trace.py --on chanspec` unchanged. Two conventions to keep in mind
+  when comparing with a router capture: a 32-bit shared-memory access is
+  split low half first (little-endian host; the MIPS stub of
+  `test/integration` does the opposite), and the PHY_VER read `wl` makes
+  after every PHY write is dropped unless `--keep-flush`.
+- **ops_fold.py** `fold` rebuilds the accessor-level ops from their bus
+  footprint -- `PHY.MOD`/`RAD.MOD` from an adjacent RD+WR pair (the mask is
+  `rd ^ wr`, a lower bound), `MAC.MCTRL val mask`, `TBL.WR/RD id off len`
+  headers before the 0xd/0xe writes -- and `report` lists what the bus does
+  not show and what can be inferred about it: window moves, polling loops,
+  `macintstatus` reasons, DMA ring activity per chanspec segment, pauses.
+
 ## Analysis
 
 - **tracelib.py** is the library the others import. It holds:
