@@ -244,6 +244,13 @@ class Decoder:
         o, v, w = op.off, op.val, op.width
         if o not in (OBJDATA, OBJDATA_HI):
             yield from self.flush_bulk()
+        # A read of an address register is the posted-write flush of the
+        # write before it (the MIPS routers do one after every address
+        # write); it is a bus operation of its own and stays in the output.
+        if o in (PHY_CTL, RADIO_CTL, OBJADDR) and op.kind == "R" and w != 4 \
+                or o == OBJADDR and op.kind == "R":
+            yield f"REG.RD off=0x{o:04x} val={hexw(op)}"
+            return
         if o == PHY_CTL:
             if w == 4:
                 self.phy_addr = v & 0xffff
@@ -261,8 +268,7 @@ class Decoder:
             yield f"RAD.{rw(op)} addr=0x{self.radio_addr or 0:04x} val=0x{v:04x}"
             return
         if o == OBJADDR:
-            if op.kind == "W":
-                self.objaddr = v
+            self.objaddr = v
             return
         if o in (OBJDATA, OBJDATA_HI):
             yield from self.obj(op)

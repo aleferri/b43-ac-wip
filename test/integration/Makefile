@@ -47,6 +47,7 @@ KFLAGS := -nostdinc -I$(CURDIR)/$(UP) $(KINC) -D__KERNEL__ -DMODULE -DKBUILD_MOD
           -include $(K)/include/linux/kconfig.h \
           -include $(K)/include/linux/compiler_types.h \
           -DCONFIG_B43_BCMA=1 -DCONFIG_B43_PHY_AC=1 -DCONFIG_B43_LEDS=1 \
+          -DCONFIG_BCM63XX=1 \
           -O2 -fno-strict-aliasing -fno-common -std=gnu11 \
           -Wno-address-of-packed-member \
           -mno-red-zone \
@@ -54,6 +55,10 @@ KFLAGS := -nostdinc -I$(CURDIR)/$(UP) $(KINC) -D__KERNEL__ -DMODULE -DKBUILD_MOD
           -include $(CURDIR)/compat.h \
           -DB43_AC_FN_TRACE
 
+# CONFIG_BCM63XX: il bersaglio e le board della collezione sono router BCM63xx
+# con la radio su PCIe, e su quegli host b43 rilegge gli indirizzi dei
+# registri come il driver stock (patches/0020). Gli header non lo usano.
+#
 # Build per il backtrace: -O2 resta, perche' lo chiedono gli header; -fno-inline
 # -g tengono i frame, cosi' gdb dice in quale funzione di b43 la probe muore
 # invece che in b43_one_core_attach dove tutto e' inlinato.
