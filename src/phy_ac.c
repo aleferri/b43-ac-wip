@@ -10657,7 +10657,6 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 {
 	B43_AC_FN();
 	struct ieee80211_channel *channel = dev->wl->hw->conf.chandef.chan;
-	enum nl80211_channel_type channel_type = cfg80211_get_chandef_type(&dev->wl->hw->conf.chandef);
 	const struct cfg80211_chan_def *chandef = &dev->wl->hw->conf.chandef;
 	enum nl80211_chan_width width = chandef->width;
 	const struct b43_phy_ac_channeltab_e_radio2069 *e2069;
@@ -10698,13 +10697,6 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	 */
 
 	/* 5 GHz: the channel table is the filter (unknown channels -ESRCH). */
-
-	/*
-	 * channel_type is the legacy HT-only description of the same thing as
-	 * chandef.width, and cannot express the VHT widths. It stays in the
-	 * signature because that is the b43 phy_ops prototype.
-	 */
-	(void)channel_type;
 
 	b43dbg(dev->wl, "phy-ac: set_channel ch%u (%u MHz) start\n",
 	       channel->hw_value, channel->center_freq);
