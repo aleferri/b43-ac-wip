@@ -30,15 +30,8 @@
 
 #include "trace_out.h"
 
-/* --- bcma: gestione del core, non accesso ai registri ------------------ */
+/* --- bcma: il lato host PCI, che passa dallo spazio di configurazione --- */
 
-int bcma_core_enable(struct bcma_device *core, u32 flags) { return 0; }
-void bcma_core_disable(struct bcma_device *core, u32 flags) { }
-bool bcma_core_is_enabled(struct bcma_device *core) { return true; }
-void bcma_core_set_clockmode(struct bcma_device *core,
-			     enum bcma_clkmode clkmode) { }
-void bcma_core_pll_ctl(struct bcma_device *core, u32 req, u32 status,
-		       bool on) { }
 void bcma_host_pci_up(struct bcma_bus *bus) { }
 void bcma_host_pci_down(struct bcma_bus *bus) { }
 int bcma_host_pci_irq_ctl(struct bcma_bus *bus, struct bcma_device *core,

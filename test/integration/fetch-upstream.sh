@@ -15,7 +15,8 @@ TAG=v$(echo "$KVER" | cut -d. -f1,2)
 # un albero vanilla a parte e non deve toccare quello della suite, che ha le
 # patch del port applicate sopra.
 DIR=${OUTDIR:-$(dirname "$0")/b43-upstream}
-BASE=https://raw.githubusercontent.com/torvalds/linux/$TAG/drivers/net/wireless/broadcom/b43
+ROOT=https://raw.githubusercontent.com/torvalds/linux/$TAG/drivers
+BASE=$ROOT/net/wireless/broadcom/b43
 
 FILES="main.c phy_common.c bus.c xmit.c phy_ac.c dma.c leds.c rfkill.c
        Makefile Kconfig
@@ -24,18 +25,30 @@ FILES="main.c phy_common.c bus.c xmit.c phy_ac.c dma.c leds.c rfkill.c
        phy_a.h phy_g.h phy_n.h phy_lp.h phy_ht.h phy_lcn.h phy_ac.h
        radio_2055.h radio_2056.h radio_2057.h radio_2059.h"
 
-mkdir -p "$DIR"
+# La gestione del core di bcma -- reset, clock del core, PLL -- e' codice
+# vero e non si stubba: sono gli accessi al wrapper e a clk_ctl_st che una
+# cattura al bus (reverse-tools/mmio2ops.py) mostra, e senza il loro codice
+# b43 li chiamerebbe senza emettere niente.
+BCMA_FILES="core.c bcma_private.h"
+
+mkdir -p "$DIR/bcma"
 echo "b43 da $TAG"
 missing=
-for f in $FILES; do
+fetch() {
 	for try in 1 2 3; do
-		if curl -sfL -o "$DIR/$f" "$BASE/$f"; then
-			continue 2
+		if curl -sfL -o "$1" "$2"; then
+			return 0
 		fi
 		sleep 1
 	done
-	rm -f "$DIR/$f"
-	missing="$missing $f"
+	rm -f "$1"
+	return 1
+}
+for f in $FILES; do
+	fetch "$DIR/$f" "$BASE/$f" || missing="$missing $f"
+done
+for f in $BCMA_FILES; do
+	fetch "$DIR/bcma/$f" "$ROOT/bcma/$f" || missing="$missing bcma/$f"
 done
 
 if [ -n "$missing" ]; then

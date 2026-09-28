@@ -162,6 +162,7 @@ struct ssb_sprom_rxgains {
  * we hold only the fields the scratch code reads.
  */
 struct ssb_sprom {
+	u8 il0mac[6];		/* MAC address of the 802.11 core */
 	/*
 	 * Offset di potenza per-rate a 5 GHz, per sotto-banda e larghezza.
 	 * Nomi e forma sono quelli che patches/0001 aggiunge a

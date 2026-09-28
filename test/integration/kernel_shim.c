@@ -79,6 +79,34 @@ void __warn_printk(const char *fmt, ...)
 {
 }
 
+/*
+ * dev_err/dev_warn, che bcma usa per i suoi timeout: stesso canale di
+ * _printk. Il device non si stampa, la suite ne ha uno solo.
+ */
+static void shim_dev_printk(const char *level, const char *fmt, va_list ap)
+{
+	fprintf(stderr, "%s: ", level);
+	vfprintf(stderr, fmt, ap);
+}
+
+void _dev_err(const void *dev, const char *fmt, ...)
+{
+	va_list ap;
+
+	va_start(ap, fmt);
+	shim_dev_printk("err", fmt, ap);
+	va_end(ap);
+}
+
+void _dev_warn(const void *dev, const char *fmt, ...)
+{
+	va_list ap;
+
+	va_start(ap, fmt);
+	shim_dev_printk("warn", fmt, ap);
+	va_end(ap);
+}
+
 void fortify_panic(const char *name)
 {
 	fprintf(stderr, "b43-integration: fortify_panic in %s\n", name);

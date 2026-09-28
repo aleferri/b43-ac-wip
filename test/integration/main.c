@@ -51,27 +51,15 @@ int init_module(void);
 void cleanup_module(void);
 
 /*
- * Il core 802.11 del d6220, dai suoi dump: chip 0x4352, corerev 42 (ucode42,
- * AC rev1). Sono i valori che decidono i gate, quindi vengono dai dati della
- * board e non da una scelta qui -- vedi router-data/d6220/wl1_revinfo.txt.
+ * Il core 802.11: corerev 42 su tutte le board della collezione (ucode42, AC
+ * rev1, `corerev 0x2a` in ogni wl1_revinfo.txt). Chip, chiprev e deviceid PCI
+ * cambiano da board a board e vengono dal profilo: sono i valori che decidono
+ * i gate -- b43_supported_bands (main.c:5494) legge `bus->host_pci->device`
+ * quando l'hosttype e' PCI -- quindi sono dati della board e non una scelta
+ * qui.
  */
-#define D6220_CHIP_ID		0x4352
-#define D6220_CHIP_REV		0x3
-#define D6220_CORE_REV		42
-#define D6220_CORE_ID		BCMA_CORE_80211
-
-/*
- * Il device PCI. b43_supported_bands (main.c:5494) legge
- * `bus->host_pci->device` quando l'hosttype e' PCI, quindi dichiarare PCI
- * senza fornirlo e' una promessa non mantenuta: il puntatore nullo la' non e'
- * un ramo che b43 gestisce.
- *
- * Il device id e' quello del 4352 su questo hardware, 0x43b3, che
- * patches/0009 aggiunge alla tabella del bridge PCI di bcma. b43 lo usa per
- * decidere le bande su alcuni chip: sceglierne uno a caso farebbe registrare
- * le bande sbagliate in silenzio.
- */
-#define D6220_PCI_DEVICE	0x43b3
+#define TEST_CORE_REV		42
+#define TEST_CORE_ID		BCMA_CORE_80211
 
 static struct pci_dev test_pci;
 static struct bcma_bus test_bus;
@@ -80,12 +68,15 @@ static struct bcma_device test_cc_core;
 
 static void build_core(void)
 {
+	const struct board_profile *board =
+		board_profile_lookup(b43_test_env("B43_BOARD"));
+
 	test_bus.ops = &b43_test_bcma_ops;
 	test_bus.hosttype = BCMA_HOSTTYPE_PCI;
-	test_pci.device = D6220_PCI_DEVICE;
+	test_pci.device = board->pci_device;
 	test_bus.host_pci = &test_pci;
-	test_bus.chipinfo.id = D6220_CHIP_ID;
-	test_bus.chipinfo.rev = D6220_CHIP_REV;
+	test_bus.chipinfo.id = board->chip_id;
+	test_bus.chipinfo.rev = board->chip_rev;
 	test_bus.chipinfo.pkg = 0x1;
 
 	/*
@@ -106,12 +97,11 @@ static void build_core(void)
 	 * Su hardware la riempie bcma_sprom_extract_r11(); qui il profilo sta
 	 * al suo posto, con le stesse maschere.
 	 */
-	board_profile_to_sprom(board_profile_lookup(b43_test_env("B43_BOARD")),
-			       &test_bus.sprom);
+	board_profile_to_sprom(board, &test_bus.sprom);
 
 	test_core.bus = &test_bus;
-	test_core.id.id = D6220_CORE_ID;
-	test_core.id.rev = D6220_CORE_REV;
+	test_core.id.id = TEST_CORE_ID;
+	test_core.id.rev = TEST_CORE_REV;
 	test_core.id.manuf = BCMA_MANUF_BCM;
 	test_core.core_index = 0;
 }

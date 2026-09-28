@@ -20,6 +20,10 @@
 struct board_profile {
 	const char *name;
 	u16 chip_id;
+	/* chiprev e deviceid PCI, da `wl revinfo`: b43 legge il secondo per
+	 * decidere le bande, e l'integrazione li monta su chipinfo e host_pci. */
+	u8  chip_rev;
+	u16 pci_device;
 	u8  radio_rev;
 	u16 radio_ver;
 	u8  phy_rev;
@@ -93,6 +97,7 @@ struct board_profile {
  */
 static const struct board_profile PROFILE_D6220 = {
 	.name = "d6220", .chip_id = 0x4352, .radio_rev = 4,
+	.chip_rev = 0x3, .pci_device = 0x43b3,
 	/* macaddr=00:00:00:00:00:03 (wl1_nvram.txt) */
 	.macaddr = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x03 },
 	/* WLCOREREV e MACHW_L/H come li scrive il vendor: cold01 #652-#654 */
@@ -148,6 +153,7 @@ static const struct board_profile PROFILE_D6220 = {
 
 static const struct board_profile PROFILE_AGCOMBO = {
 	.name = "agcombo", .chip_id = 0x4360, .radio_rev = 4,
+	.chip_rev = 0x3, .pci_device = 0x43a2,
 	/* macaddr=00:c0:02:01:07:24 (agcombo/wl1_nvram.txt) */
 	.macaddr = { 0x00, 0xc0, 0x02, 0x01, 0x07, 0x24 },
 	.core_rev = 42, .mac_hw_cap = 0x30518c05,
@@ -217,6 +223,9 @@ static const struct board_profile PROFILE_AGCOMBO = {
  */
 static const struct board_profile PROFILE_DSL = {
 	.name = "dsl", .chip_id = 0x4352, .radio_rev = 4,
+	/* deviceid dalla lista PCI di router_info.txt; il chiprev di wl1 non
+	 * e' in nessun dump, e' quello del D6220, stesso chip. */
+	.chip_rev = 0x3, .pci_device = 0x43b3,
 	.radio_ver = 0x2069, .phy_rev = 1,
 	/* Same SROM words and the same ledbh10=0x88 as the D6220. */
 	.ledbh = { [0] = 0xff, [1] = 0xff, [2] = 0xff, [3] = 0xff,
@@ -270,6 +279,7 @@ static const struct board_profile PROFILE_DSL = {
  */
 static const struct board_profile PROFILE_TG789 = {
 	.name = "tg789", .chip_id = 0x4360, .radio_rev = 4,
+	.chip_rev = 0x3, .pci_device = 0x43a2,
 	/* macaddr=12:13:31:f6:da:77, il segnaposto del file di mappa. */
 	.macaddr = { 0x12, 0x13, 0x31, 0xf6, 0xda, 0x77 },
 	/* corerev 0x2a (wl1_revinfo) e MACHW_L/H come li scrive il vendor:
@@ -347,6 +357,9 @@ static inline void board_profile_to_sprom(const struct board_profile *p,
 	unsigned int c, b, w;
 
 	memset(s, 0, sizeof(*s));
+	/* The 802.11 core's address, which bcma takes from the same NVRAM
+	 * key: b43 registers it as the permanent address. */
+	memcpy(s->il0mac, p->macaddr, sizeof(s->il0mac));
 	s->rxchain = p->rxchain;
 	s->subband5gver = p->subband5gver;
 	for (b = 0; b < 2; b++)

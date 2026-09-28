@@ -153,7 +153,21 @@ static int oracle_has_other_core(FILE *f)
 }
 
 /*
- * Le righe della cattura: `<ts> #<ep> cpuN <CLASSE> addr=0x.. val=0x..`.
+ * La shared memory ha piu' spazi -- SHARED, SCRATCH, UCODE, ... -- con gli
+ * stessi indirizzi, e la cattura li distingue col campo `sel=` (la routing di
+ * B43_MMIO_SHM_CONTROL nei 16 bit alti). La coda e' per spazio: una sola coda
+ * per indirizzo darebbe alla lettura di UCODEREV il valore di un'altra
+ * routing allo stesso offset.
+ */
+static void shm_key(char *buf, size_t len, u32 routing)
+{
+	snprintf(buf, len, "OBJ.RD/%x", routing);
+}
+
+/*
+ * Le righe della cattura: `<ts> #<ep> cpuN <CLASSE> addr=0x.. val=0x..`, e
+ * `off=` al posto di `addr=` per i registri del MAC (REG.RD), che porta solo
+ * una cattura presa al bus (reverse-tools/mmio2ops.py).
  * Si prendono solo le letture, perche' l'oracolo risponde a quelle; le
  * scritture del vendor sono il termine di confronto, non un ingresso.
  */
@@ -192,9 +206,19 @@ static void oracle_load(void)
 	}
 	while (fgets(line, sizeof(line), f)) {
 		if (sscanf(line, "%*s #%*u cpu%*u %31s addr=0x%x val=0x%x",
+			   cls, &addr, &val) != 3 &&
+		    sscanf(line, "%*s #%*u cpu%*u %31s off=0x%x val=0x%x",
 			   cls, &addr, &val) != 3)
 			continue;
-		if (strstr(cls, ".RD"))
+		if (!strcmp(cls, "OBJ.RD")) {
+			const char *sel = strstr(line, " sel=0x");
+			unsigned routing = 0;
+
+			if (sel)
+				sscanf(sel, " sel=0x%x", &routing);
+			shm_key(cls, sizeof(cls), routing);
+			oracle_push(cls, (u16)addr, val);
+		} else if (strstr(cls, ".RD"))
 			oracle_push(cls, (u16)addr, val);
 		else if (!strcmp(cls, "PHY.MOD") || !strcmp(cls, "PHY.AND") ||
 			 !strcmp(cls, "PHY.OR"))
@@ -420,6 +444,34 @@ void b43_trace_fill(void *buf, unsigned long count, u16 off, u8 reg_width)
 u32 b43_trace_read(const char *cls, u16 addr, int width)
 {
 	return oracle_lookup(cls, addr, width);
+}
+
+int b43_trace_has(const char *cls, u16 addr)
+{
+	if (!oracle_loaded)
+		oracle_load();
+	return okey(cls, addr, 0) != NULL;
+}
+
+u32 b43_trace_read_shm(u32 routing, u16 addr, int width)
+{
+	char cls[32];
+
+	shm_key(cls, sizeof(cls), routing);
+	return oracle_lookup(cls, addr, width);
+}
+
+void b43_trace_consume_shm_if(u32 routing, u16 addr, u32 val)
+{
+	struct oracle_key *k;
+	char cls[32];
+
+	if (!oracle_loaded)
+		oracle_load();
+	shm_key(cls, sizeof(cls), routing);
+	k = okey(cls, addr, 0);
+	if (k && k->pos < k->n && k->vals[k->pos] == val)
+		k->last = k->vals[k->pos++];
 }
 
 /*

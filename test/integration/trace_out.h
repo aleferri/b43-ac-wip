@@ -28,6 +28,14 @@ void b43_trace_block(const char *cls, u16 off, unsigned long count,
 void b43_trace_fill(void *buf, unsigned long count, u16 off, u8 reg_width);
 u32  b43_trace_read(const char *cls, u16 addr, int width);
 u32  b43_trace_read_raw(u16 off, int width);
+/* Se la cattura porta almeno una lettura di (cls, addr). */
+int  b43_trace_has(const char *cls, u16 addr);
+/* Le letture di shared memory, con la coda dello spazio `routing` (i 16 bit
+ * alti di B43_MMIO_SHM_CONTROL, il `sel=` della cattura). */
+u32  b43_trace_read_shm(u32 routing, u16 addr, int width);
+/* Consuma la voce in testa a quella coda se vale `val`: la lettura l'ha
+ * servita un modello, ed e' la stessa che il vendor ha fatto. */
+void b43_trace_consume_shm_if(u32 routing, u16 addr, u32 val);
 
 /*
  * Lettura di una variabile d'ambiente intera, per gli stub che ne hanno

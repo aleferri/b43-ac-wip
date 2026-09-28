@@ -66,6 +66,10 @@ UPSTREAM := main.c phy_common.c bus.c xmit.c leds.c rfkill.c \
             phy_ac.c tables_phy_ac.c radio_2069.c rxiqcal_phy_ac.c \
             helpers_phy_ac.c ppr_ac.c
 
+# La gestione del core di bcma, anche lei com'e': reset, clock e PLL del
+# core passano dal wrapper e da clk_ctl_st, che lo stub traccia.
+BCMA := bcma/core.c
+
 # I nostri: il bus finto che emette le op. L'aggancio e' la vtable
 # bcma_host_ops, non i simboli bcma_* che il link chiede.
 LOCAL := bcma_stub.c subsystem_stub.c main.c
@@ -103,7 +107,7 @@ fetch:
 check:
 	@test -d $(K) || { echo "header kernel assenti: apt-get install linux-headers-generic"; exit 1; }
 	@test -f $(UP)/main.c || { echo "sorgenti b43 assenti: make fetch"; exit 1; }
-	@for f in $(UPSTREAM); do \
+	@for f in $(UPSTREAM) $(BCMA); do \
 	    n=$$(cd $(UP) && gcc -c $$f -o /dev/null $(KFLAGS) 2>&1 | grep -c 'error:'); \
 	    echo "  $$f: $$n errori"; \
 	done
@@ -111,10 +115,10 @@ check:
 # Traguardo 2: quanto manca al link, per famiglia. Il numero e' la mappa del
 # lavoro rimasto, e il README lo spiega voce per voce.
 link:
-	@for f in $(UPSTREAM); do (cd $(UP) && gcc -c $$f -o $${f%.c}.o $(KFLAGS)) || exit 1; done
+	@for f in $(UPSTREAM) $(BCMA); do (cd $(UP) && gcc -c $$f -o $${f%.c}.o $(KFLAGS)) || exit 1; done
 	@for f in $(LOCAL); do gcc -c $$f -o $${f%.c}.o $(KFLAGS) -I.; done
 	@for f in $(USER); do gcc -c $$f -o $${f%.c}.o $(UFLAGS) -I.; done
-	@ld -r $(patsubst %.c,$(UP)/%.o,$(UPSTREAM)) \
+	@ld -r $(patsubst %.c,$(UP)/%.o,$(UPSTREAM) $(BCMA)) \
 	      $(patsubst %.c,%.o,$(LOCAL)) $(patsubst %.c,%.o,$(USER)) \
 	      -o b43_partial.o
 	@nm -u b43_partial.o | awk '{print $$2}' | sort -u > residual.txt
@@ -155,4 +159,4 @@ run: b43-trace
 	    $(if $(B43_TIMELINE),B43_TIMELINE=$(B43_TIMELINE)) ./b43-trace 2>/dev/null)
 
 clean:
-	rm -f $(UP)/*.o *.o b43_partial.o residual.txt b43-trace
+	rm -f $(UP)/*.o $(UP)/bcma/*.o *.o b43_partial.o residual.txt b43-trace

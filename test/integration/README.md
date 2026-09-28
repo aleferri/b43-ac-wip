@@ -73,6 +73,25 @@ The strip matters more here than in `../unit`: the whole of b43 runs, and
 `b43_validate_chipaccess` reads `UCODEREV` and `UCODEPATCH`. Without the strip
 it would be served wl0's values.
 
+**A capture taken at the bus.** The agcombo captures of `wl-mmio-trap`
+(`router-data/agcombo/*.bin`) serve as oracle once decoded, and carry what a
+wl-diag segment cannot: the MAC registers (`REG.RD`, served by offset), the
+wrapper's IOST and every shared-memory space by its `sel=`. They need no
+strip, since the trap sees one core:
+
+```sh
+python3 ../../reverse-tools/mmio2ops.py ../../router-data/agcombo/ch36.bin \
+    --keep-flush -o /tmp/ch36.m2o
+python3 ../../reverse-tools/timeline.py /tmp/ch36.m2o /tmp/ch36.tl
+B43_BOARD=agcombo B43_READ_ORACLE=/tmp/ch36.m2o B43_CHANNEL=36 B43_BW=80 \
+    B43_TIMELINE=/tmp/ch36.tl B43_TRACE_OUT=/tmp/int36.trace ./b43-trace
+```
+
+`ch36` is a cold attach, the trap armed about 160 operations after it began;
+`ch100` and `ch149-wep` are hot ups and read no `UCODEREV`, so the probe of a
+run on those channels takes its reads from `ch36`. Each file ends with a
+down.
+
 **The output.**
 
 - `TRACE_OUT` writes the trace to a file (`B43_TRACE_OUT` for the binary);
@@ -82,7 +101,9 @@ it would be served wl0's values.
   rejected the probe) go to stderr.
 
 **Configuration.** `B43_CHANNEL` and `B43_BW` choose it. They are the same
-parameters `../unit` takes as `AC_CHANNEL` and `AC_BW`:
+parameters `../unit` takes as `AC_CHANNEL` and `AC_BW`; `B43_BOARD` picks the
+board profile of `../board_profile.h` (chip, chip revision, PCI device, SROM),
+as the unit harness's argument does:
 
 ```sh
 make run ORACLE=/tmp/m05 B43_CHANNEL=52 B43_BW=20 TRACE_OUT=/tmp/t
@@ -188,11 +209,21 @@ at registration as a named table, `wl_default_locale_5g`.
 
 **`bcma_stub.c`** serves the bus:
 
-- MMIO reads come from the oracle;
-- shared-memory accesses are reported at their byte offset, with a 32-bit access
-  split into the two 16-bit operations the vendor emits;
+- MMIO reads come from the oracle, and every read of a MAC register is in the
+  trace as `REG.RD`;
+- shared-memory accesses are reported at their byte offset, with a 32-bit
+  access to SHARED split into the two 16-bit operations the vendor emits; the
+  other spaces (the address match table) are one 32-bit operation per word,
+  as at the bus;
 - `MACCONTROL` is a latch;
-- the ucode's `B43_IRQ_MAC_SUSPENDED` answers `b43_upload_microcode()`.
+- the ucode's `B43_IRQ_MAC_SUSPENDED` answers `b43_upload_microcode()`;
+- the agent space is traced as `WRAP.RD/WR`: IOCTL and RESET_CTL are latches,
+  RESET_ST is zero, IOST comes from a bus capture or is the D6220's;
+- `clk_ctl_st` follows its requests: ALP and HT always available, the
+  backplane on HT while FORCEHT is set.
+
+`bcma_core_enable/disable`, `bcma_core_set_clockmode` and `bcma_core_pll_ctl`
+are drivers/bcma/core.c itself, fetched with b43 at the same tag.
 
 **`subsystem_stub.c`** stands in for mac80211 and cfg80211:
 

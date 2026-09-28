@@ -76,45 +76,32 @@ void b43_test_raise_irq(u32 reason)
 /*
  * Le quattro celle di b43_validate_chipaccess(), e solo quelle.
  *
- * Il self-test scrive e rilegge SHM_SHARED 0..7, e l'oracolo non lo puo'
- * servire fino in fondo: la meta' allineata sta nella cattura (#511-#522) ma
- * quella non allineata usa 0x1122/0x3344/0x5566/0x7788, che `wl` non esegue.
- * Le code per (classe, indirizzo) hanno quattro valori per 0x0000 e 0x0002 e
- * zero per 0x0004 e 0x0006, contro le cinque e sei letture di b43: ogni op in
- * piu' sfasa tutte le successive, e la lettura di UCODEREV di
- * b43_upload_microcode() finisce sul fallback invece che in posizione.
+ * Sono UCODEREV, UCODEPATCH, UCODEDATE e UCODETIME (SHM_SHARED 0x0000-0x0006).
+ * Finche' il PSM e' fermo sono RAM del driver: il self-test ci scrive i suoi
+ * pattern e li rilegge, b43_upload_microcode() le azzera con il resto della
+ * shared memory. Quando il PSM parte le riscrive il microcodice, e da li' in
+ * poi il valore e' suo: lo serve l'oracolo, perche' qui il microcodice non
+ * c'e'.
  *
- * Che siano RAM lo dimostra la cattura, non un'assunzione: a #513 e #515 il
- * vendor rilegge esattamente cio' che #511 e #512 avevano scritto due op
- * prima. Quindi qui la scrittura vince sull'oracolo, che serve la cella solo
- * finche' nessuno l'ha scritta.
+ * Il modello non puo' essere l'oracolo nemmeno a PSM fermo. La meta' non
+ * allineata del self-test usa 0x1122/0x3344/0x5566/0x7788, che `wl` non
+ * esegue, e la versione 7.14.43 del driver stock non esegue affatto il test:
+ * le code per indirizzo non hanno quelle letture, e servirle dalla cattura
+ * darebbe al self-test i valori dell'ucode, cioe' un probe che fallisce.
  *
- * La lista e' a mano e corta di proposito. Il write-through NON e' corretto
- * in generale: le celle che aggiorna il ucode -- la finestra statistiche
- * 0x0300-0x0314, i contatori 0x0768-0x0788, il TSSI -- il port le azzera e le
- * rilegge, e servirle dal modello restituirebbe zero al posto dei valori del
- * vendor, cioe' farebbe passare il gate del watchdog misurando niente. Il
- * criterio che le separa e' nella cattura (le ucode-owned il vendor le legge
- * piu' di quanto le scriva) e non e' stato estratto: quando servira' un'altra
- * cella si estrae allora.
+ * Una lettura servita dal modello consuma dalla coda dell'oracolo la voce in
+ * testa solo se ha lo stesso valore: e' la stessa lettura fatta dal vendor
+ * (il D6220 esegue la meta' allineata, #511-#522 del segmento di
+ * riferimento). Una voce diversa e' di una lettura successiva e resta al suo
+ * posto.
  *
- * Perche' 0x0000 e 0x0002 NON sono nella lista, pur essendo del self-test:
- * sono UCODEREV e UCODEPATCH, e a scriverle e' il microcodice quando parte,
- * non il driver. Modellarle sembrava funzionare -- il ripristino del
- * self-test rimette i valori che l'oracolo aveva servito -- ma piu' avanti
- * b43 le azzera prima di avviare il PSM, e allora il modello serviva quello
- * zero a b43_upload_microcode(), che rifiutava il firmware come troppo
- * vecchio (`fwrev <= 0x128`). Restano all'oracolo, dove il fallback a coda
- * esaurita da' 0x03a0 e 0x2715 perche' l'ultimo valore visto e' il contenuto
- * vero della cella.
- *
- * Il prezzo e' un `b43warn` sul path non allineato -- read16(0) prende la
- * quarta voce della coda, 0x03a0, dove b43 si aspetta 0x1122 -- e si paga
- * volentieri: quell'avviso e' cosmetico e non tocca il flusso, mentre fwrev
- * decide il ramo dell'ucode e meta' del bring-up.
+ * Il write-through NON e' corretto in generale: le celle che aggiorna il ucode
+ * -- la finestra statistiche 0x0300-0x0314, i contatori 0x0768-0x0788, il TSSI
+ * -- il port le azzera e le rilegge, e servirle dal modello restituirebbe
+ * zero al posto dei valori del vendor, cioe' farebbe passare il gate del
+ * watchdog misurando niente. Per questo la lista e' corta.
  */
-#define SHM_MODEL_FIRST	4		/* byte 0x0004 */
-#define SHM_MODEL_CELLS	2		/* byte 0x0004 e 0x0006 */
+#define SHM_MODEL_CELLS	4		/* byte 0x0000, 0x0002, 0x0004, 0x0006 */
 
 static u16 shm_model[SHM_MODEL_CELLS];
 static bool shm_model_written[SHM_MODEL_CELLS];
@@ -122,17 +109,21 @@ static bool shm_model_written[SHM_MODEL_CELLS];
 static int shm_model_slot(u32 routing, u16 byte_off)
 {
 	if (routing != B43_SHM_SHARED || (byte_off & 1) ||
-	    byte_off < SHM_MODEL_FIRST ||
-	    byte_off >= SHM_MODEL_FIRST + SHM_MODEL_CELLS * 2)
+	    byte_off >= SHM_MODEL_CELLS * 2)
 		return -1;
-	return (byte_off - SHM_MODEL_FIRST) / 2;
+	return byte_off / 2;
+}
+
+static bool shm_model_active(void)
+{
+	return !(macctl & B43_MACCTL_PSM_RUN);
 }
 
 static void shm_model_store(u32 routing, u16 byte_off, u16 val)
 {
 	int slot = shm_model_slot(routing, byte_off);
 
-	if (slot < 0)
+	if (slot < 0 || !shm_model_active())
 		return;
 	shm_model[slot] = val;
 	shm_model_written[slot] = true;
@@ -143,9 +134,10 @@ static bool shm_model_load(u32 routing, u16 byte_off, u16 *val)
 {
 	int slot = shm_model_slot(routing, byte_off);
 
-	if (slot < 0 || !shm_model_written[slot])
+	if (slot < 0 || !shm_model_active() || !shm_model_written[slot])
 		return false;
 	*val = shm_model[slot];
+	b43_trace_consume_shm_if(routing << 16, byte_off, *val);
 	return true;
 }
 
@@ -201,11 +193,17 @@ static u16 shm_word_read(u32 routing, u16 off)
 	u16 val;
 
 	if (!shm_model_load(routing >> 16, off, &val))
-		val = (u16)b43_trace_read("OBJ.RD", off, 16);
+		val = (u16)b43_trace_read_shm(routing, off, 16);
 	b43_trace_shm("OBJ.RD", routing | off, val, 16);
 	return val;
 }
 
+/*
+ * Le altre routing -- la tabella di match degli indirizzi (RCMTA), gli
+ * scratch -- non hanno la meta' a 16 bit: l'indice e' di una parola a 32 bit,
+ * e il vendor al bus le legge e scrive cosi', una op per parola
+ * (OBJ.WR sel=0x40000 addr=0x007e val=0x0102c000 sulla riga della stazione).
+ */
 static void shm_note_write(u16 port, u32 val, int width)
 {
 	u32 routing = shm_routing_off & 0xffff0000u;
@@ -213,6 +211,10 @@ static void shm_note_write(u16 port, u32 val, int width)
 
 	if (width != 32) {
 		shm_word_write(routing, off, (u16)val);
+		return;
+	}
+	if (routing >> 16 != B43_SHM_SHARED) {
+		b43_trace_shm("OBJ.WR", routing | off, val, 32);
 		return;
 	}
 	shm_word_write(routing, off, (u16)(val >> 16));
@@ -227,8 +229,48 @@ static u32 shm_note_read(u16 port, int width)
 
 	if (width != 32)
 		return shm_word_read(routing, off);
+	if (routing >> 16 != B43_SHM_SHARED) {
+		u32 v = b43_trace_read_shm(routing, off, 32);
+
+		b43_trace_shm("OBJ.RD", routing | off, v, 32);
+		return v;
+	}
 	hi = shm_word_read(routing, off);
 	return (hi << 16) | shm_word_read(routing, (u16)(off + 2));
+}
+
+/*
+ * clk_ctl_st del core 802.11 (BCMA_CLKCTLST), che bcma_core_set_clockmode()
+ * e bcma_core_pll_ctl() di drivers/bcma/core.c scrivono e poi interrogano
+ * finche' lo stato non segue la richiesta: fino a 1500 e 10000 giri, cioe'
+ * tutta la traccia se la lettura torna zero.
+ *
+ * La meta' bassa sono le richieste del driver e si rilegge come scritta. La
+ * meta' alta e' lo stato, e il comportamento e' quello della cattura al bus
+ * dell'agcombo (#119-#121, #19216-#19217): ALP e HT sono sempre disponibili,
+ * il backplane gira su HT mentre FORCEHT e' alto e su ALP altrimenti, e le tre
+ * risorse esterne sono su (EXTRESST = 7) anche senza richiesta, perche' le
+ * tiene il PMU. Il valore iniziale delle richieste e' la prima lettura della
+ * cattura quando c'e' (0x0040, HQCLKREQ, sull'agcombo), zero se no.
+ */
+static u32 clkctlst_req;
+static bool clkctlst_init;
+
+static u32 clkctlst_read(void)
+{
+	u32 v;
+
+	if (!clkctlst_init) {
+		clkctlst_init = true;
+		if (b43_trace_has("REG.RD", BCMA_CLKCTLST))
+			clkctlst_req = b43_trace_read_raw(BCMA_CLKCTLST, 32) &
+				       0xffff;
+	}
+	v = clkctlst_req | BCMA_CLKCTLST_HAVEALP | BCMA_CLKCTLST_HAVEHT |
+	    BCMA_CLKCTLST_EXTRESST;
+	v |= (clkctlst_req & BCMA_CLKCTLST_FORCEHT) ? BCMA_CLKCTLST_BP_ON_HT
+						    : BCMA_CLKCTLST_BP_ON_ALP;
+	return v;
 }
 
 static void note_write(struct bcma_device *core, u16 off, u32 val, int width)
@@ -264,6 +306,11 @@ static void note_write(struct bcma_device *core, u16 off, u32 val, int width)
 		return;
 	case B43_MMIO_GEN_IRQ_REASON:
 		irq_pending &= ~val;
+		b43_trace_raw("REG.WR", off, val, width);
+		return;
+	case BCMA_CLKCTLST:
+		clkctlst_init = true;
+		clkctlst_req = val & 0xffff;
 		b43_trace_raw("REG.WR", off, val, width);
 		return;
 	default:
@@ -305,7 +352,8 @@ static u32 note_read(struct bcma_device *core, u16 off, int width)
 
 	switch (off) {
 	case B43_MMIO_PHY_VER:
-		return phy_version_word();
+		v = phy_version_word();
+		break;
 	/*
 	 * L'identita' della radio, che b43 legge a `b43_radio_versioning`
 	 * (main.c:4679) per corerev 40/42: scrive 0 in RADIO24_CONTROL e la
@@ -335,15 +383,21 @@ static u32 note_read(struct bcma_device *core, u16 off, int width)
 	case B43_MMIO_SHM_DATA_UNALIGNED:
 		return shm_note_read(off, width);
 	case B43_MMIO_MACCTL:
-		return macctl;
+		v = macctl;
+		break;
+	case BCMA_CLKCTLST:
+		v = clkctlst_read();
+		break;
 	/*
 	 * La risposta del microcodice. b43_upload_microcode() (main.c:2790)
 	 * avvia il PSM e poi aspetta B43_IRQ_MAC_SUSPENDED qui, venti giri e
 	 * poi "Microcode not responding"; b43_mac_suspend() aspetta lo stesso
 	 * bit.
 	 *
-	 * L'oracolo non lo puo' servire: il tracer del vendor non aggancia le
-	 * letture MMIO grezze, e in nessuna cattura c'e' una REG.RD 0x128. Il
+	 * L'oracolo non lo puo' servire. Le catture wl-diag non hanno le
+	 * letture MMIO grezze; quelle prese al bus le hanno, ma sono le
+	 * risposte a un'altra sequenza di eventi, e servite in coda darebbero
+	 * a b43 le cause di interruzione di wl fuori dal loro contesto. Il
 	 * valore lo produce il microcodice, e il microcodice qui e' lo shim --
 	 * il blob di kernel_shim.c e' un header valido senza codice dentro,
 	 * quindi il PSM non partirebbe mai. Rispondere e' il modello, non
@@ -353,10 +407,18 @@ static u32 note_read(struct bcma_device *core, u16 off, int width)
 	 * degli interrupt, e un latch restituirebbe l'ACK invece dello stato.
 	 */
 	case B43_MMIO_GEN_IRQ_REASON:
-		return B43_IRQ_MAC_SUSPENDED | irq_pending;
+		v = B43_IRQ_MAC_SUSPENDED | irq_pending;
+		break;
 	default:
-		return b43_trace_read_raw(off, width);
+		v = b43_trace_read_raw(off, width);
+		break;
 	}
+	/*
+	 * Un registro del MAC, non una porta: sul bus e' una lettura a se', e
+	 * una cattura presa li' la porta come REG.RD.
+	 */
+	b43_trace_raw("REG.RD", off, v, width);
+	return v;
 }
 
 static u8 stub_read8(struct bcma_device *core, u16 off)
@@ -408,29 +470,63 @@ static void stub_block_write(struct bcma_device *core, const void *buf,
 }
 
 /*
- * Lo spazio "agent" del core, che e' una vtable a parte: `bcma_aread32` non
- * passa dalle read32 qui sopra. b43 lo interroga a `b43_wireless_core_attach`
- * (main.c:5393) per sapere quali bande il PHY supporta, e da quella risposta
- * dipendono `have_2ghz_phy` e `have_5ghz_phy` -- cioe' quale PHY alloca e
- * quali bande registra. Non e' un accessorio: senza, b43 non sa che core ha.
+ * Lo spazio "agent" del core, il wrapper, che e' una vtable a parte:
+ * `bcma_aread32` non passa dalle read32 qui sopra. Ci passano il reset e i
+ * clock del core -- bcma_core_enable/disable, compilati dalla suite com'e'
+ * in drivers/bcma/core.c -- e i bit PHY di IOCTL che b43 tocca da se'. Sul
+ * bus e' la finestra 0x1000-0x1fff, che reverse-tools/mmio2ops.py riporta
+ * come WRAP.RD/WR con l'offset nel wrapper: qui si traccia con lo stesso
+ * nome.
  *
- * Sul d6220 wl1 e' il core 5 GHz, quindi BCMA_IOST porta il bit 5G e non il
- * 2G. Non compare nella traccia del vendor: il tracer di wl aggancia le
- * funzioni di accesso ai registri PHY e radio, non lo spazio agent.
+ * IOCTL e RESET_CTL sono registri di controllo e si rileggono come scritti:
+ * un latch. RESET_ST e' lo stato di una transazione di reset in corso, e fuori
+ * da una transazione vale zero, che e' cio' che bcma_core_disable() aspetta.
+ *
+ * IOST lo serve l'oracolo quando la cattura e' presa al bus (0x100c
+ * sull'agcombo: DMA64, FASTCLKA, DUALB). Le catture wl-diag non hanno lo
+ * spazio agent, e allora vale la costante del D6220, dove wl1 e' il core
+ * 5 GHz: da quella risposta b43_wireless_core_attach() (main.c:5393) ricava
+ * have_2ghz_phy e have_5ghz_phy.
  */
 /* I valori sono quelli di b43.h:509, non inventati qui. */
 #define B43_BCMA_IOST_2G_PHY	0x00000001	/* 2.4G capable phy */
 #define B43_BCMA_IOST_5G_PHY	0x00000002	/* 5G capable phy */
 
+static u32 agent_ioctl, agent_resetctl;
+
+static u32 agent_read(u16 off)
+{
+	switch (off) {
+	case BCMA_IOCTL:
+		return agent_ioctl;
+	case BCMA_RESET_CTL:
+		return agent_resetctl;
+	case BCMA_IOST:
+		if (b43_trace_has("WRAP.RD", off))
+			return b43_trace_read("WRAP.RD", off, 32);
+		return B43_BCMA_IOST_5G_PHY;
+	case BCMA_RESET_ST:
+		return 0;
+	default:
+		return b43_trace_read("WRAP.RD", off, 32);
+	}
+}
+
 static u32 stub_aread32(struct bcma_device *core, u16 off)
 {
-	if (off == BCMA_IOST)
-		return B43_BCMA_IOST_5G_PHY;
-	return 0;
+	u32 v = agent_read(off);
+
+	b43_trace_raw("WRAP.RD", off, v, 32);
+	return v;
 }
 
 static void stub_awrite32(struct bcma_device *core, u16 off, u32 val)
 {
+	if (off == BCMA_IOCTL)
+		agent_ioctl = val;
+	else if (off == BCMA_RESET_CTL)
+		agent_resetctl = val;
+	b43_trace_raw("WRAP.WR", off, val, 32);
 }
 
 const struct bcma_host_ops b43_test_bcma_ops = {
