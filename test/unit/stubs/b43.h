@@ -400,6 +400,8 @@ void bcma_chipco_regctl_maskset(struct bcma_drv_cc *cc, u32 offset,
 #define B43_SHM_SH_HOSTF5         0x00D4
 #define B43_SHM_SH_RFATT          0x0064
 #define B43_MMIO_MACCTL           0x120
+#define B43_MACCTL_AP             0x00040000	/* b43.h */
+#define B43_DMA64_TXSUSPEND       0x00000002	/* dma.h */
 #define B43_MMIO_MACCMD           0x124
 #define B43_MACCMD_BGNOISE        0x00000010
 

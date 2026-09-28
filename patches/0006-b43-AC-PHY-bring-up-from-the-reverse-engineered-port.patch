@@ -1,4 +1,4 @@
-From 89ff21707972525c043273d98aea3577913d33a6 Mon Sep 17 00:00:00 2001
+From d7ac86fba6f934a445d32d49f320d6a304070449 Mon Sep 17 00:00:00 2001
 From: c <c@l>
 Date: Tue, 8 Sep 2026 14:29:02 +0000
 Subject: [PATCH] b43: AC-PHY bring-up from the reverse-engineered port
@@ -11,7 +11,7 @@ Regenerated from src/ rather than maintained by hand, so it cannot drift out
 of sync with the tree the unit suite measures.
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     5 +
- .../wireless/broadcom/b43/helpers_phy_ac.c    |    66 +
+ .../wireless/broadcom/b43/helpers_phy_ac.c    |    75 +
  drivers/net/wireless/broadcom/b43/phy_ac.c    | 11349 +++++++++++++++-
  drivers/net/wireless/broadcom/b43/phy_ac.h    |   817 +-
  drivers/net/wireless/broadcom/b43/ppr_ac.c    |   255 +
@@ -22,7 +22,7 @@ of sync with the tree the unit suite measures.
  .../wireless/broadcom/b43/rxiqcal_phy_ac.h    |    23 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1153 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    79 +
- 12 files changed, 15933 insertions(+), 23 deletions(-)
+ 12 files changed, 15942 insertions(+), 23 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -51,10 +51,10 @@ index 54f92ce..f60b35e 100644
  b43-y				+= dma.o
 diff --git a/drivers/net/wireless/broadcom/b43/helpers_phy_ac.c b/drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
 new file mode 100644
-index 0000000..5d18443
+index 0000000..d062266
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,75 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +/*
 + * Broadcom B43 wireless driver AC-PHY low-level helpers.
@@ -116,9 +116,18 @@ index 0000000..5d18443
 + * Read/modify/write of B43_MMIO_MACCTL. The b43 core has no such helper;
 + * call sites inline b43_maskset32() instead. Wrapping it here keeps the
 + * AC-PHY setup readable and gives the trace harness a symbol to intercept.
++ *
++ * While the channel availability check runs the MAC is muted, and the AP
++ * bit does not reach the register: the stock driver's mode setup asks for
++ * it on every bring-up, the register carries it only once the check has
++ * ended (0x44020402 where a channel without the check has 0x44060402, at
++ * the bus on the agcombo). b43_ac_cac_match_gate() in the core sets it when
++ * it opens.
 + */
 +void b43_maccontrol_set(struct b43_wldev *dev, u32 mask, u32 set)
 +{
++	if (dev->cac_pending)
++		set &= ~B43_MACCTL_AP;
 +	b43_maskset32(dev, B43_MMIO_MACCTL, mask, set);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c

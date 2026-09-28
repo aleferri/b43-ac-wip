@@ -1525,6 +1525,22 @@ static u16 beacon_tpl_len(void)
  */
 static void emit_core_cac_gate(bool open)
 {
+	/*
+	 * I cinque FIFO TX nell'ordine del vendor: 1, 3, 0, 2, 4. In chiusura
+	 * ciascuno e' preceduto da una lettura di MACCONTROL, in apertura no.
+	 */
+	static const u16 txctl[] = { 0x0240, 0x02c0, 0x0200, 0x0280, 0x0300 };
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(txctl); i++) {
+		u32 v;
+
+		if (!open)
+			b43_read32(&g_wldev, B43_MMIO_MACCTL);
+		v = b43_read32(&g_wldev, txctl[i]);
+		b43_write32(&g_wldev, txctl[i],
+			    open ? v & ~B43_DMA64_TXSUSPEND : v | B43_DMA64_TXSUSPEND);
+	}
 	b43_test_emit_amt(0x3f, open ? 0x8008 : 0);
 }
 

@@ -33,28 +33,35 @@ is from the stock driver.
 | `pwork_60sec` | b43 periodic work | CRS minimum-power threshold, written only when it changes |
 
 After the bring-up the stock driver no longer drives the flow: it reacts to
-events. Three entry points model that. On hardware nothing calls them yet; the
-unit harness drives them from the capture's timestamps (`reverse-tools/timeline.py`):
+events. Three entry points model that, and `patches/0003` wires them into the
+core; the unit harness drives them from the capture's timestamps instead
+(`reverse-tools/timeline.py`):
 
-| entry | event in the stock driver | missing wiring |
+| entry | event in the stock driver | core wiring |
 |---|---|---|
-| `b43_phy_ac_watchdog()` | 1 s watchdog callback | b43 has only the 15 s and 60 s works |
-| `b43_phy_ac_radar_poll()` | 150 ms radar-detector timer (`PHY 0x0251`/`0x0252`) | no timer; b43 does not advertise radar detection |
-| `b43_phy_ac_bss_up()` | AP start after the availability check: AMT row restored, tempsense, calibration block | `bss_info_changed(BEACON_ENABLED)` must call it |
+| `b43_phy_ac_watchdog()` | 1 s watchdog callback | `pwork_1sec`, a 1 s periodic work while the PHY has it |
+| `b43_phy_ac_radar_poll()` | 150 ms radar-detector timer (`PHY 0x0251`/`0x0252`) | `radar_work`, queued by `b43_op_config()` while `conf->radar_enabled` |
+| `b43_phy_ac_bss_up()` | AP start after the availability check | the first 1 s tick after `bss_info_changed(BEACON_ENABLED)` has cleared the check |
 
-The CAC state is `ac->cac_pending`:
+The check is `dev->cac_pending`, set by `b43_op_config()` on a radar channel
+with `conf->radar_enabled` and nothing beaconing, cleared by
+`bss_info_changed(BEACON_ENABLED)`; the PHY keeps its own copy in
+`ac->cac_pending`, which `bss_up()` clears. `b43_phy_ac_may_calibrate_tx()` is
+its complement on channels with radar duty.
 
-- `b43_phy_ac_may_calibrate_tx()` is its complement on channels with radar
-  duty (`IEEE80211_CHAN_RADAR`);
-- `bss_up()` clears it;
-- nothing in the kernel sets it. On hardware the arm belongs in
-  `b43_op_config()` when `hw->conf.radar_enabled` rises.
+While the check is pending the MAC is muted, and `b43_ac_cac_match_gate()` in
+the core opens and closes it at the two transitions, in the order the stock
+driver writes at the bus (the agcombo ch100 hot up, `router-data/agcombo/`):
 
-Two helpers are declared in `phy_ac.h` for the core to define:
+- the five TX FIFOs, suspended 1, 3, 0, 2, 4 with a read of MACCONTROL before
+  each, resumed in the same order;
+- the station row of the address match table, cleared and rewritten with the
+  address and flags `0x8008`;
+- `B43_MACCTL_AP`: `b43_maccontrol_set()` and `b43_adjust_opmode()` keep it
+  off the register while the check runs, the gate sets it when it opens.
 
-- `b43_ac_cac_match_gate()` suspends and restores AMT row `0x3f` around the
-  check;
-- `b43_ac_beacon_reload()` reloads the beacon template.
+The beacon template reload the stock driver does from its watchdog turn has no
+core counterpart yet (`b43_ac_beacon_reload()`, see `retrace-todo.md`).
 
 ## Driver warnings
 

@@ -153,24 +153,22 @@ with another SSID fails silently.
 
 ## Core: hardware wiring of the event model
 
-On hardware none of this runs yet (see `driver-status.md`):
-
-- arm the check in `b43_op_config()` when `hw->conf.radar_enabled` rises;
-- call `b43_phy_ac_bss_up()` from `bss_info_changed(BEACON_ENABLED)`;
-- give the PHY a 1 s work for `b43_phy_ac_watchdog()` and a 150 ms timer for
-  `b43_phy_ac_radar_poll()`;
-- define `b43_ac_cac_match_gate()` and `b43_ac_beacon_reload()` in the core.
+The check, the 1 s tick, the radar timer and the bss-up are wired (see
+`driver-status.md`). What is left is the beacon template reload the stock
+driver does from its watchdog turn, `b43_ac_beacon_reload()`.
 
 The stock driver loads beacon templates from inside its own watchdog turn; b43
 does it from `bss_info_changed` under the mutex. In the comparison each such
 reload is a movable core block. It costs 32–57 operations of displacement each,
 and `cmp_skip.py` has no category for it.
 
-Once the wiring exists, hostapd finishes the availability check **before** the
-AP comes up, so `cac_pending` will be false at bring-up, and the calibrations
-will run where the cold captures show them skipped. The cold gate rewards the
-skipped form only because the harness declares a freshly loaded module's check
-pending. `AC_DFS_CAC_DONE` exercises the other case.
+The check is pending at bring-up, and the calibrations it holds back run at
+the bss-up, on the hot up as on the cold attach: the agcombo ch100/80 hot up
+captured at the bus (`router-data/agcombo/ch100.bin`) keeps the MAC muted
+for 61 s -- TX FIFOs suspended, station row cleared, no AP bit -- polls the
+detector 452 times and opens the gate before the calibration block. The
+harness declares the check pending on every radar channel, cold or hot;
+`AC_DFS_CAC_DONE` exercises a channel whose check an earlier owner passed.
 
 At rmmod the stock driver issues `SI.COREREG core=0 off=0x80 val=4`, which is
 `pcie_watchdog_reset()` from `si_detach()`. bcma has no equivalent.
