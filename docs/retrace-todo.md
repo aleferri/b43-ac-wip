@@ -137,7 +137,12 @@ This is deliberately off: b43 writes `PRMAXTIME=1`, and the item is declared in
 1. Keep only `b43_chip_init()`'s `PRMAXTIME=0`. The stock driver writes it
    once, b43 twice.
 2. Add a `b43_write_probe_resp_template()` in the core, on the model of the
-   beacon template, at template RAM `0x0700`.
+   beacon template, at template RAM `0x0700` (the TODO next to
+   `B43_SHM_SH_BT_BASE0_AC` in `patches/0021`). At the bus the stock driver
+   rewrites it after every beacon, once the beacon length and the MACCMD
+   valid bits are written: one `RAM_CONTROL`, then 76 words on the agcombo.
+   The probe response comes from mac80211 with
+   `NL80211_PROBE_RESP_OFFLOAD_SUPPORT_*` and `ieee80211_proberesp_get()`.
 3. Write the timings `0x0180`/`0x0182`/`0x0184`/`0x0186` = `0x0527`/`0x01f4`/
    `0`/`0x0032`. The stock driver writes them twice; the first time falls
    inside `op_init`, between `bcma_chipco_gpio_control()` and `mode_init`.
