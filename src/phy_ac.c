@@ -2385,7 +2385,7 @@ static void b43_phy_ac_cca_pulse(struct b43_wldev *dev)
 	B43_AC_FN();
 	struct b43_phy_ac *phy_ac = dev->phy.ac;
 
-	b43_phy_force_clock(dev, true);
+	b43_phy_ac_force_clock(dev, true);
 	b43_phy_maskset(dev, B43_PHY_AC_BBCFG,
 			(u16)~B43_PHY_AC_BBCFG_RSTCCA,
 			B43_PHY_AC_BBCFG_RSTCCA);
@@ -2394,7 +2394,7 @@ static void b43_phy_ac_cca_pulse(struct b43_wldev *dev)
 	b43_phy_maskset(dev, B43_PHY_AC_BBCFG,
 			(u16)~B43_PHY_AC_BBCFG_RSTCCA, 0);
 	phy_ac->status_mask &= ~B43_PHY_AC_STATE_CCA_RESET;
-	b43_phy_force_clock(dev, false);
+	b43_phy_ac_force_clock(dev, false);
 }
 
 /*
@@ -7257,7 +7257,7 @@ void b43_phy_ac_post_rxiqcal_stage2(struct b43_wldev *dev)
 	 * annidato in mezzo. Da qui l'alternanza 1,1,0,0 al posto di 1,0,1,0
 	 * negli argomenti di PHY.FGC, due volte su cold01.
 	 */
-	b43_phy_force_clock(dev, true);
+	b43_phy_ac_force_clock(dev, true);
 	b43_phy_write(dev, 0x0382, 0x8a09);
 
 	/* B4a: three fixed per-core groups, each of four table writes at
@@ -7734,7 +7734,7 @@ void b43_phy_ac_rxcal_afe_finalize_gain_luts(struct b43_wldev *dev)
 	b43_phy_ac_cca_pulse(dev);
 	b43_phy_write(dev, 0x0382, 0x0000);
 	/* Chiusura della finestra di force aperta con la 0x0382 = 0x8a09. */
-	b43_phy_force_clock(dev, false);
+	b43_phy_ac_force_clock(dev, false);
 
 	for (i = 0; i < 0x80; i++) {
 		for (core = 0; core < dev->phy.ac->num_cores; core++) {
@@ -8118,7 +8118,7 @@ void b43_phy_ac_rxiqcal_dds_seed(struct b43_wldev *dev)
 	static const u16 zeros[2] = { 0, 0 };
 
 	/* 1 op: arm command */
-	b43_phy_force_clock(dev, true);
+	b43_phy_ac_force_clock(dev, true);
 	b43_phy_write(dev, 0x0382, 0x8a09);
 
 	/* 3× 8 op: azzera 3 zone da 2 slot in TBL 0x000c */
@@ -8286,7 +8286,7 @@ void b43_phy_ac_rxiqcal_apply_tx_bbmult_kick(struct b43_wldev *dev)
 	b43_phy_ac_cca_pulse(dev);
 	b43_phy_write(dev, 0x0382, 0x0000);
 	/* Chiusura della finestra di force aperta con la 0x0382 = 0x8a09. */
-	b43_phy_force_clock(dev, false);
+	b43_phy_ac_force_clock(dev, false);
 }
 
 /*

@@ -1,4 +1,4 @@
-From 0ccfecf29b6087028ee592f45f32687825d31511 Mon Sep 17 00:00:00 2001
+From d90a3f853a077140d6b6ac8244a5870dce6d3fcf Mon Sep 17 00:00:00 2001
 From: Alessandro Ferri <aleferri@example.invalid>
 Date: Mon, 28 Sep 2026 22:58:57 +0000
 Subject: [PATCH] b43: read back register addresses as the stock driver does
@@ -89,7 +89,7 @@ index 625c8be..c137b3c 100644
  
  u32 b43_shm_read32(struct b43_wldev *dev, u16 routing, u16 offset)
 diff --git a/drivers/net/wireless/broadcom/b43/phy_common.c b/drivers/net/wireless/broadcom/b43/phy_common.c
-index 0acd049..46d5ca3 100644
+index 9674b94..f4713e6 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_common.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_common.c
 @@ -222,7 +222,7 @@ u16 b43_radio_read(struct b43_wldev *dev, u16 reg)

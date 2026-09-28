@@ -403,6 +403,9 @@ void bcma_chipco_regctl_maskset(struct bcma_drv_cc *cc, u32 offset,
 #define B43_MMIO_MACCTL           0x120
 #define B43_MACCTL_AP             0x00040000	/* b43.h */
 #define B43_MMIO_PHY0             0x3E6
+#define B43_MMIO_PSM_PHY_HDR      0x492
+#define B43_PSM_HDR_MAC_PHY_CLOCK_EN	0x00000002
+#define B43_PSM_HDR_MAC_PHY_FORCE_CLK	0x00000004
 #define B43_BCMA_IOCTL_PHY_BW_20MHZ	0x00000040
 #define B43_BCMA_IOCTL_PHY_BW_40MHZ	0x00000080
 #define B43_BCMA_IOCTL_PHY_BW_80MHZ	0x000000C0

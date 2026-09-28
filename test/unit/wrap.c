@@ -26,8 +26,8 @@
  *   cpu1 PHY.MOD  addr=0xNNNN val=0xNNNN mask=0xNNNN
  *   cpu1 RAD.WR   addr=0xNNNN val=0xNNNN
  *   cpu1 RAD.RD   addr=0xNNNN val=UNDEFINED
- *   cpu1 MMIO.WR  off=0xNNNN  val=0xNNNN
- *   cpu1 MMIO.RD  off=0xNNNN  val=UNDEFINED
+ *   cpu1 REG.WR   off=0xNNNN val=0xNNNN
+ *   cpu1 REG.RD   off=0xNNNN val=0xNNNN
  *   cpu1 TBL.WR   id=0xNNNN off=0xNNNN len=N
  *   cpu1 TBL.RD   id=0xNNNN off=0xNNNN len=N
  *
@@ -910,14 +910,14 @@ u16 __wrap_b43_read16(struct b43_wldev *dev, u16 off)
 	} else {
 		v = (off < MIRROR_MMIO_SZ) ? mirror_mmio[off] : 0;
 	}
-	fprintf(trace(), "cpu1 MMIO.RD  off=0x%04x  val=0x%04x\n", off, v);
+	fprintf(trace(), "cpu1 REG.RD   off=0x%04x val=0x%04x\n", off, v);
 	return v;
 }
 
 void __wrap_b43_write16(struct b43_wldev *dev, u16 off, u16 val)
 {
 	(void)dev;
-	fprintf(trace(), "cpu1 MMIO.WR  off=0x%04x  val=0x%04x\n", off, val);
+	fprintf(trace(), "cpu1 REG.WR   off=0x%04x val=0x%04x\n", off, val);
 	if (off < MIRROR_MMIO_SZ) mirror_mmio[off] = val;
 }
 

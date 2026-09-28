@@ -1,4 +1,4 @@
-From 6e2b11fd349f368910ea33b2fb9f4568b9e274b9 Mon Sep 17 00:00:00 2001
+From f911bae89cd089459f54a21bfdef1266f56cd583 Mon Sep 17 00:00:00 2001
 From: Alessandro Ferri <aleferri@example.invalid>
 Date: Sun, 27 Sep 2026 15:55:26 +0000
 Subject: [PATCH] b43: core support for the AC-PHY
@@ -363,11 +363,11 @@ Signed-off-by: Alessandro Ferri <aleferri@example.invalid>
  drivers/net/wireless/broadcom/b43/leds.c      | 172 +++---
  drivers/net/wireless/broadcom/b43/leds.h      |  19 +-
  drivers/net/wireless/broadcom/b43/main.c      | 537 ++++++++++++++++--
- .../net/wireless/broadcom/b43/phy_common.c    |  21 +
+ .../net/wireless/broadcom/b43/phy_common.c    |  24 +
  .../net/wireless/broadcom/b43/phy_common.h    |  24 +
  drivers/net/wireless/broadcom/b43/xmit.c      |   9 +-
  drivers/net/wireless/broadcom/b43/xmit.h      |  20 +
- 10 files changed, 728 insertions(+), 141 deletions(-)
+ 10 files changed, 731 insertions(+), 141 deletions(-)
 
 diff --git a/drivers/net/wireless/broadcom/b43/Kconfig b/drivers/net/wireless/broadcom/b43/Kconfig
 index 4559549..616aa17 100644
@@ -1643,7 +1643,7 @@ index 92ca0b2..b2299b5 100644
  
  static struct bcma_driver b43_bcma_driver = {
 diff --git a/drivers/net/wireless/broadcom/b43/phy_common.c b/drivers/net/wireless/broadcom/b43/phy_common.c
-index 285490f..0acd049 100644
+index 285490f..9674b94 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_common.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_common.c
 @@ -560,6 +560,27 @@ bool b43_is_40mhz(struct b43_wldev *dev)
@@ -1674,6 +1674,16 @@ index 285490f..0acd049 100644
  void b43_phy_force_clock(struct b43_wldev *dev, bool force)
  {
  	u32 tmp;
+@@ -577,6 +598,9 @@ void b43_phy_force_clock(struct b43_wldev *dev, bool force)
+ 		else
+ 			tmp &= ~BCMA_IOCTL_FGC;
+ 		bcma_awrite32(dev->dev->bdev, BCMA_IOCTL, tmp);
++		/* The AC cores' stock driver reads the IOCTL back. */
++		if (dev->phy.type == B43_PHYTYPE_AC)
++			bcma_aread32(dev->dev->bdev, BCMA_IOCTL);
+ 		break;
+ #endif
+ #ifdef CONFIG_B43_SSB
 diff --git a/drivers/net/wireless/broadcom/b43/phy_common.h b/drivers/net/wireless/broadcom/b43/phy_common.h
 index 5ec5233..4d48441 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_common.h

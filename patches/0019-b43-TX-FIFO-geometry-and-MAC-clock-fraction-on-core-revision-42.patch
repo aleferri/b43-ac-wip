@@ -1,4 +1,4 @@
-From b2f917c6c3a7888fcd4433c84f24b8ff4e9aaab6 Mon Sep 17 00:00:00 2001
+From 924f3c05b5b013f2157bf4def186d8d264f20fe0 Mon Sep 17 00:00:00 2001
 From: Alessandro Ferri <aleferri@example.invalid>
 Date: Sun, 27 Sep 2026 18:30:00 +0000
 Subject: [PATCH] b43: TX FIFO geometry and MAC clock fraction on core revision

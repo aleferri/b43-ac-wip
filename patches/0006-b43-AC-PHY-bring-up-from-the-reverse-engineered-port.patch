@@ -1,4 +1,4 @@
-From f90d92c20b6ca54d9608f022e48a9d6a4c341f4e Mon Sep 17 00:00:00 2001
+From beaaa68e715fb4fcbf3f6c5ba9bcda362d4c42a7 Mon Sep 17 00:00:00 2001
 From: c <c@l>
 Date: Tue, 8 Sep 2026 14:29:02 +0000
 Subject: [PATCH] b43: AC-PHY bring-up from the reverse-engineered port
@@ -11,9 +11,9 @@ Regenerated from src/ rather than maintained by hand, so it cannot drift out
 of sync with the tree the unit suite measures.
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     5 +
- .../wireless/broadcom/b43/helpers_phy_ac.c    |    92 +
+ .../wireless/broadcom/b43/helpers_phy_ac.c    |   111 +
  drivers/net/wireless/broadcom/b43/phy_ac.c    | 11357 +++++++++++++++-
- drivers/net/wireless/broadcom/b43/phy_ac.h    |   818 +-
+ drivers/net/wireless/broadcom/b43/phy_ac.h    |   819 +-
  drivers/net/wireless/broadcom/b43/ppr_ac.c    |   255 +
  drivers/net/wireless/broadcom/b43/ppr_ac.h    |    81 +
  .../net/wireless/broadcom/b43/radio_2069.c    |  1549 +++
@@ -22,7 +22,7 @@ of sync with the tree the unit suite measures.
  .../wireless/broadcom/b43/rxiqcal_phy_ac.h    |    23 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1153 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    79 +
- 12 files changed, 15968 insertions(+), 23 deletions(-)
+ 12 files changed, 15988 insertions(+), 23 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -51,10 +51,10 @@ index 54f92ce..f60b35e 100644
  b43-y				+= dma.o
 diff --git a/drivers/net/wireless/broadcom/b43/helpers_phy_ac.c b/drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
 new file mode 100644
-index 0000000..ad5397e
+index 0000000..a1626b5
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,111 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +/*
 + * Broadcom B43 wireless driver AC-PHY low-level helpers.
@@ -113,6 +113,25 @@ index 0000000..ad5397e
 +}
 +
 +/*
++ * Force the PHY clock on or release it. The stock driver pairs the core's
++ * forced gated clock with the MAC's side of it in PSM_PHY_HDR: set after the
++ * IOCTL on the way in, cleared to CLOCK_EN before it on the way out (0x0006
++ * and 0x0002 at the bus, 52 times each on the agcombo ch36 attach).
++ */
++void b43_phy_ac_force_clock(struct b43_wldev *dev, bool force)
++{
++	if (force) {
++		b43_phy_force_clock(dev, true);
++		b43_write16(dev, B43_MMIO_PSM_PHY_HDR,
++			    B43_PSM_HDR_MAC_PHY_CLOCK_EN |
++			    B43_PSM_HDR_MAC_PHY_FORCE_CLK);
++		return;
++	}
++	b43_write16(dev, B43_MMIO_PSM_PHY_HDR, B43_PSM_HDR_MAC_PHY_CLOCK_EN);
++	b43_phy_force_clock(dev, false);
++}
++
++/*
 + * The MAC's operating width, @bw the chanspec's width field (B43_MAC_BW_*).
 + * At the bus the stock driver reads MACCONTROL, clears PHY0 (0x3e6), sets
 + * the PHY bandwidth clock of the core's IOCTL and reads MACCONTROL again.
@@ -148,7 +167,7 @@ index 0000000..ad5397e
 +	b43_maskset32(dev, B43_MMIO_MACCTL, mask, set);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index 756cd44..f707e97 100644
+index 756cd44..ab3f82f 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -1,23 +1,51 @@
@@ -2522,7 +2541,7 @@ index 756cd44..f707e97 100644
 +	B43_AC_FN();
 +	struct b43_phy_ac *phy_ac = dev->phy.ac;
 +
-+	b43_phy_force_clock(dev, true);
++	b43_phy_ac_force_clock(dev, true);
 +	b43_phy_maskset(dev, B43_PHY_AC_BBCFG,
 +			(u16)~B43_PHY_AC_BBCFG_RSTCCA,
 +			B43_PHY_AC_BBCFG_RSTCCA);
@@ -2531,7 +2550,7 @@ index 756cd44..f707e97 100644
 +	b43_phy_maskset(dev, B43_PHY_AC_BBCFG,
 +			(u16)~B43_PHY_AC_BBCFG_RSTCCA, 0);
 +	phy_ac->status_mask &= ~B43_PHY_AC_STATE_CCA_RESET;
-+	b43_phy_force_clock(dev, false);
++	b43_phy_ac_force_clock(dev, false);
 +}
 +
 +/*
@@ -7394,7 +7413,7 @@ index 756cd44..f707e97 100644
 +	 * annidato in mezzo. Da qui l'alternanza 1,1,0,0 al posto di 1,0,1,0
 +	 * negli argomenti di PHY.FGC, due volte su cold01.
 +	 */
-+	b43_phy_force_clock(dev, true);
++	b43_phy_ac_force_clock(dev, true);
 +	b43_phy_write(dev, 0x0382, 0x8a09);
 +
 +	/* B4a: three fixed per-core groups, each of four table writes at
@@ -7871,7 +7890,7 @@ index 756cd44..f707e97 100644
 +	b43_phy_ac_cca_pulse(dev);
 +	b43_phy_write(dev, 0x0382, 0x0000);
 +	/* Chiusura della finestra di force aperta con la 0x0382 = 0x8a09. */
-+	b43_phy_force_clock(dev, false);
++	b43_phy_ac_force_clock(dev, false);
 +
 +	for (i = 0; i < 0x80; i++) {
 +		for (core = 0; core < dev->phy.ac->num_cores; core++) {
@@ -8255,7 +8274,7 @@ index 756cd44..f707e97 100644
 +	static const u16 zeros[2] = { 0, 0 };
 +
 +	/* 1 op: arm command */
-+	b43_phy_force_clock(dev, true);
++	b43_phy_ac_force_clock(dev, true);
 +	b43_phy_write(dev, 0x0382, 0x8a09);
 +
 +	/* 3× 8 op: azzera 3 zone da 2 slot in TBL 0x000c */
@@ -8423,7 +8442,7 @@ index 756cd44..f707e97 100644
 +	b43_phy_ac_cca_pulse(dev);
 +	b43_phy_write(dev, 0x0382, 0x0000);
 +	/* Chiusura della finestra di force aperta con la 0x0382 = 0x8a09. */
-+	b43_phy_force_clock(dev, false);
++	b43_phy_ac_force_clock(dev, false);
 +}
 +
 +/*
@@ -11541,7 +11560,7 @@ index 756cd44..f707e97 100644
 +	(void)b43_phy_ac_farrow_vals_432x_media_a1;
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.h b/drivers/net/wireless/broadcom/b43/phy_ac.h
-index 02eb6c0..88435a2 100644
+index 02eb6c0..ae11cfd 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.h
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.h
 @@ -3,6 +3,12 @@
@@ -11631,7 +11650,7 @@ index 02eb6c0..88435a2 100644
  #define B43_PHY_AC_C1_CLIP			0x6d4
  #define  B43_PHY_AC_C1_CLIP_DIS			0x4000
  #define B43_PHY_AC_C2_CLIP			0x8d4
-@@ -31,9 +87,765 @@
+@@ -31,9 +87,766 @@
  #define B43_PHY_AC_C3_CLIP			0xad4
  #define  B43_PHY_AC_C3_CLIP_DIS			0x4000
  
@@ -12351,6 +12370,7 @@ index 02eb6c0..88435a2 100644
 +void b43_phy_ac_mhf_maskset(struct b43_wldev *dev, u16 slot, u16 mask, u16 val);
 +void b43_maccontrol_set(struct b43_wldev *dev, u32 mask, u32 set);
 +void b43_mac_bw_set(struct b43_wldev *dev, u32 bw);
++void b43_phy_ac_force_clock(struct b43_wldev *dev, bool force);
 +
 +/*
 + * Function-boundary markers for the userspace test harness. B43_AC_FN() at the

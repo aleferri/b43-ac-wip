@@ -56,6 +56,25 @@ void b43_phy_ac_mhf_maskset(struct b43_wldev *dev, u16 slot, u16 mask, u16 val)
 }
 
 /*
+ * Force the PHY clock on or release it. The stock driver pairs the core's
+ * forced gated clock with the MAC's side of it in PSM_PHY_HDR: set after the
+ * IOCTL on the way in, cleared to CLOCK_EN before it on the way out (0x0006
+ * and 0x0002 at the bus, 52 times each on the agcombo ch36 attach).
+ */
+void b43_phy_ac_force_clock(struct b43_wldev *dev, bool force)
+{
+	if (force) {
+		b43_phy_force_clock(dev, true);
+		b43_write16(dev, B43_MMIO_PSM_PHY_HDR,
+			    B43_PSM_HDR_MAC_PHY_CLOCK_EN |
+			    B43_PSM_HDR_MAC_PHY_FORCE_CLK);
+		return;
+	}
+	b43_write16(dev, B43_MMIO_PSM_PHY_HDR, B43_PSM_HDR_MAC_PHY_CLOCK_EN);
+	b43_phy_force_clock(dev, false);
+}
+
+/*
  * The MAC's operating width, @bw the chanspec's width field (B43_MAC_BW_*).
  * At the bus the stock driver reads MACCONTROL, clears PHY0 (0x3e6), sets
  * the PHY bandwidth clock of the core's IOCTL and reads MACCONTROL again.
