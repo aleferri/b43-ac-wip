@@ -149,6 +149,16 @@ This is deliberately off: b43 writes `PRMAXTIME=1`, and the item is declared in
    `0x0184` is read back later, a handshake with the firmware.
 4. Remove the `SOLO_VENDOR` entry.
 
+### Power management queue
+
+Not needed for the first bring-up. b43 keeps `B43_MACCTL_DISCPMQ` set and lets
+mac80211 learn the stations' power-save state from the frames it receives; the
+AC cores' stock driver clears it in AP mode (`0x44060402` -> `0x04060402` at
+the bus on the agcombo) and uses the queue the MAC fills with each station's
+PM-bit change. To implement it, next to the TODO in `b43_adjust_opmode()`
+(`patches/0003`): clear the bit in AP mode, and in the `B43_IRQ_PMQ` handler
+drain the queue and report each change to mac80211.
+
 ### SSID length
 
 `AC_SSID_LEN` (default 8) drives the probe-response length, the PLCP of the
