@@ -772,11 +772,12 @@ static void b43_phy_ac_prb_rsp_plcp(struct b43_wldev *dev, u16 len)
  * il vendor visita i blocchi, con i CCK interlacciati fra gli OFDM e non in un
  * gruppo a parte -- 1, 2, 5.5, 6, 9, 11, 12, 18, 24, 36, 48, 54 Mbit/s. @dirmap
  * e' l'indice nella direct-map table, che e' il nibble basso del campo SIGNAL,
- * e @mcs il MCS su cui il rate legacy OFDM ricade.
+ * e @ofdm l'indice del rate legacy per b43_ppr_ac_ofdm(), da 0 = 6 Mbit/s a
+ * 7 = 54.
  */
 struct b43_phy_ac_prb_rsp_rate {
 	u8 dirmap;
-	u8 mcs;
+	u8 ofdm;
 	bool cck;
 };
 
@@ -785,14 +786,14 @@ static const struct b43_phy_ac_prb_rsp_rate b43_phy_ac_prb_rsp_rates[12] = {
 	{  4, 0, true  },	/*  2 */
 	{  7, 0, true  },	/*  5.5 */
 	{ 11, 0, false },	/*  6 */
-	{ 15, 0, false },	/*  9 */
+	{ 15, 1, false },	/*  9 */
 	{ 14, 0, true  },	/* 11 */
-	{ 10, 0, false },	/* 12 */
-	{ 14, 0, false },	/* 18 */
-	{  9, 1, false },	/* 24 */
-	{ 13, 2, false },	/* 36 */
-	{  8, 3, false },	/* 48 */
-	{ 12, 4, false },	/* 54 */
+	{ 10, 2, false },	/* 12 */
+	{ 14, 3, false },	/* 18 */
+	{  9, 4, false },	/* 24 */
+	{ 13, 5, false },	/* 36 */
+	{  8, 6, false },	/* 48 */
+	{ 12, 7, false },	/* 54 */
 };
 
 /*
@@ -1021,14 +1022,15 @@ static void b43_phy_ac_chainmask_block(struct b43_wldev *dev,
  * 20 MHz one. On the six 80 MHz segments that is the difference between exact
  * and one dB out on ch52, ch100, ch132 and ch149, and it has a reason of its
  * own -- a legacy rate on a bonded channel goes out duplicated over the whole
- * block, so it spends the wide budget. Within the row: 6, 9, 12 and 18 Mb/s
- * on mcs0, then 24, 36, 48 and 54 on mcs1..4.
+ * block, so it spends the wide budget. Within the row each rate reads the
+ * group of its modulation class (ppr_ac.h): 6 to 18 Mb/s the first, 24 to 54
+ * the next four.
  *
  * The target the distance is taken from is the maximum over every row the
  * channel loads, which is what the PHY closes its loop on, so the two agree by
- * construction. The regulatory ceiling is already inside the table, applied to
- * maxp rather than to the finished rows -- see b43_ppr_ac_load_max_from_sprom(),
- * which is where ch100 at 20 MHz decides it.
+ * construction. The spacing table carries no regulatory ceiling; that one is
+ * applied to the finished rows of the power table only, in
+ * b43_ppr_ac_load_max_from_sprom(), and does not enter the distances.
  *
  * Exact on 28 of the 43 cold segments. What is left over is a saturation: on
  * thirteen of the other fifteen the vendor writes max(distance, K) for a K
@@ -1050,7 +1052,6 @@ static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev)
 	B43_AC_FN();
 	struct b43_phy_ac *ac = dev->phy.ac;
 	const struct b43_ppr_ac *sp = &ac->txpwr_spacing;
-	const u8 *row = b43_ppr_ac_row_for_width(sp, ac->cal_width);
 	u8 max = b43_ppr_ac_get_max(sp);
 	unsigned int i;
 
@@ -1066,7 +1067,8 @@ static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev)
 		if (r->cck)
 			val = b43_phy_ac_cck_rate_po(ac);
 		else
-			val = (u16)((max - row[r->mcs]) * 4);
+			val = (u16)((max - b43_ppr_ac_ofdm(sp, ac->cal_width,
+							 r->ofdm)) * 4);
 
 		b43_shm_read16(dev, B43_SHM_SHARED, cell);
 		b43_shm_write16(dev, B43_SHM_SHARED, cell, val);
@@ -1078,9 +1080,8 @@ static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev)
  *
  * E' la stessa forma del campo per-rate di b43_phy_ac_prb_rsp_rate_po() --
  * distanza dal massimo della tabella, in sedicesimi di dB -- con due
- * differenze: vale per il solo rate del beacon, che a 5 GHz e' il 6 Mbit e
- * sta su mcs0, e la riga e' **sempre** quella a 20 MHz, non quella della
- * larghezza operante.
+ * differenze: vale per il solo rate del beacon, che a 5 GHz e' il 6 Mbit, e la
+ * riga e' **sempre** quella a 20 MHz, non quella della larghezza operante.
  *
  * Nel driver del vendor la scrive wlc_beacon_phytxctl(), che prende il primo
  * dei tre valori che wlc_stf_get_204080_pwrs() restituisce -- le potenze a 20,
@@ -1104,7 +1105,7 @@ u16 b43_phy_ac_beacon_pwr_offset(struct b43_wldev *dev)
 	const struct b43_ppr_ac *ppr = &dev->phy.ac->txpwr_ppr;
 	u8 max = b43_ppr_ac_get_max(ppr);
 
-	return (u16)((max - ppr->rates.mcs_20[0]) * 4);
+	return (u16)((max - b43_ppr_ac_ofdm(ppr, NL80211_CHAN_WIDTH_20, 0)) * 4);
 }
 
 /*

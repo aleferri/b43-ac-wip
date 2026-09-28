@@ -1,4 +1,4 @@
-From 6926357011662516120123c63049e637a521ed57 Mon Sep 17 00:00:00 2001
+From 2645ea3da7fbf80edc0072ecbb277c67fac11e49 Mon Sep 17 00:00:00 2001
 From: c <c@l>
 Date: Tue, 8 Sep 2026 14:29:02 +0000
 Subject: [PATCH] b43: AC-PHY bring-up from the reverse-engineered port
@@ -12,17 +12,17 @@ of sync with the tree the unit suite measures.
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     5 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |    66 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 11331 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 11357 +++++++++++++++-
  drivers/net/wireless/broadcom/b43/phy_ac.h    |   817 +-
- drivers/net/wireless/broadcom/b43/ppr_ac.c    |   262 +
- drivers/net/wireless/broadcom/b43/ppr_ac.h    |    59 +
+ drivers/net/wireless/broadcom/b43/ppr_ac.c    |   255 +
+ drivers/net/wireless/broadcom/b43/ppr_ac.h    |    81 +
  .../net/wireless/broadcom/b43/radio_2069.c    |  1549 +++
  .../net/wireless/broadcom/b43/radio_2069.h    |    47 +
  .../wireless/broadcom/b43/rxiqcal_phy_ac.c    |   532 +
  .../wireless/broadcom/b43/rxiqcal_phy_ac.h    |    23 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1153 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    79 +
- 12 files changed, 15900 insertions(+), 23 deletions(-)
+ 12 files changed, 15941 insertions(+), 23 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -122,7 +122,7 @@ index 0000000..5d18443
 +	b43_maskset32(dev, B43_MMIO_MACCTL, mask, set);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index 756cd44..5f64aa8 100644
+index 756cd44..15dbb2a 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -1,23 +1,51 @@
@@ -184,7 +184,7 @@ index 756cd44..5f64aa8 100644
  	if (!phy_ac)
  		return -ENOMEM;
  	dev->phy.ac = phy_ac;
-@@ -62,27 +90,11290 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -62,27 +90,11316 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -478,6 +478,7 @@ index 756cd44..5f64aa8 100644
 +static void b43_phy_ac_crs_block_e(struct b43_wldev *dev);
 +static void b43_phy_ac_wd_stats_tail(struct b43_wldev *dev);
 +static void b43_phy_ac_tempsense(struct b43_wldev *dev);
++static bool b43_phy_ac_cal_reads_temp(struct b43_wldev *dev);
 +/*
 + * Le quattro celle sparse con cui si apre la spazzata, e la spazzata piatta
 + * 0x0768-0x078a. Due funzioni e non una perche' all'ingresso della fase probe
@@ -882,11 +883,12 @@ index 756cd44..5f64aa8 100644
 + * il vendor visita i blocchi, con i CCK interlacciati fra gli OFDM e non in un
 + * gruppo a parte -- 1, 2, 5.5, 6, 9, 11, 12, 18, 24, 36, 48, 54 Mbit/s. @dirmap
 + * e' l'indice nella direct-map table, che e' il nibble basso del campo SIGNAL,
-+ * e @mcs il MCS su cui il rate legacy OFDM ricade.
++ * e @ofdm l'indice del rate legacy per b43_ppr_ac_ofdm(), da 0 = 6 Mbit/s a
++ * 7 = 54.
 + */
 +struct b43_phy_ac_prb_rsp_rate {
 +	u8 dirmap;
-+	u8 mcs;
++	u8 ofdm;
 +	bool cck;
 +};
 +
@@ -895,14 +897,14 @@ index 756cd44..5f64aa8 100644
 +	{  4, 0, true  },	/*  2 */
 +	{  7, 0, true  },	/*  5.5 */
 +	{ 11, 0, false },	/*  6 */
-+	{ 15, 0, false },	/*  9 */
++	{ 15, 1, false },	/*  9 */
 +	{ 14, 0, true  },	/* 11 */
-+	{ 10, 0, false },	/* 12 */
-+	{ 14, 0, false },	/* 18 */
-+	{  9, 1, false },	/* 24 */
-+	{ 13, 2, false },	/* 36 */
-+	{  8, 3, false },	/* 48 */
-+	{ 12, 4, false },	/* 54 */
++	{ 10, 2, false },	/* 12 */
++	{ 14, 3, false },	/* 18 */
++	{  9, 4, false },	/* 24 */
++	{ 13, 5, false },	/* 36 */
++	{  8, 6, false },	/* 48 */
++	{ 12, 7, false },	/* 54 */
 +};
 +
 +/*
@@ -1131,14 +1133,15 @@ index 756cd44..5f64aa8 100644
 + * 20 MHz one. On the six 80 MHz segments that is the difference between exact
 + * and one dB out on ch52, ch100, ch132 and ch149, and it has a reason of its
 + * own -- a legacy rate on a bonded channel goes out duplicated over the whole
-+ * block, so it spends the wide budget. Within the row: 6, 9, 12 and 18 Mb/s
-+ * on mcs0, then 24, 36, 48 and 54 on mcs1..4.
++ * block, so it spends the wide budget. Within the row each rate reads the
++ * group of its modulation class (ppr_ac.h): 6 to 18 Mb/s the first, 24 to 54
++ * the next four.
 + *
 + * The target the distance is taken from is the maximum over every row the
 + * channel loads, which is what the PHY closes its loop on, so the two agree by
-+ * construction. The regulatory ceiling is already inside the table, applied to
-+ * maxp rather than to the finished rows -- see b43_ppr_ac_load_max_from_sprom(),
-+ * which is where ch100 at 20 MHz decides it.
++ * construction. The spacing table carries no regulatory ceiling; that one is
++ * applied to the finished rows of the power table only, in
++ * b43_ppr_ac_load_max_from_sprom(), and does not enter the distances.
 + *
 + * Exact on 28 of the 43 cold segments. What is left over is a saturation: on
 + * thirteen of the other fifteen the vendor writes max(distance, K) for a K
@@ -1160,7 +1163,6 @@ index 756cd44..5f64aa8 100644
 +	B43_AC_FN();
 +	struct b43_phy_ac *ac = dev->phy.ac;
 +	const struct b43_ppr_ac *sp = &ac->txpwr_spacing;
-+	const u8 *row = b43_ppr_ac_row_for_width(sp, ac->cal_width);
 +	u8 max = b43_ppr_ac_get_max(sp);
 +	unsigned int i;
 +
@@ -1176,7 +1178,8 @@ index 756cd44..5f64aa8 100644
 +		if (r->cck)
 +			val = b43_phy_ac_cck_rate_po(ac);
 +		else
-+			val = (u16)((max - row[r->mcs]) * 4);
++			val = (u16)((max - b43_ppr_ac_ofdm(sp, ac->cal_width,
++							 r->ofdm)) * 4);
 +
 +		b43_shm_read16(dev, B43_SHM_SHARED, cell);
 +		b43_shm_write16(dev, B43_SHM_SHARED, cell, val);
@@ -1188,9 +1191,8 @@ index 756cd44..5f64aa8 100644
 + *
 + * E' la stessa forma del campo per-rate di b43_phy_ac_prb_rsp_rate_po() --
 + * distanza dal massimo della tabella, in sedicesimi di dB -- con due
-+ * differenze: vale per il solo rate del beacon, che a 5 GHz e' il 6 Mbit e
-+ * sta su mcs0, e la riga e' **sempre** quella a 20 MHz, non quella della
-+ * larghezza operante.
++ * differenze: vale per il solo rate del beacon, che a 5 GHz e' il 6 Mbit, e la
++ * riga e' **sempre** quella a 20 MHz, non quella della larghezza operante.
 + *
 + * Nel driver del vendor la scrive wlc_beacon_phytxctl(), che prende il primo
 + * dei tre valori che wlc_stf_get_204080_pwrs() restituisce -- le potenze a 20,
@@ -1214,7 +1216,7 @@ index 756cd44..5f64aa8 100644
 +	const struct b43_ppr_ac *ppr = &dev->phy.ac->txpwr_ppr;
 +	u8 max = b43_ppr_ac_get_max(ppr);
 +
-+	return (u16)((max - ppr->rates.mcs_20[0]) * 4);
++	return (u16)((max - b43_ppr_ac_ofdm(ppr, NL80211_CHAN_WIDTH_20, 0)) * 4);
 +}
 +
 +/*
@@ -5716,15 +5718,16 @@ index 756cd44..5f64aa8 100644
 +	ac->cac_pending = false;
 +
 +	/*
-+	 * Una lettura di temperatura a MAC sospeso apre il bss-up, prima delle
-+	 * calibrazioni: su tutti e 21 i segmenti che chiudono il check sta
-+	 * subito dietro il ripristino della riga AMT. Non e' il giro del
-+	 * watchdog -- quello ha la sua cadenza, vedi b43_phy_ac_watchdog() -- e'
-+	 * la lettura che il bss-up prende da se'.
++	 * The bss-up opens its calibrations with the reading of
++	 * b43_phy_ac_cal_tempsense(), with the MAC suspended, right behind the
++	 * restore of the AMT row. It is not the watchdog's: that one has its own
++	 * cadence, see b43_phy_ac_watchdog().
 +	 */
-+	b43_mac_suspend(dev);
-+	b43_phy_ac_tempsense(dev);
-+	b43_mac_enable(dev);
++	if (b43_phy_ac_cal_reads_temp(dev)) {
++		b43_mac_suspend(dev);
++		b43_phy_ac_tempsense(dev);
++		b43_mac_enable(dev);
++	}
 +
 +	b43_phy_ac_calibration_block(dev);
 +
@@ -6070,6 +6073,28 @@ index 756cd44..5f64aa8 100644
 +}
 +
 +/*
++ * Whether a full calibration opens with a temperature reading: when
++ * phycal_tempdelta is set. brcmsmac does the same for the N-PHY on the
++ * bss-up (PHY_PERICAL_UP_BSS: "if (pi->phycal_tempdelta) nphy_lastcal_temp =
++ * tempsense()"), and the captures agree for the AC-PHY on both calibrations
++ * that open with one, the channel calibration of the up and the bss-up's:
++ * the tg789vac, whose NVRAM has phycal_tempdelta=0, reads on the 39
++ * segments whose instances got `wl phycal_tempdelta 40` from the capture
++ * script of the time and skips both readings on the four captured without
++ * it; the d6220, the DSL-3580L and the agcombo, at 255 in NVRAM, always
++ * read.
++ *
++ * 255 is the unprogrammed value, and the stock driver runs with a delta
++ * there: the DSL-3580L reports 40 through `wl phycal_tempdelta` with 255 in
++ * NVRAM. SALAME on 40 being the driver's default rather than something its
++ * userspace sets; only zero against non-zero matters here.
++ */
++static bool b43_phy_ac_cal_reads_temp(struct b43_wldev *dev)
++{
++	return dev->dev->bus_sprom->phycal_tempdelta != 0;
++}
++
++/*
 + * channel_calibrate: the calibrations that close a channel switch, run by
 + * b43_op_config() in place of its final mac_enable. The bss-up's temperature
 + * reading needs the MAC suspended and the calibrations after it need it
@@ -6090,7 +6115,8 @@ index 756cd44..5f64aa8 100644
 +static void b43_phy_ac_op_channel_calibrate(struct b43_wldev *dev)
 +{
 +	B43_AC_FN();
-+	b43_phy_ac_tempsense(dev);
++	if (b43_phy_ac_cal_reads_temp(dev))
++		b43_phy_ac_tempsense(dev);
 +	b43_mac_enable(dev);
 +	b43_phy_ac_post_switch_calibrations(dev);
 +}
@@ -12346,71 +12372,73 @@ index 02eb6c0..8abae73 100644
  #endif /* B43_PHY_AC_H_ */
 diff --git a/drivers/net/wireless/broadcom/b43/ppr_ac.c b/drivers/net/wireless/broadcom/b43/ppr_ac.c
 new file mode 100644
-index 0000000..794293c
+index 0000000..c2d384e
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/ppr_ac.c
-@@ -0,0 +1,262 @@
+@@ -0,0 +1,255 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Per-rate power table for the AC-PHY, SROM revision 11.
 + *
 + * The primitives follow b43's ppr.c one for one. What differs is the load:
-+ * rev 11 has per-core maxp5ga[] over four 5 GHz sub-bands and the MCS power
-+ * offsets per bandwidth, and the table takes the minimum maxp over the active
-+ * cores as b43_ppr_load_max_from_sprom() does over its two.
++ * rev 11 has per-core maxp5ga[] over four 5 GHz sub-bands and the power
++ * offsets per bandwidth and modulation class (see ppr_ac.h), and the table
++ * takes the minimum maxp over the active cores as
++ * b43_ppr_load_max_from_sprom() does over its two.
 + */
 +
 +#include "b43.h"
 +#include "ppr_ac.h"
 +
-+#define ppr_ac_for_each_entry(ppr, i, rate)				\
-+	for (i = 0, rate = (ppr)->__all_rates;				\
++#define ppr_ac_for_each_entry(ppr, i, entry)				\
++	for (i = 0, entry = (ppr)->__all;					\
 +	     i < (ppr)->num;						\
-+	     i++, rate++)
++	     i++, entry++)
 +
-+static unsigned int b43_ppr_ac_num(enum nl80211_chan_width width)
++/* Row of the table a width sits on; also the number of rows it loads - 1. */
++static unsigned int b43_ppr_ac_row(enum nl80211_chan_width width)
 +{
 +	switch (width) {
 +	case NL80211_CHAN_WIDTH_80:
-+		return 4 * B43_PPR_AC_RATES;
++		return 2;
 +	case NL80211_CHAN_WIDTH_40:
-+		return 3 * B43_PPR_AC_RATES;
++		return 1;
 +	default:
-+		return 2 * B43_PPR_AC_RATES;
++		return 0;
 +	}
 +}
 +
 +void b43_ppr_ac_clear(struct b43_ppr_ac *ppr, enum nl80211_chan_width width)
 +{
 +	memset(ppr, 0, sizeof(*ppr));
-+	ppr->num = b43_ppr_ac_num(width);
++	ppr->num = (b43_ppr_ac_row(width) + 1) * B43_PPR_AC_GROUPS;
 +}
 +
 +void b43_ppr_ac_add(struct b43_ppr_ac *ppr, int diff)
 +{
 +	unsigned int i;
-+	u8 *rate;
++	u8 *entry;
 +
-+	ppr_ac_for_each_entry(ppr, i, rate)
-+		*rate = (u8)clamp_t(int, *rate + diff, 0, 127);
++	ppr_ac_for_each_entry(ppr, i, entry)
++		*entry = (u8)clamp_t(int, *entry + diff, 0, 127);
 +}
 +
 +void b43_ppr_ac_apply_max(struct b43_ppr_ac *ppr, u8 max)
 +{
 +	unsigned int i;
-+	u8 *rate;
++	u8 *entry;
 +
-+	ppr_ac_for_each_entry(ppr, i, rate)
-+		*rate = min(*rate, max);
++	ppr_ac_for_each_entry(ppr, i, entry)
++		*entry = min(*entry, max);
 +}
 +
 +void b43_ppr_ac_apply_min(struct b43_ppr_ac *ppr, u8 min)
 +{
 +	unsigned int i;
-+	u8 *rate;
++	u8 *entry;
 +
-+	ppr_ac_for_each_entry(ppr, i, rate)
-+		*rate = max(*rate, min);
++	ppr_ac_for_each_entry(ppr, i, entry)
++		*entry = max(*entry, min);
 +}
 +
 +u8 b43_ppr_ac_get_max(const struct b43_ppr_ac *ppr)
@@ -12419,28 +12447,36 @@ index 0000000..794293c
 +	u8 res = 0;
 +
 +	for (i = 0; i < ppr->num; i++)
-+		res = max(ppr->__all_rates[i], res);
++		res = max(ppr->__all[i], res);
 +
 +	return res;
 +}
 +
 +/*
-+ * The row the channel's legacy OFDM rates sit on: the one of the operating
-+ * width. A legacy rate on a bonded channel goes out duplicated over the whole
-+ * block, so it spends the wide budget and not the 20 MHz one, and its distance
-+ * from the target is read on the wide row.
++ * The group of each rate: the nibble of the mcsbw*po word its modulation and
++ * coding class sits on. Legacy 6 to 18 Mb/s and MCS 0-2 share the first.
 + */
-+const u8 *b43_ppr_ac_row_for_width(const struct b43_ppr_ac *ppr,
-+				   enum nl80211_chan_width width)
++static const u8 b43_ppr_ac_ofdm_group[B43_PPR_AC_OFDM_RATES] = {
++	0, 0, 0, 0, 1, 2, 3, 4
++};
++static const u8 b43_ppr_ac_mcs_group[B43_PPR_AC_MCS] = {
++	0, 0, 0, 1, 2, 3, 4, 5, 6, 7
++};
++
++u8 b43_ppr_ac_ofdm(const struct b43_ppr_ac *ppr, enum nl80211_chan_width width,
++		   unsigned int rate)
 +{
-+	switch (width) {
-+	case NL80211_CHAN_WIDTH_80:
-+		return ppr->rates.mcs_80;
-+	case NL80211_CHAN_WIDTH_40:
-+		return ppr->rates.mcs_40;
-+	default:
-+		return ppr->rates.mcs_20;
-+	}
++	if (WARN_ON_ONCE(rate >= B43_PPR_AC_OFDM_RATES))
++		return 0;
++	return ppr->rows[b43_ppr_ac_row(width)][b43_ppr_ac_ofdm_group[rate]];
++}
++
++u8 b43_ppr_ac_mcs(const struct b43_ppr_ac *ppr, enum nl80211_chan_width width,
++		  unsigned int mcs)
++{
++	if (WARN_ON_ONCE(mcs >= B43_PPR_AC_MCS))
++		return 0;
++	return ppr->rows[b43_ppr_ac_row(width)][b43_ppr_ac_mcs_group[mcs]];
 +}
 +
 +/*
@@ -12484,9 +12520,9 @@ index 0000000..794293c
 +	return 3;
 +}
 +
-+static u8 b43_ppr_ac_off(u32 po, unsigned int mcs)
++static u8 b43_ppr_ac_off(u32 po, unsigned int group)
 +{
-+	return (u8)(((po >> (4 * mcs)) & 0xf) * 2);
++	return (u8)(((po >> (4 * group)) & 0xf) * 2);
 +}
 +
 +static u8 b43_ppr_ac_sub(u8 maxp, u8 off)
@@ -12495,44 +12531,27 @@ index 0000000..794293c
 +}
 +
 +/*
-+ * Load the SROM limits for a channel. Returns the maxp the table was built
-+ * from, the minimum over the active cores, so a caller that wants a core's
-+ * own limit can add back (maxp5ga[core] - maxp) as the vendor does.
-+ *
-+ * The mcsbw*po words are selected by the l/m/h band of the primary channel
-+ * (below 52, below 100, the rest), which is not the maxp5ga sub-band above:
-+ * the two partitions are the SROM's, not this driver's, and they differ at
-+ * ch48-51 and ch100.
-+ *
-+ * The OFDM row has no field of its own in rev 11. It follows the 20 MHz MCS
-+ * row through the mapping the SHM per-rate offsets were inverted against:
-+ * 6, 9, 12 and 18 Mb/s on MCS0, then 24, 36, 48 and 54 on MCS1-4.
++ * Fill the rows the width loads from @top less each group's nibble, in
++ * half-dB. The mcsbw*po words are selected by the l/m/h band of the primary
++ * channel (below 52, below 100, the rest), which is not the maxp5ga sub-band
++ * above: the two partitions are the SROM's, not this driver's, and they
++ * differ at ch48-51 and ch100.
 + */
 +static void b43_ppr_ac_fill_rows(const struct ssb_sprom *sprom,
 +				 struct b43_ppr_ac *ppr, u16 chan, u8 top)
 +{
-+	static const u8 ofdm_on_mcs[B43_PPR_AC_RATES] = { 0, 0, 0, 0, 1, 2, 3, 4 };
-+	const u32 po[3][3] = {
++	const u32 po[3][B43_PPR_AC_ROWS] = {
 +		{ sprom->mcsbw205glpo, sprom->mcsbw405glpo, sprom->mcsbw805glpo },
 +		{ sprom->mcsbw205gmpo, sprom->mcsbw405gmpo, sprom->mcsbw805gmpo },
 +		{ sprom->mcsbw205ghpo, sprom->mcsbw405ghpo, sprom->mcsbw805ghpo },
 +	};
-+	struct b43_ppr_ac_rates *rates = &ppr->rates;
 +	unsigned int band = chan < 52 ? 0 : chan < 100 ? 1 : 2;
-+	unsigned int i;
++	unsigned int row, g;
 +
-+	for (i = 0; i < B43_PPR_AC_RATES; i++) {
-+		rates->mcs_20[i] = b43_ppr_ac_sub(top,
-+						  b43_ppr_ac_off(po[band][0], i));
-+		if (ppr->num > 2 * B43_PPR_AC_RATES)
-+			rates->mcs_40[i] = b43_ppr_ac_sub(top,
-+					b43_ppr_ac_off(po[band][1], i));
-+		if (ppr->num > 3 * B43_PPR_AC_RATES)
-+			rates->mcs_80[i] = b43_ppr_ac_sub(top,
-+					b43_ppr_ac_off(po[band][2], i));
-+	}
-+	for (i = 0; i < B43_PPR_AC_RATES; i++)
-+		rates->ofdm[i] = rates->mcs_20[ofdm_on_mcs[i]];
++	for (row = 0; row < ppr->num / B43_PPR_AC_GROUPS; row++)
++		for (g = 0; g < B43_PPR_AC_GROUPS; g++)
++			ppr->rows[row][g] = b43_ppr_ac_sub(top,
++						b43_ppr_ac_off(po[band][row], g));
 +}
 +
 +u8 b43_ppr_ac_load_max_from_sprom(const struct ssb_sprom *sprom, u8 coremask,
@@ -12614,10 +12633,10 @@ index 0000000..794293c
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/ppr_ac.h b/drivers/net/wireless/broadcom/b43/ppr_ac.h
 new file mode 100644
-index 0000000..f0863c2
+index 0000000..0216d87
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/ppr_ac.h
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,81 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +#ifndef B43_PPR_AC_H_
 +#define B43_PPR_AC_H_
@@ -12629,32 +12648,45 @@ index 0000000..f0863c2
 +/*
 + * Per-rate power table for the AC-PHY, built from the SROM revision 11 fields.
 + *
-+ * Same shape and units as b43's ppr.h -- one byte per rate in quarter dBm, the
-+ * same primitives -- with the rows the rev 11 SROM describes. It has no CCK
-+ * field for 5 GHz and carries its MCS offsets per bandwidth (mcsbw{20,40,80}),
-+ * so a channel loads the OFDM row and the 20 MHz MCS row at every width, the
-+ * 40 MHz row from 40 MHz up and the 80 MHz row at 80: that is how a bonded
-+ * channel carries its 20-in-40, 20-in-80 and 40-in-80 rate groups, and why
-+ * the maximum over the table is taken over every width the channel contains.
++ * Same units and primitives as b43's ppr.h -- one byte per entry in quarter
++ * dBm -- but the entries are not rates. Each mcsbw{20,40,80}5g{l,m,h}po word
++ * carries eight nibbles, and each nibble is the power offset of one modulation
++ * and coding class, shared by every legacy OFDM rate and every MCS that uses
++ * it:
++ *
++ *   group  class          OFDM rates       MCS
++ *     0    BPSK, QPSK     6, 9, 12, 18     0, 1, 2
++ *     1    16-QAM 1/2     24               3
++ *     2    16-QAM 3/4     36               4
++ *     3    64-QAM 2/3     48               5
++ *     4    64-QAM 3/4     54               6
++ *     5    64-QAM 5/6     --               7
++ *     6    256-QAM 3/4    --               8
++ *     7    256-QAM 5/6    --               9
++ *
++ * This is the decode `wl curpower` prints as "Board Limits" on the agcombo and
++ * DSL-3580L dumps (docs/txpwr-target-derivation.md). The table therefore holds
++ * one row of eight groups per bandwidth, and b43_ppr_ac_ofdm() and
++ * b43_ppr_ac_mcs() translate a rate into its group. There is no CCK field for
++ * 5 GHz in rev 11.
++ *
++ * A channel loads the 20 MHz row at every width, the 40 MHz row from 40 MHz up
++ * and the 80 MHz row at 80: those are the 20-in-40, 20-in-80 and 40-in-80 rate
++ * groups of a bonded channel, and the reason the maximum over the table is
++ * taken over every width the channel contains.
 + */
 +
-+#define B43_PPR_AC_RATES	8
-+
-+struct b43_ppr_ac_rates {
-+	u8 ofdm[B43_PPR_AC_RATES];	/* 6, 9, 12, 18, 24, 36, 48, 54 Mb/s */
-+	u8 mcs_20[B43_PPR_AC_RATES];	/* MCS 0-7 at 20 MHz, or 20-in-40/80 */
-+	u8 mcs_40[B43_PPR_AC_RATES];	/* MCS 0-7 at 40 MHz, or 40-in-80 */
-+	u8 mcs_80[B43_PPR_AC_RATES];	/* MCS 0-7 at 80 MHz */
-+};
-+
-+#define B43_PPR_AC_RATES_NUM	(sizeof(struct b43_ppr_ac_rates))
++#define B43_PPR_AC_GROUPS	8
++#define B43_PPR_AC_ROWS		3	/* 20, 40, 80 MHz */
++#define B43_PPR_AC_OFDM_RATES	8	/* 6, 9, 12, 18, 24, 36, 48, 54 Mb/s */
++#define B43_PPR_AC_MCS		10	/* MCS 0-9 */
 +
 +struct b43_ppr_ac {
 +	union {
-+		u8 __all_rates[B43_PPR_AC_RATES_NUM];
-+		struct b43_ppr_ac_rates rates;
++		u8 __all[B43_PPR_AC_ROWS * B43_PPR_AC_GROUPS];
++		u8 rows[B43_PPR_AC_ROWS][B43_PPR_AC_GROUPS];
 +	};
-+	/* Entries the current width loads: 16 at 20 MHz, 24 at 40, 32 at 80. */
++	/* Entries the current width loads: 8 at 20 MHz, 16 at 40, 24 at 80. */
 +	unsigned int num;
 +};
 +
@@ -12663,8 +12695,17 @@ index 0000000..f0863c2
 +void b43_ppr_ac_apply_max(struct b43_ppr_ac *ppr, u8 max);
 +void b43_ppr_ac_apply_min(struct b43_ppr_ac *ppr, u8 min);
 +u8 b43_ppr_ac_get_max(const struct b43_ppr_ac *ppr);
-+const u8 *b43_ppr_ac_row_for_width(const struct b43_ppr_ac *ppr,
-+				   enum nl80211_chan_width width);
++
++/*
++ * The power of one rate on the row of @width. @rate indexes the legacy OFDM
++ * rates in bitrate order, 0 = 6 Mb/s to 7 = 54 Mb/s; @mcs is the MCS index,
++ * 0 to 9. A row the table did not load reads as zero.
++ */
++u8 b43_ppr_ac_ofdm(const struct b43_ppr_ac *ppr, enum nl80211_chan_width width,
++		   unsigned int rate);
++u8 b43_ppr_ac_mcs(const struct b43_ppr_ac *ppr, enum nl80211_chan_width width,
++		  unsigned int mcs);
++
 +bool b43_ppr_ac_sprom_has_subband_po(const struct ssb_sprom *sprom);
 +
 +unsigned int b43_ppr_ac_subband(u16 chan, enum nl80211_chan_width width);

@@ -32,12 +32,52 @@ clear -> load_max_from_sprom -> apply_max(regulatory) -> add(-6)
 
 `src/ppr_ac.{c,h}` is that PPR for SROM rev 11:
 
-- the same primitives, and OFDM and MCS rows at 20/40/80 MHz;
+- the same primitives, and one row of eight modulation-class groups per width
+  (20/40/80 MHz), read through `b43_ppr_ac_ofdm()` and `b43_ppr_ac_mcs()`;
 - loaded from the minimum of `maxp5ga` over the active chains, plus the per-core
   delta, with the `mcsbw*po` nibbles per width;
 - a 40 MHz channel also loads the 20 MHz row (20-in-40), and an 80 MHz channel
   loads the 20 and 40 MHz rows. The maximum over rates therefore takes the
   smallest offset among the contained widths.
+
+### The nibble → rate mapping
+
+Each `mcsbw{20,40,80}5g{l,m,h}po` word is eight nibbles in half-dB, and each
+nibble belongs to a modulation and coding class, shared by the legacy OFDM
+rates and the MCS that use it:
+
+| nibble | class | OFDM | MCS |
+|---|---|---|---|
+| 0 | BPSK, QPSK | 6, 9, 12, 18 | 0, 1, 2 |
+| 1 | 16-QAM 1/2 | 24 | 3 |
+| 2 | 16-QAM 3/4 | 36 | 4 |
+| 3 | 64-QAM 2/3 | 48 | 5 |
+| 4 | 64-QAM 3/4 | 54 | 6 |
+| 5 | 64-QAM 5/6 | — | 7 |
+| 6 | 256-QAM 3/4 | — | 8 |
+| 7 | 256-QAM 5/6 | — | 9 |
+
+The evidence is the stock driver's own decode, the "Board Limits" block of
+`wl curpower`, on two boards and two driver versions:
+
+- agcombo, `router-data/agcombo/stats.txt`, `wl` 7.14.43: at ch100/80
+  (`mcsbw805ghpo = 0xcca88440`, `maxp5ga[2] = 82`) OFDM 6–18 and MCS 0–2 read
+  20.5 dBm, OFDM 24/36 and MCS 3/4 18.5, OFDM 48/54 and MCS 5/6 16.5, MCS 7
+  15.5, MCS 8/9 14.5; at ch36/80 (`0x88644220`, `maxp5ga[0] = 74`) the same
+  shape one nibble narrower;
+- DSL-3580L, `router-data/dsl3580l/wl1_curpower_ch52-bw80.txt`, `wl` 6.30: at
+  ch52 (`mcsbw805gmpo = 0xcca86420`, `maxp5ga = 76`) MCS 0–2 read 19.0, then
+  18.0, 17.0, 16.0, 15.0, 14.0 for MCS 3–7 and 13.0 for MCS 8/9. All eight
+  nibbles of that word differ, so it fixes every row of the table above.
+
+A reading where nibble *i* is MCS *i* gives MCS 1 one dB below MCS 0 and MCS 3
+three nibbles down; neither dump shows that. The three columns of `Board
+Limits` (20in80, 40in80, 80MHz) are the three rows of the table, filled from
+the `bw20`, `bw40` and `bw80` words; on those two boards the words are equal
+and so are the columns.
+
+Which nibble of the `sb*`, `dot11agdup*` and `mcslr*` words goes where is
+still open; they are zero on every board captured.
 
 The regulatory stage is `b43_phy_ac_reg_ceiling()`. It is
 `QDB(max_power) − antenna_gain`, with the antenna gain from `aga0`
@@ -90,11 +130,14 @@ On the same chip and configuration (ch52/20), `wl` 6.30 on the DSL-3580L writes
 56 where 7.14 writes 62. A number that changes with the binary and not with the
 chip lives in the binary: it is the CLM.
 
-**80 MHz uses the `bw80` nibbles.** Only the D6220 has a `bw80` word that
-differs from `bw20`, and its three 80 MHz observations score 1 of 3 with either
-choice. The `bw80` branch errs **below** the stock driver (62 against 66); the
-`bw20` branch errs **above** (80 against 76). With equal scores, the side that
-does not push the PA harder is chosen.
+**At 80 MHz every contained row enters the maximum.** Only the D6220 has
+`bw20`, `bw40` and `bw80` words that differ, and its six cold 80 MHz segments
+need all three: ch36 writes 66 = 72 − 6, the 20-in-80 row (`bw20` nibble 0 is
+0, `bw80`'s is 2); ch52 writes 64 = 70 − 6, the 40-in-80 row (`bw40` nibble 0
+is 0 where `bw20`'s is 1 and `bw80`'s is 2); ch100 writes 76 under the 26 dBm
+ceiling; ch116 and ch132 write 80 = 86 − 6; ch149 the 1 dBm floor. Taking the
+`bw80` word alone gives 62 on ch36 and 60 on ch52; the `bw20` word alone gives
+62 on ch52. The agcombo's words are equal per band and cannot discriminate.
 
 ## Per-rate offsets in shared memory
 

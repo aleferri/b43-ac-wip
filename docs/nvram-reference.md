@@ -142,9 +142,11 @@ Each group is a triplet `(a1, b0, b1)` of the pdet model.
 - `maxp5ga0..2`: 5 GHz maximum power per core, 4 sub-band values; the PPR
   maximum. `maxp5ga0[3] = 0` on the D6220 is a sub-band capped to zero, to be
   handled as "unavailable on that chain", not as 0 dBm. ✓
-- `mcsbw{20,40,80}5g{l,m,h}po`: per-MCS offsets packed per band and width, read
-  as **unsigned** nibbles in half-dB. The per-rate SHM offsets are
-  `(max − ppr[rate]) * 4`. ✓
+- `mcsbw{20,40,80}5g{l,m,h}po`: power offsets packed per band and width, read
+  as **unsigned** nibbles in half-dB, one nibble per modulation class (nibble 0
+  is BPSK/QPSK: OFDM 6–18 and MCS 0–2; nibbles 1–7 are MCS 3–9, with OFDM
+  24–54 on nibbles 1–4; see `txpwr-target-derivation.md`). The per-rate SHM
+  offsets are `(max − ppr[rate]) * 4`. ✓
 - `mcsbw160...po`: 80+80/160 MHz offsets. ~
 - `mcslr5g{l,m,h}po`: low-rate offsets. ~ (read, zero)
 - `cckbw202gpo`, `cckbw20ul2gpo`, `dot11agofdmhrbw202gpo`, `ofdmlrbw202gpo`:

@@ -251,9 +251,15 @@ bracket of the TX power-control enable. On a first bring-up it does not.
 ### TX target: the second of three passes at 40/80 MHz
 
 On cold ch36 and ch44 at 40 and 80 MHz the three `txpwrctrl_setup` passes write
-`base`, `base − 4`, `base`. The `−4` is `2 × max(ppr)`, the worst rate instead
-of the maximum. It does not appear above 5250 MHz, at 20 MHz (clamped), or hot.
-Why the second pass takes the worst rate, and only there, is not understood.
+`base`, `62`, `base`: 66/62/66 on the D6220, 68/62/68 on the agcombo. The
+middle value is the same on two boards whose `maxp5ga` and `mcsbw*po` differ,
+so it is not a different reading of the SROM table (the largest nibble of the
+agcombo's word would give 52); it is the same `get_max()` with a different
+regulatory cap in force, 68 before the 6-unit margin, 15.5 dBm written. The
+per-rate `+0x0e` field of that pass is flat too, 24 on the D6220 and 72 on the
+agcombo. Which locale state the middle pass runs under, and why only on U-NII-1
+bonded channels (not above 5250 MHz, not at 20 MHz, not hot), is not
+understood.
 
 ### Regulatory ceilings that cfg80211 cannot express
 
@@ -284,6 +290,14 @@ It is not the regulatory ceiling, and not a function of width or band:
 
 ch100 at 40 and 80 MHz does not even follow that form: two tail steps of 1.5
 and 2.5 dB where everything else is in half-dB multiples.
+
+Two agcombo observations point at the locale rather than at the SROM:
+
+- on the D6220, ch116/80 and ch132/80 have the same `maxp5ga`, the same
+  `mcsbw805ghpo`, the same target (0x50) and different K, 2 dB against 0;
+- the agcombo (three chains) writes twice the D6220's K where both have one:
+  2 dB against 1 on ch60/40 and on ch100–140 at 20 MHz; on ch60/40 and
+  ch100/40 the field is flat at 2 dB where the D6220 writes 1 dB and a ramp.
 
 ### Sub-band row offsets
 
