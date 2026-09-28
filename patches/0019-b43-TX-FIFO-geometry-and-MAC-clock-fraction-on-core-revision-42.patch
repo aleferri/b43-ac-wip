@@ -1,7 +1,8 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 440f12d9946ca1f4457f6183d80176102ccc281d Mon Sep 17 00:00:00 2001
 From: Alessandro Ferri <aleferri@example.invalid>
 Date: Sun, 27 Sep 2026 18:30:00 +0000
-Subject: [PATCH] b43: TX FIFO geometry and MAC clock fraction on core revision 42
+Subject: [PATCH] b43: TX FIFO geometry and MAC clock fraction on core revision
+ 42
 
 Two MAC-side blocks the OEM driver emits at core init and b43 does not. They
 were invisible in the wl-diag captures, which hook the PHY, radio and shared
@@ -36,8 +37,14 @@ at template RAM 0x2c (power save), the 4-word TX status of this core (0x170-
 0x17c, b43 reads two), and a GPIO mask write (0x49e = 0) after each MACCTL
 write in the sample-collect loop, which the 7.14 reference does differently.
 ---
---- a/drivers/net/wireless/broadcom/b43/b43.h	2026-09-27 18:09:51.605636786 +0000
-+++ b/drivers/net/wireless/broadcom/b43/b43.h	2026-09-27 18:28:54.649251735 +0000
+ drivers/net/wireless/broadcom/b43/b43.h  |  5 ++
+ drivers/net/wireless/broadcom/b43/main.c | 99 +++++++++++++++++++++++-
+ 2 files changed, 103 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/net/wireless/broadcom/b43/b43.h b/drivers/net/wireless/broadcom/b43/b43.h
+index 7e9ff68..1f4c364 100644
+--- a/drivers/net/wireless/broadcom/b43/b43.h
++++ b/drivers/net/wireless/broadcom/b43/b43.h
 @@ -128,6 +128,10 @@
  #define B43_MMIO_XMTFIFO_RD_PTR		0x528	/* core rev>= 16 only */
  #define B43_MMIO_XMTFIFO_WR_PTR		0x52A	/* core rev>= 16 only */
@@ -57,9 +64,11 @@ write in the sample-collect loop, which the 7.14 reference does differently.
  #define B43_MMIO_XMTTPLATEPTR		0x550
  #define B43_MMIO_SMPL_CLCT_STRPTR	0x552	/* core rev>= 22 only */
  #define B43_MMIO_SMPL_CLCT_STPPTR	0x554	/* core rev>= 22 only */
---- a/drivers/net/wireless/broadcom/b43/main.c	2026-09-27 18:09:51.769777654 +0000
-+++ b/drivers/net/wireless/broadcom/b43/main.c	2026-09-27 18:28:54.650519660 +0000
-@@ -3040,7 +3040,18 @@
+diff --git a/drivers/net/wireless/broadcom/b43/main.c b/drivers/net/wireless/broadcom/b43/main.c
+index cc3059d..755485e 100644
+--- a/drivers/net/wireless/broadcom/b43/main.c
++++ b/drivers/net/wireless/broadcom/b43/main.c
+@@ -3183,7 +3183,18 @@ void b43_mac_switch_freq(struct b43_wldev *dev, u8 spurmode)
  {
  	u16 chip_id = dev->dev->chip_id;
  
@@ -79,7 +88,7 @@ write in the sample-collect loop, which the 7.14 reference does differently.
  		switch (spurmode) {
  		case 2: /* 168 Mhz: 2^26/168 = 0x61862 */
  			b43_write16(dev, B43_MMIO_TSF_CLK_FRAC_LOW, 0x1862);
-@@ -3224,6 +3235,72 @@
+@@ -3368,6 +3379,85 @@ static void b43_mgmtframe_txantenna(struct b43_wldev *dev, int antenna)
  	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_PRPHYCTL, tmp);
  }
  
@@ -97,10 +106,15 @@ write in the sample-collect loop, which the 7.14 reference does differently.
 + * BCM4360. The microcode does not size the FIFOs by itself, so without this
 + * they keep whatever geometry the previous driver left in the hardware.
 + *
-+ * The chain commit is polled 25 times at 10 us. The OEM driver reads the
-+ * register 22 times for each entry with the done bit already clear at the
-+ * first read, so the budget is its, the exit condition is the plain one.
++ * Both waits are the OEM driver's, as the bus shows them on the agcombo. The
++ * flush polls the command's busy bit and reads it once more to check it.
++ * Each chain entry waits for its command field to clear, 21 retries 10 us
++ * apart, and on these chips it never does: all 22 reads of every entry
++ * return the command with the go bit already clear, the same on each
++ * bring-up. So the wait always runs out, and what says whether the entry was
++ * taken is the go bit.
 + */
++#define B43_TXFIFO_CHAIN_RETRIES	21
 +#define B43_TXFIFO_BLOCKS_REV42		42
 +#define B43_TXFIFO_CHAIN_GO		0x8000
 +#define B43_TXFIFO_CHAIN_CMD		0x0007
@@ -125,9 +139,11 @@ write in the sample-collect loop, which the 7.14 reference does differently.
 +	b43_write16(dev, B43_MMIO_XMTFIFOCMD, 0x0005);
 +	for (tries = 0; b43_read16(dev, B43_MMIO_XMTFIFOCMD) & 0x0001; tries++) {
 +		if (tries >= 100)
-+			return -ETIMEDOUT;
++			break;
 +		udelay(10);
 +	}
++	if (b43_read16(dev, B43_MMIO_XMTFIFOCMD) & 0x0001)
++		return -ETIMEDOUT;
 +
 +	b43_txfifo_alloc(dev, 0x002a, 0x002a, 0x002a, 0x262a, 0x17);
 +	for (fifo = 0; fifo < 6; fifo++)
@@ -139,10 +155,16 @@ write in the sample-collect loop, which the 7.14 reference does differently.
 +		b43_write16(dev, B43_MMIO_AGGFIFODATA1, min(3u, n - i));
 +		b43_write16(dev, B43_MMIO_AGGFIFODATA0,
 +			    B43_TXFIFO_CHAIN_GO | (i << 4) | B43_TXFIFO_CHAIN_CMD);
-+		for (tries = 0; b43_read16(dev, B43_MMIO_AGGFIFODATA0) &
-+				B43_TXFIFO_CHAIN_GO; tries++) {
-+			if (tries >= 25)
-+				return -ETIMEDOUT;
++		for (tries = 0; ; tries++) {
++			u16 v = b43_read16(dev, B43_MMIO_AGGFIFODATA0);
++
++			if (!(v & B43_TXFIFO_CHAIN_CMD))
++				break;
++			if (tries == B43_TXFIFO_CHAIN_RETRIES) {
++				if (v & B43_TXFIFO_CHAIN_GO)
++					return -ETIMEDOUT;
++				break;
++			}
 +			udelay(10);
 +		}
 +	}
@@ -152,7 +174,7 @@ write in the sample-collect loop, which the 7.14 reference does differently.
  /* This is the opposite of b43_chip_init() */
  static void b43_chip_exit(struct b43_wldev *dev)
  {
-@@ -3265,6 +3342,13 @@
+@@ -3409,6 +3499,13 @@ static int b43_chip_init(struct b43_wldev *dev)
  	if (err)
  		goto err_gpio_clean;
  
@@ -166,3 +188,6 @@ write in the sample-collect loop, which the 7.14 reference does differently.
  	/* Turn the Analog on and initialize the PHY. */
  	phy->ops->switch_analog(dev, 1);
  	err = b43_phy_init(dev);
+-- 
+2.43.0
+
