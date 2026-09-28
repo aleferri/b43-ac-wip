@@ -70,6 +70,8 @@
 #   SETTLE     attesa dopo up, secondi                        (default 10)
 #   SETTLE_BSS attesa dopo bss up, secondi                    (default $SETTLE)
 #   SSID       se impostato: ssid + bss up prima dell'attesa  (default vuoto)
+#   WEP_KEY    chiave hex: se impostata la installa via addwep  (default vuoto)
+#   KEY_IDX    indice WEP 0..3                                  (default 0)
 #   WL_KO      percorso di wl.ko: OBBLIGATORIO, vedi sotto
 #   DEVID      deviceid ammessi su IF, da `wl revinfo`, separati da spazio
 #              (default: i core AC della collezione, 0x43b3 0x43a2)
@@ -319,6 +321,7 @@ ciclo() {
 
     if [ -n "$SSID" ]; then
         wl -i "$IF" bss up > /dev/null 2>&1
+        install_key
         sleep "$SETTLE_BSS"
     fi
 
@@ -330,6 +333,7 @@ ciclo() {
 echo "capture_cold_init: $IF, BW$BW, attesa ${SETTLE}s + ${SETTLE_BSS}s bss, deviceid ammessi: $DEVID"
 echo "modulo: $WL_KO"
 [ -n "$SSID" ] || echo "SSID non impostato: la bss non sale e mancheranno le tabelle per-core"
+[ -n "$WEP_KEY" ] && echo "chiave WEP su slot ${KEY_IDX:-0}: installata via addwep dopo bss up; verifica in traccia SHM 0x10f4 e 0x05e0"
 echo "il rmmod di wl porta giu' anche il 2.4 GHz: non guidare questa procedura in wifi"
 echo "il lettore di /proc/wl_diag deve essere gia' attivo"
 

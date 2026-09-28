@@ -51,3 +51,28 @@ profilo() {
     esac
     return 0
 }
+
+# Chiave opzionale nella key table, condivisa dagli script di cattura. Serve a
+# far comparire in traccia il percorso di scrittura chiave: in chiaro gli slot
+# restano a zero. Verificato su questa build -- `addwep` scrive il materiale a
+# SHM 0x10f4 e l'entry dello slot nel KEYIDXBLOCK a 0x05e0 (0x0003 per lo slot
+# 0). `wsec_key` da CLI qui non ha handler, cade nel set generico e risponde
+# "Buffer too short", quindi la via e' addwep, cioe' WEP.
+#
+# Opt-in: senza WEP_KEY e' un no-op. Richiede SSID, la chiamata sta dopo
+# `bss up` perche' la key table si programma a BSS attivo.
+#
+#   WEP_KEY   chiave hex, 10 cifre (WEP-40) o 26 (WEP-104), con o senza 0x
+#   KEY_IDX   indice WEP 0..3                                     (default 0)
+install_key() {
+    [ -n "$WEP_KEY" ] || return 0
+    if [ -z "$SSID" ]; then
+        echo "WEP_KEY impostata ma SSID vuoto: senza BSS la key table non si programma, salto" >&2
+        return 0
+    fi
+    k=${WEP_KEY#0x}
+    wl -i "$IF" wsec 1 > /dev/null 2>&1
+    wl -i "$IF" addwep "${KEY_IDX:-0}" "0x$k" > /dev/null 2>&1
+    wl -i "$IF" primary_key "${KEY_IDX:-0}" > /dev/null 2>&1
+    return 0
+}
