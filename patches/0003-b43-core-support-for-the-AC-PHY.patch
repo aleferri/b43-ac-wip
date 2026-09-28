@@ -1,4 +1,4 @@
-From 89d4a052374722197edf133070221b1f732fd5f9 Mon Sep 17 00:00:00 2001
+From 6e2b11fd349f368910ea33b2fb9f4568b9e274b9 Mon Sep 17 00:00:00 2001
 From: Alessandro Ferri <aleferri@example.invalid>
 Date: Sun, 27 Sep 2026 15:55:26 +0000
 Subject: [PATCH] b43: core support for the AC-PHY
@@ -362,12 +362,12 @@ Signed-off-by: Alessandro Ferri <aleferri@example.invalid>
  drivers/net/wireless/broadcom/b43/dma.c       |  34 +-
  drivers/net/wireless/broadcom/b43/leds.c      | 172 +++---
  drivers/net/wireless/broadcom/b43/leds.h      |  19 +-
- drivers/net/wireless/broadcom/b43/main.c      | 528 ++++++++++++++++--
+ drivers/net/wireless/broadcom/b43/main.c      | 537 ++++++++++++++++--
  .../net/wireless/broadcom/b43/phy_common.c    |  21 +
  .../net/wireless/broadcom/b43/phy_common.h    |  24 +
  drivers/net/wireless/broadcom/b43/xmit.c      |   9 +-
  drivers/net/wireless/broadcom/b43/xmit.h      |  20 +
- 10 files changed, 721 insertions(+), 139 deletions(-)
+ 10 files changed, 728 insertions(+), 141 deletions(-)
 
 diff --git a/drivers/net/wireless/broadcom/b43/Kconfig b/drivers/net/wireless/broadcom/b43/Kconfig
 index 4559549..616aa17 100644
@@ -831,7 +831,7 @@ index 5ebd1b2..eb68796 100644
  
  #endif /* B43_LEDS_H_ */
 diff --git a/drivers/net/wireless/broadcom/b43/main.c b/drivers/net/wireless/broadcom/b43/main.c
-index 92ca0b2..14e0e94 100644
+index 92ca0b2..b2299b5 100644
 --- a/drivers/net/wireless/broadcom/b43/main.c
 +++ b/drivers/net/wireless/broadcom/b43/main.c
 @@ -316,6 +316,23 @@ static struct ieee80211_channel b43_5ghz_aphy_chantable[] = {
@@ -1098,7 +1098,23 @@ index 92ca0b2..14e0e94 100644
  }
  
  /* The ucode will use phase1 key with TEK key to decrypt rx packets.
-@@ -1237,7 +1373,7 @@ static void b43_bcma_phy_reset(struct b43_wldev *dev)
+@@ -972,8 +1108,13 @@ static void do_key_write(struct b43_wldev *dev,
+ 	B43_WARN_ON(index >= ARRAY_SIZE(dev->key));
+ 	B43_WARN_ON(key_len > B43_SEC_KEYSIZE);
+ 
+-	if (index >= pairwise_keys_start)
+-		keymac_write(dev, index, NULL);	/* First zero out mac. */
++	/*
++	 * First zero out mac, so that the old address does not match with the
++	 * new key. A clear writes the zero address at the end anyway, and the
++	 * stock driver writes such a row once.
++	 */
++	if (index >= pairwise_keys_start && mac_addr)
++		keymac_write(dev, index, NULL);
+ 	if (algorithm == B43_SEC_ALGO_TKIP) {
+ 		/*
+ 		 * We should provide an initial iv32, phase1key pair.
+@@ -1237,7 +1378,7 @@ static void b43_bcma_phy_reset(struct b43_wldev *dev)
  	/* Put PHY into reset */
  	flags = bcma_aread32(dev->dev->bdev, BCMA_IOCTL);
  	flags |= B43_BCMA_IOCTL_PHY_RESET;
@@ -1107,7 +1123,7 @@ index 92ca0b2..14e0e94 100644
  	bcma_awrite32(dev->dev->bdev, BCMA_IOCTL, flags);
  	udelay(2);
  
-@@ -1423,6 +1559,12 @@ static void handle_irq_noise(struct b43_wldev *dev)
+@@ -1423,6 +1564,12 @@ static void handle_irq_noise(struct b43_wldev *dev)
  	u8 i, j;
  	s32 average;
  
@@ -1120,7 +1136,7 @@ index 92ca0b2..14e0e94 100644
  	/* Bottom half of Link Quality calculation. */
  
  	if (dev->phy.type != B43_PHYTYPE_G)
-@@ -2866,13 +3008,14 @@ static int b43_gpio_init(struct b43_wldev *dev)
+@@ -2866,13 +3013,14 @@ static int b43_gpio_init(struct b43_wldev *dev)
  #ifdef CONFIG_B43_SSB
  	struct ssb_device *gpiodev;
  #endif
@@ -1138,7 +1154,7 @@ index 92ca0b2..14e0e94 100644
  	if (dev->dev->chip_id == 0x4301) {
  		mask |= 0x0060;
  		set |= 0x0060;
-@@ -3106,8 +3249,8 @@ static void b43_adjust_opmode(struct b43_wldev *dev)
+@@ -3106,8 +3254,8 @@ static void b43_adjust_opmode(struct b43_wldev *dev)
  	ctl &= ~B43_MACCTL_BEACPROMISC;
  	ctl |= B43_MACCTL_INFRA;
  
@@ -1149,7 +1165,7 @@ index 92ca0b2..14e0e94 100644
  		ctl |= B43_MACCTL_AP;
  	else if (b43_is_mode(wl, NL80211_IFTYPE_ADHOC))
  		ctl &= ~B43_MACCTL_INFRA;
-@@ -3142,6 +3285,11 @@ static void b43_adjust_opmode(struct b43_wldev *dev)
+@@ -3142,6 +3290,11 @@ static void b43_adjust_opmode(struct b43_wldev *dev)
  	/* FIXME: We don't currently implement the PMQ mechanism,
  	 *        so always disable it. If we want to implement PMQ,
  	 *        we need to enable it here (clear DISCPMQ) in AP mode.
@@ -1161,7 +1177,7 @@ index 92ca0b2..14e0e94 100644
  	 */
  	if (0  /* ctl & B43_MACCTL_AP */)
  		b43_maskset32(dev, B43_MMIO_MACCTL, ~B43_MACCTL_DISCPMQ, 0);
-@@ -3172,6 +3320,7 @@ static void b43_rate_memory_init(struct b43_wldev *dev)
+@@ -3172,6 +3325,7 @@ static void b43_rate_memory_init(struct b43_wldev *dev)
  	case B43_PHYTYPE_LP:
  	case B43_PHYTYPE_HT:
  	case B43_PHYTYPE_LCN:
@@ -1169,7 +1185,7 @@ index 92ca0b2..14e0e94 100644
  		b43_rate_memory_write(dev, B43_OFDM_RATE_6MB, 1);
  		b43_rate_memory_write(dev, B43_OFDM_RATE_9MB, 1);
  		b43_rate_memory_write(dev, B43_OFDM_RATE_12MB, 1);
-@@ -3407,11 +3556,27 @@ static void b43_periodic_every15sec(struct b43_wldev *dev)
+@@ -3407,11 +3561,27 @@ static void b43_periodic_every15sec(struct b43_wldev *dev)
  #endif
  }
  
@@ -1198,7 +1214,7 @@ index 92ca0b2..14e0e94 100644
  	if (state % 4 == 0)
  		b43_periodic_every60sec(dev);
  	if (state % 2 == 0)
-@@ -3444,6 +3609,8 @@ static void b43_periodic_work_handler(struct work_struct *work)
+@@ -3444,6 +3614,8 @@ static void b43_periodic_work_handler(struct work_struct *work)
  out_requeue:
  	if (b43_debug(dev, B43_DBG_PWORK_FAST))
  		delay = msecs_to_jiffies(50);
@@ -1207,7 +1223,7 @@ index 92ca0b2..14e0e94 100644
  	else
  		delay = round_jiffies_relative(HZ * 15);
  	ieee80211_queue_delayed_work(wl->hw, &dev->periodic_work, delay);
-@@ -3451,13 +3618,46 @@ out:
+@@ -3451,13 +3623,46 @@ out:
  	mutex_unlock(&wl->mutex);
  }
  
@@ -1255,7 +1271,7 @@ index 92ca0b2..14e0e94 100644
  }
  
  /* Check if communication with the device works correctly. */
-@@ -3973,12 +4173,112 @@ static void b43_set_retry_limits(struct b43_wldev *dev,
+@@ -3973,12 +4178,112 @@ static void b43_set_retry_limits(struct b43_wldev *dev,
  			long_retry);
  }
  
@@ -1368,7 +1384,7 @@ index 92ca0b2..14e0e94 100644
  	int antenna;
  	int err = 0;
  
-@@ -3997,10 +4297,36 @@ static int b43_op_config(struct ieee80211_hw *hw, u32 changed)
+@@ -3997,10 +4302,36 @@ static int b43_op_config(struct ieee80211_hw *hw, u32 changed)
  		if (err)
  			goto out_mac_enable;
  
@@ -1408,7 +1424,7 @@ index 92ca0b2..14e0e94 100644
  	}
  
  	if (changed & IEEE80211_CONF_CHANGE_RETRY_LIMITS)
-@@ -4044,7 +4370,10 @@ static int b43_op_config(struct ieee80211_hw *hw, u32 changed)
+@@ -4044,7 +4375,10 @@ static int b43_op_config(struct ieee80211_hw *hw, u32 changed)
  	}
  
  out_mac_enable:
@@ -1420,7 +1436,7 @@ index 92ca0b2..14e0e94 100644
  	mutex_unlock(&wl->mutex);
  
  	return err;
-@@ -4127,6 +4456,18 @@ static void b43_op_bss_info_changed(struct ieee80211_hw *hw,
+@@ -4127,6 +4461,18 @@ static void b43_op_bss_info_changed(struct ieee80211_hw *hw,
  
  		if (changed & BSS_CHANGED_BSSID)
  			b43_write_mac_bssid_templates(dev);
@@ -1439,7 +1455,7 @@ index 92ca0b2..14e0e94 100644
  	}
  
  	b43_mac_suspend(dev);
-@@ -4336,6 +4677,7 @@ redo:
+@@ -4336,6 +4682,7 @@ redo:
  	/* Cancel work. Unlock to avoid deadlocks. */
  	mutex_unlock(&wl->mutex);
  	cancel_delayed_work_sync(&dev->periodic_work);
@@ -1447,7 +1463,7 @@ index 92ca0b2..14e0e94 100644
  	cancel_work_sync(&wl->tx_work);
  	b43_leds_stop(dev);
  	mutex_lock(&wl->mutex);
-@@ -4684,6 +5026,9 @@ static void setup_struct_wldev_for_init(struct b43_wldev *dev)
+@@ -4684,6 +5031,9 @@ static void setup_struct_wldev_for_init(struct b43_wldev *dev)
  
  	/* Noise calculation context */
  	memset(&dev->noisecalc, 0, sizeof(dev->noisecalc));
@@ -1457,7 +1473,7 @@ index 92ca0b2..14e0e94 100644
  }
  
  static void b43_bluetooth_coext_enable(struct b43_wldev *dev)
-@@ -4895,6 +5240,56 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
+@@ -4895,6 +5245,56 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
  	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_SFFBLIM, 3);
  	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_LFFBLIM, 2);
  
@@ -1514,7 +1530,7 @@ index 92ca0b2..14e0e94 100644
  	/* Disable sending probe responses from firmware.
  	 * Setting the MaxTime to one usec will always trigger
  	 * a timeout, so we never send any probe resp.
-@@ -4937,6 +5332,19 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
+@@ -4937,6 +5337,19 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
  	b43_bluetooth_coext_enable(dev);
  
  	b43_bus_powerup(dev, !(sprom->boardflags_lo & B43_BFL_XTAL_NOSLOW));
@@ -1534,7 +1550,7 @@ index 92ca0b2..14e0e94 100644
  	b43_upload_card_macaddress(dev);
  	b43_security_init(dev);
  
-@@ -5249,6 +5657,21 @@ out:
+@@ -5249,6 +5662,21 @@ out:
  	b43info(wl, "Controller restarted\n");
  }
  
@@ -1556,7 +1572,7 @@ index 92ca0b2..14e0e94 100644
  static int b43_setup_bands(struct b43_wldev *dev,
  			   bool have_2ghz_phy, bool have_5ghz_phy)
  {
-@@ -5266,6 +5689,11 @@ static int b43_setup_bands(struct b43_wldev *dev,
+@@ -5266,6 +5694,11 @@ static int b43_setup_bands(struct b43_wldev *dev,
  	if (have_2ghz_phy)
  		hw->wiphy->bands[NL80211_BAND_2GHZ] = limited_2g ?
  			&b43_band_2ghz_limited : &b43_band_2GHz;
@@ -1568,7 +1584,7 @@ index 92ca0b2..14e0e94 100644
  	if (dev->phy.type == B43_PHYTYPE_N) {
  		if (have_5ghz_phy)
  			hw->wiphy->bands[NL80211_BAND_5GHZ] = limited_5g ?
-@@ -5279,6 +5707,19 @@ static int b43_setup_bands(struct b43_wldev *dev,
+@@ -5279,6 +5712,19 @@ static int b43_setup_bands(struct b43_wldev *dev,
  	dev->phy.supports_2ghz = have_2ghz_phy;
  	dev->phy.supports_5ghz = have_5ghz_phy;
  
@@ -1588,7 +1604,7 @@ index 92ca0b2..14e0e94 100644
  	return 0;
  }
  
-@@ -5350,6 +5791,12 @@ static void b43_supported_bands(struct b43_wldev *dev, bool *have_2ghz_phy,
+@@ -5350,6 +5796,12 @@ static void b43_supported_bands(struct b43_wldev *dev, bool *have_2ghz_phy,
  
  	/* As a fallback, try to guess using PHY type */
  	switch (dev->phy.type) {
@@ -1601,7 +1617,7 @@ index 92ca0b2..14e0e94 100644
  	case B43_PHYTYPE_G:
  	case B43_PHYTYPE_N:
  	case B43_PHYTYPE_LP:
-@@ -5656,6 +6103,7 @@ bcma_out:
+@@ -5656,6 +6108,7 @@ bcma_out:
  static void b43_bcma_remove(struct bcma_device *core)
  {
  	struct b43_wldev *wldev = bcma_get_drvdata(core);
@@ -1609,7 +1625,7 @@ index 92ca0b2..14e0e94 100644
  	struct b43_wl *wl = wldev->wl;
  
  	/* We must cancel any work here before unregistering from ieee80211,
-@@ -5671,14 +6119,14 @@ static void b43_bcma_remove(struct bcma_device *core)
+@@ -5671,14 +6124,14 @@ static void b43_bcma_remove(struct bcma_device *core)
  		ieee80211_unregister_hw(wl->hw);
  	}
  

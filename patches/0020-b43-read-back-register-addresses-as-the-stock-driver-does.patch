@@ -1,4 +1,4 @@
-From 83a4d303f2af067a5c71af37f9fd7a224d4c117f Mon Sep 17 00:00:00 2001
+From 0ccfecf29b6087028ee592f45f32687825d31511 Mon Sep 17 00:00:00 2001
 From: Alessandro Ferri <aleferri@example.invalid>
 Date: Mon, 28 Sep 2026 22:58:57 +0000
 Subject: [PATCH] b43: read back register addresses as the stock driver does
@@ -72,7 +72,7 @@ index fdb1c82..f4dedc1 100644
  	dev->dev = &core->dev;
  	dev->dma_dev = core->dma_dev;
 diff --git a/drivers/net/wireless/broadcom/b43/main.c b/drivers/net/wireless/broadcom/b43/main.c
-index 2444b39..070abee 100644
+index 625c8be..c137b3c 100644
 --- a/drivers/net/wireless/broadcom/b43/main.c
 +++ b/drivers/net/wireless/broadcom/b43/main.c
 @@ -510,6 +510,12 @@ static inline void b43_shm_control_word(struct b43_wldev *dev,
