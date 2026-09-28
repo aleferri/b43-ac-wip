@@ -35,7 +35,8 @@ that changes only bits 0x000c of the read before it; the host-flag clear is
 the write of the flags word 0x005e with bit 0x4000 clear; the BSS row of the
 address match table is the write of its second word, OBJ.WR sel=0x40000
 addr=0x7f, with flags in the upper half; the mac_suspend after a template
-length is the next MACCTL write with bit 0 clear; the region dump is the run
+length is the next MACCTL write with bit 0 clear, or the MACCMD write that
+commits it; the region dump is the run
 of reads that starts at 0x00e0. Which set applies is read off the capture:
 one with REG.* or WRAP.* operations is a bus capture.
 
@@ -172,7 +173,11 @@ class BusMarkers:
 
     @staticmethod
     def suspend_after(ops, i):
+        # The 7.14.43 driver commits the template with MACCMD (beacon valid
+        # bits) and no mac_suspend, after a read of MACCMD.
         for j in range(i + 1, min(i + 4, len(ops))):
+            if ops[j][2] == "MAC.MCMD":
+                return True
             if ops[j][2] == "MAC.MCTRL":
                 return not val(ops[j][3]) & 1
         return False
