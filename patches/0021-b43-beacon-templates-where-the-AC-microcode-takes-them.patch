@@ -1,4 +1,4 @@
-From 82d501d9361f23e015c53878ec1047d79e293cd6 Mon Sep 17 00:00:00 2001
+From 0bacb757e7ce64a211083898e957a033a07c03bd Mon Sep 17 00:00:00 2001
 From: Alessandro Ferri <aleferri@example.invalid>
 Date: Mon, 28 Sep 2026 23:14:24 +0000
 Subject: [PATCH] b43: beacon templates where the AC microcode takes them
@@ -43,7 +43,7 @@ index 959e01f..fec0dd3 100644
  #define B43_SHM_SH_TIMBPOS		0x001E	/* TIM B position in beacon */
  #define B43_SHM_SH_DTIMP		0x0012	/* DTIP period */
 diff --git a/drivers/net/wireless/broadcom/b43/main.c b/drivers/net/wireless/broadcom/b43/main.c
-index c137b3c..464031c 100644
+index 418132d..ce149e9 100644
 --- a/drivers/net/wireless/broadcom/b43/main.c
 +++ b/drivers/net/wireless/broadcom/b43/main.c
 @@ -500,6 +500,38 @@ static void b43_ram_write(struct b43_wldev *dev, u16 offset, u32 val)

@@ -3639,14 +3639,6 @@ static void b43_phy_ac_set_reg_on_reset(struct b43_wldev *dev)
 		b43_phy_write(dev, 0x0026, 0x0092);
 	b43_phy_write(dev, 0x0025, 0x0030);
 
-	/*
-	 * Enable the backplane MAC-PHY clock. The b43 core only enables it
-	 * after b43_phy_init(), in b43_chip_init(), which is too late for the
-	 * AC calibration that runs during reset, so it is enabled here. This
-	 * is idempotent with respect to the core's own enable.
-	 */
-	b43_mac_phy_clock_set(dev, true);
-
 	b43_phy_maskset(dev, 0x040f, (u16)~0x0200, 0);
 
 	/* Clip mask: all the bit-5 clears first, then all the low-byte 0x55

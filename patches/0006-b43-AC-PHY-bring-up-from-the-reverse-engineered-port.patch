@@ -1,4 +1,4 @@
-From beaaa68e715fb4fcbf3f6c5ba9bcda362d4c42a7 Mon Sep 17 00:00:00 2001
+From 5baf2d4ea4f7c909eab88f76199b0eebce9497d9 Mon Sep 17 00:00:00 2001
 From: c <c@l>
 Date: Tue, 8 Sep 2026 14:29:02 +0000
 Subject: [PATCH] b43: AC-PHY bring-up from the reverse-engineered port
@@ -12,7 +12,7 @@ of sync with the tree the unit suite measures.
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     5 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |   111 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 11357 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 11349 +++++++++++++++-
  drivers/net/wireless/broadcom/b43/phy_ac.h    |   819 +-
  drivers/net/wireless/broadcom/b43/ppr_ac.c    |   255 +
  drivers/net/wireless/broadcom/b43/ppr_ac.h    |    81 +
@@ -22,7 +22,7 @@ of sync with the tree the unit suite measures.
  .../wireless/broadcom/b43/rxiqcal_phy_ac.h    |    23 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1153 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    79 +
- 12 files changed, 15988 insertions(+), 23 deletions(-)
+ 12 files changed, 15980 insertions(+), 23 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -167,7 +167,7 @@ index 0000000..a1626b5
 +	b43_maskset32(dev, B43_MMIO_MACCTL, mask, set);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index 756cd44..ab3f82f 100644
+index 756cd44..74a4f26 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -1,23 +1,51 @@
@@ -229,7 +229,7 @@ index 756cd44..ab3f82f 100644
  	if (!phy_ac)
  		return -ENOMEM;
  	dev->phy.ac = phy_ac;
-@@ -62,27 +90,11316 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -62,27 +90,11308 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -3794,14 +3794,6 @@ index 756cd44..ab3f82f 100644
 +	if (dev->phy.rev == 1)
 +		b43_phy_write(dev, 0x0026, 0x0092);
 +	b43_phy_write(dev, 0x0025, 0x0030);
-+
-+	/*
-+	 * Enable the backplane MAC-PHY clock. The b43 core only enables it
-+	 * after b43_phy_init(), in b43_chip_init(), which is too late for the
-+	 * AC calibration that runs during reset, so it is enabled here. This
-+	 * is idempotent with respect to the core's own enable.
-+	 */
-+	b43_mac_phy_clock_set(dev, true);
 +
 +	b43_phy_maskset(dev, 0x040f, (u16)~0x0200, 0);
 +
