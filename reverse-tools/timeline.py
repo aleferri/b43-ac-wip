@@ -28,6 +28,17 @@ does on each event is the driver's, and none of it is in this file.
           of the BSS row of the address match table with its flags, AMT.WR
           idx=0x3f a3!=0, after the arm.
 
+A capture taken at the MMIO bus (reverse-tools/mmio2ops.py) has none of the
+accessor classes, so there each marker has its bus form: a maskset is the read
+of the register followed by the write, the mode change is the write of 0x0520
+that changes only bits 0x000c of the read before it; the host-flag clear is
+the write of the flags word 0x005e with bit 0x4000 clear; the BSS row of the
+address match table is the write of its second word, OBJ.WR sel=0x40000
+addr=0x7f, with flags in the upper half; the mac_suspend after a template
+length is the next MACCTL write with bit 0 clear; the region dump is the run
+of reads that starts at 0x00e0. Which set applies is read off the capture:
+one with REG.* or WRAP.* operations is a bus capture.
+
 Lines are `<t> <op#> <kind>`, sorted by time. Two things about the driver's
 state at the start of the flow come out of the same pass, because the harness
 cannot know them otherwise:
@@ -75,18 +86,117 @@ def load(path):
     return ops
 
 
+def val(rest):
+    m = re.search(r"\bval=0x([0-9a-fA-F]+)", rest)
+    return int(m.group(1), 16) if m else None
+
+
+def at(ops, i, name, addr):
+    return 0 <= i < len(ops) and match(ops[i][2], ops[i][3], name, addr)
+
+
+class AccessorMarkers:
+    """The markers in the vocabulary of the wl-diag hooks."""
+
+    @staticmethod
+    def wd(ops, i):
+        _, _, op, rest = ops[i]
+        return (op == "PHY.MOD" and
+                re.match(r"^addr=0x0*520\b.*\bmask=0x0*c\b", rest) is not None)
+
+    @staticmethod
+    def mhf_clear(ops, i):
+        _, _, op, rest = ops[i]
+        return op == "MAC.MHF" and re.search(r"\bmask=0x0*4000\b", rest) is not None
+
+    @staticmethod
+    def arm(ops, i):
+        _, _, op, rest = ops[i]
+        return (op == "PHY.MOD" and
+                re.match(r"^addr=0x0*2e4 val=0x0*f00\b", rest) is not None)
+
+    @staticmethod
+    def bss_row(ops, i):
+        _, _, op, rest = ops[i]
+        return (op == "AMT.WR" and re.match(r"^idx=0x0*3f\b", rest) is not None
+                and re.search(r"\ba3=0x0*[1-9a-f]", rest) is not None)
+
+    @staticmethod
+    def amt(ops, i):
+        return ops[i][2] == "AMT.WR"
+
+    @staticmethod
+    def suspend_after(ops, i):
+        return (i + 1 < len(ops) and ops[i + 1][2] == "MAC.MCTRL" and
+                ops[i + 1][3].startswith("val=0x00000000 mask=0x00000001"))
+
+    @staticmethod
+    def dump(ops, i):
+        _, _, op, rest = ops[i]
+        return (op == "OBJ.BULKR" and
+                re.match(r"^addr=0x0*e0 len=128\b", rest) is not None)
+
+
+class BusMarkers:
+    """The same markers as a capture at the MMIO bus shows them."""
+
+    @staticmethod
+    def wd(ops, i):
+        # The read of the maskset is the PHY access before the write; the
+        # interrupt handler can land in between with its MAC registers.
+        if not at(ops, i, "PHY.WR", 0x520):
+            return False
+        j = i - 1
+        while j >= 0 and not ops[j][2].startswith(("PHY.", "RAD.")):
+            j -= 1
+        return (at(ops, j, "PHY.RD", 0x520) and
+                (val(ops[i][3]) ^ val(ops[j][3])) & ~0xc == 0)
+
+    @staticmethod
+    def mhf_clear(ops, i):
+        return at(ops, i, "OBJ.WR", 0x5e) and not val(ops[i][3]) & 0x4000
+
+    @staticmethod
+    def arm(ops, i):
+        return at(ops, i, "PHY.WR", 0x2e4) and val(ops[i][3]) & 0x3f00 == 0x0f00
+
+    @staticmethod
+    def bss_row(ops, i):
+        _, _, op, rest = ops[i]
+        return (at(ops, i, "OBJ.WR", 0x7f) and "sel=0x40000" in rest
+                and val(rest) >> 16 != 0)
+
+    @staticmethod
+    def amt(ops, i):
+        return ops[i][2].startswith("OBJ.") and "sel=0x40000" in ops[i][3]
+
+    @staticmethod
+    def suspend_after(ops, i):
+        for j in range(i + 1, min(i + 4, len(ops))):
+            if ops[j][2] == "MAC.MCTRL":
+                return not val(ops[j][3]) & 1
+        return False
+
+    @staticmethod
+    def dump(ops, i):
+        return at(ops, i, "OBJ.RD", 0xe0) and at(ops, i + 1, "OBJ.RD", 0xe2)
+
+
+def markers_for(ops):
+    bus = any(op.startswith(("REG.", "WRAP.")) for _, _, op, _ in ops)
+    return BusMarkers if bus else AccessorMarkers
+
+
 def events(ops):
-    turns = [i for i, (_, _, op, rest) in enumerate(ops)
-             if op == "PHY.MOD"
-             and re.match(r"^addr=0x0*520\b.*\bmask=0x0*c\b", rest)]
+    mk = markers_for(ops)
+    turns = [i for i in range(len(ops)) if mk.wd(ops, i)]
     if not turns:
         return [], 0, 0, False
 
     # The host-flag clear that ends the channel switch. The first turn after
     # it reads the statistics window without latching it and carries no
     # sampling phase, so its marker is the first head word of the poll.
-    mhf = max(i for i, (_, _, op, rest) in enumerate(ops[:turns[0]])
-              if op == "MAC.MHF" and re.search(r"\bmask=0x0*4000\b", rest))
+    mhf = max(i for i in range(turns[0]) if mk.mhf_clear(ops, i))
     first = next(i for i in range(mhf, turns[0])
                  if match(ops[i][2], ops[i][3], "OBJ.RD", 0x10e))
     turns = [first] + turns
@@ -114,20 +224,24 @@ def events(ops):
     # The arm is the last maskset of 0x02e4 that a detector poll follows within
     # a few operations; the earlier ones belong to the radio bring-up.
     arm = None
-    for i, (_, _, op, rest) in enumerate(ops):
-        if (op == "PHY.MOD" and re.match(r"^addr=0x0*2e4 val=0x0*f00\b", rest)
+    for i in range(len(ops)):
+        if (mk.arm(ops, i)
                 and any(match(ops[j][2], ops[j][3], "PHY.RD", 0x251)
                         for j in range(i + 1, min(i + 9, len(ops))))):
             arm = i
+    if arm is None:
+        # The 7.14.43 driver (agcombo) arms the detector without the 0x02e4
+        # maskset. Its first poll after the channel switch is the arm's own
+        # turn all the same, 150 ms before the next one.
+        arm = next((i - 1 for i in range(mhf, len(ops))
+                    if match(ops[i][2], ops[i][3], "PHY.RD", 0x251)), None)
     if arm is not None:
         polls = [i for i in range(arm + 1, len(ops))
                  if match(ops[i][2], ops[i][3], "PHY.RD", 0x251)]
         # The first poll is the arm's own turn, emitted by the driver.
         out += [(ops[i][0], ops[i][1], "POLL") for i in polls[1:]]
         for i in range(arm + 1, len(ops)):
-            _, _, op, rest = ops[i]
-            if (op == "AMT.WR" and re.match(r"^idx=0x0*3f\b", rest)
-                    and re.search(r"\ba3=0x0*[1-9a-f]", rest)):
+            if mk.bss_row(ops, i):
                 out.append((ops[i][0], ops[i][1], "BSS_UP"))
                 break
 
@@ -142,8 +256,7 @@ def events(ops):
     for i in range(mhf, len(ops) - 1):
         t, n, op, rest = ops[i]
         if (op == "OBJ.WR" and re.match(r"^addr=0x0*1[8a]\b", rest)
-                and ops[i + 1][2] == "MAC.MCTRL"
-                and ops[i + 1][3].startswith("val=0x00000000 mask=0x00000001")):
+                and mk.suspend_after(ops, i)):
             if i < first:
                 pre += 1
             else:
@@ -163,9 +276,8 @@ def events(ops):
     phase = None
     turn_t = [ops[i][0] for i in turns]
     advances = len(turns) - off
-    for t, _, op, rest in ops:
-        if (op == "OBJ.BULKR" and t >= t_first
-                and re.match(r"^addr=0x0*e0 len=128\b", rest)):
+    for i, (t, _, op, rest) in enumerate(ops):
+        if t >= t_first and mk.dump(ops, i):
             idx = sum(1 for x in turn_t if x <= t) - 1
             phase = (29 - idx + off) % 30
             break
@@ -177,7 +289,7 @@ def events(ops):
         for i, (t, _, op, rest) in enumerate(ops):
             if not match(op, rest, "PHY.RD", 0x73c) or t < t_first:
                 continue
-            if any(o[2] == "AMT.WR" for o in ops[max(0, i - 60):i]):
+            if any(mk.amt(ops, j) for j in range(max(0, i - 60), i)):
                 continue
             idx = sum(1 for x in turn_t if x <= t) - 1
             if t - turn_t[idx] > 1.5:
