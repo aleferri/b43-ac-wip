@@ -129,7 +129,7 @@ void b43_test_oracle_coverage_report(void);
 
 /*
  * SROM rev 11 per-chain power info. Exactly the shape defined by
- * sprom-rev11/0001-*.patch's addition to include/linux/ssb/ssb.h —
+ * src/sprom-rev11/0001-*.patch's addition to include/linux/ssb/ssb.h —
  * keep field order/types byte-identical so this stub interoperates
  * with anything using the same offsets.
  */

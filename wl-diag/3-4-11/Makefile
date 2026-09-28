@@ -5,8 +5,8 @@
 #        -j
 #
 # KDIR deve puntare a un kernel GIA' configurato con gli stessi .config del
-# firmware (stesso CONFIG_*; in particolare CONFIG_KPROBES=y e
-# CONFIG_KALLSYMS=y) e con i Module.symvers/headers del build originale,
+# firmware (stesso CONFIG_*; serve CONFIG_KALLSYMS=y, non CONFIG_KPROBES: il
+# tracer usa detour inline) e con i Module.symvers/headers del build originale,
 # altrimenti vermagic/CRC non combaciano e insmod rifiuta il modulo.
 
 obj-m := wl_diag.o

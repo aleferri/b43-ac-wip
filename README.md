@@ -97,7 +97,7 @@ board is unknown.
 ## What is ported
 
 - **SROM rev 11** (`patches/0001`), with a userspace test harness in
-  [`sprom-rev11/`](sprom-rev11/).
+  [`src/sprom-rev11/`](src/sprom-rev11/).
 - **`op_init`**: BCMA only, chips `0x4352`/`0x4360` (anything else returns
   `-EOPNOTSUPP`). It covers the PLL check, core probe, frontend pre-init, PMU
   regctl, GPIO, `mode_init`, the table load in the stock driver's order,
@@ -197,12 +197,16 @@ Build with `B43_DEBUG=y` for the per-phase `b43dbg` messages.
 
 ```
 src/            driver sources (the source of truth; target drivers/net/wireless/broadcom/b43/)
+src/sprom-rev11/  SROM rev 11 draft patch and its test harness
 patches/        the kernel patch series; 0006 is regenerated from src/
 test/unit/      userspace harness: the PHY alone against the captures
 test/integration/  the whole of b43 with the port, against real kernel headers
 docs/           technical notes
-sprom-rev11/    SROM rev 11 draft patch and its test harness
-reverse-tools/  trace pipeline, analysis and extraction scripts, on-device tracer
+reverse-tools/  trace pipeline, analysis and extraction scripts
+wl-diag/        on-device tracer for the stock wl driver (kernels 3.4 and 2.6.30)
+wl-mmio-trap/   on-device MMIO trap for the stock wl driver (kernel 3.4)
+wl-cc-dump/     on-device ChipCommon PMU state dump
+wl-capture-scripts/  device-side capture sweeps
 router-data/    captures and static dumps per board
 scripts/        patch regeneration and helpers
 ```
@@ -216,7 +220,7 @@ open.
 - Split `patches/0006` before submitting to `linux-wireless`; the planned split
   is in `docs/driver-status.md`.
 - HT/VHT: the init tables already cover OFDM; the late PHY writes need an audit.
-- Submit `sprom-rev11/`; the preconditions are in its README.
+- Submit `src/sprom-rev11/`; the preconditions are in its README.
 - Co-loading with the integrated N-PHY (`wl0`): both PHYs probe, the rest is
   testable only with a complete bring-up.
 - Data TX/RX and 2.4 GHz.

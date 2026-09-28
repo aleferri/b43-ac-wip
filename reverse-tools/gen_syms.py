@@ -19,7 +19,7 @@ questo tracer esiste.
 
 Il report sui singoli simboli resta, ed e' la parte utile: dice in anticipo
 quali hook si risolveranno e quali no, senza dover caricare niente sul device.
-La lista dei nomi combacia con hooks[] in wl-diag-2630/wl_diag.c piu'
+La lista dei nomi combacia con hooks[] in wl-diag/2-6-30/wl_diag.c piu'
 r4k_flush_icache_range, che serve al momento dell'arm. Se cambia li',
 aggiornala qui. --module wl restringe il match ai simboli di quel modulo,
 utile se un nome collide con un simbolo del kernel.
@@ -28,7 +28,7 @@ import argparse
 import sys
 
 WANTED = [
-    # Combacia con hooks[] di wl-diag-2630/wl_diag.c, generata da la'.
+    # Combacia con hooks[] di wl-diag/2-6-30/wl_diag.c, generata da la'.
     # Se si aggiunge un hook, va aggiunto qui: altrimenti il report
     # dice "tutto risolto" su una lista incompleta.
     "phy_reg_read", "phy_reg_write", "phy_reg_mod",

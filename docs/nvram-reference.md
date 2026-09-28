@@ -8,7 +8,7 @@ This file does two things:
    as established by comparing the driver with the stock traces.
 
 The field semantics are those of Broadcom's SROM rev 11 layout (`bcmsrom_tbl.h`;
-see [`../sprom-rev11/cross_check.md`](../sprom-rev11/cross_check.md)). The
+see [`../src/sprom-rev11/cross_check.md`](../src/sprom-rev11/cross_check.md)). The
 correlations come from the boards with register traces.
 
 ## Confidence legend

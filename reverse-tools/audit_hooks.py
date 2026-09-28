@@ -47,7 +47,7 @@ CONFIG_KALLSYMS_ALL: `is_core_symbol()` in kernel/module.c filtra sui flag di
 sezione -- SHF_ALLOC piu' SHF_EXECINSTR quando l'opzione e' spenta -- e non sul
 binding. Quello che serve KALLSYMS_ALL e' un simbolo DATO.
 
-  ./audit_hooks.py wl.ko [wl-diag/wl_diag.c]
+  ./audit_hooks.py wl.ko [../wl-diag/3-4-11/wl_diag.c]
 """
 import os
 import re
@@ -57,6 +57,7 @@ import sys
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+WL_DIAG = os.path.join(HERE, os.pardir, 'wl-diag')
 
 
 def is_branch(insn):
@@ -251,7 +252,7 @@ def leggi_enum(src):
 
 def leggi_classi():
     """numero -> nome di classe, dal decoder: e' l'unico posto dove stanno."""
-    path = os.path.join(HERE, 'decode-wl-diag.py')
+    path = os.path.join(WL_DIAG, 'decode-wl-diag.py')
     try:
         src = open(path).read()
     except OSError:
@@ -275,7 +276,7 @@ def reg_dest(w):
 
 
 def main(ko, sorgente=None):
-    sorgente = sorgente or os.path.join(HERE, 'wl-diag', 'wl_diag.c')
+    sorgente = sorgente or os.path.join(WL_DIAG, '3-4-11', 'wl_diag.c')
     testo = open(sorgente).read()
 
     errori = lint(testo)

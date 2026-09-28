@@ -13,7 +13,7 @@ Two patch files carry this work:
     FEM block (`femctrl`, …) and `subband5gver`;
   - antenna gain decoded into `antenna_gain_qdb[]`;
   - `SSB_SPROM11_CCODE` at `0x0096`.
-- **`sprom-rev11/0001-ssb-bcma-firmware-SROM-revision-11-support.patch`** is a
+- **`src/sprom-rev11/0001-ssb-bcma-firmware-SROM-revision-11-support.patch`** is a
   wider draft for upstream. It also covers the NVRAM path in
   `drivers/firmware/broadcom/bcm47xx_sprom.c`. It is not a build prerequisite.
 

@@ -8,8 +8,8 @@
 # KDIR deve puntare al kernel GIA' configurato con gli stessi .config del
 # firmware DSL (stesso CONFIG_*; serve CONFIG_KALLSYMS=y) e con i
 # Module.symvers/headers del build originale, altrimenti vermagic/CRC non
-# combaciano e insmod rifiuta il modulo. NB: a differenza della 3.4 NON serve
-# CONFIG_KPROBES (il tracer usa detour inline, non kprobe).
+# combaciano e insmod rifiuta il modulo. Come sulla 3.4 non serve
+# CONFIG_KPROBES: il tracer usa detour inline.
 #
 # Su 2.6.30 kallsyms_lookup_name esiste ma NON e' esportata ai moduli (l'export
 # arriva in 2.6.33), quindi il sorgente disabilita da se' quel ramo sotto 2.6.33:
@@ -17,7 +17,7 @@
 # l'indirizzo di kallsyms_lookup_name, una riga di /proc/kallsyms:
 #   insmod wl_diag.ko arm=1 klookup=0x<addr_di_kallsyms_lookup_name>
 # e il modulo trova gli altri da solo, ririsolvendoli a ogni ricaricamento del
-# bersaglio. reverse-tools/gen_syms.py costruisce la riga da un dump di
+# bersaglio. ../../reverse-tools/gen_syms.py costruisce la riga da un dump di
 # /proc/kallsyms e dice in anticipo quali hook si risolveranno.
 # Per forzare lo stesso comportamento su un kernel piu' recente:
 #   make KDIR=... EXTRA_CFLAGS=-DWLDIAG_NO_KALLSYMS ...

@@ -10,7 +10,7 @@ The usual order: decode → strip the other core → fold `RETVAL` → compare.
 `test/unit/gates.sh` runs the whole chain; none of it needs to be run by hand
 for a gate.
 
-- **decode-wl-diag.py** decodes the tracer's binary records (28 bytes,
+- **../wl-diag/decode-wl-diag.py** decodes the tracer's binary records (28 bytes,
   big-endian) into text lines (`PHY.WR addr=.. val=..`, …).
 - **strip_other_core.py** removes the other wireless core's attach from the head
   of a capture: `wl` attaches every core at load. It matters for the read
@@ -179,7 +179,7 @@ the same vocabulary:
   not from here.
 - **cmp_funcs.py** compares same-name function bodies across `wl` builds, both
   byte-identical and identical up to constants (relocation immediates zeroed).
-- **gen_syms.py** builds the `insmod` line of `wl-diag-2630` (`klookup=`) from a
+- **gen_syms.py** builds the `insmod` line of `wl-diag/2-6-30` (`klookup=`) from a
   `/proc/kallsyms` copied off the device.
 
 ## Table extractors (one-shot, from the ELF)
@@ -192,30 +192,37 @@ the same vocabulary:
 
 ## Device side
 
-- **wl-diag/**, **wl-diag-2630/**: the inline-detour tracer for kernel 3.4 and
-  2.6.30. See `wl-diag/README.md`.
-- **cc-dump/**: a ChipCommon PMU state dump module. See `cc-dump/README.md`.
-- **capture_cold_init.sh** takes a **cold** sweep, one cycle per channel,
-  reloading `wl` each time. `wl_diag` is loaded once and arms itself at the
-  target's `MODULE_STATE_COMING`, so the attach falls under the hooks without a
-  PCI remove/rescan. Kernels 3.4 and 2.6.30.
-- **capture_hot_init.sh** takes a **hot** sweep. The module stays loaded, and
-  each cycle is `{chanspec; up; wait; down}`. Split it with
-  `split_trace.py --on chanspec`, and compare with the `up`/`switch_channel`
-  flows and `AC_FIRST_INIT=0`.
-- **capture_profiles.sh** holds the channel lists both scripts share. Copy it
-  next to them on the device. The groups are disjoint: `<bw>` for channels
-  without radar duty, `<bw>dfs` for those with (CAC ~60 s), `<bw>meteo` for the
-  weather-radar band.
-- **capture_cold_tg789vac.sh** is the cold cycle on the TG789vac v2, where
-  reloading `wl` alone crashes the router; see
-  `router-data/tg789vac-v2/README.md`.
+The tracer, the capture scripts and the PMU dump module have their own
+top-level directories:
+
+- **../wl-diag/**: the inline-detour tracer, `3-4-11/` for kernel 3.4 and
+  `2-6-30/` for 2.6.30, with its decoder and `wl_diag_3580.ko`, the build for
+  the DSL-3580L. See `../wl-diag/README.md`.
+- **../wl-cc-dump/**: a ChipCommon PMU state dump module. See its README.
+- **../wl-capture-scripts/**:
+  - **capture_cold_init.sh** takes a **cold** sweep, one cycle per channel,
+    reloading `wl` each time. `wl_diag` is loaded once and arms itself at the
+    target's `MODULE_STATE_COMING`, so the attach falls under the hooks
+    without a PCI remove/rescan. Kernels 3.4 and 2.6.30.
+  - **capture_hot_init.sh** takes a **hot** sweep. The module stays loaded,
+    and each cycle is `{chanspec; up; wait; down}`. Split it with
+    `split_trace.py --on chanspec`, and compare with the `up`/`switch_channel`
+    flows and `AC_FIRST_INIT=0`.
+  - **capture_profiles.sh** holds the channel lists both scripts share. Copy
+    it next to them on the device. The groups are disjoint: `<bw>` for
+    channels without radar duty, `<bw>dfs` for those with (CAC ~60 s),
+    `<bw>meteo` for the weather-radar band.
+  - **capture_cold_tg789vac.sh** is the cold cycle on the TG789vac v2, where
+    reloading `wl` alone crashes the router; see
+    `../router-data/tg789vac-v2/README.md`.
+
+Here:
+
 - **mempeek.c**, **pcicfg.c**, **memfind.c** are static userspace helpers over
   `/dev/mem` and `/proc/bus/pci`:
   - `mempeek` reads MMIO;
   - `pcicfg` repoints `BAR0_WIN` onto ChipCommon;
   - `memfind` finds a kernel variable by value.
-- **wl_diag_3580.ko** is the tracer built for the DSL-3580L.
 
 ## Checks on C sources
 

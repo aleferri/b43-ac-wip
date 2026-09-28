@@ -151,7 +151,7 @@ static void bcma_sprom_extract_r11(struct bcma_bus *bus, const u16 *sprom)
 		 * every chain. A second board with non-saturated 5gm/5gh and
 		 * non-zero 2g rxgains would harden this further; the encoding
 		 * is committed here as the working extraction with that
-		 * caveat noted in sprom-rev11/README.md.
+		 * caveat noted in src/sprom-rev11/README.md.
 		 */
 		v = sprom[SPOFF(base + SSB_SPROM11_PWR_RXGAINS0)];
 		bcma_sprom_unpack_rxgains(&bus->sprom.rxgains_5gm, i,  v       & 0xff);

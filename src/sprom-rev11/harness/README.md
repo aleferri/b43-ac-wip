@@ -10,10 +10,10 @@ Broadcom decoder that produced `nvram_dump`.
 
 ```
 $ make                     # builds ./test
-$ make check               # ../../router-data/dsl3580l/wl1_*.txt (raw mode)
-$ make check-d6220         # ../../router-data/d6220/wl1_*.txt (raw mode)
+$ make check               # ../../../router-data/dsl3580l/wl1_*.txt (raw mode)
+$ make check-d6220         # ../../../router-data/d6220/wl1_*.txt (raw mode)
 $ make check-bcm4360usb    # synth-mode round trip on vectors/bcm4360usb.nvram
-$ make check-agcombo       # synth-mode round trip on ../../router-data/agcombo/wl1_nvram.txt
+$ make check-agcombo       # synth-mode round trip on ../../../router-data/agcombo/wl1_nvram.txt
 ```
 
 Against another vector:

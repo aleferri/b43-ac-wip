@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 # Decoder dei record wl_diag (MIPS big-endian, 28 byte/record).
 #
-# Uso tipico (il device fa: cat /dev/wl_diag | nc -u host 5555):
-#     nc -u -l -p 5555 | ./decode.py
+# Uso tipico (il device fa: cat /proc/wl_diag | nc <HOST> 5555, su TCP):
+#     ncat -l 5555 | python3 decode-wl-diag.py
 # oppure da file:
-#     ./decode.py < dump.bin
+#     python3 decode-wl-diag.py < dump.bin
 #
-# Framing: e' uno stream di byte, si legge a blocchi di 28. Ogni record e' ben
-# sotto l'MTU; con 'cat | nc' non c'e' rischio di spezzare a meta' record.
+# Framing: e' uno stream di byte, si legge a blocchi di 28 e un record spezzato
+# fra due read resta nel buffer fino al successivo.
 #
-# DEVE restare allineato agli op-code di wl_diag.c (enum OP_*). Aggiornato per
-# gli hook GPIO ChipCommon (op 10/11/12): per quelli 'addr' NON e' usato
+# DEVE restare allineato agli op-code di 3-4-11/wl_diag.c e 2-6-30/wl_diag.c
+# (enum OP_*). Per gli hook GPIO ChipCommon (op 10/11/12) 'addr' NON e' usato
 # (addr_src=0), i campi significativi sono val=a2 e mask=aux=a1. Idem per il
 # controllo verso il MAC: MAC.MCTRL (op 16) e' un RMW su reg fisso (addr
 # assente, val=a2/mask=a1, 32 bit); MAC.MHF (17) porta idx=addr, val, mask;
 # MAC.MHF.RD (18) e' una read (val UNDEFINED). PHY.AND (19) / PHY.OR (20):
 # reg-op a un operando (addr,val); val e' la maschera-AND risp. il valore-OR,
 # resi con la maschera effettiva derivata (clr ~val / set val).
-# MAC.BW (35): larghezza al livello MAC, val = il parametro. Il port non la fa.
+# MAC.BW (35): larghezza al livello MAC, val = il parametro.
 # SROMCTL.RD/WR (36,37): registro di controllo SROM, dal percorso di attach.
 # OTP.* (32-34): letture OTP dal livello generico. addr = numero di word o
 # regione; il valore va in un puntatore, non nel ritorno, quindi qui interessa
@@ -28,14 +28,15 @@
 # confine di ciclo affidabile: CHANSPEC (26) viene dalla generica
 # wlc_phy_chanspec_set, che sull'AC-PHY non e' sul percorso e quando scatta porta
 # il chanspec CORRENTE, cioe' in ritardo di un ciclo.
-# CHANSPEC (26): cambio canale, addr = chanspec. Il decoder lo espande in
-# canale/banda/larghezza col formato 802.11ac standard (chan=bit 0-7,
-# bw=0x3800, band=0xc000) -- assunzione, non verificata su cattura. Serve a
-# tagliare a posteriori una run che copre piu' canali.
+# CHANSPEC (26): cambio canale, addr = chanspec. Il decoder lo espande, come
+# CS.SHM, in canale/banda/larghezza col formato 802.11ac (chan=bit 0-7,
+# bw=0x3800, band=0xc000); il canale e' quello CENTRALE, non il primario (vedi
+# B43_PHY_AC_CHANSPEC_* in src/phy_ac.h). Serve a tagliare a posteriori una run
+# che copre piu' canali.
 # MARK (39): etichetta iniettata dallo spazio utente con
 #     echo "ch36 bw20" > /proc/wl_diag
 # 12 caratteri impacchettati big-endian nei tre campi u32 (addr, val, aux). Non
-# viene dal driver: e' un confine messo nella traccia da chi cattura, e sostuisce
+# viene dal driver: e' un confine messo nella traccia da chi cattura, e sostituisce
 # il taglio a posteriori sui salti temporali. wl_diag ne emette due da se',
 # "mod COMING" e "mod GOING", ai bordi di ogni caricamento del bersaglio.
 # OBJ.RD (24) / OBJ.WR (25): object memory del MAC. addr=offset in byte,
@@ -81,10 +82,10 @@ OPS = {
     255: "DROP",
 }
 
-# Le read loggano solo occorrenza+indirizzo: il valore NON e' catturato (hook
-# all'ingresso, o foglia con return non agganciabile). Va emesso UNDEFINED, MAI
-# 0x0000 inventato -- altrimenti si riparte col problema di distinguere zeri
-# veri da zeri finti.
+# Il record di una read porta solo occorrenza e indirizzo: l'hook sta
+# all'ingresso, e il valore, quando l'hook ha retcap, arriva nel RETVAL che
+# segue. Nella riga della read va emesso UNDEFINED, MAI 0x0000 inventato --
+# altrimenti si riparte col problema di distinguere zeri veri da zeri finti.
 CHANSPEC = 26
 CS_SHM   = 40
 OBJ      = {24, 25}
@@ -107,7 +108,7 @@ NO_ADDR  = {47, 48, 51}		# registro fisso o nessun indirizzo: PHY.RDW/WRW, PHY.F
 # OBJ.SET: memset su shared memory, offset + valore + lunghezza.
 OBJ_SET  = 50
 MARK     = 39
-READS    = {1, 4, 18, 24, 29, 30, 32, 33, 34, 36, 47}                 # PHY.RD, RAD.RD, MAC.MHF.RD, OBJ.RD
+READS    = {1, 4, 18, 24, 29, 30, 32, 33, 34, 36, 47}                 # read: la riga non porta il valore
 HAS_MASK = {3, 6, 7, 8, 9, 10, 11, 12, 17} # aux e' una mask (RMW, GPIO, MHF)
 GPIO     = {10, 11, 12}                   # niente addr; val=a2, mask=aux=a1
 MCTRL    = {16}                            # MACCONTROL RMW: reg fisso, niente addr; val=a2, mask=aux=a1
@@ -116,7 +117,7 @@ TABLE    = {13, 14}                       # id=addr(a1), len=val(a2), off=aux(a3
 DELAY    = 15                             # niente addr; usec=val(a1)
 PHY_AND  = 19                             # addr + val=maschera-AND (bit tenuti)
 PHY_OR   = 20                             # addr + val=valore-OR (bit settati)
-COREREG  = 21                             # core reg: off=addr(a2), core=aux(a1); val non catturato
+COREREG  = 21                             # core reg: off=addr(a2), core=aux(a1); val nell'ARGX
 # Record di continuazione (correlati al principale via 'for=#<parent_seq>'):
 #   ARGX  (22): arg su stack extra -> a5=addr, a6=val, parent=aux
 #   RETVAL(23): valore restituito da una read/rmw -> parent=addr, val=val
@@ -201,7 +202,7 @@ def main():
             elif op == RETVAL:                     # valore restituito, continuazione
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} "
                       f"for=#{addr} val={h(val, True)}")
-            elif op == COREREG:                    # core reg: core+off, valore non catturato all'ingresso
+            elif op == COREREG:                    # core reg: core+off; val nell'ARGX, ritorno nel RETVAL
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} "
                       f"core={h(aux, False)} off={h(addr, False)} val=UNDEFINED")
             elif op == PHY_WARR:                   # conteggio voci, non un addr

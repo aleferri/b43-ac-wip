@@ -3,11 +3,17 @@
  * wl_diag, variante per kernel 2.6.30 (DSL-3580L, SoC BCM6362, MIPS32 BE,
  * gcc 4.4.2 buildroot).
  *
- * Meccanismo, formato dei record e limiti sono quelli della variante 3.4:
- * vedi la testata di ../wl-diag/wl_diag.c. Identici anche gli op-code, cosi'
- * decode-wl-diag.py decodifica le tracce di tutti i router e si possono
- * cross-correlare (fra versioni di wl diverse cambia il contenuto della
- * trace, non il formato).
+ * Meccanismo e formato dei record sono quelli della variante 3.4: vedi la
+ * testata di ../3-4-11/wl_diag.c. Gli op-code sono un prefisso di quelli della
+ * 3.4, con gli stessi valori, cosi' ../decode-wl-diag.py decodifica le tracce di
+ * tutti i router e si possono cross-correlare (fra versioni di wl diverse
+ * cambia il contenuto della trace, non il formato).
+ *
+ * Rispetto alla 3.4 mancano il percorso a break, la deviazione della tail call,
+ * lo stop_machine attorno alle patch d'ingresso, la regola di un solo hook per
+ * op, il filtro sui simboli fuori dal bersaglio, il controllo sui lui condivisi
+ * fra epiloghi e quello di collisione fra hook. Lo short-j lascia o[1] al suo
+ * posto come delay slot della `j` invece di annullarlo.
  *
  * Qui e' adattato solo il collante kernel pre-2.6.33: coda a ring manuale al
  * posto del kfifo tipizzato, spinlock_t al posto di raw_spinlock, e i tre
@@ -29,6 +35,7 @@
 #include <linux/wait.h>
 #include <linux/spinlock.h>
 #include <linux/poll.h>
+#include <linux/vmalloc.h>
 #include <asm/cacheflush.h>
 #include <linux/notifier.h>
 
@@ -126,7 +133,7 @@ static void flush_i(unsigned long s, unsigned long e)
 		p_flush_icache(s, e);
 }
 
-/* ---- record + coda + char device (uguale alla versione kprobe) -------- */
+/* ---- record + coda --------------------------------------------------- */
 #define WLDIAG_MAGIC 0x57444731u
 enum wldiag_op {
 	OP_PHY_R = 1, OP_PHY_W, OP_PHY_MOD,
@@ -190,6 +197,31 @@ static DECLARE_WAIT_QUEUE_HEAD(rq);
 static atomic_t seq = ATOMIC_INIT(0);
 static atomic_t drops = ATOMIC_INIT(0);
 
+/* fifo_recs portato in [MIN, MAX] e arrotondato per difetto a una potenza di
+ * 2: emit() e wd_read() indicizzano con fifo_recs - 1 come maschera. */
+static int ring_alloc(void)
+{
+	if (fifo_recs < FIFO_RECS_MIN || fifo_recs > FIFO_RECS_MAX) {
+		uint r = fifo_recs < FIFO_RECS_MIN ? FIFO_RECS_MIN : FIFO_RECS_MAX;
+
+		pr_warn("wl_diag: fifo_recs=%u fuori da [%u, %u], uso %u\n",
+			fifo_recs, FIFO_RECS_MIN, FIFO_RECS_MAX, r);
+		fifo_recs = r;
+	}
+	fifo_recs = 1U << (fls(fifo_recs) - 1);
+
+	ring = vmalloc(fifo_recs * sizeof(*ring));
+	if (!ring) {
+		pr_err("wl_diag: vmalloc di %u KB per la coda fallita, "
+		       "riprova con un fifo_recs piu' basso\n",
+		       (uint)(fifo_recs * sizeof(*ring) / 1024));
+		return -ENOMEM;
+	}
+	pr_info("wl_diag: coda di %u record (%u KB)\n", fifo_recs,
+		(uint)(fifo_recs * sizeof(*ring) / 1024));
+	return 0;
+}
+
 /* Letture di REGISTRO PHY da non registrare, per conservare la fifo. Nasce dal
  * polling del rivelatore radar: sui canali DFS il driver interroga 0x0253 e
  * 0x0254 in continuo -- 192000 e 194000 letture nelle quattro fasi -- e con i
@@ -217,14 +249,6 @@ static atomic_t drops = ATOMIC_INIT(0);
  * formato di quei registri, non la classificazione.
  */
 #define SKIP_MAX 16
-/* Un ciclo di init A FREDDO si ottiene ricaricando il modulo bersaglio, non
- * manomettendo la struct del PHY dallo stub. Il byte "gia' calibrato" (227 su
- * 6.30, 251 su 7.14.89) resta quindi solo una nota: a freddo e' quel byte a zero
- * che rende completa la cal_init, e nella traccia lo si vede dal record CAL.INIT.
- * NB: su 2.6.30 il ricarico di `wl` non e' praticabile come sul 3.4 -- vedi il
- * README -- quindi qui la fase a freddo resta quella del solo probe.
- */
-
 static char *skipphyrd;
 module_param(skipphyrd, charp, 0444);
 static u32 skip_list[SKIP_MAX];
@@ -335,11 +359,11 @@ struct hook {
 	unsigned long addr;
 	u32 saved[4];
 	bool armed;
-	/* Campi di stato aggiunti dopo: DEVONO stare in coda, perche' la tabella
-	 * usa inizializzatori posizionali e inserirli in mezzo li sposta tutti.
-	 * E' successo, e per questo gli inizializzatori usano ora la forma
-	 * designata: un `true` destinato a retcap finiva nel campo precedente,
-	 * retcap restava falso per ogni hook e non usciva NESSUN RETVAL. */
+	/* Campi di stato: DEVONO stare in coda, perche' la tabella inizializza i
+	 * primi cinque campi in forma posizionale e un campo inserito in mezzo
+	 * sposta tutti i valori che seguono. Cosi' un `true` destinato a retcap
+	 * finiva nel campo precedente, retcap restava falso per ogni hook e non
+	 * usciva NESSUN RETVAL. I campi dopo @aux_src si impostano per nome. */
 	bool use_sites;		/* patch delle coppie lui/addiu ai siti di chiamata */
 	/* Nome di un hook di livello piu' basso: se QUELLO si aggancia, questo
 	 * si salta. Serve per i thunk. `wlc_bmac_read/write_shm` sono thunk di
@@ -388,7 +412,8 @@ static struct hook hooks[] = {
 	 * Firme dedotte dal ramo brcmsmac (mirror del wl proprietario) --
 	 * da riverificare sul disasm come per gli altri hook (cfr. il caveat
 	 * len/off di wlc_phy_table_*). Se un prologo ha un branch nelle prime
-	 * 4 parole, wd_init lo salta con un pr_warn: nessun rischio.
+	 * 4 parole, pianifica() ripiega sui siti di chiamata o salta l'hook con un
+	 * pr_warn: nessun rischio.
 	 *   wlc_bmac_mctrl(hw, u32 mask, u32 val)   reg fisso: mask=a1, val=a2
 	 *   wlc_bmac_mhf(hw, u8 idx, u16 mask, u16 val, int bands)
 	 *                                           idx=a1, mask=a2, val=a3
@@ -406,14 +431,6 @@ static struct hook hooks[] = {
 	 * spiegazione. */
 	{ "wlc_bmac_mhf",       OP_MAC_MHF_W, 1, 3, 2, .nargx = 1 },
 	{ "wlc_bmac_mhf_get",   OP_MAC_MHF_R, 1, 0, 0, .retcap = true },
-	/* Object memory del MAC (SHM, SCR, IHR): addr=offset, aux=selettore.
-	 * Cattura anche il campione di rumore della crs_min_pwr cal, che passa da
-	 * wlc_phy_noise_read_shmem -> wlapi_bmac_read_shm -> wlc_bmac_read_shm ->
-	 * qui, non da un registro PHY.
-	 * NOME PER VERSIONE: read_objmem su 6.30, read_objmem16 su 7.14.
-	 * Non si aggancia read_shm: e' un wrapper con jr alla parola 2. */
-	/* Cambio canale: chanspec in a1. Si aggancia la generica, che scatta per
-	 * ogni PHY e permette una run unica su piu' canali da splittare dopo. */
 	/* Template RAM: solo il bulk, su 6.30 gli accessor ptr/data non esistono. */
 	{ "wlc_bmac_write_template_ram", OP_TPL_RAMW, 1, 2, 3 },
 	/* OTP: il livello generico ha gli stessi nomi su 6.30 e 7.14 e prologo
@@ -426,9 +443,8 @@ static struct hook hooks[] = {
 	{ "otp_init",        OP_OTP_INIT, 0, 0, 0, .retcap = true },
 	{ "otp_read_word",   OP_OTP_RDW,  1, 0, 2, .retcap = true },
 	{ "otp_read_region", OP_OTP_RDR,  1, 0, 3, .retcap = true },
-	/* Due accessor che il codice acphy chiama e che il port NON fa affatto --
-	 * zero riferimenti a bw_set o sromctl in src/. Il grafo delle chiamate
-	 * dice anche DOVE vanno:
+	/* Due accessor che il codice acphy chiama. Il grafo delle chiamate dice
+	 * DOVE vanno:
 	 *
 	 *   wlc_bmac_bw_set     <- wlapi_bmac_bw_set <- wlc_phy_chanspec_set_acphy
 	 *                                            <- wlc_phy_init
@@ -446,17 +462,33 @@ static struct hook hooks[] = {
 	 * NON si aggancia wlc_bmac_macphyclk_set: i suoi chiamanti sono
 	 * init_htphy, init_nphy e wlc_bmac_init, quindi per l'AC-PHY non e' nel
 	 * percorso. Ha anche un bne alla parola 1, ma e' irrilevante. */
+	/* Il momento in cui si invoca cal_init: una volta per ciclo di bring-up,
+	 * quindi anche l'ancora per segmentare uno sweep.
+	 *
+	 * Un ciclo A FREDDO si ottiene ricaricando il modulo bersaglio, come fa
+	 * wl-capture-scripts/capture_cold_init.sh, non manomettendo la struct del
+	 * PHY dallo stub. Il byte "gia' calibrato" (227 su 6.30, 251 su 7.14.89)
+	 * resta una nota: a freddo e' quel byte a zero che rende completa la
+	 * cal_init. */
 	{ "wlc_phy_cal_init", OP_CAL_INIT,   0, 0, 0 },
 	{ "wlc_bmac_bw_set",  OP_MAC_BW,     0, 1, 0 },
 	{ "si_get_sromctl",   OP_SROMCTL_R,  0, 0, 0, .retcap = true },
 	{ "si_set_sromctl",   OP_SROMCTL_W,  0, 1, 0 },
+	/* Cambio canale: chanspec in a1. Si aggancia la generica, che scatta per
+	 * ogni PHY e permette una run unica su piu' canali da splittare dopo. */
 	{ "wlc_phy_chanspec_set", OP_CHANSPEC, 1, 0, 0 },
+	/* Object memory del MAC (SHM, SCR, IHR): addr=offset, aux=selettore.
+	 * Cattura anche il campione di rumore della crs_min_pwr cal, che passa da
+	 * wlc_phy_noise_read_shmem -> wlapi_bmac_read_shm -> wlc_bmac_read_shm ->
+	 * qui, non da un registro PHY.
+	 * NOME PER VERSIONE: read_objmem su 6.30, read_objmem16 su 7.14. */
 	{ "wlc_bmac_read_objmem",  OP_MAC_OBJ_R, 1, 0, 2, .retcap = true },
 	{ "wlc_bmac_write_objmem", OP_MAC_OBJ_W, 1, 2, 3 },
-	/* Thunk a 16 bit sopra il bulk. Sono GLOBAL, mentre read/write_objmem
-	 * qui sopra sono LOCAL, e kallsyms_lookup_name trova i locali di un
-	 * modulo solo con CONFIG_KALLSYMS_ALL: se i due sopra non si risolvono,
-	 * questi restano l'unica via sulla shared memory. Coprono il solo
+	/* Thunk a 16 bit sopra read/write_objmem. Quei due sono LOCAL, il che
+	 * non li nasconde a kallsyms: su 2.6.30 add_kallsyms() tiene l'intera
+	 * symtab del modulo, e CONFIG_KALLSYMS_ALL riguarda solo quella del
+	 * kernel. Possono pero' mancare del tutto dalla symtab di un blob, e allora
+	 * questi, GLOBAL, restano l'unica via sulla shared memory. Coprono il solo
 	 * selettore SHM, quindi aux resta 0.
 	 *   wlc_bmac_read_shm(hw, offset)        offset=a1, valore nel RETVAL
 	 *   wlc_bmac_write_shm(hw, offset, val)  offset=a1, val=a2 */
@@ -487,7 +519,7 @@ static struct hook hooks[] = {
 	 *
 	 * I nomi cambiano fra le versioni: su 6.30 l'entry point e'
 	 * wlc_bmac_set_addrmatch, su 7.14 wlc_set_addrmatch. Sono elencati
-	 * entrambi: quello che non c'e' non si risolve e wd_init lo dice.
+	 * entrambi: quello che non c'e' non si risolve e pianifica() lo dice.
 	 *
 	 * Indice in a1 e puntatore all'indirizzo in a2, letto dai prologhi
 	 * dell'oggetto 6.30 e coerente con brcms_b_set_addrmatch() di brcmsmac.
@@ -495,7 +527,7 @@ static struct hook hooks[] = {
 	/* set_addrmatch ha un branch alla parola 2 del prologo (il test su
 	 * hw+72), quindi il detour a 4 parole non ci sta: short-j. Le parole
 	 * 0 e 1 sono `lw` e `sltiu`, non PC-relative e senza effetti
-	 * collaterali, quindi la rieseuzione nello stub e' innocua.
+	 * collaterali, quindi la riesecuzione nello stub e' innocua.
 	 * a1 = indice, a2 = puntatore all'indirizzo (si legge `lbu 1($a2)`). */
 	{ "wlc_bmac_set_addrmatch", OP_ADDRMATCH, 1, 0, 0, .shortj = true },
 	{ "wlc_set_addrmatch",      OP_ADDRMATCH, 1, 0, 0 },
@@ -504,14 +536,10 @@ static struct hook hooks[] = {
 	{ "wlc_bmac_write_amt",     OP_AMT_W,     1, 0, 3 },
 	{ "wlc_bmac_set_rcmta",     OP_RCMTA_W,   1, 0, 0 },
 	/* Accessor trovati nei blob di entrambe le versioni e non coperti dagli
-	 * hook sopra. Coprono cio' di cui oggi non si vede niente:
+	 * hook sopra:
 	 *
 	 *   phy_reg_write_array   scrittura PHY in blocco, l'accessor che in altri
-	 *                         alberi si chiama phy_reg_write_list. Se dentro
-	 *                         chiama phy_reg_write le singole scritture si
-	 *                         vedono gia' e questo hook aggiunge un marcatore,
-	 *                         come TBL.WR fa per le tabelle; se non lo chiama,
-	 *                         e' l'unica via per vederle. Utile nei due casi.
+	 *                         alberi si chiama phy_reg_write_list.
 	 *   phy_reg_read/write_wide   accesso PHY a 32 bit. Gli hook a 16 bit non
 	 *                         lo intercettano.
 	 *   wlc_bmac_write_ihr    gli Indirect Hardware Registers del core d11.
@@ -519,8 +547,8 @@ static struct hook hooks[] = {
 	 *                         dedicato li scrive senza passarci.
 	 *   wlc_bmac_set_shm      scrittura mascherata in shared memory.
 	 *
-	 * Firme lette dai prologhi dell'oggetto 6.30, non assunte -- e quattro su
-	 * sei non erano cio' che sembrava dal nome:
+	 * Firme lette dai prologhi dell'oggetto 6.30, non assunte -- e la
+	 * maggior parte non era cio' che sembrava dal nome:
 	 *
 	 *   phy_reg_write_array(pi, array, n)   NON ha un indirizzo: a1 e' un
 	 *       puntatore all'array e a2 il conteggio (un `blez a2` ci esce). Si
@@ -541,19 +569,19 @@ static struct hook hooks[] = {
 	{ "phy_reg_write_wide",  OP_PHY_WRW,  0, 1, 0 },
 	{ "wlc_bmac_write_ihr",  OP_IHR_W,    1, 2, 0 },
 	{ "wlc_bmac_set_shm",    OP_OBJ_SET,  1, 2, 3 },
-	/* branch a slot 3 (beq): detour classico a 4 parole impossibile. short-j a
-	 * 1 parola: o[0]=j stub; o[1] (addiu $v0,1) resta come delay slot; lo stub
+	/* branch a slot 3 (beq): detour classico a 4 parole impossibile. short-j:
+	 * o[0]=j stub; o[1] (addiu $v0,1) resta come delay slot; lo stub
 	 * riesegue o[0..1] e rientra a +8 (v0 ri-settato DOPO la hook). addr=a1
 	 * grezzo (l'andi 0xffff e' o[0], rieseguito nello stub). */
 	{ "read_radio_reg",     OP_RADIO_R,   1, 0, 0, .shortj = true, .retcap = true },
 };
 #define NHOOK ARRAY_SIZE(hooks)
 
-/* Punto d'atterraggio del detour: chiamato dallo stub con (id, a1, a2, a3). */
 static inline u32 pick(u8 src, u32 a1, u32 a2, u32 a3)
 {
 	return src == 1 ? a1 : src == 2 ? a2 : src == 3 ? a3 : 0;
 }
+/* Punto d'atterraggio del detour: chiamato dallo stub con (id, a1, a2, a3). */
 u32 __used noinline
 wl_diag_hook(u32 id, u32 a1, u32 a2, u32 a3)
 {
@@ -662,7 +690,6 @@ wl_diag_exit_ret(u32 retval)
 static inline u32 i_addiu(u8 rt, u8 rs, s16 im){ return (0x09u<<26)|(rs<<21)|(rt<<16)|(u16)im; }
 static inline u32 i_sw(u8 rt, u8 b, s16 o){ return (0x2bu<<26)|(b<<21)|(rt<<16)|(u16)o; }
 static inline u32 i_lw(u8 rt, u8 b, s16 o){ return (0x23u<<26)|(b<<21)|(rt<<16)|(u16)o; }
-/* beq rs,rt,off: off in ISTRUZIONI, dal delay slot */
 static inline u32 i_lui(u8 rt, u16 im){ return (0x0fu<<26)|(rt<<16)|im; }
 static inline u32 i_ori(u8 rt, u8 rs, u16 im){ return (0x0du<<26)|(rs<<21)|(rt<<16)|im; }
 static inline u32 i_jalr(u8 rs){ return (rs<<21)|(R_RA<<11)|0x09u; }
@@ -948,7 +975,7 @@ static void patch_entry(int idx)
 	if (hooks[idx].shortj) {
 		/* patch a 1 parola atomica: o[0]=j stub. o[1] resta (delay slot,
 		 * rieseguito anche dallo stub). Richiede stub in regione j 256MB
-		 * (verificato in wd_init). */
+		 * (verificato in pianifica()). */
 		o[0] = i_j(stub);
 		flush_i(hooks[idx].addr, hooks[idx].addr + 8);
 		return;
@@ -977,7 +1004,7 @@ static void restore_entry(int idx)
 	flush_i(hooks[idx].addr, hooks[idx].addr + 16);
 }
 
-/* ---- char device ------------------------------------------------------ */
+/* ---- /proc/wl_diag --------------------------------------------------- */
 static ssize_t wd_read(struct file *f, char __user *ubuf, size_t len, loff_t *off)
 {
 	struct wldiag_rec r;
@@ -1059,14 +1086,14 @@ static const struct file_operations wd_fops = {
 	.poll = wd_poll,
 	.llseek = no_llseek,
 };
-/* Il buffer sta in /proc/wl_diag: appare da se' e non serve mknod. La strada
- * precedente era un misc device a minor dinamico, che voleva leggere il minor
- * da /proc/misc e crearlo a mano a ogni caricamento.
+/* Il buffer sta in /proc/wl_diag: appare da se' e non serve mknod, mentre un
+ * misc device a minor dinamico vorrebbe leggere il minor da /proc/misc e
+ * crearlo a mano a ogni caricamento.
  * proc_create ha la stessa firma su 2.6.30 e 3.4 e prende file_operations,
  * quindi la stessa chiamata vale per entrambi. */
 #define WD_PROC "wl_diag"
 
-/* ---- init/exit -------------------------------------------------------- */
+/* ---- piano, armamento, disarmo --------------------------------------- */
 static int eligible[NHOOK];   /* indici agganciabili */
 static int n_elig;
 
@@ -1119,6 +1146,23 @@ static void azzera_piano(void)
 static int pianifica(void);
 static int arma(void);
 
+/*
+ * Il notifier e' il perno dell'armamento dinamico, non una difesa di riserva:
+ * COMING arma, GOING disarma, senza eccezioni. E' quello che serve per una
+ * cattura a freddo, dove ogni ciclo e' un rmmod piu' un insmod del bersaglio.
+ *
+ * L'ordine delle notifiche in 2.6.30 lo permette, ed e' lo stesso del 3.4:
+ * in init_module() load_module() finisce del tutto -- rilocazioni applicate,
+ * modulo in lista -- poi arriva COMING, poi mod->init, quindi si arma prima
+ * che il driver parta; in delete_module() gira mod->exit(), poi arriva GOING,
+ * poi free_module(), quindi al disarmo il testo e' ancora mappato. Il 2.6.30
+ * non ha nemmeno set_section_ro_nx, che nel 3.4 gira subito DOPO COMING: la'
+ * la finestra scrivibile e' strettissima, qui il testo dei moduli e' sempre
+ * scrivibile.
+ *
+ * Niente riferimento sul bersaglio: `rmmod wl` deve poter riuscire, ed e' il
+ * passo centrale di una cattura a freddo.
+ */
 static int wd_mod_notify(struct notifier_block *nb, unsigned long ev, void *data)
 {
 	struct module *m = data;
@@ -1319,29 +1363,17 @@ static int arma(void)
 	return 0;
 }
 
-/*
- * Il notifier e' il perno dell'armamento dinamico, non una difesa di riserva:
- * COMING arma, GOING disarma, senza eccezioni. E' quello che serve per una
- * cattura a freddo, dove ogni ciclo e' un rmmod piu' un insmod del bersaglio.
- *
- * L'ordine delle notifiche in 2.6.30 lo permette, ed e' lo stesso del 3.4:
- * in init_module() load_module() finisce del tutto -- rilocazioni applicate,
- * modulo in lista -- poi arriva COMING, poi mod->init, quindi si arma prima
- * che il driver parta; in delete_module() gira mod->exit(), poi arriva GOING,
- * poi free_module(), quindi al disarmo il testo e' ancora mappato. Il 2.6.30
- * non ha nemmeno set_section_ro_nx, che nel 3.4 gira subito DOPO COMING: la'
- * la finestra scrivibile e' strettissima, qui il testo dei moduli e' sempre
- * scrivibile.
- *
- * Niente riferimento sul bersaglio: `rmmod wl` deve poter riuscire, ed e' il
- * passo centrale di una cattura a freddo.
- */
+/* ---- init/exit ------------------------------------------------------- */
 static int __init wd_init(void)
 {
 	parse_skipphyrd();
 
+	if (ring_alloc())
+		return -ENOMEM;
+
 	if (!proc_create(WD_PROC, 0600, NULL, &wd_fops)) {
 		pr_err("wl_diag: proc_create(/proc/%s) fallita\n", WD_PROC);
+		vfree(ring);
 		return -ENOMEM;
 	}
 
@@ -1366,12 +1398,13 @@ static int __init wd_init(void)
 
 static void __exit wd_exit(void)
 {
-	disarma();
 	if (mod_nb_registered) {
 		unregister_module_notifier(&wd_mod_nb);
 		mod_nb_registered = false;
 	}
+	disarma();
 	remove_proc_entry(WD_PROC, NULL);
+	vfree(ring);
 	pr_info("wl_diag: scaricato (persi: %d, filtrati: %d)\n",
 		atomic_read(&drops), atomic_read(&filtered));
 }

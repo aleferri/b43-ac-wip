@@ -1,18 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * wl_diag (B) - PHY/radio/PMU tracer for the Broadcom "wl" driver, WITHOUT
+ * wl_diag - PHY/radio/PMU tracer for the Broadcom "wl" driver, WITHOUT
  * kprobes.
  *
  * CONFIG_KPROBES is off on this kernel, so the accessors are hooked with a
  * function-entry detour: resolve the address through kallsyms, overwrite the
  * first 4 instructions with a jump (lui/ori/jr $t9) to an executable stub that
- * records (op, addr, val, mask), then re-run the 4 original instructions,
- * relocated, and return to func+16.
+ * records (op, addr, val, mask), then runs the 4 original instructions copied
+ * into the stub and returns to func+16.
  *
- * ONLY entry arguments are captured (a1=addr, a2/a3=val/mask). The value
- * RETURNED by reads is not traced (a simplification): phy_reg_read and
- * read_radio_reg therefore log only the address read, and the decoder emits
- * them as val=UNDEFINED, never 0x0000.
+ * A record carries up to three register arguments, picked per hook among
+ * a1..a3. Stack arguments follow in an ARGX record (nargx), and the value a
+ * read returns follows in a RETVAL record, through a trampoline on $ra
+ * (retcap). The read record itself holds no value: the decoder prints it as
+ * val=UNDEFINED, never 0x0000.
  *
  * read_radio_reg has a branch in its 4th instruction (beq), so the classic
  * 4-word detour is impossible. It is hooked with the "short-j" variant (the
@@ -39,7 +40,8 @@
  * so a stub still in flight when the target unloads still runs valid code.
  *
  * Runtime assumption (MIPS32R1, no NX/RODATA for module text): module memory
- * is RWX plus an explicit flush_icache_range. To be confirmed on the device.
+ * is RWX plus an explicit flush_icache_range. Where the vendor loader puts
+ * `wl` in KSEG0, which is unmapped, this holds by construction.
  *
  * Arming is DYNAMIC. The hooks are not applied when this module is inserted
  * but on the target's MODULE_STATE_COMING notification, which on 3.4
@@ -80,7 +82,7 @@
 #include <linux/spinlock.h>
 #include <linux/poll.h>
 #include <asm/cacheflush.h>
-#include <asm/page.h>		/* PAGE_OFFSET, per il controllo su module_core */
+#include <asm/page.h>		/* PAGE_OFFSET, for the check on module_core */
 /* Needed for BRK_KPROBE_BP, which tells whether the kernel has the
  * notify_die(DIE_BREAK) branch in do_bp: without this include the #ifdef
  * further down would always be false and the break path would compile away
@@ -142,7 +144,7 @@ static void flush_i(unsigned long s, unsigned long e)
 		p_flush_icache(s, e);
 }
 
-/* ---- record + queue + char device (same as the kprobe version) -------- */
+/* ---- record + queue -------------------------------------------------- */
 #define WLDIAG_MAGIC 0x57444731u
 enum wldiag_op {
 	OP_PHY_R = 1, OP_PHY_W, OP_PHY_MOD,
@@ -177,23 +179,9 @@ struct wldiag_rec {
 } __packed;
 
 /*
- * The queue is allocated at runtime rather than statically: the size becomes a
- * parameter, and an allocation that fails shows up straight away instead of
- * inflating the module image in .bss.
- *
- * Why it has to be large: the peak rate seen on the DSL captures is 5200
- * records/s (the 80 MHz phase, with RETVALs on), and with 32768 records the
- * margin was ~6 seconds. That was not enough: that phase lost 1873 records in
- * 232 drips of 2-3, meaning the queue was on the edge throughout. With the
- * default of 131072 the margin rises to ~25 s.
- *
- * Cost: 28 bytes per record, so 131072 records are 3.5 MB of unpageable kernel
- * memory. On a router with 64 MB that is a slice, but it is only paid while the
- * module is loaded. If the allocation fails, lower the parameter: 65536 is
- * 1.75 MB and ~12 s of margin.
- */
-/*
- * The queue sits on a vmalloc'd buffer, not on kfifo_alloc: __kfifo_alloc uses
+ * The queue is allocated at init, so its size is a parameter and a failed
+ * allocation shows up straight away instead of inflating the module's .bss.
+ * It sits on a vmalloc'd buffer, not on kfifo_alloc: __kfifo_alloc uses
  * kmalloc, which wants physically CONTIGUOUS pages, and on a fragmented router
  * an allocation of a few MB fails. vmalloc has no such constraint. kfifo_init
  * takes the buffer ready-made and puts the queue head on top of it.
@@ -211,17 +199,11 @@ struct wldiag_rec {
  * at (TCP, `cat`), or filter more with skipphyrd.
  *
  * Cost: 28 bytes per record, so 131072 records are 3.5 MB of unpageable kernel
- * memory, paid only while the module is loaded.
+ * memory, paid only while the module is loaded. If the allocation fails, lower
+ * the parameter: 65536 is 1.75 MB and ~12 s of margin.
  *
  * fifo_recs is rounded down to a power of 2: kfifo_init divides the size in
  * bytes by esize and does rounddown_pow_of_two.
- */
-/* A COLD init cycle is obtained by reloading the target module -- which is what
- * reverse-tools/capture_cold_init.sh does, with the hooks already armed from
- * MODULE_STATE_COMING -- not by tampering with the PHY struct from the stub.
- * The "already calibrated" byte (251 on 7.14.89, 227 on 6.30) therefore stays
- * a note only: when cold it is pi->[251] == 0 that makes cal_init complete, and
- * in the trace that shows as the CAL.INIT record.
  */
 
 #define FIFO_RECS_DEF 131072
@@ -373,7 +355,7 @@ struct hook {
 	const char *ripiego_di;
 	bool shortj;		/* true: 1-word 'j' detour (branch inside the 4-word window) */
 	bool retcap;		/* true: capture the return value through the ra trampoline */
-	u8 nargx;		/* # arg extra su stack da catturare: arg5@16(sp), arg6@20(sp) */
+	u8 nargx;		/* # of stack arguments to capture: arg5@16(sp), arg6@20(sp) */
 	/* Where aux comes from when the hook is armed as a tail call: there the
 	 * arguments seen are those of the function being jumped to, not those of
 	 * the thunk's entry, and the delay slot has already set the ones it sets.
@@ -427,7 +409,8 @@ static struct hook hooks[] = {
 	 * flags. Signatures taken from the brcmsmac branch (a mirror of the
 	 * proprietary wl) -- to be re-checked against the disasm like the other
 	 * hooks (cf. the len/off caveat on wlc_phy_table_*). If a prologue has a
-	 * branch in the first 4 words, wd_init skips it with a pr_warn: no risk.
+	 * branch in the first 4 words, pianifica() takes another route or skips
+	 * the hook with a pr_warn: no risk.
 	 *   wlc_bmac_mctrl(hw, u32 mask, u32 val)   fixed reg: mask=a1, val=a2
 	 *   wlc_bmac_mhf(hw, u8 idx, u16 mask, u16 val, int bands)
 	 *                                           idx=a1, mask=a2, val=a3
@@ -445,17 +428,8 @@ static struct hook hooks[] = {
 	 * unexplained. */
 	{ "wlc_bmac_mhf",       OP_MAC_MHF_W, 1, 3, 2, .nargx = 1 },
 	{ "wlc_bmac_mhf_get",   OP_MAC_MHF_R, 1, 0, 0, .retcap = true },
-	/* MAC object memory (SHM, SCR, IHR): addr=offset, aux=selector.
-	 * This also catches the noise sample of the crs_min_pwr cal, which comes
-	 * through wlc_phy_noise_read_shmem -> wlapi_bmac_read_shm ->
-	 * wlc_bmac_read_shm -> here, not from a PHY register.
-	 * NAME PER VERSION: read_objmem on 6.30, read_objmem16 on 7.14.
-	 * read_shm is not hooked: it is a wrapper with a jr in word 2. */
-	/* Channel change: chanspec in a1. The generic one is hooked, which fires
-	 * for every PHY and allows a single run over several channels, to be
-	 * split afterwards. */
 	/* Template RAM: where the PHY loads the tone waveforms, the input of
-	 * RXIQ, PAPD and do_dummy_tx. No op class covered it.
+	 * RXIQ, PAPD and do_dummy_tx.
 	 * On 6.30 the ptr/data accessors do not exist: there, only the bulk.
 	 *
 	 * short-j on all four: on 7.14.89 the branch sits in word 2 of every one
@@ -481,9 +455,7 @@ static struct hook hooks[] = {
 	{ "otp_init",        OP_OTP_INIT, 0, 0, 0, .retcap = true },
 	{ "otp_read_word",   OP_OTP_RDW,  1, 0, 2, .retcap = true },
 	{ "otp_read_region", OP_OTP_RDR,  1, 0, 3, .retcap = true },
-	/* Two accessors the acphy code calls and the port does NOT do at all --
-	 * zero references to bw_set or sromctl in src/. The call graph also says
-	 * WHERE they go:
+	/* Two accessors the acphy code calls. The call graph says WHERE they go:
 	 *
 	 *   wlc_bmac_bw_set     <- wlapi_bmac_bw_set <- wlc_phy_chanspec_set_acphy
 	 *                                            <- wlc_phy_init
@@ -504,7 +476,13 @@ static struct hook hooks[] = {
 	/* The moment cal_init is invoked: once per bring-up cycle, which also
 	 * makes it the soundest anchor for segmenting a sweep. Prologue:
 	 * addiu sp / sw s0 / sw ra / lbu 251(a0), branch in word 4, so the 4-word
-	 * detour holds. */
+	 * detour holds.
+	 *
+	 * A COLD cycle comes from reloading the target module, which is what
+	 * wl-capture-scripts/capture_cold_init.sh does, not from tampering with
+	 * the PHY struct from the stub. The "already calibrated" byte (251 on
+	 * 7.14.89, 227 on 6.30) stays a note: when cold it is pi->[251] == 0 that
+	 * makes cal_init complete. */
 	{ "wlc_phy_cal_init", OP_CAL_INIT,   0, 0, 0 },
 	{ "wlc_bmac_bw_set",  OP_MAC_BW,     0, 1, 0 },
 	{ "si_get_sromctl",   OP_SROMCTL_R,  0, 0, 0, .retcap = true },
@@ -521,6 +499,12 @@ static struct hook hooks[] = {
 	 * 4-word detour does not hold; the first two words are lw and are not
 	 * PC-relative, so the 2-word short-j does. */
 	{ "wlc_phy_chanspec_shm_set", OP_CHANSPEC_SHM, 1, 0, 0, .shortj = true },
+	/* MAC object memory (SHM, SCR, IHR): addr=offset, aux=selector.
+	 * This also catches the noise sample of the crs_min_pwr cal, which comes
+	 * through wlc_phy_noise_read_shmem -> wlapi_bmac_read_shm ->
+	 * wlc_bmac_read_shm -> here, not from a PHY register.
+	 * NAME PER VERSION: read_objmem on 6.30, read_objmem16 on 7.14. Where
+	 * these do not resolve, the read/write_shm thunks further down stand in. */
 	{ "wlc_bmac_read_objmem16",  OP_MAC_OBJ_R, 1, 0, 2, .retcap = true },
 	{ "wlc_bmac_write_objmem16", OP_MAC_OBJ_W, 1, 2, 3 },
 	/* The BULK object-memory pair. It is needed for two independent reasons.
@@ -584,15 +568,10 @@ static struct hook hooks[] = {
 	{ "wlc_bmac_write_amt",     OP_AMT_W,     1, 0, 3 },
 	{ "wlc_bmac_set_rcmta",     OP_RCMTA_W,   1, 0, 0 },
 	/* Accessors found in the blobs of both versions and not covered by the
-	 * hooks above. They cover what nothing shows today:
+	 * hooks above:
 	 *
 	 *   phy_reg_write_array   bulk PHY write, the accessor that goes by the
-	 *                         name phy_reg_write_list in other trees. If it
-	 *                         calls phy_reg_write inside, the individual
-	 *                         writes are already visible
-	 *                         and this hook adds a marker, as TBL.WR does for
-	 *                         tables; if it does not, this is the only way to
-	 *                         see them. Useful either way.
+	 *                         name phy_reg_write_list in other trees.
 	 *   phy_reg_read/write_wide   32-bit PHY access. The 16-bit hooks do not
 	 *                         intercept it.
 	 *   wlc_bmac_write_ihr    the d11 core's Indirect Hardware Registers.
@@ -601,7 +580,7 @@ static struct hook hooks[] = {
 	 *   wlc_bmac_set_shm      masked write to shared memory.
 	 *
 	 * Signatures read off the prologues of the 6.30 object, not assumed -- and
-	 * four out of six were not what the name suggested:
+	 * most were not what the name suggested:
 	 *
 	 *   phy_reg_write_array(pi, array, n)   has NO address: a1 is a pointer to
 	 *       the array and a2 the count (a `blez a2` gives it away). Only n is
@@ -623,7 +602,7 @@ static struct hook hooks[] = {
 	/* short-j: on the 7.14 blob the prologue is lw / lw / lbu / bne, so the
 	 * branch falls in word 3 and the 4-word detour does not hold; the first
 	 * two words are lw, not PC-relative and with no side effects, so re-running
-	 * them in the stub is harmless. The signatures below were read on the 6.30
+	 * them in the stub is harmless. The signatures above were read on the 6.30
 	 * object, where the prologue was evidently different: this is the textbook
 	 * case of the note above about names and offsets changing between
 	 * versions, except that here it is not the name that changes but the
@@ -639,13 +618,9 @@ static struct hook hooks[] = {
 	{ "phy_reg_write_wide",  OP_PHY_WRW,  0, 1, 0, .shortj = true },
 	{ "wlc_bmac_write_ihr",  OP_IHR_W,    1, 2, 0 },
 	{ "wlc_bmac_set_shm",    OP_OBJ_SET,  1, 2, 3 },
-	/* The force gated clock. b43 has it as b43_phy_force_clock() and the port
-	 * uses it in b43_phy_ac_reset_cca(), but the captures hold no class for it:
-	 * the harness emits it as a comment and the comparison ignores it, so it is
-	 * invisible on both sides. On the d6220 7.14 blob the AC callers are three
-	 * and not one: wlc_phy_resetcca_acphy once and wlc_phy_cal_txiqlo_acphy
-	 * twice. If the vendor forces the clock around the TX IQ/LO cal as well and
-	 * the port does not, nobody sees it today.
+	/* The force gated clock, b43_phy_force_clock() in b43. On the d6220 7.14
+	 * blob the AC callers are three: wlc_phy_resetcca_acphy once and
+	 * wlc_phy_cal_txiqlo_acphy twice.
 	 *
 	 * wlc_bmac_phyclk_fgc is hooked and not the thunk wlapi_bmac_phyclk_fgc:
 	 * all thirteen callers go through the thunk, which tail-calls it, and the
@@ -669,10 +644,10 @@ static struct hook hooks[] = {
 	 * before the up -- touches no register, and without this hook it is not in
 	 * the trace at all. ioctl_rec() decodes the payload; see it for the records.
 	 *
-	 * wlc_ioctl is a thunk: lui/addiu $t9, jr $t9, nop (read with mipsdis.py on
-	 * wlD6220.o, 7.14.89). The first two words are not PC-relative, so the
-	 * short-j re-runs them and returns to the jr; word 0 writes $t9, so the
-	 * re-entry goes through $t8. */
+	 * wlc_ioctl is a thunk: lui/addiu $t9, jr $t9, nop (read with
+	 * reverse-tools/mipsdis.py on wlD6220.o, 7.14.89). The first two words
+	 * are not PC-relative, so the short-j re-runs them and returns to the jr;
+	 * word 0 writes $t9, so the re-entry goes through $t8. */
 	{ "wlc_ioctl",          OP_IOCTL,    1, 2, 3, .shortj = true },
 	/* Variants for builds where the two above do NOT exist. On 7.14.43 there is
 	 * no 16-bit accessor at all: only the bulk copyfrom/copyto_objmem pair, and
@@ -719,7 +694,6 @@ static struct hook hooks[] = {
 };
 #define NHOOK ARRAY_SIZE(hooks)
 
-/* Landing point of the detour: called from the stub with (id, a1, a2, a3). */
 static inline u32 pick(u8 src, u32 a1, u32 a2, u32 a3)
 {
 	return src == 1 ? a1 : src == 2 ? a2 : src == 3 ? a3 : 0;
@@ -777,6 +751,7 @@ static u32 ioctl_rec(u32 cmd, u32 buf, u32 len)
 	return emit(OP_IOVAR_SET, v, len > nl + 1 ? len - nl - 1 : 0, 0);
 }
 
+/* Landing point of the detour: called from the stub with (id, a1, a2, a3). */
 u32 __used noinline
 wl_diag_hook(u32 id, u32 a1, u32 a2, u32 a3)
 {
@@ -784,10 +759,6 @@ wl_diag_hook(u32 id, u32 a1, u32 a2, u32 a3)
 	u8 aux_src = (h->use_tailj && h->tail_aux_src) ? h->tail_aux_src :
 							 h->aux_src;
 
-	/* CAL.INIT carries the state of the switch in the record, so the trace says
-	 * by itself which cycles were forced. Without this the experiment cannot be
-	 * read afterwards: capture_hot_init alternates 1 and 0, so the value read
-	 * from sysfs at the end of the run is always the last one written. */
 	/* CAL.INIT carries no payload: it says WHEN cal_init was invoked, and it is
 	 * also the anchor for segmenting a sweep, one per cycle. */
 	if (h->op == OP_CAL_INIT)
@@ -877,7 +848,7 @@ wl_diag_exit_ret(u32 retval)
 	return ra;
 }
 
-/* ---- mini-assembler MIPS o32 (codifiche verificate) ------------------- */
+/* ---- MIPS o32 mini-assembler (verified encodings) -------------------- */
 #define R_ZERO 0
 #define R_V0 2
 #define R_V1 3
@@ -892,8 +863,6 @@ wl_diag_exit_ret(u32 retval)
 static inline u32 i_addiu(u8 rt, u8 rs, s16 im){ return (0x09u<<26)|(rs<<21)|(rt<<16)|(u16)im; }
 static inline u32 i_sw(u8 rt, u8 b, s16 o){ return (0x2bu<<26)|(b<<21)|(rt<<16)|(u16)o; }
 static inline u32 i_lw(u8 rt, u8 b, s16 o){ return (0x23u<<26)|(b<<21)|(rt<<16)|(u16)o; }
-/* beq rs,rt,off: off in INSTRUCTIONS, relative to the word after the delay
- * slot */
 static inline u32 i_lui(u8 rt, u16 im){ return (0x0fu<<26)|(rt<<16)|im; }
 static inline u32 i_ori(u8 rt, u8 rs, u16 im){ return (0x0du<<26)|(rs<<21)|(rt<<16)|im; }
 static inline u32 i_jalr(u8 rs){ return (rs<<21)|(R_RA<<11)|0x09u; }
@@ -901,8 +870,6 @@ static inline u32 i_jr(u8 rs){ return (rs<<21)|0x08u; }
 static inline u32 i_j(unsigned long tgt){ return (0x02u<<26)|(u32)((tgt>>2)&0x03ffffffu); }
 #define I_NOP 0u
 
-/* true if the opcode is a branch or jump (not relocatable verbatim into the
- * stub) */
 /*
  * Destination register of an instruction, or 0xff if it writes none.
  * This is needed for ONE precise reason: after re-running the displaced words,
@@ -923,7 +890,7 @@ static u8 dest_reg(u32 insn)
 	if (op == 0) {				/* SPECIAL: dest = rd */
 		u32 f = insn & 0x3f;
 
-		if (f == 0x08 || f == 0x09)	/* jr/jalr: nessun rd utile */
+		if (f == 0x08 || f == 0x09)	/* jr/jalr: no useful rd */
 			return 0xff;
 		return (u8)((insn >> 11) & 31);
 	}
@@ -931,7 +898,7 @@ static u8 dest_reg(u32 insn)
 	    op == 0x0a || op == 0x0b || op == 0x08 ||	/* lui/addiu/andi/ori/slti* */
 	    (op >= 0x20 && op <= 0x27))			/* load: dest = rt */
 		return (u8)((insn >> 16) & 31);
-	return 0xff;				/* store, branch, altro */
+	return 0xff;				/* store, branch, other */
 }
 
 static bool scrive_reg(const u32 *w, int n, u8 r)
@@ -944,6 +911,8 @@ static bool scrive_reg(const u32 *w, int n, u8 r)
 	return false;
 }
 
+/* true if the opcode is a branch or jump (not relocatable verbatim into the
+ * stub) */
 static bool is_branch(u32 insn)
 {
 	u32 op = insn >> 26;
@@ -988,7 +957,7 @@ static bool is_j_abs(u32 insn)
 #define STUB_WORDS 48
 #define STUB_POOL_BYTES (NHOOK * STUB_WORDS * sizeof(u32))
 static u32 (*stub_pool)[STUB_WORDS];
-static u32 ret_tramp[16] __attribute__((aligned(8)));	/* trampolino di ritorno condiviso */
+static u32 ret_tramp[16] __attribute__((aligned(8)));	/* shared return trampoline */
 
 /* The 'break' path for prologues that cannot be detoured (a branch in the
  * window). One word, no delay slot. do_bp() calls notify_die(DIE_BREAK) for
@@ -1001,7 +970,7 @@ static u32 ret_tramp[16] __attribute__((aligned(8)));	/* trampolino di ritorno c
 #ifdef BRK_KPROBE_BP
 #define WD_HAVE_BP 1
 
-static bool bp_registered;	/* die notifier registrato */
+static bool bp_registered;	/* die notifier registered */
 
 #define BP_INSN (0x0000000dU | (BRK_KPROBE_BP << 6))	/* break BRK_KPROBE_BP */
 
@@ -1037,10 +1006,10 @@ static int wd_bp_notify(struct notifier_block *nb, unsigned long val, void *data
 
 static struct notifier_block wd_bp_nb = {
 	.notifier_call = wd_bp_notify,
-	.priority = 0x7fffffff,		/* prima di eventuali altri consumatori */
+	.priority = 0x7fffffff,		/* ahead of any other consumer */
 };
 
-/* stub: [0] original word, [1] j func+4, [2] nop */
+/* stub: [0] original word, [1..3] lui/ori/jr to func+4, [4] nop */
 static void build_bp_stub(int idx)
 {
 	u32 *s = stub_pool[idx];
@@ -1070,10 +1039,11 @@ static void build_bp_stub(int idx)
  * and it works on 2.6.30 where there is no break.
  * A single stub serves both jalr and jr: it preserves ra and jumps to the real
  * function.
- * Three conditions, checked at runtime: the pair must yield the exact address;
+ * Four conditions, checked at runtime: the pair must yield the exact address;
  * a jump on the SAME register must follow it; the addiu must not be shared (the
  * compiler reuses the low part across different sites: in the D6220 blob the
- * one at +0x1f5a24 serves two functions). */
+ * one at +0x1f5a24 serves two functions); the lui must not feed more than one
+ * epilogue (see lui_consumatori()). */
 #define MAX_SITES 8
 
 struct site {
@@ -1095,8 +1065,6 @@ static inline u16 lo16_of(unsigned long v) { return (u16)(v & 0xffff); }
  * would patch foreign code with no error. */
 static struct module *target_mod;
 
-/* A purely arithmetic filter, no list walking: it applies once the first symbol
- * has established which module is the target. */
 /* The target's text range, and whether it can be trusted.
  *
  * module_core and core_text_size are the ONLY fields of struct module this
@@ -1139,6 +1107,8 @@ static void valuta_testo(unsigned long a)
 		(void *)b, n, (void *)a);
 }
 
+/* A purely arithmetic filter, no list walking: it applies once the first symbol
+ * has established which module is the target. */
 static bool dentro_bersaglio(unsigned long a)
 {
 	if (!target_mod)
@@ -1463,8 +1433,8 @@ static void build_stub(int idx)
 	s[n++] = I_NOP;
 	s[n++] = i_sw(R_V0, R_SP, 20);		/* seq */
 
-	/* Arg extra su stack (o32): arg5@16(entry)=48(sp), arg6@20=52(sp).
-	 * wl_diag_hook_argx(seq, arg5, arg6) -> record ARGX di continuazione. */
+	/* Stack arguments (o32): arg5@16(entry)=48(sp), arg6@20=52(sp).
+	 * wl_diag_hook_argx(seq, arg5, arg6) -> follow-on ARGX record. */
 	if (hooks[idx].nargx) {
 		s[n++] = i_lw(R_A0, R_SP, 20);			/* seq */
 		s[n++] = i_lw(R_A1, R_SP, 48);			/* arg5 */
@@ -1487,7 +1457,7 @@ static void build_stub(int idx)
 		s[n++] = i_ori(R_T9, R_T9, enterfn & 0xffff);
 		s[n++] = i_jalr(R_T9);
 		s[n++] = I_NOP;
-		s[n++] = i_sw(R_V0, R_SP, 24);			/* ra da installare */
+		s[n++] = i_sw(R_V0, R_SP, 24);			/* ra to install */
 	}
 
 	s[n++] = i_lw(R_A0, R_SP, 0);
@@ -1508,7 +1478,7 @@ static void build_stub(int idx)
 		return;
 	}
 	for (k = 0; k < rep; k++)
-		s[n++] = o[k];	/* re-run the displaced words (o[1] of the short-j re-sets v0) */
+		s[n++] = o[k];	/* re-run the displaced words */
 	/* Register for the re-entry jump: $t9 if no re-run word writes it,
 	 * otherwise $t8. pianifica() has already dropped the hook if it writes
 	 * both, so here one of the two is always fine. */
@@ -1625,7 +1595,7 @@ static bool ingresso_patchato(const struct hook *h)
 	return true;
 }
 
-/* ---- char device ------------------------------------------------------ */
+/* ---- /proc/wl_diag --------------------------------------------------- */
 static ssize_t wd_read(struct file *f, char __user *ubuf, size_t len, loff_t *off)
 {
 	struct wldiag_rec r;
@@ -1706,15 +1676,14 @@ static const struct file_operations wd_fops = {
 	.poll = wd_poll,
 	.llseek = no_llseek,
 };
-/* The buffer lives in /proc/wl_diag: it appears by itself and needs no mknod.
- * The previous route was a misc device with a dynamic minor, which meant
- * reading the minor from /proc/misc and creating it by hand on every load.
- * proc_create has the same signature on 2.6.30 and 3.4 and takes
+/* The buffer lives in /proc/wl_diag: it appears by itself and needs no mknod,
+ * where a misc device would need its dynamic minor read from /proc/misc on
+ * every load. proc_create has the same signature on 2.6.30 and 3.4 and takes
  * file_operations, so the same call works for both. */
 #define WD_PROC "wl_diag"
 
-/* ---- piano, armamento, disarmo ---------------------------------------- */
-static int eligible[NHOOK];   /* indici agganciabili */
+/* ---- plan, arming, disarming ----------------------------------------- */
+static int eligible[NHOOK];   /* indices of the hookable entries */
 static int n_elig;
 static bool armato;
 
@@ -1780,8 +1749,8 @@ static int ripristina_ingressi(void *unused)
  * every new plan, because after a re-insmod of the target the addresses are
  * different, and re-patching the old ones gives no error, it gives damage.
  *
- * shortj, retcap and nargx are NOT touched: they are the definition of the
- * hook, not state. It is the same boundary that already produced a bug when
+ * shortj, retcap, nargx, tail_aux_src and ripiego_di are NOT touched: they
+ * are the definition of the hook, not state. It is the same boundary that already produced a bug when
  * state fields ended up among the table's positional initialisers.
  */
 static void azzera_stato(void)
@@ -1931,7 +1900,7 @@ static int pianifica(void)
 		elegge(i);
 		pr_info("wl_diag: hook plan '%s' @%px%s\n", hooks[i].name, o,
 			hooks[i].use_shortj ? " [short-j]" :
-			hooks[i].shortj ? " [4 parole: stub fuori regione j]" : "");
+			hooks[i].shortj ? " [4 words: stub outside the j region]" : "");
 	}
 
 	/* Drop the fallbacks whose underlying accessor got hooked: see
@@ -2270,7 +2239,7 @@ static int __init wd_init(void)
 		static const char * const cand[] = {
 			"r4k_flush_icache_range",
 			"local_r4k_flush_icache_range",
-			"local_flush_icache_range",  /* anch'esso var: probabile miss */
+			"local_flush_icache_range",  /* also a variable: likely a miss */
 		};
 		int k;
 
