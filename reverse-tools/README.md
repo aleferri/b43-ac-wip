@@ -67,7 +67,9 @@ accessor classes and none of the config-space traffic, but it has everything
 the MAC and the DMA do, which `wl-diag` never traced. Two tools bring it into
 the same vocabulary:
 
-- **mmio2ops.py** decodes the raw BAR0 accesses into `PHY.WR/RD`, `RAD.WR/RD`,
+- **mmio2ops.py** decodes the raw BAR0 accesses -- an x86 mmiotrace, or the
+  binary records of `wl-mmio-trap/` from a MIPS router, see `--format` -- into
+  `PHY.WR/RD`, `RAD.WR/RD`,
   `OBJ.WR/RD` (with `sel=` and `OBJ.BULKW` for auto-increment runs),
   `MAC.MCTRL`, `MAC.MCMD` and `REG.*`, plus `CC.*`, `SROM.RD`, `WRAP.*`,
   `PCIE.*`, `EROM.RD` for what lies outside the D11 core. The sliding window

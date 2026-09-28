@@ -586,13 +586,18 @@ SOLO_PORT = (
 #
 #   REG.*, MAC.MCMD  i registri MMIO del MAC: il tracer del vendor aggancia le
 #          funzioni di accesso a PHY, radio e shared memory, non l'MMIO grezzo,
-#          e nessuna cattura porta una op di queste classi. Ci passano la
-#          richiesta del campione di rumore, gli ACK e le maschere degli
-#          interrupt e il valid bit dei template beacon.
+#          e nessuna cattura wl-diag porta una op di queste classi. Ci passano
+#          la richiesta del campione di rumore, gli ACK e le maschere degli
+#          interrupt e il valid bit dei template beacon. Le catture prese al
+#          bus (reverse-tools/mmio2ops.py) le portano, e contro quelle la voce
+#          si spegne.
+#   WRAP.*  lo spazio agent del core: reset, clock e bit PHY di IOCTL. Stesso
+#          caso, lo vedono solo le catture al bus.
 SOLO_PORT_SENZA_CLASSE = (
     (r'^AMT\.', 'AMT.'),
     (r'^REG\.', 'REG.'),
     (r'^MAC\.MCMD\b', 'MAC.MCMD'),
+    (r'^WRAP\.', 'WRAP.'),
 )
 
 

@@ -316,7 +316,7 @@ def apply_skips(ops, rules, verbose=False):
     return out, skipped, used
 
 
-OP_HEAD = re.compile(r'^(\S+)\s+addr=(0x[0-9a-f]+)')
+OP_HEAD = re.compile(r'^(\S+)\s+(?:addr|off)=(0x[0-9a-f]+)')
 TBL_HEAD = re.compile(r'^TBL\.(?:WR|RD)\s+(id=\S+\s+off=\S+)')
 
 # Op che NON hanno un'identita' propria: sono porte, e l'identita' e' l'accesso
@@ -412,8 +412,13 @@ def bus_stats(V, T, C):
     diff = []
     def same(v, t):
         # canon() ha reso 'val=*' la lettura senza valore; ops_equal() la
-        # conosce come UNDEFINED.
-        return C.ops_equal(v.replace('val=*', 'val=UNDEFINED'), t)
+        # conosce come UNDEFINED. Il lato a livello di accessor puo' essere
+        # l'uno o l'altro: il vendor wl-diag contro una traccia al bus
+        # (test/integration), o l'harness contro una cattura al bus
+        # (reverse-tools/mmio2ops.py). Il lato bus non ha ne' jolly ne'
+        # maschere, quindi provare i due versi non allarga il confronto.
+        return (C.ops_equal(v.replace('val=*', 'val=UNDEFINED'), t) or
+                C.ops_equal(t.replace('val=*', 'val=UNDEFINED'), v))
 
     for k, a, b, c, d in sm.get_opcodes():
         if k == 'equal':

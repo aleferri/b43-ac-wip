@@ -62,11 +62,13 @@ def norm(op):
     arguments of the tracer, not of the op, and the harness stubs do not model
     them. So is `sel=`, the shared-memory routing: the d6220 captures were
     decoded without it and the DSL ones and the integration harness carry it,
-    and on the offset-in-bytes form of the address it adds nothing.
+    and on the offset-in-bytes form of the address it adds nothing. And so is
+    `reg=`, the register name reverse-tools/mmio2ops.py appends for the
+    reader: the offset already says which register it is.
     """
     op = " ".join(op.split())
     op = re.sub(r"^GPIO\.OUTEN\b", "GPIO.OE", op)
-    op = re.sub(r"\s+(ret|a5|a6|sel)=\S+", "", op)
+    op = re.sub(r"\s+(ret|a5|a6|sel|reg)=\S+", "", op)
     op = _HEX.sub(lambda m: "0x" + m.group(1).lower(), op)
     m = re.match(r"PHY\.(AND|OR)\s+addr=(\S+)\s+val=(\S+)", op)
     if m:
@@ -76,7 +78,13 @@ def norm(op):
 
 _MOD = re.compile(r"^(PHY|RAD)\.MOD\s+addr=(\S+)\s+val=(\S+)\s+mask=(\S+)$")
 _ANDOR = re.compile(r"^(PHY|RAD)\.(AND|OR)\s+addr=(\S+)\s+val=(\S+)")
-_ACCESSOR_ONLY = re.compile(r"^(TBL\.(WR|RD)|MAC\.MHF)\b")
+_ACCESSOR_ONLY = re.compile(r"^(TBL\.(WR|RD)|MAC\.MHF|AMT\.WR)\b")
+
+# A row of the address match table (RCMTA, selector 4) as the wl-diag hooks
+# see it: a bulk header of 8 bytes. On the bus it is two 32-bit words at word
+# index addr/4, the read of both before the write of both.
+_RCMTA_BULK = re.compile(r"^OBJ\.BULK([RW]) addr=(0x[0-9a-fA-F]+) len=(\d+)"
+                         r".*\ba5=0x0*40000\b")
 
 
 def unfold_bus(op):
@@ -87,7 +95,9 @@ def unfold_bus(op):
     a table access is the words on the data port, and the TBL marker that
     names the table stands for nothing on the bus; a host-flag maskset is a
     software shadow whose write-through, when it happens, is its own OBJ.WR
-    on both sides. This maps an accessor-level
+    on both sides; an address-match row is the logical AMT.WR record, which is
+    nothing on the bus, and its 8-byte bulk, which is two 32-bit words. This
+    maps an accessor-level
     op onto that vocabulary so the two can be compared without teaching the
     bus tracer what the accessors were.
 
@@ -101,6 +111,13 @@ def unfold_bus(op):
     op = " ".join(op.split())
     if _ACCESSOR_ONLY.match(op):
         return []
+    m = _RCMTA_BULK.match(op)
+    if m:
+        kind, addr, n = m.group(1), int(m.group(2), 16) // 4, int(m.group(3)) // 4
+        return [norm(f"OBJ.{kind}D addr=0x{addr + k:04x} val=UNDEFINED"
+                     if kind == "R" else
+                     f"OBJ.WR addr=0x{addr + k:04x} val=UNDEFINED")
+                for k in range(n)]
     m = _ANDOR.match(op)
     if m:
         space, kind, addr, val = m.groups()

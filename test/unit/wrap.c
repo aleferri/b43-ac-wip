@@ -1486,8 +1486,10 @@ void b43_test_emit_amt(u16 idx, u16 flags)
 	else
 		fprintf(trace(), "cpu1 AMT.WR    idx=0x%04x\n", idx);
 
-	fprintf(trace(), "cpu1 OBJ.BULKR addr=0x%04x len=8\n", (u16)(idx * 8));
-	fprintf(trace(), "cpu1 OBJ.BULKW addr=0x%04x len=8\n", (u16)(idx * 8));
+	fprintf(trace(), "cpu1 OBJ.BULKR addr=0x%04x len=8 a5=0x00040000\n",
+		(u16)(idx * 8));
+	fprintf(trace(), "cpu1 OBJ.BULKW addr=0x%04x len=8 a5=0x00040000\n",
+		(u16)(idx * 8));
 }
 
 /*
