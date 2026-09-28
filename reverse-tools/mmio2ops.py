@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Decode a Linux mmiotrace of a PCIe BCMA wireless chip into op classes.
+"""Decode a bus-level capture of a PCIe BCMA wireless chip into op classes.
+
+Two capture formats, the same device traffic:
+
+    mmiotrace     the Linux kernel's mmiotrace text, taken on an x86 host
+                  (router-data/archer-t5e);
+    wl-mmio-trap  the binary records of wl-mmio-trap/, taken on a MIPS
+                  big-endian router (router-data/agcombo/*.bin).
 
 The trace is the raw MMIO traffic on BAR0 (16 KiB, PCIe gen2 layout):
 
@@ -23,6 +30,7 @@ PCIE.* and EROM.RD for the parts the vendor tracer never saw.
 """
 import argparse
 import collections
+import struct
 import sys
 
 BAR0 = 0xfe400000
@@ -86,6 +94,57 @@ def parse_mmiotrace(path):
         yield Op(float(f[2]), f[0], int(f[1]), int(f[4], 16) - BAR0, int(f[5], 16))
 
 
+# struct wl_mmio_rec of wl-mmio-trap/wl_mmio_trap_main.c, packed, big-endian.
+TRAP_REC = struct.Struct(">QIIIIBBH")      # ts_ns seq addr val aux op cpu pad
+TRAP_RD, TRAP_WR, TRAP_MARK, TRAP_DROP = 60, 61, 62, 255
+TRAP_AUX_WIDTH = 0xff
+
+
+def trap_device_offset(off, width):
+    """The register a sub-word access reaches on the device.
+
+    The trap records the offset of wl's own load or store, the CPU side. On
+    the MIPS big-endian host the 16-bit register accessors address the other
+    half of the 32-bit word, r ^ 2, so the device sees offset ^ 2: taken
+    literally, the capture writes PHY addresses to PHY_DATA and reads the
+    data back from PHY_CONTROL. 32-bit accesses are not moved."""
+    return off ^ 2 if width == 2 else off
+
+
+def parse_wl_mmio_trap(path):
+    """Records of a wl_mmio_trap capture; marks come as kind 'M' with the
+    label in `val`, drops are reported on stderr, as the queue loses them."""
+    data = open(path, "rb").read()
+    if len(data) % TRAP_REC.size:
+        print(f"{path}: {len(data) % TRAP_REC.size} trailing bytes ignored",
+              file=sys.stderr)
+    for i in range(0, len(data) - TRAP_REC.size + 1, TRAP_REC.size):
+        ts, seq, addr, val, aux, op, cpu, _ = TRAP_REC.unpack_from(data, i)
+        t = ts / 1e9
+        if op in (TRAP_RD, TRAP_WR):
+            width = aux & TRAP_AUX_WIDTH
+            yield Op(t, "R" if op == TRAP_RD else "W", width,
+                     trap_device_offset(addr, width), val)
+        elif op == TRAP_MARK:
+            raw = b"".join(w.to_bytes(4, "big") for w in (addr, val, aux))
+            yield Op(t, "M", 0, 0, raw.split(b"\0")[0].decode("ascii", "replace"))
+        elif op == TRAP_DROP:
+            print(f"{path}: {aux} records dropped before #{seq}", file=sys.stderr)
+
+
+PARSERS = {"mmiotrace": parse_mmiotrace, "wl-mmio-trap": parse_wl_mmio_trap}
+
+
+def guess_format(path):
+    with open(path, "rb") as f:
+        head = f.read(64)
+    try:
+        head.decode("ascii")
+    except UnicodeDecodeError:
+        return "wl-mmio-trap"
+    return "mmiotrace"
+
+
 class Decoder:
     """Turns bus accesses into ops; one instance per trace."""
 
@@ -141,6 +200,10 @@ class Decoder:
 
     def decode(self, ops):
         for op in ops:
+            if op.kind == "M":
+                yield from ((op.ts, o) for o in self.flush_bulk())
+                yield op.ts, f"MARK '{op.val}'"
+                continue
             before = self.window
             self.track_window(op)
             if self.mark_windows and self.window != before:
@@ -345,6 +408,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("trace")
+    ap.add_argument("--format", choices=sorted(PARSERS),
+                    help="capture format (default: binary is wl-mmio-trap, text is mmiotrace)")
     ap.add_argument("-o", "--out", help="decoded ops (default: stdout)")
     ap.add_argument("--srom", help="write the SROM words read through the chipcommon alias here")
     ap.add_argument("--erom", action="store_true",
@@ -357,7 +422,7 @@ def main():
                     help="keep the PHY_VER read that follows PHY writes (wl's write flush)")
     args = ap.parse_args()
 
-    ops = list(parse_mmiotrace(args.trace))
+    ops = list(PARSERS[args.format or guess_format(args.trace)](args.trace))
     if args.erom:
         erom_report(ops, sys.stdout)
         return

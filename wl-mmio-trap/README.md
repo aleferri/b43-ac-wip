@@ -286,9 +286,14 @@ come from the free part of its enum, so the two streams can be merged on
 the timestamp: both stamp with `sched_clock()`.
 
 For the register-level decoding -- object memory, PHY and radio ports,
-window moves -- feed the capture to `reverse-tools/mmio2ops.py`, which was
-written for the x86 mmiotrace of the same family and reads the same shape of
-data.
+window moves -- give the binary capture to `reverse-tools/mmio2ops.py`, which
+reads it directly (`--format wl-mmio-trap`, chosen by itself for a binary
+file). The addresses this decoder prints are the offsets of wl's own loads
+and stores, the CPU side; on this big-endian host a 16-bit register sits at
+the other half of its word, so the device register is `offset ^ 2` for every
+16-bit access and mmio2ops applies it. The UCODEREV read shows it: the cell
+at shared-memory byte 0 is read from CPU offset `0x166` and holds `0x03a0`,
+the high half of the `ucoderev 0x3a004b1` of `wl1_revinfo.txt`.
 
 ## Record format
 
