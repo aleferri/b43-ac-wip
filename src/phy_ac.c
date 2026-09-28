@@ -367,6 +367,7 @@ static void b43_phy_ac_post_bringup_tail(struct b43_wldev *dev);
 static void b43_phy_ac_crs_block_e(struct b43_wldev *dev);
 static void b43_phy_ac_wd_stats_tail(struct b43_wldev *dev);
 static void b43_phy_ac_tempsense(struct b43_wldev *dev);
+static bool b43_phy_ac_cal_reads_temp(struct b43_wldev *dev);
 /*
  * Le quattro celle sparse con cui si apre la spazzata, e la spazzata piatta
  * 0x0768-0x078a. Due funzioni e non una perche' all'ingresso della fase probe
@@ -5605,15 +5606,16 @@ void b43_phy_ac_bss_up(struct b43_wldev *dev)
 	ac->cac_pending = false;
 
 	/*
-	 * Una lettura di temperatura a MAC sospeso apre il bss-up, prima delle
-	 * calibrazioni: su tutti e 21 i segmenti che chiudono il check sta
-	 * subito dietro il ripristino della riga AMT. Non e' il giro del
-	 * watchdog -- quello ha la sua cadenza, vedi b43_phy_ac_watchdog() -- e'
-	 * la lettura che il bss-up prende da se'.
+	 * The bss-up opens its calibrations with the reading of
+	 * b43_phy_ac_cal_tempsense(), with the MAC suspended, right behind the
+	 * restore of the AMT row. It is not the watchdog's: that one has its own
+	 * cadence, see b43_phy_ac_watchdog().
 	 */
-	b43_mac_suspend(dev);
-	b43_phy_ac_tempsense(dev);
-	b43_mac_enable(dev);
+	if (b43_phy_ac_cal_reads_temp(dev)) {
+		b43_mac_suspend(dev);
+		b43_phy_ac_tempsense(dev);
+		b43_mac_enable(dev);
+	}
 
 	b43_phy_ac_calibration_block(dev);
 
@@ -5959,6 +5961,28 @@ static void b43_phy_ac_tempsense(struct b43_wldev *dev)
 }
 
 /*
+ * Whether a full calibration opens with a temperature reading: when
+ * phycal_tempdelta is set. brcmsmac does the same for the N-PHY on the
+ * bss-up (PHY_PERICAL_UP_BSS: "if (pi->phycal_tempdelta) nphy_lastcal_temp =
+ * tempsense()"), and the captures agree for the AC-PHY on both calibrations
+ * that open with one, the channel calibration of the up and the bss-up's:
+ * the tg789vac, whose NVRAM has phycal_tempdelta=0, reads on the 39
+ * segments whose instances got `wl phycal_tempdelta 40` from the capture
+ * script of the time and skips both readings on the four captured without
+ * it; the d6220, the DSL-3580L and the agcombo, at 255 in NVRAM, always
+ * read.
+ *
+ * 255 is the unprogrammed value, and the stock driver runs with a delta
+ * there: the DSL-3580L reports 40 through `wl phycal_tempdelta` with 255 in
+ * NVRAM. SALAME on 40 being the driver's default rather than something its
+ * userspace sets; only zero against non-zero matters here.
+ */
+static bool b43_phy_ac_cal_reads_temp(struct b43_wldev *dev)
+{
+	return dev->dev->bus_sprom->phycal_tempdelta != 0;
+}
+
+/*
  * channel_calibrate: the calibrations that close a channel switch, run by
  * b43_op_config() in place of its final mac_enable. The bss-up's temperature
  * reading needs the MAC suspended and the calibrations after it need it
@@ -5979,7 +6003,8 @@ static void b43_phy_ac_tempsense(struct b43_wldev *dev)
 static void b43_phy_ac_op_channel_calibrate(struct b43_wldev *dev)
 {
 	B43_AC_FN();
-	b43_phy_ac_tempsense(dev);
+	if (b43_phy_ac_cal_reads_temp(dev))
+		b43_phy_ac_tempsense(dev);
 	b43_mac_enable(dev);
 	b43_phy_ac_post_switch_calibrations(dev);
 }

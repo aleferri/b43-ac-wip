@@ -385,16 +385,39 @@ another latch than the port, or once more or once less.
 - **Re-emission.** The rule by which the CRS block is re-emitted at steady state
   has not been found: a hysteresis on the ladder levels fails the negative test.
 
-### Tempsense at bss-up
+### Tempsense before the full calibration (closed)
 
-The stock driver reads the temperature before the full calibration on 130 of
-131 segments; the TG789vac `cold01` does not. The reference driver gates it on
-`phycal_tempdelta` being non-zero. The instance value is set at runtime by the
-vendor's init script, not by NVRAM, so the two candidates cannot be told apart.
-The port always reads.
+The two readings that open a full calibration -- the channel calibration of
+a bss-up on a channel without CAC, and the bss-up after the check -- are made
+only with `phycal_tempdelta` non-zero, as brcmsmac does for the N-PHY on
+`PHY_PERICAL_UP_BSS`. The watchdog's reading has its own cadence and is not
+gated. The port does it in `b43_phy_ac_cal_reads_temp()`.
 
-`capture_cold_tg789vac.sh` records `phycal_tempdelta` and can force it with
-`TEMPDELTA=`; one run decides.
+Counted with the `0x0394 = 0x0110` arm followed by `0x0393 = 0x8000` as the
+signature, the d6220 reads on every segment and the tg789vac on 39, skipping
+both readings on `cold01`, `cold32`, `cold33` and `cold41`. Those four are
+exactly the segments of its second boot. The first boot was captured with
+the script that still had `TUNE=1` by default (up to `b7fd828`), which gave
+each loaded instance `phycal_tempdelta 40`; the second with the one without
+it, where the instance starts from the NVRAM's 0. The weather segments count:
+their check closes at turn 60 and their bss-up skips the reading like the
+up's.
+
+The harness takes `AC_TEMPDELTA` to run an instance the way it was captured;
+`gates.sh` sets it from the `IOVAR.SET` the `wlc_ioctl` hook records when a
+capture forces it. The tg789vac profile keeps its NVRAM 0, so its first-boot
+segments want `AC_TEMPDELTA=40`. With the right value:
+
+| segment | before | after |
+| --- | --- | --- |
+| `cold01` ch36/20 | 93.80% | 99.82% |
+| `cold32` ch116/40, compressed | 80.45% | 99.52% |
+| `cold33` ch124/40, compressed | 89.86% | 99.76% |
+| `cold41` ch116/80, compressed | 68.30% | 99.59% |
+
+Still open: the value the driver runs with at 255 in NVRAM, the unprogrammed
+SROM. The DSL-3580L reports 40 through `wl phycal_tempdelta`, which its
+userspace may set. Only zero against non-zero matters here.
 
 The conversion of the raw samples is open; see
 [`tempsense-wiring-evidence.md`](tempsense-wiring-evidence.md).

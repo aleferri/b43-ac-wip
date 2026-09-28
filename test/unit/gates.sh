@@ -253,6 +253,13 @@ PY
 		"$TMP/merged" | grep -oE "0x[0-9a-f]+$")
 	[ -n "$bsscc" ] && sched="$sched AC_BSS_CC=$bsscc"
 
+	# phycal_tempdelta, when the capture set it on the instance: the
+	# wlc_ioctl hook records `wl phycal_tempdelta N` as an IOVAR.SET. Older
+	# captures do not have it, and take AC_TEMPDELTA from the caller.
+	tdelta=$(grep -m1 -oE "IOVAR\.SET +name=phycal_tempdelta val=0x[0-9a-f]+" \
+		"$TMP/merged" | grep -oE "0x[0-9a-f]+$" || true)
+	[ -n "$tdelta" ] && sched="$sched AC_TEMPDELTA=$tdelta"
+
 	# MAC.BW is written only by the first segment of each bandwidth: the
 	# others inherit it. The segment knows by itself whether it has it.
 	if grep -q ' MAC\.BW' "$TMP/merged"; then

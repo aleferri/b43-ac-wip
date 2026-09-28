@@ -43,6 +43,18 @@ for a gate.
   beacon (`AC_BEACON_RELOADS`, `AC_EDCF_RELOADS`).
 - **check_class_coverage.py** says which op classes a capture traces. See
   `router-data/CLASS-COVERAGE.md`.
+- **compress_turns.py** shortens a cold segment by removing whole blocks of
+  steady watchdog turns, for the weather-radar segments: ten minutes of turns
+  and radar polls that the comparison takes longer on than on anything else,
+  the same as those of the first minute. It removes multiples of 60 turns,
+  which hold a whole number of every period the driver counts (the
+  temperature reading every `temps_period` turns, the region dump every 30),
+  and an even number of beacon reloads, whose parity picks the template
+  buffer. It keeps 60 turns after the start, around the bss-up and before the
+  end, drops `RETVAL`/`ARGX` continuations with the ops that carry them, and
+  shifts the later timestamps back. A tg789vac weather segment goes from 194k
+  lines to 82k and its gate from over ten minutes to about ninety seconds;
+  `gates.sh` takes the output like any other segment.
 - **reorder_trace.py** reorders a trace on another's order, to align two
   captures.
 - **The comparison itself** is `test/unit/compare.py` (positional) and

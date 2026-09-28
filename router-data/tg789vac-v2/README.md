@@ -154,6 +154,13 @@ this also takes 2.4 GHz down.
   is a hot one.
 - The captured instances stay at Broadcom defaults, by choice. At the end the
   script removes the once-per-boot marker and restarts hostapd.
+- That was not so for the first boot of the sweep: the script of the time
+  (`TUNE=1`, up to `b7fd828`) gave every loaded instance `nar 0` and
+  `phycal_tempdelta 40`. The delta decides whether a full calibration opens
+  with a temperature reading, so the first-boot segments compare with
+  `AC_TEMPDELTA=40`, and those of the second boot -- `cold01`, `cold32`,
+  `cold33`, `cold41` -- with the NVRAM's 0, the profile's value. See
+  `docs/retrace-todo.md`, "Tempsense before the full calibration".
 
 **Watch:** every `rmmod` prints `dqmHandlerRegisterHost: Exceeded maximum number
 of DQM IRQ Handlers! (8)` twice per interface. That is a handler leak on

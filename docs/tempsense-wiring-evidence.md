@@ -29,11 +29,19 @@ Per chain, four steps toggle radio `0x000e` bits 1 and 2 (the `step[]` table in
     step 2: bit1 set,   bit2 set
     step 3: bit1 clear, bit2 set
 
-The thermal signal is the difference between the bit-1-clear and bit-1-set
-steps. Taking `diff = ((mean(step1) - mean(step0)) + (mean(step3) - mean(step2))) / 2`
-gives one differential code per chain. The bit-1-set steps sit near ~350 counts
-and the bit-1-clear steps near ~3200, so the differential lands near ~2850-3050
-and moves with temperature.
+The samples are 12-bit two's complement. The bit-1-set steps sit just above
+zero and, as the chip warms, dip below it (`0x0ff9`, `0x0ff1`); the
+bit-1-clear steps sit near `0x0c70`, which is negative. Read as signed, the
+thermal signal is
+
+    diff = ((mean(step1) - mean(step0)) + (mean(step3) - mean(step2))) / 2
+
+one code per chain, near -1250 cold and -900 warm, rising with temperature.
+Read as unsigned 12-bit the same difference comes out 4096 higher (2851 is
+-1245) as long as no bit-1-set sample goes negative; once one does, the
+unsigned mean jumps by hundreds of counts. In the up-nobss session below that
+happens on chains 0 and 2 from the third minute on, so the signed reading is
+the one to use.
 
 ## No SROM calibration on this board
 
@@ -51,46 +59,41 @@ cross-checked against those defaults when they are pulled from the driver.
 
 ## Matched anchor points (raw differential vs vendor decoded output)
 
-Two thermal states, each with the raw `0x0013` block and the vendor's decoded
-`phy_tempsense` from the same session.
+Cold, just powered on at ambient -- bss-up on ch100/80, from `bss-up.zip`:
 
-Cold, just powered on at ambient — bss-up on ch100/80, from `bss-up.zip`:
+    diff per core (0/1/2): -1255 / -1228 / -1253   (avg -1245)
+    vendor phy_tempsense:  ~39-40
 
-    raw diff per core (0/1/2): 2841 / 2868 / 2843   (avg 2851)
-    vendor phy_tempsense:      ~39-40
+Warm, US session with the chip up and no BSS (`up-nobss-ioctl.zip`, the
+capture with the `wlc_ioctl` hook): ch36/80 then ch100/80, two
+`wl phy_tempsense` calls. A GET is not recorded, but each call runs its own
+tempsense block off the watchdog's ten-turn grid, which pairs it with the
+printed value:
 
-Warm, chip already exercised — US session on ch36/80, from an earlier
-`up-nobss` capture that is not in the repository (clean tempsense block found
-mid-trace):
+    t=1272.7  diff -953.8 / -907.6 / -947.4   (avg -936.2)   printed 54
+    t=1327.3  diff -906.9 / -889.5 / -919.0   (avg -905.1)   printed 56
 
-    raw diff per core (0/1/2): 3005 / 3048 / 3020   (avg 3024)
-    vendor phy_tempsense:      ~54
+An earlier version of this page paired 54 with the first watchdog block of
+that session (t=1219.3, avg -1071.6, 3024 read unsigned), 53 s and some 4
+degrees before the call.
 
-Per-core the warm-minus-cold rise is 164 / 180 / 177 counts, i.e. consistent
-across chains. Both the raw differential and the decoded output rise with
-temperature (positive slope).
+## Three-point estimate
 
-## Two-point estimate (rough, to be refined)
+The printed values are integers, so each point is a 1-degree interval, and
+the two warm points are 2 degrees apart: they fix the slope only with the cold
+point. On the chain average:
 
-From the averages, cold (2851, 40) and warm (3024, 54):
+    cold -> 54:  14.5 degC over 309 counts   0.047 degC per count
+    cold -> 56:  16.5 degC over 340 counts   0.049 degC per count
+    54 -> 56:    2 (1..3) degC over 31 counts, 0.032..0.096 degC per count
 
-    slope  ~= 0.081 degC per raw count   (~= 12.4 counts per degC)
-    T[degC] ~= 0.081 * raw_diff - 190
+    T[degC] ~= 0.0485 * diff + 100
 
-This is a two-point fit and must be treated as a starting point only: the cold
-decoded value is a range (see the series below), the warm decoded value's pairing
-to the exact block is approximate, and there is per-core spread in the raw. It
-is enough to bring the temperature up in b43 and sanity-check the sign and scale,
-not to trust to a degree.
-
-## Decoded series (vendor phy_tempsense)
-
-Cold, repeated reads just after power-on at ambient (climbing as even the idle
-chip warms; the leading 43 looks like a stale first read):
-
-    43 39 40 40 41 41 41 41 42 43 44 44
-
-Warm, US session: 54 at 36/80, 56 at 100/80.
+which gives 54.6 and 56.1 for the two warm blocks and 39.6 for the cold one.
+Chain 0 alone gives the same slope (0.048, and 0.043 for the warm pair);
+chain 1 alone does not fit the warm pair (0.11 against 0.045), so the vendor
+reads the average or chain 0, not chain 1. More points over a wider span
+decide it.
 
 ## To finalize the wiring
 
@@ -107,4 +110,5 @@ Warm, US session: 54 at 36/80, 56 at 100/80.
 ## Capture references
 
     router-data/agcombo/bss-up.zip!bss-up-ch100-bw80.txt   cold block, ch100/80
+    router-data/agcombo/up-nobss-ioctl.zip!iotctl.txt       warm blocks, 54 and 56
     router-data/agcombo/stats.txt                           decoded phy_tempsense

@@ -185,6 +185,18 @@ static void mount_board(const struct board_profile *p)
 	}
 
 	board_profile_to_sprom(p, &g_sprom);
+	/*
+	 * phycal_tempdelta as the instance ran with, when it is not the NVRAM's:
+	 * `wl phycal_tempdelta` after the insmod. It decides whether a full
+	 * calibration opens with a temperature reading; see
+	 * b43_phy_ac_cal_tempsense().
+	 */
+	{
+		const char *e = getenv("AC_TEMPDELTA");
+
+		if (e && *e)
+			g_sprom.phycal_tempdelta = (u8)strtoul(e, NULL, 0);
+	}
 
 	g_bcma_dev.bus = &g_bcma_bus;
 	g_bus_dev.bus_type = B43_BUS_BCMA;
