@@ -802,6 +802,7 @@ u16 b43_phy_ac_beacon_pwr_offset(struct b43_wldev *dev);
 /* Helper trasversali al confine MAC/PHY; razionale in helpers_phy_ac.c. */
 void b43_phy_ac_mhf_maskset(struct b43_wldev *dev, u16 slot, u16 mask, u16 val);
 void b43_maccontrol_set(struct b43_wldev *dev, u32 mask, u32 set);
+void b43_mac_bw_set(struct b43_wldev *dev, u32 bw);
 
 /*
  * Function-boundary markers for the userspace test harness. B43_AC_FN() at the

@@ -1559,10 +1559,16 @@ void b43_test_reg_init(int dflt, const char *map)
 	}
 }
 
-void b43_mac_bw_set(struct b43_wldev *dev, u32 bw)
+void __wrap_b43_mac_bw_set(struct b43_wldev *dev, u32 bw)
 {
 	(void)dev;
 	fprintf(trace(), "cpu1 MAC.BW   addr=0x0000 val=%#06x\n", bw);
+}
+
+/* Il corpo di b43_mac_bw_set() non gira mai: il --wrap sopra lo intercetta. */
+void b43_phy_bw_clk_set(struct b43_wldev *dev, u32 bits)
+{
+	(void)dev; (void)bits;
 }
 
 void udelay(unsigned long us)         { (void)us; }

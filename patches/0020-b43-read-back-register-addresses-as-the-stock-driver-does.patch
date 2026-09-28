@@ -1,4 +1,4 @@
-From e414ab79eabb7b8687a0315be366190b188fb029 Mon Sep 17 00:00:00 2001
+From 87de2e743ff6a6074a337e13df231916aa489967 Mon Sep 17 00:00:00 2001
 From: Alessandro Ferri <aleferri@example.invalid>
 Date: Mon, 28 Sep 2026 22:58:57 +0000
 Subject: [PATCH] b43: read back register addresses as the stock driver does
@@ -72,7 +72,7 @@ index fdb1c82..f4dedc1 100644
  	dev->dev = &core->dev;
  	dev->dma_dev = core->dma_dev;
 diff --git a/drivers/net/wireless/broadcom/b43/main.c b/drivers/net/wireless/broadcom/b43/main.c
-index 755485e..a778e3d 100644
+index e9504cc..76cc9ab 100644
 --- a/drivers/net/wireless/broadcom/b43/main.c
 +++ b/drivers/net/wireless/broadcom/b43/main.c
 @@ -510,6 +510,12 @@ static inline void b43_shm_control_word(struct b43_wldev *dev,
@@ -89,7 +89,7 @@ index 755485e..a778e3d 100644
  
  u32 b43_shm_read32(struct b43_wldev *dev, u16 routing, u16 offset)
 diff --git a/drivers/net/wireless/broadcom/b43/phy_common.c b/drivers/net/wireless/broadcom/b43/phy_common.c
-index 285490f..3db1d15 100644
+index 0acd049..46d5ca3 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_common.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_common.c
 @@ -222,7 +222,7 @@ u16 b43_radio_read(struct b43_wldev *dev, u16 reg)
@@ -111,7 +111,7 @@ index 285490f..3db1d15 100644
  		b43_read16(dev, B43_MMIO_PHY_VER);
  		dev->phy.writes_counter = 1;
 diff --git a/drivers/net/wireless/broadcom/b43/phy_common.h b/drivers/net/wireless/broadcom/b43/phy_common.h
-index 0118aa4..550a56d 100644
+index 4d48441..1293d55 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_common.h
 +++ b/drivers/net/wireless/broadcom/b43/phy_common.h
 @@ -33,7 +33,8 @@ struct b43_wldev;

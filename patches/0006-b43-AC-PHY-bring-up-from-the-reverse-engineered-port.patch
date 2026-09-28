@@ -1,4 +1,4 @@
-From d7ac86fba6f934a445d32d49f320d6a304070449 Mon Sep 17 00:00:00 2001
+From 748f610407e4e6bffdedafe66075321d239a2c7e Mon Sep 17 00:00:00 2001
 From: c <c@l>
 Date: Tue, 8 Sep 2026 14:29:02 +0000
 Subject: [PATCH] b43: AC-PHY bring-up from the reverse-engineered port
@@ -11,9 +11,9 @@ Regenerated from src/ rather than maintained by hand, so it cannot drift out
 of sync with the tree the unit suite measures.
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     5 +
- .../wireless/broadcom/b43/helpers_phy_ac.c    |    75 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 11349 +++++++++++++++-
- drivers/net/wireless/broadcom/b43/phy_ac.h    |   817 +-
+ .../wireless/broadcom/b43/helpers_phy_ac.c    |    92 +
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 11357 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.h    |   818 +-
  drivers/net/wireless/broadcom/b43/ppr_ac.c    |   255 +
  drivers/net/wireless/broadcom/b43/ppr_ac.h    |    81 +
  .../net/wireless/broadcom/b43/radio_2069.c    |  1549 +++
@@ -22,7 +22,7 @@ of sync with the tree the unit suite measures.
  .../wireless/broadcom/b43/rxiqcal_phy_ac.h    |    23 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1153 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    79 +
- 12 files changed, 15942 insertions(+), 23 deletions(-)
+ 12 files changed, 15968 insertions(+), 23 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -51,10 +51,10 @@ index 54f92ce..f60b35e 100644
  b43-y				+= dma.o
 diff --git a/drivers/net/wireless/broadcom/b43/helpers_phy_ac.c b/drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
 new file mode 100644
-index 0000000..d062266
+index 0000000..ad5397e
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
-@@ -0,0 +1,75 @@
+@@ -0,0 +1,92 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +/*
 + * Broadcom B43 wireless driver AC-PHY low-level helpers.
@@ -113,6 +113,23 @@ index 0000000..d062266
 +}
 +
 +/*
++ * The MAC's operating width, @bw the chanspec's width field (B43_MAC_BW_*).
++ * At the bus the stock driver reads MACCONTROL, clears PHY0 (0x3e6), sets
++ * the PHY bandwidth clock of the core's IOCTL and reads MACCONTROL again.
++ */
++void b43_mac_bw_set(struct b43_wldev *dev, u32 bw)
++{
++	u32 clk = bw == B43_MAC_BW_80 ? B43_BCMA_IOCTL_PHY_BW_80MHZ :
++		  bw == B43_MAC_BW_40 ? B43_BCMA_IOCTL_PHY_BW_40MHZ :
++					B43_BCMA_IOCTL_PHY_BW_20MHZ;
++
++	b43_read32(dev, B43_MMIO_MACCTL);
++	b43_write16(dev, B43_MMIO_PHY0, 0);
++	b43_phy_bw_clk_set(dev, clk);
++	b43_read32(dev, B43_MMIO_MACCTL);
++}
++
++/*
 + * Read/modify/write of B43_MMIO_MACCTL. The b43 core has no such helper;
 + * call sites inline b43_maskset32() instead. Wrapping it here keeps the
 + * AC-PHY setup readable and gives the trace harness a symbol to intercept.
@@ -131,7 +148,7 @@ index 0000000..d062266
 +	b43_maskset32(dev, B43_MMIO_MACCTL, mask, set);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index 756cd44..68013cd 100644
+index 756cd44..f707e97 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -1,23 +1,51 @@
@@ -193,7 +210,7 @@ index 756cd44..68013cd 100644
  	if (!phy_ac)
  		return -ENOMEM;
  	dev->phy.ac = phy_ac;
-@@ -62,27 +90,11308 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -62,27 +90,11316 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -3178,12 +3195,16 @@ index 756cd44..68013cd 100644
 + * phy.chandef is where b43 keeps the width -- b43_phy_init() points it at the
 + * hardware config before switch_analog() and before b43_software_rfkill(),
 + * which is what calls this, and b43_op_config() repoints it on every channel
-+ * change. It is also what b43_is_40mhz() reads. So the bandwidth is already
-+ * established here and there is nothing to set.
++ * change. It is also what b43_is_40mhz() reads.
++ *
++ * Right behind the chanspec the stock driver tells the MAC the width, when it
++ * differs from the one the MAC last had (MAC.BW in the wl-diag captures, the
++ * IOCTL bandwidth field at the bus); b43_mac_bw_set() does the same.
 + */
 +void b43_phy_ac_write_chanspec(struct b43_wldev *dev)
 +{
 +	const struct cfg80211_chan_def *chandef = dev->phy.chandef;
++	struct b43_phy_ac *ac = dev->phy.ac;
 +	u16 chan = chandef->chan->hw_value;
 +	u16 spec;
 +
@@ -3201,6 +3222,10 @@ index 756cd44..68013cd 100644
 +
 +	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_AC_CHANSPEC, spec);
 +
++	if (ac->mac_width != chandef->width) {
++		b43_mac_bw_set(dev, spec & B43_PHY_AC_CHANSPEC_BW_MASK);
++		ac->mac_width = chandef->width;
++	}
 +}
 +
 +static void b43_phy_ac_chanspec_tail(struct b43_wldev *dev);
@@ -11516,7 +11541,7 @@ index 756cd44..68013cd 100644
 +	(void)b43_phy_ac_farrow_vals_432x_media_a1;
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.h b/drivers/net/wireless/broadcom/b43/phy_ac.h
-index 02eb6c0..8abae73 100644
+index 02eb6c0..88435a2 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.h
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.h
 @@ -3,6 +3,12 @@
@@ -11606,7 +11631,7 @@ index 02eb6c0..8abae73 100644
  #define B43_PHY_AC_C1_CLIP			0x6d4
  #define  B43_PHY_AC_C1_CLIP_DIS			0x4000
  #define B43_PHY_AC_C2_CLIP			0x8d4
-@@ -31,9 +87,764 @@
+@@ -31,9 +87,765 @@
  #define B43_PHY_AC_C3_CLIP			0xad4
  #define  B43_PHY_AC_C3_CLIP_DIS			0x4000
  
@@ -12325,6 +12350,7 @@ index 02eb6c0..8abae73 100644
 +/* Helper trasversali al confine MAC/PHY; razionale in helpers_phy_ac.c. */
 +void b43_phy_ac_mhf_maskset(struct b43_wldev *dev, u16 slot, u16 mask, u16 val);
 +void b43_maccontrol_set(struct b43_wldev *dev, u32 mask, u32 set);
++void b43_mac_bw_set(struct b43_wldev *dev, u32 bw);
 +
 +/*
 + * Function-boundary markers for the userspace test harness. B43_AC_FN() at the

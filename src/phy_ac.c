@@ -3058,12 +3058,16 @@ static void b43_phy_ac_rx_evm_shaping_override(struct b43_wldev *dev);
  * phy.chandef is where b43 keeps the width -- b43_phy_init() points it at the
  * hardware config before switch_analog() and before b43_software_rfkill(),
  * which is what calls this, and b43_op_config() repoints it on every channel
- * change. It is also what b43_is_40mhz() reads. So the bandwidth is already
- * established here and there is nothing to set.
+ * change. It is also what b43_is_40mhz() reads.
+ *
+ * Right behind the chanspec the stock driver tells the MAC the width, when it
+ * differs from the one the MAC last had (MAC.BW in the wl-diag captures, the
+ * IOCTL bandwidth field at the bus); b43_mac_bw_set() does the same.
  */
 void b43_phy_ac_write_chanspec(struct b43_wldev *dev)
 {
 	const struct cfg80211_chan_def *chandef = dev->phy.chandef;
+	struct b43_phy_ac *ac = dev->phy.ac;
 	u16 chan = chandef->chan->hw_value;
 	u16 spec;
 
@@ -3081,6 +3085,10 @@ void b43_phy_ac_write_chanspec(struct b43_wldev *dev)
 
 	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_AC_CHANSPEC, spec);
 
+	if (ac->mac_width != chandef->width) {
+		b43_mac_bw_set(dev, spec & B43_PHY_AC_CHANSPEC_BW_MASK);
+		ac->mac_width = chandef->width;
+	}
 }
 
 static void b43_phy_ac_chanspec_tail(struct b43_wldev *dev);

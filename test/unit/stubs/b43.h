@@ -293,6 +293,7 @@ void b43_phy_mask(struct b43_wldev *dev, u16 reg, u16 mask);
 void b43_phy_set(struct b43_wldev *dev, u16 reg, u16 val);
 void b43_phy_maskset(struct b43_wldev *dev, u16 reg, u16 mask, u16 set);
 void b43_phy_force_clock(struct b43_wldev *dev, bool force);
+void b43_phy_bw_clk_set(struct b43_wldev *dev, u32 bits);
 
 u16  b43_radio_read(struct b43_wldev *dev, u16 reg);
 void b43_radio_write(struct b43_wldev *dev, u16 reg, u16 val);
@@ -401,6 +402,10 @@ void bcma_chipco_regctl_maskset(struct bcma_drv_cc *cc, u32 offset,
 #define B43_SHM_SH_RFATT          0x0064
 #define B43_MMIO_MACCTL           0x120
 #define B43_MACCTL_AP             0x00040000	/* b43.h */
+#define B43_MMIO_PHY0             0x3E6
+#define B43_BCMA_IOCTL_PHY_BW_20MHZ	0x00000040
+#define B43_BCMA_IOCTL_PHY_BW_40MHZ	0x00000080
+#define B43_BCMA_IOCTL_PHY_BW_80MHZ	0x000000C0
 #define B43_DMA64_TXSUSPEND       0x00000002	/* dma.h */
 #define B43_MMIO_MACCMD           0x124
 #define B43_MACCMD_BGNOISE        0x00000010

@@ -56,6 +56,23 @@ void b43_phy_ac_mhf_maskset(struct b43_wldev *dev, u16 slot, u16 mask, u16 val)
 }
 
 /*
+ * The MAC's operating width, @bw the chanspec's width field (B43_MAC_BW_*).
+ * At the bus the stock driver reads MACCONTROL, clears PHY0 (0x3e6), sets
+ * the PHY bandwidth clock of the core's IOCTL and reads MACCONTROL again.
+ */
+void b43_mac_bw_set(struct b43_wldev *dev, u32 bw)
+{
+	u32 clk = bw == B43_MAC_BW_80 ? B43_BCMA_IOCTL_PHY_BW_80MHZ :
+		  bw == B43_MAC_BW_40 ? B43_BCMA_IOCTL_PHY_BW_40MHZ :
+					B43_BCMA_IOCTL_PHY_BW_20MHZ;
+
+	b43_read32(dev, B43_MMIO_MACCTL);
+	b43_write16(dev, B43_MMIO_PHY0, 0);
+	b43_phy_bw_clk_set(dev, clk);
+	b43_read32(dev, B43_MMIO_MACCTL);
+}
+
+/*
  * Read/modify/write of B43_MMIO_MACCTL. The b43 core has no such helper;
  * call sites inline b43_maskset32() instead. Wrapping it here keeps the
  * AC-PHY setup readable and gives the trace harness a symbol to intercept.

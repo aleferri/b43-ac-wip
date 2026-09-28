@@ -1,4 +1,4 @@
-From 440f12d9946ca1f4457f6183d80176102ccc281d Mon Sep 17 00:00:00 2001
+From 559034727530a0be5789d8278adcbcc911647efb Mon Sep 17 00:00:00 2001
 From: Alessandro Ferri <aleferri@example.invalid>
 Date: Sun, 27 Sep 2026 18:30:00 +0000
 Subject: [PATCH] b43: TX FIFO geometry and MAC clock fraction on core revision
@@ -65,7 +65,7 @@ index 7e9ff68..1f4c364 100644
  #define B43_MMIO_SMPL_CLCT_STRPTR	0x552	/* core rev>= 22 only */
  #define B43_MMIO_SMPL_CLCT_STPPTR	0x554	/* core rev>= 22 only */
 diff --git a/drivers/net/wireless/broadcom/b43/main.c b/drivers/net/wireless/broadcom/b43/main.c
-index cc3059d..755485e 100644
+index d828288..e9504cc 100644
 --- a/drivers/net/wireless/broadcom/b43/main.c
 +++ b/drivers/net/wireless/broadcom/b43/main.c
 @@ -3183,7 +3183,18 @@ void b43_mac_switch_freq(struct b43_wldev *dev, u8 spurmode)

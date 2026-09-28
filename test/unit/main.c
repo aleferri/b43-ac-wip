@@ -358,6 +358,19 @@ static void mount_board(const struct board_profile *p)
 	 */
 	g_wldev.phy.chandef    = &g_hw.conf.chandef;
 	/*
+	 * The width the MAC was last told about, which the chanspec write
+	 * compares against: AC_MAC_WIDTH seeds it (gates.sh passes 0 on a
+	 * segment that carries MAC.BW, the segment's own width otherwise), so
+	 * a segment run on its own does not repeat a write the chain made.
+	 */
+	{
+		const char *mw = getenv("AC_MAC_WIDTH");
+
+		g_ac.mac_width = mw ? (enum nl80211_chan_width)
+				      strtoul(mw, NULL, 0)
+				    : g_hw.conf.chandef.width;
+	}
+	/*
 	 * Primo bring-up per default: e' la fase che le catture attach
 	 * testimoniano. AC_FIRST_INIT=0 seleziona il bring-up successivo, da
 	 * confrontare con le catture down->up.
@@ -2084,32 +2097,13 @@ int main(int argc, char **argv)
 		g_ac.cal_width = g_hw.conf.chandef.width;
 		g_ac.cal_freq = g_hw.conf.chandef.center_freq1;
 		/*
-		 * The caller writes these, just before the radio init rather
-		 * than inside it: in the attach capture that carries the OBJ
-		 * class the chanspec is at episode 35395 and the first op of
-		 * b43_radio_2069_init() at 35396, with the prefregs at 35420.
-		 *
-		 * AC_MAC_WIDTH seeds the width the MAC was last told about, so
-		 * a segment run on its own does not repeat a write the chain
-		 * already made.
+		 * The caller writes the chanspec, and with it the MAC width,
+		 * just before the radio init rather than inside it: in the
+		 * attach capture that carries the OBJ class the chanspec is at
+		 * episode 35395 and the first op of b43_radio_2069_init() at
+		 * 35396, with the prefregs at 35420.
 		 */
 		b43_phy_ac_write_chanspec(&g_wldev);
-		{
-			const char *mw = getenv("AC_MAC_WIDTH");
-
-			g_ac.mac_width = mw ? (enum nl80211_chan_width)
-					      strtoul(mw, NULL, 0)
-					    : g_ac.cal_width;
-			if (g_ac.cal_width != g_ac.mac_width) {
-				b43_mac_bw_set(&g_wldev,
-					g_ac.cal_width == NL80211_CHAN_WIDTH_80
-						? B43_MAC_BW_80
-					: g_ac.cal_width == NL80211_CHAN_WIDTH_40
-						? B43_MAC_BW_40
-						: B43_MAC_BW_20);
-				g_ac.mac_width = g_ac.cal_width;
-			}
-		}
 		{
 			static const u16 rccal_stat[] = {
 				0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0010,

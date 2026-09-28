@@ -466,14 +466,6 @@ PHY_ANCHE = [
 # corta: ogni voce e' un pezzo di obiettivo dichiarato irraggiungibile, e serve
 # la prova che non ci sia niente da emettere.
 #
-#   MAC.BW   hook su wlc_bmac_bw_set. L'equivalente GPL in brcmsmac,
-#            brcms_b_bw_set(), fa wlc_phy_bw_state_set() -- che e' `pi->bw = bw`
-#            e nient'altro -- piu' un reset e un init del PHY. Nelle catture
-#            fra il record e il prologo radio non c'e' nessuna scrittura di
-#            registro, e il prologo radio e' quell'init, che il port fa. In b43
-#            la larghezza sta in phy.chandef, che b43_phy_init() punta prima di
-#            switch_analog e di b43_software_rfkill: e' gia' impostata quando il
-#            PHY arriva qui, e non c'e' nulla da scrivere.
 #   MARK     record del tracer, non del driver: lo scrive lo script dello
 #            sweep dallo userspace ('chNN bwB', prima del rmmod del canale
 #            precedente) o il modulo wl-diag stesso ('mod COMING'/'mod GOING').
@@ -505,7 +497,6 @@ PHY_ANCHE = [
 #            quindi la' c'e' una controparte e una divergenza di valore, non
 #            un'assenza.
 SOLO_VENDOR = (
-    r'^MAC\.BW\b',
     r"^MARK\b",
     r"^IOCTL\b",
     r"^IOVAR\.SET\b",

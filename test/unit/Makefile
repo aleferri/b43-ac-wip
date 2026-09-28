@@ -36,7 +36,7 @@ WRAP_SYMS := \
     b43_radio_maskset \
     b43_read16 b43_write16 b43_write16f \
     b43_mac_enable b43_mac_suspend b43_mac_suspend_enable \
-    b43_maccontrol_set \
+    b43_maccontrol_set b43_mac_bw_set \
     b43_mac_phy_clock_set b43_phy_ac_mhf_maskset \
     b43_phyop_switch_analog_generic \
     b43_current_band b43_phy_init \

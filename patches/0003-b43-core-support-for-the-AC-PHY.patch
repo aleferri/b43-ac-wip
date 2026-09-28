@@ -1,4 +1,4 @@
-From d781825c14241f67c55ed52298e0f40950936b9c Mon Sep 17 00:00:00 2001
+From 05cbf89c3fa5ceb6579db72c2443903a0e71319e Mon Sep 17 00:00:00 2001
 From: Alessandro Ferri <aleferri@example.invalid>
 Date: Sun, 27 Sep 2026 15:55:26 +0000
 Subject: [PATCH] b43: core support for the AC-PHY
@@ -345,6 +345,16 @@ radar_detect_widths. ath9k and ath10k declare it only under their
 does the same with CONFIG_B43_DFS. Without pattern matching the detector
 cannot pass certification, so the option says N.
 
+PHY bandwidth clock
+-------------------
+
+The PHY bandwidth field of the core's IOCTL (bits 7:6) follows the
+operating width: the stock driver sets it to 80 MHz right behind the
+chanspec of an 80 MHz channel (0x155 -> 0x1d5 at the bus on the agcombo)
+and its core reset carries it afterwards. b43_phy_bw_clk_set() writes the
+field with a read back and keeps it in dev->phy; b43_bcma_phy_reset() puts
+it back instead of 20 MHz, which stays the value until a PHY has set it.
+
 Signed-off-by: Alessandro Ferri <aleferri@example.invalid>
 ---
  drivers/net/wireless/broadcom/b43/Kconfig     |  12 +
@@ -352,11 +362,12 @@ Signed-off-by: Alessandro Ferri <aleferri@example.invalid>
  drivers/net/wireless/broadcom/b43/dma.c       |  34 +-
  drivers/net/wireless/broadcom/b43/leds.c      | 172 +++---
  drivers/net/wireless/broadcom/b43/leds.h      |  19 +-
- drivers/net/wireless/broadcom/b43/main.c      | 521 ++++++++++++++++--
- .../net/wireless/broadcom/b43/phy_common.h    |  21 +
+ drivers/net/wireless/broadcom/b43/main.c      | 523 ++++++++++++++++--
+ .../net/wireless/broadcom/b43/phy_common.c    |  21 +
+ .../net/wireless/broadcom/b43/phy_common.h    |  24 +
  drivers/net/wireless/broadcom/b43/xmit.c      |   9 +-
  drivers/net/wireless/broadcom/b43/xmit.h      |  20 +
- 9 files changed, 691 insertions(+), 138 deletions(-)
+ 10 files changed, 716 insertions(+), 139 deletions(-)
 
 diff --git a/drivers/net/wireless/broadcom/b43/Kconfig b/drivers/net/wireless/broadcom/b43/Kconfig
 index 4559549..616aa17 100644
@@ -820,7 +831,7 @@ index 5ebd1b2..eb68796 100644
  
  #endif /* B43_LEDS_H_ */
 diff --git a/drivers/net/wireless/broadcom/b43/main.c b/drivers/net/wireless/broadcom/b43/main.c
-index 92ca0b2..cc3059d 100644
+index 92ca0b2..d828288 100644
 --- a/drivers/net/wireless/broadcom/b43/main.c
 +++ b/drivers/net/wireless/broadcom/b43/main.c
 @@ -316,6 +316,23 @@ static struct ieee80211_channel b43_5ghz_aphy_chantable[] = {
@@ -1087,6 +1098,15 @@ index 92ca0b2..cc3059d 100644
  }
  
  /* The ucode will use phase1 key with TEK key to decrypt rx packets.
+@@ -1237,7 +1373,7 @@ static void b43_bcma_phy_reset(struct b43_wldev *dev)
+ 	/* Put PHY into reset */
+ 	flags = bcma_aread32(dev->dev->bdev, BCMA_IOCTL);
+ 	flags |= B43_BCMA_IOCTL_PHY_RESET;
+-	flags |= B43_BCMA_IOCTL_PHY_BW_20MHZ; /* Make 20 MHz def */
++	flags |= dev->phy.bw_clkbits ?: B43_BCMA_IOCTL_PHY_BW_20MHZ;
+ 	bcma_awrite32(dev->dev->bdev, BCMA_IOCTL, flags);
+ 	udelay(2);
+ 
 @@ -1423,6 +1559,12 @@ static void handle_irq_noise(struct b43_wldev *dev)
  	u8 i, j;
  	s32 average;
@@ -1594,8 +1614,40 @@ index 92ca0b2..cc3059d 100644
  }
  
  static struct bcma_driver b43_bcma_driver = {
+diff --git a/drivers/net/wireless/broadcom/b43/phy_common.c b/drivers/net/wireless/broadcom/b43/phy_common.c
+index 285490f..0acd049 100644
+--- a/drivers/net/wireless/broadcom/b43/phy_common.c
++++ b/drivers/net/wireless/broadcom/b43/phy_common.c
+@@ -560,6 +560,27 @@ bool b43_is_40mhz(struct b43_wldev *dev)
+ }
+ 
+ /* https://bcm-v4.sipsolutions.net/802.11/PHY/N/BmacPhyClkFgc */
++/*
++ * The PHY clock and bandwidth field of the core's IOCTL (B43_BCMA_IOCTL_PHY_BW),
++ * kept in dev->phy so that the PHY reset of the next core reset restores it:
++ * the stock driver's core reset carries the width the PHY last ran at.
++ */
++void b43_phy_bw_clk_set(struct b43_wldev *dev, u32 bits)
++{
++#ifdef CONFIG_B43_BCMA
++	u32 tmp;
++
++	if (dev->dev->bus_type != B43_BUS_BCMA)
++		return;
++	dev->phy.bw_clkbits = bits;
++	tmp = bcma_aread32(dev->dev->bdev, BCMA_IOCTL);
++	tmp &= ~B43_BCMA_IOCTL_PHY_BW;
++	tmp |= bits;
++	bcma_awrite32(dev->dev->bdev, BCMA_IOCTL, tmp);
++	bcma_aread32(dev->dev->bdev, BCMA_IOCTL);
++#endif
++}
++
+ void b43_phy_force_clock(struct b43_wldev *dev, bool force)
+ {
+ 	u32 tmp;
 diff --git a/drivers/net/wireless/broadcom/b43/phy_common.h b/drivers/net/wireless/broadcom/b43/phy_common.h
-index 5ec5233..0118aa4 100644
+index 5ec5233..4d48441 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_common.h
 +++ b/drivers/net/wireless/broadcom/b43/phy_common.h
 @@ -143,10 +143,27 @@ enum b43_txpwr_result {
@@ -1639,6 +1691,22 @@ index 5ec5233..0118aa4 100644
  };
  
  struct b43_phy_g;
+@@ -191,6 +212,8 @@ struct b43_phy_ht;
+ struct b43_phy_lcn;
+ 
+ struct b43_phy {
++	/* IOCTL PHY bandwidth bits, 0 until b43_phy_bw_clk_set(). */
++	u32 bw_clkbits;
+ 	/* Hardware operation callbacks. */
+ 	const struct b43_phy_operations *ops;
+ 
+@@ -442,5 +465,6 @@ void b43_phyop_switch_analog_generic(struct b43_wldev *dev, bool on);
+ bool b43_is_40mhz(struct b43_wldev *dev);
+ 
+ void b43_phy_force_clock(struct b43_wldev *dev, bool force);
++void b43_phy_bw_clk_set(struct b43_wldev *dev, u32 bits);
+ 
+ #endif /* LINUX_B43_PHY_COMMON_H_ */
 diff --git a/drivers/net/wireless/broadcom/b43/xmit.c b/drivers/net/wireless/broadcom/b43/xmit.c
 index 7651b1b..7c70235 100644
 --- a/drivers/net/wireless/broadcom/b43/xmit.c
