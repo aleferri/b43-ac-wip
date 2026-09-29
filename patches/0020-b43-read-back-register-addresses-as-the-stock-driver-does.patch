@@ -1,5 +1,5 @@
 From ca9069c8b9023b0bffec8156b38f44f0412c6a89 Mon Sep 17 00:00:00 2001
-From: Alessandro Ferri <aleferri@example.invalid>
+From: Alessio Ferri <alessio.ferri.3012@gmail.com>
 Date: Mon, 28 Sep 2026 22:58:57 +0000
 Subject: [PATCH] b43: read back register addresses as the stock driver does
 

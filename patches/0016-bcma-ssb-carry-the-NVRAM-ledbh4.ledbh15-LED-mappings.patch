@@ -1,5 +1,5 @@
 From ea63cf398f107e6df345a10d2468f94bdc5ea6ef Mon Sep 17 00:00:00 2001
-From: Alessandro Ferri <aleferri@example.invalid>
+From: Alessio Ferri <alessio.ferri.3012@gmail.com>
 Date: Fri, 11 Sep 2026 11:16:11 +0000
 Subject: [PATCH 16/17] bcma: ssb: carry the NVRAM ledbh4..ledbh15 LED mappings
 
@@ -24,7 +24,7 @@ moves out of bcm47xx_get_sprom_bcma() into a helper the two share. Like
 the fallback, this exists only with bcma built in; elsewhere the call is
 an inline no-op.
 
-Signed-off-by: Alessandro Ferri <aleferri@example.invalid>
+Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
 ---
  drivers/bcma/sprom.c                      |  6 ++
  drivers/firmware/broadcom/bcm47xx_sprom.c | 91 +++++++++++++++++------

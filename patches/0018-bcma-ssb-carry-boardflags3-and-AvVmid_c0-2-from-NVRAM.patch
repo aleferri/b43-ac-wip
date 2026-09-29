@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Alessandro Ferri <aleferri@example.invalid>
+From: Alessio Ferri <alessio.ferri.3012@gmail.com>
 Date: Fri, 25 Sep 2026 18:00:00 +0000
 Subject: [PATCH 18/18] bcma: ssb: carry boardflags3 and AvVmid_c0..2 from NVRAM
 
@@ -19,7 +19,7 @@ extraction does not take the word. Read both in
 bcm47xx_sprom_fill_nvram_only(), next to ledbh4..15, which runs in either
 case.
 
-Signed-off-by: Alessandro Ferri <aleferri@example.invalid>
+Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
 ---
  drivers/firmware/broadcom/bcm47xx_sprom.c | 33 +++++++++++++++++++++++
  include/linux/ssb/ssb.h                   |  3 +++

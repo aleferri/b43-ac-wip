@@ -1,5 +1,5 @@
 From f911bae89cd089459f54a21bfdef1266f56cd583 Mon Sep 17 00:00:00 2001
-From: Alessandro Ferri <aleferri@example.invalid>
+From: Alessio Ferri <alessio.ferri.3012@gmail.com>
 Date: Sun, 27 Sep 2026 15:55:26 +0000
 Subject: [PATCH] b43: core support for the AC-PHY
 
@@ -355,7 +355,7 @@ and its core reset carries it afterwards. b43_phy_bw_clk_set() writes the
 field with a read back and keeps it in dev->phy; b43_bcma_phy_reset() puts
 it back instead of 20 MHz, which stays the value until a PHY has set it.
 
-Signed-off-by: Alessandro Ferri <aleferri@example.invalid>
+Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
 ---
  drivers/net/wireless/broadcom/b43/Kconfig     |  12 +
  drivers/net/wireless/broadcom/b43/b43.h       |  21 +

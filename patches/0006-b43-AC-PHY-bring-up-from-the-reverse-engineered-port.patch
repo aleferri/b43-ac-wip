@@ -1,5 +1,5 @@
-From 5baf2d4ea4f7c909eab88f76199b0eebce9497d9 Mon Sep 17 00:00:00 2001
-From: c <c@l>
+From 7ab4bc6b4a5666ce549b671f32d6715a8997d19a Mon Sep 17 00:00:00 2001
+From: Alessio Ferri <alessio.ferri.3012@gmail.com>
 Date: Tue, 8 Sep 2026 14:29:02 +0000
 Subject: [PATCH] b43: AC-PHY bring-up from the reverse-engineered port
 
