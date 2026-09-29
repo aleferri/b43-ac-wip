@@ -1,10 +1,11 @@
 # RX IQ calibration
 
 What the AC-PHY RX IQ calibration does, as the captures show it and as the port
-implements it (`b43_phy_ac_iq_solve()` and its callers in `b43/phy_ac.c`,
-`b43/rxiqcal_phy_ac.c`). The residuals are in `retrace-todo.md`; the LO LUT
-bases and the 80 MHz eleven-tap bank are tabulated, with their evidence, next
-to the code.
+implements it (`b43_phy_ac_iq_solve()` and its callers in `b43/phy_ac.c`; the
+estimator that validates the solve against the captures is the harness's,
+`test/unit/rxiqcal_phy_ac.c`). The residuals are in `retrace-todo.md`; the LO
+LUT bases and the five series of the 80 MHz eleven-tap bank are tabulated, with
+their evidence, next to the code.
 
 ## Structure
 

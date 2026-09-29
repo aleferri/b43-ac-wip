@@ -156,7 +156,7 @@ struct ieee80211_channel;
 
 /*
  * Hard maximum of RF chains the driver programs. Every per-core array here
- * and in phy_ac.c / rxiqcal_phy_ac.c is sized on this, and num_cores is
+ * and in phy_ac.c is sized on this, and num_cores is
  * clamped to it in b43_phy_ac_probe_cores.
  */
 #define B43_PHY_AC_MAX_CORES		3

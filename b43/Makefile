@@ -17,7 +17,6 @@ b43-$(CONFIG_B43_PHY_LCN)	+= phy_lcn.o tables_phy_lcn.o
 b43-$(CONFIG_B43_PHY_AC)	+= phy_ac.o
 b43-$(CONFIG_B43_PHY_AC)	+= tables_phy_ac.o
 b43-$(CONFIG_B43_PHY_AC)	+= radio_2069.o
-b43-$(CONFIG_B43_PHY_AC)	+= rxiqcal_phy_ac.o
 b43-$(CONFIG_B43_PHY_AC)	+= helpers_phy_ac.o
 b43-$(CONFIG_B43_PHY_AC)	+= ppr_ac.o
 b43-y				+= sysfs.o

@@ -68,7 +68,7 @@ endif
 
 # I file di b43 che si compilano come sono. Tutti e tre a zero errori.
 UPSTREAM := main.c phy_common.c bus.c xmit.c leds.c rfkill.c \
-            phy_ac.c tables_phy_ac.c radio_2069.c rxiqcal_phy_ac.c \
+            phy_ac.c tables_phy_ac.c radio_2069.c \
             helpers_phy_ac.c ppr_ac.c
 
 # La gestione del core di bcma, anche lei com'e': reset, clock e PLL del

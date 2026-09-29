@@ -18,7 +18,7 @@ B43     := ../../b43
 SCRATCH := build/b43
 STUBS   := stubs
 AC_HDRS := $(addprefix $(SCRATCH)/,phy_ac.h tables_phy_ac.h radio_2069.h \
-            ppr_ac.h rxiqcal_phy_ac.h)
+            ppr_ac.h)
 
 # We include our stubs FIRST (via -I) so kernel headers <linux/*.h> and
 # the b43 project headers resolve to our minimal versions. The copied AC-PHY
@@ -55,23 +55,17 @@ WRAP_SYMS := \
 LDFLAGS := $(foreach s,$(WRAP_SYMS),-Wl,--wrap=$(s))
 
 # --- Source lists --------------------------------------------------------
-# Start small: rxiqcal_phy_ac + tables_phy_ac are self-contained and
-# were verified in the previous work. Extend WITH_* lines when adding
-# more of the driver.
-SCRATCH_SRCS_MIN := \
-    $(SCRATCH)/rxiqcal_phy_ac.c \
-    $(SCRATCH)/tables_phy_ac.c
-
-# Full driver: the scratch phy_ac.c + radio_2069.c on top of the minimal set.
-# This is the set actually built (see SRCS below).
+# The AC-PHY files of the driver, copied into $(SCRATCH).
 SCRATCH_SRCS_FULL := \
-    $(SCRATCH_SRCS_MIN) \
+    $(SCRATCH)/tables_phy_ac.c \
     $(SCRATCH)/phy_ac.c \
     $(SCRATCH)/radio_2069.c \
     $(SCRATCH)/helpers_phy_ac.c \
     $(SCRATCH)/ppr_ac.c
 
-SRCS := $(SCRATCH_SRCS_FULL) wrap.c main.c
+# rxiqcal_phy_ac.c is the harness's own RX-IQ estimator, which validates the
+# solve against the captures; the driver does not use it.
+SRCS := $(SCRATCH_SRCS_FULL) rxiqcal_phy_ac.c wrap.c main.c
 OBJS := $(patsubst %.c,build/%.o,$(notdir $(SRCS)))
 
 vpath %.c .

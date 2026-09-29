@@ -21,16 +21,14 @@
  *     hill-climb, and the measurement gain is never altered: the gain
  *     registers are only saved and restored around the measurement.
  *
- * The RX-IQ path in use is the transcribed one in phy_ac.c, orchestrated by
- * b43_phy_ac_set_channel_calibrations(), and lives there too. What remains
- * in this file is the harness-only
- * estimator/validator -- rxiqcal_est/rxiqcal_coeffs, the tone play (tx_tone,
- * stopplayback, rxiqcal_set_tone, rxiqcal_apply_gain) and the two entry points
- * rxiqcal_est_debug and rxiqcal_comp_update -- reachable only from the
- * `ac_trace rxiq_est_debug`/`rxiq_comp` flows, never from the driver. It
- * validates the RX-IQ math against the captures. The one call it shares with
- * the production path is b43_phy_ac_rxgain_bw(), which stays in phy_ac.c. See
- * docs/rxiq-cal-analysis.md.
+ * The RX-IQ path of the driver is the transcribed one in b43/phy_ac.c,
+ * orchestrated by b43_phy_ac_set_channel_calibrations(). This file is the
+ * harness's estimator/validator -- rxiqcal_est/rxiqcal_coeffs, the tone play
+ * (tx_tone, stopplayback, rxiqcal_set_tone, rxiqcal_apply_gain) and the two
+ * entry points rxiqcal_est_debug and rxiqcal_comp_update -- run by the
+ * `ac_trace rxiq_est_debug`/`rxiq_comp` flows to validate the RX-IQ math
+ * against the captures. The one call it shares with the driver is
+ * b43_phy_ac_rxgain_bw(), in phy_ac.c. See docs/rxiq-cal-analysis.md.
  */
 #include <linux/kernel.h>	/* int_sqrt */
 #include "b43.h"

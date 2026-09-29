@@ -15,9 +15,8 @@
  * setup of b43_phy_ac_op_switch_channel(), the core's BSS configuration, the
  * second half of the setup, the post-channel calibrations and the bss-up
  * burst. `switch_channel` alone models a runtime channel change and the others
- * exercise narrower slices. The full scratch driver (phy_ac.c + radio_2069.c +
- * rxiqcal_phy_ac.c + tables_phy_ac.c) links and runs; see the Makefile
- * SCRATCH_SRCS_FULL list.
+ * exercise narrower slices. The AC-PHY files of the driver link with the
+ * harness's RX-IQ estimator, rxiqcal_phy_ac.c; see the Makefile SRCS list.
  */
 
 #include <stdio.h>

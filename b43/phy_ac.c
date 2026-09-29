@@ -36,7 +36,6 @@
 #include "phy_common.h"
 #include "tables_phy_ac.h"
 #include "radio_2069.h"
-#include "rxiqcal_phy_ac.h"
 #include "main.h"
 
 /* Temporary: the 2.4 GHz channel set is incomplete. The unit harness builds
@@ -4853,8 +4852,9 @@ static const u16 b43_phy_ac_rxgain_regs[14] = {
  * cattura e non c'e' riga.
  *
  * Sta a livello di file perche' non la usa solo chi programma il blocco: il
- * setup del generatore di tono in rxiqcal_phy_ac.c riscrive gli stessi due
- * registri per intero, e i suoi letterali erano le parole a 20 MHz.
+ * setup del generatore di tono dello stimatore di test/unit
+ * (rxiqcal_phy_ac.c) riscrive gli stessi due registri per intero, e i suoi
+ * letterali erano le parole a 20 MHz.
  */
 static const struct b43_phy_ac_rxgain_bw b43_phy_ac_rxgain_bw_tab[3] = {
 	{ 0x0003, 0x007a, 0x0000, 0x0040 },	/* 20 MHz */
