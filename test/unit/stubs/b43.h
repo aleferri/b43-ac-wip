@@ -312,6 +312,11 @@ void b43_write16f(struct b43_wldev *dev, u16 offset, u16 val);
 /* SHM (ucode shared memory) -- kernel: b43/main.h; il tracer li emette
  * come OBJ.RD/OBJ.WR (implementazione in wrap.c). */
 #define B43_SHM_SHARED 0x0001
+#define B43_SHM_SCRATCH 0x0002
+#define B43_SHM_SC_MINCONT 0x0003
+#define B43_SHM_SC_MAXCONT 0x0004
+#define B43_SHM_SC_SRLIMIT 0x0006
+#define B43_SHM_SC_LRLIMIT 0x0007
 u16  b43_shm_read16(struct b43_wldev *dev, u16 routing, u16 offset);
 void b43_shm_write16(struct b43_wldev *dev, u16 routing, u16 offset, u16 val);
 
@@ -402,6 +407,8 @@ void bcma_chipco_regctl_maskset(struct bcma_drv_cc *cc, u32 offset,
 #define B43_SHM_SH_HOSTF4         0x0078
 #define B43_SHM_SH_HOSTF5         0x00D4
 #define B43_SHM_SH_RFATT          0x0064
+#define B43_SHM_SH_CHAN           0x00A0
+#define B43_SHM_SH_SLOTT          0x0010
 #define B43_MMIO_MACCTL           0x120
 #define B43_MACCTL_AP             0x00040000	/* b43.h */
 #define B43_MMIO_PHY0             0x3E6

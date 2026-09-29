@@ -1417,7 +1417,16 @@ u16 b43_shm_read16(struct b43_wldev *dev, u16 routing, u16 offset)
 
 void b43_shm_write16(struct b43_wldev *dev, u16 routing, u16 offset, u16 val)
 {
-	(void)dev; (void)routing;
+	(void)dev;
+
+	/* The vendor tracer prints a scratch word at four times its index
+	 * (SRLIMIT, word 6, as 0x0018), and the scratch space is not the
+	 * shared one the mirror holds. */
+	if (routing == B43_SHM_SCRATCH) {
+		fprintf(trace(), "cpu1 OBJ.WR   addr=0x%04x val=0x%04x\n",
+			offset * 4, val);
+		return;
+	}
 
 	if (offset / 2 < MIRROR_SHM_WORDS)
 		mirror_shm[offset / 2] = val;

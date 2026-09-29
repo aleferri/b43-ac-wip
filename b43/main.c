@@ -2941,8 +2941,13 @@ static int b43_upload_microcode(struct b43_wldev *dev)
 	WARN_ON(dev->fw.opensource != (fwdate == 0xFFFF));
 
 	dev->qos_enabled = dev->wl->hw->queues > 1;
-	/* Default to firmware/hardware crypto acceleration. */
-	dev->hwcrypto_enabled = true;
+	/*
+	 * Default to firmware/hardware crypto acceleration, except on the AC
+	 * microcode: its cipher numbers are not b43's (WEP104 is 3 there, and
+	 * a 16 byte pairwise key 5), and the key fields of its TX and RX
+	 * headers are not mapped. mac80211 does the crypto instead.
+	 */
+	dev->hwcrypto_enabled = dev->fw.hdr_format != B43_FW_HDR_AC;
 
 	if (dev->fw.opensource) {
 		u16 fwcapa;
@@ -3396,6 +3401,17 @@ static void b43_adjust_opmode(struct b43_wldev *dev)
 			cfp_pretbtt = 50;
 	}
 	b43_write16(dev, 0x612, cfp_pretbtt);
+
+	/*
+	 * Beacon TSF offset. Both the 6.30 and the 7.14 AC microcode start from
+	 * 0x183, the band initvals' value; 7.14 moves it to 0x3a in the BSS
+	 * setup of an AP, and the 6.30 station keeps 0x183. IBSS, which also
+	 * beacons, has no capture and takes the AP value.
+	 */
+	if (dev->dev->core_rev >= 42)
+		b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_BTSFOFF,
+				(ctl & B43_MACCTL_INFRA) && !(ctl & B43_MACCTL_AP) ?
+				0x0183 : 0x003a);
 
 	/* FIXME: We don't currently implement the PMQ mechanism,
 	 *        so always disable it. If we want to implement PMQ,
@@ -5311,8 +5327,9 @@ static void b43_set_synth_pu_delay(struct b43_wldev *dev, bool idle)
 {
 	u16 pu_delay;
 
-	/* The time value is in microseconds. */
-	pu_delay = 1050;
+	/* The time value is in microseconds. The AC cores' stock driver ends
+	 * at 512, the value the AC-PHY writes, with wl 6.30 and 7.14. */
+	pu_delay = dev->phy.type == B43_PHYTYPE_AC ? 512 : 1050;
 	if (b43_is_mode(dev->wl, NL80211_IFTYPE_ADHOC) || idle)
 		pu_delay = 500;
 	if ((dev->phy.radio_ver == 0x2050) && (dev->phy.radio_rev == 8))
@@ -5477,8 +5494,9 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
 	 * always overwrites is a guess too, and the worse one.
 	 *
 	 * Where a cell is written more than once during bring-up -- host flags
-	 * 4 and 5 gain bits as the driver goes, beacon TSF offset changes once
-	 * -- the value here is the one it ends at. b43's core init has a
+	 * 4 and 5 gain bits as the driver goes -- the value here is the one it
+	 * ends at. The beacon TSF offset depends on the mode and is in
+	 * b43_adjust_opmode(). b43's core init has a
 	 * different shape from the OEM's and the intermediate points have no
 	 * counterpart in it, so the end state matches and the order does not.
 	 *
@@ -5491,8 +5509,6 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
 				B43_SHM_SH_MAXBFRAMES, 8);
 		b43_shm_write16(dev, B43_SHM_SHARED,
 				B43_SHM_SH_ANTSWAP, 0x000a);
-		b43_shm_write16(dev, B43_SHM_SHARED,
-				B43_SHM_SH_BTSFOFF, 0x003a);
 		b43_shm_write16(dev, B43_SHM_SHARED,
 				B43_SHM_SH_DEFAULTIV, 0x000a);
 		b43_shm_write16(dev, B43_SHM_SHARED,

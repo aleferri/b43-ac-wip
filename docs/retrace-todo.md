@@ -48,12 +48,21 @@ same lever as `AC_FIRST_INIT`.
   `gates.sh` passes the captured value as `AC_BSS_CC`, the driver does not
   compose it. `0x00d0` is written zero everywhere; nothing sets it.
 - **`0x078c`–`0x0790`** (station MAC): whether the ucode needs it is open.
-- **`SLOTT`**: the captures write `0x3ff` then `9` in the readback block;
-  the core writes `9` at core init.
+- **`SLOTT`**: the bsinitvals give `0x14`, the stock driver writes `9` in the
+  readback block and the core writes `9` at core init. The `0x3ff` before it
+  in the wl-diag captures is CWmax in the scratch space, not the slot time.
 - **`PSM` (`0x05F4`), `TKIPTSCTTAK` (`0x0318`)** rest on the v4 layout
   assumption and have no evidence.
-- **Cipher numbering.** The algorithm number 5 seen in the captures is past
-  b43's enum; the numbering on ucode42 is unmapped.
+- **Cipher numbering.** On the AC microcode WEP104 is `3` (a 13 byte key on
+  the agcombo's 7.14.43) and a 16 byte pairwise or group key is `5` (WPA on
+  the archer-t5e's 6.30.223, and on the BCM4352 WPA2 capture the core patch
+  cites), CCMP or TKIP not told apart; b43's enum has WEP104 at 4 and AES at 3. Hardware crypto is off on
+  `B43_FW_HDR_AC` until the numbers and the key fields of the TX and RX
+  headers are mapped.
+- **`MACHW_H` (`0x00c2`).** The capability register reads `0xb0518c05` on
+  both boards; 6.30.223 writes the high half as `0xb051`, as b43 does, and
+  7.14 (agcombo, D6220) as `0x3051`, bit 31 cleared. What the bit is, and
+  whether the 928 microcode needs it clear, is open.
 - **SSID length.** `AC_SSID_LEN` (default 8) drives the probe-response length,
   the PLCP of the eight rates and `0x001e`. `gates.sh` does not read it off the
   capture (`PRSSIDLEN` at `0x0048`), so a segment with another SSID fails
@@ -96,6 +105,14 @@ b43 keeps `B43_MACCTL_DISCPMQ` set; the AC stock driver clears it in AP mode
   Bit 6 is set, with no acknowledgement and word 1 at 0, on three probe
   requests of the archer-t5e; word 2 looks like per-rate counts. A capture
   with retries would say.
+- **Scratch and shared memory look alike to the comparison.**
+  `tracelib.normalize()` drops `sel=`, and wl-diag prints a scratch word at
+  four times its index, so scratch word 3 and shared `0x000c` are the same op
+  to `cmp_skip`. The PHY used to write CWmin/CWmax into shared memory and the
+  gates counted it a match. `test/unit` now traces scratch in the wl-diag
+  form; `test/integration` traces it at the bus, in words, so against a
+  wl-diag capture its scratch writes do not pair up. Keeping `sel=` and
+  folding the wl-diag form would fix both.
 - **Not classified:** the read-modify-writes on `0x6b4`/`0x6b8` (BT coex),
   `0x6c6`, `0x6f0`/`0x6f2`, the `clk_ctl_st` pass on every hop, the `gptimer`
   writes.

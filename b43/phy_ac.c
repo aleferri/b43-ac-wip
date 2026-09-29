@@ -655,25 +655,23 @@ static void b43_phy_ac_shm_readback_block(struct b43_wldev *dev)
 	unsigned int i;
 
 	/*
-	 * Four accesses that open the block, and none of them is understood.
+	 * Four accesses open the block.
 	 *
 	 * TODO 0x0092: read, not written, and b43.h does not name the cell. It
 	 * reads 0xacc on both boards, so it is something the microcode
 	 * publishes rather than session state; nothing here consumes the value.
 	 * It is read once earlier too, during core init.
 	 *
-	 * TODO 0x000c: written with 0xf, and b43.h does not name it either.
-	 *
-	 * The slot time, 0x03ff then 9, is the second half of what
-	 * the core (b43/main.c) introduced -- and the captures put BOTH writes here, not
-	 * at core init where that patch does the 9. What 0x03ff is for is not
-	 * known; writing the maximum and then the real value looks like a
-	 * deliberate two-step, so it is reproduced as one.
+	 * Then the contention window, 15 and 1023 in the scratch space (the
+	 * wl-diag captures print a scratch word at four times its index, so
+	 * CWmin and CWmax read as 0x000c and 0x0010 there; at the bus they are
+	 * words 3 and 4), and the slot time in shared memory. b43's core
+	 * writes all three too, at core init; the captures put them here.
 	 */
 	b43_shm_read16(dev, B43_SHM_SHARED, 0x0092);
-	b43_shm_write16(dev, B43_SHM_SHARED, 0x000c, 0x000f);
-	b43_shm_write16(dev, B43_SHM_SHARED, 0x0010, 0x03ff);	/* SLOTT */
-	b43_shm_write16(dev, B43_SHM_SHARED, 0x0010, 9);
+	b43_shm_write16(dev, B43_SHM_SCRATCH, B43_SHM_SC_MINCONT, 0x000f);
+	b43_shm_write16(dev, B43_SHM_SCRATCH, B43_SHM_SC_MAXCONT, 0x03ff);
+	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_SLOTT, 9);
 
 	/*
 	 * PHYTYPE e PHYVER, che l'ucode legge per sapere con cosa sta parlando.
@@ -3207,11 +3205,51 @@ static void b43_phy_ac_rx_evm_shaping_override(struct b43_wldev *dev);
 
 /* Forward declaration: chanspec_tail chiamata da channel_setup post-BW1F. */
 /*
+ * The chanspec of a configuration, in the layout of B43_PHY_AC_CHANSPEC_*.
+ *
+ * The centre is the primary for a 20 MHz configuration and the middle of the
+ * block otherwise, which is center_freq1; the position of the primary is its
+ * distance from the lowest channel of the block, which lies half the span
+ * below the centre, in steps of four channels.
+ */
+static u16 b43_phy_ac_chanspec(const struct cfg80211_chan_def *chandef)
+{
+	const struct ieee80211_channel *chan = chandef->chan;
+	int prim = chan->hw_value;
+	int centre = prim;
+	int half = 0;
+	u16 spec;
+
+	switch (chandef->width) {
+	case NL80211_CHAN_WIDTH_80:
+		spec = B43_PHY_AC_CHANSPEC_BW80;
+		half = 6;
+		break;
+	case NL80211_CHAN_WIDTH_40:
+		spec = B43_PHY_AC_CHANSPEC_BW40;
+		half = 2;
+		break;
+	default:
+		spec = B43_PHY_AC_CHANSPEC_BW20;
+		break;
+	}
+	if (half)
+		centre += ((int)chandef->center_freq1 - (int)chan->center_freq) / 5;
+
+	spec |= centre;
+	spec |= ((prim - (centre - half)) / 4) << B43_PHY_AC_CHANSPEC_SB_SHIFT;
+	if (chan->band == NL80211_BAND_5GHZ)
+		spec |= B43_PHY_AC_CHANSPEC_BAND_5G;
+	return spec;
+}
+
+/*
  * Write the chanspec the ucode reads out of shared memory.
  *
- * The centre channel is the primary for a 20 MHz configuration and the middle
- * of the block otherwise: +2 channels at 40 MHz and +6 at 80, which is half
- * the bonded span.
+ * On the AC-PHY this is the whole of the channel cookie: the core leaves
+ * B43_SHM_SH_CHAN to the PHY, which writes it at the head of the RF bring-up
+ * and, when it changes, at the head of a channel switch; the stock driver
+ * writes it in both places.
  *
  * The values come from phy.chandef and not from the cal_* fields, which
  * op_switch_channel() fills: the vendor writes the chanspec at the head of the RF
@@ -3231,22 +3269,10 @@ void b43_phy_ac_write_chanspec(struct b43_wldev *dev)
 {
 	const struct cfg80211_chan_def *chandef = dev->phy.chandef;
 	struct b43_phy_ac *ac = dev->phy.ac;
-	u16 chan = chandef->chan->hw_value;
-	u16 spec;
+	u16 spec = b43_phy_ac_chanspec(chandef);
 
-	switch (chandef->width) {
-	case NL80211_CHAN_WIDTH_80:
-		spec = B43_PHY_AC_CHANSPEC_BW80 | (chan + 6);
-		break;
-	case NL80211_CHAN_WIDTH_40:
-		spec = B43_PHY_AC_CHANSPEC_BW40 | (chan + 2);
-		break;
-	default:
-		spec = B43_PHY_AC_CHANSPEC_BW20 | chan;
-		break;
-	}
-
-	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_AC_CHANSPEC, spec);
+	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_CHAN, spec);
+	ac->chanspec = spec;
 
 	if (ac->mac_width != chandef->width) {
 		b43_mac_bw_set(dev, spec & B43_PHY_AC_CHANSPEC_BW_MASK);
@@ -10944,6 +10970,14 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	    dev->phy.ac->cac_pending == dev->cac_pending)
 		return 0;
 
+	/*
+	 * The chanspec heads a channel switch, right before its first PHY op
+	 * as at the bus on every hop. On the first switch after the RF
+	 * bring-up it is already there, and the stock driver writes it once.
+	 */
+	if (dev->phy.ac->chanspec != b43_phy_ac_chanspec(chandef))
+		b43_phy_ac_write_chanspec(dev);
+
 	dev->phy.ac->cac_pending = dev->cac_pending;
 	dev->phy.ac->tuned = false;
 	dev->phy.ac->cal_channel = channel->hw_value;
@@ -11227,10 +11261,10 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	 * AC della stessa famiglia, ed e' cosi' che va letto: non un numero
 	 * trascritto ma una costante per PHY, come il 2048 dell'N-PHY.
 	 *
-	 * b43 qui sbaglia due volte: applica il valore B-PHY a tutto
-	 * (b43_set_synth_pu_delay(), 1050) e aggiunge un caso adhoc/idle a 500
-	 * che in brcmsmac non esiste. Il core non lo corregge ancora, e
-	 * b43_set_synth_pu_delay() in b43/main.c riscrive questa cella.
+	 * b43_set_synth_pu_delay() in b43/main.c riscrive questa cella con
+	 * lo stesso valore. Il suo 500 per adhoc e idle non c'e' in brcmsmac,
+	 * ma c'e' nel driver stock: il 7.14.43 lo scrive all'inizio del
+	 * bring-up, il 6.30.223 alterna 500 e 512 a ogni salto di una scansione.
 	 */
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x0094, 512);
 	b43_phy_ac_mhf_maskset(dev, 4, (u16)~0x0008, 0x0008);

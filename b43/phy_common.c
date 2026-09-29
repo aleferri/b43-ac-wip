@@ -413,11 +413,28 @@ void b43_phy_take_out_of_reset(struct b43_wldev *dev)
 	}
 }
 
+static int b43_switch_channel_ac(struct b43_wldev *dev,
+				 unsigned int new_channel)
+{
+	int err;
+
+	err = dev->phy.ops->switch_channel(dev, new_channel);
+	if (err)
+		return err;
+	msleep(8);
+	return 0;
+}
+
 int b43_switch_channel(struct b43_wldev *dev, unsigned int new_channel)
 {
 	struct b43_phy *phy = &(dev->phy);
 	u16 channelcookie, savedcookie;
 	int err;
+
+	/* The AC microcode's cookie is the chanspec, which the PHY writes
+	 * itself as part of its channel switch. */
+	if (phy->type == B43_PHYTYPE_AC)
+		return b43_switch_channel_ac(dev, new_channel);
 
 	/* First we set the channel radio code to prevent the
 	 * firmware from sending ghost packets.

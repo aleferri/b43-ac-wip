@@ -268,20 +268,23 @@ struct b43_phy_ac_txpwr_limits {
 #define B43_PHY_AC_TXP_NUM_RATES		101
 
 /*
- * Chanspec, as the ucode reads it out of shared memory at 0x00a0. The low
- * byte is the *centre* channel, not the primary, and the high bits carry the
- * width. Verified across all 26 sweep configurations: ch36 gives 0xd024 at
- * 20 MHz, 0xd826 at 40 -- centre 38 of the 36+40 pair -- and 0xe02a at 80,
- * centre 42 of the 36..48 block.
+ * Chanspec, as the AC microcode reads it out of shared memory at
+ * B43_SHM_SH_CHAN: the *centre* channel in the low byte, the position of
+ * the primary 20 MHz channel inside the block in bits 8-10, the width in
+ * bits 11-13 and the band in bits 14-15, the same with wl 6.30 and 7.14.
+ * ch36 gives 0xd024 at 20 MHz, 0xd826 at 40 -- centre 38 of the 36+40 pair
+ * -- and 0xe02a at 80, centre 42 of the 36..48 block; ch157 at 80 is 0xe29b,
+ * the third channel of the 149..161 block; ch1 at 20 is 0x1001.
+ *
+ * The width field is also the argument the stock driver passes to
+ * b43_mac_bw_set().
  */
-/* Campo di banda del chanspec: e' anche l'argomento che il driver stock passa
- * a b43_mac_bw_set(). 0xd000 & 0x3800 = 0x1000, 0xd800 -> 0x1800,
- * 0xe000 -> 0x2000. */
+#define B43_PHY_AC_CHANSPEC_SB_SHIFT		8
 #define B43_PHY_AC_CHANSPEC_BW_MASK		0x3800
-#define B43_PHY_AC_CHANSPEC_BW20		0xd000
-#define B43_PHY_AC_CHANSPEC_BW40		0xd800
-#define B43_PHY_AC_CHANSPEC_BW80		0xe000
-#define B43_SHM_AC_CHANSPEC			0x00a0
+#define B43_PHY_AC_CHANSPEC_BW20		0x1000
+#define B43_PHY_AC_CHANSPEC_BW40		0x1800
+#define B43_PHY_AC_CHANSPEC_BW80		0x2000
+#define B43_PHY_AC_CHANSPEC_BAND_5G		0xc000
 
 void b43_phy_ac_write_chanspec(struct b43_wldev *dev);
 
@@ -516,6 +519,8 @@ struct b43_phy_ac {
 	u8 crs_written;
 	/* Operating width the MAC was last told about, 0 when never. */
 	enum nl80211_chan_width mac_width;
+	/* Chanspec last written to B43_SHM_SH_CHAN, 0 when never. */
+	u16 chanspec;
 	u8 crs_subband;
 	/* Operating width of the same configuration. */
 	enum nl80211_chan_width cal_width;

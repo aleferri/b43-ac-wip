@@ -1477,13 +1477,14 @@ static void emit_core_shm_chipinit(const struct board_profile *p)
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00c2,
 			(u16)((p->mac_hw_cap >> 16) & 0xffff));
 	/*
-	 * BTL0 a 7, cold01 #655. Il vendor la riscrive a 0x012a nella config
-	 * BSS: sono due scritture della stessa cella in due fasi, e servono
-	 * entrambe perche' il perimetro non la scarta piu'.
+	 * I limiti di ritrasmissione, cold01 #655: parole 6 e 7 dello scratch,
+	 * che wl-diag stampa a 0x0018 e 0x001c. Non sono BTL0 e BTSFOFF, le
+	 * celle della shared memory agli stessi indirizzi, che il vendor scrive
+	 * piu' tardi nella config BSS. b43 li scrive in b43_set_retry_limits();
+	 * il lungo e' 6, dove mac80211 ne da' 4 a b43.
 	 */
-	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x0018, 0x0007);
-
-	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x001c, 0x0006); /* BTSFOFF */
+	b43_shm_write16(&g_wldev, B43_SHM_SCRATCH, B43_SHM_SC_SRLIMIT, 7);
+	b43_shm_write16(&g_wldev, B43_SHM_SCRATCH, B43_SHM_SC_LRLIMIT, 6);
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x0044, 3);      /* SFFBLIM */
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x0046, 2);      /* LFFBLIM */
 }

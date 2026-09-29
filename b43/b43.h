@@ -259,7 +259,7 @@ enum {
 #define B43_SHM_SH_PHYTXNOI		0x006E	/* PHY noise directly after TX (lower 8bit only) */
 #define B43_SHM_SH_RFRXSP1		0x0072	/* RF RX SP Register 1 */
 #define B43_SHM_SH_HOSTF4		0x0078	/* Hostflags 4 for ucode options */
-#define B43_SHM_SH_CHAN			0x00A0	/* Current channel (low 8bit only) */
+#define B43_SHM_SH_CHAN			0x00A0	/* Current channel (low 8bit only); the chanspec on the AC-PHY */
 #define  B43_SHM_SH_CHAN_5GHZ		0x0100	/* Bit set, if 5 Ghz channel */
 #define  B43_SHM_SH_CHAN_40MHZ		0x0200	/* Bit set, if 40 Mhz channel width */
 #define B43_SHM_SH_MACHW_L		0x00C0	/* Location where the ucode expects the MAC capabilities */
