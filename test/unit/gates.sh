@@ -258,6 +258,16 @@ PY
 	# captures do not have it, and take AC_TEMPDELTA from the caller.
 	tdelta=$(grep -m1 -oE "IOVAR\.SET +name=phycal_tempdelta val=0x[0-9a-f]+" \
 		"$TMP/merged" | grep -oE "0x[0-9a-f]+$" || true)
+	# The TG789vac v2 sweep traces no IOVAR, and its first boot gave every
+	# instance `phycal_tempdelta 40`; the second boot, which took these
+	# four segments, left the NVRAM's 0 (router-data/tg789vac-v2/README.md,
+	# "Reloading wl"). Environment of the capture, not of the driver.
+	if [ -z "$tdelta" ] && [ "$BOARD" = tg789 ] && [ "$COND" = cold ]; then
+		case $base in
+		cold01-*|cold32-*|cold33-*|cold41-*) ;;
+		*) tdelta=40 ;;
+		esac
+	fi
 	[ -n "$tdelta" ] && sched="$sched AC_TEMPDELTA=$tdelta"
 
 	# MAC.BW is written only by the first segment of each bandwidth: the
