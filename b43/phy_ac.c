@@ -9452,75 +9452,89 @@ static void b43_phy_ac_iq_solve(struct b43_phy_ac_iq_acc *acc,
 /*
  * Il banco a undici prese che il vendor programma per catena **solo a
  * 80 MHz**, subito dopo i coefficienti RX IQ. La condizione e' la larghezza e
- * nient'altro: `PHY.WR 0x?6a4` compare su tutti e nove i segmenti a 80 MHz in
- * repo -- cold24 del d6220, cold25 dell'agcombo, i sei `up` a 80 dello sweep a
- * caldo -- e su nessuno dei sessantanove a 20 e 40. Sopra i 5250 a freddo non
- * c'e', ma per la ragione generale: la calibrazione non gira e questo ne fa
- * parte (agcombo cold26, ch52 a 80 MHz, e' l'unico segmento a 80 senza).
+ * nient'altro: `PHY.WR 0x?6a4` compare su ogni segmento a 80 MHz che corre la
+ * calibrazione, e su nessuno a 20 e 40.
  *
- * I valori sono costanti. Le stesse tre serie compaiono identiche su due board
- * e su ogni canale, a freddo e a caldo: non sono una misura, sono tabella.
+ * Ogni serie e' un nucleo antisimmetrico attorno a una presa centrale di
+ * 0x0400, l'unita' in Q10: le prese a distanza k valgono c/(k + t) a segno
+ * alterno, arrotondate, con t intorno a 0.01. E' la correzione dello
+ * sbilanciamento IQ che dipende dalla frequenza: il termine lineare in
+ * frequenza e' una derivata, e il nucleo della derivata e' (-1)^k / k. Le
+ * serie osservate sono cinque, c = 0, ~60.5, ~121, ~182 e ~208, identiche su
+ * tre board e su ogni canale; qui sono tabella.
  *
- * Ogni serie e' un nucleo antisimmetrico 1/k attorno a una presa centrale di
- * 0x0400, cioe' l'unita' in Q10: le prese a distanza k valgono circa
- * `±c/k`, con c che vale ~60.5, ~182 e ~208 per le tre. Un correttore di
- * ritardo di gruppo, quindi, con un solo parametro libero.
+ * Quale serie prende una catena lo dice la sua misura: la pendenza, sui toni
+ * a +-1, +-3, +-4 del periodo, del coefficiente a di ogni tono -- la parte
+ * che b43_phy_ac_iq_solve() media via. Sui 56 punti a 80 MHz delle catture
+ * (d6220, tg789vac e agcombo, a freddo e a caldo, bss-up compresi) la
+ * pendenza ai minimi quadrati, in unita' di a per passo, separa le cinque
+ * serie:
  *
- * **Cosa sceglie c non e' stabilito**, ed e' per questo che la tabella e'
- * indicizzata su (catene, core) invece che su una formula: il d6220 prende
- * {A, B} sulle sue due catene e l'agcombo {C, B, A} sulle sue tre, quindi non
- * e' l'indice del core a decidere -- la catena che porta A e' la 0 su una
- * board e la 2 sull'altra. Un conteggio di catene fuori tabella non emette il
- * blocco e lo dichiara: meglio nessun filtro che un ritardo di gruppo preso
- * dalla catena sbagliata.
+ *   serie         0          A           D           B           C
+ *   pendenza   -1.1..1.2  1.7..3.9    4.2..6.0    6.3..8.5    8.9..9.7
+ *
+ * La stessa catena cambia serie con la sua pendenza: la 1 del d6220 prende B
+ * fino a ch132 a caldo (8.45) e C da ch132 a freddo (8.91). **SALAME** sulle
+ * soglie, che stanno a meta' dei buchi e non vengono da una regola: gli
+ * intervalli non hanno passo uniforme in questa pendenza, quindi lo stimatore
+ * del vendor non e' esattamente questo.
  */
-static const u16 b43_phy_ac_bw80_fir_a[11] = {
-	0x000c, 0xfff1, 0x0014, 0xffe2, 0x003d, 0x0400,
-	0xffc4, 0x001e, 0xffec, 0x000f, 0xfff4,
-};
-static const u16 b43_phy_ac_bw80_fir_b[11] = {
-	0x0025, 0xffd2, 0x003d, 0xffa4, 0x00b8, 0x0400,
-	0xff4c, 0x005b, 0xffc4, 0x002d, 0xffdc,
-};
-static const u16 b43_phy_ac_bw80_fir_c[11] = {
-	0x002a, 0xffcc, 0x0046, 0xff97, 0x00d3, 0x0400,
-	0xff32, 0x0067, 0xffbb, 0x0034, 0xffd6,
+static const s16 b43_phy_ac_bw80_fir[][11] = {
+	{ 0, 0, 0, 0, 0, 0x0400, 0, 0, 0, 0, 0 },
+	{ 12, -15, 20, -30, 61, 0x0400, -60, 30, -20, 15, -12 },
+	{ 24, -30, 41, -61, 122, 0x0400, -120, 60, -40, 30, -24 },
+	{ 37, -46, 61, -92, 184, 0x0400, -180, 91, -60, 45, -36 },
+	{ 42, -52, 70, -105, 211, 0x0400, -206, 103, -69, 52, -42 },
 };
 
-static const struct b43_phy_ac_bw80_fir {
-	u8 cores;
-	const u16 *tap[B43_PHY_AC_MAX_CORES];
-} b43_phy_ac_bw80_fir[] = {
-	/* d6220, DSL-3580L */
-	{ 2, { b43_phy_ac_bw80_fir_a, b43_phy_ac_bw80_fir_b } },
-	/* agcombo */
-	{ 3, { b43_phy_ac_bw80_fir_c, b43_phy_ac_bw80_fir_b,
-	       b43_phy_ac_bw80_fir_a } },
-};
+/* Upper edges of the slope bins above, in units of a per step, times 10. */
+static const s16 b43_phy_ac_bw80_fir_edge[] = { 15, 40, 61, 87 };
+
+/*
+ * The slope of the per-tone a over the measurement tones of @acc, times 10:
+ * least squares over the tone steps, the newest round being the last step.
+ */
+static int b43_phy_ac_iq_slope10(const struct b43_phy_ac_iq_acc *acc,
+				 unsigned int n)
+{
+	s64 num = 0, den = 0;
+	unsigned int j;
+
+	for (j = 0; j < n; j++) {
+		int k = b43_phy_ac_tone_steps[n - 1 - j];
+		s64 ii = acc->ii[j];
+		s64 a16;
+
+		if (!ii)
+			return 0;
+		a16 = div64_s64(-((s64)acc->iq[j] << 26), ii);	/* a in Q16 */
+		num += k * a16;
+		den += k * k;
+	}
+	if (!den)
+		return 0;
+	/* Q16 per step to tenths per step. */
+	return (int)div64_s64(num * 10, den << 16);
+}
 
 static void b43_phy_ac_bw80_fir_write(struct b43_wldev *dev)
 {
 	struct b43_phy_ac *ac = dev->phy.ac;
-	const struct b43_phy_ac_bw80_fir *row = NULL;
-	unsigned int chains = hweight8(ac->coremask);
+	unsigned int n = b43_phy_ac_meas_passes(dev);
 	unsigned int c, i;
 
 	if (ac->cal_width != NL80211_CHAN_WIDTH_80)
 		return;
 
-	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_bw80_fir); i++)
-		if (b43_phy_ac_bw80_fir[i].cores == chains)
-			row = &b43_phy_ac_bw80_fir[i];
-	if (!row) {
-		b43_phy_ac_todo(dev,
-				"banco a 80 MHz non misurato per %u catene: "
-				"non lo emetto",
-				chains);
-		return;
-	}
-
-	for (c = 0; c < chains; c++) {
+	for_each_set_bit(c, &ac->coremask, ac->num_cores) {
 		u16 stride = (u16)(c * 0x200);
+		const struct b43_phy_ac_iq_acc *acc = &ac->iq_acc[c];
+		int s = acc->rounds >= n ? b43_phy_ac_iq_slope10(acc, n) : 0;
+		unsigned int row = 0;
+
+		while (row < ARRAY_SIZE(b43_phy_ac_bw80_fir_edge) &&
+		       s >= b43_phy_ac_bw80_fir_edge[row])
+			row++;
 
 		b43_phy_maskset(dev, 0x0210, (u16)~0x0007, 0x0004);
 		b43_phy_maskset(dev, 0x0211, (u16)~0x0004, 0);
@@ -9528,7 +9542,7 @@ static void b43_phy_ac_bw80_fir_write(struct b43_wldev *dev)
 		b43_phy_maskset(dev, 0x0212, (u16)~0x000f, 0x000a);
 		for (i = 0; i < 11; i++)
 			b43_phy_write(dev, (u16)(0x06a4 + stride + i),
-				      row->tap[c][i]);
+				      (u16)b43_phy_ac_bw80_fir[row][i]);
 	}
 	b43_phy_maskset(dev, 0x0211, (u16)~0x0001, 0x0001);
 }
