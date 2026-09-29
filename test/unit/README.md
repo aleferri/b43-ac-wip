@@ -1,6 +1,6 @@
 # test/unit — trace harness for the PHY
 
-Compiles the AC-PHY driver in `../../src/` in userspace and produces a trace in
+Compiles the AC-PHY files of `../../b43/` in userspace and produces a trace in
 `wl-diag`'s format, to compare against the stock captures in
 `../../router-data/`. The goal is that the port emits, in the same order, every
 operation the stock driver emits on a cold attach: no missing, no extra, no
@@ -72,7 +72,7 @@ different jobs:
 | `op di wl mancanti` | the stock driver emits it, the port does not | code to write |
 | `op del port di troppo` | the port emits it, the stock driver does not | a gate to add |
 
-`nel perimetro` and `CON eccezioni` also drop the code outside `src/` and the
+`nel perimetro` and `CON eccezioni` also drop the code outside the PHY and the
 `KNOWN` rules; they serve navigation, not scoring.
 
 ## Finding the next divergence
@@ -108,14 +108,14 @@ goal:
   (the EDCF backoff); a value not understood goes in the driver with
   `b43_phy_ac_todo()`;
 - `PERIMETER` is decided by ownership shown by `b43.h` or the blob, not by
-  reachability from `src/`, and is narrowed every time the port learns to write
+  reachability from the PHY, and is narrowed every time the port learns to write
   a cell (`PHY_ANCHE` lists the core cells the port emits);
 - a `VAL_TOLLERANZA` applies to the positional gate only; `cmp_skip.py` still
   counts the value as wrong.
 
 ## How the harness works
 
-- **No `#ifdef` in `src/`.** Every hardware accessor is intercepted at link
+- **No `#ifdef` in the PHY.** Every hardware accessor is intercepted at link
   time with `-Wl,--wrap=<sym>` (`WRAP_SYMS` in the `Makefile`). A new driver
   helper that touches hardware needs a line there, or its operations vanish.
   The one exception is temporary: the harness builds with `-DALLOW_24=true`,

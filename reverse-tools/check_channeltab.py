@@ -26,7 +26,7 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(ROOT, "src")
+SRC = os.path.join(ROOT, "b43")
 
 PHY_BW_REGS = [0x371, 0x372, 0x373, 0x374, 0x375, 0x376]
 

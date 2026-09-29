@@ -6,7 +6,7 @@ sono scritture che il port GIA' fa. Si cerca la coppia (indirizzo, valore) del
 vicino nel sorgente, e la funzione che la contiene e' il posto dove la nuova op
 va inserita.
 
-Uso: locate_missing_ops.py cattura.txt src/phy_ac.c [--classe OBJ.WR] [--max 20]
+Uso: locate_missing_ops.py cattura.txt b43/phy_ac.c [--classe OBJ.WR] [--max 20]
 """
 import argparse
 import bisect

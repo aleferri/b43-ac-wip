@@ -22,7 +22,7 @@ void b43_test_plan_table_cell(u16 id, u16 off, const u16 *vals, int n);
 void b43_test_plan_radio_reads(u16 addr, const u16 *results, int cap);
 
 /* Address match table: un record per riga, la granularita' del tracer.
- * Doppione di b43_amt_write() di patches/0003, che vive nel core e che
+ * Doppione di b43_amt_write() di b43/main.c, che vive nel core e che
  * l'harness non compila. */
 void b43_test_emit_amt(u16 idx, u16 flags);
 void b43_test_emit_addrm(u32 idx);

@@ -23,8 +23,8 @@ top-level README.
 | `switch_analog` | four sites in `main.c` plus `b43_phy_init()` | the AFE arm unit; the cold preamble once, on the first entry with a channel (`b43_phy_ac_cold_preamble_due()`) |
 | `switch_channel` | `b43_phy_init()`, `b43_op_config()` | channel setup; a no-op when channel and width are already programmed |
 | `channel_calibrate` | `b43_op_config()`, in place of its final `mac_enable` | re-enables the MAC between the RX gain-control sweep and the post-switch calibrations |
-| `recalc_txpower` / `adjust_txpower` | `b43_phy_txpower_check()` | per-rate table from the SROM (`src/ppr_ac.c`), target `0x0646` per core |
-| `pwork_1sec` | the 1 s periodic work of `patches/0003` | one watchdog turn while the PHY is in its run state; the bss-up once the availability check is over |
+| `recalc_txpower` / `adjust_txpower` | `b43_phy_txpower_check()` | per-rate table from the SROM (`b43/ppr_ac.c`), target `0x0646` per core |
+| `pwork_1sec` | the 1 s periodic work in `b43/main.c` | one watchdog turn while the PHY is in its run state; the bss-up once the availability check is over |
 | `pwork_60sec` | b43 periodic work | CRS minimum-power threshold, written only when it changes |
 | `radar_poll` | `radar_work`, every 150 ms while `conf->radar_enabled` | the detector read (`PHY 0x0251`/`0x0252`) |
 | `noise_sample_done` | `handle_irq_noise()` on `B43_IRQ_NOISESAMPLE_OK` | the background noise sample |
@@ -38,7 +38,7 @@ suspended, station row of the address match table without flags,
 ## Warnings and scaffolding
 
 Where the driver writes something it cannot derive, it logs one `b43warn` per
-site with `b43_phy_ac_todo()` (`grep -n 'b43_phy_ac_todo(dev' src/*.c`).
+site with `b43_phy_ac_todo()` (`grep -n 'b43_phy_ac_todo(dev' b43/*.c`).
 
 Some values are transcribed from captures rather than derived. On an RF chain
 other than the one they were read from they can overdrive the PA, so they are
@@ -84,24 +84,19 @@ the unknown stays open.
 
 ## Source → patch map
 
-`src/` is the source of truth for 0006; every other patch is maintained by
-editing it.
+`b43/` and `bcma/` are the source of truth: whole kernel files, changed or
+new, over the vanilla tag. The patches are generated from them and are not
+edited by hand, except for their message.
 
 | patch | content | files |
 |---|---|---|
-| 0001 | ssb/bcma: SPROM revision 11 extraction | outside `b43/` |
-| 0003 | b43: core support for the AC-PHY, one section per change | `main.c`, `dma.c`, `xmit.{c,h}`, `leds.{c,h}`, `phy_common.{c,h}`, `b43.h`, `Kconfig` |
-| 0006 | b43: AC-PHY bring-up | everything in `src/`, generated |
-| 0007 | bcma: PMU init (PLL and resources) for BCM4352/BCM4360 | outside `b43/` |
-| 0009 | bcma: BCM4352 (`0x43b3`) in the PCI bridge table | outside `b43/` |
-| 0016 | bcma/ssb: NVRAM `ledbh4..ledbh15` over the device's own SROM | outside `b43/` |
-| 0018 | bcma/ssb: `boardflags3` and `AvVmid_c0..2` from NVRAM | outside `b43/` |
-| 0019 | b43: TX FIFO geometry, MAC clock fraction and MAC setup before the PHY on core revision 42 | `main.c`, `b43.h` |
-| 0020 | b43: read back register addresses as the stock driver does | `b43.h`, `bus.c`, `main.c`, `phy_common.{c,h}` |
-| 0021 | b43: beacon templates where the AC microcode takes them | `main.c`, `b43.h` |
+| 0001 | bcma/ssb: SROM revision 11, PMU init, the BCM4352 PCI ID, NVRAM `ledbh4..ledbh15`, `boardflags3` and `AvVmid_c0..2`, one section per change | everything under `bcma/drivers/` and `bcma/include/` |
+| 0002 | b43: core support for the AC-PHY, one section per change | everything in `b43/` but the AC-PHY files |
+| 0003 | b43: AC-PHY bring-up | `b43/Makefile` and the files it builds under `CONFIG_B43_PHY_AC`, with their headers |
 
-`scripts/regen-patches.sh` (`KVER=6.8.0-142` selects the headers) fetches
-vanilla b43 at the headers' tag with `test/integration/fetch-upstream.sh`,
-applies 0003, overwrites the tree with `src/` and re-emits 0006. Message and
-author come from the current 0006. A new source file enters the patch through
-its line in `src/Makefile`.
+`scripts/regen-patches.sh` (`KVER=6.8.0-142` selects the headers, and so the
+tag) fetches the vanilla files at the headers' tag, copies the two trees over
+them and re-emits the three patches. Message, author and date come from the
+current patch: to change a message, edit it in the patch and re-run. A new
+AC-PHY source file enters 0003 through its line in `b43/Makefile`; any other
+file in `b43/` goes into 0002.

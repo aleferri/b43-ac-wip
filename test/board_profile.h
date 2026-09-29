@@ -10,7 +10,7 @@
  * Sono la stessa board, quindi il profilo sta in un posto solo. Ogni suite lo
  * monta a modo suo: `unit` ha una struct ssb_sprom di stub, `integration` ha
  * quella vera degli header del kernel, e i nomi dei campi coincidono perche' i
- * campi rev-11 li aggiunge patches/0001 con quei nomi.
+ * campi rev-11 li aggiunge bcma/include/linux/ssb/ssb.h con quei nomi.
  */
 #ifndef B43_TEST_BOARD_PROFILE_H_
 #define B43_TEST_BOARD_PROFILE_H_
@@ -345,7 +345,7 @@ static const struct board_profile PROFILE_TG789 = {
 /*
  * archer-t5e: BCM4360 PCIe card (chip 0x4352 rev 3), hybrid wl 6.30.223, the
  * only dual-band SROM of the collection. Every field is decoded from
- * router-data/archer-t5e/srom.txt with the rev 11 offsets of patches/0001;
+ * router-data/archer-t5e/srom.txt with the rev 11 offsets of bcma/drivers/bcma/sprom.c;
  * rccal and MAC_HW_CAP are the reads of its mmiotrace. femctrl is 1, not 6:
  * the FEM control table stops with its warning on this profile.
  * tssifloor5g is not decoded and takes the routers' value.
@@ -410,7 +410,7 @@ static inline const struct board_profile *board_profile_lookup(const char *name)
  * Profilo -> SROM, con le stesse maschere che bcma_sprom_extract_r11() usa
  * (SROM11_FEM_CFG1/2, offset 0x0AA/0x0AC). Il profilo sta al posto di bcma:
  * sull'hardware i per-rate li riempie bcma_sprom_extract_r11() di
- * patches/0001, dai word 176/178/180 e dai due blocchi successivi a passo 8.
+ * bcma/drivers/bcma/sprom.c, dai word 176/178/180 e dai due blocchi successivi a passo 8.
  */
 static inline void board_profile_to_sprom(const struct board_profile *p,
 					  struct ssb_sprom *s)

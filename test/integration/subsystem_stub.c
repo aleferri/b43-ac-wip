@@ -179,7 +179,7 @@ static enum nl80211_chan_width shim_width(long bw)
  * il max_power che il driver ha dichiarato. La cattura a freddo e' di un wl
  * con ccode= vuoto nel NVRAM, cioe' con la sua locale interna, e i tetti che
  * quella scrive sono board-independent: 21 dBm EIRP su ch36-48 a 20 MHz e 26
- * su ch100 (vedi b43_phy_ac_reg_ceiling in src/phy_ac.c). Non c'e' niente
+ * su ch100 (vedi b43_phy_ac_reg_ceiling in b43/phy_ac.c). Non c'e' niente
  * nel bordo da cui ricavarli, e sul ferro cfg80211 applicherebbe il world
  * regdomain, che e' un altro numero per policy: qui vale la locale del
  * vendor, perche' e' la sua traccia che si confronta. Gli altri canali

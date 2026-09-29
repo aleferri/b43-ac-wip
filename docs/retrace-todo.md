@@ -4,8 +4,8 @@ What still separates the port from the stock driver, one item per entry, with
 the evidence and the next step. Closed items are not kept: their conclusions
 live in the code.
 
-Core items (`patches/0003` and following) cannot be seen by `test/unit`, which
-compiles `src/` only; they need `test/integration`. Blocks the core emits at
+Core items (`b43/` outside the AC-PHY files) cannot be seen by `test/unit`,
+which compiles the AC-PHY files only; they need `test/integration`. Blocks the core emits at
 another point than the stock driver are declared in `MOVED` of
 `test/unit/cmp_skip.py`, each with its reason.
 
@@ -22,12 +22,12 @@ does it from `b43_security_init()` at the tail of `b43_wireless_core_init()`
   table's.
 - **The first pair.** The stock driver writes the station row with `0x8008`
   and the BSSID row without flags first; b43 does not.
-- **Double key material.** `src/` zeroes `0x10f4`–`0x14b2` and `0x05e0`–`0x0666`
+- **Double key material.** The PHY zeroes `0x10f4`–`0x14b2` and `0x05e0`–`0x0666`
   (`shm_zero_10f4`/`shm_zero_05e0`), and `b43_security_init()` writes the key
   material and index block again, the index block as `(kidx << 4) | algo`
   over 54 words where the stock driver writes zeros over 68.
 
-### Shared-memory cells emitted from `src/`
+### Shared-memory cells emitted from the PHY
 
 `b43_phy_ac_shm_readback_block()` and the two zeroing runs write MAC cells,
 not PHY ones. They sit in the PHY because the captures put them between the
@@ -49,7 +49,7 @@ same lever as `AC_FIRST_INIT`.
   compose it. `0x00d0` is written zero everywhere; nothing sets it.
 - **`0x078c`–`0x0790`** (station MAC): whether the ucode needs it is open.
 - **`SLOTT`**: the captures write `0x3ff` then `9` in the readback block;
-  `patches/0003` writes `9` at core init.
+  the core writes `9` at core init.
 - **`PSM` (`0x05F4`), `TKIPTSCTTAK` (`0x0318`)** rest on the v4 layout
   assumption and have no evidence.
 - **Cipher numbering.** The algorithm number 5 seen in the captures is past
@@ -65,7 +65,7 @@ Deliberately off: b43 writes `PRMAXTIME=1`, and the cells are in `SOLO_VENDOR`
 of `test/unit/compare.py`. To implement it:
 
 1. keep only `b43_chip_init()`'s `PRMAXTIME=0`;
-2. write the template at template RAM `0x0700` (the TODO in `patches/0021`),
+2. write the template at template RAM `0x0700` (the TODO above `B43_SHM_SH_BT_BASE0_AC` in `b43/b43.h`),
    rewritten after every beacon once its length and the MACCMD valid bits are
    written: one `RAM_CONTROL`, then 76 words on the agcombo;
 3. write `0x0180`–`0x0186` = `0x0527`/`0x01f4`/`0`/`0x0032`, twice, the first
@@ -77,7 +77,7 @@ of `test/unit/compare.py`. To implement it:
 
 b43 keeps `B43_MACCTL_DISCPMQ` set; the AC stock driver clears it in AP mode
 (`0x44060402` → `0x04060402` on the agcombo) and drains the queue on
-`B43_IRQ_PMQ`. The TODO is in `b43_adjust_opmode()` (`patches/0003`).
+`B43_IRQ_PMQ`. The TODO is in `b43_adjust_opmode()` (`b43/main.c`).
 
 ### MAC and DMA, from the bus captures
 
@@ -89,9 +89,13 @@ b43 keeps `B43_MACCTL_DISCPMQ` set; the AC stock driver clears it in AP mode
   `0x680`, `0x682`, `0x700`, `0x684`) the bsinitvals. b43 takes them from
   `b0g0initvals42.fw`/`b0g0bsinitvals42.fw` of 6.30.163; the 6.30.223 values
   (decoded ops #1140–#1480) have not been diffed against them.
-- **Missing:** the null-data template at template RAM `0x2c` (power save); the
-  TX status, which `wl` reads as four words `0x170`–`0x17c` where b43 reads
-  two.
+- **Missing:** the null-data template at template RAM `0x2c` (power save).
+- **TX status, partly mapped.** `B43_FW_HDR_AC` reads the eight words and
+  takes the frame ID and the acknowledgement (bit 15); bits 1–14 of the first
+  word and words 1–7 are not mapped, so the transmit count is fixed at one.
+  Bit 6 is set, with no acknowledgement and word 1 at 0, on three probe
+  requests of the archer-t5e; word 2 looks like per-rate counts. A capture
+  with retries would say.
 - **Not classified:** the read-modify-writes on `0x6b4`/`0x6b8` (BT coex),
   `0x6c6`, `0x6f0`/`0x6f2`, the `clk_ctl_st` pass on every hop, the `gptimer`
   writes.
@@ -101,7 +105,7 @@ b43 keeps `B43_MACCTL_DISCPMQ` set; the AC stock driver clears it in AP mode
 ### `do_full_init` does not tell cold from hot
 
 `b43_phy_exit()` sets it back to `true` on every `ifconfig down`, so on b43 it
-is true on every bring-up and the comments in `src/phy_ac.c` that read it as
+is true on every bring-up and the comments in `b43/phy_ac.c` that read it as
 "cold attach only" are wrong on the real path. It waits for the hot work.
 
 ## PHY: values
@@ -142,7 +146,7 @@ steps of 1.5 and 2.5 dB and fits no form.
 ### Sub-band row offsets
 
 `sb20in40*`, `sb20in80and160*`, `sb40and80*`, `dot11agdup*`, `mcslr5g*` are
-extracted by `patches/0001`, zero on every board, and not applied: which nibble
+extracted by `bcma/drivers/bcma/sprom.c`, zero on every board, and not applied: which nibble
 goes to which rate is in no open source. The recalc warns if a board carries
 them.
 

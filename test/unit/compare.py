@@ -53,7 +53,7 @@ SHADOW_OFFSETS = {
 # GPIO che il timer dei LED puo' pilotare. E' un'op del blocco LED e sta nel
 # PERIMETER con le altre.
 # Op che il driver esegue davvero, ma da codice fuori dall'unita' sotto test:
-# l'harness compila solo src/, non main.c di b43 ne' bcma. Vanno saltate, non
+# l'harness compila solo i file della PHY di b43/, non main.c ne' bcma. Vanno saltate, non
 # riprodotte, e solo dopo aver verificato che chi le esegue le emetta *nel punto
 # giusto* della sequenza -- altrimenti lo skip nasconde un errore d'ordine.
 #
@@ -332,7 +332,7 @@ normalize_op = tracelib.norm
 #
 # L'obiettivo e' che b43 emetta una-per-una TUTTE le op di wl, comprese quelle
 # del core. Quindi questo non e' un elenco di cose fuori scopo: e' il limite
-# dell'harness, che compila solo src/ e non main.c ne' xmit.c ne' bcma. Cio' che
+# dell'harness, che compila solo i file della PHY e non main.c ne' xmit.c ne' bcma. Cio' che
 # finisce qui e' debito, ed e' tracciato in docs/retrace-todo.md.
 #
 # Percio' il numero da guardare e' quello SENZA perimetro, e --senza-perimetro
@@ -341,7 +341,7 @@ normalize_op = tracelib.norm
 # strumento di navigazione, non un punteggio.
 #
 # Il criterio e' l'appartenenza: si scarta solo cio' di cui si puo' mostrare che
-# e' di qualcun altro. NON la raggiungibilita' da src/, che sarebbe degenere --
+# e' di qualcun altro. NON la raggiungibilita' dal PHY, che sarebbe degenere --
 # farebbe restringere il denominatore quando il port si restringe, e togliere
 # codice alzerebbe il punteggio.
 #
@@ -351,7 +351,7 @@ normalize_op = tracelib.norm
 #   TPL.RAMW     template RAM, che b43 scrive in
 #                b43_write_template_common() e
 #                b43_write_mac_bssid_templates().
-#   MAC.MHF.RD   b43_hf_read() sta nel core; in src/ non c'e' nessuna
+#   MAC.MHF.RD   b43_hf_read() sta nel core; nel PHY non c'e' nessuna
 #                chiamata, e l'unico accesso del PHY e' mhf_maskset().
 #   OTP, SROMCTL codice srom di bcma.
 #
@@ -435,7 +435,7 @@ CORE_SHM = [
 PHY_ANCHE = [
     (0x008c, 0x008c, "JSSIAUX per b43.h; la legge wd_stats_tail()"),
     (0x00a0, 0x00a0, "CHAN per b43.h; e' B43_SHM_AC_CHANSPEC in "
-                     "src/phy_ac.h, e write_chanspec() la scrive"),
+                     "b43/phy_ac.h, e write_chanspec() la scrive"),
     (0x01c0, 0x01de, "DIRMAP_A: la scansione di set_channel la legge tutta, "
                      "e prb_rsp_rate_po() ne usa otto voci per calcolare "
                      "2*voce+offset"),
@@ -516,13 +516,13 @@ SOLO_VENDOR = (
 # esiste ma non e' stata catturata perche' l'hook e' arrivato dopo. La seconda
 # e' temporanea per definizione: si chiude con una ricattura.
 # C'e' un terzo caso legittimo, e va nominato invece di far passare le voci
-# sotto uno dei due sopra: un'op che emette b43 mainline, fuori da src/, e che
+# sotto uno dei due sopra: un'op che emette b43 mainline, fuori dal PHY, e che
 # il driver stock non ha affatto. Non e' debito del port, perche' non c'e'
-# niente in src/ da correggere, e non e' pagabile senza toccare main.c. Il
+# niente nel PHY da correggere, e non e' pagabile senza toccare main.c. Il
 # criterio e' quello del perimetro -- si scarta solo cio' di cui si mostra che
 # e' di qualcun altro -- applicato al lato test.
 #
-#   AMT.*  la address match table. Il port la scrive per via di `patches/0003`,
+#   AMT.*  la address match table. Il port la scrive dal core (`b43_amt_write()` in b43/main.c),
 #          ricavata dalla cattura a freddo del DSL-3580L. Non e' un'op di
 #          troppo: e' un'op giusta che una cattura senza l'hook su
 #          `wlc_bmac_write_amt` non puo' contenere. Sta quindi in
@@ -542,7 +542,7 @@ SOLO_VENDOR = (
 #
 #          Le due prove. Le celle 0x0004/0x0006: il vendor non le tocca in
 #          nessuna cattura -- zero occorrenze su tutti e 26 i segmenti a
-#          freddo, sul tick a regime e sulla cattura del DSL -- e src/ non
+#          freddo, sul tick a regime e sulla cattura del DSL -- e il PHY non
 #          scrive SHM sotto 0x000c, quindi un'op la' non puo' essere del port
 #          nel senso che conta. Le costanti 0x1122/0x3344/0xccdd su
 #          0x0000/0x0002: non compaiono come valore OBJ su quelle celle in
@@ -620,7 +620,7 @@ PERIMETER = [
                 "probabilita' del core, perche' non abbiamo una prova e "
                 "sbagliare in quel verso gonfierebbe il punteggio. Vedi il "
                 "blocco sopra per il criterio e per il motivo per cui non si "
-                "usa la raggiungibilita' da src/."),
+                "usa la raggiungibilita' dal PHY."),
 
     dict(pattern=r'^TPL\.RAMW addr=0x48\b',
          motivo="template RAM, la cella 0x0048, che resta di altri. Le altre "
@@ -630,14 +630,14 @@ PERIMETER = [
                 "del kernel rispecchiato nell'harness. Questa no: le sue due "
                 "occorrenze, a #12960 e #13584, non cadono a un confine che "
                 "l'harness controlli -- la prima segue la coppia 0x018a/0x018c "
-                "che emette src/, la seconda la spazzata dei contatori -- "
+                "che emette il PHY, la seconda la spazzata dei contatori -- "
                 "quindi non c'e' un posto dove metterla senza spezzare una "
                 "funzione del PHY. Il PHY non tocca template RAM."),
 
     dict(pattern=r'^MAC\.MHF\.RD\b',
          motivo="lettura nuda delle host flags. Il PHY non le legge mai da "
                 "solo: il suo unico accesso e' b43_phy_ac_mhf_maskset(), che "
-                "l'harness traccia come MAC.MHF con maschera, e in src/ non "
+                "l'harness traccia come MAC.MHF con maschera, e nel PHY non "
                 "c'e' nessuna chiamata a b43_hf_read(). Nel segmento compare "
                 "una volta sola, a #13537, in mezzo al blocco di config MAC "
                 "del core -- fra OBJ.WR 0x60 e la sospensione del MAC -- ed e' "
@@ -646,15 +646,15 @@ PERIMETER = [
     dict(pattern=r'^(OTP\.|SROMCTL\.)',
          motivo="OTP e registro di controllo della SROM: le legge il codice "
                 "srom di bcma. Non sono fuori scopo -- bcma/sprom.c e' toccato "
-                "da patches/0001, che aggiunge l'estrazione rev 11 -- ma sono "
-                "fuori da src/, e l'harness monta il profilo di board "
+                "dal port, che aggiunge l'estrazione rev 11 -- ma sono "
+                "fuori dal PHY, e l'harness monta il profilo di board "
                 "direttamente invece di leggere la SROM. Nell'attach a freddo "
                 "cadono in mezzo alla sequenza analogica, fra le dieci letture "
                 "di save e il banco AFE, quindi senza questa voce il confronto "
                 "posizionale si ferma la'.\n"
                 "TODO: verificare che le tre op del segmento (SROMCTL.RD, "
                 "OTP.RDW, OTP.INIT a #548-#551 su cold01) siano quelle che "
-                "patches/0001 gia' emette. Se lo sono, lo skip e' definitivo e "
+                "bcma/drivers/bcma/sprom.c gia' emette. Se lo sono, lo skip e' definitivo e "
                 "la finestra del confronto va fatta partire dopo -- e' a questo "
                 "che serve il --range di questo strumento. Se non lo sono, e' "
                 "un buco della patch."),
@@ -678,7 +678,7 @@ PERIMETER = [
                 "b43 i LED li fa leds.c dai campi gpio0-3 della SROM, per la "
                 "sua via (MMIO GPIO_CONTROL del MAC) e non per quella del "
                 "vendor; i pin 4-15 da NVRAM ledbh glieli insegnano "
-                "patches/0016-0017. Vedi README.md, \"What is missing\"."),
+                "gpio_ext[] in bcma/ e leds.c in b43/. Vedi README.md, \"What is missing\"."),
 
     dict(pattern=r'^CAL\.INIT\b',
          motivo="switch di forzatura delle calibrazioni del driver stock. In "

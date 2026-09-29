@@ -129,7 +129,7 @@ void b43_test_oracle_coverage_report(void);
 
 /*
  * SROM rev 11 per-chain power info. Exactly the shape defined by
- * src/sprom-rev11/0001-*.patch's addition to include/linux/ssb/ssb.h —
+ * bcma/include/linux/ssb/ssb.h —
  * keep field order/types byte-identical so this stub interoperates
  * with anything using the same offsets.
  */
@@ -145,8 +145,8 @@ struct ssb_sprom_core_pwr_info {
 };
 
 /*
- * Rev-11 per-rate power offsets, as added to struct ssb_sprom by
- * patches/0001-ssb-bcma-add-SPROM-revision-11-extraction.patch. Four u32 per
+ * Rev-11 per-rate power offsets, as added to struct ssb_sprom in
+ * bcma/include/linux/ssb/ssb.h. Four u32 per
  * band in the real layout (20/40/80/160 MHz); only the two the TX power
  * derivation consumes are mirrored here.
  */
@@ -165,8 +165,8 @@ struct ssb_sprom {
 	u8 il0mac[6];		/* MAC address of the 802.11 core */
 	/*
 	 * Offset di potenza per-rate a 5 GHz, per sotto-banda e larghezza.
-	 * Nomi e forma sono quelli che patches/0001 aggiunge a
-	 * include/linux/ssb/ssb.h -- campi piatti, non un array di struct.
+	 * Nomi e forma sono quelli di
+	 * bcma/include/linux/ssb/ssb.h -- campi piatti, non un array di struct.
 	 */
 	u32 mcsbw205glpo, mcsbw405glpo, mcsbw805glpo;
 	u32 mcsbw205gmpo, mcsbw405gmpo, mcsbw805gmpo;
@@ -192,11 +192,11 @@ struct ssb_sprom {
 	u8 subband;
 	u8 subband5gver;
 	/* LED behaviour per GPIO pin: ledbh0-3 dalla SROM, 4-15 dalla NVRAM
-	 * (gpio_ext e' di patches/0016). Il PHY non li legge; stanno qui perche'
+	 * (gpio_ext[] e' in bcma/include/linux/ssb/ssb.h). Il PHY non li legge; stanno qui perche'
 	 * board_profile.h li riempie per la suite di integrazione. */
 	u8 gpio0, gpio1, gpio2, gpio3;
 	u8 gpio_ext[12];
-	/* boardflags3 e AvVmid_c0..2 dalla NVRAM, di patches/0018. */
+	/* boardflags3 e AvVmid_c0..2 dalla NVRAM, come in bcma/. */
 	u32 boardflags3;
 	u8 avvmid[3][5][2];
 	u8 avvmid_valid;
@@ -338,7 +338,7 @@ void b43_maccontrol_set(struct b43_wldev *dev, u32 mask, u32 set);
  * usa 5 slot (0-4) e ha una semantica maskset atomica visibile al tracer
  * WL-diag come `MAC.MHF addr=<slot> val=<val> mask=<mask>`.
  *
- * L'implementazione reale è in src/helpers_phy_ac.c e fa r/m/w SHM sui
+ * L'implementazione reale è in b43/helpers_phy_ac.c e fa r/m/w SHM sui
  * registri B43_SHM_SH_HOSTFn (tutti già definiti nel kernel b43.h). Nel
  * test env il --wrap del linker intercetta la chiamata prima che raggiunga
  * l'implementazione.

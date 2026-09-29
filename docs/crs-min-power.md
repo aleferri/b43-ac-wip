@@ -3,7 +3,7 @@
 The AC-PHY carrier-sense threshold: one common threshold on the eight CRS
 registers, and for every chain beyond 0 an offset in bank `0x0910`. In the port
 it runs from `b43_phy_ac_crs_ladder[]` to `b43_phy_ac_prog_bank_0910()` in
-`src/phy_ac.c`.
+`b43/phy_ac.c`.
 
 **[BLOB]** is read from the D6220's 7.14.89.14 binary; **[MEASURED]** is
 checked on the D6220 cold (43) and hot (44) sweeps and the agcombo cold (26)

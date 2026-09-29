@@ -32,11 +32,10 @@ K       := /usr/src/linux-headers-$(KVER)
 KG      := /usr/src/linux-headers-$(KVER)-generic
 UP      := b43-upstream
 
-# kinc/ tiene i due header ssb toppati da patches/0001, che aggiunge i campi
-# della SROM rev11 (pa5ga, maxp5ga, femctrl, subband5gver, rxgains). Vanno
-# PRIMA degli header kernel, o phy_ac.c non compila: quei campi in mainline
-# non esistono. La parte di patches/0001 su drivers/bcma/sprom.c non serve,
-# qui il bus e' finto.
+# kinc/ tiene i due header ssb di bcma/, con i campi della SROM rev11 (pa5ga,
+# maxp5ga, femctrl, subband5gver, rxgains). Vanno PRIMA degli header kernel,
+# o phy_ac.c non compila: quei campi in mainline non esistono. Il resto di
+# bcma/, drivers/bcma/sprom.c compreso, non serve: qui il bus e' finto.
 KINC := -I$(CURDIR)/kinc -I$(KG)/include -I$(K)/include -I$(K)/include/uapi \
         -I$(KG)/include/generated/uapi \
         -I$(K)/arch/x86/include -I$(K)/arch/x86/include/uapi \
@@ -57,7 +56,8 @@ KFLAGS := -nostdinc -I$(CURDIR)/$(UP) $(KINC) -D__KERNEL__ -DMODULE -DKBUILD_MOD
 
 # CONFIG_BCM63XX: il bersaglio e le board della collezione sono router BCM63xx
 # con la radio su PCIe, e su quegli host b43 rilegge gli indirizzi dei
-# registri come il driver stock (patches/0020). Gli header non lo usano.
+# registri come il driver stock (flush_writes in b43/bus.c). Gli header non
+# lo usano.
 #
 # Build per il backtrace: -O2 resta, perche' lo chiedono gli header; -fno-inline
 # -g tengono i frame, cosi' gdb dice in quale funzione di b43 la probe muore
@@ -106,7 +106,7 @@ all: b43-trace
 
 fetch:
 	sh fetch-upstream.sh $(KVER)
-	sh apply-port.sh $(KVER)
+	sh apply-port.sh
 
 # Traguardo 1: i sorgenti di b43 compilano contro gli header veri.
 check:

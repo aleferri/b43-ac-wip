@@ -1460,7 +1460,7 @@ void b43_test_tplram_write16(u16 offset, u16 val)
  * per intero.
  *
  * Quello che si emette qui e' la forma che ha la cattura: una lettura e una
- * scrittura della riga intera. `b43_amt_write()` di patches/0003 fa invece due
+ * scrittura della riga intera. `b43_amt_write()` di b43/main.c fa invece due
  * b43_shm_write32() sulle due word, e rilegge solo nel caso KEEP_FLAGS. Le due
  * cose non coincidono e la patch va portata alla forma della cattura -- vedi
  * docs/retrace-todo.md. Finche' non lo e', questo doppione descrive il vendor

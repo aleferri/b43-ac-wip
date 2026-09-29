@@ -108,8 +108,8 @@ static const struct board_profile *g_profile;
 /*
  * Valore che il core scrive in shared memory 0x00cc alla prima passata della
  * config BSS. Il bit 0x80 non e' costante e non e' derivato da niente che
- * src/ conosca: 0x00cc e' del blocco BSS del core -- in b43 lo scrive
- * bss_info_changed(), e src/ non lo tocca mai -- quindi prenderlo dal
+ * il PHY conosca: 0x00cc e' del blocco BSS del core -- in b43 lo scrive
+ * bss_info_changed(), e il PHY non lo tocca mai -- quindi prenderlo dal
  * chiamante non nasconde un difetto del PHY.
  *
  * Cosa lo muove, per quel che i 26 segmenti a freddo del d6220 dicono: il bit
@@ -759,7 +759,7 @@ static void run_timeline(void)
 /*
  * Doppione della coda di b43_wireless_core_init(), che b43 esegue dopo
  * b43_chip_init() e quindi dopo il primo switch_channel: prima
- * b43_upload_card_macaddress(), che via b43_macfilter_set() di patches/0003
+ * b43_upload_card_macaddress(), che via b43_macfilter_set() di b43/main.c
  * scrive BSSID e indirizzo di stazione con i flag della riga, poi
  * b43_security_init(), che azzera le righe MAC delle chiavi pairwise.
  *
@@ -1271,12 +1271,12 @@ static void run_switch_channel(void)
  * software_rfkill(false) -> ops->init -> switch_channel.
  */
 /*
- * Doppione di b43_shm_macaddr_set() di patches/0003, che vive in main.c del
- * core e che l'harness non compila.
+ * Doppione di b43_shm_macaddr_set(), che vive in b43/main.c e che l'harness
+ * non compila.
  *
- * Sta qui e non in src/ perche' NON e' codice del PHY: se finisse la' sarebbe
- * un errore di attribuzione. La forma e i valori sono gli stessi della patch --
- * tre word a 0x078c, byte basso di ogni coppia per primo -- cosi' se la patch
+ * Sta qui e non nel PHY perche' NON e' codice del PHY: se finisse la' sarebbe
+ * un errore di attribuzione. La forma e i valori sono gli stessi del core --
+ * tre word a 0x078c, byte basso di ogni coppia per primo -- cosi' se il core
  * cambia questo diventa sbagliato e il confronto lo dice.
  *
  * Il PUNTO in cui viene chiamato e' quello di wl (subito dopo i limiti di
@@ -1288,7 +1288,7 @@ static void run_switch_channel(void)
  */
 /*
  * Host flags. b43 le scrive con b43_hf_write(), che copre le parole 1..3;
- * patches/0003 aggiunge la 4 e la 5. Il vendor le mette qui, appena prima del
+ * il core del port aggiunge la 4 e la 5. Il vendor le mette qui, appena prima del
  * chanspec (cold01 #686-#690), mentre b43 le scrive molto prima, fra WLCOREREV
  * e MACHW: l'ordine e' un punto di riconciliazione aperto, e qui si segue il
  * vendor perche' e' quello che il confronto misura.
@@ -1348,10 +1348,10 @@ static void emit_core_counters_first(void)
  * secondi -- e questo harness quella transizione non la modella: cac_pending
  * e' un booleano per l'intera corsa. Vedi docs/retrace-todo.md.
  *
- * Non c'e' un sito b43 che la emetta. La riga la scrive patches/0003 dal core
- * init, e il chiamante qui e' la sospensione del match durante il channel
+ * Non c'e' un sito b43 che la emetta. La riga la scrive il core init di
+ * b43/main.c, e il chiamante qui e' la sospensione del match durante il channel
  * availability check, che b43 non ha: e' il motivo per cui sta fra i doppioni
- * e non in src/.
+ * e non nel PHY.
  */
 static void emit_core_amt_cac_suspend(void)
 {
@@ -1371,7 +1371,7 @@ static void emit_core_hostflags(void)
 
 /*
  * The GPIO pins b43 registers a LED on, from the mounted SPROM: the rule of
- * b43_led_get_sprominfo() in leds.c with patches/0003, and b43_map_led(),
+ * b43_led_get_sprominfo() in b43/leds.c, and b43_map_led(),
  * which registers nothing for OFF, ON and INACTIVE. compare.py uses them to
  * tell the vendor's LED ops from the other GPIO ones; they match the
  * mask the stock driver writes to chipcommon 0x8c in the LED block of the
@@ -1413,7 +1413,7 @@ static void emit_core_shm_macaddr(const struct board_profile *p)
 }
 
 /*
- * Doppione di b43_amt_write() di patches/0003, che vive in main.c del core.
+ * Doppione di b43_amt_write(), che vive in b43/main.c.
  *
  * Emette il record logico e il traffico della riga: l'hook del tracer su
  * wlc_bmac_write_amt da' `AMT.WR idx=`, e sotto ci sono la lettura e la
@@ -1431,12 +1431,12 @@ static void emit_core_shm_macaddr(const struct board_profile *p)
  * 56 righe (idx 0x00-0x37). Vanno spostate la', non tenute qui per comodita';
  * finche' ci sono, il confronto le conta due volte sbagliate.
  *
- * Come per emit_core_shm_macaddr(): sta qui e non in src/ perche' non e'
- * codice del PHY, e i valori sono quelli della patch, cosi' se la patch cambia
+ * Come per emit_core_shm_macaddr(): sta qui e non nel PHY perche' non e'
+ * codice del PHY, e i valori sono quelli del core, cosi' se il core cambia
  * questo diventa sbagliato e il confronto lo dice.
  */
 /*
- * Doppione delle celle di patches/0003, che vivono nel core init.
+ * Doppione delle celle che il port aggiunge al core init di b43/main.c.
  *
  * Divise in due perche' la traccia le mette in due punti distinti: ANTSWAP e
  * BTSFOFF nel blocco di chip init prima del chanspec (cold01 #650, #656), il
@@ -1446,19 +1446,19 @@ static void emit_core_shm_macaddr(const struct board_profile *p)
  *
  * Le celle del secondo gruppo non sono rispecchiate: cadono fra #12197 e
  * #14172, dentro un blocco che l'harness non modella affatto, e emetterle
- * altrove le metterebbe nel posto sbagliato -- peggio che non emetterle. La
- * patch le scrive comunque, perche' quello che conta per l'hardware e' lo
+ * altrove le metterebbe nel posto sbagliato -- peggio che non emetterle. Il
+ * core le scrive comunque, perche' quello che conta per l'hardware e' lo
  * stato finale; qui conta l'ordine, e non lo sappiamo riprodurre.
  */
 static void emit_core_shm_chipinit(const struct board_profile *p)
 {
-	/* patches/0003 */
+	/* b43/main.c, core init */
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x0080, 8);      /* MAXBFRAMES */
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x005c, 0x000a); /* ANTSWAP */
 
 	/*
 	 * Queste b43 le scrive gia', e mancavano solo perche' l'harness compila
-	 * src/ e non main.c. Nell'ordine di b43, che NON e' quello del vendor:
+	 * il PHY e non main.c. Nell'ordine di b43, che NON e' quello del vendor:
 	 * b43 mette WLCOREREV, poi le host flag, poi MACHW; il vendor mette
 	 * MACHW subito dopo WLCOREREV e le host flag molto piu' tardi, appena
 	 * prima del chanspec. Vedi docs/retrace-todo.md.

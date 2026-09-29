@@ -1,21 +1,36 @@
-# SROM revision 11 support — draft patch
+# bcma/ — the bcma, ssb and bcm47xx side of the port
 
-**Status: DRAFT — NOT FOR SUBMISSION.**
+The files of `drivers/bcma/`, `drivers/firmware/broadcom/` and `include/linux/`
+that the BCM4352/BCM4360 family needs changed, whole and at their kernel paths,
+over the tag `scripts/regen-patches.sh` fetches. They become
+`patches/0001`; `harness/` and these notes are not part of it.
 
-Two patch files carry this work:
+| file | change |
+|---|---|
+| `drivers/bcma/sprom.c` | `bcma_sprom_extract_r11()`, NVRAM `ledbh4..15` over the device's own SROM |
+| `include/linux/ssb/ssb.h`, `ssb_regs.h` | the rev 11 fields and offsets, `gpio_ext[]`, `boardflags3`, `AvVmid` |
+| `drivers/firmware/broadcom/bcm47xx_sprom.c`, `include/linux/bcm47xx_sprom.h` | `ledbh4..15`, `boardflags3` and `AvVmid_c0..2` from NVRAM |
+| `drivers/bcma/driver_chipcommon_pmu.c` | PLL and resource init for the family |
+| `drivers/bcma/host_pci.c` | the BCM4352 PCI ID, `0x43b3` |
 
-- **`patches/0001-ssb-bcma-add-SPROM-revision-11-extraction.patch`** is the one
-  in the series, and what the port builds against. It adds
-  `bcma_sprom_extract_r11()` and the fields the AC-PHY reads:
-  - `maxp5ga[4]`, `pa5ga[12]`, the `rxgains_*` triplets, `mcsbw*po` at 20/40/80,
-    and the five `rpcal` words (182, 183, 190, 191, 198);
-  - the sub-band row offsets, `pdoffset40ma`/`pdoffset80ma`, `tssifloor*`, the
-    FEM block (`femctrl`, …) and `subband5gver`;
-  - antenna gain decoded into `antenna_gain_qdb[]`;
-  - `SSB_SPROM11_CCODE` at `0x0096`.
-- **`src/sprom-rev11/0001-ssb-bcma-firmware-SROM-revision-11-support.patch`** is a
-  wider draft for upstream. It also covers the NVRAM path in
-  `drivers/firmware/broadcom/bcm47xx_sprom.c`. It is not a build prerequisite.
+The SROM rev 11 extractor adds `bcma_sprom_extract_r11()` and the fields the
+AC-PHY reads:
+
+- `maxp5ga[4]`, `pa5ga[12]`, the `rxgains_*` triplets, `mcsbw*po` at 20/40/80,
+  and the five `rpcal` words (182, 183, 190, 191, 198);
+- the sub-band row offsets, `pdoffset40ma`/`pdoffset80ma`, `tssifloor*`, the
+  FEM block (`femctrl`, …) and `subband5gver`;
+- antenna gain decoded into `antenna_gain_qdb[]`;
+- `SSB_SPROM11_CCODE` at `0x0096`.
+
+**Status: not for submission yet**; what is open is at the end.
+
+A wider draft for upstream used to sit next to this work, with its own
+`struct ssb_sprom` layout and a rev 11 mapping of the NVRAM path in
+`bcm47xx_sprom.c` (`bcm47xx_fill_sprom_path_r11`). It no longer applied to the
+tag and did not have the fields the PHY reads, so it is not in the tree; it is
+`src/sprom-rev11/0001-ssb-bcma-firmware-SROM-revision-11-support.patch` in the
+history before the move to `bcma/`.
 
 ## Why
 
@@ -73,11 +88,15 @@ and agcombo dumps and a BCM4360 USB NVRAM template; results in
 
 ## Open before sending upstream
 
-1. **Hardware.** Bring-up must reach probe and the RX path on real hardware.
+1. **The harness tests a copy.** `harness/extract_r11.c` is the extractor of
+   the old draft with the three header offsets corrected, not
+   `drivers/bcma/sprom.c`. The tree's extractor has the same three
+   corrections; that the two agree on every other field is not checked.
+2. **Hardware.** Bring-up must reach probe and the RX path on real hardware.
    This is the in-tree consumer that exercises the extractor end to end; the
    offline harness validates only the decode side.
-2. **A second board with non-zero values** in the regions that are zero on every
+3. **A second board with non-zero values** in the regions that are zero on every
    dump in the repository (`mcslr*po`, `sb20in*`, `sb40and80*`,
    `dot11agdup*po`).
-3. **Reviewers.** Hauke Mehrtens (bcm47xx) and Rafał Miłecki (bcma) are the
+4. **Reviewers.** Hauke Mehrtens (bcm47xx) and Rafał Miłecki (bcma) are the
    natural ones. Refer to the 2015 rev 11 thread in the cover letter.

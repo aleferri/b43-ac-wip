@@ -23,7 +23,7 @@ import tempfile
 import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(ROOT, "src")
+SRC = os.path.join(ROOT, "b43")
 TEST = os.path.join(ROOT, "test", "unit")
 DATA = os.path.join(ROOT, "router-data")
 

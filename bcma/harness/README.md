@@ -10,10 +10,10 @@ Broadcom decoder that produced `nvram_dump`.
 
 ```
 $ make                     # builds ./test
-$ make check               # ../../../router-data/dsl3580l/wl1_*.txt (raw mode)
-$ make check-d6220         # ../../../router-data/d6220/wl1_*.txt (raw mode)
+$ make check               # ../../router-data/dsl3580l/wl1_*.txt (raw mode)
+$ make check-d6220         # ../../router-data/d6220/wl1_*.txt (raw mode)
 $ make check-bcm4360usb    # synth-mode round trip on vectors/bcm4360usb.nvram
-$ make check-agcombo       # synth-mode round trip on ../../../router-data/agcombo/wl1_nvram.txt
+$ make check-agcombo       # synth-mode round trip on ../../router-data/agcombo/wl1_nvram.txt
 ```
 
 Against another vector:
@@ -77,8 +77,9 @@ The most useful boards have:
 
 ## Files
 
-- `extract_r11.c`: the parser body (the head of the file lists its differences
-  from the patch).
+- `extract_r11.c`: the parser body, a copy of the old draft's with the
+  differences listed at the head of the file; not `../drivers/bcma/sprom.c`
+  itself (see `../README.md`, "Open before sending upstream").
 - `synth_srom.{h,c}`: the encoder counterpart, used by `--synth`.
 - `kernel_shim.h`: typedefs, `cpu_to_be16`, `BUILD_BUG_ON`, `ARRAY_SIZE`, and
   `SPOFF/SPEX/SPEX32` byte-identical to `drivers/bcma/sprom.c`.

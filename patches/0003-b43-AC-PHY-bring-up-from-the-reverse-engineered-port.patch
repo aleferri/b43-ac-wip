@@ -1,18 +1,20 @@
-From 0f51a204e586cd8282882e62aa3f467606550c71 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Alessio Ferri <alessio.ferri.3012@gmail.com>
 Date: Tue, 8 Sep 2026 14:29:02 +0000
-Subject: [PATCH] b43: AC-PHY bring-up from the reverse-engineered port
+Subject: [PATCH 3/3] b43: AC-PHY bring-up from the reverse-engineered port
 
 Replaces mainline's 88-line phy_ac.c placeholder with the transcribed
 bring-up: init, channel tuning, RF sequencer, TX power, the 2069 radio, the
 table accessors and the RX-IQ calibration.
 
-Regenerated from src/ rather than maintained by hand, so it cannot drift out
-of sync with the tree the unit suite measures.
+Generated from b43/ by scripts/regen-patches.sh rather than maintained by
+hand, so it cannot drift out of sync with the tree the unit suite measures.
+
+Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     5 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |   111 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 11607 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 11608 +++++++++++++++-
  drivers/net/wireless/broadcom/b43/phy_ac.h    |   819 +-
  drivers/net/wireless/broadcom/b43/ppr_ac.c    |   255 +
  drivers/net/wireless/broadcom/b43/ppr_ac.h    |    81 +
@@ -22,7 +24,7 @@ of sync with the tree the unit suite measures.
  .../wireless/broadcom/b43/rxiqcal_phy_ac.h    |    23 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1153 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    79 +
- 12 files changed, 16434 insertions(+), 23 deletions(-)
+ 12 files changed, 16435 insertions(+), 23 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -167,7 +169,7 @@ index 0000000..a1626b5
 +	b43_maskset32(dev, B43_MMIO_MACCTL, mask, set);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index 756cd44..dc3a32d 100644
+index 756cd44..54d7ab2 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -1,23 +1,57 @@
@@ -235,7 +237,7 @@ index 756cd44..dc3a32d 100644
  	if (!phy_ac)
  		return -ENOMEM;
  	dev->phy.ac = phy_ac;
-@@ -62,27 +96,11560 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -62,27 +96,11561 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -821,7 +823,7 @@ index 756cd44..dc3a32d 100644
 +	 * TODO 0x000c: written with 0xf, and b43.h does not name it either.
 +	 *
 +	 * The slot time, 0x03ff then 9, is the second half of what
-+	 * patches/0003 introduced -- and the captures put BOTH writes here, not
++	 * the core (b43/main.c) introduced -- and the captures put BOTH writes here, not
 +	 * at core init where that patch does the 9. What 0x03ff is for is not
 +	 * known; writing the maximum and then the real value looks like a
 +	 * deliberate two-step, so it is reproduced as one.
@@ -2380,7 +2382,7 @@ index 756cd44..dc3a32d 100644
 +
 +/*
 + * The same table for 2.4 GHz, `acphy_txgain_epa_2g_2069rev4` of the 6.30.102.7
-+ * blob (wlDSL-3580_EU.o_save of impl14_v07, the one src/radio_2069.c's channel
++ * blob (wlDSL-3580_EU.o_save of impl14_v07, the one b43/radio_2069.c's channel
 + * table comes from). The hybrid wl on the MacBookAir6,1 and on the archer-t5e
 + * loads it whole into table 0x20 on 2.4 GHz, 384 of 384 words on both, and
 + * its TX gain loads during the ch6 calibration are entries 10, 20 and 64.
@@ -11385,7 +11387,8 @@ index 756cd44..dc3a32d 100644
 +	 *
 +	 * b43 qui sbaglia due volte: applica il valore B-PHY a tutto
 +	 * (b43_set_synth_pu_delay(), 1050) e aggiunge un caso adhoc/idle a 500
-+	 * che in brcmsmac non esiste. Vedi il TODO nella serie patches/.
++	 * che in brcmsmac non esiste. Il core non lo corregge ancora, e
++	 * b43_set_synth_pu_delay() in b43/main.c riscrive questa cella.
 +	 */
 +	b43_shm_write16(dev, B43_SHM_SHARED, 0x0094, 512);
 +	b43_phy_ac_mhf_maskset(dev, 4, (u16)~0x0008, 0x0008);
@@ -16630,6 +16633,3 @@ index 0000000..3493cc1
 +void b43_phy_ac_tbl_write_unlock(struct b43_wldev *dev, u16 saved);
 +
 +#endif /* B43_TABLES_PHY_AC_H_ */
--- 
-2.43.0
-

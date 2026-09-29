@@ -665,7 +665,7 @@ static void b43_phy_ac_shm_readback_block(struct b43_wldev *dev)
 	 * TODO 0x000c: written with 0xf, and b43.h does not name it either.
 	 *
 	 * The slot time, 0x03ff then 9, is the second half of what
-	 * patches/0003 introduced -- and the captures put BOTH writes here, not
+	 * the core (b43/main.c) introduced -- and the captures put BOTH writes here, not
 	 * at core init where that patch does the 9. What 0x03ff is for is not
 	 * known; writing the maximum and then the real value looks like a
 	 * deliberate two-step, so it is reproduced as one.
@@ -2224,7 +2224,7 @@ static const u16 b43_acphy_txgain_epa_5g_2069rev4[128][3] = {
 
 /*
  * The same table for 2.4 GHz, `acphy_txgain_epa_2g_2069rev4` of the 6.30.102.7
- * blob (wlDSL-3580_EU.o_save of impl14_v07, the one src/radio_2069.c's channel
+ * blob (wlDSL-3580_EU.o_save of impl14_v07, the one b43/radio_2069.c's channel
  * table comes from). The hybrid wl on the MacBookAir6,1 and on the archer-t5e
  * loads it whole into table 0x20 on 2.4 GHz, 384 of 384 words on both, and
  * its TX gain loads during the ch6 calibration are entries 10, 20 and 64.
@@ -11229,7 +11229,8 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	 *
 	 * b43 qui sbaglia due volte: applica il valore B-PHY a tutto
 	 * (b43_set_synth_pu_delay(), 1050) e aggiunge un caso adhoc/idle a 500
-	 * che in brcmsmac non esiste. Vedi il TODO nella serie patches/.
+	 * che in brcmsmac non esiste. Il core non lo corregge ancora, e
+	 * b43_set_synth_pu_delay() in b43/main.c riscrive questa cella.
 	 */
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x0094, 512);
 	b43_phy_ac_mhf_maskset(dev, 4, (u16)~0x0008, 0x0008);

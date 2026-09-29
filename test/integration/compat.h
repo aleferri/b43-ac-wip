@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Cio' che `src/` usa e gli header kernel installati non hanno.
+ * Cio' che `b43/` usa e gli header kernel installati non hanno.
  *
  * Non e' una comodita': senza, `-w` nasconde la dichiarazione implicita e
  * `kzalloc_obj(*p)` compila passando una struct per valore e trattando un
@@ -8,7 +8,7 @@
  * `b43_phy_ac_op_allocate`. Per questo il Makefile ora tiene
  * `-Werror=implicit-function-declaration` anche con `-w`.
  *
- * `kzalloc_obj` e' una macro dei kernel piu' recenti di 6.8. Che `src/` la
+ * `kzalloc_obj` e' una macro dei kernel piu' recenti di 6.8. Che `b43/` la
  * usi vuol dire che punta a un kernel piu' nuovo degli header con cui la
  * suite compila: e' un fatto da sapere, non da nascondere.
  */

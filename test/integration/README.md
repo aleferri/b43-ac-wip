@@ -1,8 +1,8 @@
 # test/integration — the whole of b43 on AC
 
 Compiles real b43 (`main.c`, `phy_common.c`, `leds.c`, `rfkill.c` and the
-rest, at the tag of the installed kernel headers) with the `patches/` series
-applied and `src/` inside, stubs the bus and subsystem layers, and runs the
+rest, at the tag of the installed kernel headers) with `b43/` copied over it
+and the ssb headers of `bcma/`, stubs the bus and subsystem layers, and runs the
 probe, `ifconfig up` and the capture's timeline. The trace is taken at the
 MMIO bus.
 

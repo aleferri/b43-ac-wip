@@ -10,13 +10,19 @@
 #   make trace    run it (D6220 rxiq_est_debug) and dump to trace.out
 #   make clean
 
-SCRATCH := ../../src
+# The AC-PHY files of ../../b43 are copied into build/b43 and compiled from
+# there. A quoted #include looks in the including file's own directory first,
+# and ../../b43 also holds the real b43.h, main.h and phy_common.h, which
+# would win over the stubs without a word.
+B43     := ../../b43
+SCRATCH := build/b43
 STUBS   := stubs
+AC_HDRS := $(addprefix $(SCRATCH)/,phy_ac.h tables_phy_ac.h radio_2069.h \
+            ppr_ac.h rxiqcal_phy_ac.h)
 
 # We include our stubs FIRST (via -I) so kernel headers <linux/*.h> and
-# the b43 project headers resolve to our minimal versions. The scratch
-# source directory comes next so its own headers ("b43.h" already
-# resolved above; "phy_ac.h" etc. live there).
+# the b43 project headers resolve to our minimal versions. The copied AC-PHY
+# directory comes next for its own headers ("phy_ac.h" etc.).
 CFLAGS  := -O0 -g -Wall -Wno-unused-parameter -Wno-unused-function \
            -Wno-unused-variable -Wno-unused-but-set-variable \
            -Wno-pointer-sign -Wno-sign-compare \
@@ -68,7 +74,7 @@ SCRATCH_SRCS_FULL := \
 SRCS := $(SCRATCH_SRCS_FULL) wrap.c main.c
 OBJS := $(patsubst %.c,build/%.o,$(notdir $(SRCS)))
 
-vpath %.c $(SCRATCH):.
+vpath %.c .
 
 BIN := ac_trace
 
@@ -77,7 +83,17 @@ all: $(BIN)
 build:
 	mkdir -p build
 
-build/%.o: %.c | build
+$(SCRATCH)/%: $(B43)/%
+	@mkdir -p $(SCRATCH)
+	cp $< $@
+
+# The copies are what the objects and gdb point at: not intermediates.
+.PRECIOUS: $(SCRATCH)/%
+
+build/%.o: $(SCRATCH)/%.c $(AC_HDRS) | build
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+
+build/%.o: %.c $(AC_HDRS) | build
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(BIN): $(OBJS)

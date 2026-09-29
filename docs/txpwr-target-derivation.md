@@ -3,7 +3,7 @@
 How the port derives the per-core power target in `PHY 0x0646[7:0]` (and
 `0x0846`, `0x0a46`) and the per-rate offsets in shared memory. The open
 residuals are in `retrace-todo.md`; the idle-TSSI base, table `0x21` and the
-rate-block PLCP carry their evidence next to the code in `src/phy_ac.c`.
+rate-block PLCP carry their evidence next to the code in `b43/phy_ac.c`.
 
 `0x0646` is the TX power target in quarter-dBm. The ceiling lives elsewhere,
 at `0x0b46`, written by the power-control enable path.
@@ -18,7 +18,7 @@ clear -> load_max_from_sprom -> apply_max(regulatory) -> add(-6)
       -> apply_min(8 dBm) -> get_max
 ```
 
-`src/ppr_ac.{c,h}` is that PPR for SROM rev 11, one row of eight
+`b43/ppr_ac.{c,h}` is that PPR for SROM rev 11, one row of eight
 modulation-class groups per width. It loads the minimum of `maxp5ga` over the
 active chains plus the per-core delta, with the `mcsbw*po` nibbles per width. A
 40 MHz channel also loads the 20 MHz row, an 80 MHz channel the 20 and 40 MHz

@@ -10,7 +10,7 @@ measurement tones: two up to 40 MHz, six at 80.
 
 The two models scored are the one the driver had, summing the accumulators
 over the tones, and the one it has now, the mean over the tones of the
-per-tone coefficients -- see b43_phy_ac_iq_solve() in src/phy_ac.c for the
+per-tone coefficients -- see b43_phy_ac_iq_solve() in b43/phy_ac.c for the
 arithmetic and the numbers.
 
 Usage:

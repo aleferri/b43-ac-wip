@@ -31,7 +31,7 @@
 # CHANSPEC (26): cambio canale, addr = chanspec. Il decoder lo espande, come
 # CS.SHM, in canale/banda/larghezza col formato 802.11ac (chan=bit 0-7,
 # bw=0x3800, band=0xc000); il canale e' quello CENTRALE, non il primario (vedi
-# B43_PHY_AC_CHANSPEC_* in src/phy_ac.h). Serve a tagliare a posteriori una run
+# B43_PHY_AC_CHANSPEC_* in b43/phy_ac.h). Serve a tagliare a posteriori una run
 # che copre piu' canali.
 # MARK (39): etichetta iniettata dallo spazio utente con
 #     echo "ch36 bw20" > /proc/wl_diag

@@ -37,7 +37,7 @@ probe-response template, SSID in shared memory) are in scope. Data TX/RX and
 2.4 GHz come after.
 
 The cold bring-up comes first; a bring-up on an interface that was already up
-(hot) is deferred, not dropped. The `FIRST_BRINGUP` branches in `src/` and the
+(hot) is deferred, not dropped. The `FIRST_BRINGUP` branches in `b43/` and the
 `AC_FIRST_INIT` lever of the harness stay, and where hot differs from cold the
 hot behaviour goes in [`docs/retrace-todo.md`](docs/retrace-todo.md).
 
@@ -65,19 +65,19 @@ There is no recent run on hardware.
 
 ## What is ported
 
-- **SROM rev 11** (`patches/0001`), with a test harness in
-  [`src/sprom-rev11/`](src/sprom-rev11/).
-- **The PHY** (`patches/0006`, generated from `src/`): `op_init`,
+- **SROM rev 11** (`bcma/drivers/bcma/sprom.c`, in `patches/0001`), with a
+  test harness in [`bcma/harness/`](bcma/harness/).
+- **The PHY** (the AC-PHY files of `b43/`, `patches/0003`): `op_init`,
   `software_rfkill`, `switch_analog`, `switch_channel` on every row of the
   2069 table (5170–5825 MHz) at 20, 40 and 80 MHz, the post-switch
   calibrations, TX power from the SROM, the watchdog on `pwork_1sec`, the CRS
   threshold on `pwork_60sec`, the radar poll and the bss-up.
-- **The core** (`patches/0003`, `0019`–`0021`): channel set, DMA alignment,
+- **The core** (the rest of `b43/`, `patches/0002`): channel set, DMA alignment,
   TX/RX path, address match table, shared memory, key layout, the
   `channel_calibrate` hook, LEDs above GPIO 3, the 1 s tick, the noise sample,
   the availability check and the radar work, the PHY bandwidth clock, the
   rev 42 MAC init, register read-backs and the AC template layout.
-- **bcma/ssb** (`patches/0007`, `0009`, `0016`, `0018`): PMU init, the PCI ID,
+- **bcma/ssb** (`bcma/`, `patches/0001`): PMU init, the PCI ID,
   `ledbh4..15`, `boardflags3` and `AvVmid`.
 
 How the pieces fit is in [`docs/driver-status.md`](docs/driver-status.md).
@@ -114,9 +114,10 @@ iw wlan1 scan freq 5180
 ## Repository layout
 
 ```
-src/                 driver sources, the source of truth for patches/0006
-src/sprom-rev11/     SROM rev 11 draft patch and its test harness
-patches/             the kernel patch series
+b43/                 the b43 files the port changes or adds, whole
+bcma/                the bcma, ssb and bcm47xx files it changes, at their kernel
+                     paths, and the SROM rev 11 test harness
+patches/             the three kernel patches, generated from b43/ and bcma/
 test/unit/           the PHY alone against the captures
 test/integration/    the whole of b43 with the port, against real kernel headers
 docs/                technical notes
@@ -131,7 +132,9 @@ scripts/             patch regeneration and helpers
 
 ## After the MVP
 
-- Split `patches/0003` and `0006` before submitting to `linux-wireless`.
+- Split the core and AC-PHY patches into reviewable changes before submitting
+  to `linux-wireless`.
 - HT/VHT: the init tables cover OFDM; the late PHY writes need an audit.
-- Submit `src/sprom-rev11/`; the preconditions are in its README.
+- Submit the SROM rev 11 part of `bcma/`; the preconditions are in
+  `bcma/README.md`.
 - Co-loading with the integrated N-PHY (`wl0`).

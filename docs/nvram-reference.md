@@ -3,7 +3,7 @@
 Which fields of `struct ssb_sprom` the AC-PHY reads, and where each one ends up
 in the programming, as established against the stock traces. The field
 layout is Broadcom's (`bcmsrom_tbl.h`, see
-[`../src/sprom-rev11/cross_check.md`](../src/sprom-rev11/cross_check.md)).
+[`../bcma/cross_check.md`](../bcma/cross_check.md)).
 Every other NVRAM variable is consumed by the core or not at all.
 
 ## What the driver reads

@@ -11,7 +11,7 @@ gcc-4.4.2 toolchain on Ubuntu 10.04.
 The mirror's release asset is `DSL-3580_EU_1.00_10232013_GPL.tar.gz`, firmware
 v1.00, not the v1.01 tarball above. Inside `bcm963xx_.L._consumer.tar.gz` it
 has two `wl` objects: `impl14/` is 6.30.102.3, `impl14_v07/` is 6.30.102.7.
-`src/radio_2069.c`'s channel table is `chan_tuning_2069rev4` of the latter,
+`b43/radio_2069.c`'s channel table is `chan_tuning_2069rev4` of the latter,
 sha256 `73b58f069e5ce3f3f8b6a111df4a3e6de57ed22761a53c41ba50c05ab0b07233`,
 extracted with `reverse-tools/extract_chan_tuning_2069rev4.py --min-freq 2400`:
 the 50 5 GHz rows and the 14 2.4 GHz rows.
@@ -33,7 +33,7 @@ TX-gain table is checked. Its `acphy_txgain_epa_5g_2069rev4` matches the
 D6220's (7.14.89) on 128 of 128 entries, while the DSL's 6.30 branch diverges
 from index 31 on. Two physically independent boards carrying the same values
 rules out per-board calibration; see `b43_acphy_txgain_epa_5g_2069rev4` in
-`src/phy_ac.c`.
+`b43/phy_ac.c`.
 
 **TODO:** origin and mirror of the image, and the `wl` revision it contains.
 Unlike the two blobs above, this entry does not say how to obtain the file
