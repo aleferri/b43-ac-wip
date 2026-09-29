@@ -10019,9 +10019,14 @@ static void b43_phy_ac_wd_stats_poll_opt(struct b43_wldev *dev,
 	if (!ctr32_passes)
 		return;
 
-	for (pass = 0; pass < ctr32_passes; pass++)
+	for (pass = 0; pass < ctr32_passes; pass++) {
+#if UNIT_TEST
+		if (pass == 1)
+			b43_phy_ac_core_site(dev, B43_AC_SITE_BEACON_WD);
+#endif
 		for (i = 0; i < ARRAY_SIZE(ctr32); i++)
 			b43_phy_ac_wd_shm_read32x3(dev, ctr32[i]);
+	}
 
 	/*
 	 * @ctr32_tail chiude la spazzata coi tre contatori fuori lista. Sta
@@ -10532,6 +10537,9 @@ static void b43_phy_ac_cac_arm(struct b43_wldev *dev)
 
 	B43_AC_FN();
 	b43_phy_ac_radar_thresh(dev);
+#if UNIT_TEST
+	b43_phy_ac_core_site(dev, B43_AC_SITE_CAC_CLOSE);
+#endif
 	b43_phy_ac_cac_poll(dev, 1);
 }
 
@@ -10656,6 +10664,9 @@ static void b43_phy_ac_post_bringup_tail(struct b43_wldev *dev)
 	 * GPIO del LED e il latch della finestra. b43.h non la nomina e a cosa serva
 	 * non si sa; la posizione e' invariante.
 	 */
+#if UNIT_TEST
+	b43_phy_ac_core_site(dev, B43_AC_SITE_BEACON_START);
+#endif
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x0026, 0xffff);
 
 	/*
@@ -11325,6 +11336,9 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	B43_AC_BLOCK("shm_zero_05e0");
 	for (off = 0x05e0; off <= 0x0666; off += 2)
 		b43_shm_write16(dev, B43_SHM_SHARED, off, 0x0000);
+#if UNIT_TEST
+	b43_phy_ac_core_site(dev, B43_AC_SITE_KEYS_CLEAR);
+#endif
 	/* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
 	 *   12859-13592]
 	 * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -11344,6 +11358,9 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	 */
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x018a, 0xffce);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x018c, 0xffba);
+#if UNIT_TEST
+	b43_phy_ac_core_site(dev, B43_AC_SITE_MACFILTER_FIRST);
+#endif
 	b43_phy_ac_wd_stats_poll_opt(dev, true, 0, true);
 	/*
 	 * After the sweep and after the four CCK blocks that are still not
@@ -11440,6 +11457,9 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	b43_phy_ac_mhf_maskset(dev, 1, (u16)~0x0020, 0x0020);    /* MHF1 set bit 5 */
 	b43_mac_suspend(dev);
 	b43_phy_ac_wd_stats_poll_opt(dev, true, 0, true);
+#if UNIT_TEST
+	b43_phy_ac_core_site(dev, B43_AC_SITE_MACFILTER);
+#endif
 	b43_phy_ac_basic_rate_map(dev);
 
 	/*

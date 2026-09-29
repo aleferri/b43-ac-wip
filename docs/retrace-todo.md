@@ -5,23 +5,27 @@ the evidence and the next step. Closed items are not kept: their conclusions
 live in the code.
 
 Core items (`b43/` outside the AC-PHY files) cannot be seen by `test/unit`,
-which compiles the AC-PHY files only; they need `test/integration`. Blocks the core emits at
-another point than the stock driver are declared in `MOVED` of
-`test/unit/cmp_skip.py`, each with its reason.
+which compiles the AC-PHY files only; they need `test/integration`. Core work
+the stock driver runs inside a PHY sequence, and b43 runs from the core at
+another time, is emitted by `test/unit` at the stock driver's point through the
+`#if UNIT_TEST` sites of `b43_phy_ac_core_site()` (`b43/phy_ac.h`); each site
+is known work that moves to the core, none stands for work not understood.
 
 ## Core
 
 ### Key-table clearing
 
-The stock driver clears the address match rows inside the channel setup; b43
-does it from `b43_security_init()` at the tail of `b43_wireless_core_init()`
-(a `MOVED` rule). What remains:
+The stock driver clears the address match rows inside the channel setup, right
+after `shm_zero_05e0`; b43 does it from `b43_security_init()` at the tail of
+`b43_wireless_core_init()`. `test/unit` emits them at the stock point
+(`B43_AC_SITE_KEYS_CLEAR`) with the stock count. What remains in the core:
 
 - **Row count.** The stock driver clears 56 rows (`0x00`–`0x37`), b43 50
   (`B43_NR_PAIRWISE_KEYS`). The wide layout has 64, so b43's limit is not the
   table's.
 - **The first pair.** The stock driver writes the station row with `0x8008`
-  and the BSSID row without flags first; b43 does not.
+  and the BSSID row without flags first, after `0x018a`/`0x018c`
+  (`B43_AC_SITE_MACFILTER_FIRST`); b43 does not.
 - **Double key material.** The PHY zeroes `0x10f4`–`0x14b2` and `0x05e0`–`0x0666`
   (`shm_zero_10f4`/`shm_zero_05e0`), and `b43_security_init()` writes the key
   material and index block again, the index block as `(kidx << 4) | algo`

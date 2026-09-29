@@ -40,6 +40,8 @@ static struct b43_phy_ac       g_ac;
 /* Le ricariche del template beacon: quante fatte, e quante allo start_ap. */
 static unsigned int g_beacon_reloads;
 static unsigned int g_beacon_reload_pre;
+/* The timeline has a reload inside the watchdog turn being delivered. */
+static bool g_wd_reload;
 /* Il check pendente, deciso prima che g_wldev sia costruito. */
 static bool g_cac_pending;
 static struct b43_wl           g_wl;
@@ -704,7 +706,9 @@ static void emit_core_beacon_reload(unsigned int which);
  *                                            teneva fuori
  *   POLL    il work da 150 ms del radar   -> b43_phy_ac_radar_poll()
  *   TPL     bss_info_changed del core     -> la ricarica del template, che e'
- *                                            del core e la emette l'harness
+ *                                            del core e la emette l'harness;
+ *                                            quella che segue un WD cade fra
+ *                                            le due passate dei contatori
  *   BSS_UP  il beacon parte dopo il CAC   -> il core chiude il check e riapre
  *                                            la riga AMT; il PHY lo vede al
  *                                            tick seguente
@@ -735,9 +739,26 @@ static void run_timeline(void)
 
 		if (sscanf(line, "%*f %*d %15s", kind) != 1)
 			continue;
-		if (!strcmp(kind, "WD"))
+		if (!strcmp(kind, "WD")) {
+			long at = ftell(f);
+			char next[128], nkind[16];
+
+			/*
+			 * A reload that follows the turn in the timeline falls
+			 * between its two counter passes: the watchdog's site
+			 * delivers it, see b43_phy_ac_core_site().
+			 */
+			g_wd_reload = fgets(next, sizeof(next), f) &&
+				sscanf(next, "%*f %*d %15s", nkind) == 1 &&
+				!strcmp(nkind, "TPL");
+			if (!g_wd_reload)
+				fseek(f, at, SEEK_SET);
 			b43_phyops_ac.pwork_1sec(&g_wldev);
-		else if (!strcmp(kind, "POLL"))
+			if (g_wd_reload) {
+				g_wd_reload = false;
+				emit_core_beacon_reload(g_beacon_reloads++);
+			}
+		} else if (!strcmp(kind, "POLL"))
 			b43_phy_ac_radar_poll(&g_wldev);
 		else if (!strcmp(kind, "TPL"))
 			emit_core_beacon_reload(g_beacon_reloads++);
@@ -757,18 +778,19 @@ static void run_timeline(void)
 }
 
 /*
- * Doppione della coda di b43_wireless_core_init(), che b43 esegue dopo
- * b43_chip_init() e quindi dopo il primo switch_channel: prima
- * b43_upload_card_macaddress(), che via b43_macfilter_set() di b43/main.c
- * scrive BSSID e indirizzo di stazione con i flag della riga, poi
- * b43_security_init(), che azzera le righe MAC delle chiavi pairwise.
+ * Doppioni di b43_upload_card_macaddress(), b43_macfilter_set() e
+ * b43_security_init() di b43/main.c: le righe in cima della address match
+ * table -- 0x3e il BSSID, 0x3f la stazione -- e le righe delle chiavi.
  *
- * Il vendor emette le stesse op dentro il channel setup, e la prima coppia
- * con l'ordine e i flag diversi. Qui si segue b43, e la differenza la conta
- * il confronto.
+ * b43 le scrive nella coda di b43_wireless_core_init(), dopo il primo
+ * switch_channel; il vendor dentro il channel setup, in tre punti, e la
+ * prima coppia prima che il BSSID ci sia. Si emettono ai siti del PHY, vedi
+ * b43_phy_ac_core_site().
  *
- * Le righe sono B43_NR_PAIRWISE_KEYS di b43.h, 50: con fw.rev >= 351 la kidx
- * API nuova ha 4 slot di gruppo, e il ciclo di b43_clear_keys() si ferma li'.
+ * Le righe delle chiavi sono 56, 0x00-0x37, quelle che azzera il vendor su
+ * tutti i segmenti; b43_clear_keys() ne azzera B43_NR_PAIRWISE_KEYS, 50, e la
+ * differenza e' il conto delle righe in docs/retrace-todo.md, "Key-table
+ * clearing".
  */
 static void emit_core_top_row(bool self, u16 flags)
 {
@@ -776,15 +798,41 @@ static void emit_core_top_row(bool self, u16 flags)
 	b43_test_emit_amt(self ? 0x3f : 0x3e, flags);
 }
 
-static void emit_core_init_tail(void)
+#define B43_TEST_KEY_ROWS	0x38
+
+void b43_phy_ac_core_site(struct b43_wldev *dev, enum b43_phy_ac_core_site site)
 {
 	u16 i;
 
-	emit_core_top_row(false, 0x8002);
-	emit_core_top_row(true, 0x8008);
-	for (i = 0; i < 50; i++) {
-		b43_test_emit_addrm(i);
-		b43_test_emit_amt(i, 0);
+	switch (site) {
+	case B43_AC_SITE_KEYS_CLEAR:
+		for (i = 0; i < B43_TEST_KEY_ROWS; i++) {
+			b43_test_emit_addrm(i);
+			b43_test_emit_amt(i, 0);
+		}
+		break;
+	case B43_AC_SITE_MACFILTER_FIRST:
+		emit_core_top_row(true, 0x8008);
+		emit_core_top_row(false, 0);
+		break;
+	case B43_AC_SITE_MACFILTER:
+		emit_core_top_row(false, 0x8002);
+		emit_core_top_row(true, 0x8008);
+		break;
+	case B43_AC_SITE_CAC_CLOSE:
+		if (dev->cac_pending)
+			emit_core_cac_gate(false);
+		break;
+	case B43_AC_SITE_BEACON_START:
+		for (i = 0; i < g_beacon_reload_pre; i++)
+			emit_core_beacon_reload(g_beacon_reloads++);
+		break;
+	case B43_AC_SITE_BEACON_WD:
+		if (g_wd_reload) {
+			g_wd_reload = false;
+			emit_core_beacon_reload(g_beacon_reloads++);
+		}
+		break;
 	}
 }
 
@@ -1219,12 +1267,6 @@ static void run_switch_channel(void)
 
 	int r = b43_phyops_ac.switch_channel(&g_wldev, 36);
 
-	emit_core_init_tail();
-
-	/* b43_op_config(): col check pendente il core chiude la riga AMT. */
-	if (g_wldev.cac_pending)
-		emit_core_cac_gate(false);
-
 	/*
 	 * L'ordine di b43_op_config(): switch_channel, la configurazione BSS
 	 * del core, il TX power adjust che b43_phy_txpower_check() accoda, le
@@ -1242,14 +1284,6 @@ static void run_switch_channel(void)
 		b43_phyops_ac.channel_calibrate(&g_wldev);
 	else
 		b43_mac_enable(&g_wldev);
-
-	/*
-	 * start_ap: mac80211 da' il beacon e il core lo carica. Il vendor fa
-	 * queste ricariche dentro la coda del bring-up; b43 dopo il config che
-	 * la contiene.
-	 */
-	for (unsigned int i = 0; i < g_beacon_reload_pre; i++)
-		emit_core_beacon_reload(g_beacon_reloads++);
 
 	/*
 	 * Da qui in poi il driver non decide piu' il flusso: reagisce a quello

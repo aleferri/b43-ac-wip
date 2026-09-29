@@ -854,4 +854,30 @@ void b43_ac_block_mark(const char *name);
 #define B43_AC_BLOCK(name) do { (void)sizeof(name); } while (0)
 #endif
 
+#if UNIT_TEST
+/*
+ * Core work the stock driver runs inside the PHY's own sequences, which b43
+ * runs from the core or from mac80211 at another time. Each site is work
+ * whose owner and content are known and which does not stay in the PHY:
+ * test/unit emits the core's operations at the stock driver's point so that
+ * the op-for-op comparison keeps its order. Nothing not understood goes here.
+ */
+enum b43_phy_ac_core_site {
+	/* b43_security_init(): the key rows of the address match table */
+	B43_AC_SITE_KEYS_CLEAR,
+	/* b43_upload_card_macaddress() before the BSSID is known */
+	B43_AC_SITE_MACFILTER_FIRST,
+	/* b43_macfilter_set() of BSSID and station, with their flags */
+	B43_AC_SITE_MACFILTER,
+	/* b43_ac_cac_match_gate(false) from b43_op_config() */
+	B43_AC_SITE_CAC_CLOSE,
+	/* b43_update_templates() on start_ap */
+	B43_AC_SITE_BEACON_START,
+	/* b43_update_templates() between two watchdog counter passes */
+	B43_AC_SITE_BEACON_WD,
+};
+
+void b43_phy_ac_core_site(struct b43_wldev *dev, enum b43_phy_ac_core_site site);
+#endif
+
 #endif /* B43_PHY_AC_H_ */

@@ -106,7 +106,8 @@ at zero proves the register absent, not the phase;
 
 `compare.py` holds `SOLO_VENDOR`, `SOLO_PORT`, `SOLO_PORT_SENZA_CLASSE`,
 `PERIMETER`, `VAL_NONDET` and `VAL_TOLLERANZA`, and `cmp_skip.py` holds `MOVED`
-and `KNOWN`, each entry with its reason. They are the only place where an
+(empty: see the `UNIT_TEST` sites below) and `KNOWN`, each entry with its
+reason. They are the only place where an
 operation is declared not to count, and every entry suspends a piece of the
 goal:
 
@@ -121,12 +122,18 @@ goal:
 
 ## How the harness works
 
-- **No `#ifdef` in the PHY.** Every hardware accessor is intercepted at link
-  time with `-Wl,--wrap=<sym>` (`WRAP_SYMS` in the `Makefile`). A new driver
-  helper that touches hardware needs a line there, or its operations vanish.
-  The one exception is temporary: the harness builds with `-DALLOW_24=true`,
-  which lifts `switch_channel`'s refusal of 2.4 GHz; `AC_CHANNEL` 1 to 14 is
-  that band.
+- **Accessors by link, not by `#ifdef`.** Every hardware accessor is
+  intercepted at link time with `-Wl,--wrap=<sym>` (`WRAP_SYMS` in the
+  `Makefile`). A new driver helper that touches hardware needs a line there, or
+  its operations vanish.
+- **Two defines.** `-DALLOW_24=true`, temporary, lifts `switch_channel`'s
+  refusal of 2.4 GHz; `AC_CHANNEL` 1 to 14 is that band. `-DUNIT_TEST=1`
+  compiles the `b43_phy_ac_core_site()` calls in the PHY: the points where the
+  stock driver runs core work inside a PHY sequence -- the address match
+  rows, the beacon reloads, the gate of the availability check -- which b43
+  runs from the core at another time. `main.c` emits the core's operations
+  there, so the positional gate keeps the stock order. A site is only for work
+  that is known and belongs to the core; what is not understood stays out.
 - **`wrap.c`** emits a wl-diag line per access, keeps a mirror of the writes and
   serves reads from the oracle, then any read plan, then the mirror. Table
   cells have their own oracle and mirror keyed by `(id, offset)`.

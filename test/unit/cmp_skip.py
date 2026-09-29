@@ -175,47 +175,12 @@ KNOWN = {
 # Il blocco si sposta nel flusso vendor prima dell'allineamento: le sue op
 # restano tutte nel confronto, e contano come giuste solo se il port le emette
 # nel punto dichiarato.
+#
+# Vuota: i blocchi del core che il vendor emette dentro le sequenze del PHY
+# l'harness li emette al punto del vendor, dai siti b43_phy_ac_core_site()
+# (b43/phy_ac.h), e spostarli qui li rimetterebbe fuori posto.
 # ---------------------------------------------------------------------------
-MOVED = {
-    'd6220': [
-        dict(da=r'^OBJ\.RD addr=0xcc ',
-             dopo=r'^OBJ\.RD addr=0x77e ',
-             a=r'^MAC\.MCTRL val=0x1 mask=0x1$', lung=60,
-             verso=r'^OBJ\.RD addr=0x14e ',
-             max=40,
-             motivo="ricarica del template beacon dentro la spazzata del "
-                    "watchdog, fra le due passate dei contatori a 32 bit. In "
-                    "b43 e' b43_update_templates(), che mac80211 chiama da "
-                    "bss_info_changed(BSS_CHANGED_BEACON): un contesto a "
-                    "parte, che non entra nel giro. b43 la emette alla fine "
-                    "della spazzata, dopo l'ultima lettura (0x014e)."),
-        dict(da=r'^ADDRM\.SET idx=0x0$',
-             a=r'^OBJ\.BULKW addr=0x1b8 len=8$', lung=224,
-             verso=r'^OBJ\.BULKW addr=0x1f8 len=8$',
-             verso_ctx=[(-6, r'^AMT\.WR idx=0x3e a3=0x8002$')],
-             max=1,
-             motivo="azzeramento delle righe MAC delle chiavi pairwise. Il "
-                    "vendor lo fa dentro il channel setup; in b43 e' "
-                    "b43_security_init() -> b43_clear_keys(), nella coda di "
-                    "b43_wireless_core_init() dopo b43_upload_card_macaddress(), "
-                    "cioe' dopo le due righe in cima. b43 ne azzera 50 e non "
-                    "56 (B43_NR_PAIRWISE_KEYS): le sei in piu' restano "
-                    "mancanti, ed e' la parte chiavi."),
-        dict(da=r'^AMT\.WR idx=0x3f$',
-             dopo=r'^PHY\.MOD addr=0x2e4 val=0xf00 mask=0x3f00$',
-             a=r'^OBJ\.BULKW addr=0x1f8 len=8$', lung=3,
-             verso=r'^OBJ\.BULKW addr=0x1b8 len=8$', indietro=True,
-             max=1,
-             motivo="la riga della stazione senza flag quando parte il "
-                    "channel availability check. Il vendor la chiude dentro "
-                    "il channel setup, fra la soglia degli impulsi radar "
-                    "(0x02e4) e il primo poll; in b43 la chiude "
-                    "b43_op_config() quando mac80211 sintonizza con "
-                    "radar_enabled, cioe' dopo la coda del core init: dietro "
-                    "l'azzeramento delle chiavi."),
-    ],
-}
-
+MOVED = {}
 
 def apply_moves(ops, rules):
     """Sposta i blocchi dichiarati in MOVED dove b43 li emette."""

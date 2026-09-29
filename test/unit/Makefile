@@ -26,7 +26,7 @@ AC_HDRS := $(addprefix $(SCRATCH)/,phy_ac.h tables_phy_ac.h radio_2069.h \
 CFLAGS  := -O0 -g -Wall -Wno-unused-parameter -Wno-unused-function \
            -Wno-unused-variable -Wno-unused-but-set-variable \
            -Wno-pointer-sign -Wno-sign-compare \
-           -DB43_AC_FN_TRACE -DALLOW_24=true \
+           -DB43_AC_FN_TRACE -DALLOW_24=true -DUNIT_TEST=1 \
            -I$(STUBS) -I$(SCRATCH) \
            -include stubs/linux/types.h \
            -include stubs/linux/errno.h \
