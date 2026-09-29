@@ -1,9 +1,9 @@
-# router-data/hybrid-4360 — BCM4360 PCIe card, hybrid wl 6.30.223 on x86
+# router-data/archer-t5e — BCM4360 PCIe card, hybrid wl 6.30.223 on x86
 
-The only capture taken at the MMIO bus rather than through `wl-diag`, and the
-only one of the hybrid Linux `wl`. It shows the MAC and the DMA, which the
-accessor hooks never traced; it does not show config space (window moves) or
-host memory (descriptors, frames).
+An mmiotrace of the hybrid Linux `wl`, the only capture of it and the only one
+taken on x86. It shows the MAC and the DMA, which the accessor hooks never
+traced; it does not show config space (window moves) or host memory
+(descriptors, frames).
 
 ```
 chipid   0x15134352: chip 0x4352 rev 3, 5 cores    corerev 42 (chipcommon 43, pcie2 2, gci 1, armcr4 17)

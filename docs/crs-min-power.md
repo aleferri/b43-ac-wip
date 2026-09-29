@@ -1,20 +1,13 @@
 # CRS minimum-power thresholds and bank `0x0910`
 
-The mechanism that programs the AC-PHY carrier-sense threshold:
+The AC-PHY carrier-sense threshold: one common threshold on the eight CRS
+registers, and for every chain beyond 0 an offset in bank `0x0910`. In the port
+it runs from `b43_phy_ac_crs_ladder[]` to `b43_phy_ac_prog_bank_0910()` in
+`src/phy_ac.c`.
 
-- one common threshold on the eight CRS registers;
-- for every chain beyond chain 0, an offset in bank `0x0910`.
-
-In the port it lives in `src/phy_ac.c`, from `b43_phy_ac_crs_ladder[]` to
-`b43_phy_ac_prog_bank_0910()`.
-
-Every statement carries its source, and the categories are not
-interchangeable:
-
-- **[BLOB]** read from the reference binary, D6220 7.14.89.14;
-- **[MEASURED]** checked on the captures: D6220 cold (43 segments) and hot
-  (44 `up`), agcombo cold (26) and hot (26);
-- **[OPEN]** not established; not to be implemented as if it were.
+**[BLOB]** is read from the D6220's 7.14.89.14 binary; **[MEASURED]** is
+checked on the D6220 cold (43) and hot (44) sweeps and the agcombo cold (26)
+and hot (26).
 
 ## What is written   [MEASURED]
 
@@ -53,14 +46,6 @@ zero-terminated, stride 16.
 A single function references the three rows, `wlc_phy_crs_min_pwr_cal_acphy`.
 The agcombo (7.14.43) uses the same rows: every value it writes, threshold or
 bank, is an entry of them [MEASURED].
-
-In the DSL-3580L blob (6.30.102.7) the rows are different:
-
-- they sit at `0x1fa19c`, `0x1fa1a8` and `0x1fa1b4`, stride 12, eleven entries;
-- the 40 MHz row is identical, the 20 MHz row differs in two entries, the
-  80 MHz row in nine.
-
-The port uses the D6220's rows for every board.
 
 ## The sample   [MEASURED]
 
@@ -138,84 +123,18 @@ Outside them the driver warns once.
   from the rule.
 - **`pwork_60sec()`**: the common threshold only, and only when it changes.
 
-## Open
+## Other boards
 
-**When the stock driver emits block E.** The value matches wherever both sides
-write at the same point; the point itself does not. On 31 of the 43 cold
-segments the port's CRS+bank sequence matches the stock driver's. On the other
-12:
-
-| segments | difference |
-|---|---|
-| cold12, cold13, cold16 | the stock driver writes after 26, 53 and 21 latches, the port after the first |
-| cold07, cold09, cold28, cold35 | the stock driver has one extra block in between |
-| cold17, cold18 | the port has one extra block |
-| cold14, cold15, cold32 | weather-radar, partial capture: the stock driver has only the first block |
-
-All of them are radar-duty channels. The stock driver's last block falls
-150–170 ms after the bss-up; the others have no timeline event that always
-precedes them.
-
-**Ring reset.** The port empties the rings when the sub-band changes. The cold
-sweep cannot say anything about this, because every segment is a fresh module
-load. On the hot sweep the first block of an `up` fits neither empty rings nor
-the rings of the previous segment; the material in between is in
-`hot-sweep.zip!hot-gaps/`.
-
-**DSL-3580L.** With 6.30 it writes the bank as zero on every occurrence, and
-it has its own ladder. Whether 6.30 has the filter is not checked.
+The DSL-3580L (6.30) writes the bank as zero everywhere and has its own ladder
+(`0x1fa19c`, stride 12, eleven entries; the 40 MHz row equal, the 20 MHz row
+two entries off, the 80 MHz row nine). The port uses the D6220's rows on every
+board. Ring reset on sub-band change and when the block is emitted are open,
+see `retrace-todo.md`.
 
 ## Finding the ladder in the blob
 
-**Finding it.** The ladder is the initializer of a local array, so it sits in
-anonymous `.rodata`: no symbol, and an enumeration of `OBJECT` symbols cannot
-reach it. It is found by shape: monotonic, steps of 2 to 8, no run at step 1
-(which removes index lists). Eight `u8` candidates remain: the three rows,
-`acphy_tx_evm_tbl_rev0`, `lpphy_rev2_gain_table` and three more.
-
-**Attributing it.** This needs no disassembly, only the relocations. On MIPS an
-address is loaded with `lui %hi` + `addiu %lo`, that is a
-`R_MIPS_HI16`/`R_MIPS_LO16` pair on the same symbol in `.rel.text`. Once the
-address is rebuilt, the `FUNC` symbol containing the relocation is the function
-that loads it.
-
-- On the blob there are 8537 rebuilt addresses.
-- The three rows belong to `wlc_phy_crs_min_pwr_cal_acphy`.
-- The other anonymous candidate, `+0x051b58`, belongs to
-  `wlc_phy_elna_gainctrl_workaround`.
-
-**Small arrays.** GCC may materialise the initializer as immediate stores.
-Before declaring a table absent, look for the immediates too.
-
-### The rest of the blob on this calibration   [BLOB]
-
-**Strings.** The dump strings name the noise used for the thresholds, a
-per-channel run counter, and the condition "ACI desense active, the cal does
-not run".
-
-**Related symbols.** `wlc_phy_set_crs_min_pwr_higain_acphy`,
-`wlc_phy_force_crsmin_acphy` with the `phy_force_crsmin` iovar, and
-`wlc_phy_noise_sample_request_crsmincal`.
-
-**Parameters.** They are in NVRAM, and none of the boards sets them, so the
-driver uses the compiled defaults:
-
-    noise_cal_enable_{2g,5g}        noise_cal_ref_{2g,5g}
-    noise_cal_ref_40_{2g,5g}        noise_cal_adj_{2g,5g}
-    noise_cal_po_{2g,5g}            noise_cal_po_40_{2g,5g}
-    noise_cal_po_bias_{2g,5g}       noise_cal_nf_substract_val[_{2g,5g}]
-    noise_cal_high_gain[_{2g,5g}]   noise_cal_deltamin / noise_cal_deltamax
-    noise_cal_update                noise_cal_dbg
-
-### Prior art
-
-- **N-PHY.** The same register family exists with names — `CRSMINPOWER0/1`,
-  `CRSMINPOWERL0/L1`, `CRSMINPOWERU0` in `b43/phy_n.h`. brcmsmac writes only a
-  spur-workaround constant there (`NPHY_ADJUSTED_MINCRSPOWER`), and
-  `noise_crsminpwr_index` is declared and never used: the adaptive part was
-  removed from the open-source release.
-- **ath9k** has the same quantity as `minCCApwr`, with a per-chain filter over a
-  five-sample window (median): the same design with another statistic.
-
-The symbol keeps its address-based name, `prog_bank_0910`, until its semantics
-are confirmed on the chip.
+It is the initializer of a local array, so it sits in anonymous `.rodata` with
+no symbol. It is found by shape (monotonic, steps of 2 to 8) and attributed
+through the `R_MIPS_HI16`/`R_MIPS_LO16` pairs in `.rel.text`: the function
+containing the relocation is the one that loads it. Before declaring a small
+table absent, look for immediate stores too.

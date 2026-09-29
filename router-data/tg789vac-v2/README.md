@@ -124,8 +124,8 @@ confirm on this unit with `cat /proc/cpuinfo` and `uname -a`.
 ## Reloading `wl` without crashing the router
 
 On this firmware `rmmod wl` + `insmod wl` alone crash the router. There are
-three independent causes; `reverse-tools/capture_cold_tg789vac.sh` handles all
-three.
+three independent causes; `wl-capture-scripts/capture_cold_tg789vac.sh` handles
+all three.
 
 **1. The wireless modules' memory is reserved and never freed.**
 

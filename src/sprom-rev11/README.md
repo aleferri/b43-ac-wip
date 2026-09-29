@@ -64,14 +64,9 @@ path for the per-chain rev 11 arrays.
 
 ## Test vectors
 
-The harness in `harness/` checks the extractor against four vectors:
-
-| vector | mode | result |
-|---|---|---|
-| `router-data/dsl3580l/wl1_{srom_raw,nvram}.txt` | raw | 77 PASS / 0 FAIL / 2 INFO |
-| `router-data/d6220/wl1_{srom_raw,nvram}.txt` | raw | 74 PASS / 0 FAIL / 5 INFO |
-| `router-data/agcombo/wl1_nvram.txt` | synth | 75 PASS / 0 FAIL / 4 INFO |
-| `harness/vectors/bcm4360usb.nvram` | synth | 29 PASS / 0 FAIL / 50 INFO |
+The harness in `harness/` checks the extractor against the DSL-3580L, D6220
+and agcombo dumps and a BCM4360 USB NVRAM template; results in
+`harness/README.md`.
 
 ## Open before sending upstream
 

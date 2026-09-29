@@ -42,15 +42,7 @@ OUT_DIR="$TARGET_DIR/package/kernel/mac80211/patches/brcm"
 # to a slug of that same part.
 short_name() {
 	case "$1" in
-	*5-GHz-channel*)              echo "acphy-5ghz-channels" ;;
-	*descriptor-ring-alignment*)  echo "dma-64k-align" ;;
 	*AC-PHY-bring-up*)            echo "acphy-bringup" ;;
-	*wire-AC-PHY-into*)           echo "acphy-txrx-wiring" ;;
-	*station-MAC*)                echo "shm-station-mac" ;;
-	*address-match-table*)        echo "address-match-table" ;;
-	*shared-memory-cells*)        echo "shm-cells" ;;
-	*key-index-block*)            echo "ucode42-key-index-block" ;;
-	*use-after-free*)             echo "bcma-remove-use-after-free" ;;
 	*)                            echo "" ;;
 	esac
 }

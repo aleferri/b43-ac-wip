@@ -27,6 +27,7 @@ PHY/RAD/TBL/MAC/SI/PMU/GPIO classes every capture has.
 | `agcombo/bss-up.zip` | 43411 | complete, + AMT ADDRM OBJ.BULK |
 | `agcombo/cold-sweep.zip` | 560563 | complete |
 | `agcombo/hot-sweep.zip` | 415476 | complete |
+| `agcombo/up-nobss-ioctl.zip` | 28718 | complete, + AMT ADDRM OBJ.BULK |
 | `d6220/cold-sweep.zip` | 1577029 | complete, + AMT ADDRM OBJ.BULK |
 | `d6220/hot-sweep.zip` | 2451630 | complete, + AMT ADDRM OBJ.BULK |
 | `dsl3580l/cold01-ch36-bw20.txt` | 41580 | complete, + AMT RCMTA OBJ.BULK |
@@ -35,6 +36,11 @@ PHY/RAD/TBL/MAC/SI/PMU/GPIO classes every capture has.
 | `tg789vac-v2/cold-sweep.zip` | 2792665 | complete, + AMT ADDRM OBJ.BULK |
 | `agcombo/cold-sweep-partial.tar.gz` | 552677 | **missing OBJ** |
 | `dsl3580l/full-sweep.zip` | 1707638 | **missing CAL** |
+
+The bus captures (`agcombo/*.bin`, `agcombo/mmio-decoded.zip`,
+`archer-t5e/mmiotrace.zip`) have none of the accessor classes by construction:
+the audit reports them incomplete, and an absence there means nothing at class
+level. Compare them with `--bus` (`test/integration/README.md`).
 
 ## Per-class counts
 
@@ -49,6 +55,7 @@ python3 reverse-tools/check_class_coverage.py \
 | `agcombo/cold-sweep-partial.tar.gz` | 7.14.43.21 | 0 | 0 | 0 | 0 | 0 | 56 | 0 | 0 | 0 |
 | `agcombo/cold-sweep.zip` | 7.14.43.21 | 0 | 0 | 0 | 0 | 0 | 52 | 0 | 26 | 0 |
 | `agcombo/hot-sweep.zip` | 7.14.43.21 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 26 | 0 |
+| `agcombo/up-nobss-ioctl.zip` | 7.14.43.21 | 245 | 0 | 116 | 253 | 2 | 0 | 0 | 2 | 34 |
 | `d6220/cold-sweep.zip` | 7.14.89.14 | 5407 | 0 | 2580 | 6680 | 43 | 0 | 86 | 43 | 2878 |
 | `d6220/hot-sweep.zip` | 7.14.89.14 | 10868 | 0 | 5280 | 12236 | 88 | 0 | 0 | 88 | 5824 |
 | `dsl3580l/cold01-ch36-bw20.txt` | 6.30.102.7 | 122 | 54 | 0 | 7 | 1 | 2 | 2 | 1 | 0 |
@@ -59,7 +66,7 @@ python3 reverse-tools/check_class_coverage.py \
 
 - **The agcombo sweeps** lack `AMT`, `ADDRM`, `OBJ.BULK*`, `OBJ.SET`,
   `PHY.WARR` and `PHY.FGC`, which the D6220 and TG789vac sweeps (7.14.89) and
-  the agcombo's own `bss-up.zip` carry. **SALAME**: the natural explanation is
+  the agcombo's own `bss-up.zip` and `up-nobss-ioctl.zip` carry. **SALAME**: the natural explanation is
   that the agcombo sweeps were taken with an older tracer. Which `hooks[]` each
   archive was taken with is not recorded. The hook plan that `pianifica()` logs
   at insmod is what settles it, and it should be archived with every new

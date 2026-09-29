@@ -8,7 +8,7 @@ prints it to `dmesg`. It captures the vendor-initialised `max_res_mask` /
 **Results on hardware.**
 
 - `max_res_mask` reads back `0x7ff` on a BCM4360 (agcombo) and a BCM4352
-  (DSL-3580L, `../../router-data/dsl3580l/dsl3580l_pmu-trace.txt`).
+  (DSL-3580L, `../router-data/dsl3580l/dsl3580l_pmu-trace.txt`).
 - `min_res_mask` reads `0x7fb`.
 - The port's `max` write therefore confirms the ROM value rather than
   overriding it.

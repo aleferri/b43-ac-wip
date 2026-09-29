@@ -24,82 +24,40 @@ variant leaves out.
 
 Reads carry their value through a return trampoline (`retcap` hooks), emitted
 as a `RETVAL` record after the read. Inline I/O through the `R_REG`/`W_REG`
-macros cannot be hooked. The noise sample the CRS calibration reads arrives
+macros cannot be hooked; `../wl-mmio-trap/` traces it. The noise sample the CRS calibration reads arrives
 through object memory
 (`wlc_phy_noise_read_shmem` → `wlc_bmac_read_shm` → `read_objmem[16]`), so
 `OBJ.RD` carries it.
 
 ## Hooking
 
-**The return register.** The stub re-executes the displaced words and then
-jumps back through a register. On 3.4 it uses `$t9` unless the displaced words
-write it, `$t8` otherwise; if both are written the hook is dropped at planning time.
-A thunk prologue `lui $t9` / `addiu $t9` is the case that forces this. The
-symptom of getting it wrong is unmistakable: an unaligned access with
-`$t9 == epc`, and `ra` pointing at the caller.
-
-**Unhookable prologues** have a branch inside the detour window. There are two
-ways around them:
-
-- **patching the call sites** (preferred). The module is `-mabicalls`, so calls
-  are `lui`/`addiu` + `jalr` (or `jr $t9` for tail calls). The pair is rewritten
-  to load the stub, after three runtime checks: exact address, jump on the same
-  register, `addiu` not shared. On 3.4 a fourth drops a site whose `lui` feeds
-  more than one epilogue. `wlc_bmac_mhf_get` is hooked this way.
-- **the `break` path**, 3.4 only: a die notifier on `DIE_BREAK`.
-
-**Tail calls.** On 7.14.89 the SHM thunks `wlc_bmac_read/write_shm` tail-call
-16-bit accessors that have no symbol. There the tail call itself is diverted:
-the stub leaves the argument set-up in place and exits by re-executing the
-saved `j`. `tail_aux_src` takes the selector from `a2`/`a3`, so `sel` carries
-the real value.
-
-**One hook per op** (3.4). When a build has two ways to the same op, only the
-first that resolves and hooks is armed. On both kernels `ripiego_di` drops a
-thunk when the accessor below it hooked, otherwise every SHM access would
-produce two records.
-
-**Names differ between versions** (`read_objmem` / `read_objmem16`, and so on).
-Hooking a missing name gives no error; the class just stays empty.
-
-| hook | 6.30 | 7.14 |
-| --- | --- | --- |
-| `wlc_bmac_read/write_objmem` | `LOCAL` | absent |
-| `wlc_bmac_read/write_objmem16` | absent | `LOCAL` |
-| `wlc_bmac_read/write_shm` | `GLOBAL` | `GLOBAL` |
-| `wlc_bmac_copyfrom/copyto_objmem` | `GLOBAL` | `GLOBAL` |
-| `wlc_bmac_template*_reg` | absent | `GLOBAL` |
-| `wlc_bmac_write_template_ram` | `GLOBAL` | `GLOBAL` |
-| `wlc_bmac_set_addrmatch` | `GLOBAL` | absent |
-| `wlc_set_addrmatch` | absent | `GLOBAL` |
-| `wlc_bmac_write_amt`, `wlc_bmac_set_rcmta` | `GLOBAL` | `GLOBAL` |
-| `phy_reg_write_array`, `phy_reg_read/write_wide` | `GLOBAL` | `GLOBAL` |
-| `wlc_bmac_write_ihr`, `wlc_bmac_set_shm` | `GLOBAL` | `GLOBAL` |
-
-`LOCAL` functions in `.text` still resolve through `kallsyms` (`is_core_symbol()`
-filters on section flags, not binding). A poor symbol table in the blob, as in
-the TG789vac v2's `wl.ko`, is what really hides them.
-
-**Signatures come from the prologue, not the name.** Read them with
-`../reverse-tools/mipsdis.py <object> --prologo <symbol>`. Some examples:
-
-| function | signature read from the prologue |
-| --- | --- |
-| `phy_reg_write_array(pi, array, n)` | `a1` is a **pointer**, `a2` the count; a marker, the writes arrive through the 16-bit hooks |
-| `phy_reg_write_wide(pi, val)` | fixed register, value in `a1` |
-| `phy_reg_read_wide(pi)` | value in the `RETVAL` |
-| `wlc_bmac_write_ihr(hw, off, val)` | `off=a1`, `val=a2` |
-| `wlc_bmac_set_shm(hw, off, val, len)` | `off=a1`, `val=a2`, `len=a3` |
-| `wlc_bmac_set_addrmatch(hw, idx, addr)` | `idx=a1`, `a2` a pointer; branch at word 2 → short-j |
-
-Op codes are the same numbers in both tracers (2.6.30 stops at 50, 3.4 goes on
-to 54), and `decode-wl-diag.py` does not tell the versions apart. A new op goes
-at the end of both enums with the same value.
-
-**Hook-table fields** are set with designated initializers (`.retcap = true`).
-A field inserted into positional initializers shifts every value after it.
-That is how `retcap` once silently went false for every hook, and no
-`RETVAL` arrived.
+- **Return register.** The stub re-executes the displaced words and jumps back
+  through `$t9`, or `$t8` when the displaced words write `$t9` (a thunk
+  prologue `lui`/`addiu $t9`); if both are written the hook is dropped. Getting
+  it wrong shows as an unaligned access with `$t9 == epc`.
+- **Unhookable prologues** (a branch inside the detour window) are handled by
+  patching the call sites (`lui`/`addiu` + `jalr` in this `-mabicalls` module,
+  after checking address, register and that the `addiu` is not shared;
+  `wlc_bmac_mhf_get` is hooked this way), or on 3.4 by a `break` and a
+  `DIE_BREAK` notifier.
+- **Tail calls.** On 7.14.89 the SHM thunks tail-call 16-bit accessors with no
+  symbol; the saved `j` itself is diverted, and `tail_aux_src` takes the
+  selector from `a2`/`a3`.
+- **One hook per op.** `ripiego_di` drops a thunk when the accessor below it
+  hooked, or every SHM access would give two records.
+- **Names differ between versions** (`read_objmem` on 6.30, `read_objmem16` on
+  7.14; `wlc_bmac_set_addrmatch` against `wlc_set_addrmatch`). Hooking a
+  missing name gives no error, the class just stays empty; `LOCAL` symbols
+  still resolve through kallsyms, a stripped blob (the TG789vac's) is what hides
+  them.
+- **Signatures come from the prologue**, not the name:
+  `../reverse-tools/mipsdis.py <object> --prologo <symbol>`
+  (`phy_reg_write_array(pi, array, n)` takes a pointer and is only a marker;
+  `wlc_bmac_write_ihr(hw, off, val)`, `wlc_bmac_set_shm(hw, off, val, len)`).
+- **Op codes** are the same numbers in both tracers (2.6.30 stops at 50, 3.4
+  goes to 54); a new op goes at the end of both enums. Hook-table fields use
+  designated initializers: a positional field once shifted `retcap` to false
+  for every hook.
 
 ## Checking the plan before flashing
 
@@ -144,23 +102,11 @@ Run `../reverse-tools/csanity.py` on `wl_diag.c` first.
 
 ## Capture workflow
 
-### Arming and disarming
-
-`wl_diag` arms by itself on the target's `MODULE_STATE_COMING` and disarms on
-`GOING`, on both kernels. It is loaded once, and `rmmod wl` / `insmod wl` in a
-loop do not concern it.
-
-**The notification order.** It allows this on both kernels, checked on
-`kernel/module.c` of v2.6.30 and v3.4:
-
-- **`COMING`** comes after `load_module()` (relocations applied, kallsyms
-  added) and before `mod->init`. The probe and the attach fall under the hooks,
-  with no PCI remove/rescan.
-- **`GOING`** comes after `mod->exit()` and before `free_module()`, so the
-  prologues are restored with the text still mapped.
-- **Disarming** restores the words and then calls `synchronize_sched()`. The
-  tracer holds no reference on the target, because `rmmod wl` is the core step
-  of a cold capture.
+`wl_diag` is loaded once and arms by itself on the target's
+`MODULE_STATE_COMING` (after relocation and kallsyms, before `mod->init`, so the
+probe and attach are under the hooks without a PCI rescan) and disarms on
+`GOING` (after `mod->exit()`, text still mapped), on both kernels. It holds no
+reference on `wl`, since `rmmod wl` is the core step of a cold capture.
 
 ### The steps
 
@@ -218,14 +164,10 @@ the FIFO with `skipphyrd="0x253,0x254"`:
 
 ## Notes
 
-- **Buffer size.** A large FIFO absorbs bursts, not a writer that is faster on
-  average than the reader. Repeated `** DROP **` records mean the reader is too
-  slow.
-- **Userspace commands.** `IOVAR.SET` / `IOCTL` record commands such as
-  `wl phycal_tempdelta 40`. `WLC_GET_VAR` is not recorded, since its value exists
-  only on return.
-- **Device scripts.** Many busybox builds lack `head`, `awk` and similar, so the
-  device-side scripts use shell builtins plus `wl` and `sleep` only.
-- **Line endings.** `.gitattributes` forces `eol=lf`. A script checked out with
-  CRLF fails with messages like `: not found` or
-  `unexpected end of file (expecting "done")`; strip the `\r` before running it.
+- Repeated `** DROP **` records mean the reader is slower than the writer on
+  average; a larger FIFO only absorbs bursts.
+- `WLC_GET_VAR` is not recorded: its value exists only on return.
+- The device scripts use shell builtins, `wl` and `sleep` only: many busybox
+  builds lack `head` and `awk`.
+- `.gitattributes` forces `eol=lf`; a script checked out with CRLF fails with
+  `: not found` or `unexpected end of file`.

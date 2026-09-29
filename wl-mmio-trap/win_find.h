@@ -34,7 +34,7 @@ struct win_bar {
 
 /* Physical addresses below this are reached through CKSEG1 by __ioremap()
  * and have no page table entry at all: see win_find.h's header comment and
- * DESIGN.md section 5. */
+ * README.md, "A window in KSEG1". */
 #define WIN_KSEG1_LIMIT 0x20000000UL
 
 /* vendor/device may be PCI_ANY_ID; with an unspecified device id the

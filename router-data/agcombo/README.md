@@ -14,14 +14,18 @@ driver   0x70e2b15 ~ 7.14.43.21   ucode 0x3a004b1 ~ 3.160.4.177
 | file | content |
 |---|---|
 | `wl1_revinfo.txt` | `wl -i wl1 revinfo` |
-| `wl1_srom.txt` | `wl -i wl1 srdump` — all zero on this blob; the nominal SROM is in the NVRAM dump |
+| `wl1_srom.txt` | `wl -i wl1 srdump`, all zero on this blob; the nominal SROM is in the NVRAM dump |
 | `wl1_nvram.txt` | `wl -i wl1 nvram_dump` |
-| `wl1_phytable_5gl.txt` | `wl -i wl1 phytable 0x{44,45} {0..41} 8`, plus a width-disambiguation probe at `0x44` offset 0 |
+| `wl1_phytable_5gl.txt` | `wl -i wl1 phytable 0x{44,45} {0..41} 8`, plus a width probe at `0x44` offset 0 |
 | `wl1_pmu-trace.txt` | PMU resource masks |
-| `stats.txt` | `wl` status reads (chanspec, `curpower`, `phy_tempsense`, …) from a session on ch100/80 |
+| `stats.txt` | `wl` status reads (chanspec, `curpower`, `phy_tempsense`, …) on ch100/80 |
+| `wl1_capture_stats.txt` | `phy_tempsense` and chanspec reads taken during the `up-nobss-ioctl` session |
 | `cold-sweep.zip` | 26 cold segments, `coldNN-chC-bwB.txt` |
 | `hot-sweep.zip` | 26 hot `up` segments, `NN-up-chC-bwB.txt` |
 | `bss-up.zip` | one bss-up on ch100/80 with the extended hook set (AMT, ADDRM, OBJ.BULK, PHY.FGC) |
+| `up-nobss-ioctl.zip` | `up` without a BSS on ch36/80 then ch100/80, with the `wlc_ioctl` hook |
+| `ch36.bin`, `ch100.bin`, `ch149-wep.bin` | `wl-mmio-trap` captures at the bus: a cold attach on ch36, hot ups on ch100 and ch149 with WEP, each ending with a down. Decode with `reverse-tools/mmio2ops.py` |
+| `mmio-decoded.zip` | the three `.bin` decoded (`.txt` raw, `.ops` through mmio2ops) and the MAC table of ch36 |
 | `cold-sweep-partial.tar.gz` | an older partial cold split, `split-agcombo/`; does not trace `OBJ` |
 
 The sweeps lack the classes listed in `../CLASS-COVERAGE.md`.
