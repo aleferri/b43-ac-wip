@@ -190,7 +190,9 @@ static void bcma_sprom_extract_r11(struct bcma_bus *bus, const u16 *sprom)
 	 * Sanity-check anchors on the reference board:
 	 *   cckbw202gpo   = 0  (aa2g==0)
 	 *   mcsbw205glpo  = 0xeca86420   (UNII-1 active)
-	 *   mcsbw1605gXpo = 0  (160 MHz disabled by board profile)
+	 *
+	 * Rev 11 has no 160 MHz per-rate field in the SROM: the words
+	 * after each sub-band's mcsbw80 are the rpcal ones.
 	 */
 	SPEX(cckbw202gpo,            SSB_SPROM11_CCKBW202GPO,            ~0, 0);
 	SPEX(cckbw20ul2gpo,          SSB_SPROM11_CCKBW20UL2GPO,          ~0, 0);
@@ -201,15 +203,17 @@ static void bcma_sprom_extract_r11(struct bcma_bus *bus, const u16 *sprom)
 	SPEX32(mcsbw205glpo,         SSB_SPROM11_MCSBW205GLPO,           ~0, 0);
 	SPEX32(mcsbw405glpo,         SSB_SPROM11_MCSBW405GLPO,           ~0, 0);
 	SPEX32(mcsbw805glpo,         SSB_SPROM11_MCSBW805GLPO,           ~0, 0);
-	SPEX32(mcsbw1605glpo,        SSB_SPROM11_MCSBW1605GLPO,          ~0, 0);
 	SPEX32(mcsbw205gmpo,         SSB_SPROM11_MCSBW205GMPO,           ~0, 0);
 	SPEX32(mcsbw405gmpo,         SSB_SPROM11_MCSBW405GMPO,           ~0, 0);
 	SPEX32(mcsbw805gmpo,         SSB_SPROM11_MCSBW805GMPO,           ~0, 0);
-	SPEX32(mcsbw1605gmpo,        SSB_SPROM11_MCSBW1605GMPO,          ~0, 0);
 	SPEX32(mcsbw205ghpo,         SSB_SPROM11_MCSBW205GHPO,           ~0, 0);
 	SPEX32(mcsbw405ghpo,         SSB_SPROM11_MCSBW405GHPO,           ~0, 0);
 	SPEX32(mcsbw805ghpo,         SSB_SPROM11_MCSBW805GHPO,           ~0, 0);
-	SPEX32(mcsbw1605ghpo,        SSB_SPROM11_MCSBW1605GHPO,          ~0, 0);
+	SPEX(rpcal2g,                SSB_SPROM11_RPCAL_2G,               ~0, 0);
+	SPEX(rpcal5gb[0],             SSB_SPROM11_RPCAL_5GL,              ~0, 0);
+	SPEX(rpcal5gb[1],             SSB_SPROM11_RPCAL_5GM,              ~0, 0);
+	SPEX(rpcal5gb[2],             SSB_SPROM11_RPCAL_5GH,              ~0, 0);
+	SPEX(rpcal5gb[3],             SSB_SPROM11_RPCAL_5GU,              ~0, 0);
 
 	/* TODO (still open — region byte 0x190..0x1B0 reads all zero on
 	 * the reference board, so offset disambiguation by value-match is

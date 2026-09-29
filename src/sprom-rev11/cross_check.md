@@ -81,7 +81,8 @@ Checked on the bcm4360usb synth run with non-degenerate inputs:
 | `SSB_SPROM11_PWR_MAXP5GA` | 0x0C | DSL-3580L, D6220, bcm4360usb | — |
 | `SSB_SPROM11_PWR_PA5GA` | 0x10 | DSL-3580L, D6220, bcm4360usb | — |
 | `SSB_SPROM11_CCKBW202GPO` | 0x150 | DSL-3580L, D6220 | — |
-| `SSB_SPROM11_MCSBW{20,40,80,160}5G{L,M,H}PO` | 0x150–0x190, stride 4 | DSL-3580L, D6220 (160 MHz keys missing from NVRAM → INFO) | — |
+| `SSB_SPROM11_MCSBW{20,40,80}5G{L,M,H}PO` | 0x150–0x18A | DSL-3580L, D6220 | — |
+| `SSB_SPROM11_RPCAL_{2G,5GL,5GM,5GH,5GU}` | 0x16C, 0x16E, 0x17C, 0x17E, 0x18C | D6220, agcombo | `SROM11_RPCAL_*` = words 182, 183, 190, 191, 198 |
 | sub-band offsets (`SB20IN40*`, …) | words 200–218 | zero on every board | `bcmsrom_fmt.h` |
 | reused `SSB_SPROM8_BOARDREV` | 0x0082 | DSL-3580L, D6220, bcm4360usb | revmask covers rev 11 |
 

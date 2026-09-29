@@ -28,10 +28,10 @@ is 0 if nothing failed.
 
 | vector | result | the INFO lines |
 |---|---|---|
-| DSL-3580L (raw) | 77 PASS / 0 FAIL / 2 INFO | SROM-vs-NVRAM source differences for `il0mac` and `country_code` |
-| D6220 (raw) | 74 PASS / 0 FAIL / 5 INFO | the same two, plus three `mcsbw1605g{l,m,h}po` keys the NVRAM does not declare |
-| agcombo (synth) | 75 PASS / 0 FAIL / 4 INFO | `country_code`, plus the three 160 MHz keys |
-| bcm4360usb (synth) | 29 PASS / 0 FAIL / 50 INFO | keys missing from the minimal NVRAM template |
+| DSL-3580L (raw) | 74 PASS / 0 FAIL / 7 INFO | `il0mac` and `country_code` differ between SROM and NVRAM; the NVRAM has no `rpcal` keys |
+| D6220 (raw) | 79 PASS / 0 FAIL / 2 INFO | the same two |
+| agcombo (synth) | 80 PASS / 0 FAIL / 1 INFO | `country_code` |
+| bcm4360usb (synth) | 29 PASS / 0 FAIL / 52 INFO | keys missing from the minimal NVRAM template |
 
 ## Synth mode
 

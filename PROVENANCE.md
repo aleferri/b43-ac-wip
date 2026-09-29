@@ -1,4 +1,4 @@
-# Provenance of the stock-driver binaries
+# Provenance of the stock-driver binaries and third-party captures
 
 ## DSL-3580L — `wlDSL-3580_EU.o_save`
 
@@ -7,6 +7,14 @@ From the D-Link GPL source release for the DSL-3580L, firmware v1.01, tarball
 https://github.com/aleferri/dsl-3580l-sources (release `gpl-release`).
 Reference build of that release: `make PROFILE=DSL-3580_EU`, uClibc crosstools
 gcc-4.4.2 toolchain on Ubuntu 10.04.
+
+The mirror's release asset is `DSL-3580_EU_1.00_10232013_GPL.tar.gz`, firmware
+v1.00, not the v1.01 tarball above. Inside `bcm963xx_.L._consumer.tar.gz` it
+has two `wl` objects: `impl14/` is 6.30.102.3, `impl14_v07/` is 6.30.102.7.
+`src/radio_2069.c`'s channel table is `chan_tuning_2069rev4` of the latter,
+sha256 `73b58f069e5ce3f3f8b6a111df4a3e6de57ed22761a53c41ba50c05ab0b07233`,
+extracted with `reverse-tools/extract_chan_tuning_2069rev4.py --min-freq 2400`:
+the 50 5 GHz rows and the 14 2.4 GHz rows.
 
 ## D6220 — `wlD6220.o_save`
 
@@ -30,3 +38,13 @@ rules out per-board calibration; see `b43_acphy_txgain_epa_5g_2069rev4` in
 **TODO:** origin and mirror of the image, and the `wl` revision it contains.
 Unlike the two blobs above, this entry does not say how to obtain the file
 again, so the 128/128 check cannot be reproduced from this tree today.
+
+## MacBookAir6,1 capture — `router-data/macbookair6-1/`
+
+Taken by gonsolo, https://github.com/gonsolo/bcm4360-acphy, file
+`traces/wl-init-20260926-132021.trace` at commit `2a24fb2`, with his
+`wl_full_trace.bt`. Only the capture is used; that repository also holds
+material derived from decompiling `wl.ko`, which this project does not use.
+
+**TODO:** the repository has no licence file; permission to redistribute the
+capture is pending.

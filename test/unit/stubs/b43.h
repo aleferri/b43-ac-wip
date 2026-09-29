@@ -174,6 +174,8 @@ struct ssb_sprom {
 	/* Antenna gain per band, quarter-dB, SROM ag0/ag1. Index 1 is 5 GHz. */
 	u16 pdoffset40ma[3];
 	u16 pdoffset80ma[3];
+	u16 rpcal2g;
+	u16 rpcal5gb[4];
 	s8 antenna_gain_qdb[2];
 	u16 mcslr5gpo[3];
 	u16 sb20in40hrpo;

@@ -17,8 +17,9 @@ struct b43_wldev;
  *   chan_raw6[6]   the r2069_chan_writes batch, offsets 82 to 92, registers
  *                  0x11a, 0x11b, 0x719, 0x630, 0x65c and 0x662
  *
- * These values are validated against the vendor sweep on all 16 BW20 channels
- * by reverse-tools/check_channeltab.py.
+ * The rows are chan_tuning_2069rev4 of the 6.30.102.7 blob, 2.4 and 5 GHz,
+ * with one register map for both bands. reverse-tools/check_channeltab.py
+ * checks them against the captures' BW20 segments.
  */
 struct b43_phy_ac_channeltab_e_radio2069 {
 	u8  channel;

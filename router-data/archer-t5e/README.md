@@ -1,7 +1,7 @@
 # router-data/archer-t5e — BCM4360 PCIe card, hybrid wl 6.30.223 on x86
 
-An mmiotrace of the hybrid Linux `wl`, the only capture of it and the only one
-taken on x86. It shows the MAC and the DMA, which the accessor hooks never
+An mmiotrace of the hybrid Linux `wl` on x86; `../macbookair6-1/` is the other
+capture of that driver. It shows the MAC and the DMA, which the accessor hooks never
 traced; it does not show config space (window moves) or host memory
 (descriptors, frames).
 

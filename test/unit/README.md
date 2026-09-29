@@ -35,6 +35,10 @@ post-bring-up events and the environment (`timeline.py`, `beacon_reloads.py`,
 `cmp_skip.py` and `compare.py`. The head of the script says why each step is
 where it is.
 
+`./band_gate.sh` (`BOARD=archer` for the SROM-derived values) compares the
+port's 2.4 GHz delta with the one the MacBookAir6,1 and the archer-t5e share;
+see `../../docs/retrace-todo.md`, "2.4 GHz".
+
 Run the periodic gate after **every** change: it is the only
 position-by-position comparison at `MATCH`, the most sensitive regression
 detector there is.
@@ -114,11 +118,15 @@ goal:
 - **No `#ifdef` in `src/`.** Every hardware accessor is intercepted at link
   time with `-Wl,--wrap=<sym>` (`WRAP_SYMS` in the `Makefile`). A new driver
   helper that touches hardware needs a line there, or its operations vanish.
+  The one exception is temporary: the harness builds with `-DALLOW_24=true`,
+  which lifts `switch_channel`'s refusal of 2.4 GHz; `AC_CHANNEL` 1 to 14 is
+  that band.
 - **`wrap.c`** emits a wl-diag line per access, keeps a mirror of the writes and
   serves reads from the oracle, then any read plan, then the mirror. Table
   cells have their own oracle and mirror keyed by `(id, offset)`.
 - **`main.c`** builds a fake `struct b43_wldev` from a board profile
-  (`../board_profile.h`: `d6220`, `dsl`, `agcombo`, `tg789`) and runs a flow:
+  (`../board_profile.h`: `d6220`, `dsl`, `agcombo`, `tg789`, and `archer`, the
+  one dual-band SROM) and runs a flow:
   `full` (cold attach, bring-up and the timeline, against a cold segment),
   `up` (with `AC_FIRST_INIT=0`, against a hot segment), `periodic`,
   `switch_channel`, and pieces (`down`, `op_init`, `rfkill`, `crsmin`,

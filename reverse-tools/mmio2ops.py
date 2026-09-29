@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Decode a bus-level capture of a PCIe BCMA wireless chip into op classes.
 
-Two capture formats, the same device traffic:
+Three capture formats, the same device traffic:
 
     mmiotrace     the Linux kernel's mmiotrace text, taken on an x86 host
                   (router-data/archer-t5e);
     wl-mmio-trap  the binary records of wl-mmio-trap/, taken on a MIPS
-                  big-endian router (router-data/agcombo/*.bin).
+                  big-endian router (router-data/agcombo/*.bin);
+    bpftrace      `<ns> R32|W16|... <va> <val>` lines from kprobes on the
+                  hybrid wl's osl_read*/osl_write* (router-data/macbookair6-1).
 
 The trace is the raw MMIO traffic on BAR0 (16 KiB, PCIe gen2 layout):
 
@@ -132,7 +134,25 @@ def parse_wl_mmio_trap(path):
             print(f"{path}: {aux} records dropped before #{seq}", file=sys.stderr)
 
 
-PARSERS = {"mmiotrace": parse_mmiotrace, "wl-mmio-trap": parse_wl_mmio_trap}
+def parse_bpftrace(path):
+    """Accesses of a bpftrace capture of osl_read*/osl_write*.
+
+    The addresses are kernel virtual addresses of wl's BAR0 mapping; the base
+    is the page of the lowest one, which is the sliding window at BAR0 + 0.
+    The osl_delay lines are not bus traffic and are skipped."""
+    acc = []
+    for line in open(path):
+        f = line.split()
+        if len(f) == 4 and f[1][0] in "RW" and f[1][1:] in ("8", "16", "32"):
+            acc.append((int(f[0]), f[1][0], int(f[1][1:]) // 8,
+                        int(f[2], 16), int(f[3], 16)))
+    base = min(a[3] for a in acc) & ~0xfff
+    for ts, kind, width, addr, val in acc:
+        yield Op(ts / 1e9, kind, width, addr - base, val)
+
+
+PARSERS = {"mmiotrace": parse_mmiotrace, "wl-mmio-trap": parse_wl_mmio_trap,
+           "bpftrace": parse_bpftrace}
 
 
 def guess_format(path):
@@ -415,7 +435,8 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("trace")
     ap.add_argument("--format", choices=sorted(PARSERS),
-                    help="capture format (default: binary is wl-mmio-trap, text is mmiotrace)")
+                    help="capture format (default: binary is wl-mmio-trap, text is mmiotrace; "
+                         "bpftrace must be named)")
     ap.add_argument("-o", "--out", help="decoded ops (default: stdout)")
     ap.add_argument("--srom", help="write the SROM words read through the chipcommon alias here")
     ap.add_argument("--erom", action="store_true",

@@ -39,6 +39,12 @@
 #include "rxiqcal_phy_ac.h"
 #include "main.h"
 
+/* Temporary: the 2.4 GHz channel set is incomplete. The unit harness builds
+ * with -DALLOW_24=true to exercise it. */
+#ifndef ALLOW_24
+#define ALLOW_24 false
+#endif
+
 /* Basic PHY ops */
 
 static int b43_phy_ac_op_allocate(struct b43_wldev *dev)
@@ -108,13 +114,12 @@ static void b43_phy_ac_txpwrctrl_setup(struct b43_wldev *dev, u16 freq);
  *    the recalc. The high byte of 0x0324 and friends is the one-shot reset
  *    already done in op_switch_channel; the low byte is the recalculated
  *    threshold, from the crsmin chain verified against the d6220 7.14 blob
- *    (ladder, per-bandwidth anchoring, clamp and cold bump). The one input
- *    that cannot be reproduced without hardware is the interference sample
- *    per freq_range: it is pinned here to the steady-state low-5 GHz value
- *    and has to be replaced by the measurement on real hardware.
+ *    (ladder, per-bandwidth anchoring, clamp and cold bump), on the index of
+ *    the per-chain ring the watchdog fills from the noise window.
  *
  * 3. The periodic cycle on 0x0725/0x0925 is the tempsense inside
- *    b43_phy_ac_watchdog(), the pwork_15sec hook, every temps_period turns.
+ *    b43_phy_ac_watchdog(), from the pwork_1sec hook, every temps_period
+ *    turns.
  */
 static enum b43_txpwr_result
 b43_phy_ac_op_recalc_txpower(struct b43_wldev *dev, bool ignore_tssi)
@@ -1867,6 +1872,11 @@ static void b43_phy_ac_txpwr_target_write(struct b43_wldev *dev)
  * entries instead of 64. The coefficients come from the SPROM pa5ga[] array
  * for the current sub-band, like pa_5g[] in phy_n.c, with a per-core default
  * for boards whose triple is all zero.
+ *
+ * On 2.4 GHz the triple is pa2ga[], one for the band: with the archer-t5e's
+ * SROM this gives its hybrid wl's tables 0x40 and 0x60 on 2.4 GHz, 128 of 128
+ * on both chains. The per-core default is the 5 GHz one; no board here has an
+ * empty pa2ga to show the 2.4 GHz default.
  */
 static void b43_phy_ac_est_pwr_lut(struct b43_wldev *dev, unsigned int core,
 				   unsigned int grp, u16 *lut)
@@ -1878,15 +1888,16 @@ static void b43_phy_ac_est_pwr_lut(struct b43_wldev *dev, unsigned int core,
 	};
 	const struct ssb_sprom_core_pwr_info *pw =
 		&dev->dev->bus_sprom->core_pwr_info[core];
+	const u16 *pa = b43_current_band(dev->wl) == NL80211_BAND_2GHZ ?
+		pw->pa2ga : &pw->pa5ga[grp * 3];
 	s16 a1, b0, b1;
 	s32 num, den;
 	int j;
 
-	if (pw->pa5ga[grp * 3] || pw->pa5ga[grp * 3 + 1] ||
-	    pw->pa5ga[grp * 3 + 2]) {
-		a1 = (s16)pw->pa5ga[grp * 3];
-		b0 = (s16)pw->pa5ga[grp * 3 + 1];
-		b1 = (s16)pw->pa5ga[grp * 3 + 2];
+	if (pa[0] || pa[1] || pa[2]) {
+		a1 = (s16)pa[0];
+		b0 = (s16)pa[1];
+		b1 = (s16)pa[2];
 	} else {
 		a1 = pwrdet_def[core].a1;
 		b0 = pwrdet_def[core].b0;
@@ -1947,9 +1958,18 @@ static void b43_phy_ac_txpwrctrl_program(struct b43_wldev *dev,
 	 * mcsbw*po table: those nibbles differ between boards and bands, and the
 	 * payload does not follow them.
 	 */
+	/*
+	 * On 2.4 GHz the MacBookAir6,1, whose 5 GHz entries are 0x0403, and the
+	 * archer-t5e write the table as zeros. The 2.4 GHz field,
+	 * pdoffset2g40ma (SROM word 100), is not extracted; it is blank (0xffff)
+	 * on the archer-t5e.
+	 */
 	for_each_set_bit(core, &dev->phy.ac->coremask, num_cores) {
 		const struct ssb_sprom *sp = dev->dev->bus_sprom;
 		u32 o40, o80;
+
+		if (b43_current_band(dev->wl) == NL80211_BAND_2GHZ)
+			break;
 
 		o40 = (sp->pdoffset40ma[core] >> (4 * grp)) & 0xf;
 		o80 = (sp->pdoffset80ma[core] >> (4 * grp)) & 0xf;
@@ -2050,11 +2070,11 @@ static void b43_phy_ac_txpwrctrl_setup(struct b43_wldev *dev, u16 freq)
  * Byte-for-byte transcription of the vendor blob symbol
  * `acphy_txgain_epa_5g_2069rev4` (wlD6220.o .rodata @ 0x403af0, 768 bytes).
  * Each of the 128 entries is a triplet of big-endian u16 fields as stored
- * in the blob; here they are re-expressed as host-endian u16 so callers
- * don't need to swap:
- *   [0] gaincurve   -- byte-wide value emitted into TBL 0x20 (low 8 bits)
- *   [1] bbmult_attn -- baseband multiplier + attenuation index
- *   [2] gaincode    -- radio gain code word
+ * in the blob, re-expressed here as host-endian u16: one 48-bit entry per TX
+ * power index. Bits 7:0 are the bbmult, the byte table 0x20 and the 0x0c
+ * cells 0x63/0x73 + 4 * core take; bits 47:8 are the three gain code words
+ * b43_phy_ac_txpwr_by_index() writes to table 0x07 at 0x100/0x103/0x106 +
+ * core.
  *
  * Verified byte-for-byte across three independent blob branches carrying
  * the same symbol name: wlDSL-3580_EU.o_save (6.30), wlD6220.o_save
@@ -2064,15 +2084,12 @@ static void b43_phy_ac_txpwrctrl_setup(struct b43_wldev *dev, u16 freq)
  * independent boards carrying the same exact value rules out per-board
  * calibration -- this is the generic 7.x-branch table.
  *
- * Hypothesis (from blob symbol layout observed via `strings`): the vendor
- * routine wlc_phy_ac_gains_load selects this table on boards with radio ID
- * 0x2069, rev 4, and EPA configuration derived from NVRAM. D6220 and
- * DSL-3580L both carry femctrl=6, epagain5g=0, papdcap5g=0 in NVRAM and
- * are expected to land on this same table.
+ * The low byte of column [0] reproduces the vendor's table 0x20 load 128/128.
+ * The 6.30 hybrid loads the whole entries there instead, and its 5 GHz
+ * table differs from this one in 38 of 384 words.
  *
- * Only column [0] is currently consumed (extracted inline before the
- * TBL 0x20 bulk write in b43_phy_ac_channel_setup). The byte-low of column
- * [0] reproduces the vendor's TBL 0x20 bulk 128/128 exactly.
+ * Which table, EPA or IPA, the blob picks on which board is not established;
+ * every board captured uses the EPA ones.
  */
 static const u16 b43_acphy_txgain_epa_5g_2069rev4[128][3] = {
 	{ 0x0044, 0x7f00, 0xf3ff },
@@ -2205,6 +2222,152 @@ static const u16 b43_acphy_txgain_epa_5g_2069rev4[128][3] = {
 	{ 0x0002, 0x0700, 0xf32f },
 };
 
+/*
+ * The same table for 2.4 GHz, `acphy_txgain_epa_2g_2069rev4` of the 6.30.102.7
+ * blob (wlDSL-3580_EU.o_save of impl14_v07, the one src/radio_2069.c's channel
+ * table comes from). The hybrid wl on the MacBookAir6,1 and on the archer-t5e
+ * loads it whole into table 0x20 on 2.4 GHz, 384 of 384 words on both, and
+ * its TX gain loads during the ch6 calibration are entries 10, 20 and 64.
+ * Unlike the 5 GHz one, it is not checked against a 7.14 blob.
+ */
+static const u16 b43_acphy_txgain_epa_2g_2069rev4[128][3] = {
+	{ 0x0044, 0xffff, 0xa7ff },
+	{ 0x0040, 0xffff, 0xa7ff },
+	{ 0x003f, 0xffff, 0xa7ef },
+	{ 0x003f, 0xffff, 0xa7df },
+	{ 0x003f, 0xffff, 0xa7cf },
+	{ 0x0040, 0xffff, 0xa7bf },
+	{ 0x0041, 0xffff, 0xa7af },
+	{ 0x0040, 0xffff, 0xa7a7 },
+	{ 0x003f, 0xffff, 0xa79f },
+	{ 0x0041, 0xffff, 0xa78f },
+	{ 0x0041, 0xffff, 0xa787 },
+	{ 0x0040, 0xffff, 0xa77f },
+	{ 0x0040, 0xffff, 0xa777 },
+	{ 0x0040, 0xffff, 0xa76f },
+	{ 0x0041, 0xffff, 0xa767 },
+	{ 0x0042, 0xffff, 0xa75f },
+	{ 0x003e, 0xffff, 0xa75f },
+	{ 0x0040, 0xffff, 0xa757 },
+	{ 0x0042, 0xffff, 0xa74f },
+	{ 0x003e, 0xffff, 0xa74f },
+	{ 0x0041, 0xffff, 0xa747 },
+	{ 0x003d, 0xffff, 0xa747 },
+	{ 0x0040, 0xffff, 0xa73f },
+	{ 0x003d, 0xffff, 0xa73f },
+	{ 0x0041, 0xffff, 0xa737 },
+	{ 0x003d, 0xffff, 0xa737 },
+	{ 0x0043, 0xffff, 0xa72f },
+	{ 0x0040, 0xffff, 0xa72f },
+	{ 0x003c, 0xffff, 0xa72f },
+	{ 0x0043, 0xffff, 0xa727 },
+	{ 0x0040, 0xffff, 0xa727 },
+	{ 0x003c, 0xffff, 0xa727 },
+	{ 0x0046, 0xffff, 0xa71f },
+	{ 0x0042, 0xffff, 0xa71f },
+	{ 0x003e, 0xffff, 0xa71f },
+	{ 0x003b, 0xffff, 0xa71f },
+	{ 0x004a, 0xffff, 0xa717 },
+	{ 0x0046, 0xffff, 0xa717 },
+	{ 0x0042, 0xffff, 0xa717 },
+	{ 0x003e, 0xffff, 0xa717 },
+	{ 0x003b, 0xffff, 0xa717 },
+	{ 0x0037, 0xffff, 0xa717 },
+	{ 0x004c, 0xffff, 0xa70f },
+	{ 0x0048, 0xffff, 0xa70f },
+	{ 0x0044, 0xffff, 0xa70f },
+	{ 0x0040, 0xffff, 0xa70f },
+	{ 0x003c, 0xffff, 0xa70f },
+	{ 0x0039, 0xffff, 0xa70f },
+	{ 0x0036, 0xffff, 0xa70f },
+	{ 0x0033, 0xffff, 0xa70f },
+	{ 0x002f, 0xffff, 0xa70f },
+	{ 0x0055, 0xffff, 0xa707 },
+	{ 0x0050, 0xffff, 0xa707 },
+	{ 0x004b, 0xffff, 0xa707 },
+	{ 0x0047, 0xffff, 0xa707 },
+	{ 0x0043, 0xffff, 0xa707 },
+	{ 0x003f, 0xffff, 0xa707 },
+	{ 0x003c, 0xffff, 0xa707 },
+	{ 0x0038, 0xffff, 0xa707 },
+	{ 0x0035, 0xffff, 0xa707 },
+	{ 0x0032, 0xffff, 0xa707 },
+	{ 0x0030, 0xffff, 0xa707 },
+	{ 0x002d, 0xffff, 0xa707 },
+	{ 0x002a, 0xffff, 0xa707 },
+	{ 0x003f, 0xcfff, 0xa707 },
+	{ 0x0042, 0xc7ff, 0xa707 },
+	{ 0x003f, 0xc7ff, 0xa707 },
+	{ 0x0043, 0xbfff, 0xa707 },
+	{ 0x003f, 0xbfff, 0xa707 },
+	{ 0x0045, 0xb7ff, 0xa707 },
+	{ 0x0041, 0xb7ff, 0xa707 },
+	{ 0x003d, 0xb7ff, 0xa707 },
+	{ 0x0044, 0xafff, 0xa707 },
+	{ 0x0040, 0xafff, 0xa707 },
+	{ 0x003d, 0xafff, 0xa707 },
+	{ 0x0046, 0xa7ff, 0xa707 },
+	{ 0x0041, 0xa7ff, 0xa707 },
+	{ 0x003e, 0xa7ff, 0xa707 },
+	{ 0x003b, 0xa7ff, 0xa707 },
+	{ 0x0046, 0x9fff, 0xa707 },
+	{ 0x0042, 0x9fff, 0xa707 },
+	{ 0x003e, 0x9fff, 0xa707 },
+	{ 0x003b, 0x9fff, 0xa707 },
+	{ 0x0037, 0x9fff, 0xa707 },
+	{ 0x0046, 0x97ff, 0xa707 },
+	{ 0x0042, 0x97ff, 0xa707 },
+	{ 0x003f, 0x97ff, 0xa707 },
+	{ 0x003b, 0x97ff, 0xa707 },
+	{ 0x0038, 0x97ff, 0xa707 },
+	{ 0x0035, 0x97ff, 0xa707 },
+	{ 0x004c, 0x8fff, 0xa707 },
+	{ 0x0048, 0x8fff, 0xa707 },
+	{ 0x0044, 0x8fff, 0xa707 },
+	{ 0x0040, 0x8fff, 0xa707 },
+	{ 0x003c, 0x8fff, 0xa707 },
+	{ 0x0039, 0x8fff, 0xa707 },
+	{ 0x0036, 0x8fff, 0xa707 },
+	{ 0x0033, 0x8fff, 0xa707 },
+	{ 0x0030, 0x8fff, 0xa707 },
+	{ 0x002d, 0x8fff, 0xa707 },
+	{ 0x0058, 0x87ff, 0xa707 },
+	{ 0x0053, 0x87ff, 0xa707 },
+	{ 0x004f, 0x87ff, 0xa707 },
+	{ 0x004a, 0x87ff, 0xa707 },
+	{ 0x0046, 0x87ff, 0xa707 },
+	{ 0x0042, 0x87ff, 0xa707 },
+	{ 0x003e, 0x87ff, 0xa707 },
+	{ 0x003b, 0x87ff, 0xa707 },
+	{ 0x0038, 0x87ff, 0xa707 },
+	{ 0x0035, 0x87ff, 0xa707 },
+	{ 0x0032, 0x87ff, 0xa707 },
+	{ 0x002f, 0x87ff, 0xa707 },
+	{ 0x002c, 0x87ff, 0xa707 },
+	{ 0x002a, 0x87ff, 0xa707 },
+	{ 0x0027, 0x87ff, 0xa707 },
+	{ 0x0025, 0x87ff, 0xa707 },
+	{ 0x0023, 0x87ff, 0xa707 },
+	{ 0x0021, 0x87ff, 0xa707 },
+	{ 0x001f, 0x87ff, 0xa707 },
+	{ 0x001e, 0x87ff, 0xa707 },
+	{ 0x001c, 0x87ff, 0xa707 },
+	{ 0x001a, 0x87ff, 0xa707 },
+	{ 0x0019, 0x87ff, 0xa707 },
+	{ 0x0017, 0x87ff, 0xa707 },
+	{ 0x0016, 0x87ff, 0xa707 },
+	{ 0x0015, 0x87ff, 0xa707 },
+	{ 0x0014, 0x87ff, 0xa707 },
+	{ 0x0013, 0x87ff, 0xa707 },
+};
+
+static const u16 (*b43_phy_ac_txgain_table(struct b43_wldev *dev))[3]
+{
+	if (b43_current_band(dev->wl) == NL80211_BAND_2GHZ)
+		return b43_acphy_txgain_epa_2g_2069rev4;
+	return b43_acphy_txgain_epa_5g_2069rev4;
+}
+
 /**************************************************
  * Open-loop TX gain (fixed index)
  **************************************************/
@@ -2244,7 +2407,7 @@ void b43_phy_ac_txpwr_by_index(struct b43_wldev *dev, u8 idx)
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
 
 	for_each_set_bit(core, &ac->coremask, ac->num_cores) {
-		const u16 *e = b43_acphy_txgain_epa_5g_2069rev4[idx];
+		const u16 *e = b43_phy_ac_txgain_table(dev)[idx];
 		u16 g0, g1, g2, bbmult;
 
 
@@ -3951,16 +4114,15 @@ static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
 	 * Bulk write of table 0x20, a 128-byte gain curve, invariant across
 	 * every capture. It goes through the alternate DATA port 0x011, which
 	 * actab_write_bulk() handles for id 0x20. The buffer is column 0, the
-	 * gain curve, of b43_acphy_txgain_epa_5g_2069rev4 -- the low byte of
-	 * each u16.
+	 * gain curve, of the band's TX gain table -- the low byte of each u16.
 	 */
 	{
+		const u16 (*txgain)[3] = b43_phy_ac_txgain_table(dev);
 		u8 gaincurve[128];
 		unsigned int k;
 
 		for (k = 0; k < 128; k++)
-			gaincurve[k] = (u8)(b43_acphy_txgain_epa_5g_2069rev4[k][0]
-					    & 0xff);
+			gaincurve[k] = (u8)(txgain[k][0] & 0xff);
 		b43_actab_write_bulk(dev, 0x20, 0x0000, 8, 128, gaincurve);
 	}
 
@@ -4268,23 +4430,23 @@ static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
  * Table id 0x11, 464 words, loaded through the alternate data register 0x0011
  * by b43_actab_write_r11().
  *
- * Only the twelve words at the head and the four at the tail are real data,
- * and both are channel-invariant. The 448 words between them are a single
- * repeated value that depends on the sub-band.
+ * The twelve words at the head and the four at the tail are constant, the
+ * same on every board and driver version captured. The 448 words between
+ * them repeat one value per sub-band: a unit phasor, 512 * e^(j theta), built
+ * from the SROM's rpcal word for that sub-band -- rpcal2g on 2.4 GHz,
+ * rpcal5gb0..3 on the four pa5g sub-bands. With p the low byte of rpcal and
+ * a step of 2 pi / 256:
  *
- * Counted on every one of the 43 cold segments, all three bandwidths: 0x18f1
- * up to ch48, 0x7907 from ch52 to ch144, 0x080d from ch149 up. Three values,
- * not two -- the old sweep stopped at ch140 and could not see the third.
+ *   I = round(512 * cos((p + 1) * step))
+ *   Q = -round(512 * sin(p * step))
+ *   word = (Q & 0x1f) << 11 | (I & 0x7ff)
  *
- * The two boundaries fall where pa5g_group() puts its first and third, 5250
- * and 5744, but the family is not pa5g_group: that one splits again at 5500,
- * and ch100 to ch140 carry the same value as ch52 to ch64. Where exactly the
- * upper boundary sits between 5720 and 5745 the sweep cannot say, since it has
- * no channel in between; 5744 is taken from the SROM partition so that the two
- * places read the same, not because the data picks it.
- *
- * Resta una tabella fittata: i tre valori sono quelli che le catture mostrano,
- * non una regola ricavata da chi scrive quelle celle.
+ * Exact on the six (rpcal, word) pairs of the two routers that load the
+ * table: the d6220's 0x012b/0x0129/0x0129/0xff3e give 0x18f1/0x7907/
+ * 0x7907/0x080d, the agcombo's 0x172b/0x1823/0x1021 give 0x18f1/0xe145/
+ * 0x6958. The high byte of rpcal does not enter. The 6.30 hybrid writes the
+ * whole 48-bit entry, I in bits 10:0, Q in 21:11 and bit 22 set; with rpcal
+ * zero the archer-t5e's is (512, 0), what the formula gives.
  */
 static const u16 b43_acphy_tbl11_head[12] = {
 	0x005b, 0x8250, 0xc338, 0x4527, 0xa6a1, 0x081b,
@@ -4296,13 +4458,43 @@ static const u16 b43_acphy_tbl11_tail[4] = { 0x0000, 0x0000, 0x0000, 0x0000 };
 #define B43_PHY_AC_TBL11_FILL_OFF	12
 #define B43_PHY_AC_TBL11_FILL_LEN	448
 
-static u16 b43_phy_ac_tbl11_fill(u16 freq)
+/* round(512 * sin(k * 2 pi / 256)) for k = 0..64. */
+static const u16 b43_phy_ac_sin512_q[65] = {
+	  0,  13,  25,  38,  50,  63,  75,  88, 100, 112, 124, 137, 149,
+	161, 172, 184, 196, 207, 219, 230, 241, 252, 263, 274, 284, 295,
+	305, 315, 325, 334, 344, 353, 362, 371, 379, 388, 396, 404, 411,
+	419, 426, 433, 439, 445, 452, 457, 463, 468, 473, 478, 482, 486,
+	490, 493, 497, 500, 502, 504, 506, 508, 510, 511, 511, 512, 512,
+};
+
+static s16 b43_phy_ac_sin512(unsigned int k)
 {
-	if (freq < 5250)
-		return 0x18f1;
-	if (freq > 5744)
-		return 0x080d;
-	return 0x7907;
+	k &= 0xff;
+	if (k <= 64)
+		return b43_phy_ac_sin512_q[k];
+	if (k <= 128)
+		return b43_phy_ac_sin512_q[128 - k];
+	if (k <= 192)
+		return -b43_phy_ac_sin512_q[k - 128];
+	return -b43_phy_ac_sin512_q[256 - k];
+}
+
+static u16 b43_phy_ac_rpcal(struct b43_wldev *dev)
+{
+	const struct ssb_sprom *sp = dev->dev->bus_sprom;
+
+	if (b43_current_band(dev->wl) == NL80211_BAND_2GHZ)
+		return sp->rpcal2g;
+	return sp->rpcal5gb[b43_phy_ac_pa5g_group(dev, dev->phy.ac->cal_freq)];
+}
+
+static u16 b43_phy_ac_tbl11_fill(struct b43_wldev *dev)
+{
+	unsigned int p = b43_phy_ac_rpcal(dev) & 0xff;
+	s16 i = b43_phy_ac_sin512(p + 1 + 64);
+	s16 q = -b43_phy_ac_sin512(p);
+
+	return (u16)(((q & 0x1f) << 11) | (i & 0x7ff));
 }
 
 /*
@@ -4339,21 +4531,27 @@ static void b43_phy_ac_chan_tables(struct b43_wldev *dev)
 	 * nshp -- are not here; noise_shaping_table_init() emits those.
 	 */
 	/*
-	 * The 7.14.89 driver loads it on the 4352 and not on the 4360: the
-	 * d6220 writes it on every segment and the tg789vac, same driver, on
-	 * none. The agcombo, a 4360 on 7.14.43, does load it. Where it is not
-	 * loaded the gate cycle around it is absent too: after 0x00f5 the
-	 * tg789vac goes straight to the noise-shaping lock.
+	 * Loaded where the SROM carries rpcal: on the d6220 (a 4352) and the
+	 * agcombo (a 4360), not on the tg789vac (a 4360) or the DSL-3580L (a
+	 * 4352), whose five rpcal words are all zero. The 6.30 hybrid loads it
+	 * whatever the words. Where it is not loaded the gate cycle around it
+	 * is absent too: after 0x00f5 the tg789vac goes straight to the
+	 * noise-shaping lock.
 	 */
-	if (dev->dev->chip_id != 0x4352)
-		return;
+	{
+		const struct ssb_sprom *sp = dev->dev->bus_sprom;
+
+		if (!sp->rpcal2g && !sp->rpcal5gb[0] && !sp->rpcal5gb[1] &&
+		    !sp->rpcal5gb[2] && !sp->rpcal5gb[3])
+			return;
+	}
 
 	saved = b43_phy_ac_tbl_write_lock(dev);
 	b43_actab_write_r11(dev, 0x11, 0, ARRAY_SIZE(b43_acphy_tbl11_head),
 			    b43_acphy_tbl11_head);
 	b43_actab_fill_r11(dev, 0x11, B43_PHY_AC_TBL11_FILL_OFF,
 			   B43_PHY_AC_TBL11_FILL_LEN,
-			   b43_phy_ac_tbl11_fill(dev->phy.ac->cal_freq));
+			   b43_phy_ac_tbl11_fill(dev));
 	b43_actab_write_r11(dev, 0x11,
 			    B43_PHY_AC_TBL11_FILL_OFF + B43_PHY_AC_TBL11_FILL_LEN,
 			    ARRAY_SIZE(b43_acphy_tbl11_tail),
@@ -4419,6 +4617,13 @@ b43_phy_ac_post_noise_shaping_rx_regprog_core(struct b43_wldev *dev,
 	u16 stride = (u16)(core * 0x200);
 	u16 tbl_off = (u16)(0x00f9 + core);
 	static const u16 tbl_val = 0xc0b5;
+	/*
+	 * 0x06de and 0x06e0 are 0x014a on 2.4 GHz, on both cores of the
+	 * MacBookAir6,1 and the archer-t5e, where 5 GHz has 0x015a and 0x016a.
+	 * The rest of the block moves between those boards on 2.4 GHz, and
+	 * 0x06e1 already on 5 GHz: board data, transcribed here from the d6220.
+	 */
+	bool band_2g = b43_current_band(dev->wl) == NL80211_BAND_2GHZ;
 
 	/* peek + program 0x06dc/0x06dd */
 	cur = b43_phy_read_log(dev, 0x06dc + stride);
@@ -4434,10 +4639,10 @@ b43_phy_ac_post_noise_shaping_rx_regprog_core(struct b43_wldev *dev,
 
 	/* 5 gruppi (MOD 0x06e3+stride clear bit 1) + 2 write */
 	b43_phy_maskset(dev, 0x06e3 + stride, (u16)~0x0002, 0x0000);
-	b43_phy_write(dev, 0x06de + stride, 0x015a);
+	b43_phy_write(dev, 0x06de + stride, band_2g ? 0x014a : 0x015a);
 	b43_phy_write(dev, 0x06df + stride, 0x0004);
 	b43_phy_maskset(dev, 0x06e3 + stride, (u16)~0x0002, 0x0000);
-	b43_phy_write(dev, 0x06e0 + stride, 0x016a);
+	b43_phy_write(dev, 0x06e0 + stride, band_2g ? 0x014a : 0x016a);
 	b43_phy_write(dev, 0x06e1 + stride, 0x0018);
 	b43_phy_maskset(dev, 0x06e3 + stride, (u16)~0x0002, 0x0000);
 	b43_phy_write(dev, 0x06e4 + stride, 0x013a);
@@ -5403,8 +5608,10 @@ static void b43_phy_ac_chanspec_tail(struct b43_wldev *dev)
  * driver emits this for every num_cores without filtering, on 2x2 boards
  * too.
  *
- * Uses rxgains_5gl, U-NII-1, consistent with the ch36 target. 5gm and 5gh
- * will need a per-sub-band selection.
+ * Uses rxgains_5gl on 5 GHz, U-NII-1, consistent with the ch36 target; 5gm
+ * and 5gh will need a per-sub-band selection. On 2.4 GHz it uses rxgains_2g:
+ * the archer-t5e's SROM has elnagain 4 there and 3 in 5gl, and its hybrid wl
+ * writes the header as 0x0e on 2.4 GHz and 0x0c on 5 GHz on every chain.
  * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   10578-10621, 10738-10781, 10898-10941]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -5416,7 +5623,9 @@ static void b43_phy_ac_rxgain_init(struct b43_wldev *dev, unsigned int core)
 	static const u16 fill_07[10] = { 7, 7, 7, 7, 7, 7, 7, 7, 7, 7 };
 	static const u16 fill_02[10] = { 2, 2, 2, 2, 2, 2, 2, 2, 2, 2 };
 	const struct ssb_sprom *sprom = dev->dev->bus_sprom;
-	const struct ssb_sprom_rxgains *rxgains = &sprom->rxgains_5gl;
+	const struct ssb_sprom_rxgains *rxgains =
+		b43_current_band(dev->wl) == NL80211_BAND_2GHZ ?
+		&sprom->rxgains_2g : &sprom->rxgains_5gl;
 	u16 ps = (u16)(core * 0x0200);
 	u16 ta = (u16)(0x0044 + core * 0x0020);
 	u16 tb = (u16)(0x0045 + core * 0x0020);
@@ -10663,7 +10872,7 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	struct b43_phy *phy = &dev->phy;
 	u16 off;
 
-	if (b43_current_band(dev->wl) == NL80211_BAND_2GHZ) {
+	if (!ALLOW_24 && b43_current_band(dev->wl) == NL80211_BAND_2GHZ) {
 		b43dbg(dev->wl,
 		       "AC-PHY: 2.4 GHz channel %u not supported on this board\n",
 		       new_channel);
@@ -10788,6 +10997,12 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	 * noise variance (tbl 0x15), gain-limit (tbl 0x0b), and noise shaping
 	 * coefficient tables (tbl 0x44/0x45 per-core, stride 0x20 on table ID).
 	 * All write data is deterministic from the ch36 d6220 trace.
+	 *
+	 * On 2.4 GHz the MacBookAir6,1 and the archer-t5e, on the 6.30 hybrid,
+	 * write the nshp runs below, the same on both boards and every core. The
+	 * first cell of each run is not taken from them: 6.30 and 7.14 already
+	 * write it differently on 5 GHz (0xfe/0xf8/1/1 against the d6220's
+	 * 0xf9/0xf5/0/0), so 2.4 GHz keeps 7.14's 5 GHz value there and says so.
 	 */
 	{
 		static const u16 nvar_data[5] = { 0x0020, 0x0021, 0x0022, 0x0023, 0x0024 };
@@ -10798,8 +11013,20 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 		static const u16 nshp_b8[6]   = { 0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005 };
 		static const u16 nshp_a10[7]  = { 0x00f5, 0x00f8, 0x00fb, 0x00fe, 0x0002, 0x0005, 0x0009 };
 		static const u16 nshp_b10[7]  = { 0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005, 0x0006 };
+		static const u16 nshp_a8_2g[6]  = { 0x00f9, 0x00ff, 0x0006, 0x000c, 0x0012, 0x0019 };
+		static const u16 nshp_a10_2g[7] = { 0x00f5, 0x00f8, 0x00fc, 0x00ff, 0x0002, 0x0002, 0x0002 };
+		static const u16 nshp_b10_2g[7] = { 0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0004, 0x0004 };
+		bool band_2g = b43_current_band(dev->wl) == NL80211_BAND_2GHZ;
+		const u16 *a8 = band_2g ? nshp_a8_2g : nshp_a8;
+		const u16 *a10 = band_2g ? nshp_a10_2g : nshp_a10;
+		const u16 *b10 = band_2g ? nshp_b10_2g : nshp_b10;
 		u16 saved;
 		unsigned int core;
+
+		if (band_2g)
+			b43_phy_ac_todo(dev,
+				"2.4 GHz noise shaping: the first cell of each "
+				"run is 7.14's 5 GHz value, not measured");
 
 		/*
 		 * Phase 1: gate cycle, enable, shared tables.
@@ -10837,7 +11064,7 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 			u16 rd6[6];
 
 			b43_actab_read_bulk(dev, 0x15, nvar_off[core], 16, 6, rd6);
-			b43_actab_write_bulk(dev, ta, 0x0008, 16, 6, nshp_a8);
+			b43_actab_write_bulk(dev, ta, 0x0008, 16, 6, a8);
 			b43_actab_write_bulk(dev, tb, 0x0008, 16, 6, nshp_b8);
 		}
 
@@ -10855,8 +11082,8 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 			u16 ta = 0x44 + core * 0x20;
 			u16 tb = 0x45 + core * 0x20;
 
-			b43_actab_write_bulk(dev, ta, 0x0010, 16, 7, nshp_a10);
-			b43_actab_write_bulk(dev, tb, 0x0010, 16, 7, nshp_b10);
+			b43_actab_write_bulk(dev, ta, 0x0010, 16, 7, a10);
+			b43_actab_write_bulk(dev, tb, 0x0010, 16, 7, b10);
 		}
 
 		b43_phy_ac_tbl_write_unlock(dev, saved);
@@ -10925,6 +11152,16 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	b43_phy_write(dev, 0x0307, 0x4e51);
 	b43_phy_write(dev, 0x030a, 0x4e51);
 	b43_phy_write(dev, 0x030d, 0x4e51);
+
+	/*
+	 * Two writes on 2.4 GHz only, right after the four above: on all 41
+	 * 2.4 GHz segments of the MacBookAir6,1 and the archer-t5e, and on no
+	 * 5 GHz one. Meaning not identified.
+	 */
+	if (b43_current_band(dev->wl) == NL80211_BAND_2GHZ) {
+		b43_phy_write(dev, 0x0299, 0x4477);
+		b43_phy_write(dev, 0x03c1, 0x0010);
+	}
 
 	b43_phy_ac_reset_cca(dev);
 	udelay(1);
@@ -11289,14 +11526,20 @@ static const u16 b43_phy_ac_farrow_vals_432x_media_a1[98] = {
  * Farrow resampler ratio and deltaphase, both functions of the centre
  * frequency and the bandwidth mode:
  *
- *   ratio  = round(f_MHz * 2^18 / D) - 2^24
- *   dphase = round(K / f_MHz)
+ *   ratio  = round(f_MHz * 2^18 * M / D) - 2^24
+ *   dphase = round(K / (M * f_MHz))
  *
- * with (D, K) = (60, 0x7_8000_0000) at 20 and 40 MHz and
- * (45, 0xB_4000_0000) at 80. The 80 MHz mode also swaps two constants that
+ * with (D, M, K) = (60, 1, 0x7_8000_0000) at 20 and 40 MHz and
+ * (45, 1, 0xB_4000_0000) at 80. The 80 MHz mode also swaps two constants that
  * travel with it, 0x0199/0x01a0 and 0x019c/0x01a3, so the three move
  * together and it reads as a sample-rate mode rather than a per-bandwidth
  * scaling.
+ *
+ * On 2.4 GHz the block is the same, in the same order, with D/M = 80/3, 4/9
+ * of the 5 GHz 20 MHz divider, K = D * 2^29 as in that mode, and 0x1400 in
+ * 0x019c/0x01a3. Exact on ch1-13 of the MacBookAir6,1 and ch1-11 of the
+ * archer-t5e, 24 out of 24, identical on the two boards; both are 20 MHz
+ * scans, so there is no 2.4 GHz 40 MHz point.
  *
  * Verified against every configuration of the d6220 sweep -- 16 channels at
  * 20 MHz, 7 bonded pairs at 40, 3 at 80 -- exact on both registers and both
@@ -11309,17 +11552,25 @@ static const u16 b43_phy_ac_farrow_vals_432x_media_a1[98] = {
 
 struct b43_phy_ac_farrow_mode {
 	u16 div;		/* D in the ratio */
+	u16 mul;		/* M in the ratio and the deltaphase */
 	u64 dphase_num;		/* K in the deltaphase */
 	u16 mu;			/* 0x0199 / 0x01a0 */
 	u16 cfg;		/* 0x019c / 0x01a3 */
 };
 
 static const struct b43_phy_ac_farrow_mode b43_phy_ac_farrow_mode_20_40 = {
-	.div = 60, .dphase_num = 0x780000000ull, .mu = 0x00a7, .cfg = 0x0f00,
+	.div = 60, .mul = 1, .dphase_num = 0x780000000ull, .mu = 0x00a7,
+	.cfg = 0x0f00,
 };
 
 static const struct b43_phy_ac_farrow_mode b43_phy_ac_farrow_mode_80 = {
-	.div = 45, .dphase_num = 0xb40000000ull, .mu = 0x0084, .cfg = 0x0b40,
+	.div = 45, .mul = 1, .dphase_num = 0xb40000000ull, .mu = 0x0084,
+	.cfg = 0x0b40,
+};
+
+static const struct b43_phy_ac_farrow_mode b43_phy_ac_farrow_mode_2g_20 = {
+	.div = 80, .mul = 3, .dphase_num = 0xa00000000ull, .mu = 0x00a7,
+	.cfg = 0x1400,
 };
 
 /* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
@@ -11344,9 +11595,16 @@ static void b43_phy_ac_farrow_setup(struct b43_wldev *dev,
 			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
 			   B43_PHY_AC_STATE_CCA_RESET);
 
-	/* The 2.4 GHz branch programs different registers entirely. */
-	if (b43_current_band(dev->wl) != NL80211_BAND_5GHZ)
-		return;
+	if (b43_current_band(dev->wl) == NL80211_BAND_2GHZ) {
+		if (width != NL80211_CHAN_WIDTH_20 &&
+		    width != NL80211_CHAN_WIDTH_20_NOHT) {
+			b43_phy_ac_todo(dev,
+				"Farrow resampler at 2.4 GHz and %d: "
+				"not measured, not programmed", width);
+			return;
+		}
+		m = &b43_phy_ac_farrow_mode_2g_20;
+	}
 
 	/*
 	 * The operating channel's centre frequency, and the mode that goes
@@ -11363,9 +11621,9 @@ static void b43_phy_ac_farrow_setup(struct b43_wldev *dev,
 		freq = channel->center_freq;
 	}
 
-	ratio = (u32)(DIV_ROUND_CLOSEST(freq * (1u << 18), m->div) -
+	ratio = (u32)(DIV_ROUND_CLOSEST(freq * m->mul * (1u << 18), m->div) -
 		      B43_PHY_AC_FARROW_OFFSET);
-	dphase = (u32)DIV_ROUND_CLOSEST_ULL(m->dphase_num, freq);
+	dphase = (u32)DIV_ROUND_CLOSEST_ULL(m->dphase_num, m->mul * freq);
 
 	/*
 	 * The vendor's order: the low half of each 32-bit value before its

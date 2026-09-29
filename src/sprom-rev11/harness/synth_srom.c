@@ -190,9 +190,8 @@ static u8 nv_rxgains_byte(const struct nvram *nv, const char *band, int c)
 
 int synth_srom_from_nvram(const struct nvram *nv, u16 *srom, size_t words)
 {
-	/* Footprint: highest byte the patch reads is mcsbw1605ghpo at 0x18C
-	 * occupying 4 bytes → last touched word is byte 0x18E = word 0xC7
-	 * (200 dec). Anything below that is fine for our footprint. */
+	/* Footprint: the per-rate region ends with rpcal5gb3 at byte 0x18C,
+	 * word 198. Anything below that is fine for our footprint. */
 	if (words < 0x100)
 		return -1;
 
@@ -330,15 +329,17 @@ int synth_srom_from_nvram(const struct nvram *nv, u16 *srom, size_t words)
 		{"mcsbw205glpo",           SSB_SPROM11_MCSBW205GLPO,          1},
 		{"mcsbw405glpo",           SSB_SPROM11_MCSBW405GLPO,          1},
 		{"mcsbw805glpo",           SSB_SPROM11_MCSBW805GLPO,          1},
-		{"mcsbw1605glpo",          SSB_SPROM11_MCSBW1605GLPO,         1},
+		{"rpcal2g",                SSB_SPROM11_RPCAL_2G,              0},
+		{"rpcal5gb0",              SSB_SPROM11_RPCAL_5GL,             0},
 		{"mcsbw205gmpo",           SSB_SPROM11_MCSBW205GMPO,          1},
 		{"mcsbw405gmpo",           SSB_SPROM11_MCSBW405GMPO,          1},
 		{"mcsbw805gmpo",           SSB_SPROM11_MCSBW805GMPO,          1},
-		{"mcsbw1605gmpo",          SSB_SPROM11_MCSBW1605GMPO,         1},
+		{"rpcal5gb1",              SSB_SPROM11_RPCAL_5GM,             0},
+		{"rpcal5gb2",              SSB_SPROM11_RPCAL_5GH,             0},
 		{"mcsbw205ghpo",           SSB_SPROM11_MCSBW205GHPO,          1},
 		{"mcsbw405ghpo",           SSB_SPROM11_MCSBW405GHPO,          1},
 		{"mcsbw805ghpo",           SSB_SPROM11_MCSBW805GHPO,          1},
-		{"mcsbw1605ghpo",          SSB_SPROM11_MCSBW1605GHPO,         1},
+		{"rpcal5gb3",              SSB_SPROM11_RPCAL_5GU,             0},
 	};
 	for (size_t i = 0; i < sizeof(ppr)/sizeof(ppr[0]); i++) {
 		u32 v = 0;

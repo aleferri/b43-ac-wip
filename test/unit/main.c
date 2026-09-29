@@ -207,7 +207,7 @@ static void mount_board(const struct board_profile *p)
 	/*
 	 * ch36 unless AC_CHANNEL says otherwise. Driving another channel only
 	 * makes sense against a capture of that channel supplied through
-	 * AC_READ_ORACLE.
+	 * AC_READ_ORACLE. Channels 1 to 14 are 2.4 GHz.
 	 */
 	g_chan.band = NL80211_BAND_5GHZ;
 	g_chan.hw_value = 36;
@@ -225,6 +225,12 @@ static void mount_board(const struct board_profile *p)
 		}
 	}
 	g_chan.center_freq = 5000 + 5 * g_chan.hw_value;
+	if (g_chan.hw_value <= 14) {
+		g_chan.band = NL80211_BAND_2GHZ;
+		g_chan.center_freq = g_chan.hw_value == 14 ?
+			2484 : 2407 + 5 * g_chan.hw_value;
+		b43_test_band = NL80211_BAND_2GHZ;
+	}
 
 	/*
 	 * Radar-detection requirement, as cfg80211 would set it from the

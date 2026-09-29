@@ -18,7 +18,10 @@ Every other NVRAM variable is consumed by the core or not at all.
 | `sb20in40*`, `sb20in80and160*`, `sb40and80*`, `dot11agdup*`, `mcslr5gpo` | read to warn: zero on every board, not applied |
 | `pdoffset40ma*`, `pdoffset80ma*` | table `0x21` |
 | `antenna_gain_qdb` (`aga0`) | regulatory ceiling |
-| `rxgains_5gl` | RX gain init, for every band: the stock driver freezes it at attach |
+| `rxgains_5gl` | RX gain init on 5 GHz: the stock driver freezes it at attach |
+| `rxgains_2g` | RX gain init on 2.4 GHz |
+| `core_pwr_info[].pa2ga` | est_pwr transfer function on 2.4 GHz |
+| `rpcal2g`, `rpcal5gb[4]` | table `0x11`: loaded when any is non-zero, filled with the phasor of the sub-band's word |
 | `tssifloor5g` | PHY `0x0724 + c·0x200` |
 | `femctrl` | guard on the FEM control table (`femctrl=6` only) |
 | `pdgain5g`, `boardflags3`, `avvmid` | selection of the AvVmid set |

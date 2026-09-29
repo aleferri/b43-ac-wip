@@ -67,6 +67,9 @@ gate. The comparison itself is `test/unit/compare.py` (positional) and
   discards (method in `docs/retrace-todo.md`, "Discarded reads").
 - **srom.py**: which written values are board data (`literals`, `correlate`,
   `verify`).
+- **band_delta.py**: what the stock driver writes differently on 2.4 GHz,
+  from two hops per band of one capture (folded with `ops_fold.py`); `--also`
+  runs a second capture and marks each line same, other values or absent.
 - **decorrelate_channels.py**: classifies each written key over N segments
   (invariant, channel-only, width-only, centre frequency, dynamic).
 - **check_channeltab.py**: the 2069 channel table against every sweep segment.

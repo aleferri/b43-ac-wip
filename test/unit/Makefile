@@ -20,7 +20,7 @@ STUBS   := stubs
 CFLAGS  := -O0 -g -Wall -Wno-unused-parameter -Wno-unused-function \
            -Wno-unused-variable -Wno-unused-but-set-variable \
            -Wno-pointer-sign -Wno-sign-compare \
-           -DB43_AC_FN_TRACE \
+           -DB43_AC_FN_TRACE -DALLOW_24=true \
            -I$(STUBS) -I$(SCRATCH) \
            -include stubs/linux/types.h \
            -include stubs/linux/errno.h \

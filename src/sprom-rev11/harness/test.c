@@ -386,15 +386,20 @@ int main(int argc, char **argv)
 	check_u_hard(&nv, "mcsbw205glpo",         bus.sprom.mcsbw205glpo,         "mcsbw205glpo");
 	check_u_hard(&nv, "mcsbw405glpo",         bus.sprom.mcsbw405glpo,         "mcsbw405glpo");
 	check_u_hard(&nv, "mcsbw805glpo",         bus.sprom.mcsbw805glpo,         "mcsbw805glpo");
-	check_u_hard(&nv, "mcsbw1605glpo",        bus.sprom.mcsbw1605glpo,        "mcsbw1605glpo");
 	check_u_hard(&nv, "mcsbw205gmpo",         bus.sprom.mcsbw205gmpo,         "mcsbw205gmpo");
 	check_u_hard(&nv, "mcsbw405gmpo",         bus.sprom.mcsbw405gmpo,         "mcsbw405gmpo");
 	check_u_hard(&nv, "mcsbw805gmpo",         bus.sprom.mcsbw805gmpo,         "mcsbw805gmpo");
-	check_u_hard(&nv, "mcsbw1605gmpo",        bus.sprom.mcsbw1605gmpo,        "mcsbw1605gmpo");
 	check_u_hard(&nv, "mcsbw205ghpo",         bus.sprom.mcsbw205ghpo,         "mcsbw205ghpo");
 	check_u_hard(&nv, "mcsbw405ghpo",         bus.sprom.mcsbw405ghpo,         "mcsbw405ghpo");
 	check_u_hard(&nv, "mcsbw805ghpo",         bus.sprom.mcsbw805ghpo,         "mcsbw805ghpo");
-	check_u_hard(&nv, "mcsbw1605ghpo",        bus.sprom.mcsbw1605ghpo,        "mcsbw1605ghpo");
+
+	/* === rpcal ==================================================== */
+	printf("\n[ rpcal ]\n");
+	check_u_hard(&nv, "rpcal2g",   bus.sprom.rpcal2g,     "rpcal2g");
+	check_u_hard(&nv, "rpcal5gb0", bus.sprom.rpcal5gb[0], "rpcal5gb[0]");
+	check_u_hard(&nv, "rpcal5gb1", bus.sprom.rpcal5gb[1], "rpcal5gb[1]");
+	check_u_hard(&nv, "rpcal5gb2", bus.sprom.rpcal5gb[2], "rpcal5gb[2]");
+	check_u_hard(&nv, "rpcal5gb3", bus.sprom.rpcal5gb[3], "rpcal5gb[3]");
 
 	/* === Summary ================================================== */
 	printf("\n=== Summary ===\n");

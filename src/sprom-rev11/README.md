@@ -7,8 +7,8 @@ Two patch files carry this work:
 - **`patches/0001-ssb-bcma-add-SPROM-revision-11-extraction.patch`** is the one
   in the series, and what the port builds against. It adds
   `bcma_sprom_extract_r11()` and the fields the AC-PHY reads:
-  - `maxp5ga[4]`, `pa5ga[12]`, the `rxgains_*` triplets, `mcsbw*po` at 20/40/80
-    (and 160);
+  - `maxp5ga[4]`, `pa5ga[12]`, the `rxgains_*` triplets, `mcsbw*po` at 20/40/80,
+    and the five `rpcal` words (182, 183, 190, 191, 198);
   - the sub-band row offsets, `pdoffset40ma`/`pdoffset80ma`, `tssifloor*`, the
     FEM block (`femctrl`, …) and `subband5gver`;
   - antenna gain decoded into `antenna_gain_qdb[]`;
@@ -30,7 +30,8 @@ path for the per-chain rev 11 arrays.
 ## What the draft covers
 
 1. **`struct ssb_sprom` extension.** Fields appended for rev 11: per-band rxgains
-   triplets, the FEM/PA control block, `mcsbw80*`/`mcsbw160*`/`mcslr*po`, the
+   triplets, the FEM/PA control block, `mcsbw80*`/`mcsbw160*`/`mcslr*po` (the
+   160 MHz words from the NVRAM only), the five `rpcal` words, the
    `sb20in*`/`sb40and80` hr/lr offsets, `dot11agdup{hr,lr}po`, per-chain
    `pdoffset*ma`. `struct ssb_sprom_core_pwr_info` gains rev-11-shaped
    `maxp2ga`, `maxp5ga[4]`, `pa2ga[3]` and `pa5ga[12]`. Existing fields do not
@@ -47,8 +48,10 @@ path for the per-chain rev 11 arrays.
      `RXGAINS0 lo=5gm, hi=5gh; RXGAINS1 lo=2g, hi=5gl`;
    - `pdoffset40ma` at `0xCA`;
    - the rev 11 power-per-rate region `0x150`–`0x190`. Its layout differs from
-     rev 9: four consecutive `u32` per 5 GHz sub-band (`mcsbw20/40/80/160`), and
+     rev 9: `mcsbw20/40/80` per 5 GHz sub-band followed by `rpcal` words, and
      a pair of `u16` between the 2.4 GHz BW40 entry and the 5 GHz BW20 entries.
+     Rev 11 has no 160 MHz per-rate field in the SROM (`bcmsrom_fmt.h`: words
+     182/183, 190/191, 198 are `SROM11_RPCAL_*`).
 
 ## How the offsets were pinned
 

@@ -227,6 +227,57 @@ re-emission rule is not found (a hysteresis on the ladder fails the negative
 test), and neither is the ring reset on the hot sweep
 (`hot-sweep.zip!hot-gaps/`).
 
+## 2.4 GHz
+
+`switch_channel` refuses the band unless the driver is built with `ALLOW_24`,
+as the unit harness is. `test/unit/band_gate.sh` compares the port's delta
+between ch40/ch44 and ch2/ch3 with the one the MacBookAir6,1 and the archer-t5e
+share (72 registers or cells, both on the 6.30 hybrid): 58 reproduced with the
+d6220 profile, 60 with `BOARD=archer`, whose SROM is the only dual-band one.
+
+**In the port, and matching both boards:** the 2069 channel table rows ch1–14
+(ch14 in no capture) with the 5 GHz register map, radio `0x066d = 0x18c0`, the
+absence of the `0x08c9`–`0x08c8` block, the Farrow resampler (`D/M = 80/3`,
+`K = D * 2^29`, `0x1400`), `0x06de`/`0x06e0 = 0x014a`, `0x0299 = 0x4477` and
+`0x03c1 = 0x0010` after `0x030d`, the TX gain table
+`acphy_txgain_epa_2g_2069rev4` (384 of 384 words of the table `0x20` load), and
+the noise-shaping runs of tables `0x44`/`0x45`.
+
+**In the port, from the SROM, checked on the archer-t5e:** the RX gain header
+from `rxgains_2g` (`0x0e`), and est_pwr from `pa2ga` (tables `0x40`/`0x60`,
+128 of 128 on both chains).
+
+Table `0x21` is written as zeros on 2.4 GHz, as on both boards.
+
+**Open:**
+
+- **TX target and per-rate fields.** Scan hops rewrite `0x0646` unchanged, so
+  the only 2.4 GHz target captured is the MacBook's ch6 calibration, `0x2e`.
+  The per-rate cells (`0x099a`… OFDM, `0x0a3a`… CCK) are flat `0x18` on the
+  archer-t5e, whose 2.4 GHz offsets are all zero and `maxp2ga` 80, and zero on
+  the MacBook, whose SROM is not available. Two boards and one known SROM do
+  not fix a rule; a `wl srdump` of the MacBook would.
+- **First cell of each noise-shaping run.** 6.30 and 7.14 already write it
+  differently on 5 GHz; 2.4 GHz keeps 7.14's 5 GHz value and warns.
+- **Board data.** `0x06dd`, `0x06df`, `0x06e1`–`0x06e5` and table `0x07`
+  `[0xf9 + core]` change between the two boards on the same core; `0x06e1`
+  does on 5 GHz too, where the port writes the D6220's `0x0018`. The CCK rate
+  cells `0x0a3a`… need the SROM's CCK offsets.
+- **FEM control.** The archer-t5e has `femctrl = 1`; the port has only
+  `femctrl = 6`'s table and stops there with its warning.
+- **Radio `0x002c`.** The core transition works on `0x002c` instead of
+  `0x0033`; the bus shows a read and a write of the same value, so field and
+  value are not known.
+- **`0x0140`.** 6.30 sets bit 0 on the band with a MOD; the port writes the
+  register in 7.14's form.
+- **40 MHz** on 2.4 GHz has no capture; the Farrow setup warns and programs
+  nothing there.
+- **Version.** Everything above is 6.30. On 5 GHz the hybrid's TX gain table
+  differs from 7.14's in 38 of 384 words, so the 2.4 GHz one needs a 7.14 blob
+  before it is more than a 6.30 value.
+- **Calibrations.** The only 2.4 GHz channel set with them is the ch6 one at
+  the end of the MacBook capture, a hot one.
+
 ## Chip and board differences
 
 - **Double analog programming.** The agcombo (4360, 7.14.43) enters the AFE arm

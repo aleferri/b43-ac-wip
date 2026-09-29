@@ -1,10 +1,7 @@
-From 0c5e37ad2e2d416867949f22f5a3704737e9e856 Mon Sep 17 00:00:00 2001
+From 0eb12970f52c945cbb2fc5ae3b1b77e6925d13ea Mon Sep 17 00:00:00 2001
 From: DRAFT <draft@example.com>
 Date: Mon, 4 May 2026 09:51:16 +0000
 Subject: [DRAFT PATCH v3] ssb / bcma / firmware: SROM revision 11 support
-MIME-Version: 1.0
-Content-Type: text/plain; charset=UTF-8
-Content-Transfer-Encoding: 8bit
 
 Add support for SROM revision 11, introduced with the BCM4352 / BCM4360
 family. The change is split across the three layers that need to land
@@ -12,7 +9,11 @@ together to be useful:
 
  1. struct ssb_sprom is extended with the rev-11 fields: per-band
     rxgains triplets, the front-end-module / PA control block,
-    mcsbw80*po / mcsbw160*po / mcslr*po, the sb20in*/sb40and80 hr/lr
+    mcsbw80*po / mcsbw160*po / mcslr*po, the five rpcal words (TX
+    beamforming RX path calibration, 2.4 GHz and the four 5 GHz
+    sub-bands, SROM words 182, 183, 190, 191, 198; rev 11 has no 160
+    MHz per-rate field in the SROM, so mcsbw160*po come from the NVRAM
+    only), the sb20in*/sb40and80 hr/lr
     matrix, dot11agdup{hr,lr}po, dot11agofdmhrbw202gpo /
     ofdmlrbw202gpo, and per-chain pdoffset arrays. The per-chain power
     info struct gains rev-11-shaped maxp2ga, maxp5ga[4], pa2ga[3],
@@ -53,17 +54,17 @@ middle u16 of the rev-11 IL0MAC block at 0x90.
 
 Signed-off-by: TBD <tbd@example.com>
 ---
- drivers/bcma/sprom.c                      | 141 +++++++++++++++++++++++-
- drivers/firmware/broadcom/bcm47xx_sprom.c | 174 +++++++++++++++++++++++++++++-
- include/linux/ssb/ssb.h                   |  98 +++++++++++++++++
- include/linux/ssb/ssb_regs.h              |  70 ++++++++++++
- 4 files changed, 480 insertions(+), 3 deletions(-)
+ drivers/bcma/sprom.c                      | 143 ++++++++++++++++-
+ drivers/firmware/broadcom/bcm47xx_sprom.c | 179 +++++++++++++++++++++-
+ include/linux/ssb/ssb.h                   | 102 ++++++++++++
+ include/linux/ssb/ssb_regs.h              |  72 +++++++++
+ 4 files changed, 493 insertions(+), 3 deletions(-)
 
 diff --git a/drivers/bcma/sprom.c b/drivers/bcma/sprom.c
-index e668ad7..08ba44a 100644
+index e668ad7..9ebf708 100644
 --- a/drivers/bcma/sprom.c
 +++ b/drivers/bcma/sprom.c
-@@ -474,6 +474,138 @@ static void bcma_sprom_extract_r8(struct bcma_bus *bus, const u16 *sprom)
+@@ -474,6 +474,140 @@ static void bcma_sprom_extract_r8(struct bcma_bus *bus, const u16 *sprom)
  	     SSB_SPROM8_TEMPDELTA_HYSTERESIS_SHIFT);
  }
  
@@ -165,10 +166,10 @@ index e668ad7..08ba44a 100644
 +			sprom[SPOFF(SSB_SPROM11_PDOFFSET40MA) + i];
 +
 +	/* Power-per-rate region. Layout differs from rev 9: each 5 GHz
-+	 * sub-band has four consecutive u32 entries (mcsbw20/40/80/160)
-+	 * rather than two, and a pair of u16 (dot11agofdmhrbw202gpo,
-+	 * ofdmlrbw202gpo) sits between the 2.4 GHz BW40 entry and the
-+	 * 5 GHz BW20 entries.
++	 * sub-band has mcsbw20/40/80 followed by rpcal words, and a pair of
++	 * u16 (dot11agofdmhrbw202gpo, ofdmlrbw202gpo) sits between the
++	 * 2.4 GHz BW40 entry and the 5 GHz BW20 entries. The SROM has no
++	 * 160 MHz field; mcsbw160*po come from the NVRAM only.
 +	 */
 +	SPEX(cckbw202gpo,            SSB_SPROM11_CCKBW202GPO,            ~0, 0);
 +	SPEX(cckbw20ul2gpo,          SSB_SPROM11_CCKBW20UL2GPO,          ~0, 0);
@@ -179,15 +180,17 @@ index e668ad7..08ba44a 100644
 +	SPEX32(mcsbw205glpo,         SSB_SPROM11_MCSBW205GLPO,           ~0, 0);
 +	SPEX32(mcsbw405glpo,         SSB_SPROM11_MCSBW405GLPO,           ~0, 0);
 +	SPEX32(mcsbw805glpo,         SSB_SPROM11_MCSBW805GLPO,           ~0, 0);
-+	SPEX32(mcsbw1605glpo,        SSB_SPROM11_MCSBW1605GLPO,          ~0, 0);
 +	SPEX32(mcsbw205gmpo,         SSB_SPROM11_MCSBW205GMPO,           ~0, 0);
 +	SPEX32(mcsbw405gmpo,         SSB_SPROM11_MCSBW405GMPO,           ~0, 0);
 +	SPEX32(mcsbw805gmpo,         SSB_SPROM11_MCSBW805GMPO,           ~0, 0);
-+	SPEX32(mcsbw1605gmpo,        SSB_SPROM11_MCSBW1605GMPO,          ~0, 0);
 +	SPEX32(mcsbw205ghpo,         SSB_SPROM11_MCSBW205GHPO,           ~0, 0);
 +	SPEX32(mcsbw405ghpo,         SSB_SPROM11_MCSBW405GHPO,           ~0, 0);
 +	SPEX32(mcsbw805ghpo,         SSB_SPROM11_MCSBW805GHPO,           ~0, 0);
-+	SPEX32(mcsbw1605ghpo,        SSB_SPROM11_MCSBW1605GHPO,          ~0, 0);
++	SPEX(rpcal2g,                SSB_SPROM11_RPCAL_2G,               ~0, 0);
++	SPEX(rpcal5gb[0],             SSB_SPROM11_RPCAL_5GL,              ~0, 0);
++	SPEX(rpcal5gb[1],             SSB_SPROM11_RPCAL_5GM,              ~0, 0);
++	SPEX(rpcal5gb[2],             SSB_SPROM11_RPCAL_5GH,              ~0, 0);
++	SPEX(rpcal5gb[3],             SSB_SPROM11_RPCAL_5GU,              ~0, 0);
 +
 +	/* TODO (region 0x190..0x1B0): mcslr5g{l,m,h}po, sb20in40{hr,lr}po,
 +	 * sb20in80and160{hr,lr}5g{l,m,h}po, sb40and80{hr,lr}5g{l,m,h}po,
@@ -202,7 +205,7 @@ index e668ad7..08ba44a 100644
  /*
   * Indicates the presence of external SPROM.
   */
-@@ -640,7 +772,14 @@ int bcma_sprom_get(struct bcma_bus *bus)
+@@ -640,7 +774,14 @@ int bcma_sprom_get(struct bcma_bus *bus)
  		bcma_warn(bus, "Invalid SPROM read from the PCIe card, trying to use fallback SPROM\n");
  		err = bcma_fill_sprom_with_fallback(bus, &bus->sprom);
  	} else {
@@ -219,7 +222,7 @@ index e668ad7..08ba44a 100644
  	}
  
 diff --git a/drivers/firmware/broadcom/bcm47xx_sprom.c b/drivers/firmware/broadcom/bcm47xx_sprom.c
-index bca03fd..00179ad 100644
+index bca03fd..bd05e09 100644
 --- a/drivers/firmware/broadcom/bcm47xx_sprom.c
 +++ b/drivers/firmware/broadcom/bcm47xx_sprom.c
 @@ -114,6 +114,52 @@ static void nvram_read_u32_2(const char *prefix, const char *name,
@@ -291,7 +294,7 @@ index bca03fd..00179ad 100644
  	ENTRY(0x00000700, u8, pre, "noiselvl2ga0", noiselvl2ga[0], 0, fb);
  	ENTRY(0x00000700, u8, pre, "noiselvl2ga1", noiselvl2ga[1], 0, fb);
  	ENTRY(0x00000700, u8, pre, "noiselvl2ga2", noiselvl2ga[2], 0, fb);
-@@ -404,9 +448,132 @@ static void bcm47xx_sprom_fill_auto(struct ssb_sprom *sprom,
+@@ -404,9 +448,137 @@ static void bcm47xx_sprom_fill_auto(struct ssb_sprom *sprom,
  	ENTRY(0x00000700, u8, pre, "noiselvl5gua0", noiselvl5gua[0], 0, fb);
  	ENTRY(0x00000700, u8, pre, "noiselvl5gua1", noiselvl5gua[1], 0, fb);
  	ENTRY(0x00000700, u8, pre, "noiselvl5gua2", noiselvl5gua[2], 0, fb);
@@ -321,6 +324,11 @@ index bca03fd..00179ad 100644
 +	ENTRY(0x00000800, u32, pre, "mcsbw1605glpo",  mcsbw1605glpo,  0, fb);
 +	ENTRY(0x00000800, u32, pre, "mcsbw1605gmpo",  mcsbw1605gmpo,  0, fb);
 +	ENTRY(0x00000800, u32, pre, "mcsbw1605ghpo",  mcsbw1605ghpo,  0, fb);
++	ENTRY(0x00000800, u16, pre, "rpcal2g",        rpcal2g,        0, fb);
++	ENTRY(0x00000800, u16, pre, "rpcal5gb0",      rpcal5gb[0],    0, fb);
++	ENTRY(0x00000800, u16, pre, "rpcal5gb1",      rpcal5gb[1],    0, fb);
++	ENTRY(0x00000800, u16, pre, "rpcal5gb2",      rpcal5gb[2],    0, fb);
++	ENTRY(0x00000800, u16, pre, "rpcal5gb3",      rpcal5gb[3],    0, fb);
 +	ENTRY(0x00000800, u16, pre, "mcslr5glpo",     mcslr5glpo,     0, fb);
 +	ENTRY(0x00000800, u16, pre, "mcslr5gmpo",     mcslr5gmpo,     0, fb);
 +	ENTRY(0x00000800, u16, pre, "mcslr5ghpo",     mcslr5ghpo,     0, fb);
@@ -424,7 +432,7 @@ index bca03fd..00179ad 100644
  static void bcm47xx_fill_sprom_path_r4589(struct ssb_sprom *sprom,
  					  const char *prefix, bool fallback)
  {
-@@ -586,6 +753,9 @@ void bcm47xx_fill_sprom(struct ssb_sprom *sprom, const char *prefix,
+@@ -586,6 +758,9 @@ void bcm47xx_fill_sprom(struct ssb_sprom *sprom, const char *prefix,
  	case 9:
  		bcm47xx_fill_sprom_path_r4589(sprom, prefix, fallback);
  		break;
@@ -435,7 +443,7 @@ index bca03fd..00179ad 100644
  
  	bcm47xx_sprom_fill_auto(sprom, prefix, fallback);
 diff --git a/include/linux/ssb/ssb.h b/include/linux/ssb/ssb.h
-index e1fb11e..bf7ccb2 100644
+index 67cb66f..9d89ca9 100644
 --- a/include/linux/ssb/ssb.h
 +++ b/include/linux/ssb/ssb.h
 @@ -23,6 +23,28 @@ struct ssb_sprom_core_pwr_info {
@@ -467,7 +475,7 @@ index e1fb11e..bf7ccb2 100644
  };
  
  struct ssb_sprom {
-@@ -192,6 +214,82 @@ struct ssb_sprom {
+@@ -192,6 +214,86 @@ struct ssb_sprom {
  	u16 legofdm40duppo;
  	u8 sar2g;
  	u8 sar5g;
@@ -516,6 +524,10 @@ index e1fb11e..bf7ccb2 100644
 +	u16 mcslr5glpo;
 +	u16 mcslr5gmpo;
 +	u16 mcslr5ghpo;
++	/* TX beamforming RX path calibration, one word for 2.4 GHz and one per
++	 * 5 GHz sub-band (l, m, h, u). */
++	u16 rpcal2g;
++	u16 rpcal5gb[4];
 +
 +	/* Legacy 802.11g OFDM HR/LR power offsets at 2.4 GHz 20 MHz BW. */
 +	u16 dot11agofdmhrbw202gpo;
@@ -551,10 +563,10 @@ index e1fb11e..bf7ccb2 100644
  
  /* Information about the PCB the circuitry is soldered on. */
 diff --git a/include/linux/ssb/ssb_regs.h b/include/linux/ssb/ssb_regs.h
-index 210f464..2e2f5f7 100644
+index 210f464..06de376 100644
 --- a/include/linux/ssb/ssb_regs.h
 +++ b/include/linux/ssb/ssb_regs.h
-@@ -606,6 +606,76 @@
+@@ -606,6 +606,78 @@
  #define SSB_SPROM8_BW40PO		0x0196
  #define SSB_SPROM8_BWDUPPO		0x0198
  
@@ -609,15 +621,17 @@ index 210f464..2e2f5f7 100644
 +#define SSB_SPROM11_MCSBW205GLPO	0x0160	/* u32 */
 +#define SSB_SPROM11_MCSBW405GLPO	0x0164	/* u32 */
 +#define SSB_SPROM11_MCSBW805GLPO	0x0168	/* u32 */
-+#define SSB_SPROM11_MCSBW1605GLPO	0x016C	/* u32 */
++#define SSB_SPROM11_RPCAL_2G		0x016C	/* u16 */
++#define SSB_SPROM11_RPCAL_5GL		0x016E	/* u16 */
 +#define SSB_SPROM11_MCSBW205GMPO	0x0170	/* u32 */
 +#define SSB_SPROM11_MCSBW405GMPO	0x0174	/* u32 */
 +#define SSB_SPROM11_MCSBW805GMPO	0x0178	/* u32 */
-+#define SSB_SPROM11_MCSBW1605GMPO	0x017C	/* u32 */
++#define SSB_SPROM11_RPCAL_5GM		0x017C	/* u16 */
++#define SSB_SPROM11_RPCAL_5GH		0x017E	/* u16 */
 +#define SSB_SPROM11_MCSBW205GHPO	0x0180	/* u32 */
 +#define SSB_SPROM11_MCSBW405GHPO	0x0184	/* u32 */
 +#define SSB_SPROM11_MCSBW805GHPO	0x0188	/* u32 */
-+#define SSB_SPROM11_MCSBW1605GHPO	0x018C	/* u32 */
++#define SSB_SPROM11_RPCAL_5GU		0x018C	/* u16 */
 +
 +/* Not yet defined / extracted: mcslr5g{l,m,h}po, sb20in40{hr,lr}po,
 + * sb20in80and160{hr,lr}5g{l,m,h}po, sb40and80{hr,lr}5g{l,m,h}po,

@@ -1,11 +1,11 @@
-From 641623e9637fad75e0fd2194e9b8e1bcbb9d066c Mon Sep 17 00:00:00 2001
+From 162832c3eea738df686da3b7d4588de18223d203 Mon Sep 17 00:00:00 2001
 From: Alessio Ferri <alessio.ferri@mythread.it>
 Date: Wed, 17 Jun 2026 20:55:58 +0000
 Subject: [PATCH 1/9] ssb: bcma: add SPROM revision 11 extraction
 
 SPROM revision 11 is introduced with the BCM4352/BCM4360 family. Extend
 struct ssb_sprom with the rev-11 fields actually parsed (per-band rxgains,
-per-chain maxp/pa power info, 80/160 MHz MCS power offsets, pdoffset40ma)
+per-chain maxp/pa power info, 80 MHz MCS power offsets, pdoffset40ma)
 and add bcma_sprom_extract_r11(), dispatched from bcma_sprom_get() when the
 SPROM revision word reads as 11. bcma_sprom_get() already probes the rev-11
 buffer size, and bcma_sprom_valid() populates bus->sprom.revision before
@@ -31,6 +31,11 @@ gain (agbg0/aga0, whole dB in [5:0] plus quarter dB in [7:6]) into
 antenna_gain_qdb[], which the regulatory ceiling subtracts from EIRP, and pdoffset80ma, the
 per-chain power-detector offsets of the 80 MHz rate groups.
 
+The five rpcal words, the TX beamforming RX path calibration for 2.4 GHz
+and the four 5 GHz sub-bands, are words 182, 183, 190, 191 and 198,
+between the per-rate words. Rev 11 has no 160 MHz per-rate field in the
+SPROM: those words are the rpcal ones.
+
 The temperature fields -- tempthresh, tempoffset, rawtempsense, measpower,
 tempsense_slope, tempcorrx, tempsense_option, phycal_tempdelta,
 temps_period and temps_hysteresis -- sit in rev 11 four bytes below their
@@ -39,16 +44,16 @@ TG789vac v2 dump, the one board here that programs them, has THERMAL =
 0x7800 and TEMPDELTA = 0x5500, matching tempthresh=120 and
 temps_period=5 in its NVRAM.
 ---
- drivers/bcma/sprom.c         | 195 ++++++++++++++++++++++++++++++++++-
- include/linux/ssb/ssb.h      |  68 +++++++++++++
- include/linux/ssb/ssb_regs.h | 107 +++++++++++++++++++
- 3 files changed, 369 insertions(+), 1 deletion(-)
+ drivers/bcma/sprom.c         | 199 ++++++++++++++++++++++++++++++++++-
+ include/linux/ssb/ssb.h      |  69 ++++++++++++
+ include/linux/ssb/ssb_regs.h | 109 +++++++++++++++++++
+ 3 files changed, 376 insertions(+), 1 deletion(-)
 
 diff --git a/drivers/bcma/sprom.c b/drivers/bcma/sprom.c
-index e668ad7..6e2d25d 100644
+index e668ad7..5d5e737 100644
 --- a/drivers/bcma/sprom.c
 +++ b/drivers/bcma/sprom.c
-@@ -474,6 +474,196 @@ static void bcma_sprom_extract_r8(struct bcma_bus *bus, const u16 *sprom)
+@@ -474,6 +474,200 @@ static void bcma_sprom_extract_r8(struct bcma_bus *bus, const u16 *sprom)
  	     SSB_SPROM8_TEMPDELTA_HYSTERESIS_SHIFT);
  }
  
@@ -162,11 +167,18 @@ index e668ad7..6e2d25d 100644
 +		bcma_sprom_unpack_rxgains(&bus->sprom.rxgains_5gl, i, (v >> 8) & 0xff);
 +	}
 +
-+	for (i = 0; i < 3; i++)
++	SPEX(rpcal2g,    SSB_SPROM11_RPCAL_2G,  ~0, 0);
++	SPEX(rpcal5gb[0], SSB_SPROM11_RPCAL_5GL, ~0, 0);
++	SPEX(rpcal5gb[1], SSB_SPROM11_RPCAL_5GM, ~0, 0);
++	SPEX(rpcal5gb[2], SSB_SPROM11_RPCAL_5GH, ~0, 0);
++	SPEX(rpcal5gb[3], SSB_SPROM11_RPCAL_5GU, ~0, 0);
++
++	for (i = 0; i < 3; i++) {
 +		bus->sprom.pdoffset40ma[i] =
 +			sprom[SPOFF(SSB_SPROM11_PDOFFSET40MA) + i];
 +		bus->sprom.pdoffset80ma[i] =
 +			sprom[SPOFF(SSB_SPROM11_PDOFFSET80MA) + i];
++	}
 +
 +	SPEX(cckbw202gpo,           SSB_SPROM11_CCKBW202GPO,           ~0, 0);
 +	SPEX(cckbw20ul2gpo,         SSB_SPROM11_CCKBW20UL2GPO,         ~0, 0);
@@ -177,15 +189,12 @@ index e668ad7..6e2d25d 100644
 +	SPEX32(mcsbw205glpo,        SSB_SPROM11_MCSBW205GLPO,          ~0, 0);
 +	SPEX32(mcsbw405glpo,        SSB_SPROM11_MCSBW405GLPO,          ~0, 0);
 +	SPEX32(mcsbw805glpo,        SSB_SPROM11_MCSBW805GLPO,          ~0, 0);
-+	SPEX32(mcsbw1605glpo,       SSB_SPROM11_MCSBW1605GLPO,         ~0, 0);
 +	SPEX32(mcsbw205gmpo,        SSB_SPROM11_MCSBW205GMPO,          ~0, 0);
 +	SPEX32(mcsbw405gmpo,        SSB_SPROM11_MCSBW405GMPO,          ~0, 0);
 +	SPEX32(mcsbw805gmpo,        SSB_SPROM11_MCSBW805GMPO,          ~0, 0);
-+	SPEX32(mcsbw1605gmpo,       SSB_SPROM11_MCSBW1605GMPO,         ~0, 0);
 +	SPEX32(mcsbw205ghpo,        SSB_SPROM11_MCSBW205GHPO,          ~0, 0);
 +	SPEX32(mcsbw405ghpo,        SSB_SPROM11_MCSBW405GHPO,          ~0, 0);
 +	SPEX32(mcsbw805ghpo,        SSB_SPROM11_MCSBW805GHPO,          ~0, 0);
-+	SPEX32(mcsbw1605ghpo,       SSB_SPROM11_MCSBW1605GHPO,         ~0, 0);
 +
 +	SPEX(mcslr5gpo[0],          SSB_SPROM11_MCSLR5GLPO,            ~0, 0);
 +	SPEX(mcslr5gpo[1],          SSB_SPROM11_MCSLR5GMPO,            ~0, 0);
@@ -245,7 +254,7 @@ index e668ad7..6e2d25d 100644
  /*
   * Indicates the presence of external SPROM.
   */
-@@ -640,7 +824,10 @@ int bcma_sprom_get(struct bcma_bus *bus)
+@@ -640,7 +834,10 @@ int bcma_sprom_get(struct bcma_bus *bus)
  		bcma_warn(bus, "Invalid SPROM read from the PCIe card, trying to use fallback SPROM\n");
  		err = bcma_fill_sprom_with_fallback(bus, &bus->sprom);
  	} else {
@@ -258,7 +267,7 @@ index e668ad7..6e2d25d 100644
  	}
  
 diff --git a/include/linux/ssb/ssb.h b/include/linux/ssb/ssb.h
-index 1f326da..6f2f8df 100644
+index 1f326da..3664be1 100644
 --- a/include/linux/ssb/ssb.h
 +++ b/include/linux/ssb/ssb.h
 @@ -23,6 +23,19 @@ struct ssb_sprom_core_pwr_info {
@@ -281,7 +290,7 @@ index 1f326da..6f2f8df 100644
  };
  
  struct ssb_sprom {
-@@ -192,6 +205,61 @@ struct ssb_sprom {
+@@ -192,6 +205,62 @@ struct ssb_sprom {
  	u16 legofdm40duppo;
  	u8 sar2g;
  	u8 sar5g;
@@ -303,9 +312,10 @@ index 1f326da..6f2f8df 100644
 +	u32 mcsbw805glpo;
 +	u32 mcsbw805gmpo;
 +	u32 mcsbw805ghpo;
-+	u32 mcsbw1605glpo;
-+	u32 mcsbw1605gmpo;
-+	u32 mcsbw1605ghpo;
++	/* TX beamforming RX path calibration, one word for 2.4 GHz and one per
++	 * 5 GHz sub-band (l, m, h, u). */
++	u16 rpcal2g;
++	u16 rpcal5gb[4];
 +	u16 pdoffset40ma[3];
 +	u16 pdoffset80ma[3];
 +	/* Explicit per-rate-group power offsets of the bonded channels'
@@ -344,10 +354,10 @@ index 1f326da..6f2f8df 100644
  
  /* Information about the PCB the circuitry is soldered on. */
 diff --git a/include/linux/ssb/ssb_regs.h b/include/linux/ssb/ssb_regs.h
-index 210f464..961354a 100644
+index 210f464..7d3c350 100644
 --- a/include/linux/ssb/ssb_regs.h
 +++ b/include/linux/ssb/ssb_regs.h
-@@ -606,6 +606,113 @@
+@@ -606,6 +606,115 @@
  #define SSB_SPROM8_BW40PO		0x0196
  #define SSB_SPROM8_BWDUPPO		0x0198
  
@@ -429,15 +439,17 @@ index 210f464..961354a 100644
 +#define SSB_SPROM11_MCSBW205GLPO	0x0160
 +#define SSB_SPROM11_MCSBW405GLPO	0x0164
 +#define SSB_SPROM11_MCSBW805GLPO	0x0168
-+#define SSB_SPROM11_MCSBW1605GLPO	0x016C
++#define SSB_SPROM11_RPCAL_2G		0x016C
++#define SSB_SPROM11_RPCAL_5GL		0x016E
 +#define SSB_SPROM11_MCSBW205GMPO	0x0170
 +#define SSB_SPROM11_MCSBW405GMPO	0x0174
 +#define SSB_SPROM11_MCSBW805GMPO	0x0178
-+#define SSB_SPROM11_MCSBW1605GMPO	0x017C
++#define SSB_SPROM11_RPCAL_5GM		0x017C
++#define SSB_SPROM11_RPCAL_5GH		0x017E
 +#define SSB_SPROM11_MCSBW205GHPO	0x0180
 +#define SSB_SPROM11_MCSBW405GHPO	0x0184
 +#define SSB_SPROM11_MCSBW805GHPO	0x0188
-+#define SSB_SPROM11_MCSBW1605GHPO	0x018C
++#define SSB_SPROM11_RPCAL_5GU		0x018C
 +#define SSB_SPROM11_MCSLR5GLPO		0x0190
 +#define SSB_SPROM11_MCSLR5GMPO		0x0192
 +#define SSB_SPROM11_MCSLR5GHPO		0x0194

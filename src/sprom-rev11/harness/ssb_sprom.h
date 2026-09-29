@@ -68,15 +68,16 @@ struct ssb_sprom {
 	u32 mcsbw205glpo;
 	u32 mcsbw405glpo;
 	u32 mcsbw805glpo;
-	u32 mcsbw1605glpo;
 	u32 mcsbw205gmpo;
 	u32 mcsbw405gmpo;
 	u32 mcsbw805gmpo;
-	u32 mcsbw1605gmpo;
 	u32 mcsbw205ghpo;
 	u32 mcsbw405ghpo;
 	u32 mcsbw805ghpo;
-	u32 mcsbw1605ghpo;
+	/* TX beamforming RX path calibration: 2.4 GHz and the four 5 GHz
+	 * sub-bands; words 182, 183, 190, 191, 198. */
+	u16 rpcal2g;
+	u16 rpcal5gb[4];
 
 	struct ssb_sprom_core_pwr_info core_pwr_info[4];
 };

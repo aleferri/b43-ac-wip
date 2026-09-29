@@ -15,6 +15,9 @@ The traces come from four boards:
 - **Technicolor TG789vac v2** (BCM4360, 3×3, `wl` 7.14.89.14): the D6220's `wl`
   on the other chip, which separates chip and ucode from driver version.
 
+Two bus captures of the hybrid `wl` 6.30 on x86, the archer-t5e and a
+MacBookAir6,1, are the only ones with 2.4 GHz channel sets.
+
 ## Target chip
 
 | Field | Value |
@@ -40,16 +43,18 @@ hot behaviour goes in [`docs/retrace-todo.md`](docs/retrace-todo.md).
 
 ## Current state
 
-Measured on `e32ce3b`.
+Measured on 2026-09-29.
 
 | gate | result |
 |---|---|
 | unit, cold `cold01` ch36/20 | **99.72%** (29777/29860): 2 wrong values, 70 missing, 9 extra |
 | unit, cold, all 43 segments | min 98.91% (ch108/20), median 99.42%, max 99.74% |
 | unit, hot `up` ch36 / ch52 / ch104 | 98.17% / 98.63% / 98.36% |
+| unit, cold agcombo `cold01` ch36/20 | 91.12% |
+| unit, cold TG789vac v2 `cold01` ch36/20 | 96.79% (32754/33840) |
 | unit, periodic watchdog tick | **`MATCH`** |
 | integration, cold `cold01` | `probe: 0`, `start: 0`; 85.00% (28494/33523) |
-| SROM rev 11 extractor | 77/74/75 PASS, 0 FAIL (DSL-3580L, D6220, agcombo) |
+| SROM rev 11 extractor | 74/79/80 PASS, 0 FAIL (DSL-3580L, D6220, agcombo) |
 
 The number to quote is the `grezzo` line of `cmp_skip.py`; how to reproduce
 and read it is in [`test/unit/README.md`](test/unit/README.md). The six
@@ -79,7 +84,10 @@ How the pieces fit is in [`docs/driver-status.md`](docs/driver-status.md).
 
 ## What is missing
 
-- 2.4 GHz: `switch_channel` returns `-EOPNOTSUPP`.
+- 2.4 GHz: `switch_channel` returns `-EOPNOTSUPP`. The channel set is in the
+  port and checked against two boards (`test/unit/band_gate.sh`, with the
+  driver built with `ALLOW_24`); board data and calibrations are open
+  (`docs/retrace-todo.md`, "2.4 GHz").
 - Radar detection without pattern matching: `CONFIG_B43_DFS` reports every
   pulse as a radar.
 - Probe-response offload and the power management queue: deliberately off, see

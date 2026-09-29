@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Check the radio-2069 channel table against the vendor sweep segments.
 
-b43_phy_ac_set_channel() only programs ch36 because most of the values it
-writes were transcribed from a ch36 capture. The table itself, however,
-carries a row per channel, and a sweep holds one cycle per channel -- warm
-segments named *-up-chNN-bwNN or the cold ones named coldNN-chNN-bwNN,
-so the rows can be checked without tuning anything.
+The table carries a row per channel, and a sweep holds one cycle per
+channel -- warm segments named *-up-chNN-bwNN or the cold ones named
+coldNN-chNN-bwNN -- so the rows can be checked without tuning anything. The
+same register map serves both bands.
 
 For each channel present in the sweep this compares the table row against
 what the vendor actually wrote:

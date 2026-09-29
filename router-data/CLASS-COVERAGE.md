@@ -38,7 +38,7 @@ PHY/RAD/TBL/MAC/SI/PMU/GPIO classes every capture has.
 | `dsl3580l/full-sweep.zip` | 1707638 | **missing CAL** |
 
 The bus captures (`agcombo/*.bin`, `agcombo/mmio-decoded.zip`,
-`archer-t5e/mmiotrace.zip`) have none of the accessor classes by construction:
+`archer-t5e/mmiotrace.zip`, `macbookair6-1/*.trace.xz`) have none of the accessor classes by construction:
 the audit reports them incomplete, and an absence there means nothing at class
 level. Compare them with `--bus` (`test/integration/README.md`).
 

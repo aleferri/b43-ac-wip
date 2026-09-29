@@ -57,6 +57,8 @@ struct board_profile {
 	 * pdoffset40ma{0,1,2} and pdoffset80ma{0,1,2}. Feed table 0x21. */
 	u16 pdoffset40ma[3];
 	u16 pdoffset80ma[3];
+	/* rpcal2g and rpcal5gb0..3: SROM words 182, 183, 190, 191, 198. */
+	u16 rpcal[5];
 	/* mcsbw{20,40}5g{l,m,h}po, NVRAM. Index 0 = 5gl, 1 = 5gm, 2 = 5gh. */
 	u32 mcsbw5g_po[3][3];	/* [sotto-banda][bw20, bw40, bw80] */
 	/* rxgains_5gl per-core (3 core). NVRAM keys rxgains5gelnagaina{0,1,2}
@@ -64,6 +66,11 @@ struct board_profile {
 	 * e gainctx = ((triso+4)<<1)+2 nel body Phase 3 di noise-shaping. */
 	u8 rxgains_5gl_elnagain[3];
 	u8 rxgains_5gl_triso[3];
+	/* The 2.4 GHz fields, per core: pa2ga (a1, b0, b1) and rxgains 2g. Only
+	 * the archer profile carries them; the routers are zero there. */
+	u16 pa2ga[3][3];
+	u8 rxgains_2g_elnagain[3];
+	u8 rxgains_2g_triso[3];
 	/* R2069_RCCAL_E/F (radio 0x0414/0x0415) read by rccal in op_init to
 	 * derive lpf_cap = ((F-E)*193)>>8. Per-board because it is an analog
 	 * measurement, not a constant. */
@@ -96,6 +103,8 @@ struct board_profile {
  * Per ch36 (5180 MHz) con subband5gver=4 → grp=0, a1/b0/b1 = pa5ga0[0..2].
  */
 static const struct board_profile PROFILE_D6220 = {
+	/* rpcal2g, rpcal5gb0..3 = 0, 299, 297, 297, 65342 (NVRAM and SROM). */
+	.rpcal = { 0x0000, 0x012b, 0x0129, 0x0129, 0xff3e },
 	.name = "d6220", .chip_id = 0x4352, .radio_rev = 4,
 	.chip_rev = 0x3, .pci_device = 0x43b3,
 	/* macaddr=00:00:00:00:00:03 (wl1_nvram.txt) */
@@ -152,6 +161,8 @@ static const struct board_profile PROFILE_D6220 = {
 };
 
 static const struct board_profile PROFILE_AGCOMBO = {
+	/* rpcal2g, rpcal5gb0..3 from the agcombo NVRAM. */
+	.rpcal = { 0x0000, 0x172b, 0x1823, 0x1021, 0x1c30 },
 	.name = "agcombo", .chip_id = 0x4360, .radio_rev = 4,
 	.chip_rev = 0x3, .pci_device = 0x43a2,
 	/* macaddr=00:c0:02:01:07:24 (agcombo/wl1_nvram.txt) */
@@ -331,6 +342,55 @@ static const struct board_profile PROFILE_TG789 = {
 	},
 };
 
+/*
+ * archer-t5e: BCM4360 PCIe card (chip 0x4352 rev 3), hybrid wl 6.30.223, the
+ * only dual-band SROM of the collection. Every field is decoded from
+ * router-data/archer-t5e/srom.txt with the rev 11 offsets of patches/0001;
+ * rccal and MAC_HW_CAP are the reads of its mmiotrace. femctrl is 1, not 6:
+ * the FEM control table stops with its warning on this profile.
+ * tssifloor5g is not decoded and takes the routers' value.
+ */
+static const struct board_profile PROFILE_ARCHER = {
+	.name = "archer", .chip_id = 0x4352, .radio_rev = 4,
+	.chip_rev = 0x3, .pci_device = 0x43a0,
+	.macaddr = { 0xc0, 0x25, 0xe9, 0x29, 0x03, 0xcd },
+	.core_rev = 42, .mac_hw_cap = 0xb0518c05,
+	.fem_cfg1 = 0x0851, .fem_cfg2 = 0x0051,
+	.thermal = 0xffff, .tempdelta = 0xffff,
+	.tssifloor5g = { 0x3ff, 0x3ff, 0x3ff, 0x3ff },
+	.radio_ver = 0x2069, .phy_rev = 1,
+	.ledbh = { [0] = 0xff, [1] = 0xff, [2] = 0xff, [3] = 0xff,
+		   [4 ... 15] = 0xff },
+	.num_cores = 3, .coremask = 0x7, .rxchain = 7,
+	.subband5gver = 0x4,
+	.pa5ga = {
+		{ 0xff3f, 0x1a5c, 0xfcd0, 0xff42, 0x1a7e, 0xfcd7,
+		  0xff42, 0x1913, 0xfd00, 0xff48, 0x17ee, 0xfd1b },
+		{ 0xff41, 0x1a47, 0xfcd4, 0xff45, 0x1a93, 0xfcd5,
+		  0xff3e, 0x1984, 0xfced, 0xff45, 0x18a3, 0xfd08 },
+		{ 0xff49, 0x198b, 0xfcf2, 0xff49, 0x1943, 0xfcf8,
+		  0xff3c, 0x188f, 0xfcfb, 0xff41, 0x1831, 0xfd10 },
+	},
+	.maxp5ga = {
+		{ 80, 80, 80, 80 },
+		{ 80, 80, 80, 82 },
+		{ 80, 80, 80, 80 },
+	},
+	.rxgains_5gl_elnagain = { 3, 3, 3 },
+	.rxgains_5gl_triso    = { 9, 9, 9 },
+	.pa2ga = {
+		{ 0xff37, 0x1b77, 0xfcb0 },
+		{ 0xff36, 0x1b2e, 0xfcb6 },
+		{ 0xff21, 0x18ec, 0xfcee },
+	},
+	.rxgains_2g_elnagain = { 4, 4, 4 },
+	.rxgains_2g_triso    = { 9, 9, 9 },
+	.rccal_e = 0x0aba, .rccal_f = 0x0b9d,
+	.rccal_g = 0x01c9,
+	.antgain_raw = { 0, 0 },
+	/* pdoffset40ma/80ma and every mcsbw*po word are zero in this SROM. */
+};
+
 /* One-shot mock storage. Lives for the whole run. */
 /* Il profilo per nome, come lo passano le due suite (argv o B43_BOARD). */
 static inline const struct board_profile *board_profile_lookup(const char *name)
@@ -341,6 +401,8 @@ static inline const struct board_profile *board_profile_lookup(const char *name)
 		return &PROFILE_DSL;
 	if (name && !strcmp(name, "tg789"))
 		return &PROFILE_TG789;
+	if (name && !strcmp(name, "archer"))
+		return &PROFILE_ARCHER;
 	return &PROFILE_D6220;
 }
 
@@ -367,6 +429,8 @@ static inline void board_profile_to_sprom(const struct board_profile *p,
 					      (p->antgain_raw[b] >> 6));
 	memcpy(s->pdoffset40ma, p->pdoffset40ma, sizeof(s->pdoffset40ma));
 	memcpy(s->pdoffset80ma, p->pdoffset80ma, sizeof(s->pdoffset80ma));
+	s->rpcal2g = p->rpcal[0];
+	memcpy(s->rpcal5gb, &p->rpcal[1], sizeof(s->rpcal5gb));
 
 	s->tssiposslope2g = c1 & 0x0001;
 	s->epagain2g      = (c1 & 0x000e) >> 1;
@@ -397,12 +461,18 @@ static inline void board_profile_to_sprom(const struct board_profile *p,
 	       sizeof(s->rxgains_5gl.elnagain));
 	memcpy(s->rxgains_5gl.triso, p->rxgains_5gl_triso,
 	       sizeof(s->rxgains_5gl.triso));
+	memcpy(s->rxgains_2g.elnagain, p->rxgains_2g_elnagain,
+	       sizeof(s->rxgains_2g.elnagain));
+	memcpy(s->rxgains_2g.triso, p->rxgains_2g_triso,
+	       sizeof(s->rxgains_2g.triso));
 
 	for (c = 0; c < 3; c++) {
 		memcpy(s->core_pwr_info[c].pa5ga, p->pa5ga[c],
 		       sizeof(s->core_pwr_info[c].pa5ga));
 		memcpy(s->core_pwr_info[c].maxp5ga, p->maxp5ga[c],
 		       sizeof(s->core_pwr_info[c].maxp5ga));
+		memcpy(s->core_pwr_info[c].pa2ga, p->pa2ga[c],
+		       sizeof(s->core_pwr_info[c].pa2ga));
 	}
 
 	for (b = 0; b < 3; b++) {
