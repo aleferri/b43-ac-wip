@@ -1,4 +1,4 @@
-From f911bae89cd089459f54a21bfdef1266f56cd583 Mon Sep 17 00:00:00 2001
+From de6b1586df2f87ef59d94fec07594f53b5d0095b Mon Sep 17 00:00:00 2001
 From: Alessio Ferri <alessio.ferri.3012@gmail.com>
 Date: Sun, 27 Sep 2026 15:55:26 +0000
 Subject: [PATCH] b43: core support for the AC-PHY
@@ -43,12 +43,20 @@ TX:
    VHT / 40-80 MHz want a vendor-trace cross-check before being trusted.
  - b43_dummy_transmission(): emit the TXE0_PHYCTL1 (0x1A02) setup for AC.
 
-RX (b43_rx(), the part that was entirely missing):
- - link-quality/signal: AC reuses the HT per-antenna power layout
-   (phy_ht_power0..2). Flagged for an RX-trace cross-check.
- - band/frequency: AC joins N/LP/HT (5/2 GHz by B43_RX_CHAN_5GHZ +
-   channel cookie). Without this status.band/freq were left unset and
-   frames were dropped or mis-banded.
+RX (b43_rx()):
+ - b43_rx() reads the PHY type out of the low three bits of the header's
+   channel field, which the older microcode fills as (cookie << 3) |
+   phytype. B43_PHYTYPE_AC is 0x0b and does not fit in three bits, so on
+   AC the frame went down whatever branch those bits selected, or was
+   dropped with a warning. What the AC microcode writes in that field is
+   not known: the stock driver's cookie in shared memory is a 16-bit
+   chanspec, which the old encoding cannot carry either. So on AC the
+   PHY type comes from the device, and band and frequency from the
+   channel the radio is tuned to, which is also what the OFDM rate
+   lookup now takes its band from.
+ - signal: where the AC microcode reports the receive power is not known
+   either, so AC frames carry RX_FLAG_NO_SIGNAL_VAL rather than a value
+   read from the HT fields on the guess that the layout is shared.
 
 Core rate setup:
  - b43_rate_memory_init(): AC joins the OFDM group. It previously fell to
@@ -365,9 +373,9 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
  drivers/net/wireless/broadcom/b43/main.c      | 537 ++++++++++++++++--
  .../net/wireless/broadcom/b43/phy_common.c    |  24 +
  .../net/wireless/broadcom/b43/phy_common.h    |  24 +
- drivers/net/wireless/broadcom/b43/xmit.c      |   9 +-
+ drivers/net/wireless/broadcom/b43/xmit.c      |  34 +-
  drivers/net/wireless/broadcom/b43/xmit.h      |  20 +
- 10 files changed, 731 insertions(+), 141 deletions(-)
+ 10 files changed, 752 insertions(+), 145 deletions(-)
 
 diff --git a/drivers/net/wireless/broadcom/b43/Kconfig b/drivers/net/wireless/broadcom/b43/Kconfig
 index 4559549..616aa17 100644
@@ -1746,7 +1754,7 @@ index 5ec5233..4d48441 100644
  
  #endif /* LINUX_B43_PHY_COMMON_H_ */
 diff --git a/drivers/net/wireless/broadcom/b43/xmit.c b/drivers/net/wireless/broadcom/b43/xmit.c
-index 7651b1b..7c70235 100644
+index 7651b1b..e50e523 100644
 --- a/drivers/net/wireless/broadcom/b43/xmit.c
 +++ b/drivers/net/wireless/broadcom/b43/xmit.c
 @@ -254,7 +254,8 @@ int b43_generate_txhdr(struct b43_wldev *dev,
@@ -1759,26 +1767,85 @@ index 7651b1b..7c70235 100644
  	u8 extra_ft = 0;
  	struct ieee80211_rate *txrate;
  	struct ieee80211_tx_rate *rates;
-@@ -718,7 +719,10 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
+@@ -640,6 +641,8 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
+ 	u16 chanstat, mactime;
+ 	u32 macstat;
+ 	u16 chanid;
++	u8 phytype;
++	bool rx_5ghz;
+ 	int padding, rate_idx;
+ 
+ 	memset(&status, 0, sizeof(status));
+@@ -661,6 +664,18 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
+ 		break;
+ 	}
+ 
++	/* The channel field of the older microcode is (cookie << 3) | phytype,
++	 * and three bits cannot carry B43_PHYTYPE_AC. What the AC microcode
++	 * puts there is not known, so on AC the PHY type comes from the device
++	 * and the band from the channel the radio is tuned to. */
++	if (dev->phy.type == B43_PHYTYPE_AC) {
++		phytype = B43_PHYTYPE_AC;
++		rx_5ghz = b43_current_band(dev->wl) == NL80211_BAND_5GHZ;
++	} else {
++		phytype = chanstat & B43_RX_CHAN_PHYTYPE;
++		rx_5ghz = !!(chanstat & B43_RX_CHAN_5GHZ);
++	}
++
+ 	if (unlikely(macstat & B43_RX_MAC_FCSERR)) {
+ 		dev->wl->ieee_stats.dot11FCSErrorCount++;
+ 		status.flag |= RX_FLAG_FAILED_FCS_CRC;
+@@ -716,7 +731,11 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
+ 	}
+ 
  	/* Link quality statistics */
- 	switch (chanstat & B43_RX_CHAN_PHYTYPE) {
- 	case B43_PHYTYPE_HT:
--		/* TODO: is max the right choice? */
+-	switch (chanstat & B43_RX_CHAN_PHYTYPE) {
++	switch (phytype) {
 +	case B43_PHYTYPE_AC:
-+		/* AC reuses the HT per-antenna power layout (phy_ht_power*);
-+		 * wants an RX-trace cross-check before VHT is trusted.
-+		 * TODO: is max the right choice? */
++		/* Where the AC microcode reports the power is not known. */
++		status.flag |= RX_FLAG_NO_SIGNAL_VAL;
++		break;
+ 	case B43_PHYTYPE_HT:
+ 		/* TODO: is max the right choice? */
  		status.signal = max_t(__s8,
- 			max(rxhdr->phy_ht_power0, rxhdr->phy_ht_power1),
- 			rxhdr->phy_ht_power2);
-@@ -789,6 +793,7 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
- 	case B43_PHYTYPE_N:
- 	case B43_PHYTYPE_LP:
+@@ -741,8 +760,7 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
+ 	}
+ 
+ 	if (phystat0 & B43_RX_PHYST0_OFDM)
+-		rate_idx = b43_plcp_get_bitrate_idx_ofdm(plcp,
+-					!!(chanstat & B43_RX_CHAN_5GHZ));
++		rate_idx = b43_plcp_get_bitrate_idx_ofdm(plcp, rx_5ghz);
+ 	else
+ 		rate_idx = b43_plcp_get_bitrate_idx_cck(plcp);
+ 	if (unlikely(rate_idx == -1)) {
+@@ -775,7 +793,7 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
+ 	}
+ 
+ 	chanid = (chanstat & B43_RX_CHAN_ID) >> B43_RX_CHAN_ID_SHIFT;
+-	switch (chanstat & B43_RX_CHAN_PHYTYPE) {
++	switch (phytype) {
+ 	case B43_PHYTYPE_G:
+ 		status.band = NL80211_BAND_2GHZ;
+ 		/* Somewhere between 478.104 and 508.1084 firmware for G-PHY
+@@ -791,13 +809,17 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
  	case B43_PHYTYPE_HT:
-+	case B43_PHYTYPE_AC:
  		/* chanid is the SHM channel cookie. Which is the plain
  		 * channel number in b43. */
- 		if (chanstat & B43_RX_CHAN_5GHZ)
+-		if (chanstat & B43_RX_CHAN_5GHZ)
++		if (rx_5ghz)
+ 			status.band = NL80211_BAND_5GHZ;
+ 		else
+ 			status.band = NL80211_BAND_2GHZ;
+ 		status.freq =
+ 			ieee80211_channel_to_frequency(chanid, status.band);
+ 		break;
++	case B43_PHYTYPE_AC:
++		status.band = b43_current_band(dev->wl);
++		status.freq = dev->wl->hw->conf.chandef.chan->center_freq;
++		break;
+ 	default:
+ 		B43_WARN_ON(1);
+ 		goto drop;
 diff --git a/drivers/net/wireless/broadcom/b43/xmit.h b/drivers/net/wireless/broadcom/b43/xmit.h
 index 6524a75..14fcc1a 100644
 --- a/drivers/net/wireless/broadcom/b43/xmit.h
