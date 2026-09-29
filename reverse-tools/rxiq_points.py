@@ -122,8 +122,11 @@ def solve_sum(rs):
 
 def solve_mean(rs):
     n = len(rs)
-    a_sum = sum(rdiv(-(r['iq'] << 16), r['ii']) for r in rs)
-    a = rdiv(a_sum, n << 6)
+    a_sum = 0
+    for r in rs:
+        k = max(r['ii'].bit_length() - 16, 0)
+        a_sum += rdiv(-((r['iq'] >> k) << 24), r['ii'] >> k)
+    a = rdiv(a_sum, n << 14)
     b_sum = 0
     for r in rs:
         root = math.isqrt(r['qq'] * r['ii'] - r['iq'] * r['iq'])

@@ -9292,24 +9292,28 @@ void b43_phy_ac_rxiqcal_meas_post_dds_apply_v2(struct b43_wldev *dev)
  *   a_r     = -iq * 2^10 / ii
  *   b_r + 1 = 2^10 * sqrt(qq * ii - iq^2) / ii
  *
- * a is the mean of the a_r, kept in Q16 so that the per-tone rounding does
- * not decide the final unit; b is the mean of the a_r-rounded b_r, rounded
- * half up. The second form of b_r is the first with the exact a_r under the
- * root: with a_r rounded to Q10 first, a tone sitting on a half flips.
+ * a is the mean of the a_r, kept in Q24 so that the per-tone rounding does
+ * not decide the final unit, and each a_r is taken on ii and iq cut to a
+ * 16-bit mantissa of ii, the same shift on both: that truncation is what
+ * moves the values sitting just under a half, a_r = 20.49 on the tg789vac's
+ * core 0 at ch36 comes out 21 as the stock driver writes. b is the mean of
+ * the a_r-rounded b_r, rounded half up. The second form of b_r is the first
+ * with the exact a_r under the root: with a_r rounded to Q10 first, a tone
+ * sitting on a half flips.
  *
- * Measured on 118 writes of 0x?a1 over the seven cold segments that run the
- * phase and the 52 hot ones (reverse-tools/rxiq_points.py):
+ * Measured with reverse-tools/rxiq_points.py on every cold segment of the
+ * d6220 and the agcombo, the tg789vac's outside the radar channels, and the up
+ * segments of the d6220 and agcombo hot sweeps, 309 writes of 0x?a1:
  *
- *                       a exact   b exact   both
- *   accumulator sum      108       86        80
- *   this                 117       90        89
+ *                       a exact   b exact
+ *   accumulator sum      258       253
+ *   mean, full width     290       259
+ *   this                 296       259
  *
- * What remains is on the d6220's core 1: 34/59 exact with a symmetric +-1
- * residual that follows the band -- the vendor comes out ~0.7 LSB higher on
- * ch100 and above than below 5250 MHz, relative to any function of these six
- * accumulators. Core 0 is 56/59 with the three misses one low. On agcombo,
- * whose three chains are all clean under the mean, the core-1 residual is
- * not a rule per chain; an input outside the accumulators is missing for it.
+ * The mantissa costs one point the full-width mean had, core 1 of the d6220's
+ * bss-up on ch52, whose two tones average to -38.5005 and the stock driver
+ * writes -39. What remains on b is mostly the stock driver one high, and
+ * mostly on core 1; an input outside the six accumulators is missing.
  * The b43_phy_ac_todo() at the write site stays for that reason.
  */
 static void b43_phy_ac_iq_solve(struct b43_phy_ac_iq_acc *acc,
@@ -9336,7 +9340,8 @@ static void b43_phy_ac_iq_solve(struct b43_phy_ac_iq_acc *acc,
 	for (r = 0; r < nr; r++) {
 		u64 ii = acc->ii[r], qq = acc->qq[r];
 		s64 iq = acc->iq[r];
-		s64 num;
+		unsigned int k;
+		s64 num, den;
 		u64 root;
 
 		if (!ii) {
@@ -9345,10 +9350,17 @@ static void b43_phy_ac_iq_solve(struct b43_phy_ac_iq_acc *acc,
 			return;
 		}
 
-		/* a_r in Q16, rounded half away from zero. */
-		num = -(iq << 16);
-		a_sum += div64_s64(num + (num < 0 ? -(s64)(ii >> 1)
-						 : (s64)(ii >> 1)), ii);
+		/*
+		 * a_r in Q24, rounded half away from zero, on the two
+		 * accumulators cut to a 16-bit mantissa of ii: the same shift
+		 * on both, iq arithmetically.
+		 */
+		k = fls64(ii);
+		k = k > 16 ? k - 16 : 0;
+		den = (s64)(ii >> k);
+		num = -((iq >> k) << 24);
+		a_sum += div64_s64(num + (num < 0 ? -(den >> 1) : (den >> 1)),
+				   den);
 
 		/*
 		 * b_r + 1 in Q10: 2^10 * sqrt(qq*ii - iq^2) / ii, rounded to
@@ -9359,8 +9371,8 @@ static void b43_phy_ac_iq_solve(struct b43_phy_ac_iq_acc *acc,
 		b_sum += div64_u64((root << 11) + ii, ii << 1);
 	}
 
-	/* Mean of the Q16 a_r back to Q10, rounded half away from zero. */
-	a_den = (s64)nr << 6;
+	/* Mean of the Q24 a_r back to Q10, rounded half away from zero. */
+	a_den = (s64)nr << 14;
 	a = (s32)div64_s64(a_sum + (a_sum < 0 ? -(a_den >> 1) : (a_den >> 1)),
 			   a_den);
 	/* Mean of the b_r, rounded half up. */
@@ -9481,11 +9493,11 @@ void b43_phy_ac_rxiqcal_apply_coefficients(struct b43_wldev *dev)
 	unsigned int c;
 
 	b43_phy_ac_todo(dev,
-		"the RX IQ coefficient b matches the stock driver on 90 of 118 "
-		"measured points; the misses are one LSB either way and sit "
-		"almost all on core 1, where they follow the band. An input "
-		"outside the six accumulators is missing. Receive image "
-		"rejection on that core may be slightly worse.\n");
+		"the RX IQ coefficient b matches the stock driver on 259 of 309 "
+		"measured points; the misses are one LSB, mostly the stock "
+		"driver high and mostly on core 1. An input outside the six "
+		"accumulators is missing. Receive image rejection on that core "
+		"may be slightly worse.\n");
 
 	/* Per core [c]: 0x?a0 (coeff a) e 0x?a1 (coeff b) */
 	for_each_set_bit(c, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {

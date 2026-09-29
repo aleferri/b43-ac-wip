@@ -77,6 +77,7 @@ static inline void __clear_bit(unsigned long nr, unsigned long *addr)
 /* Bit-manipulation helpers used by the driver. */
 static inline int __ffs(unsigned long x)  { return __builtin_ctzl(x); }
 static inline int fls(int x)              { return x ? 32 - __builtin_clz((unsigned)x) : 0; }
+static inline int fls64(u64 x)            { return x ? 64 - __builtin_clzll(x) : 0; }
 static inline int hweight32(u32 x)        { return __builtin_popcount(x); }
 static inline int hweight8(u8 x)          { return __builtin_popcount(x); }
 static inline s32 sign_extend32(u32 value, int index)
