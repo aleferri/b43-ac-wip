@@ -680,6 +680,16 @@ PERIMETER = [
                 "vendor; i pin 4-15 da NVRAM ledbh glieli insegnano "
                 "gpio_ext[] in bcma/ e leds.c in b43/. Vedi README.md, \"What is missing\"."),
 
+    dict(pattern=r'^SI\.COREREG core=0x0 off=0x80\b',
+         motivo="il watchdog del chipcommon, scritto una volta sola in coda al "
+                "detach di wl1: dopo il rilascio dei LED, e l'ultima op del "
+                "core prima del reset del chip. Nel driver stock e' "
+                "pcie_watchdog_reset(), che resetta il chip con il watchdog "
+                "prima di rilasciare il dispositivo PCIe; il registro e' di "
+                "bcma (BCMA_CC_WATCHDOG) e nel percorso di rimozione di bcma "
+                "non c'e' niente di simile, vedi docs/retrace-todo.md, \"MAC "
+                "and DMA, from the bus captures\"."),
+
     dict(pattern=r'^CAL\.INIT\b',
          motivo="switch di forzatura delle calibrazioni del driver stock. In "
                 "questa build il record non porta ne' indirizzo ne' valore, "
