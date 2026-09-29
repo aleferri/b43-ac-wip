@@ -110,8 +110,10 @@ sample, that is where one sample decides the index alone:
   thresholds fall on half-octaves and the index rises by three per octave, about
   one per dB, and the ladder would continue that way.
 
-The levels the captures cover, per width, are in `b43_phy_ac_crs_noise_seen[]`.
-Outside them the driver warns once.
+A level no capture reached is not an extrapolation as long as the sample stays
+below 4096: the thresholds under it are pinned, and a quieter or noisier
+environment only picks another entry of the ladder. The driver does not warn on
+the noise level.
 
 ## Where it is written   [MEASURED]
 

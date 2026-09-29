@@ -364,8 +364,6 @@ struct b43_phy_ac {
 	 */
 	u16 wd_turns;
 	u16 wd_switch_turns;
-	/* L'avviso di campione fuori dal misurato si emette una volta sola. */
-	bool crs_noise_warned;
 	/*
 	 * Il blocco E delle soglie CRS e' dovuto al prossimo campione di
 	 * rumore che arriva: la coda del bring-up arma, e

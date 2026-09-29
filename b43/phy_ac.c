@@ -5274,31 +5274,6 @@ static const u8 b43_phy_ac_crs_noise_idx[] = { 0, 1, 3, 4, 6, 7 };
 static const u8 b43_phy_ac_crs_noise_anchor[3] = { 0, 2, 2 };
 
 /*
- * I livelli v che le catture hanno davvero percorso, per larghezza, contati
- * su ogni campione di ogni catena dei quattro sweep. Fuori di qui la formula
- * continua a produrre una voce della scala, ma nessuno ha mai visto il
- * vendor scriverla: quello che c'e' oltre e' estrapolazione, e il driver non
- * deve spacciarla per misura.
- *
- * A 20 MHz non si e' mai visto il livello piu' basso, a 80 il piu' alto. E'
- * rumore ambientale: nessuna delle catture e' stata presa in una camera
- * anecoica ne' accanto a un forno a microonde.
- *
- * Fuori intervallo il driver avvisa una volta e lascia che la formula
- * estrapoli. Non appiattisce sull'estremo osservato: sarebbe una seconda
- * invenzione sopra la prima, e nasconderebbe proprio quello che l'avviso deve
- * dire. Sbagliare qui non rompe niente -- e' una soglia di ricezione, non una
- * potenza di trasmissione: se e' troppo alta la radio diventa sorda e
- * trasmette sopra gli altri, se e' troppo bassa vede il rumore come portante e
- * non trasmette mai. Guasti funzionali, reversibili, e il log dice perche'.
- */
-static const u8 b43_phy_ac_crs_noise_seen[3][2] = {
-	/* BW20 */ { 1, 5 },
-	/* BW40 */ { 0, 5 },
-	/* BW80 */ { 0, 4 },
-};
-
-/*
  * Fold one latch of the noise window into the per-chain rings. Called from
  * the watchdog, where the window is latched; @sample holds one value per
  * chain.
@@ -5316,23 +5291,6 @@ static void b43_phy_ac_crs_note_noise(struct b43_wldev *dev, const u16 *sample)
 		while (v < ARRAY_SIZE(b43_phy_ac_crs_noise_th) &&
 		       n >= b43_phy_ac_crs_noise_th[v])
 			v++;
-
-		if ((v < b43_phy_ac_crs_noise_seen[bw][0] ||
-		     v > b43_phy_ac_crs_noise_seen[bw][1]) &&
-		    !ac->crs_noise_warned) {
-			ac->crs_noise_warned = true;
-			b43warn(dev->wl,
-				"AC-PHY: noise sample %u at %u MHz falls outside "
-				"everything the captures cover, so the carrier "
-				"sense threshold here is extrapolated and not "
-				"measured. Carrier sense may be wrong in either "
-				"direction: too deaf and the radio transmits over "
-				"others, too sensitive and it never gets to "
-				"transmit. Nothing is damaged and the setting is "
-				"not sticky. A capture of this environment is "
-				"what would fix it.\n",
-				sample[core], 20u << bw);
-		}
 
 		ac->crs_ring[core][slot] = b43_phy_ac_crs_noise_idx[v] +
 					   b43_phy_ac_crs_noise_anchor[bw];
