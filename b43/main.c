@@ -5470,6 +5470,16 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
 	if (dev->dev->core_rev >= 13) {
 		u32 mac_hw_cap = b43_read32(dev, B43_MMIO_MAC_HW_CAP);
 
+		/*
+		 * The AC microcode gets bit 31 cleared from every stock driver
+		 * in the captures -- 6.30.102.7 with ucode 802, 7.14 with 928
+		 * on three boards -- except the x86 hybrid 6.30.223, which
+		 * leaves it set for its ucode 832. That one is followed too:
+		 * the captures cannot tell the ucode from the build.
+		 */
+		if (dev->fw.hdr_format == B43_FW_HDR_AC && dev->fw.rev != 832)
+			mac_hw_cap &= ~0x80000000;
+
 		b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_MACHW_L,
 				mac_hw_cap & 0xffff);
 		b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_MACHW_H,

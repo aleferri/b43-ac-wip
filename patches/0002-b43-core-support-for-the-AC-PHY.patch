@@ -510,6 +510,16 @@ b43 has 4, and a 16 byte key is 5, past b43's enum; the key fields of its
 TX and RX headers are not mapped either. B43_FW_HDR_AC leaves
 hwcrypto_enabled off, and mac80211 does the crypto.
 
+Bit 31 of the MAC capabilities on the AC microcode
+--------------------------------------------------
+
+Every stock driver in the captures clears bit 31 of the capability register
+before it writes the high half to the microcode: 6.30.102.7 with ucode 802,
+7.14 with ucode 928 on three boards (0xb0518c05 becomes 0x3051). The one
+exception is the x86 hybrid 6.30.223, which leaves it set for its ucode
+832, and b43 follows that too: the captures cannot tell the ucode from the
+build. What the bit enables is not known.
+
 Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
 ---
  drivers/net/wireless/broadcom/b43/Kconfig     |  12 +
@@ -519,12 +529,12 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
  drivers/net/wireless/broadcom/b43/dma.h       |   2 +
  drivers/net/wireless/broadcom/b43/leds.c      | 172 ++--
  drivers/net/wireless/broadcom/b43/leds.h      |  19 +-
- drivers/net/wireless/broadcom/b43/main.c      | 888 ++++++++++++++++--
+ drivers/net/wireless/broadcom/b43/main.c      | 898 ++++++++++++++++--
  .../net/wireless/broadcom/b43/phy_common.c    |  45 +-
  .../net/wireless/broadcom/b43/phy_common.h    |  27 +-
  drivers/net/wireless/broadcom/b43/xmit.c      |  41 +-
  drivers/net/wireless/broadcom/b43/xmit.h      |  21 +
- 12 files changed, 1127 insertions(+), 211 deletions(-)
+ 12 files changed, 1137 insertions(+), 211 deletions(-)
 
 diff --git a/drivers/net/wireless/broadcom/b43/Kconfig b/drivers/net/wireless/broadcom/b43/Kconfig
 index 4559549..616aa17 100644
@@ -1134,7 +1144,7 @@ index 5ebd1b2..eb68796 100644
  
  #endif /* B43_LEDS_H_ */
 diff --git a/drivers/net/wireless/broadcom/b43/main.c b/drivers/net/wireless/broadcom/b43/main.c
-index 92ca0b2..215faa3 100644
+index 92ca0b2..31b4f93 100644
 --- a/drivers/net/wireless/broadcom/b43/main.c
 +++ b/drivers/net/wireless/broadcom/b43/main.c
 @@ -316,6 +316,23 @@ static struct ieee80211_channel b43_5ghz_aphy_chantable[] = {
@@ -2262,7 +2272,24 @@ index 92ca0b2..215faa3 100644
  	if (b43_is_mode(dev->wl, NL80211_IFTYPE_ADHOC) || idle)
  		pu_delay = 500;
  	if ((dev->phy.radio_ver == 0x2050) && (dev->phy.radio_rev == 8))
-@@ -4895,6 +5481,55 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
+@@ -4884,6 +5470,16 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
+ 	if (dev->dev->core_rev >= 13) {
+ 		u32 mac_hw_cap = b43_read32(dev, B43_MMIO_MAC_HW_CAP);
+ 
++		/*
++		 * The AC microcode gets bit 31 cleared from every stock driver
++		 * in the captures -- 6.30.102.7 with ucode 802, 7.14 with 928
++		 * on three boards -- except the x86 hybrid 6.30.223, which
++		 * leaves it set for its ucode 832. That one is followed too:
++		 * the captures cannot tell the ucode from the build.
++		 */
++		if (dev->fw.hdr_format == B43_FW_HDR_AC && dev->fw.rev != 832)
++			mac_hw_cap &= ~0x80000000;
++
+ 		b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_MACHW_L,
+ 				mac_hw_cap & 0xffff);
+ 		b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_MACHW_H,
+@@ -4895,6 +5491,55 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
  	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_SFFBLIM, 3);
  	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_LFFBLIM, 2);
  
@@ -2318,7 +2345,7 @@ index 92ca0b2..215faa3 100644
  	/* Disable sending probe responses from firmware.
  	 * Setting the MaxTime to one usec will always trigger
  	 * a timeout, so we never send any probe resp.
-@@ -4937,6 +5572,19 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
+@@ -4937,6 +5582,19 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
  	b43_bluetooth_coext_enable(dev);
  
  	b43_bus_powerup(dev, !(sprom->boardflags_lo & B43_BFL_XTAL_NOSLOW));
@@ -2338,7 +2365,7 @@ index 92ca0b2..215faa3 100644
  	b43_upload_card_macaddress(dev);
  	b43_security_init(dev);
  
-@@ -5249,6 +5897,21 @@ out:
+@@ -5249,6 +5907,21 @@ out:
  	b43info(wl, "Controller restarted\n");
  }
  
@@ -2360,7 +2387,7 @@ index 92ca0b2..215faa3 100644
  static int b43_setup_bands(struct b43_wldev *dev,
  			   bool have_2ghz_phy, bool have_5ghz_phy)
  {
-@@ -5266,6 +5929,11 @@ static int b43_setup_bands(struct b43_wldev *dev,
+@@ -5266,6 +5939,11 @@ static int b43_setup_bands(struct b43_wldev *dev,
  	if (have_2ghz_phy)
  		hw->wiphy->bands[NL80211_BAND_2GHZ] = limited_2g ?
  			&b43_band_2ghz_limited : &b43_band_2GHz;
@@ -2372,7 +2399,7 @@ index 92ca0b2..215faa3 100644
  	if (dev->phy.type == B43_PHYTYPE_N) {
  		if (have_5ghz_phy)
  			hw->wiphy->bands[NL80211_BAND_5GHZ] = limited_5g ?
-@@ -5279,6 +5947,19 @@ static int b43_setup_bands(struct b43_wldev *dev,
+@@ -5279,6 +5957,19 @@ static int b43_setup_bands(struct b43_wldev *dev,
  	dev->phy.supports_2ghz = have_2ghz_phy;
  	dev->phy.supports_5ghz = have_5ghz_phy;
  
@@ -2392,7 +2419,7 @@ index 92ca0b2..215faa3 100644
  	return 0;
  }
  
-@@ -5350,6 +6031,12 @@ static void b43_supported_bands(struct b43_wldev *dev, bool *have_2ghz_phy,
+@@ -5350,6 +6041,12 @@ static void b43_supported_bands(struct b43_wldev *dev, bool *have_2ghz_phy,
  
  	/* As a fallback, try to guess using PHY type */
  	switch (dev->phy.type) {
@@ -2405,7 +2432,7 @@ index 92ca0b2..215faa3 100644
  	case B43_PHYTYPE_G:
  	case B43_PHYTYPE_N:
  	case B43_PHYTYPE_LP:
-@@ -5656,6 +6343,7 @@ bcma_out:
+@@ -5656,6 +6353,7 @@ bcma_out:
  static void b43_bcma_remove(struct bcma_device *core)
  {
  	struct b43_wldev *wldev = bcma_get_drvdata(core);
@@ -2413,7 +2440,7 @@ index 92ca0b2..215faa3 100644
  	struct b43_wl *wl = wldev->wl;
  
  	/* We must cancel any work here before unregistering from ieee80211,
-@@ -5671,14 +6359,14 @@ static void b43_bcma_remove(struct bcma_device *core)
+@@ -5671,14 +6369,14 @@ static void b43_bcma_remove(struct bcma_device *core)
  		ieee80211_unregister_hw(wl->hw);
  	}
  

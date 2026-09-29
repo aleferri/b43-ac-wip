@@ -59,10 +59,12 @@ same lever as `AC_FIRST_INIT`.
   cites), CCMP or TKIP not told apart; b43's enum has WEP104 at 4 and AES at 3. Hardware crypto is off on
   `B43_FW_HDR_AC` until the numbers and the key fields of the TX and RX
   headers are mapped.
-- **`MACHW_H` (`0x00c2`).** The capability register reads `0xb0518c05` on
-  both boards; 6.30.223 writes the high half as `0xb051`, as b43 does, and
-  7.14 (agcombo, D6220) as `0x3051`, bit 31 cleared. What the bit is, and
-  whether the 928 microcode needs it clear, is open.
+- **`MACHW_H` (`0x00c2`), bit 31.** The capability register reads
+  `0xb0518c05`. Every stock driver clears bit 31 before writing the high
+  half (DSL-3580L 6.30.102.7 with ucode 802; D6220, TG789vac v2 and agcombo,
+  7.14 with 928) except the x86 hybrid 6.30.223 with ucode 832, and
+  `B43_FW_HDR_AC` does the same, 832 included. Whether that is the ucode or
+  the hybrid build, and what the bit is, is open.
 - **SSID length.** `AC_SSID_LEN` (default 8) drives the probe-response length,
   the PLCP of the eight rates and `0x001e`. `gates.sh` does not read it off the
   capture (`PRSSIDLEN` at `0x0048`), so a segment with another SSID fails
