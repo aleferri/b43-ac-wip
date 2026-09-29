@@ -148,30 +148,90 @@ middle value on two boards with different SROMs points at a different
 regulatory cap in force (68 before the margin); which locale state, and why
 only on U-NII-1 bonded channels cold, is not understood.
 
-### Regulatory ceilings that cfg80211 cannot express
+### TX power: regulatory limits and chain masks
 
-The stock driver's ceilings are per width, cfg80211's `max_power` per 20 MHz
-channel. `AC_MAX_POWER_MAP` in `gates.sh` reproduces the 20 MHz ones; ch60 at
-22 dBm and ch100 at 24 dBm hold at 40 MHz only. On the TG789vac v2 the ceilings
-behave as conducted power, so the map is right only on a 5.5 dB board.
+One problem, seen in three places: the target on `0x?46`, the per-rate field
+`+0x0e`, and the chain masks `0x05d6`/`0x05d8`. The TG789vac v2 diverges on all
+three from its first bring-up on; the d6220 on the target at 40/80 MHz on the
+band edges and on `+0x0e` at ch104–144.
 
-### Per-rate field `+0x0e`: a saturation
+**The stock limits, from the three `curpower` dumps** (`agcombo/stats.txt` at
+ch100/80 and ch36/80, `dsl3580l/wl1_curpower_ch52-bw80.txt`, two driver
+branches). The limits are per rate class, chain count and width, and their
+structure is the same in all three to the quarter dB; only the level moves:
 
-Where the field still diverges the stock driver mostly writes
-`max(distance, K)`, K constant across the segment's rates: 1 dB on ch104–144
-at 20 MHz and ch60/40, 2 dB on ch116/80, 3 dB on ch36/80. It is not the
-regulatory ceiling nor a function of width or band (ch100, ch104–144 and
-ch149–165 at 20 MHz share the SROM word and sub-band, with K 0, 1 and 0). It
-points at the locale: ch116/80 and ch132/80 share SROM and target and differ in
-K, and the agcombo writes twice the D6220's K. ch100 at 40 and 80 MHz has tail
-steps of 1.5 and 2.5 dB and fits no form.
+| rows | offset |
+|---|---|
+| 1 chain (OFDM, MCS0-7, VHT8-9), 20in80 | Local Max − 2 dB |
+| 1 chain, 40in80 and 80 | Local Max − 1 dB |
+| CDD on 2 chains, STBC | 1 chain − 3 dB |
+| CDD on 3 chains | 1 chain − 5 dB |
+| TXBF on 2 chains | 1 chain − 6 dB |
+| TXBF on 3 chains | 1 chain − 9.75 dB |
+
+The level is the "BSS Local Max", the value cfg80211 gives as `max_power`
+(23 dBm at ch36, 30 at ch100: ETSI), less the antenna gain the driver reports
+(0 on the agcombo whatever its NVRAM says, 5.5 dB on the DSL). The target is
+`min(board, limit) - 1.5 dB` per rate and the register takes the maximum over
+the rates, as the Power Targets of `curpower` show.
+
+**The chain masks follow the limits.** Per class the stock driver takes the
+chain count with the highest total power, the limit plus 3.0 / 4.77 dB for 2 /
+3 chains, the fewer chains on a tie; `0x05d6` behaves like the TXBF rows and
+`0x05d8` like the CDD rows. With one level per channel and width this gives the
+two masks and the target on 75 of the 86 cold segments of the d6220 and the
+TG789vac, and the same level fits both boards on 41 of 43 channel/width pairs.
+**SALAME**: the class of each cell is the best of four assignments tried, not a
+known meaning. The mask carries the chain count: 1, 3 on the d6220; 1, 5, 7 on
+the TG789vac, two chains being 0 and 2.
+
+**What does not fit, and why.**
+
+- A 20 MHz channel has its own limit: ch36/20 writes 56 on all three boards,
+  15.5 dBm per chain with antenna gains of 0, 4.25 and 5.5 dB, where the
+  20in80 row of the same channel is 21 dBm on the agcombo. No 80 MHz table has
+  that column.
+- Band edges: ch60/40 (60), ch100/40 (68), ch36/40 and ch36/80 on the
+  TG789vac (68), ch100 at 20 and 80 MHz (76) are the same on every board that
+  shows them, below what the level of the channel allows, and without changing
+  the masks. They are locale caps per channel and width.
+- The antenna gain: the d6220 (5.5 dB) and the TG789vac (4.25 dB) write the
+  same targets, so on the 7.14.89 boards the gain the driver subtracts is not
+  the SROM's.
+- On the TG789vac ch36/80, 68 needs 18.5 dBm per chain, which no row of the
+  agcombo's 36/80 table gives with the margin. **SALAME**: the edge levels
+  differ between 7.14.43 and 7.14.89.
+
+The port today takes one ceiling per 20 MHz channel from cfg80211, less the
+SROM antenna gain, applied to every rate (`AC_MAX_POWER_MAP` in `gates.sh`),
+and a mask table keyed on sub-band (`b43_phy_ac_chain_partial`). Neither is the
+stock model.
+
+**Next step:** the offsets above in the port with the median from cfg80211,
+the width and band-edge offsets measured on the three sweeps as a second table
+on the same median, then the masks from the chain choice instead of the
+sub-band table.
+
+### Per-rate field `+0x0e`
+
+The distance of each rate from the target, in sixteenths of a dB. Where it
+diverges it is the legacy OFDM rows sitting under a lower limit than the MCS
+rows: `max(distance, K)` with K the target less the OFDM limit, one K per
+segment. With the target model above that limit is 19 dBm on ch52–144 at
+20 MHz on both boards (K 0x18, 0x20, 0x10 on the TG789vac at ch52, ch104,
+ch132; 0x10 on the d6220 at ch104–144). ch100/20 does not reconcile the two
+boards with one limit. The CCK field (`b43_phy_ac_cck_rate_po()`) is a table
+keyed on sub-band: the TG789vac writes 0xf8 on sub-band 1 where the table has
+the d6220's 0xe8, and its maxp5ga is lower there than on sub-band 0 as on the
+d6220, so the hypothesis in that comment does not hold.
 
 ### Sub-band row offsets
 
 `sb20in40*`, `sb20in80and160*`, `sb40and80*`, `dot11agdup*`, `mcslr5g*` are
-extracted by `bcma/drivers/bcma/sprom.c`, zero on every board, and not applied: which nibble
-goes to which rate is in no open source. The recalc warns if a board carries
-them.
+extracted by `bcma/drivers/bcma/sprom.c` and not applied: which nibble goes to
+which rate is in no open source. They are zero on the d6220, the agcombo and
+the DSL-3580L; the TG789vac v2 carries `dot11agduphrpo=0x4444`. The recalc
+warns if a board carries them.
 
 ### RX IQ coefficient `b`, core 1
 
