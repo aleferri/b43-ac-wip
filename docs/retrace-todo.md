@@ -48,9 +48,13 @@ same lever as `AC_FIRST_INIT`.
 
 ### Other shared-memory cells
 
-- **`0x00cc`.** Bits 6–8 are the chain mask in force; bits 0 and 2 are opaque.
-  `gates.sh` passes the captured value as `AC_BSS_CC`, the driver does not
-  compose it. `0x00d0` is written zero everywhere; nothing sets it.
+- **`0x00cc`.** Bits 8:6 are the `0x05d6` mask of the site that writes it,
+  composed by `b43_phy_ac_bss_cc()`; bit 2 is always set and bit 0 is the
+  core's, and what either means is open. The PHY rewrites it at its two
+  chain-mask sites; the first write, at the BSS configuration, b43's core does
+  not do, and `test/unit` mirrors it. Wrong wherever the mask is (see
+  "TX power"). `0x00d0` is written zero everywhere; nothing
+  sets it.
 - **`0x078c`–`0x0790`** (station MAC): whether the ucode needs it is open.
 - **`SLOTT`**: the bsinitvals give `0x14`, the stock driver writes `9` in the
   readback block and the core writes `9` at core init. The `0x3ff` before it

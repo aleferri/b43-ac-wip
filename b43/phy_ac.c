@@ -967,8 +967,9 @@ static const struct b43_phy_ac_chain_partial {
 	     { { 0x0001, 0x0005 }, { 0x0007, 0x0007 }, { 0x0007, 0x0007 } } },
 };
 
-static void b43_phy_ac_chainmask_block(struct b43_wldev *dev,
-				       enum b43_phy_ac_chain_site site)
+/* The pair @site writes on 0x05d6/0x05d8, into @pair. */
+static void b43_phy_ac_chain_pair(struct b43_wldev *dev,
+				  enum b43_phy_ac_chain_site site, u16 *out)
 {
 	struct b43_phy_ac *ac = dev->phy.ac;
 	u16 mask = ac->coremask;
@@ -1002,10 +1003,53 @@ static void b43_phy_ac_chainmask_block(struct b43_wldev *dev,
 					chains);
 	}
 
+	out[0] = pair ? pair[0] : mask;
+	out[1] = pair ? pair[1] : mask;
+}
+
+static void b43_phy_ac_chainmask_block(struct b43_wldev *dev,
+				       enum b43_phy_ac_chain_site site)
+{
+	u16 mask = dev->phy.ac->coremask;
+	u16 pair[2];
+
+	b43_phy_ac_chain_pair(dev, site, pair);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x05d4, mask);
-	b43_shm_write16(dev, B43_SHM_SHARED, 0x05d6, pair ? pair[0] : mask);
-	b43_shm_write16(dev, B43_SHM_SHARED, 0x05d8, pair ? pair[1] : mask);
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x05d6, pair[0]);
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x05d8, pair[1]);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x05da, mask);
+}
+
+/*
+ * shm 0x00cc carries, in bits 8:6, the chain mask of 0x05d6 -- the one the
+ * chain-mask block of the same site writes a few operations later -- and a
+ * constant 0x0004 below. Bit 0 is the core's, set by the BSS configuration.
+ *
+ * Read off every write of the cell on the two cold sweeps: 0x44 where 0x05d6
+ * is 1, 0xc4 where it is 3 (the d6220 on two chains), 0x144 and 0x1c4 where
+ * it is 5 and 7 (the tg789vac on three). The mask follows the site: on the
+ * tg789vac at ch108-140/40 the setup sites carry 5 and the TX power site 7,
+ * and the cell goes 0x144, 0x1c5 at that site, 0x145 at the last setup pass;
+ * the d6220 at ch36/40 goes 0x44, 0xc5, 0x45 on its 1, 3, 1.
+ */
+u16 b43_phy_ac_bss_cc(struct b43_wldev *dev)
+{
+	u16 pair[2];
+
+	b43_phy_ac_chain_pair(dev, B43_PHY_AC_CHAIN_SETUP, pair);
+	return (u16)(pair[0] << 6 | 0x0004);
+}
+
+static void b43_phy_ac_bss_cc_update(struct b43_wldev *dev,
+				     enum b43_phy_ac_chain_site site)
+{
+	u16 pair[2];
+	u16 cc = b43_shm_read16(dev, B43_SHM_SHARED, 0x00cc);
+
+	b43_phy_ac_chain_pair(dev, site, pair);
+	cc = (u16)((cc & ~0x01c0) | (pair[0] << 6));
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
 }
 
 /*
@@ -6005,18 +6049,8 @@ static void b43_phy_ac_txpwr_adjust(struct b43_wldev *dev)
 	b43_mac_enable(dev);
 	b43_maccontrol_set(dev, ~0x00100000u, 0x00100000);
 	b43_mac_suspend(dev);
-	/*
-	 * Read-modify-write of 0x00cc: reads the value and writes it back twice
-	 * unchanged. The cell is touched the same way in the BSS config and on
-	 * every watchdog tick, always with the same pattern; what the double
-	 * rewrite is for is unknown.
-	 */
-	{
-		u16 cc = b43_shm_read16(dev, B43_SHM_SHARED, 0x00cc);
-
-		b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
-		b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
-	}
+	/* The chain mask into 0x00cc, see b43_phy_ac_bss_cc(). */
+	b43_phy_ac_bss_cc_update(dev, B43_PHY_AC_CHAIN_TXPWR);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00ce,
 			b43_phy_ac_beacon_pwr_offset(dev));
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00d0, 0x0000);
@@ -10778,7 +10812,7 @@ static void b43_phy_ac_down(struct b43_wldev *dev)
 
 	/*
 	 * Third and last pass of the twelve-rate loop, with the same shm
-	 * prologue as the second one: the double rewrite of 0x00cc, the beacon
+	 * prologue as the second one: the chain mask into 0x00cc, the beacon
 	 * power offset on 0x00ce and the zero on 0x00d0, then the chain-mask
 	 * block.
 	 *
@@ -10802,12 +10836,7 @@ static void b43_phy_ac_down(struct b43_wldev *dev)
 	 */
 	b43_maccontrol_set(dev, (u32)~0x00100000u, 0x00000000);
 	b43_mac_suspend(dev);
-	{
-		u16 cc = b43_shm_read16(dev, B43_SHM_SHARED, 0x00cc);
-
-		b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
-		b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
-	}
+	b43_phy_ac_bss_cc_update(dev, B43_PHY_AC_CHAIN_SETUP);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00ce,
 			b43_phy_ac_beacon_pwr_offset(dev));
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00d0, 0x0000);

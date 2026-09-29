@@ -806,6 +806,8 @@ void b43_phy_ac_noise_sample_done(struct b43_wldev *dev);
 
 /* Il valore di shm 0x00ce, che anche l'harness emette; derivazione in phy_ac.c. */
 u16 b43_phy_ac_beacon_pwr_offset(struct b43_wldev *dev);
+/* Il valore di shm 0x00cc della config BSS, la maschera di catena; in phy_ac.c. */
+u16 b43_phy_ac_bss_cc(struct b43_wldev *dev);
 
 /* Helper trasversali al confine MAC/PHY; razionale in helpers_phy_ac.c. */
 void b43_phy_ac_mhf_maskset(struct b43_wldev *dev, u16 slot, u16 mask, u16 val);

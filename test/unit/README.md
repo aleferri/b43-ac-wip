@@ -31,7 +31,7 @@ These are the commands behind the quoted numbers; ad hoc variants give numbers
 that cannot be compared. `gates.sh` strips the other core's attach, folds the
 capture, takes the window from the attach's first PHY operation, extracts the
 post-bring-up events and the environment (`timeline.py`, `beacon_reloads.py`,
-`AC_BSS_CC`, `AC_MAX_POWER_MAP`), runs the flow with the read oracle and calls
+`AC_MAX_POWER_MAP`), runs the flow with the read oracle and calls
 `cmp_skip.py` and `compare.py`. The head of the script says why each step is
 where it is.
 

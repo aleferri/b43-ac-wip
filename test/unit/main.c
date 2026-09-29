@@ -107,32 +107,6 @@ static void seed_crs_rings(u8 idx)
 
 static const struct board_profile *g_profile;
 
-/*
- * Valore che il core scrive in shared memory 0x00cc alla prima passata della
- * config BSS. Il bit 0x80 non e' costante e non e' derivato da niente che
- * il PHY conosca: 0x00cc e' del blocco BSS del core -- in b43 lo scrive
- * bss_info_changed(), e il PHY non lo tocca mai -- quindi prenderlo dal
- * chiamante non nasconde un difetto del PHY.
- *
- * Cosa lo muove, per quel che i 26 segmenti a freddo del d6220 dicono: il bit
- * e' alto se la frequenza e' 5250 MHz o piu', oppure se la larghezza e' 80
- * MHz. Torna su tutti e 26 senza eccezioni. Alla seconda passata
- * (emit_core_bss_config1, che gia' rilegge e riscrive) la soglia sulla
- * larghezza scende a 40: ch36 e ch44 a 40 MHz hanno 0x44 alla prima passata e
- * 0xc5 alla seconda.
- *
- * Sui 52 segmenti a caldo e' alto ovunque, ch36 a 20 MHz compreso, dove a
- * freddo e' basso -- ma quelli non sono la stessa condizione e non
- * contraddicono la regola: il LEGGIMI dello sweep a caldo dice che l'SSID e'
- * impostato prima dell'up, cioe' il BSS c'e' gia' quando questo blocco viene
- * scritto. Sul DSL-3580L il bit e' alto su ogni canale e larghezza, il che non
- * contraddice ma nemmeno conferma: quella board gira una wl piu' vecchia.
- *
- * Resta una regola fittata su due termini, non una derivazione: cosa
- * significhi il bit non e' stabilito, e per questo il valore arriva dalla
- * cattura invece di essere calcolato qui. gates.sh lo legge da lei.
- */
-static u16 g_bss_cc = 0x0044;
 
 /*
  * Su quali delle quattro passate conf_tx lo stack di sopra ripubblica il
@@ -460,13 +434,6 @@ static void mount_board(const struct board_profile *p)
 
 		if (e)
 			g_edcf_reload_mask = (unsigned int)strtoul(e, NULL, 0);
-	}
-
-	{
-		const char *e = getenv("AC_BSS_CC");
-
-		if (e)
-			g_bss_cc = (u16)strtoul(e, NULL, 0);
 	}
 
 	/* Preconditions the rxiqcal REQUIRE gates want to see. */
@@ -1699,8 +1666,10 @@ static void emit_core_bss_config(void)
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x0012, 0x0003);
 
 	b43_shm_read16(&g_wldev, B43_SHM_SHARED, 0x00cc);
-	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00cc, g_bss_cc);
-	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00cc, g_bss_cc | 0x0001);
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00cc,
+			b43_phy_ac_bss_cc(&g_wldev));
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00cc,
+			b43_phy_ac_bss_cc(&g_wldev) | 0x0001);
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00ce,
 			b43_phy_ac_beacon_pwr_offset(&g_wldev));
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00d0, 0x0000);

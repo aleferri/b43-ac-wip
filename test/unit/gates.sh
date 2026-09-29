@@ -247,12 +247,6 @@ PY
 	sched="$sched $(python3 "$TOOLS/beacon_reloads.py" \
 		"$TMP/merged" --sh 2>/dev/null | grep AC_EDCF_RELOADS || true)"
 
-	# Il valore agganciato di shm 0x00cc, che il blocco BSS del core scrive
-	# e che nessuna regola nota deriva. Vedi g_bss_cc in main.c.
-	bsscc=$(grep -m1 -oE "OBJ\.WR +addr=0x00cc val=0x[0-9a-f]+" \
-		"$TMP/merged" | grep -oE "0x[0-9a-f]+$")
-	[ -n "$bsscc" ] && sched="$sched AC_BSS_CC=$bsscc"
-
 	# phycal_tempdelta, when the capture set it on the instance: the
 	# wlc_ioctl hook records `wl phycal_tempdelta N` as an IOVAR.SET. Older
 	# captures do not have it, and take AC_TEMPDELTA from the caller.
