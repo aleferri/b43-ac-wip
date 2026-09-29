@@ -11532,14 +11532,18 @@ static const u16 b43_phy_ac_farrow_vals_432x_media_a1[98] = {
  * Farrow resampler ratio and deltaphase, both functions of the centre
  * frequency and the bandwidth mode:
  *
- *   ratio  = round(f_MHz * 2^18 * M / D) - 2^24
+ *   ratio  = round(f_MHz * 2^18 * M / D)
  *   dphase = round(K / (M * f_MHz))
  *
  * with (D, M, K) = (60, 1, 0x7_8000_0000) at 20 and 40 MHz and
- * (45, 1, 0xB_4000_0000) at 80. The 80 MHz mode also swaps two constants that
- * travel with it, 0x0199/0x01a0 and 0x019c/0x01a3, so the three move
- * together and it reads as a sample-rate mode rather than a per-bandwidth
- * scaling.
+ * (45, 1, 0xB_4000_0000) at 80. The ratio is 26 bits: 0x019a takes 15:0,
+ * 0x019b 23:16, and 25:24 sit at 8:7 of 0x0199, above the mode's own field.
+ * Bit 24 is set on every 5 GHz channel but the top one at 80 MHz, 5775 MHz,
+ * where the ratio crosses 2^25 and 0x0199 goes from 0x0084 to 0x0104.
+ *
+ * The 80 MHz mode also swaps two constants that travel with it, the low
+ * field of 0x0199/0x01a0 and 0x019c/0x01a3, so the three move together and
+ * it reads as a sample-rate mode rather than a per-bandwidth scaling.
  *
  * On 2.4 GHz the block is the same, in the same order, with D/M = 80/3, 4/9
  * of the 5 GHz 20 MHz divider, K = D * 2^29 as in that mode, and 0x1400 in
@@ -11547,35 +11551,31 @@ static const u16 b43_phy_ac_farrow_vals_432x_media_a1[98] = {
  * archer-t5e, 24 out of 24, identical on the two boards; both are 20 MHz
  * scans, so there is no 2.4 GHz 40 MHz point.
  *
- * Verified against every configuration of the d6220 sweep -- 16 channels at
- * 20 MHz, 7 bonded pairs at 40, 3 at 80 -- exact on both registers and both
- * cores, 26 out of 26.
- *
- * The 80 MHz row rests on three distinct centre frequencies, so D and K are
- * fitted with little room to spare there; the 20 and 40 MHz row has 23.
+ * Verified against every configuration of the d6220 and tg789vac cold
+ * sweeps -- 25 channels at 20 MHz, 12 bonded pairs at 40, 6 at 80 -- exact on
+ * both registers and both cores.
  */
-#define B43_PHY_AC_FARROW_OFFSET	0x01000000u
 
 struct b43_phy_ac_farrow_mode {
 	u16 div;		/* D in the ratio */
 	u16 mul;		/* M in the ratio and the deltaphase */
 	u64 dphase_num;		/* K in the deltaphase */
-	u16 mu;			/* 0x0199 / 0x01a0 */
+	u16 mu;			/* 0x0199 / 0x01a0, bits 6:0 */
 	u16 cfg;		/* 0x019c / 0x01a3 */
 };
 
 static const struct b43_phy_ac_farrow_mode b43_phy_ac_farrow_mode_20_40 = {
-	.div = 60, .mul = 1, .dphase_num = 0x780000000ull, .mu = 0x00a7,
+	.div = 60, .mul = 1, .dphase_num = 0x780000000ull, .mu = 0x0027,
 	.cfg = 0x0f00,
 };
 
 static const struct b43_phy_ac_farrow_mode b43_phy_ac_farrow_mode_80 = {
-	.div = 45, .mul = 1, .dphase_num = 0xb40000000ull, .mu = 0x0084,
+	.div = 45, .mul = 1, .dphase_num = 0xb40000000ull, .mu = 0x0004,
 	.cfg = 0x0b40,
 };
 
 static const struct b43_phy_ac_farrow_mode b43_phy_ac_farrow_mode_2g_20 = {
-	.div = 80, .mul = 3, .dphase_num = 0xa00000000ull, .mu = 0x00a7,
+	.div = 80, .mul = 3, .dphase_num = 0xa00000000ull, .mu = 0x0027,
 	.cfg = 0x1400,
 };
 
@@ -11595,6 +11595,7 @@ static void b43_phy_ac_farrow_setup(struct b43_wldev *dev,
 	enum nl80211_chan_width width = chandef->width;
 	unsigned int freq;
 	u32 ratio, dphase;
+	u16 mu;
 
 	B43_PHY_AC_REQUIRE(dev,
 			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
@@ -11627,9 +11628,9 @@ static void b43_phy_ac_farrow_setup(struct b43_wldev *dev,
 		freq = channel->center_freq;
 	}
 
-	ratio = (u32)(DIV_ROUND_CLOSEST(freq * m->mul * (1u << 18), m->div) -
-		      B43_PHY_AC_FARROW_OFFSET);
+	ratio = (u32)DIV_ROUND_CLOSEST(freq * m->mul * (1u << 18), m->div);
 	dphase = (u32)DIV_ROUND_CLOSEST_ULL(m->dphase_num, m->mul * freq);
+	mu = (u16)(m->mu | ((ratio >> 24) & 0x3) << 7);
 
 	/*
 	 * The vendor's order: the low half of each 32-bit value before its
@@ -11637,14 +11638,14 @@ static void b43_phy_ac_farrow_setup(struct b43_wldev *dev,
 	 * is unknown, then the global config that closes the block. 14 ops.
 	 */
 	b43_phy_write(dev, 0x019a, ratio & 0xffff);
-	b43_phy_write(dev, 0x019b, ratio >> 16);
+	b43_phy_write(dev, 0x019b, (ratio >> 16) & 0xff);
 	b43_phy_write(dev, 0x019c, m->cfg);
-	b43_phy_write(dev, 0x0199, m->mu);
+	b43_phy_write(dev, 0x0199, mu);
 
 	b43_phy_write(dev, 0x01a1, ratio & 0xffff);
-	b43_phy_write(dev, 0x01a2, ratio >> 16);
+	b43_phy_write(dev, 0x01a2, (ratio >> 16) & 0xff);
 	b43_phy_write(dev, 0x01a3, m->cfg);
-	b43_phy_write(dev, 0x01a0, m->mu);
+	b43_phy_write(dev, 0x01a0, mu);
 
 	b43_phy_write(dev, 0x1603, dphase & 0xffff);
 	b43_phy_write(dev, 0x1602, dphase >> 16);
