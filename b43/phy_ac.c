@@ -10280,14 +10280,6 @@ static void b43_phy_ac_op_pwork_1sec(struct b43_wldev *dev)
 	if ((sm & want) != want || (sm & forbid))
 		return;
 
-	/*
-	 * The core ends the channel availability check when beaconing starts;
-	 * what the check held back runs here, ahead of the turn. The vendor has
-	 * it between two turns, and this puts it at most one turn later.
-	 */
-	if (dev->phy.ac->cac_pending && !dev->cac_pending)
-		b43_phy_ac_bss_up(dev);
-
 	b43_phy_ac_watchdog(dev);
 }
 
@@ -11526,6 +11518,7 @@ const struct b43_phy_operations b43_phyops_ac = {
 	.channel_calibrate	= b43_phy_ac_op_channel_calibrate,
 	.noise_sample_done	= b43_phy_ac_noise_sample_done,
 	.radar_poll		= b43_phy_ac_radar_poll,
+	.cac_done		= b43_phy_ac_bss_up,
 };
 
 /* ==========================================================================

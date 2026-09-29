@@ -165,6 +165,10 @@ enum b43_txpwr_result {
  * 			mac80211 asks for radar detection. Returns true when
  * 			a radar pulse has arrived since the previous call.
  * 			Can be NULL, if the PHY has no detector.
+ * @cac_done:		The channel availability check has ended and the BSS
+ * 			beacons. Called by the core right after it releases the
+ * 			MAC, for the PHY to run what the check held back.
+ * 			Can be NULL, if not required.
  */
 struct b43_phy_operations {
 	/* Initialisation */
@@ -204,6 +208,7 @@ struct b43_phy_operations {
 	void (*channel_calibrate)(struct b43_wldev *dev);
 	void (*noise_sample_done)(struct b43_wldev *dev);
 	bool (*radar_poll)(struct b43_wldev *dev);
+	void (*cac_done)(struct b43_wldev *dev);
 };
 
 struct b43_phy_g;

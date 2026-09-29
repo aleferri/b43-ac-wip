@@ -701,17 +701,14 @@ static void emit_core_beacon_reload(unsigned int which);
  * loro istanti sulla cattura: reverse-tools/timeline.py li estrae e dice cosa
  * sono. Ogni riga e' un callback che su hardware arriva da fuori del PHY:
  *
- *   WD      il tick periodico da un secondo -> pwork_1sec del PHY, che
- *                                            riprende anche quel che il check
- *                                            teneva fuori
+ *   WD      il tick periodico da un secondo -> pwork_1sec del PHY
  *   POLL    il work da 150 ms del radar   -> b43_phy_ac_radar_poll()
  *   TPL     bss_info_changed del core     -> la ricarica del template, che e'
  *                                            del core e la emette l'harness;
  *                                            quella che segue un WD cade fra
  *                                            le due passate dei contatori
- *   BSS_UP  il beacon parte dopo il CAC   -> il core chiude il check e riapre
- *                                            la riga AMT; il PHY lo vede al
- *                                            tick seguente
+ *   BSS_UP  il beacon parte dopo il CAC   -> il core chiude il check, riapre
+ *                                            la riga AMT e chiama cac_done
  *   NOISE   il campione di rumore pronto   -> b43_phy_ac_noise_sample_done(),
  *                                            che su hardware arriva dal
  *                                            tasklet del core
@@ -766,6 +763,7 @@ static void run_timeline(void)
 			if (g_wldev.cac_pending) {
 				g_wldev.cac_pending = false;
 				emit_core_cac_gate(true);
+				b43_phyops_ac.cac_done(&g_wldev);
 			}
 		} else if (!strcmp(kind, "NOISE"))
 			b43_phy_ac_noise_sample_done(&g_wldev);

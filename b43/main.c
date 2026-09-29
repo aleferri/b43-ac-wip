@@ -4500,6 +4500,8 @@ static void b43_ac_cac_match_gate(struct b43_wldev *dev, bool open)
 	if (open) {
 		if (ap)
 			b43_maskset32(dev, B43_MMIO_MACCTL, ~0, B43_MACCTL_AP);
+		if (dev->phy.ops->cac_done)
+			dev->phy.ops->cac_done(dev);
 		return;
 	}
 	/* The interface may have come up before the check started. */
@@ -4697,11 +4699,7 @@ static void b43_op_bss_info_changed(struct ieee80211_hw *hw,
 		if (changed & BSS_CHANGED_BSSID)
 			b43_write_mac_bssid_templates(dev);
 
-		/*
-		 * Beaconing ends the channel availability check. What the
-		 * check held back the AC PHY picks up on its next periodic
-		 * tick.
-		 */
+		/* Beaconing ends the channel availability check. */
 		if (dev->phy.type == B43_PHYTYPE_AC &&
 		    changed & BSS_CHANGED_BEACON_ENABLED &&
 		    conf->enable_beacon && dev->cac_pending) {

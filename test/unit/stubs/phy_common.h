@@ -54,6 +54,7 @@ struct b43_phy_operations {
 	void (*channel_calibrate)(struct b43_wldev *dev);
 	void (*noise_sample_done)(struct b43_wldev *dev);
 	bool (*radar_poll)(struct b43_wldev *dev);
+	void (*cac_done)(struct b43_wldev *dev);
 };
 
 #endif
