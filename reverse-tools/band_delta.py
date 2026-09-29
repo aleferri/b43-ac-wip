@@ -22,7 +22,7 @@ deltas both captures share, how many the port reproduces.
     band_delta.py A5 B5 A2 B2 [--also A5 B5 A2 B2] [--port A5 B5 A2 B2]
 """
 import argparse
-import difflib
+import tracelib
 
 
 def load(path):
@@ -52,8 +52,7 @@ def load(path):
 
 
 def align(a, b):
-    return difflib.SequenceMatcher(None, [k for k, _, _ in a], [k for k, _, _ in b],
-                                   autojunk=False).get_opcodes()
+    return tracelib.align_opcodes([k for k, _, _ in a], [k for k, _, _ in b])
 
 
 def changed(a, b):

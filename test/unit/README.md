@@ -58,12 +58,18 @@ values (`reverse-tools/trace_filter.py --retvals`), or every read looks absent.
 ## Reading the score
 
 ```
-grezzo          : 29777/29860 = 99.72%   19 regioni
-                  2 col valore sbagliato, 70 op di wl mancanti, 9 op del port di troppo
+grezzo          : 29776/29861 = 99.72%   18 regioni
+                  2 col valore sbagliato, 71 op di wl mancanti, 10 op del port di troppo
 ```
 
 The line to quote is `grezzo` (raw). Its denominator is the union of the two
-streams, so it reaches 100% only when they coincide. The three counts are three
+streams, so it reaches 100% only when they coincide.
+
+Ops are matched in order, in blocks: `tracelib.align_opcodes()` anchors the
+two streams on runs of eight ops found in both, extends each anchor while the
+ops agree and searches the gaps between anchors the same way. A block of one
+op is not a match -- one op equal to one op says nothing about where the two
+streams are -- so it counts as missing on one side and extra on the other. The three counts are three
 different jobs:
 
 | count | meaning | the job |

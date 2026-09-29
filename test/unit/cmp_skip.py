@@ -22,11 +22,14 @@ eccezioni e' anche il modo piu' comodo di far tornare un numero.
 Uso: cmp_skip.py vendor.txt test.txt lo:hi [--board agcombo] [--verbose]
 """
 import argparse
-import difflib
 import re
 import importlib.util
 import os
 import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                os.pardir, os.pardir, 'reverse-tools'))
+import tracelib  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -378,8 +381,7 @@ def chiavi(ops):
 
 
 def lcs_stats(V, T):
-    sm = difflib.SequenceMatcher(None, V, T, autojunk=False)
-    oc = sm.get_opcodes()
+    oc = tracelib.align_opcodes(V, T)
     eq = sum(b - a for k, a, b, c, d in oc if k == 'equal')
     diff = [o for o in oc if o[0] != 'equal']
     return eq, len(diff), diff
@@ -407,7 +409,6 @@ def bus_stats(V, T, C):
     """
     kv = [ident(o) for o in V]
     kt = [ident(o) for o in T]
-    sm = difflib.SequenceMatcher(None, kv, kt, autojunk=False)
     eq = wrong = missing = surplus = 0
     diff = []
     def same(v, t):
@@ -420,7 +421,7 @@ def bus_stats(V, T, C):
         return (C.ops_equal(v.replace('val=*', 'val=UNDEFINED'), t) or
                 C.ops_equal(t.replace('val=*', 'val=UNDEFINED'), v))
 
-    for k, a, b, c, d in sm.get_opcodes():
+    for k, a, b, c, d in tracelib.align_opcodes(kv, kt):
         if k == 'equal':
             bad = [i for i in range(b - a) if not same(V[a + i], T[c + i])]
             eq += (b - a) - len(bad)
@@ -454,9 +455,8 @@ def classify(V, T):
     uguali. L'allineamento esatto non la vede, perche' confronta stringhe.
     """
     kv, kt = chiavi(V), chiavi(T)
-    sm = difflib.SequenceMatcher(None, V, T, autojunk=False)
     wrong = missing = surplus = jolly = 0
-    for k, a, b, c, d in sm.get_opcodes():
+    for k, a, b, c, d in tracelib.align_opcodes(V, T):
         if k == 'equal':
             continue
         avail = {}

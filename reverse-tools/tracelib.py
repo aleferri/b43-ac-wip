@@ -13,6 +13,7 @@ they are the definition of what "the same op" and "this op belongs to this
 function" mean. Two tools implementing them differently give two answers to
 the same question, so they live here and not in the callers.
 """
+import bisect
 import collections
 import difflib
 import os
@@ -490,12 +491,11 @@ def spans_by_function(trace, capture):
     """
     ops, events, _ = segment(trace)
     vendor = read_vendor(capture)
-    sm = difflib.SequenceMatcher(a=[o.norm for o in vendor], b=ops,
-                                 autojunk=False)
     pos_to_ep = {}
-    for i, j, n in sm.get_matching_blocks():
-        for k in range(n):
-            pos_to_ep[j + k] = vendor[i + k].ep
+    for tag, i, i2, j, _ in align_opcodes([o.norm for o in vendor], ops):
+        if tag == 'equal':
+            for k in range(i2 - i):
+                pos_to_ep[j + k] = vendor[i + k].ep
 
     spans = {}
     for name, ivs in intervals(events, len(ops)).items():
@@ -511,3 +511,134 @@ def write_temp(text, suffix=".txt"):
     tmp.write(text)
     tmp.close()
     return tmp.name
+
+
+# ---------------------------------------------------------------------------
+# Alignment
+# ---------------------------------------------------------------------------
+
+SEED = 8
+MIN_BLOCK = 2
+SEED_MAX_REPEAT = 64
+_GAP_FALLBACK = 4_000_000
+
+
+def _seeds(a, alo, ahi, b, blo, bhi, k):
+    """(i, j) pairs of runs of k items found in both ranges.
+
+    A run found once on each side pairs with itself. A run repeated -- the
+    same watchdog turn, the same statistics dump, once per second -- pairs
+    its occurrences in order, the first with the first, up to
+    SEED_MAX_REPEAT of them; the chain of seeds drops the pairs that do not
+    fit. A run more common than that says nothing about where it is.
+    """
+    def grams(s, lo, hi):
+        pos = collections.defaultdict(list)
+        for i in range(lo, hi - k + 1):
+            pos[tuple(s[i:i + k])].append(i)
+        return pos
+    ga = grams(a, alo, ahi)
+    gb = grams(b, blo, bhi)
+    out = []
+    for g, pa in ga.items():
+        pb = gb.get(g)
+        if pb and max(len(pa), len(pb)) <= SEED_MAX_REPEAT:
+            out.extend(zip(pa, pb))
+    return sorted(out)
+
+
+def _increasing_chain(pairs):
+    """The longest subsequence of pairs, sorted by i, increasing in j."""
+    tails, tails_j, prev = [], [], [None] * len(pairs)
+    for n, (_, j) in enumerate(pairs):
+        p = bisect.bisect_left(tails_j, j)
+        if p:
+            prev[n] = tails[p - 1]
+        if p == len(tails):
+            tails.append(n)
+            tails_j.append(j)
+        else:
+            tails[p] = n
+            tails_j[p] = j
+    chain, n = [], tails[-1] if tails else None
+    while n is not None:
+        chain.append(pairs[n])
+        n = prev[n]
+    return chain[::-1]
+
+
+def _blocks(a, b, k):
+    """Matching blocks (i, j, n), in order, found from runs of k items.
+
+    A run of k consecutive items found in both ranges anchors the two
+    sequences to each other (see _seeds()); the longest chain of anchors in the same
+    order on both sides is taken, each anchor is extended while the items
+    agree, and the gaps between anchors are searched again the same way,
+    where a run that was too common in the whole may not be in the gap.
+    A gap with no anchor left is handed to difflib, which on a gap that
+    small is cheap.
+    """
+    out = []
+    stack = [(0, len(a), 0, len(b))]
+    while stack:
+        alo, ahi, blo, bhi = stack.pop()
+        if alo >= ahi or blo >= bhi:
+            continue
+        seeds = _seeds(a, alo, ahi, b, blo, bhi, k)
+        found = []
+        ia, ib = alo, blo
+        for i, j in _increasing_chain(seeds):
+            if i < ia or j < ib:
+                continue
+            s, t = i, j
+            while s > ia and t > ib and a[s - 1] == b[t - 1]:
+                s, t = s - 1, t - 1
+            e, f = i, j
+            while e < ahi and f < bhi and a[e] == b[f]:
+                e, f = e + 1, f + 1
+            found.append((s, t, e - s))
+            ia, ib = e, f
+        if not found:
+            if (ahi - alo) * (bhi - blo) <= _GAP_FALLBACK:
+                sm = difflib.SequenceMatcher(None, a[alo:ahi], b[blo:bhi],
+                                             autojunk=False)
+                out.extend((alo + i, blo + j, n)
+                           for i, j, n in sm.get_matching_blocks() if n)
+            else:
+                print(f"tracelib: {ahi - alo} x {bhi - blo} ops with no run "
+                      f"of {k} in common, left unaligned", file=sys.stderr)
+            continue
+        out.extend(found)
+        edges = [(alo, blo)] + [(s + n, t + n) for s, t, n in found]
+        ends = [(s, t) for s, t, _ in found] + [(ahi, bhi)]
+        for (x0, y0), (x1, y1) in zip(edges, ends):
+            stack.append((x0, x1, y0, y1))
+    return sorted(out)
+
+
+def align_opcodes(a, b, seed=SEED, min_block=MIN_BLOCK):
+    """Opcodes like difflib.SequenceMatcher.get_opcodes(), without the
+    matches that are not matches.
+
+    difflib builds its blocks from single equal items, which is quadratic in
+    the repetitions of an item -- 40000 PHY address read-backs per side on a
+    bus capture -- and, in the leftovers between the long blocks, accepts a
+    single item as a block. One op equal to one op is not evidence that the
+    two sequences are at the same point; here a block shorter than min_block
+    is not a match, and the search starts from runs of seed items.
+    """
+    ops, i, j = [], 0, 0
+    for s, t, n in _blocks(a, b, seed):
+        if n < min_block:
+            continue
+        if i < s or j < t:
+            tag = ('replace' if i < s and j < t else
+                   'delete' if i < s else 'insert')
+            ops.append((tag, i, s, j, t))
+        ops.append(('equal', s, s + n, t, t + n))
+        i, j = s + n, t + n
+    if i < len(a) or j < len(b):
+        tag = ('replace' if i < len(a) and j < len(b) else
+               'delete' if i < len(a) else 'insert')
+        ops.append((tag, i, len(a), j, len(b)))
+    return ops

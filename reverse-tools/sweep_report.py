@@ -30,7 +30,6 @@ Usage:
 """
 import argparse
 import collections
-import difflib
 import glob
 import os
 import re
@@ -62,8 +61,8 @@ def load_ops(path, vendor):
 
 def matched_in_order(a, b):
     """Ops matched in order, the same measure as test/unit/cmp_skip.py."""
-    sm = difflib.SequenceMatcher(a=a, b=b, autojunk=False)
-    return sum(n for _, _, n in sm.get_matching_blocks())
+    return sum(i2 - i1 for tag, i1, i2, _, _ in T.align_opcodes(a, b)
+               if tag == 'equal')
 
 
 def score(vendor, port):

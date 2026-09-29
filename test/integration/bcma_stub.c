@@ -385,6 +385,24 @@ static u32 note_read(struct bcma_device *core, u16 off, int width)
 	case B43_MMIO_MACCTL:
 		v = macctl;
 		break;
+	/*
+	 * An address register reads back what was written to it. The read
+	 * after every address write -- b43_flush_writes() on these hosts, and
+	 * the stock driver on the AC cores -- is the port's own address, not a
+	 * value to take from the capture: served from the oracle's queue, it
+	 * is the stock driver's address at that point in its sequence, and
+	 * wrong as soon as the two sequences part.
+	 */
+	case B43_MMIO_PHY_CONTROL:
+		v = phy_addr;
+		break;
+	case B43_MMIO_RADIO_CONTROL:
+	case B43_MMIO_RADIO24_CONTROL:
+		v = radio_addr;
+		break;
+	case B43_MMIO_SHM_CONTROL:
+		v = shm_routing_off;
+		break;
 	case BCMA_CLKCTLST:
 		v = clkctlst_read();
 		break;

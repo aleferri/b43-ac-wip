@@ -47,17 +47,20 @@ Measured on 2026-09-29.
 
 | gate | result |
 |---|---|
-| unit, cold `cold01` ch36/20 | **99.72%** (29777/29860): 2 wrong values, 70 missing, 9 extra |
+| unit, cold `cold01` ch36/20 | **99.72%** (29776/29861): 2 wrong values, 71 missing, 10 extra |
 | unit, cold, all 43 segments | min 98.91% (ch108/20), median 99.42%, max 99.74% |
-| unit, hot `up` ch36 / ch52 / ch104 | 98.17% / 98.63% / 98.36% |
-| unit, cold agcombo `cold01` ch36/20 | 91.12% |
+| unit, hot `up` ch36 / ch52 / ch104 | 98.17% / 98.63% / 98.35% |
+| unit, cold agcombo `cold01` ch36/20 | 91.05% |
 | unit, cold TG789vac v2 `cold01` ch36/20 | 96.79% (32754/33840) |
 | unit, periodic watchdog tick | **`MATCH`** |
-| integration, cold `cold01` | `probe: 0`, `start: 0`; 85.00% (28494/33523) |
+| integration, cold `cold01` | `probe: 0`, `start: 0`; 87.98% (29023/32990) |
+| integration, agcombo ch36/80 at the bus | 64.63% (73799/114190) |
 | SROM rev 11 extractor | 74/79/80 PASS, 0 FAIL (DSL-3580L, D6220, agcombo) |
 
 The number to quote is the `grezzo` line of `cmp_skip.py`; how to reproduce
-and read it is in [`test/unit/README.md`](test/unit/README.md). The six
+and read it is in [`test/unit/README.md`](test/unit/README.md). Ops are
+matched in blocks of at least two (see there); the numbers before that rule
+were a few ops higher on the unit gates and 85.00% on the integration one. The six
 weather-radar segments (ch120/124/128 at 20 MHz, ch116/124 at 40, ch116 at 80)
 end before their availability check completes and measure a partial attach.
 
