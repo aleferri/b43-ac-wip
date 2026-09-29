@@ -12,40 +12,35 @@ hand, so it cannot drift out of sync with the tree the unit suite measures.
 
 Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
 ---
- drivers/net/wireless/broadcom/b43/Makefile    |     5 +
+ drivers/net/wireless/broadcom/b43/Makefile    |     4 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |   111 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 11642 +++++++++++++++-
- drivers/net/wireless/broadcom/b43/phy_ac.h    |   824 +-
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 11711 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.h    |   855 +-
  drivers/net/wireless/broadcom/b43/ppr_ac.c    |   255 +
  drivers/net/wireless/broadcom/b43/ppr_ac.h    |    81 +
  .../net/wireless/broadcom/b43/radio_2069.c    |  1744 +++
  .../net/wireless/broadcom/b43/radio_2069.h    |    48 +
- .../wireless/broadcom/b43/rxiqcal_phy_ac.c    |   532 +
- .../wireless/broadcom/b43/rxiqcal_phy_ac.h    |    23 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1153 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    79 +
- 12 files changed, 16474 insertions(+), 23 deletions(-)
+ 10 files changed, 16018 insertions(+), 23 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
  create mode 100644 drivers/net/wireless/broadcom/b43/radio_2069.c
  create mode 100644 drivers/net/wireless/broadcom/b43/radio_2069.h
- create mode 100644 drivers/net/wireless/broadcom/b43/rxiqcal_phy_ac.c
- create mode 100644 drivers/net/wireless/broadcom/b43/rxiqcal_phy_ac.h
  create mode 100644 drivers/net/wireless/broadcom/b43/tables_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/tables_phy_ac.h
 
 diff --git a/drivers/net/wireless/broadcom/b43/Makefile b/drivers/net/wireless/broadcom/b43/Makefile
-index 54f92ce..f60b35e 100644
+index 54f92ce..62386e2 100644
 --- a/drivers/net/wireless/broadcom/b43/Makefile
 +++ b/drivers/net/wireless/broadcom/b43/Makefile
-@@ -15,6 +15,11 @@ b43-$(CONFIG_B43_PHY_HT)	+= tables_phy_ht.o
+@@ -15,6 +15,10 @@ b43-$(CONFIG_B43_PHY_HT)	+= tables_phy_ht.o
  b43-$(CONFIG_B43_PHY_HT)	+= radio_2059.o
  b43-$(CONFIG_B43_PHY_LCN)	+= phy_lcn.o tables_phy_lcn.o
  b43-$(CONFIG_B43_PHY_AC)	+= phy_ac.o
 +b43-$(CONFIG_B43_PHY_AC)	+= tables_phy_ac.o
 +b43-$(CONFIG_B43_PHY_AC)	+= radio_2069.o
-+b43-$(CONFIG_B43_PHY_AC)	+= rxiqcal_phy_ac.o
 +b43-$(CONFIG_B43_PHY_AC)	+= helpers_phy_ac.o
 +b43-$(CONFIG_B43_PHY_AC)	+= ppr_ac.o
  b43-y				+= sysfs.o
@@ -169,10 +164,10 @@ index 0000000..a1626b5
 +	b43_maskset32(dev, B43_MMIO_MACCTL, mask, set);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index 756cd44..3fea07a 100644
+index 756cd44..fd80c6c 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
-@@ -1,23 +1,57 @@
+@@ -1,23 +1,56 @@
  // SPDX-License-Identifier: GPL-2.0-or-later
  /*
 - * Broadcom B43 wireless driver
@@ -214,7 +209,6 @@ index 756cd44..3fea07a 100644
 +#include "phy_common.h"
 +#include "tables_phy_ac.h"
 +#include "radio_2069.h"
-+#include "rxiqcal_phy_ac.h"
 +#include "main.h"
  
 -/**************************************************
@@ -237,7 +231,7 @@ index 756cd44..3fea07a 100644
  	if (!phy_ac)
  		return -ENOMEM;
  	dev->phy.ac = phy_ac;
-@@ -62,27 +96,11595 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -62,27 +95,11665 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -1125,8 +1119,9 @@ index 756cd44..3fea07a 100644
 +	     { { 0x0001, 0x0005 }, { 0x0007, 0x0007 }, { 0x0007, 0x0007 } } },
  };
 +
-+static void b43_phy_ac_chainmask_block(struct b43_wldev *dev,
-+				       enum b43_phy_ac_chain_site site)
++/* The pair @site writes on 0x05d6/0x05d8, into @pair. */
++static void b43_phy_ac_chain_pair(struct b43_wldev *dev,
++				  enum b43_phy_ac_chain_site site, u16 *out)
 +{
 +	struct b43_phy_ac *ac = dev->phy.ac;
 +	u16 mask = ac->coremask;
@@ -1160,10 +1155,53 @@ index 756cd44..3fea07a 100644
 +					chains);
 +	}
 +
++	out[0] = pair ? pair[0] : mask;
++	out[1] = pair ? pair[1] : mask;
++}
++
++static void b43_phy_ac_chainmask_block(struct b43_wldev *dev,
++				       enum b43_phy_ac_chain_site site)
++{
++	u16 mask = dev->phy.ac->coremask;
++	u16 pair[2];
++
++	b43_phy_ac_chain_pair(dev, site, pair);
 +	b43_shm_write16(dev, B43_SHM_SHARED, 0x05d4, mask);
-+	b43_shm_write16(dev, B43_SHM_SHARED, 0x05d6, pair ? pair[0] : mask);
-+	b43_shm_write16(dev, B43_SHM_SHARED, 0x05d8, pair ? pair[1] : mask);
++	b43_shm_write16(dev, B43_SHM_SHARED, 0x05d6, pair[0]);
++	b43_shm_write16(dev, B43_SHM_SHARED, 0x05d8, pair[1]);
 +	b43_shm_write16(dev, B43_SHM_SHARED, 0x05da, mask);
++}
++
++/*
++ * shm 0x00cc carries, in bits 8:6, the chain mask of 0x05d6 -- the one the
++ * chain-mask block of the same site writes a few operations later -- and a
++ * constant 0x0004 below. Bit 0 is the core's, set by the BSS configuration.
++ *
++ * Read off every write of the cell on the two cold sweeps: 0x44 where 0x05d6
++ * is 1, 0xc4 where it is 3 (the d6220 on two chains), 0x144 and 0x1c4 where
++ * it is 5 and 7 (the tg789vac on three). The mask follows the site: on the
++ * tg789vac at ch108-140/40 the setup sites carry 5 and the TX power site 7,
++ * and the cell goes 0x144, 0x1c5 at that site, 0x145 at the last setup pass;
++ * the d6220 at ch36/40 goes 0x44, 0xc5, 0x45 on its 1, 3, 1.
++ */
++u16 b43_phy_ac_bss_cc(struct b43_wldev *dev)
++{
++	u16 pair[2];
++
++	b43_phy_ac_chain_pair(dev, B43_PHY_AC_CHAIN_SETUP, pair);
++	return (u16)(pair[0] << 6 | 0x0004);
++}
++
++static void b43_phy_ac_bss_cc_update(struct b43_wldev *dev,
++				     enum b43_phy_ac_chain_site site)
++{
++	u16 pair[2];
++	u16 cc = b43_shm_read16(dev, B43_SHM_SHARED, 0x00cc);
++
++	b43_phy_ac_chain_pair(dev, site, pair);
++	cc = (u16)((cc & ~0x01c0) | (pair[0] << 6));
++	b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
++	b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
 +}
 +
 +/*
@@ -4967,8 +5005,9 @@ index 756cd44..3fea07a 100644
 + * cattura e non c'e' riga.
 + *
 + * Sta a livello di file perche' non la usa solo chi programma il blocco: il
-+ * setup del generatore di tono in rxiqcal_phy_ac.c riscrive gli stessi due
-+ * registri per intero, e i suoi letterali erano le parole a 20 MHz.
++ * setup del generatore di tono dello stimatore di test/unit
++ * (rxiqcal_phy_ac.c) riscrive gli stessi due registri per intero, e i suoi
++ * letterali erano le parole a 20 MHz.
 + */
 +static const struct b43_phy_ac_rxgain_bw b43_phy_ac_rxgain_bw_tab[3] = {
 +	{ 0x0003, 0x007a, 0x0000, 0x0040 },	/* 20 MHz */
@@ -5432,31 +5471,6 @@ index 756cd44..3fea07a 100644
 +static const u8 b43_phy_ac_crs_noise_anchor[3] = { 0, 2, 2 };
 +
 +/*
-+ * I livelli v che le catture hanno davvero percorso, per larghezza, contati
-+ * su ogni campione di ogni catena dei quattro sweep. Fuori di qui la formula
-+ * continua a produrre una voce della scala, ma nessuno ha mai visto il
-+ * vendor scriverla: quello che c'e' oltre e' estrapolazione, e il driver non
-+ * deve spacciarla per misura.
-+ *
-+ * A 20 MHz non si e' mai visto il livello piu' basso, a 80 il piu' alto. E'
-+ * rumore ambientale: nessuna delle catture e' stata presa in una camera
-+ * anecoica ne' accanto a un forno a microonde.
-+ *
-+ * Fuori intervallo il driver avvisa una volta e lascia che la formula
-+ * estrapoli. Non appiattisce sull'estremo osservato: sarebbe una seconda
-+ * invenzione sopra la prima, e nasconderebbe proprio quello che l'avviso deve
-+ * dire. Sbagliare qui non rompe niente -- e' una soglia di ricezione, non una
-+ * potenza di trasmissione: se e' troppo alta la radio diventa sorda e
-+ * trasmette sopra gli altri, se e' troppo bassa vede il rumore come portante e
-+ * non trasmette mai. Guasti funzionali, reversibili, e il log dice perche'.
-+ */
-+static const u8 b43_phy_ac_crs_noise_seen[3][2] = {
-+	/* BW20 */ { 1, 5 },
-+	/* BW40 */ { 0, 5 },
-+	/* BW80 */ { 0, 4 },
-+};
-+
-+/*
 + * Fold one latch of the noise window into the per-chain rings. Called from
 + * the watchdog, where the window is latched; @sample holds one value per
 + * chain.
@@ -5474,23 +5488,6 @@ index 756cd44..3fea07a 100644
 +		while (v < ARRAY_SIZE(b43_phy_ac_crs_noise_th) &&
 +		       n >= b43_phy_ac_crs_noise_th[v])
 +			v++;
-+
-+		if ((v < b43_phy_ac_crs_noise_seen[bw][0] ||
-+		     v > b43_phy_ac_crs_noise_seen[bw][1]) &&
-+		    !ac->crs_noise_warned) {
-+			ac->crs_noise_warned = true;
-+			b43warn(dev->wl,
-+				"AC-PHY: noise sample %u at %u MHz falls outside "
-+				"everything the captures cover, so the carrier "
-+				"sense threshold here is extrapolated and not "
-+				"measured. Carrier sense may be wrong in either "
-+				"direction: too deaf and the radio transmits over "
-+				"others, too sensitive and it never gets to "
-+				"transmit. Nothing is damaged and the setting is "
-+				"not sticky. A capture of this environment is "
-+				"what would fix it.\n",
-+				sample[core], 20u << bw);
-+		}
 +
 +		ac->crs_ring[core][slot] = b43_phy_ac_crs_noise_idx[v] +
 +					   b43_phy_ac_crs_noise_anchor[bw];
@@ -5549,6 +5546,54 @@ index 756cd44..3fea07a 100644
 +	return DIV_ROUND_UP(sum, ac->crs_ring_len);
 +}
 +
++/*
++ * Record what a CRS write left on the hardware: chain 0 at @idx0, the common
++ * threshold, and every other chain at the index its bank was taken from.
++ */
++static void b43_phy_ac_crs_note_prog(struct b43_wldev *dev, unsigned int idx0)
++{
++	struct b43_phy_ac *ac = dev->phy.ac;
++	unsigned int core;
++
++	ac->crs_prog[0] = (u8)idx0;
++	for (core = 1; core < B43_PHY_AC_MAX_CORES; core++)
++		ac->crs_prog[core] = (u8)(ac->crs_ring_len
++					  ? b43_phy_ac_crs_index(dev, core)
++					  : idx0);
++}
++
++/*
++ * Whether a noise latch moves the thresholds far enough to be written: some
++ * chain's index in force three ladder steps or more away from the one it
++ * carries. The stock driver rewrites the block from the latch on its own
++ * only then; on a latch that follows a calibration it writes regardless.
++ *
++ * Measured on the 85 cold segments of the d6220 and the tg789vac: with the
++ * rings and the index of b43_phy_ac_crs_index(), a band of +-3 steps gives
++ * every latch-driven block and no other on 80. A band of +-2 gives 68, one
++ * of 3 down and 3 up the same 80, one in ladder dB at best 77. Four of the
++ * five left are drops of two steps that cross a hole of the single-sample
++ * index (3 to 1, 5 to 3), the fifth a move of one on the tg789vac's chain 1.
++ */
++#define B43_PHY_AC_CRS_HYST	3
++
++static bool b43_phy_ac_crs_moved(struct b43_wldev *dev)
++{
++	struct b43_phy_ac *ac = dev->phy.ac;
++	unsigned int core;
++
++	if (!ac->crs_ring_len)
++		return false;
++
++	for_each_set_bit(core, &ac->coremask, ac->num_cores) {
++		int d = (int)b43_phy_ac_crs_index(dev, core) - ac->crs_prog[core];
++
++		if (abs(d) >= B43_PHY_AC_CRS_HYST)
++			return true;
++	}
++	return false;
++}
++
 +static u8 b43_phy_ac_crs_min_pwr(struct b43_wldev *dev, unsigned int idx,
 +				 bool cold)
 +{
@@ -5592,6 +5637,7 @@ index 756cd44..3fea07a 100644
 +		return;
 +
 +	b43_phy_ac_crs_regs_write(dev, crs);
++	dev->phy.ac->crs_prog[0] = (u8)idx;
 +}
 +
 +/*
@@ -5715,6 +5761,7 @@ index 756cd44..3fea07a 100644
 +	};
 +	u16 gain = 0x00bf;
 +	u16 crs = 0x0031;
++	unsigned int crs_idx;
 +	unsigned int i;
 +
 +	if (b43_current_band(dev->wl) != NL80211_BAND_5GHZ)
@@ -5739,15 +5786,15 @@ index 756cd44..3fea07a 100644
 +		 * First bring-up, or any bonded width: the value is the
 +		 * observed constant, 0x3a at 20 MHz, 0x3c at 40 and 0x3d at 80.
 +		 * Every cold segment writes it as the first of the two CRS
-+		 * values of its cycle, whatever the channel.
++		 * values of its cycle, whatever the channel. On the ladder it is
++		 * entry 4, 6 and 7 of the width's row with the cold bump.
 +		 */
-+		crs = (dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_80)
-+			? 0x003d
-+			: (dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_40)
-+				? 0x003c : 0x003a;
++		crs_idx = (dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_80) ? 7
++			: (dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_40) ? 6
++			: 4;
 +	else
-+		crs = b43_phy_ac_crs_min_pwr(dev, b43_phy_ac_crs_index(dev, 0),
-+					     true);
++		crs_idx = b43_phy_ac_crs_index(dev, 0);
++	crs = b43_phy_ac_crs_min_pwr(dev, crs_idx, true);
 +
 +	dev->phy.ac->crs_written = (u8)crs;
 +
@@ -5767,6 +5814,7 @@ index 756cd44..3fea07a 100644
 +
 +	b43_phy_ac_crs_regs_write(dev, crs);
 +	b43_phy_ac_prog_bank_0910(dev);
++	b43_phy_ac_crs_note_prog(dev, crs_idx);
 +
 +	b43_phy_read_log(dev, 0x03a9);
 +	b43_phy_maskset(dev, 0x03a9, (u16)~0x007f, 0x0000);
@@ -6154,18 +6202,8 @@ index 756cd44..3fea07a 100644
 +	b43_mac_enable(dev);
 +	b43_maccontrol_set(dev, ~0x00100000u, 0x00100000);
 +	b43_mac_suspend(dev);
-+	/*
-+	 * Read-modify-write of 0x00cc: reads the value and writes it back twice
-+	 * unchanged. The cell is touched the same way in the BSS config and on
-+	 * every watchdog tick, always with the same pattern; what the double
-+	 * rewrite is for is unknown.
-+	 */
-+	{
-+		u16 cc = b43_shm_read16(dev, B43_SHM_SHARED, 0x00cc);
-+
-+		b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
-+		b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
-+	}
++	/* The chain mask into 0x00cc, see b43_phy_ac_bss_cc(). */
++	b43_phy_ac_bss_cc_update(dev, B43_PHY_AC_CHAIN_TXPWR);
 +	b43_shm_write16(dev, B43_SHM_SHARED, 0x00ce,
 +			b43_phy_ac_beacon_pwr_offset(dev));
 +	b43_shm_write16(dev, B43_SHM_SHARED, 0x00d0, 0x0000);
@@ -9492,24 +9530,28 @@ index 756cd44..3fea07a 100644
 + *   a_r     = -iq * 2^10 / ii
 + *   b_r + 1 = 2^10 * sqrt(qq * ii - iq^2) / ii
 + *
-+ * a is the mean of the a_r, kept in Q16 so that the per-tone rounding does
-+ * not decide the final unit; b is the mean of the a_r-rounded b_r, rounded
-+ * half up. The second form of b_r is the first with the exact a_r under the
-+ * root: with a_r rounded to Q10 first, a tone sitting on a half flips.
++ * a is the mean of the a_r, kept in Q24 so that the per-tone rounding does
++ * not decide the final unit, and each a_r is taken on ii and iq cut to a
++ * 16-bit mantissa of ii, the same shift on both: that truncation is what
++ * moves the values sitting just under a half, a_r = 20.49 on the tg789vac's
++ * core 0 at ch36 comes out 21 as the stock driver writes. b is the mean of
++ * the a_r-rounded b_r, rounded half up. The second form of b_r is the first
++ * with the exact a_r under the root: with a_r rounded to Q10 first, a tone
++ * sitting on a half flips.
 + *
-+ * Measured on 118 writes of 0x?a1 over the seven cold segments that run the
-+ * phase and the 52 hot ones (reverse-tools/rxiq_points.py):
++ * Measured with reverse-tools/rxiq_points.py on every cold segment of the
++ * d6220 and the agcombo, the tg789vac's outside the radar channels, and the up
++ * segments of the d6220 and agcombo hot sweeps, 309 writes of 0x?a1:
 + *
-+ *                       a exact   b exact   both
-+ *   accumulator sum      108       86        80
-+ *   this                 117       90        89
++ *                       a exact   b exact
++ *   accumulator sum      258       253
++ *   mean, full width     290       259
++ *   this                 296       259
 + *
-+ * What remains is on the d6220's core 1: 34/59 exact with a symmetric +-1
-+ * residual that follows the band -- the vendor comes out ~0.7 LSB higher on
-+ * ch100 and above than below 5250 MHz, relative to any function of these six
-+ * accumulators. Core 0 is 56/59 with the three misses one low. On agcombo,
-+ * whose three chains are all clean under the mean, the core-1 residual is
-+ * not a rule per chain; an input outside the accumulators is missing for it.
++ * The mantissa costs one point the full-width mean had, core 1 of the d6220's
++ * bss-up on ch52, whose two tones average to -38.5005 and the stock driver
++ * writes -39. What remains on b is mostly the stock driver one high, and
++ * mostly on core 1; an input outside the six accumulators is missing.
 + * The b43_phy_ac_todo() at the write site stays for that reason.
 + */
 +static void b43_phy_ac_iq_solve(struct b43_phy_ac_iq_acc *acc,
@@ -9536,7 +9578,8 @@ index 756cd44..3fea07a 100644
 +	for (r = 0; r < nr; r++) {
 +		u64 ii = acc->ii[r], qq = acc->qq[r];
 +		s64 iq = acc->iq[r];
-+		s64 num;
++		unsigned int k;
++		s64 num, den;
 +		u64 root;
 +
 +		if (!ii) {
@@ -9545,10 +9588,17 @@ index 756cd44..3fea07a 100644
 +			return;
 +		}
 +
-+		/* a_r in Q16, rounded half away from zero. */
-+		num = -(iq << 16);
-+		a_sum += div64_s64(num + (num < 0 ? -(s64)(ii >> 1)
-+						 : (s64)(ii >> 1)), ii);
++		/*
++		 * a_r in Q24, rounded half away from zero, on the two
++		 * accumulators cut to a 16-bit mantissa of ii: the same shift
++		 * on both, iq arithmetically.
++		 */
++		k = fls64(ii);
++		k = k > 16 ? k - 16 : 0;
++		den = (s64)(ii >> k);
++		num = -((iq >> k) << 24);
++		a_sum += div64_s64(num + (num < 0 ? -(den >> 1) : (den >> 1)),
++				   den);
 +
 +		/*
 +		 * b_r + 1 in Q10: 2^10 * sqrt(qq*ii - iq^2) / ii, rounded to
@@ -9559,8 +9609,8 @@ index 756cd44..3fea07a 100644
 +		b_sum += div64_u64((root << 11) + ii, ii << 1);
 +	}
 +
-+	/* Mean of the Q16 a_r back to Q10, rounded half away from zero. */
-+	a_den = (s64)nr << 6;
++	/* Mean of the Q24 a_r back to Q10, rounded half away from zero. */
++	a_den = (s64)nr << 14;
 +	a = (s32)div64_s64(a_sum + (a_sum < 0 ? -(a_den >> 1) : (a_den >> 1)),
 +			   a_den);
 +	/* Mean of the b_r, rounded half up. */
@@ -9589,75 +9639,89 @@ index 756cd44..3fea07a 100644
 +/*
 + * Il banco a undici prese che il vendor programma per catena **solo a
 + * 80 MHz**, subito dopo i coefficienti RX IQ. La condizione e' la larghezza e
-+ * nient'altro: `PHY.WR 0x?6a4` compare su tutti e nove i segmenti a 80 MHz in
-+ * repo -- cold24 del d6220, cold25 dell'agcombo, i sei `up` a 80 dello sweep a
-+ * caldo -- e su nessuno dei sessantanove a 20 e 40. Sopra i 5250 a freddo non
-+ * c'e', ma per la ragione generale: la calibrazione non gira e questo ne fa
-+ * parte (agcombo cold26, ch52 a 80 MHz, e' l'unico segmento a 80 senza).
++ * nient'altro: `PHY.WR 0x?6a4` compare su ogni segmento a 80 MHz che corre la
++ * calibrazione, e su nessuno a 20 e 40.
 + *
-+ * I valori sono costanti. Le stesse tre serie compaiono identiche su due board
-+ * e su ogni canale, a freddo e a caldo: non sono una misura, sono tabella.
++ * Ogni serie e' un nucleo antisimmetrico attorno a una presa centrale di
++ * 0x0400, l'unita' in Q10: le prese a distanza k valgono c/(k + t) a segno
++ * alterno, arrotondate, con t intorno a 0.01. E' la correzione dello
++ * sbilanciamento IQ che dipende dalla frequenza: il termine lineare in
++ * frequenza e' una derivata, e il nucleo della derivata e' (-1)^k / k. Le
++ * serie osservate sono cinque, c = 0, ~60.5, ~121, ~182 e ~208, identiche su
++ * tre board e su ogni canale; qui sono tabella.
 + *
-+ * Ogni serie e' un nucleo antisimmetrico 1/k attorno a una presa centrale di
-+ * 0x0400, cioe' l'unita' in Q10: le prese a distanza k valgono circa
-+ * `±c/k`, con c che vale ~60.5, ~182 e ~208 per le tre. Un correttore di
-+ * ritardo di gruppo, quindi, con un solo parametro libero.
++ * Quale serie prende una catena lo dice la sua misura: la pendenza, sui toni
++ * a +-1, +-3, +-4 del periodo, del coefficiente a di ogni tono -- la parte
++ * che b43_phy_ac_iq_solve() media via. Sui 56 punti a 80 MHz delle catture
++ * (d6220, tg789vac e agcombo, a freddo e a caldo, bss-up compresi) la
++ * pendenza ai minimi quadrati, in unita' di a per passo, separa le cinque
++ * serie:
 + *
-+ * **Cosa sceglie c non e' stabilito**, ed e' per questo che la tabella e'
-+ * indicizzata su (catene, core) invece che su una formula: il d6220 prende
-+ * {A, B} sulle sue due catene e l'agcombo {C, B, A} sulle sue tre, quindi non
-+ * e' l'indice del core a decidere -- la catena che porta A e' la 0 su una
-+ * board e la 2 sull'altra. Un conteggio di catene fuori tabella non emette il
-+ * blocco e lo dichiara: meglio nessun filtro che un ritardo di gruppo preso
-+ * dalla catena sbagliata.
++ *   serie         0          A           D           B           C
++ *   pendenza   -1.1..1.2  1.7..3.9    4.2..6.0    6.3..8.5    8.9..9.7
++ *
++ * La stessa catena cambia serie con la sua pendenza: la 1 del d6220 prende B
++ * fino a ch132 a caldo (8.45) e C da ch132 a freddo (8.91). **SALAME** sulle
++ * soglie, che stanno a meta' dei buchi e non vengono da una regola: gli
++ * intervalli non hanno passo uniforme in questa pendenza, quindi lo stimatore
++ * del vendor non e' esattamente questo.
 + */
-+static const u16 b43_phy_ac_bw80_fir_a[11] = {
-+	0x000c, 0xfff1, 0x0014, 0xffe2, 0x003d, 0x0400,
-+	0xffc4, 0x001e, 0xffec, 0x000f, 0xfff4,
-+};
-+static const u16 b43_phy_ac_bw80_fir_b[11] = {
-+	0x0025, 0xffd2, 0x003d, 0xffa4, 0x00b8, 0x0400,
-+	0xff4c, 0x005b, 0xffc4, 0x002d, 0xffdc,
-+};
-+static const u16 b43_phy_ac_bw80_fir_c[11] = {
-+	0x002a, 0xffcc, 0x0046, 0xff97, 0x00d3, 0x0400,
-+	0xff32, 0x0067, 0xffbb, 0x0034, 0xffd6,
++static const s16 b43_phy_ac_bw80_fir[][11] = {
++	{ 0, 0, 0, 0, 0, 0x0400, 0, 0, 0, 0, 0 },
++	{ 12, -15, 20, -30, 61, 0x0400, -60, 30, -20, 15, -12 },
++	{ 24, -30, 41, -61, 122, 0x0400, -120, 60, -40, 30, -24 },
++	{ 37, -46, 61, -92, 184, 0x0400, -180, 91, -60, 45, -36 },
++	{ 42, -52, 70, -105, 211, 0x0400, -206, 103, -69, 52, -42 },
 +};
 +
-+static const struct b43_phy_ac_bw80_fir {
-+	u8 cores;
-+	const u16 *tap[B43_PHY_AC_MAX_CORES];
-+} b43_phy_ac_bw80_fir[] = {
-+	/* d6220, DSL-3580L */
-+	{ 2, { b43_phy_ac_bw80_fir_a, b43_phy_ac_bw80_fir_b } },
-+	/* agcombo */
-+	{ 3, { b43_phy_ac_bw80_fir_c, b43_phy_ac_bw80_fir_b,
-+	       b43_phy_ac_bw80_fir_a } },
-+};
++/* Upper edges of the slope bins above, in units of a per step, times 10. */
++static const s16 b43_phy_ac_bw80_fir_edge[] = { 15, 40, 61, 87 };
++
++/*
++ * The slope of the per-tone a over the measurement tones of @acc, times 10:
++ * least squares over the tone steps, the newest round being the last step.
++ */
++static int b43_phy_ac_iq_slope10(const struct b43_phy_ac_iq_acc *acc,
++				 unsigned int n)
++{
++	s64 num = 0, den = 0;
++	unsigned int j;
++
++	for (j = 0; j < n; j++) {
++		int k = b43_phy_ac_tone_steps[n - 1 - j];
++		s64 ii = acc->ii[j];
++		s64 a16;
++
++		if (!ii)
++			return 0;
++		a16 = div64_s64(-((s64)acc->iq[j] << 26), ii);	/* a in Q16 */
++		num += k * a16;
++		den += k * k;
++	}
++	if (!den)
++		return 0;
++	/* Q16 per step to tenths per step. */
++	return (int)div64_s64(num * 10, den << 16);
++}
 +
 +static void b43_phy_ac_bw80_fir_write(struct b43_wldev *dev)
 +{
 +	struct b43_phy_ac *ac = dev->phy.ac;
-+	const struct b43_phy_ac_bw80_fir *row = NULL;
-+	unsigned int chains = hweight8(ac->coremask);
++	unsigned int n = b43_phy_ac_meas_passes(dev);
 +	unsigned int c, i;
 +
 +	if (ac->cal_width != NL80211_CHAN_WIDTH_80)
 +		return;
 +
-+	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_bw80_fir); i++)
-+		if (b43_phy_ac_bw80_fir[i].cores == chains)
-+			row = &b43_phy_ac_bw80_fir[i];
-+	if (!row) {
-+		b43_phy_ac_todo(dev,
-+				"banco a 80 MHz non misurato per %u catene: "
-+				"non lo emetto",
-+				chains);
-+		return;
-+	}
-+
-+	for (c = 0; c < chains; c++) {
++	for_each_set_bit(c, &ac->coremask, ac->num_cores) {
 +		u16 stride = (u16)(c * 0x200);
++		const struct b43_phy_ac_iq_acc *acc = &ac->iq_acc[c];
++		int s = acc->rounds >= n ? b43_phy_ac_iq_slope10(acc, n) : 0;
++		unsigned int row = 0;
++
++		while (row < ARRAY_SIZE(b43_phy_ac_bw80_fir_edge) &&
++		       s >= b43_phy_ac_bw80_fir_edge[row])
++			row++;
 +
 +		b43_phy_maskset(dev, 0x0210, (u16)~0x0007, 0x0004);
 +		b43_phy_maskset(dev, 0x0211, (u16)~0x0004, 0);
@@ -9665,7 +9729,7 @@ index 756cd44..3fea07a 100644
 +		b43_phy_maskset(dev, 0x0212, (u16)~0x000f, 0x000a);
 +		for (i = 0; i < 11; i++)
 +			b43_phy_write(dev, (u16)(0x06a4 + stride + i),
-+				      row->tap[c][i]);
++				      (u16)b43_phy_ac_bw80_fir[row][i]);
 +	}
 +	b43_phy_maskset(dev, 0x0211, (u16)~0x0001, 0x0001);
 +}
@@ -9681,11 +9745,11 @@ index 756cd44..3fea07a 100644
 +	unsigned int c;
 +
 +	b43_phy_ac_todo(dev,
-+		"the RX IQ coefficient b matches the stock driver on 90 of 118 "
-+		"measured points; the misses are one LSB either way and sit "
-+		"almost all on core 1, where they follow the band. An input "
-+		"outside the six accumulators is missing. Receive image "
-+		"rejection on that core may be slightly worse.\n");
++		"the RX IQ coefficient b matches the stock driver on 259 of 309 "
++		"measured points; the misses are one LSB, mostly the stock "
++		"driver high and mostly on core 1. An input outside the six "
++		"accumulators is missing. Receive image rejection on that core "
++		"may be slightly worse.\n");
 +
 +	/* Per core [c]: 0x?a0 (coeff a) e 0x?a1 (coeff b) */
 +	for_each_set_bit(c, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
@@ -10177,9 +10241,14 @@ index 756cd44..3fea07a 100644
 +	if (!ctr32_passes)
 +		return;
 +
-+	for (pass = 0; pass < ctr32_passes; pass++)
++	for (pass = 0; pass < ctr32_passes; pass++) {
++#if UNIT_TEST
++		if (pass == 1)
++			b43_phy_ac_core_site(dev, B43_AC_SITE_BEACON_WD);
++#endif
 +		for (i = 0; i < ARRAY_SIZE(ctr32); i++)
 +			b43_phy_ac_wd_shm_read32x3(dev, ctr32[i]);
++	}
 +
 +	/*
 +	 * @ctr32_tail chiude la spazzata coi tre contatori fuori lista. Sta
@@ -10390,16 +10459,6 @@ index 756cd44..3fea07a 100644
 +				   ac->wd_turns % b43_phy_ac_temps_period(dev) ==
 +				   b43_phy_ac_temps_period(dev) - 1u,
 +				   false);
-+
-+		/*
-+		 * Dove il check di disponibilita' e' pendente il blocco E non
-+		 * esce dalla coda del bring-up, e tocca al primo giro armarlo:
-+		 * lo emette il campione che arriva, come nell'altro caso, non
-+		 * la fine del giro. Emetterlo qui lo mette otto op prima del
-+		 * latch e con il campione del giro precedente.
-+		 */
-+		if (k == 1 && !b43_phy_ac_may_calibrate_tx(dev))
-+			ac->crs_update_pending = true;
 +	}
 +
 +	if (!half_turn)
@@ -10432,14 +10491,6 @@ index 756cd44..3fea07a 100644
 +		return;
 +	if ((sm & want) != want || (sm & forbid))
 +		return;
-+
-+	/*
-+	 * The core ends the channel availability check when beaconing starts;
-+	 * what the check held back runs here, ahead of the turn. The vendor has
-+	 * it between two turns, and this puts it at most one turn later.
-+	 */
-+	if (dev->phy.ac->cac_pending && !dev->cac_pending)
-+		b43_phy_ac_bss_up(dev);
 +
 +	b43_phy_ac_watchdog(dev);
 +}
@@ -10690,6 +10741,9 @@ index 756cd44..3fea07a 100644
 +
 +	B43_AC_FN();
 +	b43_phy_ac_radar_thresh(dev);
++#if UNIT_TEST
++	b43_phy_ac_core_site(dev, B43_AC_SITE_CAC_CLOSE);
++#endif
 +	b43_phy_ac_cac_poll(dev, 1);
 +}
 +
@@ -10720,6 +10774,7 @@ index 756cd44..3fea07a 100644
 +							 b43_phy_ac_crs_index(dev, 0),
 +							 true));
 +	b43_phy_ac_prog_bank_0910(dev);
++	b43_phy_ac_crs_note_prog(dev, b43_phy_ac_crs_index(dev, 0));
 +
 +	/*
 +	 * Il MAC torna attivo e ci resta: quel che segue -- il poll delle
@@ -10760,7 +10815,7 @@ index 756cd44..3fea07a 100644
 +	B43_AC_FN();
 +	b43_phy_ac_wd_stats_tail(dev);
 +
-+	if (ac->crs_update_pending) {
++	if (ac->crs_update_pending || b43_phy_ac_crs_moved(dev)) {
 +		ac->crs_update_pending = false;
 +		b43_phy_ac_crs_block_e(dev);
 +	}
@@ -10814,6 +10869,9 @@ index 756cd44..3fea07a 100644
 +	 * GPIO del LED e il latch della finestra. b43.h non la nomina e a cosa serva
 +	 * non si sa; la posizione e' invariante.
 +	 */
++#if UNIT_TEST
++	b43_phy_ac_core_site(dev, B43_AC_SITE_BEACON_START);
++#endif
 +	b43_shm_write16(dev, B43_SHM_SHARED, 0x0026, 0xffff);
 +
 +	/*
@@ -10907,7 +10965,7 @@ index 756cd44..3fea07a 100644
 +
 +	/*
 +	 * Third and last pass of the twelve-rate loop, with the same shm
-+	 * prologue as the second one: the double rewrite of 0x00cc, the beacon
++	 * prologue as the second one: the chain mask into 0x00cc, the beacon
 +	 * power offset on 0x00ce and the zero on 0x00d0, then the chain-mask
 +	 * block.
 +	 *
@@ -10931,12 +10989,7 @@ index 756cd44..3fea07a 100644
 +	 */
 +	b43_maccontrol_set(dev, (u32)~0x00100000u, 0x00000000);
 +	b43_mac_suspend(dev);
-+	{
-+		u16 cc = b43_shm_read16(dev, B43_SHM_SHARED, 0x00cc);
-+
-+		b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
-+		b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
-+	}
++	b43_phy_ac_bss_cc_update(dev, B43_PHY_AC_CHAIN_SETUP);
 +	b43_shm_write16(dev, B43_SHM_SHARED, 0x00ce,
 +			b43_phy_ac_beacon_pwr_offset(dev));
 +	b43_shm_write16(dev, B43_SHM_SHARED, 0x00d0, 0x0000);
@@ -11483,6 +11536,9 @@ index 756cd44..3fea07a 100644
 +	B43_AC_BLOCK("shm_zero_05e0");
 +	for (off = 0x05e0; off <= 0x0666; off += 2)
 +		b43_shm_write16(dev, B43_SHM_SHARED, off, 0x0000);
++#if UNIT_TEST
++	b43_phy_ac_core_site(dev, B43_AC_SITE_KEYS_CLEAR);
++#endif
 +	/* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
 +	 *   12859-13592]
 +	 * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -11502,6 +11558,9 @@ index 756cd44..3fea07a 100644
 +	 */
 +	b43_shm_write16(dev, B43_SHM_SHARED, 0x018a, 0xffce);
 +	b43_shm_write16(dev, B43_SHM_SHARED, 0x018c, 0xffba);
++#if UNIT_TEST
++	b43_phy_ac_core_site(dev, B43_AC_SITE_MACFILTER_FIRST);
++#endif
 +	b43_phy_ac_wd_stats_poll_opt(dev, true, 0, true);
 +	/*
 +	 * After the sweep and after the four CCK blocks that are still not
@@ -11598,6 +11657,9 @@ index 756cd44..3fea07a 100644
 +	b43_phy_ac_mhf_maskset(dev, 1, (u16)~0x0020, 0x0020);    /* MHF1 set bit 5 */
 +	b43_mac_suspend(dev);
 +	b43_phy_ac_wd_stats_poll_opt(dev, true, 0, true);
++#if UNIT_TEST
++	b43_phy_ac_core_site(dev, B43_AC_SITE_MACFILTER);
++#endif
 +	b43_phy_ac_basic_rate_map(dev);
 +
 +	/*
@@ -11664,6 +11726,7 @@ index 756cd44..3fea07a 100644
 +	.channel_calibrate	= b43_phy_ac_op_channel_calibrate,
 +	.noise_sample_done	= b43_phy_ac_noise_sample_done,
 +	.radar_poll		= b43_phy_ac_radar_poll,
++	.cac_done		= b43_phy_ac_bss_up,
 +};
 +
 +/* ==========================================================================
@@ -11719,14 +11782,18 @@ index 756cd44..3fea07a 100644
 + * Farrow resampler ratio and deltaphase, both functions of the centre
 + * frequency and the bandwidth mode:
 + *
-+ *   ratio  = round(f_MHz * 2^18 * M / D) - 2^24
++ *   ratio  = round(f_MHz * 2^18 * M / D)
 + *   dphase = round(K / (M * f_MHz))
 + *
 + * with (D, M, K) = (60, 1, 0x7_8000_0000) at 20 and 40 MHz and
-+ * (45, 1, 0xB_4000_0000) at 80. The 80 MHz mode also swaps two constants that
-+ * travel with it, 0x0199/0x01a0 and 0x019c/0x01a3, so the three move
-+ * together and it reads as a sample-rate mode rather than a per-bandwidth
-+ * scaling.
++ * (45, 1, 0xB_4000_0000) at 80. The ratio is 26 bits: 0x019a takes 15:0,
++ * 0x019b 23:16, and 25:24 sit at 8:7 of 0x0199, above the mode's own field.
++ * Bit 24 is set on every 5 GHz channel but the top one at 80 MHz, 5775 MHz,
++ * where the ratio crosses 2^25 and 0x0199 goes from 0x0084 to 0x0104.
++ *
++ * The 80 MHz mode also swaps two constants that travel with it, the low
++ * field of 0x0199/0x01a0 and 0x019c/0x01a3, so the three move together and
++ * it reads as a sample-rate mode rather than a per-bandwidth scaling.
 + *
 + * On 2.4 GHz the block is the same, in the same order, with D/M = 80/3, 4/9
 + * of the 5 GHz 20 MHz divider, K = D * 2^29 as in that mode, and 0x1400 in
@@ -11734,35 +11801,31 @@ index 756cd44..3fea07a 100644
 + * archer-t5e, 24 out of 24, identical on the two boards; both are 20 MHz
 + * scans, so there is no 2.4 GHz 40 MHz point.
 + *
-+ * Verified against every configuration of the d6220 sweep -- 16 channels at
-+ * 20 MHz, 7 bonded pairs at 40, 3 at 80 -- exact on both registers and both
-+ * cores, 26 out of 26.
-+ *
-+ * The 80 MHz row rests on three distinct centre frequencies, so D and K are
-+ * fitted with little room to spare there; the 20 and 40 MHz row has 23.
++ * Verified against every configuration of the d6220 and tg789vac cold
++ * sweeps -- 25 channels at 20 MHz, 12 bonded pairs at 40, 6 at 80 -- exact on
++ * both registers and both cores.
 + */
-+#define B43_PHY_AC_FARROW_OFFSET	0x01000000u
 +
 +struct b43_phy_ac_farrow_mode {
 +	u16 div;		/* D in the ratio */
 +	u16 mul;		/* M in the ratio and the deltaphase */
 +	u64 dphase_num;		/* K in the deltaphase */
-+	u16 mu;			/* 0x0199 / 0x01a0 */
++	u16 mu;			/* 0x0199 / 0x01a0, bits 6:0 */
 +	u16 cfg;		/* 0x019c / 0x01a3 */
 +};
 +
 +static const struct b43_phy_ac_farrow_mode b43_phy_ac_farrow_mode_20_40 = {
-+	.div = 60, .mul = 1, .dphase_num = 0x780000000ull, .mu = 0x00a7,
++	.div = 60, .mul = 1, .dphase_num = 0x780000000ull, .mu = 0x0027,
 +	.cfg = 0x0f00,
 +};
 +
 +static const struct b43_phy_ac_farrow_mode b43_phy_ac_farrow_mode_80 = {
-+	.div = 45, .mul = 1, .dphase_num = 0xb40000000ull, .mu = 0x0084,
++	.div = 45, .mul = 1, .dphase_num = 0xb40000000ull, .mu = 0x0004,
 +	.cfg = 0x0b40,
 +};
 +
 +static const struct b43_phy_ac_farrow_mode b43_phy_ac_farrow_mode_2g_20 = {
-+	.div = 80, .mul = 3, .dphase_num = 0xa00000000ull, .mu = 0x00a7,
++	.div = 80, .mul = 3, .dphase_num = 0xa00000000ull, .mu = 0x0027,
 +	.cfg = 0x1400,
 +};
 +
@@ -11782,6 +11845,7 @@ index 756cd44..3fea07a 100644
 +	enum nl80211_chan_width width = chandef->width;
 +	unsigned int freq;
 +	u32 ratio, dphase;
++	u16 mu;
 +
 +	B43_PHY_AC_REQUIRE(dev,
 +			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
@@ -11814,9 +11878,9 @@ index 756cd44..3fea07a 100644
 +		freq = channel->center_freq;
 +	}
 +
-+	ratio = (u32)(DIV_ROUND_CLOSEST(freq * m->mul * (1u << 18), m->div) -
-+		      B43_PHY_AC_FARROW_OFFSET);
++	ratio = (u32)DIV_ROUND_CLOSEST(freq * m->mul * (1u << 18), m->div);
 +	dphase = (u32)DIV_ROUND_CLOSEST_ULL(m->dphase_num, m->mul * freq);
++	mu = (u16)(m->mu | ((ratio >> 24) & 0x3) << 7);
 +
 +	/*
 +	 * The vendor's order: the low half of each 32-bit value before its
@@ -11824,14 +11888,14 @@ index 756cd44..3fea07a 100644
 +	 * is unknown, then the global config that closes the block. 14 ops.
 +	 */
 +	b43_phy_write(dev, 0x019a, ratio & 0xffff);
-+	b43_phy_write(dev, 0x019b, ratio >> 16);
++	b43_phy_write(dev, 0x019b, (ratio >> 16) & 0xff);
 +	b43_phy_write(dev, 0x019c, m->cfg);
-+	b43_phy_write(dev, 0x0199, m->mu);
++	b43_phy_write(dev, 0x0199, mu);
 +
 +	b43_phy_write(dev, 0x01a1, ratio & 0xffff);
-+	b43_phy_write(dev, 0x01a2, ratio >> 16);
++	b43_phy_write(dev, 0x01a2, (ratio >> 16) & 0xff);
 +	b43_phy_write(dev, 0x01a3, m->cfg);
-+	b43_phy_write(dev, 0x01a0, m->mu);
++	b43_phy_write(dev, 0x01a0, mu);
 +
 +	b43_phy_write(dev, 0x1603, dphase & 0xffff);
 +	b43_phy_write(dev, 0x1602, dphase >> 16);
@@ -11847,7 +11911,7 @@ index 756cd44..3fea07a 100644
 +	(void)b43_phy_ac_farrow_vals_432x_media_a1;
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.h b/drivers/net/wireless/broadcom/b43/phy_ac.h
-index 02eb6c0..822af95 100644
+index 02eb6c0..d48d7b6 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.h
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.h
 @@ -3,6 +3,12 @@
@@ -11937,7 +12001,7 @@ index 02eb6c0..822af95 100644
  #define B43_PHY_AC_C1_CLIP			0x6d4
  #define  B43_PHY_AC_C1_CLIP_DIS			0x4000
  #define B43_PHY_AC_C2_CLIP			0x8d4
-@@ -31,9 +87,771 @@
+@@ -31,9 +87,802 @@
  #define B43_PHY_AC_C3_CLIP			0xad4
  #define  B43_PHY_AC_C3_CLIP_DIS			0x4000
  
@@ -12010,7 +12074,7 @@ index 02eb6c0..822af95 100644
 +
 +/*
 + * Hard maximum of RF chains the driver programs. Every per-core array here
-+ * and in phy_ac.c / rxiqcal_phy_ac.c is sized on this, and num_cores is
++ * and in phy_ac.c is sized on this, and num_cores is
 + * clamped to it in b43_phy_ac_probe_cores.
 + */
 +#define B43_PHY_AC_MAX_CORES		3
@@ -12218,8 +12282,6 @@ index 02eb6c0..822af95 100644
 +	 */
 +	u16 wd_turns;
 +	u16 wd_switch_turns;
-+	/* L'avviso di campione fuori dal misurato si emette una volta sola. */
-+	bool crs_noise_warned;
 +	/*
 +	 * Il blocco E delle soglie CRS e' dovuto al prossimo campione di
 +	 * rumore che arriva: la coda del bring-up arma, e
@@ -12369,6 +12431,11 @@ index 02eb6c0..822af95 100644
 +	u8 crs_ring[B43_PHY_AC_MAX_CORES][4];
 +	u8 crs_ring_head;
 +	u8 crs_ring_len;
++	/*
++	 * Per chain, the ladder index the hardware carries from the last CRS
++	 * write, common threshold plus bank. See b43_phy_ac_crs_moved().
++	 */
++	u8 crs_prog[B43_PHY_AC_MAX_CORES];
 +	/* CRS value chanspec_tail() last wrote, reused by the Block E site. */
 +	u8 crs_written;
 +	/* Operating width the MAC was last told about, 0 when never. */
@@ -12657,6 +12724,8 @@ index 02eb6c0..822af95 100644
 +
 +/* Il valore di shm 0x00ce, che anche l'harness emette; derivazione in phy_ac.c. */
 +u16 b43_phy_ac_beacon_pwr_offset(struct b43_wldev *dev);
++/* Il valore di shm 0x00cc della config BSS, la maschera di catena; in phy_ac.c. */
++u16 b43_phy_ac_bss_cc(struct b43_wldev *dev);
 +
 +/* Helper trasversali al confine MAC/PHY; razionale in helpers_phy_ac.c. */
 +void b43_phy_ac_mhf_maskset(struct b43_wldev *dev, u16 slot, u16 mask, u16 val);
@@ -12706,6 +12775,32 @@ index 02eb6c0..822af95 100644
 +#define B43_AC_BLOCK(name) b43_ac_block_mark(name)
 +#else
 +#define B43_AC_BLOCK(name) do { (void)sizeof(name); } while (0)
++#endif
++
++#if UNIT_TEST
++/*
++ * Core work the stock driver runs inside the PHY's own sequences, which b43
++ * runs from the core or from mac80211 at another time. Each site is work
++ * whose owner and content are known and which does not stay in the PHY:
++ * test/unit emits the core's operations at the stock driver's point so that
++ * the op-for-op comparison keeps its order. Nothing not understood goes here.
++ */
++enum b43_phy_ac_core_site {
++	/* b43_security_init(): the key rows of the address match table */
++	B43_AC_SITE_KEYS_CLEAR,
++	/* b43_upload_card_macaddress() before the BSSID is known */
++	B43_AC_SITE_MACFILTER_FIRST,
++	/* b43_macfilter_set() of BSSID and station, with their flags */
++	B43_AC_SITE_MACFILTER,
++	/* b43_ac_cac_match_gate(false) from b43_op_config() */
++	B43_AC_SITE_CAC_CLOSE,
++	/* b43_update_templates() on start_ap */
++	B43_AC_SITE_BEACON_START,
++	/* b43_update_templates() between two watchdog counter passes */
++	B43_AC_SITE_BEACON_WD,
++};
++
++void b43_phy_ac_core_site(struct b43_wldev *dev, enum b43_phy_ac_core_site site);
 +#endif
 +
  #endif /* B43_PHY_AC_H_ */
@@ -14861,573 +14956,6 @@ index 0000000..7edb72e
 +void b43_radio_2069_afe_lpf_stage(struct b43_wldev *dev, u16 afe_728);
 +
 +#endif /* B43_RADIO_2069_H_ */
-diff --git a/drivers/net/wireless/broadcom/b43/rxiqcal_phy_ac.c b/drivers/net/wireless/broadcom/b43/rxiqcal_phy_ac.c
-new file mode 100644
-index 0000000..42d53fc
---- /dev/null
-+++ b/drivers/net/wireless/broadcom/b43/rxiqcal_phy_ac.c
-@@ -0,0 +1,532 @@
-+// SPDX-License-Identifier: GPL-2.0-or-later
-+/*
-+ * Broadcom B43 AC-PHY -- RX I/Q calibration.
-+ *
-+ * The setup -> gainctrl -> measure -> solve -> apply -> cleanup skeleton and
-+ * the solve itself come from the brcmsmac N-PHY calibration
-+ * (brcm80211/brcmsmac/phy/phy_n.c: wlc_phy_cal_rxiq_nphy_rev3,
-+ * wlc_phy_calc_rx_iq_comp_nphy, wlc_phy_rx_iq_est_nphy). The solve is
-+ * PHY-independent; the register map is adapted to AC-PHY rev 1 with the
-+ * 2069 radio.
-+ *
-+ * Settled by the captured read values:
-+ *   - accumulator layout: +3/+2 is i_pwr, +5/+4 is q_pwr, +1/+0 is iq_prod
-+ *     (signed and small). The solve only reproduces the stock driver's
-+ *     coefficients with this mapping.
-+ *   - the a/b coefficients live in 0x?a0/0x?a1 per chain, s10 format.
-+ *   - b43_phy_ac_rxiqcal_comp_update() is bit-exact on three
-+ *     measurement-to-coefficient vectors: the sum of two rounds of 0x4000
-+ *     samples.
-+ *   - the iteration and tone-mode sequence is a fixed schedule, not a
-+ *     hill-climb, and the measurement gain is never altered: the gain
-+ *     registers are only saved and restored around the measurement.
-+ *
-+ * The RX-IQ path in use is the transcribed one in phy_ac.c, orchestrated by
-+ * b43_phy_ac_set_channel_calibrations(), and lives there too. What remains
-+ * in this file is the harness-only
-+ * estimator/validator -- rxiqcal_est/rxiqcal_coeffs, the tone play (tx_tone,
-+ * stopplayback, rxiqcal_set_tone, rxiqcal_apply_gain) and the two entry points
-+ * rxiqcal_est_debug and rxiqcal_comp_update -- reachable only from the
-+ * `ac_trace rxiq_est_debug`/`rxiq_comp` flows, never from the driver. It
-+ * validates the RX-IQ math against the captures. The one call it shares with
-+ * the production path is b43_phy_ac_rxgain_bw(), which stays in phy_ac.c. See
-+ * docs/rxiq-cal-analysis.md.
-+ */
-+#include <linux/kernel.h>	/* int_sqrt */
-+#include "b43.h"
-+#include "phy_ac.h"
-+#include "tables_phy_ac.h"
-+#include "radio_2069.h"
-+#include "rxiqcal_phy_ac.h"
-+
-+/* Per-core estimator output: I/Q powers and cross product from the
-+ * correlator. Same shape as brcmsmac's struct phy_iq_est. */
-+struct b43_phy_ac_iq_est {
-+	s32 iq_prod;
-+	u32 i_pwr;
-+	u32 q_pwr;
-+};
-+
-+/* Per-core RX compensation coefficients. Like nphy_iq_comp but extended to
-+ * three cores: on the 3x3 agcombo the vendor programs core 2 as well. */
-+struct b43_phy_ac_iq_comp {
-+	s16 a[3], b[3];
-+};
-+
-+/*
-+ * Minimum I+Q power below which the measurement is not trustworthy, the
-+ * N-PHY NPHY_MIN_RXIQ_PWR value kept as a placeholder. The AC-PHY
-+ * accumulator scale still has to be confirmed on hardware.
-+ */
-+#define B43_PHY_AC_MIN_RXIQ_PWR		0x100
-+#define B43_PHY_AC_RXIQ_CAL_RETRY	2
-+#define B43_PHY_AC_RXCAL_NUM_SAMPS	1024	/* 0x400 in the capture */
-+
-+/*
-+ * RX-IQ correlator registers, confirmed against the capture (the
-+ * down-to-bss-up trace, one block of 24 episodes plus seven more). These
-+ * are writes and commands, so they are captured verbatim; only the read
-+ * values, the accumulators, are undefined in the trace, and the silicon
-+ * supplies those at runtime.
-+ */
-+#define B43_PHY_AC_RXIQ_CMD		0x0270	/* bit0 = start, bit1 = iqMode */
-+#define  B43_PHY_AC_RXIQ_START		0x0001
-+#define  B43_PHY_AC_RXIQ_IQMODE		0x0002
-+#define B43_PHY_AC_RXIQ_WAIT		0x0271	/* [7:0] = wait_time */
-+#define B43_PHY_AC_RXIQ_NSAMP		0x0272	/* num_samps */
-+/* Per-core accumulators: three Hi/Lo pairs based at 0x06c0 + core * 0x200,
-+ * read in the order +3,+2 / +5,+4 / +1,+0. */
-+#define B43_PHY_AC_RXIQ_ACC(core)	(u16)(0x06c0 + (core) * 0x200)
-+
-+/*
-+ * Register map taken from the capture.
-+ *
-+ * Filled in and confirmed: rxiq_est, rxiq_coeffs, rxcal_apply_gain, tx_tone,
-+ * stopplayback.
-+ */
-+
-+/*
-+ * RX-IQ correlator: arm num_samps samples, wait for completion, read the
-+ * per-core i_pwr/q_pwr/iq_prod accumulators. Modelled on
-+ * wlc_phy_rx_iq_est_nphy. The register sequence is confirmed by the
-+ * capture:
-+ *   WR 0x0272 = num_samps; MOD 0x0271[7:0] = wait_time (32);
-+ *   MOD 0x0270 clear iqMode; MOD 0x0270 set start; poll RD 0x0270;
-+ *   read the accumulators at 0x06c0 + core * 0x200, so 0x08c0 for core 1.
-+ *
-+ * The accumulator mapping is confirmed by the agcombo rescan capture, which
-+ * records the read values: the +3,+2 pair is i_pwr, +5,+4 is q_pwr and
-+ * +1,+0 is iq_prod, high half first. It agrees with the measured values
-+ * (i and q large and similar, iq small and signed) and with the solve: only
-+ * with this mapping does rx_iq_comp_update reproduce the coefficients the
-+ * vendor writes.
-+ */
-+static int b43_phy_ac_rxiqcal_est(struct b43_wldev *dev,
-+			       struct b43_phy_ac_iq_est *est,
-+			       u16 num_samps, u8 wait_time)
-+{
-+	B43_AC_FN();
-+	unsigned int core, i;
-+	bool timed_out = true;
-+
-+	b43_phy_write(dev, B43_PHY_AC_RXIQ_NSAMP, num_samps);
-+	b43_phy_maskset(dev, B43_PHY_AC_RXIQ_WAIT, (u16)~0x00ff, wait_time);
-+	b43_phy_mask(dev, B43_PHY_AC_RXIQ_CMD, (u16)~B43_PHY_AC_RXIQ_IQMODE);
-+	b43_phy_set(dev, B43_PHY_AC_RXIQ_CMD, B43_PHY_AC_RXIQ_START);
-+
-+	for (i = 0; i < 5000; i++) {
-+		if (!(b43_phy_read(dev, B43_PHY_AC_RXIQ_CMD) &
-+		      B43_PHY_AC_RXIQ_START)) {
-+			timed_out = false;
-+			break;
-+		}
-+		udelay(10);
-+	}
-+	if (timed_out) {
-+		b43err(dev->wl, "phy-ac: rxiqcal_est timeout\n");
-+		return -ETIMEDOUT;
-+	}
-+
-+	for (core = 0; core < dev->phy.ac->num_cores; core++) {
-+		u16 b = B43_PHY_AC_RXIQ_ACC(core);
-+
-+		est[core].i_pwr =
-+			(b43_phy_read(dev, b + 3) << 16) | b43_phy_read(dev, b + 2);
-+		est[core].q_pwr =
-+			(b43_phy_read(dev, b + 5) << 16) | b43_phy_read(dev, b + 4);
-+		est[core].iq_prod =
-+			(b43_phy_read(dev, b + 1) << 16) | b43_phy_read(dev, b + 0);
-+	}
-+	return 0;
-+}
-+
-+/*
-+ * Read (write = 0) or write (write = 1) the per-core RX compensation
-+ * coefficients. The N-PHY equivalent is wlc_phy_rx_iq_coeffs_nphy, which
-+ * uses PHY registers 0x9a-0x9d.
-+ *
-+ * The AC-PHY map is confirmed by the agcombo rescan-to-bss-ch36 capture,
-+ * which records the read values: a at 0x06a0 + core * 0x200, b at
-+ * 0x06a1 + core * 0x200, s10 in field [9:0]. rx_iq_comp_update() below
-+ * reproduces that capture's three measurement-to-coefficient vectors
-+ * bit-exactly.
-+ */
-+#define B43_PHY_AC_RXIQ_COMP_A(core)	(u16)(0x06a0 + (core) * 0x200)
-+#define B43_PHY_AC_RXIQ_COMP_B(core)	(u16)(0x06a1 + (core) * 0x200)
-+
-+static void b43_phy_ac_rxiqcal_coeffs(struct b43_wldev *dev, u8 write,
-+				   struct b43_phy_ac_iq_comp *comp)
-+{
-+	B43_AC_FN();
-+	unsigned int core;
-+
-+	for (core = 0; core < dev->phy.ac->num_cores && core < 3; core++) {
-+		if (write) {
-+			b43_phy_write(dev, B43_PHY_AC_RXIQ_COMP_A(core),
-+				      comp->a[core] & 0x3ff);
-+			b43_phy_write(dev, B43_PHY_AC_RXIQ_COMP_B(core),
-+				      comp->b[core] & 0x3ff);
-+		} else {
-+			comp->a[core] = sign_extend32(
-+				b43_phy_read(dev,
-+					     B43_PHY_AC_RXIQ_COMP_A(core)), 9);
-+			comp->b[core] = sign_extend32(
-+				b43_phy_read(dev,
-+					     B43_PHY_AC_RXIQ_COMP_B(core)), 9);
-+		}
-+	}
-+}
-+
-+/*
-+ * Inject the calibration tone and set up the loopback, transcribed verbatim
-+ * from a 14-op block of the capture.
-+ *
-+ * The ops that carry mask=0x0000 in the trace are register and/or, which the
-+ * tracer does not distinguish. The choice made here is inferred from the
-+ * value -- a 0xff.. clear-mask reads as and, a small value as or -- so it is
-+ * a heuristic and still to be confirmed.
-+ *
-+ * The three writes below are the sample-play control (num_samps, loops,
-+ * wait), not the tone shape: frequency and amplitude live in the CORDIC table
-+ * loaded into 0x000e, so the freq_hz/amp parameters are unused here. NSAMP is
-+ * the 20 MHz value (0x27); the correlator-kick sites use the bandwidth-aware
-+ * b43_phy_ac_rxiqcal_kick_len() instead.
-+ */
-+static void b43_phy_ac_tx_tone(struct b43_wldev *dev, u32 freq_hz, u16 amp)
-+{
-+	B43_AC_FN();
-+	b43_phy_mask(dev, 0x0471, (u16)~0x0001);	/* and 0xfffe */
-+	b43_phy_write(dev, B43_PHY_AC_SAMP_PLAY_NSAMP, 0x0027);
-+	b43_phy_write(dev, B43_PHY_AC_SAMP_PLAY_LOOPS, 0xffff);
-+	b43_phy_write(dev, B43_PHY_AC_SAMP_PLAY_WAIT, 0x003c);
-+	b43_phy_set(dev, 0x0400, 0x0001);		/* or */
-+	b43_phy_mask(dev, B43_PHY_AC_SAMP_PLAY_CTL, (u16)~0x0004);	/* and 0xfffb */
-+	b43_phy_mask(dev, B43_PHY_AC_SAMP_PLAY_CTL, (u16)~B43_PHY_AC_SAMP_PLAY_START);	/* and 0xfffe */
-+	b43_phy_mask(dev, 0x0382, (u16)~0xc000);	/* and 0x3fff */
-+	b43_phy_set(dev, B43_PHY_AC_SAMP_PLAY_CTL, B43_PHY_AC_SAMP_PLAY_START);		/* or */
-+	udelay(1);
-+	b43_phy_write(dev, 0x0400, 0x0000);
-+	(void)freq_hz;
-+	(void)amp;
-+}
-+
-+/* Stop the tone after the estimate. Transcribed from the capture; the
-+ * and/or split is the same heuristic as above. */
-+static void b43_phy_ac_stopplayback(struct b43_wldev *dev)
-+{
-+	B43_AC_FN();
-+	b43_phy_set(dev, B43_PHY_AC_SAMP_PLAY_CTL, B43_PHY_AC_SAMP_PLAY_STOP);		/* or */
-+	b43_phy_mask(dev, B43_PHY_AC_SAMP_PLAY_CTL, (u16)~0x0004);	/* and 0xfffb */
-+}
-+
-+/* ===================== DEBUG: MEASURE-ONLY HELPER ======================== */
-+
-+/*
-+ * Tone-mode values observed in the ch36 trace: the per-core "tone enable"
-+ * register (0x0734 + core*0x200) cycles through {4, 2, 1, 0} across four
-+ * consecutive 1024-sample rxiq_est calls. Core 2 (if present) follows its
-+ * own sequence {4, 1, 0, -}. The tone frequency (0x0730) and max (0x0731)
-+ * are constant at 0x00b0 and 0x0004 across all four.
-+ */
-+static const u8 rxiqcal_tone_modes_c01[] = { 4, 2, 1, 0 };
-+static const u8 rxiqcal_tone_modes_c2[]  = { 4, 1, 0, 0 };
-+
-+/*
-+ * Per-core tone engine: program frequency, max amplitude, and tone-enable.
-+ * Registers at 0x0730/0x0731/0x0734 + core * 0x200. Additionally set the
-+ * three AFE override bits in 0x0722 + core * 0x200.
-+ */
-+static void b43_phy_ac_rxiqcal_set_tone(struct b43_wldev *dev, u8 core,
-+				     u16 freq, u16 fmax, u8 tone_mode)
-+{
-+	B43_AC_FN();
-+	u16 s = (u16)(core * 0x200);
-+
-+	b43_phy_write(dev, 0x0730 + s, freq);
-+	b43_phy_write(dev, 0x0731 + s, fmax);
-+	b43_phy_write(dev, 0x0734 + s, tone_mode);
-+	b43_phy_maskset(dev, 0x0722 + s, (u16)~0x0002, 0x0002);
-+	b43_phy_maskset(dev, 0x0722 + s, (u16)~0x0004, 0x0004);
-+	b43_phy_maskset(dev, 0x0722 + s, (u16)~0x0008, 0x0008);
-+}
-+
-+/*
-+ * Gain override: apply the measurement gain on <core>, then micro-settle.
-+ * Two-step write sequence from the trace: first the "armed"
-+ * values (0x00fa / 0x01d3 / 0x07e6 a 20 MHz), then the settled values
-+ * (0x007a / 0x01d3 / 0x07e2). Le due parole su 0x0739 e 0x073a seguono la
-+ * larghezza; vedi b43_phy_ac_rxgain_bw(). The read-before-write is a save — we skip it here
-+ * because the caller saves and restores the registers.
-+ */
-+static void b43_phy_ac_rxiqcal_apply_gain(struct b43_wldev *dev, u8 core)
-+{
-+	B43_AC_FN();
-+	u16 s = (u16)(core * 0x200);
-+
-+	const struct b43_phy_ac_rxgain_bw *g = b43_phy_ac_rxgain_bw(dev);
-+	u16 w73a = (u16)(0x0190 | g->f73a_07 | g->f73a_08 | g->f73a_60);
-+
-+	b43_phy_write(dev, 0x0739 + s, (u16)(0x0080 | g->f739_7e));
-+	b43_phy_write(dev, 0x073a + s, w73a);
-+	b43_phy_write(dev, 0x0725 + s, 0x07e6);
-+	/* micro-settle: same sequence both cores */
-+	b43_phy_write(dev, 0x0725 + s, 0x07e2);
-+	b43_phy_write(dev, 0x073a + s, w73a);
-+	b43_phy_write(dev, 0x0739 + s, g->f739_7e);
-+}
-+
-+/*
-+ * Debug-only RX-IQ estimation: runs the 4-tone-mode measurement sequence
-+ * observed in the ch36 trace and prints the raw accumulator
-+ * values. This does NOT compute or apply compensation coefficients — it
-+ * only reads what the hardware reports, so the results can validate (or
-+ * falsify) the register-map and accumulator-layout assumptions.
-+ *
-+ * Call point: after txpwr_by_index, before the bss-up's tempsense: in the
-+ * trace it sits between the txpwr tail and the tempsense block.
-+ */
-+void b43_phy_ac_rxiqcal_est_debug(struct b43_wldev *dev)
-+{
-+	B43_AC_FN();
-+	struct b43_phy_ac_iq_est est[3];
-+	u16 save_gain[B43_PHY_AC_MAX_CORES * 3];	/* 0x0739, 0x073a, 0x0725 */
-+	u16 save_tone[B43_PHY_AC_MAX_CORES * 3];	/* 0x0730, 0x0731, 0x0734 */
-+	u16 saved_040f;
-+	unsigned int core, tm;
-+	int err;
-+	u8 num_cores = dev->phy.ac->num_cores;
-+
-+	B43_PHY_AC_REQUIRE(dev,
-+			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
-+			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
-+			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
-+
-+	b43dbg(dev->wl, "phy-ac: rxiq_est_debug — start (%u cores)\n",
-+	       num_cores);
-+
-+	/* Save gain and tone registers. */
-+	for_each_set_bit(core, &dev->phy.ac->coremask, num_cores) {
-+		u16 s = (u16)(core * 0x200);
-+
-+
-+		save_gain[core * 3 + 0] = b43_phy_read(dev, 0x0739 + s);
-+		save_gain[core * 3 + 1] = b43_phy_read(dev, 0x073a + s);
-+		save_gain[core * 3 + 2] = b43_phy_read(dev, 0x0725 + s);
-+	}
-+	for (core = 0; core < num_cores; core++) {
-+		u16 s = (u16)(core * 0x200);
-+
-+		save_tone[core * 3 + 0] = b43_phy_read(dev, 0x0730 + s);
-+		save_tone[core * 3 + 1] = b43_phy_read(dev, 0x0731 + s);
-+		save_tone[core * 3 + 2] = b43_phy_read(dev, 0x0734 + s);
-+	}
-+	saved_040f = b43_phy_read_log(dev, 0x040f);
-+
-+	/*
-+	 * Tone engine init: a 46-op scalar sequence that programs the RX-IQ
-+	 * classifier and clears the per-core IQ coefficients before the
-+	 * measurement. The op list is the same on ch36 BW20 and ch36 BW40,
-+	 * down to the values written.
-+	 *
-+	 * Left out: the two table writes to id 0x000c offsets 0x0060 and
-+	 * 0x0064, two words each, that the vendor issues in the middle of
-+	 * this sequence. Their values depend on channel and bandwidth
-+	 * (ch36 BW20 gives {0x0062,0xfffd}/{0x0023,0x0003}, ch36 BW40 gives
-+	 * {0x0060,0xfffe}/{0x0025,0x0002}, ch44 BW20 gives
-+	 * {0x0061,0xfffe}/{0x0022,0x0002}), and without the formula that
-+	 * derives them, writing nothing beats writing another channel's
-+	 * values.
-+	 *
-+	 * Also left out, for the same reason of scope: the large gain
-+	 * override, some 230 MODs over 0x072x-0x074x per core, and the
-+	 * 40-word table write to id 0x000e offset 0. Both are outside this
-+	 * measure-only helper.
-+	 */
-+	b43_phy_set(dev, 0x0400, 0x0003);
-+	b43_phy_set(dev, 0x0402, 0x0020);
-+	(void)b43_phy_read_log(dev, 0x0403);
-+	b43_phy_write(dev, 0x0400, 0x0000);
-+	b43_phy_write(dev, 0x019e, 0x03d0);
-+	b43_phy_write(dev, 0x06a0, 0x0000);
-+	b43_phy_write(dev, 0x06a1, 0x0000);
-+	b43_phy_write(dev, 0x08a0, 0x0000);
-+	b43_phy_write(dev, 0x08a1, 0x0000);
-+	b43_phy_mask(dev, 0x0211, (u16)~0x0001);
-+	b43_phy_mask(dev, 0x040f, (u16)~0x0200);
-+
-+	/* CCA reset pulse. */
-+	b43_phy_set(dev, B43_PHY_AC_BBCFG, B43_PHY_AC_BBCFG_RSTCCA);
-+	dev->phy.ac->status_mask |= B43_PHY_AC_STATE_CCA_RESET;
-+	b43_phy_mask(dev, B43_PHY_AC_BBCFG, (u16)~B43_PHY_AC_BBCFG_RSTCCA);
-+	dev->phy.ac->status_mask &= ~B43_PHY_AC_STATE_CCA_RESET;
-+
-+	/* Arm tone engine (reuse existing helper). */
-+	b43_phy_ac_tx_tone(dev, 0, 0);
-+
-+	/*
-+	 * Apply gain override on all present cores. The vendor arms all 3, core
-+	 * 2 included (WR 0x0b39/b3a/b25). Arming fewer leaves the estimator
-+	 * polling the status of an un-armed core until it times out.
-+	 */
-+	for (core = 0; core < num_cores; core++)
-+		b43_phy_ac_rxiqcal_apply_gain(dev, core);
-+
-+	/* Sweep four tone modes, 1024 samples each. */
-+	for (tm = 0; tm < ARRAY_SIZE(rxiqcal_tone_modes_c01); tm++) {
-+		for (core = 0; core < num_cores; core++) {
-+			const u8 *modes = (core < 2) ? rxiqcal_tone_modes_c01
-+						      : rxiqcal_tone_modes_c2;
-+			b43_phy_ac_rxiqcal_set_tone(dev, core, 0x00b0, 0x0004,
-+						 modes[tm]);
-+		}
-+
-+		err = b43_phy_ac_rxiqcal_est(dev, est, 0x0400, 32);
-+		if (err) {
-+			b43dbg(dev->wl,
-+			       "phy-ac: rxiq_est_debug tone_mode=%u — timeout\n",
-+			       rxiqcal_tone_modes_c01[tm]);
-+			continue;
-+		}
-+
-+		for (core = 0; core < num_cores; core++) {
-+			b43dbg(dev->wl,
-+			       "phy-ac: rxiq_est_debug tm=%u core=%u "
-+			       "i_pwr=0x%08x q_pwr=0x%08x iq_prod=0x%08x\n",
-+			       rxiqcal_tone_modes_c01[tm], core,
-+			       est[core].i_pwr, est[core].q_pwr,
-+			       (u32)est[core].iq_prod);
-+		}
-+	}
-+
-+	/* Teardown tone. */
-+	b43_phy_ac_stopplayback(dev);
-+
-+	/* Restore tone registers. */
-+	for (core = 0; core < num_cores; core++) {
-+		u16 s = (u16)(core * 0x200);
-+
-+		b43_phy_write(dev, 0x0730 + s, save_tone[core * 3 + 0]);
-+		b43_phy_write(dev, 0x0731 + s, save_tone[core * 3 + 1]);
-+		b43_phy_write(dev, 0x0734 + s, save_tone[core * 3 + 2]);
-+	}
-+	/* Restore gain registers. */
-+	for_each_set_bit(core, &dev->phy.ac->coremask, num_cores) {
-+		u16 s = (u16)(core * 0x200);
-+
-+
-+		b43_phy_write(dev, 0x0739 + s, save_gain[core * 3 + 0]);
-+		b43_phy_write(dev, 0x073a + s, save_gain[core * 3 + 1]);
-+		b43_phy_write(dev, 0x0725 + s, save_gain[core * 3 + 2]);
-+	}
-+
-+	/*
-+	 * Cleanup the way the vendor does it: restore the 0x040f gate, then a
-+	 * CCA pulse to commit the state. The capture issues that pulse at the
-+	 * end of the RX-IQ block, before moving to the next phase.
-+	 *
-+	 * The vendor's other restores, to table id 0x000c offsets
-+	 * 0x0063/0x0067/0x0073/0x0077, undo the large gain override that is
-+	 * not ported here, so there is nothing to restore.
-+	 */
-+	b43_phy_maskset(dev, 0x040f, (u16)~0x0200, saved_040f & 0x0200);
-+	b43_phy_set(dev, B43_PHY_AC_BBCFG, B43_PHY_AC_BBCFG_RSTCCA);
-+	dev->phy.ac->status_mask |= B43_PHY_AC_STATE_CCA_RESET;
-+	b43_phy_mask(dev, B43_PHY_AC_BBCFG, (u16)~B43_PHY_AC_BBCFG_RSTCCA);
-+	dev->phy.ac->status_mask &= ~B43_PHY_AC_STATE_CCA_RESET;
-+
-+	b43dbg(dev->wl, "phy-ac: rxiq_est_debug — done\n");
-+}
-+
-+/* The generic algorithm, ported as-is. */
-+
-+/*
-+ * Measure with the correlator and solve for the IQ compensation
-+ * coefficients: from the estimate (ii = I^2, qq = Q^2, iq = I*Q), derive the
-+ * (a, b) pair that cancels the gain and phase imbalance. Same shape as
-+ * wlc_phy_calc_rx_iq_comp_nphy; the AC-specific details -- two rounds
-+ * summed, round-to-nearest, s10 format in 0x?a0/0x?a1 -- are confirmed
-+ * bit-exactly against the three measurement-to-coefficient vectors of the
-+ * agcombo capture. See docs/rxiq-cal-analysis.md.
-+ *
-+ * Still to verify on AC-PHY: the scale of B43_PHY_AC_MIN_RXIQ_PWR. It holds
-+ * the N-PHY value as a placeholder, and the captured powers are orders of
-+ * magnitude above it, so the guard has never been exercised.
-+ */
-+int b43_phy_ac_rxiqcal_comp_update(struct b43_wldev *dev, u8 core_mask)
-+{
-+	B43_AC_FN();
-+	struct b43_phy_ac_iq_est est[3], est2[3];
-+	struct b43_phy_ac_iq_comp old_comp, new_comp;
-+	unsigned int core;
-+	uint retry = 0;
-+	int err;
-+
-+	if (!core_mask)
-+		return 0;
-+
-+	b43_phy_ac_rxiqcal_coeffs(dev, 0, &old_comp);
-+	memset(&new_comp, 0, sizeof(new_comp));
-+	b43_phy_ac_rxiqcal_coeffs(dev, 1, &new_comp);
-+
-+retry_cal:
-+	/*
-+	 * Two estimates of 0x4000 samples, summed. The vendor measures two
-+	 * rounds per core and solves on the sum of the accumulators, not on
-+	 * the mean of the coefficients: on agcombo core 0 the rounds give
-+	 * a = +7 and a = -12, and the coefficient written is -3, which is
-+	 * solve(round1 + round2).
-+	 */
-+	err = b43_phy_ac_rxiqcal_est(dev, est, 0x4000, 32);
-+	if (err)
-+		return err;
-+	err = b43_phy_ac_rxiqcal_est(dev, est2, 0x4000, 32);
-+	if (err)
-+		return err;
-+
-+	new_comp = old_comp;
-+
-+	for (core = 0; core < dev->phy.ac->num_cores; core++) {
-+		s64 iq, num;
-+		u64 ii, qq, v;
-+		s32 a, b;
-+
-+		if (!((core_mask >> core) & 1))
-+			continue;
-+
-+		iq = (s64)est[core].iq_prod + est2[core].iq_prod;
-+		ii = (u64)est[core].i_pwr + est2[core].i_pwr;
-+		qq = (u64)est[core].q_pwr + est2[core].q_pwr;
-+
-+		if (ii + qq < B43_PHY_AC_MIN_RXIQ_PWR || ii == 0) {
-+			if (retry < B43_PHY_AC_RXIQ_CAL_RETRY) {
-+				retry++;
-+				goto retry_cal;
-+			}
-+			new_comp = old_comp;	/* give up, keep the old ones */
-+			break;
-+		}
-+
-+		/*
-+		 * a = -(iq/ii), b = sqrt(qq/ii - a^2) - 1.0, both in Q10, with
-+		 * round-to-nearest on each. The three agcombo vectors tell
-+		 * that apart from the N-PHY floor: a = -2.61 becomes -3,
-+		 * b = 109.97 becomes 110, b = 59.83 becomes 60. What happens
-+		 * at an exact half is not observed in any capture.
-+		 */
-+		num = -(iq << 10);
-+		a = (s32)div64_s64(num + (num < 0 ? -(s64)(ii >> 1)
-+					          : (s64)(ii >> 1)), ii);
-+
-+		v = div64_u64((qq << 20) + (ii >> 1), ii) - (u64)(a * a);
-+		b = (s32)int_sqrt64(v);
-+		if (v - (u64)b * b > (u64)b)
-+			b++;		/* rounded sqrt, not floor */
-+		b -= 1 << 10;
-+
-+		new_comp.a[core] = (s16)a;
-+		new_comp.b[core] = (s16)b;
-+	}
-+
-+	b43_phy_ac_rxiqcal_coeffs(dev, 1, &new_comp);
-+	return 0;
-+}
-diff --git a/drivers/net/wireless/broadcom/b43/rxiqcal_phy_ac.h b/drivers/net/wireless/broadcom/b43/rxiqcal_phy_ac.h
-new file mode 100644
-index 0000000..e8e253a
---- /dev/null
-+++ b/drivers/net/wireless/broadcom/b43/rxiqcal_phy_ac.h
-@@ -0,0 +1,23 @@
-+/* SPDX-License-Identifier: GPL-2.0-or-later */
-+#ifndef B43_PHY_AC_RXIQCAL_H_
-+#define B43_PHY_AC_RXIQCAL_H_
-+
-+struct b43_wldev;
-+
-+/*
-+ * Measure -- two rounds of 0x4000 samples, summed -- and program the RX-IQ
-+ * compensation coefficients for the cores in core_mask. The arithmetic and
-+ * the register map are confirmed bit-exactly against the agcombo capture
-+ * that records read values (docs/rxiq-cal-analysis.md). Expects the caller
-+ * to have the tone running and the measurement path configured.
-+ */
-+int b43_phy_ac_rxiqcal_comp_update(struct b43_wldev *dev, u8 core_mask);
-+
-+/*
-+ * Debug: run the 4-tone-mode RX-IQ measurement sequence and log the raw
-+ * accumulator values (i_pwr, q_pwr, iq_prod) per core.
-+ * Call after txpwr_by_index in set_channel.
-+ */
-+void b43_phy_ac_rxiqcal_est_debug(struct b43_wldev *dev);
-+
-+#endif /* B43_PHY_AC_RXIQCAL_H_ */
 diff --git a/drivers/net/wireless/broadcom/b43/tables_phy_ac.c b/drivers/net/wireless/broadcom/b43/tables_phy_ac.c
 new file mode 100644
 index 0000000..c330dbd
