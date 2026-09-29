@@ -392,8 +392,6 @@ CORE_SHM = [
     (0x00a8, 0x00a8, "MCASTCOOKIE"),
     (0x00b0, 0x00b0, "EXTNPHYCTL"),
     (0x00b6, 0x00b6, "BCN_LI"),
-    (0x0100, 0x0100, "CHAN_5GHZ"),
-    (0x0108, 0x0108, "BCMCFIFOID"),
     (0x0160, 0x017e, "PRSSID, SSID da 32 byte"),
     (0x0180, 0x0186, "temporizzazioni probe response: non nominate in b43.h, "
                      "ma b43 spegne l'offload con PRMAXTIME=1 e non le scrive "
@@ -416,6 +414,9 @@ CORE_SHM = [
 # 0x05e0-0x0666 di set_channel,
 # 0x05d6/0x05d8 le due celle centrali del blocco chainmask, che
 # b43_phy_ac_chainmask_block() scrive ora a tutti e quattro i siti.
+# 0x0100 CHAN_5GHZ e 0x0108 BCMCFIFOID, che il vendor tocca solo dentro il
+# dump della regione 0x00e0-0x015e, e b43_phy_ac_wd_region_dump() lo legge
+# intero.
 #
 # Vanno tolte, non e' facoltativo: il perimetro scarta op dal solo lato vendor,
 # quindi una cella che il port emette e il perimetro scarta diventa
