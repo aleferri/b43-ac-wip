@@ -5349,6 +5349,54 @@ static unsigned int b43_phy_ac_crs_index(struct b43_wldev *dev,
 	return DIV_ROUND_UP(sum, ac->crs_ring_len);
 }
 
+/*
+ * Record what a CRS write left on the hardware: chain 0 at @idx0, the common
+ * threshold, and every other chain at the index its bank was taken from.
+ */
+static void b43_phy_ac_crs_note_prog(struct b43_wldev *dev, unsigned int idx0)
+{
+	struct b43_phy_ac *ac = dev->phy.ac;
+	unsigned int core;
+
+	ac->crs_prog[0] = (u8)idx0;
+	for (core = 1; core < B43_PHY_AC_MAX_CORES; core++)
+		ac->crs_prog[core] = (u8)(ac->crs_ring_len
+					  ? b43_phy_ac_crs_index(dev, core)
+					  : idx0);
+}
+
+/*
+ * Whether a noise latch moves the thresholds far enough to be written: some
+ * chain's index in force three ladder steps or more away from the one it
+ * carries. The stock driver rewrites the block from the latch on its own
+ * only then; on a latch that follows a calibration it writes regardless.
+ *
+ * Measured on the 85 cold segments of the d6220 and the tg789vac: with the
+ * rings and the index of b43_phy_ac_crs_index(), a band of +-3 steps gives
+ * every latch-driven block and no other on 80. A band of +-2 gives 68, one
+ * of 3 down and 3 up the same 80, one in ladder dB at best 77. Four of the
+ * five left are drops of two steps that cross a hole of the single-sample
+ * index (3 to 1, 5 to 3), the fifth a move of one on the tg789vac's chain 1.
+ */
+#define B43_PHY_AC_CRS_HYST	3
+
+static bool b43_phy_ac_crs_moved(struct b43_wldev *dev)
+{
+	struct b43_phy_ac *ac = dev->phy.ac;
+	unsigned int core;
+
+	if (!ac->crs_ring_len)
+		return false;
+
+	for_each_set_bit(core, &ac->coremask, ac->num_cores) {
+		int d = (int)b43_phy_ac_crs_index(dev, core) - ac->crs_prog[core];
+
+		if (abs(d) >= B43_PHY_AC_CRS_HYST)
+			return true;
+	}
+	return false;
+}
+
 static u8 b43_phy_ac_crs_min_pwr(struct b43_wldev *dev, unsigned int idx,
 				 bool cold)
 {
@@ -5392,6 +5440,7 @@ static void b43_phy_ac_op_pwork_60sec(struct b43_wldev *dev)
 		return;
 
 	b43_phy_ac_crs_regs_write(dev, crs);
+	dev->phy.ac->crs_prog[0] = (u8)idx;
 }
 
 /*
@@ -5515,6 +5564,7 @@ static void b43_phy_ac_chanspec_tail(struct b43_wldev *dev)
 	};
 	u16 gain = 0x00bf;
 	u16 crs = 0x0031;
+	unsigned int crs_idx;
 	unsigned int i;
 
 	if (b43_current_band(dev->wl) != NL80211_BAND_5GHZ)
@@ -5539,15 +5589,15 @@ static void b43_phy_ac_chanspec_tail(struct b43_wldev *dev)
 		 * First bring-up, or any bonded width: the value is the
 		 * observed constant, 0x3a at 20 MHz, 0x3c at 40 and 0x3d at 80.
 		 * Every cold segment writes it as the first of the two CRS
-		 * values of its cycle, whatever the channel.
+		 * values of its cycle, whatever the channel. On the ladder it is
+		 * entry 4, 6 and 7 of the width's row with the cold bump.
 		 */
-		crs = (dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_80)
-			? 0x003d
-			: (dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_40)
-				? 0x003c : 0x003a;
+		crs_idx = (dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_80) ? 7
+			: (dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_40) ? 6
+			: 4;
 	else
-		crs = b43_phy_ac_crs_min_pwr(dev, b43_phy_ac_crs_index(dev, 0),
-					     true);
+		crs_idx = b43_phy_ac_crs_index(dev, 0);
+	crs = b43_phy_ac_crs_min_pwr(dev, crs_idx, true);
 
 	dev->phy.ac->crs_written = (u8)crs;
 
@@ -5567,6 +5617,7 @@ static void b43_phy_ac_chanspec_tail(struct b43_wldev *dev)
 
 	b43_phy_ac_crs_regs_write(dev, crs);
 	b43_phy_ac_prog_bank_0910(dev);
+	b43_phy_ac_crs_note_prog(dev, crs_idx);
 
 	b43_phy_read_log(dev, 0x03a9);
 	b43_phy_maskset(dev, 0x03a9, (u16)~0x007f, 0x0000);
@@ -10207,16 +10258,6 @@ void b43_phy_ac_watchdog(struct b43_wldev *dev)
 				   ac->wd_turns % b43_phy_ac_temps_period(dev) ==
 				   b43_phy_ac_temps_period(dev) - 1u,
 				   false);
-
-		/*
-		 * Dove il check di disponibilita' e' pendente il blocco E non
-		 * esce dalla coda del bring-up, e tocca al primo giro armarlo:
-		 * lo emette il campione che arriva, come nell'altro caso, non
-		 * la fine del giro. Emetterlo qui lo mette otto op prima del
-		 * latch e con il campione del giro precedente.
-		 */
-		if (k == 1 && !b43_phy_ac_may_calibrate_tx(dev))
-			ac->crs_update_pending = true;
 	}
 
 	if (!half_turn)
@@ -10532,6 +10573,7 @@ static void b43_phy_ac_crs_block_e(struct b43_wldev *dev)
 							 b43_phy_ac_crs_index(dev, 0),
 							 true));
 	b43_phy_ac_prog_bank_0910(dev);
+	b43_phy_ac_crs_note_prog(dev, b43_phy_ac_crs_index(dev, 0));
 
 	/*
 	 * Il MAC torna attivo e ci resta: quel che segue -- il poll delle
@@ -10572,7 +10614,7 @@ void b43_phy_ac_noise_sample_done(struct b43_wldev *dev)
 	B43_AC_FN();
 	b43_phy_ac_wd_stats_tail(dev);
 
-	if (ac->crs_update_pending) {
+	if (ac->crs_update_pending || b43_phy_ac_crs_moved(dev)) {
 		ac->crs_update_pending = false;
 		b43_phy_ac_crs_block_e(dev);
 	}

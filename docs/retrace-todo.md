@@ -299,23 +299,24 @@ latch.
 
 ### When the CRS block is written
 
-The value is closed ([`crs-min-power.md`](crs-min-power.md)); the moment is
-not. On 12 cold segments, all radar-duty, the stock driver writes block E at
-another latch than the port, or once more or less:
+The value is closed ([`crs-min-power.md`](crs-min-power.md)), and so is the
+rule in the port: after a calibration the block is written at the next latch;
+otherwise at a latch where some chain's index in force has moved three ladder
+steps or more from the one it carries (`b43_phy_ac_crs_moved()`). It explains
+every block of 80 of the 85 cold segments of the d6220 and the TG789vac, and
+the 70 hot ups of the d6220 and the agcombo, where 16 latches sit two steps
+away and none is written.
 
-| segments | difference |
-|---|---|
-| cold12, cold13, cold16 | the stock driver writes after 26, 53 and 21 latches, the port after the first |
-| cold07, cold09, cold28, cold35 | the stock driver has one extra block |
-| cold17, cold18 | the port has one extra block |
-| cold14, cold15, cold32 | weather radar, partial capture: the stock driver has only the first block |
-
-The stock driver's last block falls 150–170 ms after the bss-up. `cold01` is
-the only segment whose first watchdog turn collapses onto the window read; a
-rule fitted on it alone would be a transcription. The steady-state
-re-emission rule is not found (a hysteresis on the ladder fails the negative
-test), and neither is the ring reset on the hot sweep
-(`hot-sweep.zip!hot-gaps/`).
+Open: five blocks the stock driver writes at two steps or less, d6220 cold07
+(latch 45), cold09 (12), cold35 (40), TG789vac cold32 (36) and cold39 (2 and
+6). The rings give exactly the values written there, so the arithmetic is
+right and only the trigger is missing. The operations before those latches are
+an ordinary watchdog turn. Tried and worse: a band on the levels of the sample
+instead of the ladder steps (67), on the mean level of the ring (77), in dB of
+the mean power (67 at best), separate bands on common threshold and bank (68).
+Neither the time since the last write explains them (cold39 rewrites at the
+second latch). The ring reset on the hot sweep (`hot-sweep.zip!hot-gaps/`) is
+open too.
 
 ## 2.4 GHz
 

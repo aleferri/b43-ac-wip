@@ -513,6 +513,11 @@ struct b43_phy_ac {
 	u8 crs_ring[B43_PHY_AC_MAX_CORES][4];
 	u8 crs_ring_head;
 	u8 crs_ring_len;
+	/*
+	 * Per chain, the ladder index the hardware carries from the last CRS
+	 * write, common threshold plus bank. See b43_phy_ac_crs_moved().
+	 */
+	u8 crs_prog[B43_PHY_AC_MAX_CORES];
 	/* CRS value chanspec_tail() last wrote, reused by the Block E site. */
 	u8 crs_written;
 	/* Operating width the MAC was last told about, 0 when never. */
