@@ -1551,6 +1551,10 @@ static void emit_core_shm_chipinit(const struct board_profile *p)
  * l'elemento VHT operation cambia. La word scritta in template RAM invece e'
  * 0x012c fissa, a ogni larghezza.
  */
+/*
+ * The template RAM write that precedes the length is the whole template, in
+ * 32-bit words: TPL.RAMW carries its byte count, the length rounded up to 4.
+ */
 static u16 beacon_tpl_len(void)
 {
 	enum nl80211_chan_width w = g_wldev.phy.chandef->width;
@@ -1624,7 +1628,8 @@ static void emit_core_beacon_reload(unsigned int which)
 			b43_shm_read16(dev, B43_SHM_SHARED, 0x00cc));
 	/* Parte fissa piu' l'SSID, come in emit_core_bss_ssid(). */
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x001e, (u16)(0x003c + g_ssid_len));
-	b43_test_tplram_write16(btl == 0x0018 ? 0x0200 : 0x0480, 0x012c);
+	b43_test_tplram_write16(btl == 0x0018 ? 0x0200 : 0x0480,
+				(beacon_tpl_len() + 3) & ~3);
 	b43_shm_write16(dev, B43_SHM_SHARED, btl, beacon_tpl_len());
 
 	b43_mac_suspend(dev);
@@ -1654,7 +1659,8 @@ static void emit_core_bss_ssid(u16 btl)
 	 * BT_BASE0/BT_BASE1 di b43.h, che valgono 0x0068 e 0x0468: il layout
 	 * della template RAM dell'AC non e' quello del firmware v4.
 	 */
-	b43_test_tplram_write16(btl == 0x0018 ? 0x0200 : 0x0480, 0x012c);
+	b43_test_tplram_write16(btl == 0x0018 ? 0x0200 : 0x0480,
+				(beacon_tpl_len() + 3) & ~3);
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, btl, beacon_tpl_len());
 }
 
