@@ -548,6 +548,10 @@ struct b43_phy_ac {
 	struct b43_ppr_ac txpwr_ppr;
 	struct b43_ppr_ac txpwr_spacing;	/* distances, never saturated */
 	u8 txpwr_max[B43_PHY_AC_MAX_CORES];
+	/* maxp5ga of the lowest core, 0 when the SROM declares no power. */
+	u8 txpwr_maxp;
+	/* Limit on the legacy OFDM rates before the margin, 0 when none. */
+	u16 txpwr_ofdm_ceiling;
 	u16 txpwr_calc_chan;
 	enum nl80211_chan_width txpwr_calc_width;
 	u16 txpwr_calc_ceiling;

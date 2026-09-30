@@ -40,22 +40,27 @@ The cold bring-up comes first; a bring-up on an interface that was already up
 (hot) is deferred, not dropped. The `FIRST_BRINGUP` branches in `b43/` and the
 `AC_FIRST_INIT` lever of the harness stay, and where hot differs from cold the
 hot behaviour goes in [`docs/retrace-todo.md`](docs/retrace-todo.md).
+The TX power model -- locale caps, legacy and CCK rules, chain choice -- is in
+[`docs/txpwr-target-derivation.md`](docs/txpwr-target-derivation.md).
 
 ## Current state
 
-Measured on 2026-09-29.
+Measured on 2026-09-30.
 
 | gate | result |
 |---|---|
-| unit, cold `cold01` ch36/20 | **99.72%** (29776/29861): 2 wrong values, 71 missing, 10 extra |
-| unit, cold, all 43 segments | min 98.91% (ch108/20), median 99.42%, max 99.74% |
-| unit, hot `up` ch36 / ch52 / ch104 | 98.17% / 98.63% / 98.35% |
+| unit, cold `cold01` ch36/20 | **99.89%** (29817/29849): 2 wrong values, 27 missing (26 of them core cells outside the PHY), 1 extra |
+| unit, cold, all 43 segments | min 99.77% (ch36/80), median 99.91%, max 99.95% |
+| unit, hot `up` ch36 / ch52 / ch104 | 98.45% / 99.00% / 98.93% |
 | unit, cold agcombo `cold01` ch36/20 | 91.05% |
-| unit, cold TG789vac v2 `cold01` ch36/20 | 96.79% (32754/33840) |
+| unit, cold TG789vac v2 `cold01` ch36/20 | 99.91% |
+| unit, cold TG789vac v2, all 43 segments | min 99.77% (ch149/40), median 99.91%, max 99.98% |
 | unit, periodic watchdog tick | **`MATCH`** |
 | integration, cold `cold01` | `probe: 0`, `start: 0`; 87.98% (29023/32990) |
 | integration, agcombo ch36/80 at the bus | 64.63% (73799/114190) |
 | SROM rev 11 extractor | 74/79/80 PASS, 0 FAIL (DSL-3580L, D6220, agcombo) |
+
+The agcombo and the two integration rows were not re-measured on this date.
 
 The number to quote is the `grezzo` line of `cmp_skip.py`; how to reproduce
 and read it is in [`test/unit/README.md`](test/unit/README.md). Ops are

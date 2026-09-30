@@ -98,32 +98,13 @@ while [ $# -gt 0 ]; do
 	esac
 done
 
-# The regulatory ceiling the stock driver applies, in dBm EIRP per 20 MHz
-# channel, measured on the d6220 and agcombo sweeps: the same values on two
-# boards with different SROMs, so they are the locale's, not the board's. The
-# driver subtracts the 5 GHz antenna gain (aga0 = 133, 5.5 dB) and the 6-unit
-# margin: 21 dBm on ch36-48 gives the 0x38 every attach writes, 26 dBm on ch100
-# gives its 0x4c. Everything else stays at the permissive default. Two of the
-# vendor's ceilings cannot be expressed this way, because they hold at 40 MHz
-# only -- ch60 (22 dBm) and ch100 (24 dBm) -- and cfg80211 has no
-# per-bandwidth max_power; on those two segments the value on 0x0646/0x0846 is
-# the regulatory domain's, not the vendor's.
-#
-# It holds in both conditions: on the 44 up segments the vendor writes the same
-# target as on the cold segment of the same channel and width, every
-# configuration, so the map is exported for --hot as well.
-#
-# The tg789vac says the vendor's ceilings are conducted, not EIRP less the
-# board's antenna gain: with aga0 = 68 (4.25 dB) it writes the same 56 on
-# ch36-48/20, 76 on ch100/20 and /80, 60 on ch60/40 and 68 on ch100/40 as the
-# d6220 with 5.5 dB. The map reproduces them through an integer EIRP only on
-# a 5.5 dB board; on the tg789vac the conducted 15.5 dBm would need 19.75, and
-# its targets on those channels come out a quarter to five quarters of a dB
-# off. It also binds on ch64/20 there (76), where the d6220 is under its own
-# SROM limit and never shows it.
-REG_MAP="36:21,40:21,44:21,48:21,100:26"
-: "${AC_MAX_POWER_MAP:=$REG_MAP}"
-export AC_MAX_POWER_MAP
+# The regulatory ceiling. The stock driver's limits are conducted and per
+# width -- the same 56 on ch36-48/20 on the d6220, the agcombo and the
+# tg789vac, whose antenna gains differ -- and the port carries them as its
+# own locale table (b43_phy_ac_locale_ceiling()), so cfg80211's per-channel
+# EIRP is left permissive here and binds nowhere. AC_MAX_POWER_MAP still
+# reaches the harness for experiments on the cfg80211 path.
+[ -n "${AC_MAX_POWER_MAP:-}" ] && export AC_MAX_POWER_MAP
 
 if [ "$COND" = cold ]; then
 	DIR=$COLD

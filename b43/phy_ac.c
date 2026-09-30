@@ -410,7 +410,6 @@ static void b43_phy_ac_wd_stats_poll_opt(struct b43_wldev *dev,
 					 bool head_sweep,
 					 unsigned int ctr32_passes,
 					 bool ctr32_tail);
-static unsigned int b43_phy_ac_po_band(u16 chan);
 static void b43_phy_ac_txpwr_target_write(struct b43_wldev *dev);
 static void b43_phy_ac_farrow_setup(struct b43_wldev *dev,
 				    struct ieee80211_channel *channel);
@@ -799,48 +798,31 @@ static const struct b43_phy_ac_prb_rsp_rate b43_phy_ac_prb_rsp_rates[12] = {
 };
 
 /*
- * Il campo per i rate CCK, che nel PPR sono il gruppo cck[4].
+ * The field for the CCK rates, the cck[4] group of the PPR.
  *
- * La rev 11 non ha un campo per-rate per loro su 5 GHz -- `cckbw202gpo` e'
- * della banda 2.4 e vale zero -- quindi il valore non si deriva da mcsbw*po, e
- * resta una tabella per sottobanda e larghezza. La tabella e' giustificata
- * perche' non dipende dalla board:
+ * Rev 11 has no per-rate field for them on 5 GHz -- cckbw202gpo is the 2.4 GHz
+ * band's and reads zero -- and the stock driver puts the CCK rates at the
+ * 1 dBm floor: the field is the target's distance from it, saturated at 0xf8.
+ * Measured on all 86 cold segments of the d6220 and the tg789vac: 0xd0 at
+ * target 56, 0xe0 at 60, 0xe8 at 62, 0xf0 at 64, 0xf8 from 66 up (a target
+ * of 66 is 15.5 dB over the floor, 0xf8), through every width and every
+ * sub-band, the three passes of the d6220's ch36/44 at 40 and 80 included
+ * (66, 62, 66 -> 0xf8, 0xe8, 0xf8). The tg789vac reaches 0xf8 on ch36/40 at
+ * 68 where the d6220 stops at 0xf8 on 66: the same rule, not the same
+ * sub-band table.
  *
- *   sottobanda 0 a 20 MHz: 0xd0 su tre schede con maxp5ga diverso e di forma
- *   diversa -- {72,70,86,0} sul d6220, {74,74,82,82} sull'agcombo,
- *   {76,76,76,76} sul DSL, che e' piatta. Ne' il valore di maxp5ga ne' la
- *   relazione fra sottobande adiacenti lo spostano.
- *
- *   sottobanda 2 e le larghezze legate: 0xf8, concordi fra d6220 e agcombo su
- *   tutte le configurazioni dei due sweep a freddo.
- *
- * L'eccezione e' la sottobanda 1, e non e' nascosta: la' il d6220 da' 0xe8 a 20
- * MHz e 0xf0 a 40 e 80 dove l'agcombo da' 0xf8, e a 40 MHz il valore cambia
- * anche col canale, 0xe0 a ch60 su entrambe. Quella sottobanda e' anche l'unica
- * voce di maxp5ga che in tutte e tre le SROM sia piu' bassa della precedente,
- * 70 < 72 sul solo d6220. Che sia la causa e' plausibile e non provato, e i
- * valori qui sono quelli del d6220: su un'altra scheda va rimisurata.
- *
- * TODO: chiusi i due termini aperti sotto, questo gruppo dovrebbe uscire dallo
- * stesso conto invece che da una tabella, perche' il suo ppr non ha nibble e il
- * campo e' la sola distanza fra il massimo e maxp5ga.
+ * The one segment family the rule does not reach is the d6220's UNII-3,
+ * where maxp5ga is 0 and the target is the floor itself: the vendor writes
+ * 0xf8 there, not 0. A board that declares no power is treated as saturated,
+ * as observed; what the stock driver computes in that case is not known.
  */
 static u16 b43_phy_ac_cck_rate_po(struct b43_phy_ac *ac)
 {
-	unsigned int sb = b43_phy_ac_po_band(ac->cal_channel);
-	bool stretto = ac->cal_width == NL80211_CHAN_WIDTH_20;
+	u8 target = b43_ppr_ac_get_max(&ac->txpwr_ppr);
 
-	if (sb == 0)
-		return stretto ? 0x00d0 : 0x00f8;
-	if (sb == 1) {
-		if (stretto)
-			return 0x00e8;
-		if (ac->cal_width == NL80211_CHAN_WIDTH_40 &&
-		    ac->cal_channel == 60)
-			return 0x00e0;
-		return 0x00f0;
-	}
-	return 0x00f8;
+	if (!ac->txpwr_maxp)
+		return 0x00f8;
+	return (u16)min((target - B43_PHY_AC_QDB(1)) * 4, 0xf8);
 }
 
 /*
@@ -902,108 +884,181 @@ void b43_phy_ac_rxiqcal_dds_seed_tone(struct b43_wldev *dev, int step)
 }
 
 /*
- * Le tre celle invarianti del blocco 0x05d4-0x05dc, che b43.h chiama
- * KEYIDXBLOCK per il firmware v4 e che sul core AC sono altro.
+ * The chain masks of the 0x05d4-0x05dc block, which b43.h calls KEYIDXBLOCK
+ * for the v4 firmware and which the AC core uses for something else.
  *
- * Il valore e' la maschera delle catene: 0x3 sulla D6220, che ha
- * txchain=rxchain=3, e 0x7 sull'agcombo, che ha 7. Verificato sui 26 segmenti a
- * freddo di ognuna delle due board -- due conteggi di catene diversi, due
- * valori diversi, sempre uguali a coremask -- quindi e' derivato e non
- * trascritto: il driver la maschera la ha gia' in ac->coremask.
+ * 0x05d4 and 0x05dc are coremask, 0x3 on the d6220, 0x7 on the agcombo and
+ * the tg789vac, on every segment of every sweep: derived, not transcribed.
+ * 0x05da follows 0x05d8 wherever that one keeps more than one chain, and is
+ * coremask where 0x05d8 drops to one: on the tg789vac 0x5 on the five
+ * configurations where 0x05d8 is 0x5 (ch36 and ch44 at 40, ch36, ch100 and
+ * ch116 at 80) and 0x7 on the rest, 0x7 included where 0x05d8 is 0x1
+ * (ch36-48/20); on the d6220 always coremask, which two chains cannot tell
+ * from two-of-two. A class with the CDD offsets and no one-chain mode fits
+ * that shape; the agcombo, on 7.14.43, writes coremask there throughout, so
+ * it is the 7.14.89 behaviour that is reproduced. It is not temperature:
+ * the tempsense samples of those five segments read 49-62 degC on the
+ * agcombo's calibration, in the middle of the sweep's range, with
+ * tempthresh at 120.
  *
- * Le due celle in mezzo, 0x05d6 e 0x05d8, portano la stessa maschera in ogni
- * caso tranne uno: al primo bring-up sotto i 5250 MHz prendono una maschera
- * parziale che dipende dalla larghezza, dal numero di catene e da quale dei
- * quattro siti la scrive. Quella e' trascritta e non derivata, e la tabella
- * qui sotto dice perche'.
+ * 0x05d6 and 0x05d8 are the chain choice of two rate classes, and they
+ * follow the regulatory headroom rather than the sub-band. The stock driver
+ * takes, per class, the chain count with the highest total power
  *
- * I quattro siti non sono intercambiabili: tre stanno nel channel setup e nel
- * down e portano la stessa coppia, il quarto sta in b43_phy_ac_txpwr_adjust()
- * e sopra i 20 MHz ne porta una piu' larga. Sono due colonne della tabella,
- * non un'eccezione da annotare.
+ *   min(board, limit - class_offset[n]) + 10 log10(n)
  *
- * Perche' una tabella e non una formula: le dodici coppie osservate -- due
- * board, tre larghezze, due siti -- le riproduce anche una legge, con la
- * maschera di p catene su n presa spaziando le catene il piu' possibile
- * (due catene su tre sono la 0 e la 2, da cui 0x5 e non 0x3) e p che sale
- * con la larghezza. Ma quella legge ha tre termini e nessuno dei tre ha una
- * ragione indipendente dalle stesse dodici coppie, e il primo punto che la
- * metterebbe alla prova -- una board a quattro catene -- non c'e' in
- * nessuna cattura. Una tabella dice quello che si e' misurato e si ferma li';
- * una formula fitta su dodici punti direbbe anche cosa fare su una board che
- * nessuno ha visto. Un conteggio di catene fuori tabella prende percio'
- * coremask e lo dichiara, invece di estrapolare.
+ * with the fewer chains on a tie, where the limit is the locale's Local Max
+ * for the channel and width less the board's antenna gain, the board is the
+ * top row of the operating width, and the offsets are the ones the stock
+ * driver prints in `wl curpower` (router-data/agcombo/stats.txt,
+ * dsl3580l/wl1_curpower_ch52-bw80.txt): CDD on 2 and 3 chains 3 and 5 dB
+ * under one chain, TXBF 6 and 9.75. So a limit at or under the board keeps
+ * one chain, a board well under the limit takes them all, and in between
+ * two. 0x05d6 behaves as the TXBF rows and 0x05d8 as the CDD rows.
+ * **SALAME**: the class of each cell is the best of the four assignments
+ * tried, not a known meaning.
  *
- * Il predicato e' la sola sotto-banda, il gruppo 0 di b43_phy_ac_pa5g_group().
- * Lo separa dalla guardia radar -- che qui stava e che sul set di catture
- * precedente dava lo stesso risultato, perche' la' ogni canale con la guardia
- * stava sopra i 5250 e nessun canale senza guardia stava sopra -- lo sweep a
- * 43 segmenti: ch144-165 non hanno la guardia e stanno sopra i 5250, e il
- * vendor ci porta coremask su tutti e otto i segmenti che li coprono (sei a
- * 20 MHz, due a 40).
+ * Two tg789vac configurations are left out of the fit of the levels: ch100
+ * and ch116 at 80 MHz, where 0x05d8 is 0x5 while ch132/80, same rows and
+ * width, has 0x7, and the pair holds for one value of the level only. With
+ * the level of ch132/80 the port writes 0x7 there. Not temperature (above);
+ * what separates the two channels at 80 MHz is open.
  *
- * Non c'e' un termine sul primo bring-up. Sui 44 segmenti up dello sweep a
- * caldo la coppia parziale c'e', sugli stessi sei canali dei freddi; sui 52 up
- * del set precedente era coremask ovunque, ed e' quella assenza ad avere
- * giustificato il termine.
+ * The Local Max is not in cfg80211 and not the cap that binds the target
+ * (b43_phy_ac_locale_ceiling()): at ch64/20 the target caps at 20.5 dBm
+ * while the masks need 30 or more. It is measured from the masks of the
+ * three boards -- 2 chains at 5.5 dB of gain, 3 at 4.25, 3 at 0 -- as the
+ * range of levels that reproduces every board's pair; per width, on 18 of
+ * the 19 channel/width pairs the three boards see the ranges intersect, and
+ * the table below takes a value inside. A channel not in the table has no
+ * level the masks show, and takes coremask.
+ * [capture-ref: router-data/d6220/cold-sweep.zip, router-data/tg789vac-v2/cold-sweep.zip,
+ *   router-data/agcombo/cold-sweep.zip: OBJ.WR 0x05d6/0x05d8 of every segment]
+ *
+ * The TX power site writes the block a second time, and above 20 MHz that
+ * pass sees a level 1 dB higher: the d6220 on ch36/40 goes 1/3 to 3/3 and
+ * back, the tg789vac on ch108-140/40 5/7 to 7/7 and back, while at 20 MHz
+ * every site writes the same pair on every board. Why the second pass is
+ * looser is not known; the d6220's target on the same pass drops instead
+ * (docs/retrace-todo.md).
  */
+struct b43_phy_ac_local_max_row {
+	u8 first, last;		/* primary channel range, inclusive */
+	u8 level;		/* Local Max, quarter-dBm EIRP */
+};
+
+static const struct b43_phy_ac_local_max_row b43_phy_ac_local_max_20[] = {
+	{  36,  48,  84 },
+	{  52,  64, 120 },
+	{ 100, 144, 124 },
+};
+
+static const struct b43_phy_ac_local_max_row b43_phy_ac_local_max_40[] = {
+	{  36,  44, 106 },
+	{ 108, 140, 136 },
+};
+
+static const struct b43_phy_ac_local_max_row b43_phy_ac_local_max_80[] = {
+	{  36,  36, 104 },
+	{ 100, 132, 132 },
+};
+
+static u16 b43_phy_ac_local_max(struct b43_phy_ac *ac)
+{
+	const struct b43_phy_ac_local_max_row *rows;
+	unsigned int n, i;
+
+	switch (ac->cal_width) {
+	case NL80211_CHAN_WIDTH_80:
+		rows = b43_phy_ac_local_max_80;
+		n = ARRAY_SIZE(b43_phy_ac_local_max_80);
+		break;
+	case NL80211_CHAN_WIDTH_40:
+		rows = b43_phy_ac_local_max_40;
+		n = ARRAY_SIZE(b43_phy_ac_local_max_40);
+		break;
+	default:
+		rows = b43_phy_ac_local_max_20;
+		n = ARRAY_SIZE(b43_phy_ac_local_max_20);
+		break;
+	}
+	for (i = 0; i < n; i++)
+		if (ac->cal_channel >= rows[i].first &&
+		    ac->cal_channel <= rows[i].last)
+			return rows[i].level;
+	return 0;
+}
+
 enum b43_phy_ac_chain_site {
 	B43_PHY_AC_CHAIN_SETUP,		/* channel setup (x2) e down */
 	B43_PHY_AC_CHAIN_TXPWR,		/* b43_phy_ac_txpwr_adjust() */
 };
 
-static const struct b43_phy_ac_chain_partial {
-	u8 cores;
-	/* [larghezza 20/40/80] x {0x05d6, 0x05d8} */
-	u16 setup[3][2];
-	u16 txpwr[3][2];
-} b43_phy_ac_chain_partial[] = {
-	/* d6220, DSL-3580L: coremask 0x3 */
-	{ 2, { { 0x0001, 0x0001 }, { 0x0001, 0x0003 }, { 0x0003, 0x0003 } },
-	     { { 0x0001, 0x0001 }, { 0x0003, 0x0003 }, { 0x0003, 0x0003 } } },
-	/* agcombo: coremask 0x7 */
-	{ 3, { { 0x0001, 0x0005 }, { 0x0005, 0x0005 }, { 0x0005, 0x0007 } },
-	     { { 0x0001, 0x0005 }, { 0x0007, 0x0007 }, { 0x0007, 0x0007 } } },
-};
+/* Chain count of the class whose per-chain offsets are @off, see above. */
+static unsigned int b43_phy_ac_chain_count(int board, int limit,
+					   const u8 *off, unsigned int chains)
+{
+	static const u8 gain[] = { 0, 0, 12, 19 };	/* 10 log10(n), quarter dB */
+	unsigned int n, best = 1;
+	int best_total = min(board, limit);
+
+	for (n = 2; n <= chains; n++) {
+		int total = min(board, limit - off[n]) + gain[n];
+
+		if (total > best_total) {
+			best_total = total;
+			best = n;
+		}
+	}
+	return best;
+}
+
+/* @n chains out of coremask, spread as far apart as the mask allows. */
+static u16 b43_phy_ac_chain_mask(u16 coremask, unsigned int n)
+{
+	unsigned int chains = hweight8((u8)coremask);
+	u16 lowest = coremask & (u16)-coremask;
+
+	if (n >= chains)
+		return coremask;
+	if (n == 1)
+		return lowest;
+	/* two of three: the outer ones */
+	return coremask & ~(u16)(lowest << 1);
+}
 
 /* The pair @site writes on 0x05d6/0x05d8, into @pair. */
 static void b43_phy_ac_chain_pair(struct b43_wldev *dev,
 				  enum b43_phy_ac_chain_site site, u16 *out)
 {
+	static const u8 off_cdd[] = { 0, 0, 12, 20 };
+	static const u8 off_txbf[] = { 0, 0, 24, 39 };
 	struct b43_phy_ac *ac = dev->phy.ac;
-	u16 mask = ac->coremask;
-	const u16 *pair = NULL;
+	const struct ssb_sprom *sprom = dev->dev->bus_sprom;
+	unsigned int chains = hweight8(ac->coremask);
+	u16 level = b43_phy_ac_local_max(ac);
+	int board, limit, antgain;
 
-	if (b43_phy_ac_pa5g_group(dev, 5000 + 5 * ac->cal_channel) == 0) {
-		/*
-		 * Le catene popolate, non i core del silicio: la prova che
-		 * lega la tabella alle board e' aa5g/txchain, cioe' coremask.
-		 * @num_cores conta i core che il PHY dichiara in 0x000b, che
-		 * sulla d6220 sono tre con due catene cablate.
-		 */
-		unsigned int chains = hweight8(ac->coremask);
-		unsigned int bw = b43_phy_ac_bw_step(dev);
-		unsigned int i;
+	out[0] = out[1] = ac->coremask;
+	if (!level || !ac->txpwr_maxp)
+		return;
 
-		for (i = 0; i < ARRAY_SIZE(b43_phy_ac_chain_partial); i++) {
-			const struct b43_phy_ac_chain_partial *r =
-				&b43_phy_ac_chain_partial[i];
+	antgain = sprom->antenna_gain_qdb[1];
+	if (antgain < 0)
+		antgain = 0;
+	limit = (int)level - antgain;
+	if (site == B43_PHY_AC_CHAIN_TXPWR &&
+	    ac->cal_width != NL80211_CHAN_WIDTH_20)
+		limit += 4;
+	board = (int)ac->txpwr_maxp -
+		(0x7f - b43_ppr_ac_row_max(&ac->txpwr_spacing, ac->cal_width));
 
-			if (r->cores != chains)
-				continue;
-			pair = (site == B43_PHY_AC_CHAIN_TXPWR)
-				? r->txpwr[bw] : r->setup[bw];
-			break;
-		}
-		if (!pair)
-			b43_phy_ac_todo(dev,
-					"maschera parziale 0x05d6/0x05d8 non "
-					"misurata per %u catene: uso coremask",
-					chains);
-	}
-
-	out[0] = pair ? pair[0] : mask;
-	out[1] = pair ? pair[1] : mask;
+	out[0] = b43_phy_ac_chain_mask(ac->coremask,
+				       b43_phy_ac_chain_count(board, limit,
+							      off_txbf, chains));
+	out[1] = b43_phy_ac_chain_mask(ac->coremask,
+				       b43_phy_ac_chain_count(board, limit,
+							      off_cdd, chains));
 }
 
 static void b43_phy_ac_chainmask_block(struct b43_wldev *dev,
@@ -1016,7 +1071,8 @@ static void b43_phy_ac_chainmask_block(struct b43_wldev *dev,
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x05d4, mask);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x05d6, pair[0]);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x05d8, pair[1]);
-	b43_shm_write16(dev, B43_SHM_SHARED, 0x05da, mask);
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x05da,
+			hweight8((u8)pair[1]) > 1 ? pair[1] : mask);
 }
 
 /*
@@ -1052,6 +1108,39 @@ static void b43_phy_ac_bss_cc_update(struct b43_wldev *dev,
 }
 
 /*
+ * Distance of a legacy OFDM rate from the target, in sixteenths of a dB,
+ * for the per-rate block and the beacon cell.
+ *
+ * @spacing is the rate's entry in txpwr_spacing, the SROM rows laid out from
+ * 0x7f so that no entry saturates. The field is the SROM spacing of the rate
+ * under the top row -- the d6220 in UNII-3 has maxp5ga 0, the target at the
+ * floor, and still writes 16/32/48 on the three upper rates, and on ch100/20
+ * it keeps 16/32/48 with the target 1 dB under the top row -- saturated by
+ * the legacy limit of b43_phy_ac_reg_ofdm_ceiling() where that binds, which
+ * is a distance from the finished target: on ch104-144/20 both boards write
+ * target - 76 on the rates the spacing would put higher.
+ *
+ * The general ceiling is not in the distance: where it binds it moves the
+ * target and leaves the spacing (d6220 ch100/20). Whether it also clamps
+ * the rows on a board whose rows differ across the OFDM groups is open, see
+ * docs/retrace-todo.md; the tg789vac's ch36-48 rows are flat across those
+ * groups and do not tell.
+ */
+static u16 b43_phy_ac_rate_po(const struct b43_phy_ac *ac, u8 spacing)
+{
+	u16 dist = (u16)(b43_ppr_ac_get_max(&ac->txpwr_spacing) - spacing) * 4;
+
+	if (ac->txpwr_ofdm_ceiling) {
+		int target = b43_ppr_ac_get_max(&ac->txpwr_ppr);
+		int cap = (int)ac->txpwr_ofdm_ceiling - 6;
+
+		if (target > cap)
+			dist = max(dist, (u16)(target - cap) * 4);
+	}
+	return dist;
+}
+
+/*
  * Field at +0x0e of the per-rate block: the rate's power offset, in eighths.
  *
  * For the address see b43_phy_ac_rate_shm_offset(). brcmsmac writes offsets
@@ -1078,9 +1167,11 @@ static void b43_phy_ac_bss_cc_update(struct b43_wldev *dev,
  * applied to the finished rows of the power table only, in
  * b43_ppr_ac_load_max_from_sprom(), and does not enter the distances.
  *
- * Exact on 28 of the 43 cold segments. What is left over is a saturation: on
- * thirteen of the other fifteen the vendor writes max(distance, K) for a K
- * constant across the rates of a segment -- 1 dB on ch104-144 at 20 MHz and on
+ * On top of the spacing the legacy rates carry their own regulatory limit
+ * (b43_phy_ac_reg_ofdm_ceiling()), which is what saturates the field to
+ * target - cap at 20 MHz on ch104-144; b43_phy_ac_ofdm_po() applies it.
+ * What is left over is at 40 and 80 MHz, where the vendor writes
+ * max(distance, K) for a K constant across the rates of a segment -- 1 dB on
  * ch60 at 40, 2 dB on ch116/80, 3 dB on ch36/80 -- and nothing derives K yet.
  * The two that do not even take that form, ch100 at 40 MHz and ch100 at 80,
  * are in docs/retrace-todo.md.
@@ -1098,7 +1189,6 @@ static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev)
 	B43_AC_FN();
 	struct b43_phy_ac *ac = dev->phy.ac;
 	const struct b43_ppr_ac *sp = &ac->txpwr_spacing;
-	u8 max = b43_ppr_ac_get_max(sp);
 	unsigned int i;
 
 	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_prb_rsp_rates); i++) {
@@ -1113,8 +1203,9 @@ static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev)
 		if (r->cck)
 			val = b43_phy_ac_cck_rate_po(ac);
 		else
-			val = (u16)((max - b43_ppr_ac_ofdm(sp, ac->cal_width,
-							 r->ofdm)) * 4);
+			val = b43_phy_ac_rate_po(ac,
+						 b43_ppr_ac_ofdm(sp, ac->cal_width,
+								 r->ofdm));
 
 		b43_shm_read16(dev, B43_SHM_SHARED, cell);
 		b43_shm_write16(dev, B43_SHM_SHARED, cell, val);
@@ -1140,7 +1231,9 @@ static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev)
  * su 37, e i sei che restano sono tutti e soli quelli a 40 e 80 MHz dove la
  * riga a 20 e quella operante divergono -- che e' la previsione, non
  * un'eccezione. Su ch52 a 40 MHz le due righe distano due quarti di dB e la
- * cella vale 0x08 contro lo 0x00 del campo per-rate.
+ * cella vale 0x08 contro lo 0x00 del campo per-rate. Il limite regolatorio
+ * dei rate legacy (b43_phy_ac_reg_ofdm_ceiling()) vale anche qui: a 20 MHz
+ * su ch104-144 la cella segue il campo per-rate a target - 76.
  *
  * Il campo 0x700 resta a zero: su nessuno dei 43 segmenti, ne' sulle altre
  * quattro catture, la cella supera 0x100, quindi non e' mai stato osservato
@@ -1148,10 +1241,10 @@ static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev)
  */
 u16 b43_phy_ac_beacon_pwr_offset(struct b43_wldev *dev)
 {
-	const struct b43_ppr_ac *ppr = &dev->phy.ac->txpwr_ppr;
-	u8 max = b43_ppr_ac_get_max(ppr);
+	const struct b43_phy_ac *ac = dev->phy.ac;
 
-	return (u16)((max - b43_ppr_ac_ofdm(ppr, NL80211_CHAN_WIDTH_20, 0)) * 4);
+	return b43_phy_ac_rate_po(ac, b43_ppr_ac_ofdm(&ac->txpwr_spacing,
+						      NL80211_CHAN_WIDTH_20, 0));
 }
 
 /*
@@ -1696,6 +1789,72 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 }
 
 /*
+ * The stock driver's own locale, in quarter-dBm before the margin, per
+ * primary channel and width. Conducted limits: the d6220 (5.5 dB antenna
+ * gain), the agcombo (5.5) and the tg789vac (4.25), with different maxp5ga
+ * and mcsbw*po, write the same target wherever one of these binds, and
+ * where none does each writes its own SROM value. brcmsmac carries the same
+ * kind of table in channel.c (locale_5g_*) beside cfg80211's max_power;
+ * here it is what was measured, not what any body publishes, and it is
+ * taken as the tighter of the two with b43_phy_ac_reg_ceiling().
+ *
+ * Per width, the rows that bind on at least one board. The d6220's second
+ * txpwrctrl pass on ch36/ch44 at 40 and 80 MHz (68) is not here; see
+ * docs/retrace-todo.md.
+ * [capture-ref: router-data/d6220/cold-sweep.zip, router-data/tg789vac-v2/cold-sweep.zip:
+ *   PHY.MOD 0x0646 mask=0x00ff of every segment]
+ */
+struct b43_phy_ac_locale_row {
+	u8 first, last;		/* primary channel range, inclusive */
+	u8 limit;		/* quarter-dBm */
+};
+
+static const struct b43_phy_ac_locale_row b43_phy_ac_locale_20[] = {
+	{  36,  48, 62 },
+	{  64,  64, 82 },
+	{ 100, 100, 82 },
+	{ 104, 128, 90 },
+	{ 132, 144, 86 },
+};
+
+static const struct b43_phy_ac_locale_row b43_phy_ac_locale_40[] = {
+	{  36,  44, 74 },
+	{  60,  60, 66 },
+	{ 100, 100, 74 },
+};
+
+static const struct b43_phy_ac_locale_row b43_phy_ac_locale_80[] = {
+	{  36,  36, 74 },
+	{ 100, 100, 82 },
+};
+
+static u16 b43_phy_ac_locale_ceiling(struct b43_phy_ac *ac)
+{
+	const struct b43_phy_ac_locale_row *rows;
+	unsigned int n, i;
+
+	switch (ac->cal_width) {
+	case NL80211_CHAN_WIDTH_80:
+		rows = b43_phy_ac_locale_80;
+		n = ARRAY_SIZE(b43_phy_ac_locale_80);
+		break;
+	case NL80211_CHAN_WIDTH_40:
+		rows = b43_phy_ac_locale_40;
+		n = ARRAY_SIZE(b43_phy_ac_locale_40);
+		break;
+	default:
+		rows = b43_phy_ac_locale_20;
+		n = ARRAY_SIZE(b43_phy_ac_locale_20);
+		break;
+	}
+	for (i = 0; i < n; i++)
+		if (ac->cal_channel >= rows[i].first &&
+		    ac->cal_channel <= rows[i].last)
+			return rows[i].limit;
+	return 0;
+}
+
+/*
  * Regulatory ceiling for the configuration, in quarter-dBm, or 0 when none
  * applies.
  *
@@ -1721,12 +1880,10 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
  * the board's antenna gain off it is what keeps b43 within the regulatory
  * domain; the two agree where the gain is 5.5 dB, because the conducted
  * values plus 5.5 are whole dBm. The vendor's limits are per bandwidth,
- * though: ch36-48 bind at 20 MHz only and ch100 binds differently at 40 than at 20 and 80.
- * cfg80211 carries one max_power per 20 MHz channel, so this function can
- * reproduce the 20 MHz ceilings and, through the minimum over the block, will
- * bound 40 and 80 MHz where the vendor does not. That is the regulatory
- * domain's policy, not a port defect. The harness reproduces the vendor's
- * ceiling through AC_MAX_POWER_MAP, in both conditions; see test/unit/gates.sh.
+ * though: ch36-48 bind at 20 MHz only and ch100 binds differently at 40 than
+ * at 20 and 80. cfg80211 carries one max_power per 20 MHz channel, so this
+ * path alone cannot express them; the measured table of
+ * b43_phy_ac_locale_ceiling() does, and the result is the tighter of the two.
  */
 static u16 b43_phy_ac_reg_ceiling(struct b43_wldev *dev)
 {
@@ -1777,22 +1934,76 @@ static u16 b43_phy_ac_reg_ceiling(struct b43_wldev *dev)
 			best = lim;
 	}
 
+	{
+		u16 locale = b43_phy_ac_locale_ceiling(ac);
+
+		if (locale && locale < best)
+			best = locale;
+	}
 	return best == INT_MAX ? 0 : (u16)best;
 }
 
 /*
- * Per-band index into the rev-11 mcsbw*po fields: 0 = 5gl, 1 = 5gm, 2 = 5gh.
- * The split is by channel number and is not the same as the subband5gver
- * split that indexes maxp5ga, which is by frequency; the two partitions are
- * independent in the SROM and the captures need both.
+ * Regulatory limit on the legacy OFDM rates, in quarter-dBm before the
+ * margin, or 0 when none applies.
+ *
+ * The stock locale limits the rate classes separately, and the legacy OFDM
+ * rates sit under their own limit where MCS goes higher. It shows in the
+ * per-rate offsets alone, since the target register takes the maximum over
+ * every rate; the rows below are where both the d6220 and the tg789vac put
+ * every legacy rate at the same power under a target that is higher:
+ *  - 20 MHz, ch52-144: 76 after the margin (the d6220 cold and hot at
+ *    target 80, the tg789vac at 82, 84 and 80; neither where the target is
+ *    76 or less);
+ *  - 80 MHz, ch100-128: 72 (the d6220 at ch116 with target 80, the
+ *    tg789vac at ch100 and ch116 with 76 and 86; ch132/80 on both follows
+ *    its rows above 72);
+ *  - 40 MHz, ch108-140: 84 (the tg789vac at target 86; the d6220's rows
+ *    there stop at 80 and do not tell).
+ * At 40 MHz on ch52-64 and ch100 the two boards write different legacy
+ * powers under the same target and no row fits both; see
+ * docs/retrace-todo.md. cfg80211 carries no per-rate-class limit, so these
+ * are the stock driver's as measured.
+ * [capture-ref: router-data/d6220/cold-sweep.zip!cold10-ch104-bw20.txt]
+ * [capture-ref: router-data/d6220/cold-sweep.zip!cold41-ch116-bw80.txt]
+ * [capture-ref: router-data/tg789vac-v2/cold-sweep.zip!cold31-ch108-bw40.txt]
  */
-static unsigned int b43_phy_ac_po_band(u16 chan)
+static const struct b43_phy_ac_locale_row b43_phy_ac_ofdm_limit_20[] = {
+	{  52, 144, 82 },
+};
+
+static const struct b43_phy_ac_locale_row b43_phy_ac_ofdm_limit_40[] = {
+	{ 108, 140, 90 },
+};
+
+static const struct b43_phy_ac_locale_row b43_phy_ac_ofdm_limit_80[] = {
+	{ 100, 128, 78 },
+};
+
+static u16 b43_phy_ac_reg_ofdm_ceiling(struct b43_phy_ac *ac)
 {
-	if (chan < 52)
-		return 0;
-	if (chan < 100)
-		return 1;
-	return 2;
+	const struct b43_phy_ac_locale_row *rows;
+	unsigned int n, i;
+
+	switch (ac->cal_width) {
+	case NL80211_CHAN_WIDTH_80:
+		rows = b43_phy_ac_ofdm_limit_80;
+		n = ARRAY_SIZE(b43_phy_ac_ofdm_limit_80);
+		break;
+	case NL80211_CHAN_WIDTH_40:
+		rows = b43_phy_ac_ofdm_limit_40;
+		n = ARRAY_SIZE(b43_phy_ac_ofdm_limit_40);
+		break;
+	default:
+		rows = b43_phy_ac_ofdm_limit_20;
+		n = ARRAY_SIZE(b43_phy_ac_ofdm_limit_20);
+		break;
+	}
+	for (i = 0; i < n; i++)
+		if (ac->cal_channel >= rows[i].first &&
+		    ac->cal_channel <= rows[i].last)
+			return rows[i].limit;
+	return 0;
 }
 
 /*
@@ -1863,6 +2074,9 @@ bool b43_phy_ac_txpwr_recalc(struct b43_wldev *dev)
 	b43_ppr_ac_add(ppr, -6);
 	b43_ppr_ac_apply_min(ppr, B43_PHY_AC_QDB(1));
 	max = b43_ppr_ac_get_max(ppr);
+
+	ac->txpwr_maxp = maxp;
+	ac->txpwr_ofdm_ceiling = b43_phy_ac_reg_ofdm_ceiling(ac);
 
 	if (b43_ppr_ac_sprom_has_subband_po(sprom) && !ac->txpwr_calc_chan)
 		b43warn(dev->wl,
@@ -3529,9 +3743,7 @@ static void b43_phy_ac_coeff_bank_init(struct b43_wldev *dev)
 	 * 80, with no exception.
 	 */
 	{
-		u16 idx = (dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_80) ? 3
-			: (dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_40) ? 2
-			: 1;
+		u16 idx = (u16)(b43_phy_ac_bw_step(dev) + 1);
 		u16 narrow = (idx == 1) ? ~0 : 0;
 
 		b43_phy_maskset(dev, 0x0076, (u16)~0x0007, idx);
@@ -4307,11 +4519,7 @@ static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
 	 */
 	{
 		static const u16 stage8_base[3] = { 0x00db, 0x0123, 0x016b };
-		unsigned int bwi =
-			(dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_80) ? 2 :
-			(dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_40) ? 1
-									  : 0;
-		u16 base = stage8_base[bwi];
+		u16 base = stage8_base[b43_phy_ac_bw_step(dev)];
 
 		b43_phy_ac_set_analog_tx_lpf_locked(dev, 0x100,
 						    base & 7,
@@ -5628,7 +5836,7 @@ static void b43_phy_ac_chanspec_tail(struct b43_wldev *dev)
 	 * resets it to the floor.
 	 */
 	if (dev->phy.ac->status_mask & B43_PHY_AC_STATE_FIRST_BRINGUP ||
-	    dev->phy.ac->cal_width != NL80211_CHAN_WIDTH_20)
+	    dev->phy.ac->cal_width != NL80211_CHAN_WIDTH_20) {
 		/*
 		 * First bring-up, or any bonded width: the value is the
 		 * observed constant, 0x3a at 20 MHz, 0x3c at 40 and 0x3d at 80.
@@ -5636,10 +5844,10 @@ static void b43_phy_ac_chanspec_tail(struct b43_wldev *dev)
 		 * values of its cycle, whatever the channel. On the ladder it is
 		 * entry 4, 6 and 7 of the width's row with the cold bump.
 		 */
-		crs_idx = (dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_80) ? 7
-			: (dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_40) ? 6
-			: 4;
-	else
+		static const u8 first_idx[3] = { 4, 6, 7 };
+
+		crs_idx = first_idx[b43_phy_ac_bw_step(dev)];
+	} else
 		crs_idx = b43_phy_ac_crs_index(dev, 0);
 	crs = b43_phy_ac_crs_min_pwr(dev, crs_idx, true);
 
@@ -7021,11 +7229,14 @@ void b43_phy_ac_post_cal_finalize_iter3(struct b43_wldev *dev)
 	/*
 	 * The RX suspend closes with the same clear of the statistics window
 	 * that a watchdog tick does, between the 0x0339 write above and the
-	 * mac_suspend below. The counters have been
-	 * accumulating since the channel setup, and the probe phase that
-	 * follows reads the window on every tick.
+	 * mac_suspend below. The counters have been accumulating since the
+	 * channel setup, and the probe phase that follows reads the window on
+	 * every tick. As on the tick, not over a sample in flight: on the one
+	 * segment where a watchdog turn ran late enough to request its sample
+	 * right before this point (cold34, ch132/40), the vendor skips it.
 	 */
-	b43_phy_ac_wd_stats_clear(dev);
+	if (!dev->phy.ac->noise_pending)
+		b43_phy_ac_wd_stats_clear(dev);
 
 	/*
 	 * Una parola in shared memory, subito dopo il clear e prima del

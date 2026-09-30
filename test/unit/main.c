@@ -88,19 +88,30 @@ static void plan_rxiq_poll(const char *board, bool first_init)
 }
 
 /*
- * Every chain's noise ring full of @idx: the ladder index in force is @idx on
- * each chain, and the 0x0910 bank carries no offset.
+ * Chain @c's noise ring full of @idx, and the CRS block programmed from it:
+ * the ladder index in force on the chain is @idx and the hardware carries it.
  */
+static void seed_crs_chain(unsigned int c, u8 idx)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(g_ac.crs_ring[0]); i++)
+		g_ac.crs_ring[c][i] = idx;
+	g_ac.crs_prog[c] = idx;
+}
+
+/* The same on every chain, so the 0x0910 bank carries no offset. */
 static void seed_crs_rings(u8 idx)
 {
-	unsigned int c, i;
+	unsigned int c;
 
 	for (c = 0; c < B43_PHY_AC_MAX_CORES; c++)
-		for (i = 0; i < ARRAY_SIZE(g_ac.crs_ring[0]); i++)
-			g_ac.crs_ring[c][i] = idx;
+		seed_crs_chain(c, idx);
 	g_ac.crs_ring_head = 0;
 	g_ac.crs_ring_len = ARRAY_SIZE(g_ac.crs_ring[0]);
 }
+
+static int timeline_has(const char *kind);
 
 /* Profilo montato, per i pochi punti che servono a modellare il core. */
 
@@ -229,13 +240,22 @@ static void mount_board(const struct board_profile *p)
 	 * board. Marking it would suppress the calibrations the vendor runs
 	 * there, which is most of a 29k-operation attach.
 	 *
-	 * This is the regulatory domain the captures were taken under, not a
-	 * universal truth: another domain may well put ch144 back under the
-	 * duty, and then it is cfg80211 that says so, not this line.
+	 * This is the regulatory domain the d6220 captures were taken under,
+	 * not a universal truth: the tg789vac's domain does put ch144 under
+	 * the duty, and its ch144 segment polls the detector 166 times. So
+	 * where a timeline is given, its POLL events are the answer and the
+	 * frequency rule is the fallback for the flows that run without one;
+	 * on hardware it is cfg80211 that says so.
 	 */
-	if ((g_chan.center_freq > 5250 && g_chan.center_freq <= 5350) ||
-	    (g_chan.center_freq > 5470 && g_chan.center_freq <= 5700))
-		g_chan.flags |= IEEE80211_CHAN_RADAR;
+	{
+		int polls = timeline_has("POLL");
+
+		if (polls > 0 ||
+		    (polls < 0 &&
+		     ((g_chan.center_freq > 5250 && g_chan.center_freq <= 5350) ||
+		      (g_chan.center_freq > 5470 && g_chan.center_freq <= 5700))))
+			g_chan.flags |= IEEE80211_CHAN_RADAR;
+	}
 
 	/*
 	 * Whether a channel availability check is outstanding. On hardware it
@@ -683,6 +703,32 @@ static void emit_core_beacon_reload(unsigned int which);
  * cattura e cosa ha fatto lo stack nel frattempo. Il driver decide solo cosa
  * fare a ogni callback.
  */
+/*
+ * Whether the timeline carries an event of @kind: 1 or 0, and -1 when there
+ * is no timeline to ask.
+ */
+static int timeline_has(const char *kind)
+{
+	const char *path = getenv("AC_TIMELINE");
+	FILE *f;
+	char line[128];
+	int found = 0;
+
+	if (!path || !*path)
+		return -1;
+	f = fopen(path, "r");
+	if (!f)
+		return -1;
+	while (!found && fgets(line, sizeof(line), f)) {
+		char k[16];
+
+		if (sscanf(line, "%*f %*d %15s", k) == 1 && !strcmp(k, kind))
+			found = 1;
+	}
+	fclose(f);
+	return found;
+}
+
 static void run_timeline(void)
 {
 	const char *path = getenv("AC_TIMELINE");
@@ -2170,6 +2216,17 @@ int main(int argc, char **argv)
 		g_ac.probe_mode = 0x0004;
 		g_ac.wd_turns = 9;
 		g_ac.wd_switch_turns = 9;
+		/*
+		 * The CRS state the segment carries into this tick: the block
+		 * last written at #31414 (0x34, bank 0x0500) from chain 0 at
+		 * ladder index 1 and chain 1 at 3, and the five latches since
+		 * (#32019-#33110) all on the same two indices. The tick's own
+		 * sample lands there too, so the block is not rewritten;
+		 * without this state the rings are empty and the sample alone
+		 * reads as a move.
+		 */
+		seed_crs_rings(1);
+		seed_crs_chain(1, 3);
 		b43_phy_ac_watchdog(&g_wldev);
 		/*
 		 * Il latch della finestra non e' la coda del giro: arriva col

@@ -60,22 +60,29 @@ eight nibbles all differ, which fixes every row).
 
 - **Same value cold and hot** on all 43 cold and 44 `up` configurations, while
   RX-IQ and idle-TSSI change between the two: it is not closed-loop.
-- **The ceiling belongs to the locale, not the board.** The D6220 and the
-  agcombo have different SROMs and write the same values where the SROM model
-  would differ:
+- **The ceiling belongs to the locale, not the board.** The D6220, the
+  agcombo and the TG789vac have different SROMs and antenna gains (5.5, 0,
+  4.25 dB) and write the same target where a limit binds:
 
-  | configuration | D6220 SROM | agcombo SROM | written, both |
-  | --- | --- | --- | --- |
-  | ch36–48 bw20 | 66/64 | 68 | **56** |
-  | ch60 bw40 | 64 | 68 | **60** |
-  | ch100 bw40 | 80 | 76 | **68** |
-  | ch100 bw20 and bw80 | 80 | 76 | **76** |
+  | configuration | D6220 | agcombo | TG789vac | written, all | cap before margin |
+  | --- | --- | --- | --- | --- | --- |
+  | ch36–48 bw20 | 66/64 | 68 | 80/78 | **56** | 62 |
+  | ch64 bw20 | 62 | 68 | 82 | 62 / 68 / **76** | 82 |
+  | ch100 bw20 and bw80 | 80 | 76 | 86 | **76** | 82 |
+  | ch104–128 bw20 | 80 | 76 | 86 | 80 / 76 / **84** | 90 |
+  | ch132–144 bw20 | 80 | 76 | 86 | 80 / 76 / **80** | 86 |
+  | ch36–44 bw40, ch36 bw80 | 66 | 68 | 82 | 66 / 68 / **68** | 74 |
+  | ch60 bw40 | 64 | 68 | 82 | **60** | 66 |
+  | ch100 bw40 | 80 | 76 | 86 | **68** | 74 |
 
-  With the margin and the 5.5 dB antenna gain these are 21, 22, 24 and 26 dBm.
-  `gates.sh` feeds the expressible part as
-  `AC_MAX_POWER_MAP=36:21,40:21,44:21,48:21,100:26`. On ch52/20 `wl` 6.30 on
-  the DSL-3580L writes 56 where 7.14 writes 62 on the same chip: the value lives
-  in the binary's CLM, not in any read.
+  The caps are conducted (the same number on three gains) and per width, so
+  cfg80211's one EIRP per 20 MHz channel cannot express them and the
+  `AC_MAX_POWER_MAP` that once stood in for them held only on a 5.5 dB board.
+  The port carries them as `b43_phy_ac_locale_ceiling()`, the tighter of the
+  two with the cfg80211 ceiling, as brcmsmac carries `locale_5g_*` in
+  `channel.c`. On ch52/20 `wl` 6.30 on the DSL-3580L writes 56 where 7.14
+  writes 62 on the same chip: the value lives in the binary's CLM, not in any
+  read.
 - **At 80 MHz every contained row enters the maximum.** Only the D6220 has
   `bw20`, `bw40` and `bw80` words that differ, and its six 80 MHz segments need
   all three (ch36 takes the 20-in-80 row, ch52 the 40-in-80 row); either word
@@ -84,13 +91,90 @@ eight nibbles all differ, which fixes every row).
 ## Per-rate offsets in shared memory
 
 - The field `+0x0e` of each rate block (`b43_phy_ac_prb_rsp_rate_po()`) is
-  `(max − ppr[rate]) * 4` on the finished table, the ceiling applied to the
-  rows. `wl curpower` on the DSL-3580L shows every target as
-  `min(board, regulatory) − 1.5 dB`.
-- Legacy OFDM rates take the row of the operating width: on a bonded channel
-  the frame goes out duplicated over the whole block.
+  the rate's distance from the target in sixteenths of a dB, and it is read
+  on the SROM spacing, not on the finished table: the D6220 in UNII-3 has
+  `maxp5ga` 0, the target at the floor, and still writes 16/32/48 on the
+  three upper rates, and on ch100/20 it keeps 16/32/48 with the target 1 dB
+  under the top row. So the general ceiling moves the target and leaves the
+  spacing. `txpwr_spacing` is the same PPR laid out from 0x7f so that no
+  entry saturates; `b43_phy_ac_rate_po()` reads it.
+- **The legacy OFDM rates carry their own limit** (`b43_phy_ac_reg_ofdm_ceiling()`),
+  which shows in this field alone since the target takes the maximum over
+  MCS: 76 after the margin on ch52–144 at 20 MHz, 72 on ch100–128 at 80,
+  84 on ch108–140 at 40. On the D6220 and the TG789vac every legacy rate the
+  spacing would put higher sits at that value (ch104/20: `target − 76` on the
+  eight legacy fields on both, targets 80 and 84). The field is
+  `max(spacing, target − limit)`.
+- Legacy OFDM rates take the row of the operating width on the D6220 (the
+  reference build, 7.14.89). The TG789vac and the agcombo read them from
+  somewhere else wherever a limit binds and at bonded widths, and the three
+  boards disagree pairwise, so this is the driver build's own legacy table;
+  `retrace-todo.md` has the numbers.
+- **The CCK rates sit at the 1 dBm floor**: their field
+  (`b43_phy_ac_cck_rate_po()`) is `min(0xf8, 4 · (target − 4))` on all 86
+  cold segments of the D6220 and the TG789vac, every width and sub-band
+  (0xd0 at 56, 0xe0 at 60, 0xe8 at 62, 0xf0 at 64, 0xf8 from 66). The one
+  exception is the D6220's UNII-3, `maxp5ga` 0, where the vendor writes 0xf8
+  and the rule gives 0.
 - `0x00ce`, the beacon power offset (`b43_phy_ac_beacon_pwr_offset()`), has the
-  same form on the 20 MHz row.
+  same form on the 20 MHz row, the legacy limit included.
 - The block address is `2 * shm_read(DIRMAP + index * 2)`, as
   `brcms_b_rate_shm_offset()`; `M_RT_DIRMAP_A` = `0x01c0`, the index is the low
   nibble of the PLCP SIGNAL field.
+
+## Chain masks `0x05d6` / `0x05d8` / `0x05da`
+
+The three cells of the `0x05d4`–`0x05dc` block that are not coremask are the
+chain choice of the rate classes, and they follow the regulatory headroom,
+not the sub-band. Per class the stock driver takes the chain count `n` with
+the highest total power
+
+    min(board, L − offset[n]) + 10·log10(n)
+
+fewer chains on a tie, with the `wl curpower` offsets (CDD on 2 and 3 chains
+3 and 5 dB under one chain, TXBF 6 and 9.75), `board` the top row of the
+operating width and `L` the locale's Local Max for the channel and width less
+the board's antenna gain. `0x05d6` behaves as the TXBF rows and `0x05d8` as
+the CDD rows; in closed form, with `d = L − board` in quarter dB:
+
+| cell | 1 chain | 2 chains | 3 chains |
+| --- | --- | --- | --- |
+| `0x05d8` (CDD) | d ≤ 0 | 1 ≤ d ≤ 13 | d ≥ 14 |
+| `0x05d6` (TXBF) | d ≤ 12 | 13 ≤ d ≤ 32 | d ≥ 33 |
+
+`0x05da` follows `0x05d8` where that keeps more than one chain and is
+coremask where it drops to one (7.14.89; the agcombo on 7.14.43 writes
+coremask there throughout). Two of three chains is the outer pair, 0x5.
+
+The Local Max is neither the cap that binds the target (at ch64/20 the target
+caps at 20.5 dBm and the masks need 30 or more) nor in cfg80211. It is
+measured from the masks: per channel and width, the range of `L` that
+reproduces each board's pair, intersected over the D6220 (2 chains, 5.5 dB),
+the TG789vac (3, 4.25) and the agcombo (3, 0). On 18 of the 19 channel/width
+pairs the three boards see, the ranges intersect, and
+`b43_phy_ac_local_max()` takes a value inside: 84 on ch36–48/20, 120 on
+ch52–64/20, 124 on ch100–144/20, 106 on ch36–44/40, 136 on ch108–140/40,
+104 on ch36/80, 132 on ch100–132/80 (quarter-dBm EIRP). A channel not in the
+table takes coremask. The one miss is the agcombo's ch36/40 first pass; the
+antenna gain the agcombo's driver reports (0) is not its SROM's (5.5), so
+with the SROM gain the port is wrong on that board and right on the other
+two.
+
+The sub-band table this replaces was an artefact of the two boards it was
+read from: with `maxp5ga` at 72/70/86 and 74/74/82 the headroom shrinks
+under the thresholds only where the Local Max is lowest, below 5250 MHz, so
+"sub-band 0 ⇒ partial masks" described them exactly and predicted the
+TG789vac (90/88/92/88) wrong on every channel above.
+
+## The second pass
+
+The TX power site (`b43_phy_ac_txpwr_adjust()`) writes the block a second
+time. On the D6220 and the agcombo that pass is the 20 MHz computation of the
+primary channel: on ch36 at 40 and at 80 it carries the same target (62),
+the same legacy power (56 on the D6220, 44 on the agcombo — each board's own
+ch36/20 legacy power) and the same beacon cell, and differs from the 20 MHz
+segment only in the target's cap, 68 against 62. The TG789vac's second pass
+leaves the power table alone and moves the masks only (ch108–140/40: 5 to
+7). The port writes the first pass three times and takes the Local Max 1 dB
+higher on that site above 20 MHz, which reproduces the masks on every board
+but is a fit, not the mechanism.

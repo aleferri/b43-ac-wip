@@ -93,6 +93,18 @@ u8 b43_ppr_ac_ofdm(const struct b43_ppr_ac *ppr, enum nl80211_chan_width width,
 	return ppr->rows[b43_ppr_ac_row(width)][b43_ppr_ac_ofdm_group[rate]];
 }
 
+u8 b43_ppr_ac_row_max(const struct b43_ppr_ac *ppr,
+		      enum nl80211_chan_width width)
+{
+	const u8 *row = ppr->rows[b43_ppr_ac_row(width)];
+	u8 m = 0;
+	unsigned int g;
+
+	for (g = 0; g < B43_PPR_AC_GROUPS; g++)
+		m = max(m, row[g]);
+	return m;
+}
+
 u8 b43_ppr_ac_mcs(const struct b43_ppr_ac *ppr, enum nl80211_chan_width width,
 		  unsigned int mcs)
 {
@@ -153,12 +165,21 @@ static u8 b43_ppr_ac_sub(u8 maxp, u8 off)
 }
 
 /*
- * Fill the rows the width loads from @top less each group's nibble, in
- * half-dB. The mcsbw*po words are selected by the l/m/h band of the primary
- * channel (below 52, below 100, the rest), which is not the maxp5ga sub-band
- * above: the two partitions are the SROM's, not this driver's, and they
+ * The l/m/h band of the mcsbw*po words: 0 = 5gl, 1 = 5gm, 2 = 5gh, by channel
+ * number. It is not the maxp5ga sub-band of b43_ppr_ac_subband(), which is by
+ * frequency: the two partitions are the SROM's, not this driver's, and they
  * differ at ch48-51 and ch100.
  */
+unsigned int b43_ppr_ac_po_band(u16 chan)
+{
+	if (chan < 52)
+		return 0;
+	if (chan < 100)
+		return 1;
+	return 2;
+}
+
+/* Fill the rows the width loads from @top less each group's nibble. */
 static void b43_ppr_ac_fill_rows(const struct ssb_sprom *sprom,
 				 struct b43_ppr_ac *ppr, u16 chan, u8 top)
 {
@@ -167,7 +188,7 @@ static void b43_ppr_ac_fill_rows(const struct ssb_sprom *sprom,
 		{ sprom->mcsbw205gmpo, sprom->mcsbw405gmpo, sprom->mcsbw805gmpo },
 		{ sprom->mcsbw205ghpo, sprom->mcsbw405ghpo, sprom->mcsbw805ghpo },
 	};
-	unsigned int band = chan < 52 ? 0 : chan < 100 ? 1 : 2;
+	unsigned int band = b43_ppr_ac_po_band(chan);
 	unsigned int row, g;
 
 	for (row = 0; row < ppr->num / B43_PPR_AC_GROUPS; row++)

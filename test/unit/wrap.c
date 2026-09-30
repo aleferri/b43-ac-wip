@@ -314,6 +314,7 @@ void b43_test_trace_to(FILE *f) { trace_stream = f; }
 struct oracle_q {
 	u16 *v;
 	int n, cap, iter;
+	int over;	/* reads past the end: the port read more than the capture */
 };
 
 static struct oracle_q oracle_phy[ORACLE_ADDRS];
@@ -325,6 +326,8 @@ static long oracle_hits, oracle_miss_addr, oracle_miss_exhausted;
 
 static int oracle_has_obj, oracle_has_tpl, oracle_has_cal;
 static const char *oracle_path;
+
+static void oracle_flush_bulk(unsigned *addr, unsigned *words);
 
 static void oracle_push(struct oracle_q *tbl, unsigned addr, unsigned val)
 {
@@ -342,6 +345,16 @@ static void oracle_push(struct oracle_q *tbl, unsigned addr, unsigned val)
 		q->cap = nc;
 	}
 	q->v[q->n++] = (u16)val;
+}
+
+/* The slots of a region read whose words the capture does not carry. */
+static void oracle_flush_bulk(unsigned *addr, unsigned *words)
+{
+	while (*words) {
+		oracle_push(oracle_obj, *addr, 0);
+		*addr += 2;
+		(*words)--;
+	}
 }
 
 /*
@@ -391,9 +404,20 @@ static void oracle_init(void)
 		return;
 	}
 	unsigned tbl_id = 0, tbl_off = 0, tbl_len = 0, tbl_words = 0;
+	/*
+	 * A shared-memory region read whose words are not traced. The d6220
+	 * captures follow every `OBJ.BULKR` header with its words, so the
+	 * header stands for nothing; the tg789vac's never do, and the region
+	 * dump of the watchdog (0x00e0-0x015e, 64 words) is then one header
+	 * for 64 reads the port makes one by one. Without the slots those
+	 * reads take the next values of every poll cell inside the region and
+	 * shift each queue by one per dump. Decided per header, on whether its
+	 * first word follows it; the value of a slot is not in the capture.
+	 */
+	unsigned bulk_addr = 0, bulk_words = 0;
 
 	while (fgets(line, sizeof(line), f)) {
-		unsigned addr, val;
+		unsigned addr, val, len, sel;
 		char *p;
 
 		/*
@@ -418,6 +442,22 @@ static void oracle_init(void)
 			if (ep < oracle_from)
 				continue;
 		}
+
+		if ((p = strstr(line, "OBJ.BULKR")) != NULL) {
+			oracle_flush_bulk(&bulk_addr, &bulk_words);
+			if (sscanf(p, "OBJ.BULKR addr=%x len=%u a5=%x",
+				   &addr, &len, &sel) == 3 && sel == 0x10000) {
+				bulk_addr = addr;
+				bulk_words = len / 2;
+			}
+			continue;
+		}
+		if (bulk_words && (p = strstr(line, "OBJ.RD")) != NULL &&
+		    sscanf(p, "OBJ.RD %*[^=]=%x", &addr) == 1 &&
+		    addr == bulk_addr)
+			bulk_words = 0;
+		else
+			oracle_flush_bulk(&bulk_addr, &bulk_words);
 
 		if ((p = strstr(line, "TBL.RD")) != NULL) {
 			if (sscanf(p, "TBL.RD id=%x off=%x len=%u",
@@ -471,6 +511,7 @@ static void oracle_init(void)
 				oracle_push(oracle_obj, addr, val);
 		}
 	}
+	oracle_flush_bulk(&bulk_addr, &bulk_words);
 	fclose(f);
 	oracle_on = 1;
 	fprintf(stderr, "wrap: oracle attivo da %s\n", path);
@@ -546,6 +587,7 @@ static int oracle_take(struct oracle_q *tbl, u16 addr, u16 *out)
 	}
 	if (q->iter >= q->n) {
 		oracle_miss_exhausted++;
+		q->over++;
 		return 0;
 	}
 	*out = q->v[q->iter++];
@@ -584,13 +626,16 @@ void b43_test_oracle_report(void)
 			if (!q[i]->n)
 				continue;
 			addrs++;
-			if (q[i]->iter != q[i]->n) {
+			if (q[i]->iter != q[i]->n)
 				partial++;
+			if (q[i]->iter != q[i]->n)
 				fprintf(stderr,
 					"oracle %s 0x%04x  consumate %d/%d\n",
-					nm[i], a,
-					q[i]->iter, q[i]->n);
-			}
+					nm[i], a, q[i]->iter, q[i]->n);
+			else if (q[i]->over)
+				fprintf(stderr,
+					"oracle %s 0x%04x  esaurita, %d letture in eccesso\n",
+					nm[i], a, q[i]->over);
 		}
 	}
 	fprintf(stderr,

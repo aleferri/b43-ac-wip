@@ -147,17 +147,44 @@ not. `0x14` is not derivable from the SROM; the port writes it under
 ### TX target: the second of three passes at 40/80 MHz
 
 On cold ch36 and ch44 at 40 and 80 MHz the three `txpwrctrl_setup` passes write
-`base`, `62`, `base` (66/62/66 on the D6220, 68/62/68 on the agcombo). The same
-middle value on two boards with different SROMs points at a different
-regulatory cap in force (68 before the margin); which locale state, and why
-only on U-NII-1 bonded channels cold, is not understood.
+`base`, `62`, `base` (66/62/66 on the D6220, 68/62/68 on the agcombo). The
+middle pass is the TX power site (`b43_phy_ac_txpwr_adjust()`), and what it
+writes is **width-independent**: on each board the second pass of ch36/40 and
+of ch36/80 carries the same target, the same legacy power and the same
+beacon cell -- D6220 target 62, legacy 56; agcombo 62 and 44 -- and the
+legacy power is exactly the board's own ch36/20 legacy power (D6220 56,
+agcombo 44, from `+0x0e` of the 20 MHz segments). So the second pass is the
+20 MHz computation of the primary channel, with one difference from the
+20 MHz segments themselves: the target caps at 68 (target 62) where ch36/20
+caps at 62 (target 56) on every board. A 20-in-40/80 limit 1.5 dB above the
+20 MHz channel's own, with the legacy limit (62) unchanged, fits both boards;
+the tg789vac's second pass leaves the target alone (68 on ch36/40 with a
+first-pass cap of 74 and rows at 88, so a 68 cap would have dropped it to
+62) and only moves the chain masks (ch108-140/40: 5 to 7), which is the
+same pattern as its legacy rates: its driver does not recompute the power
+table at that site. Not modelled; the port writes the first pass three
+times. The port's masks on that pass take the Local Max 1 dB higher, which
+reproduces every board but is a fit, not the mechanism above.
 
 ### TX power: regulatory limits and chain masks
 
 One problem, seen in three places: the target on `0x?46`, the per-rate field
-`+0x0e`, and the chain masks `0x05d6`/`0x05d8`. The TG789vac v2 diverges on all
-three from its first bring-up on; the d6220 on the target at 40/80 MHz on the
-band edges and on `+0x0e` at ch104–144.
+`+0x0e`, and the chain masks `0x05d6`/`0x05d8`. The target is closed on both
+boards through the locale table of `b43_phy_ac_locale_ceiling()` (the caps
+listed under "band edges" below, per channel and width, conducted), except
+the d6220's second pass at 40/80 MHz. The chain masks `0x05d6`/`0x05d8` are
+closed on the first pass of every segment of the three boards but one
+(agcombo ch36/40) through the chain choice below with a Local Max table
+(`b43_phy_ac_local_max()`), and on the second pass with that level 1 dB
+higher above 20 MHz. `0x05da` follows `0x05d8` where that keeps more than
+one chain and is coremask where it drops to one (7.14.89; the agcombo on
+7.14.43 writes coremask throughout). Not temperature: the tempsense samples
+of the five TG789vac segments with 0x5 there read 49-62 degC on the
+agcombo's calibration (`docs/tempsense-wiring-evidence.md`), in the middle
+of the sweep's 44-62, against a tempthresh of 120. Open: `0x05d8` at 0x5 on
+ch100 and ch116 at 80 MHz where ch132/80, same rows and width, has 0x7 --
+the port writes 0x7 on all three; and `+0x0e` at 40 and 80 MHz on both
+boards.
 
 **The stock limits, from the three `curpower` dumps** (`agcombo/stats.txt` at
 ch100/80 and ch36/80, `dsl3580l/wl1_curpower_ch52-bw80.txt`, two driver
@@ -206,28 +233,80 @@ the TG789vac, two chains being 0 and 2.
   agcombo's 36/80 table gives with the margin. **SALAME**: the edge levels
   differ between 7.14.43 and 7.14.89.
 
-The port today takes one ceiling per 20 MHz channel from cfg80211, less the
-SROM antenna gain, applied to every rate (`AC_MAX_POWER_MAP` in `gates.sh`),
-and a mask table keyed on sub-band (`b43_phy_ac_chain_partial`). Neither is the
-stock model.
+The port today takes the tighter of cfg80211's ceiling (one EIRP per 20 MHz
+channel, less the SROM antenna gain) and its own locale table of the caps
+above, and computes the masks from the chain choice on a Local Max table
+measured from the masks themselves (84 on ch36-48/20, 120 on ch52-64/20,
+124 on ch100-144/20, 106 on ch36-44/40, 136 on ch108-140/40, 104 on ch36/80,
+132 on ch100-132/80, quarter-dBm EIRP, less the SROM gain). The two tables
+are the same locale seen from two sides and should become one; the antenna
+gain the agcombo's driver reports (0) is not its SROM's (5.5), so on that
+board the SROM gain gives the wrong masks.
 
-**Next step:** the offsets above in the port with the median from cfg80211,
-the width and band-edge offsets measured on the three sweeps as a second table
-on the same median, then the masks from the chain choice instead of the
-sub-band table.
+**The TG789vac's legacy rates at 40 and 80 MHz** are flat across the eight
+OFDM rates on every bonded segment. Where a legacy limit binds on both
+boards the port now carries it (`b43_phy_ac_reg_ofdm_ceiling()`: 84 on
+ch108-140/40, 72 on ch100-128/80, after the margin). Where none binds the
+TG789vac writes the maximum of its **40 MHz row** on every rate, at 40 MHz
+and at 80 alike -- 84 on ch108-140/40 and on ch132/80 (`mcsbw405ghpo`
+nibble 1 under maxp 92), where its 80 MHz row would give 80/78 -- while the
+d6220 on ch132/80 follows its 80 MHz row with its per-group offsets
+(76/72/68, `mcsbw805ghpo` 2/4/6). Below the limits the two boards also
+differ: ch100/40 TG789vac 60, d6220 64 on the six lower rates then 62 and
+58; ch60/40 52 against 56; ch36 at 40 and 80 68 against 66 and 54. So the
+TG789vac's driver reads the legacy rows of a bonded channel from a
+different place than the d6220's, and the port's spacing table (the
+operating width's row) is the d6220's reading.
+
+The agcombo (4360, 3 chains, 7.14.43) settles what it is not. Its rows
+hold exactly where nothing binds (ch52-64/20, ch52/40, ch108-132/40:
+68/68/68/68/64/64/60/60 and 76/76/76/76/68/68/60/60 are its nibbles to the
+quarter), so the group map is right on all three boards. Where a limit
+binds it sides with neither: at ch100/40 and ch60/40 it writes the
+TG789vac's 60 and 52 (d6220 64, 56); at ch100/80 the d6220 writes 72 and
+the TG789vac 72 but the agcombo 60; at ch36/40 and 36/80 it writes 56 on
+every rate, which is its own ch36/20 legacy power (d6220 66 and 54,
+TG789vac 68); at ch100-140/20 its legacy sits at 68 under a target of 76
+where the other two sit at 76 under 80 and 84. Chip and chain count are
+ruled out (agcombo and TG789vac share both and disagree at ch100/80,
+ch36/40, ch108/40); the SROM's `dot11agdup*` are ruled out (the agcombo
+has none and still differs from the d6220). What is left is the driver
+build's own legacy table, so a port can follow one reference only; it
+follows the d6220 (7.14.89, the two full sweeps).
 
 ### Per-rate field `+0x0e`
 
-The distance of each rate from the target, in sixteenths of a dB. Where it
-diverges it is the legacy OFDM rows sitting under a lower limit than the MCS
-rows: `max(distance, K)` with K the target less the OFDM limit, one K per
-segment. With the target model above that limit is 19 dBm on ch52–144 at
-20 MHz on both boards (K 0x18, 0x20, 0x10 on the TG789vac at ch52, ch104,
-ch132; 0x10 on the d6220 at ch104–144). ch100/20 does not reconcile the two
-boards with one limit. The CCK field (`b43_phy_ac_cck_rate_po()`) is a table
-keyed on sub-band: the TG789vac writes 0xf8 on sub-band 1 where the table has
-the d6220's 0xe8, and its maxp5ga is lower there than on sub-band 0 as on the
-d6220, so the hypothesis in that comment does not hold.
+The distance of each rate from the target, in sixteenths of a dB. At 20 MHz
+it is closed: the legacy OFDM rows sit under their own limit, 76 after the
+margin on ch52–144, on the d6220 (cold and hot) and the TG789vac alike, and
+ch100/20 (target 76, K 0 on both) fits it too
+(`b43_phy_ac_reg_ofdm_ceiling()`; the beacon cell `0x00ce` takes the same
+cap). At 40 and 80 MHz the duplicate legacy rows are not under that limit
+(ch108–140/40: target 80, fields 0) and what they are under is not one
+number: d6220 ch60/40 writes K 0x10 and the TG789vac 0x20 at the same target
+60, the TG789vac carries `dot11agduphrpo=0x4444` which the loader does not
+apply, and on the d6220 ch149/80 writes K 0x10 with the target at the floor.
+The three-pass segments (ch36/ch44 at 40 and 80) follow the target of each
+pass. The CCK field is closed: the CCK rates sit at the 1 dBm floor and the
+field is the target's distance from it saturated at 0xf8, on all 86 segments
+(`b43_phy_ac_cck_rate_po()`); the d6220's UNII-3, maxp5ga 0, writes 0xf8
+where the rule gives 0, kept as an observed exception.
+
+**Where the general limit binds, the two boards disagree on the OFDM rows.**
+The d6220 on ch100/20 (rows 86/86/82/78/74 for the five OFDM groups, target
+76 under the 82 cap) keeps its spacing, 0/0/16/32/48: the cap moved the
+target and left the rows. The TG789vac on ch36/20 (rows 76/76/76/76/72, cap
+62) writes 0 on every rate, on ch100/20 (86/86/82/82/76, cap 82) 0 on every
+rate, on ch104/20 (same rows, target 84) 32 on every rate, on ch108-140/40
+(target 86, uncapped) 8 on every rate then 56 then 8, and on ch116/80 56 on
+every rate -- while on ch149/20, uncapped, it follows its rows exactly
+(0/0/0/16/16/40, `mcsbw205ghpo` nibbles 0/0/2/2/5). So the TG789vac's legacy
+rates are flat wherever a limit binds and at every bonded width, the d6220's
+are never flat. A per-rate clamp at the cap reproduces the TG789vac's 20 MHz
+segments and breaks the d6220's ch100 at all three widths; the port keeps
+the d6220's model. What separates the two -- 4360 vs 4352, 3 chains, the
+`dot11agduphrpo=0x4444` the loader does not apply, a different legacy limit
+table -- is not established. **SALAME** on all four.
 
 ### Sub-band row offsets
 
@@ -286,20 +365,25 @@ the hot segments. Still uncertain:
 
 ## PHY: operations missing or extra
 
-### `PHY.RDW` on table `0x20`
+### Hot `up`: the core's MAC block after the PHY
 
-The stock driver reads 19 cells of table `0x20` at full width, a `PHY.RD 0x0011`
-followed by two `PHY.RDW`; the port stops after the `0x0011` read, so 38 reads
-are missing (cold01, cold05). Values seen: `0x7f00`, `0xf3ff`, `0xf32f`,
-`0x1300`, `0xf34f`. Next step: find what table `0x20` is at that width.
-
-### Counter sweep on late turns
-
-When the stock timer runs late it skips the statistics-window latch on some
-turns and the counter clear (`OBJ.WR 0x0308`–`0x0312`) on others: 12–36 extra
-operations on the affected segments. `reverse-tools/watchdog_turns.py --check`
-measures the turns; the next attempt is a rule on the time since the last
-latch.
+On the three hot `up` segments 232-250 of the missing ops are one block, at
+the end of the segment after the PHY's last write (`PMU.RC` release):
+`MAC.MCTRL` 0x04000400 x4 and 0x04000404, host-flag masksets on MHF0-4
+(`0x0080`, `0x0100`, `0x0010`, `0x1504`, ...), `MAC.MCTRL` 0x04020402, the
+address-match table cleared row by row (`AMT.WR` + `OBJ.BULKR`/`BULKW`
+0x0000-0x0010 and 0x00e8-0x00f8), and the core's shared-memory init
+(`OBJ.WR` 0x0016, 0x0018, 0x001c, 0x0044, 0x0046, 0x005c-0x0062, 0x0078,
+0x0080, 0x00c0, 0x00c2, 0x00d4, 0x078c-0x0790). It is `wl up`'s MAC
+re-initialisation -- b43's `b43_wireless_core_init()` material, host flags,
+keys, TSF and BSS cells -- which the stock driver runs after the PHY where
+b43 runs it before. Not the PHY's, but the perimeter cannot drop it by
+pattern: the PHY's own `b43_phy_ac_mhf_maskset()` traces as `MAC.MHF` with a
+mask exactly like `b43_hf_write()` does, and the shared cells are not all in
+`b43.h`. Either the harness's `up` flow mirrors main.c's block in the stock
+order, as it already does for the BSS templates, or the perimeter learns the
+block by position (after the last PHY op of the flow). The 16 extra ops are
+the two rewrites of the 0x033a-0x0343 gain block at 0x3bf.
 
 ### When the CRS block is written
 
