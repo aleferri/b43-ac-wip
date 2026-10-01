@@ -53,15 +53,19 @@ struct ieee80211_channel;
 #define B43_PHY_AC_SAMP_PLAY_CTL		0x460	/* start (bit0) / stop (bit1) */
 #define  B43_PHY_AC_SAMP_PLAY_START		0x0001
 #define  B43_PHY_AC_SAMP_PLAY_STOP		0x0002
-/* SALAME: loops/wait named from the N-PHY block order and, for loops, its
- * 0xffff = continuous convention; the wait value (0x3c) is not cross-checked. */
+/*
+ * LOOPS and WAIT are named after the N-PHY block order, LOOPS = 0xffff as
+ * its "continuous" convention; the WAIT value (0x3c) is not cross-checked.
+ */
 #define B43_PHY_AC_SAMP_PLAY_LOOPS		0x461
 #define B43_PHY_AC_SAMP_PLAY_WAIT		0x462
 #define B43_PHY_AC_SAMP_PLAY_NSAMP		0x463	/* num_samps - 1 */
 
-/* Per-channel PHY resampler and bandwidth registers 0x371-0x376. The values
- * come from chan_tuning u16[52..57], the phy_bw[] field, not from the radio's
- * chan_raw6. */
+/*
+ * Per-channel PHY resampler and bandwidth registers 0x371-0x376, from
+ * chan_tuning u16[52..57] (the phy_bw[] field), not from the radio's
+ * chan_raw6.
+ */
 #define B43_PHY_AC_BW1A				0x371
 #define B43_PHY_AC_BW2				0x372
 #define B43_PHY_AC_BW3				0x373
@@ -162,30 +166,29 @@ struct ieee80211_channel;
 #define B43_PHY_AC_MAX_CORES		3
 
 /*
- * Quante passate di misura la finestra tiene: due fino a 40 MHz, sei a 80 sul
- * d6220 e sette su agcombo. Otto copre il caso osservato piu' ampio.
+ * Measurement passes the window keeps: two up to 40 MHz, six at 80 on the
+ * d6220, seven on agcombo.
  */
 #define B43_PHY_AC_IQ_ROUNDS	8
 
 /*
- * Per-core RX-IQ accumulators. The solve averages the measurement passes; with
- * only one the coefficients do not match, which is how that was established.
- * The reads of 0x?c0-0x?c5 happen inside the measurement, which runs several
- * times, and the values are kept here because the solve lives in a different
- * function.
+ * Per-core RX-IQ accumulators. The reads of 0x?c0-0x?c5 happen inside the
+ * measurement, which runs several times, and the solve, in another function,
+ * averages the passes.
  */
 
 struct b43_phy_ac_iq_acc {
-	/* Finestra scorrevole sulle passate; [0] e' la piu' recente. */
+	/* Sliding window over the passes; [0] is the newest. */
 	u32 ii[B43_PHY_AC_IQ_ROUNDS];
 	u32 qq[B43_PHY_AC_IQ_ROUNDS];
 	s32 iq[B43_PHY_AC_IQ_ROUNDS];
-	/* Passate di misura nella finestra; la ricerca in loopback non conta. */
+	/* Measurement passes in the window, loopback search excluded. */
 	unsigned int rounds;
 	bool measuring;
-	/* The solved coefficients, computed once and reapplied: the stock driver
-	 * rewrites the same values on the second apply rather than recomputing
-	 * them. */
+	/*
+	 * The solved coefficients, computed once and reapplied: the stock
+	 * driver writes the same values again on the second apply.
+	 */
 	s16 a;
 	s16 b;
 	bool solved;
@@ -198,24 +201,16 @@ struct b43_phy_ac_iq_acc {
 /*
  * Per-rate TX power limits, in quarter-dBm.
  *
- * Same shape and units as struct txpwr_limits in
- * brcm80211/brcmsmac/phy/phy_hal.h, because the computation that fills it is
- * the one brcmsmac already carries as wlc_phy_txpower_recalc_target(). The
- * quarter-dB unit is that driver's BRCMS_TXPWR_DB_FACTOR of 4; the register
- * this eventually feeds, 0x0646, is in the same unit while the SROM and
- * regulatory values are in whole dB.
+ * Same shape and units as struct txpwr_limits in brcmsmac/phy/phy_hal.h,
+ * since it is filled by the computation brcmsmac carries as
+ * wlc_phy_txpower_recalc_target(). The register this feeds, 0x0646, is in
+ * the same unit; the SROM and regulatory values are in whole dB.
  *
- * The limits are segmented, and not only between OFDM and legacy: each
- * modulation, bandwidth and stream count has its own row. A single scalar
- * cannot stand in for them, which is why fitting one constant against the
- * captured 0x0646 values could never close.
- *
- * The AC-PHY reduces this to two things:
- *   - the maximum over rates, written per core to 0x0646[7:0];
- *   - the per-rate distance from that maximum, which lands in table 0x21,
- *     the array this driver calls ppr[24].
- * That split explains why ppr is channel-invariant across the sweep while
- * 0x0646 is not: moving channel moves the maximum, not the spacing.
+ * Each modulation, bandwidth and stream count has its own row, so no single
+ * constant fits the captured 0x0646 values. The AC-PHY reduces this to the
+ * maximum over rates, written per core to 0x0646[7:0], and the per-rate
+ * distance from it, in table 0x21 (ppr[24]); hence ppr is channel-invariant
+ * while 0x0646 is not.
  */
 struct b43_phy_ac_txpwr_limits {
 	u8 cck[B43_PHY_AC_NUM_RATES_CCK];
@@ -234,10 +229,9 @@ struct b43_phy_ac_txpwr_limits {
 };
 
 /*
- * Flat rate index into the limit and target arrays, same segmentation and
- * same numbering as the TXP_* defines in brcmsmac/phy/phy_int.h. Kept
- * identical so the two can be read side by side; only the segments the
- * AC-PHY exercises are filled in at first.
+ * Flat rate index into the limit and target arrays, with the segmentation
+ * and numbering of the TXP_* defines in brcmsmac/phy/phy_int.h, so the two
+ * can be read side by side.
  */
 #define B43_PHY_AC_TXP_FIRST_CCK		0
 #define B43_PHY_AC_TXP_LAST_CCK			3
@@ -306,121 +300,104 @@ void b43_phy_ac_write_chanspec(struct b43_wldev *dev);
 #define B43_PHY_AC_IDLE_TSSI_BASE		0x0200
 
 struct b43_phy_ac {
-	/* active RF-chain count (PHY reg 0x0B & 0x07), set at op_init */
+	/* physical core count (PHY reg 0x0b & 0x07), set by probe_cores */
 	u8 num_cores;
 	/*
-	 * Populated-chain bitmask, one bit per wired core, set at op_init.
-	 * unsigned long so that for_each_set_bit() walks it directly.
+	 * Wired-chain bitmask (SROM rxchain), set by probe_cores; unsigned long
+	 * so that for_each_set_bit() walks it directly.
 	 */
 	unsigned long coremask;
-	/* Analog LPF / DAC-buffer caps; attach defaults, set in op_allocate. */
-	u8 lpf_cap0;	/* default 0x80 */
-	u8 lpf_cap1;	/* default 0x80 */
-	u8 dacbuf_cap;	/* default 0x0c */
+	/* LPF and DAC-buffer caps, measured by b43_radio_2069_rccal(). */
+	u8 lpf_cap0;
+	u8 lpf_cap1;
+	u8 dacbuf_cap;
 	/* Software mirror of tracked HW gate bits; see B43_PHY_AC_STATE_*. */
 	u16 status_mask;
 	/*
-	 * State of the 0x0520[3:2] toggle the probe cycles of
-	 * rxiqcal_finalize() use. The stock driver alternates it at every group
-	 * of peeks and never restarts it, not even across a channel switch.
-	 *
-	 * Verified over the 32 warm cycles of the d6220 sweep: the mode each
-	 * cycle opens on always follows from the parity of the toggle count of
-	 * the cycle before it, 31 transitions out of 31.
+	 * State of the 0x0520[3:2] walk of the probe cycles. The stock driver
+	 * steps it at every group of peeks and never restarts it, not even
+	 * across a channel switch (31 of 31 transitions over the d6220's 32
+	 * warm cycles).
 	 */
 	u16 probe_mode;
 	/*
-	 * Channel of the last completed calibration, 0 when none has run.
-	 *
-	 * The first probe group of a calibration is irregular -- see
-	 * b43_phy_ac_probe_cycle() -- and what selects it is whether the
-	 * channel has changed since the previous calibration, not whether this
-	 * is a first bring-up. The d6220 sweep settles it: across its 32 warm
-	 * cycles, in which no bring-up is a first one, the irregular group
-	 * appears in exactly the 16 cycles that follow a channel change,
-	 * 32 out of 32.
+	 * Channel of the last completed calibration, 0 when none has run. The
+	 * irregular first probe group follows a channel change, not a first
+	 * bring-up: across the d6220's 32 warm cycles it appears in exactly the
+	 * 16 that follow a channel change.
 	 */
 	u16 last_cal_channel;
 	/*
 	 * Whether a channel availability check is outstanding on the current
-	 * channel: the calibrations that transmit wait for it, see
+	 * channel; the calibrations that transmit wait for it, see
 	 * b43_phy_ac_may_calibrate_tx().
 	 *
-	 * The check is not this driver's, mac80211 runs it, and the core keeps
-	 * its state in dev->cac_pending: set by the config call that tunes the
-	 * channel with hw->conf.radar_enabled, cleared when beaconing starts.
-	 * op_switch_channel() takes it from there, and the periodic tick that
-	 * finds the core's cleared runs b43_phy_ac_bss_up(), which clears this.
+	 * mac80211 runs the check, and the core keeps its state in
+	 * dev->cac_pending: set by the config call that tunes the channel with
+	 * hw->conf.radar_enabled, cleared when beaconing starts.
+	 * op_switch_channel() copies it, and the core's cac_done hook,
+	 * b43_phy_ac_bss_up(), clears it.
 	 */
 	bool cac_pending;
 	/*
-	 * Giri del watchdog dal bring-up in qua. Il measure block cade ogni
-	 * dieci giri e il dump della regione statistiche ogni trenta, contati su
-	 * questo: sulla cattura il measure block sta sul nono giro della fase e
-	 * poi ogni dieci, su tutti e 43 i segmenti a freddo, e il dump sul
-	 * trentesimo. E' periodico del driver e non del canale, quindi il
-	 * contatore non si azzera al cambio canale: sui cicli a caldo la fase
-	 * comincia a un punto qualunque del periodo.
+	 * Watchdog turns since the bring-up. The tempsense and the region dump
+	 * fall on this count, which a channel change does not reset: it is the
+	 * driver's period, not the channel's, so on hot cycles the phase starts
+	 * anywhere in it. @wd_switch_turns counts from the channel change.
 	 */
 	u16 wd_turns;
 	u16 wd_switch_turns;
 	/*
-	 * Il blocco E delle soglie CRS e' dovuto al prossimo campione di
-	 * rumore che arriva: la coda del bring-up arma, e
-	 * b43_phy_ac_noise_sample_done() lo emette e azzera il flag.
+	 * CRS block E is due with the next noise sample: the bring-up tail sets
+	 * this, b43_phy_ac_noise_sample_done() emits the block and clears it.
 	 */
 	bool crs_update_pending;
 	/*
-	 * Un campione e' in volo: armato e non ancora consumato. Finche' e'
-	 * alto il giro non ne arma un altro, che e' la guardia
-	 * `sampling_in_progress` di wlc_phy_noise_sample_request().
+	 * A sample is in flight, armed and not consumed yet; no turn arms
+	 * another meanwhile (wlc_phy_noise_sample_request()'s
+	 * sampling_in_progress guard).
 	 */
 	bool noise_pending;
-	/* Un impulso radar e' arrivato dall'ultimo b43_phy_ac_radar_poll(). */
+	/* A radar pulse arrived since the last b43_phy_ac_radar_poll(). */
 	bool radar_pulses;
-	/* Un giro senza peek in piu', dopo il giro d'ingresso. */
+	/* One more turn without a peek, after the entry turn. */
 	bool peek_skip_one;
 	/*
-	 * Il primo giro dopo il bring-up ha la forma piena -- le quattro celle
-	 * sparse in ordine d'ingresso, il peek col tono, il cambio di modo --
-	 * invece della sola spazzata.
+	 * The first turn after the bring-up has the full shape (the four
+	 * scattered cells in entry order, the tone peek, the mode change)
+	 * instead of the sweep alone.
 	 *
-	 * Non lo decide il driver, lo decide quando arriva il primo callback:
-	 * sugli 87 segmenti dei due sweep la forma piena e la distanza fra la
-	 * coda del bring-up e il primo giro vanno insieme senza eccezioni --
-	 * 44 su 44 negli `up` a caldo, dove il timer gira gia' e il callback
-	 * cade entro un millisecondo, e 1 su 43 a freddo, cold01, l'unico dove
-	 * il tick era gia' scaduto; sugli altri 42 il primo callback arriva
-	 * 1.0-1.3 s dopo ed e' la spazzata sola. Il testimone che la cattura
-	 * porta e' l'ordine delle quattro celle -- 0x010e 0x010c 0x0158 0x015e
-	 * d'ingresso contro 0x010e 0x0158 0x010c 0x015e a regime -- quindi il
-	 * valore viene dal chiamante; reverse-tools/timeline.py lo legge.
+	 * Whether it does depends on when the first callback arrives, not on
+	 * the driver: over the 87 segments of the two sweeps the full shape
+	 * goes with a first callback within a millisecond of the bring-up tail
+	 * (44 of 44 hot `up` segments, and cold01 only among the cold ones),
+	 * while a callback 1.0-1.3 s later is the sweep alone. The caller sets
+	 * it; reverse-tools/timeline.py reads it from the order of the four
+	 * cells.
 	 */
 	bool wd_entry_turn;
 	/*
-	 * Count of calibration cycles this session, gating the cold bump in
-	 * the crsmin path of pwork_60sec(): the blob bumps the ladder for the
-	 * first two calibrations. It appears to saturate at two.
+	 * Calibration cycles this session, gating the cold bump of the crsmin
+	 * path: the blob bumps the ladder for the first two calibrations.
 	 */
 	u8 cal_cycles;
 	/*
-	 * Byte basso della soglia CRS min-power come l'ha scritta l'ultima
-	 * volta uno dei tre siti, per non riscriverla invariata dall'hook
-	 * periodico; vedi b43_phy_ac_op_pwork_60sec(). Zero vuol dire mai
-	 * scritta, e non e' un valore della scala, che parte da 41.
+	 * Low byte of the CRS min-power threshold as last written by one of the
+	 * three sites, so that the periodic hook does not rewrite it unchanged;
+	 * see b43_phy_ac_op_pwork_60sec(). Zero means never written: the ladder
+	 * starts at 41.
 	 */
 	u16 crs_low;
-	/* RX-IQ accumulators gathered by the measurement, consumed by the
-	 * solve. */
+	/* RX-IQ accumulators of the measurement, consumed by the solve. */
 	struct b43_phy_ac_iq_acc iq_acc[B43_PHY_AC_MAX_CORES];
-	/* Salvati da tempsense_radio_setup, riscritti da tempsense_radio_restore. */
+	/* Saved by tempsense_radio_setup(), restored by _restore(). */
 	u16 tempsense_radio_saved[B43_PHY_AC_MAX_CORES][7];
 	/*
 	 * TX baseband multiplier, IQLOCAL 0x63 + 4*core mirrored at 0x73 +
-	 * 4*core. The vendor never invents it: bbmult_cal[core] is the entry
-	 * of GAINCTRLBBMULT (table 0x20) read for the TX cal, bbmult_meas the
-	 * entry at index 0 read for the RX-IQ measurement, bbmult_saved[core]
-	 * the cell as read before a cal and written back after it.
+	 * 4*core. bbmult_cal[core] is the GAINCTRLBBMULT entry (table 0x20)
+	 * read for the TX cal, bbmult_meas the entry at index 0 read for the
+	 * RX-IQ measurement, bbmult_saved[core] the cell as read before a cal
+	 * and written back after.
 	 */
 	u16 bbmult_cal[B43_PHY_AC_MAX_CORES];
 	/*
@@ -437,29 +414,25 @@ struct b43_phy_ac {
 	 */
 	u16 rxgain_saved[B43_PHY_AC_MAX_CORES][14];
 	/*
-	 * The RX gain configuration of each core across the RX-IQ cal: the
+	 * Cal state saved in block D of rxiqcal_finalize() and written back by
+	 * b43_phy_ac_down() at `wl down`: the LO DAC read-back of radio
+	 * 0x?002-0x?005, and the TX IQ/LO coefficients of IQLOCAL (table
+	 * 0x000c) per core at 0x60 + 4*core, {a, b} at +0/+1 and the LO leakage
+	 * word at +2.
+	 *
+	 * @iqlo_saved says whether block D has run; the write-back depends on
+	 * it, since before the first save the arrays hold zeroes. It is not
+	 * b43_phy_ac_may_calibrate_tx(): above 5250 MHz a cold segment has
+	 * neither the save nor the write-back, while a hot one has both with
+	 * the calibration skipped (hot 09, ch52, writes radio 0x0002-0x0005
+	 * where cold05 writes nothing). A cold sweep alone cannot tell the two
+	 * apart.
+	 *
+	 * Then the RX gain configuration of each core across the RX-IQ cal: the
 	 * 25 registers of b43_phy_ac_rxgain_cfg_regs[] plus 0x073e, and the
 	 * three RFSEQ gain rows 0x0100/0x0103/0x0106 + core, read by
-	 * rxgain_config_readback(), written back by rxiq_teardown_apply_defaults().
-	 */
-	/*
-	 * Cal state saved in block D of rxiqcal_finalize() and written back by
-	 * b43_phy_ac_down(), at `wl down`: the LO DAC
-	 * readback of radio 0x?002-0x?005, and the TX IQ/LO coefficients of
-	 * the IQLOCAL table (0x000c) per core at 0x60 + 4*core -- {a, b} at
-	 * +0/+1 and the LO leakage word at +2, two signed bytes.
-	 *
-	 * @iqlo_saved says whether block D has run in this driver's life, and
-	 * it is what the write-back is conditional on: there is nothing to
-	 * write back before the first save, and the arrays hold zeroes that
-	 * would land on the LO DAC and the IQ/LO correctors. The predicate is
-	 * the save and not b43_phy_ac_may_calibrate_tx(), which the two sweeps
-	 * separate: above 5250 MHz a cold segment has neither the save nor the
-	 * write-back, while a hot one has both with the calibration skipped
-	 * all the same -- hot 09 (ch52) writes 0x0079/0x0079/0x0069/0x0078 to
-	 * radio 0x0002-0x0005 where cold05 writes nothing at all. A cold sweep
-	 * cannot tell the two rules apart on its own: one channel per module
-	 * load means the save either ran in that same segment or never.
+	 * rxgain_config_readback() and written back by
+	 * rxiq_teardown_apply_defaults().
 	 */
 	u16 lo_dac[B43_PHY_AC_MAX_CORES][4];
 	u16 txiqlo_coef[B43_PHY_AC_MAX_CORES][3];
@@ -477,26 +450,25 @@ struct b43_phy_ac {
 	} afe_res[6];
 	/*
 	 * Snapshot of afe_res at the end of b43_phy_ac_rxcal_afe_calibrate(),
-	 * the cal's first pass. It is needed because the blob rewrites the same
-	 * offsets with the second tone's results, applied once and temporarily,
-	 * while the final reapplications -- the finalize kick and
-	 * rxiqcal_finalize() -- use the first pass's results again. The attach
-	 * capture shows exactly that: one write of the second pass, then two of
-	 * the first.
+	 * the cal's first pass: the blob rewrites the same offsets with the
+	 * second tone's results, applied once, while the final reapplications
+	 * (the finalize kick and rxiqcal_finalize()) use the first pass's
+	 * results again, as the attach capture shows.
 	 */
 	struct {
 		u16 off;
 		u16 v[2];
 		u8 n;
 	} afe_res_cal[6];
-	/* pa5ga/maxp5ga sub-band group (0..3) for the current channel, cached
-	 * by txpwrctrl_setup so later cal blocks can derive per-core power. */
+	/*
+	 * pa5ga/maxp5ga sub-band group (0..3) of the current channel, cached by
+	 * txpwrctrl_setup for the later cal blocks.
+	 */
 	u8 pa5g_grp;
 	/*
 	 * Channel being programmed, cached by set_channel for the cal blocks
-	 * that run after it. Not read from dev->phy.channel: b43 only updates
-	 * that once ops->switch_channel has returned, so during the
-	 * calibrations it still holds the previous channel.
+	 * that run after it: b43 updates dev->phy.channel only once
+	 * ops->switch_channel has returned.
 	 */
 	u16 cal_channel;
 	/*
@@ -529,14 +501,11 @@ struct b43_phy_ac {
 	enum nl80211_chan_width cal_width;
 
 	/*
-	 * Lunghezza dell'SSID, in byte. Non e' roba del PHY: entra qui perche'
-	 * la lunghezza del probe response dipende da lei, e da quella dipendono
-	 * i PLCP degli otto rate che b43_phy_ac_prb_rsp_plcp() calcola. Su un
-	 * driver vero arriva dal template che mac80211 fornisce; qui la mette
-	 * il core, o chi ne fa le veci.
-	 *
-	 * L'SSID della ricattura e' `test-ap5`, otto caratteri; la lunghezza
-	 * fissa i PLCP di tutti e tre i bandwidth. Vedi docs/retrace-todo.md.
+	 * SSID length in bytes. Not PHY state: the probe response length
+	 * depends on it, and the PLCP of the eight rates
+	 * b43_phy_ac_prb_rsp_plcp() computes depends on that. Set by the core
+	 * (on hardware, from mac80211's template). The recapture's SSID is
+	 * `test-ap5`; see docs/retrace-todo.md.
 	 */
 	u8 ssid_len;
 	/*
@@ -556,92 +525,82 @@ struct b43_phy_ac {
 	enum nl80211_chan_width txpwr_calc_width;
 	u16 txpwr_calc_ceiling;
 	/*
-	 * A channel switch leaves the hardware power control behind the
-	 * target even when the target itself did not move: the vendor runs
-	 * the whole txpwrctrl setup again after the core's BSS configuration.
-	 * Raised by op_switch_channel(), consumed by adjust_txpower().
+	 * A channel switch leaves the hardware power control behind even when
+	 * the target did not move: the stock driver runs the whole txpwrctrl
+	 * setup again after the core's BSS configuration. Set by
+	 * op_switch_channel(), consumed by adjust_txpower().
 	 */
 	bool txpwr_adjust_due;
 	/*
-	 * The configuration the radio is tuned to, once op_switch_channel()
-	 * has run to completion; cleared by op_init(). b43 asks for the same
-	 * channel twice on the way up -- from b43_phy_init() and again from
-	 * b43_op_config() -- and the vendor tunes once: the second request
-	 * finds the radio already there and has nothing to emit.
+	 * The radio is tuned to the current configuration (op_switch_channel()
+	 * ran to completion); cleared by op_init(). b43 asks for the same
+	 * channel twice on the way up, from b43_phy_init() and from
+	 * b43_op_config(), and the stock driver tunes once.
 	 */
 	bool tuned;
 	/*
 	 * The last temperature reading of each chain, from
-	 * b43_phy_ac_tempsense_chain(), indexed [core][step][sample]: the four
-	 * {bit1, bit2} configurations of radio 0x?00e in the vendor's order --
-	 * (1,0), (0,0), (1,1), (0,1) -- and the eight reads of PHY 0x0013 each.
-	 * The reading is the difference between the steps with bit 1 set and
-	 * those with it clear. Nothing consumes it yet: the conversion to degrees
-	 * needs two calibration points from the stock driver's phy_tempsense.
+	 * b43_phy_ac_tempsense_chain(), as [core][step][sample]: the four
+	 * {bit1, bit2} configurations of radio 0x?00e, (1,0), (0,0), (1,1),
+	 * (0,1), and the eight reads of PHY 0x0013 each. Not consumed yet: the
+	 * conversion to degrees needs two calibration points from the stock
+	 * driver's phy_tempsense.
 	 */
 	u16 tempsense_samples[B43_PHY_AC_MAX_CORES][4][8];
 	/*
 	 * Shadow of the five HOSTFn shared-memory words, and whether a change
-	 * to it is written through to the cell.
+	 * is written through to the cell.
 	 *
-	 * The stock driver keeps the same shadow -- its brcmsmac equivalent is
-	 * brcms_b_mhf(), which writes the cell only under
+	 * The stock driver keeps the same shadow; brcmsmac's brcms_b_mhf()
+	 * writes the cell only under
 	 *
 	 *   wlc_hw->clk && band->mhfs[idx] != save && band == wlc_hw->band
 	 *
-	 * so a call that leaves the word unchanged emits nothing. The captures
-	 * bear that out: not one read of 0x005e, 0x0060, 0x0062, 0x0078 or
-	 * 0x00d4 in either witness, and the cell written on 5 calls out of 38
-	 * on the d6220 and 4 out of 56 on the DSL, in both cases exactly the
-	 * calls that change the word.
+	 * so an unchanged word emits nothing. The captures agree: no read of
+	 * the five cells, and the cell written on exactly the calls that change
+	 * the word (5 of 38 on the d6220, 4 of 56 on the DSL).
 	 *
-	 * @mhf_writethrough stands for the clk term. It is not b43's clock
-	 * state, which is already up here: it is the point the captures put
-	 * the transition at, between the slot 4 and slot 0 writes of the
-	 * frontend GPIO block. The band term does not appear because every
-	 * call in both captures is on the operating band.
+	 * @mhf_writethrough stands for the clk term: not b43's clock state, but
+	 * the point the captures put the transition at, between the slot 4 and
+	 * slot 0 writes of the front-end GPIO block. Every call is on the
+	 * operating band, so the band term does not appear.
 	 */
 	u16 mhfs[5];
 	bool mhf_writethrough;
 	/*
-	 * The attach part of the cold preamble has run: the AFE arm with the
-	 * 0x02e4 field and the mode-bit clears, the PMU request, three host
-	 * flags. Once per probe, at the first switch_analog(dev, true) after
-	 * op_allocate(), which is the attach reset.
+	 * The attach part of the cold preamble has run (the AFE arm with the
+	 * 0x02e4 field, the PMU request, three host flags). Once per probe, at
+	 * the first switch_analog(dev, true) after op_allocate(), the attach
+	 * reset.
 	 */
 	bool attach_preamble_done;
 	/*
-	 * Puntatori dei blocchi per-rate degli otto rate OFDM, presi durante la
-	 * scansione delle direct-map in op_switch_channel(). Il vendor non li
-	 * rilegge
-	 * dove costruisce la mappa dei basic rate -- quel blocco e' di sole
-	 * scritture -- quindi li tiene in cache e qui si fa lo stesso.
+	 * Block pointers of the eight OFDM rates, from the direct-map scan in
+	 * op_switch_channel(). The stock driver does not read them again where
+	 * it builds the basic rate map, which is write-only, so they are
+	 * cached.
 	 */
 	u16 rate_ptr[8];
 };
 
 /*
- * Precondition check. `want` bits MUST be set, `forbid` bits MUST be
- * clear. On mismatch: log an error, set FAULTED, and return. Once
- * FAULTED is set every subsequent REQUIRE returns immediately, so a
- * single broken invariant does not cascade into HW damage.
+ * Precondition check. `want` bits must be set, `forbid` bits clear. On
+ * mismatch: log an error, set FAULTED and return. Once FAULTED is set every
+ * later REQUIRE returns immediately, so a broken invariant does not cascade
+ * into the hardware.
  *
- * `dev` is evaluated more than once (must be a plain lvalue).
- * `want` and `forbid` must be disjoint or the check is unsatisfiable;
- * a zero `want`/`forbid` means "no requirement on that side".
+ * `dev` is evaluated more than once. A zero `want`/`forbid` means no
+ * requirement on that side.
  *
- * REQUIRE()	   -> use in functions returning void
- * REQUIRE_RET()   -> use in functions returning a value
+ * REQUIRE() is for functions returning void, REQUIRE_RET() for the others.
  *
- * STATE_PHY_RUN has no mutator and must not appear in `want` or `forbid`: it
- * mirrors BBCFG[15] for parity with annotate_enables.py, and no op in the
- * three sweeps touches that bit -- the run state is established at power-on.
+ * STATE_PHY_RUN has no mutator and must not appear in `want` or `forbid`:
+ * it mirrors BBCFG[15] for parity with annotate_enables.py, and no captured
+ * op touches that bit.
  *
- * STATE_MAC_EN is not stored either: it is the core's dev->mac_suspended
- * counter read at check time, since b43_mac_suspend()/b43_mac_enable() are
- * the only mutators of the MAC run state and they are the core's. A shadow
- * bit here would have to be kept in step by whoever calls them, and nothing
- * in this driver does.
+ * STATE_MAC_EN is not stored: it is the core's dev->mac_suspended counter,
+ * read at check time, since b43_mac_suspend()/b43_mac_enable() are the
+ * core's.
  */
 #define b43_phy_ac_status(dev)						\
 	((dev)->phy.ac->status_mask |					\
@@ -684,11 +643,8 @@ bool b43_phy_ac_force_rf_sequence(struct b43_wldev *dev, u16 rf_seq, u16 gate);
 u16  b43_phy_ac_classifier(struct b43_wldev *dev, u16 mask, u16 val);
 
 /*
- * For a read whose value nobody uses, which is a potential logic error: the
- * log puts its address and value where they can be compared with the captured
- * ones. The captures do carry every read value -- the cold sweeps in a
- * separate RETVAL record, the hot sweep and the DSL folded into the read line.
- *
+ * A read whose value nobody uses, a potential logic error: the log puts
+ * address and value where they can be compared with the captured ones.
  * Compiled out when B43_DEBUG is 0. `dev` is evaluated more than once.
  */
 #define b43_phy_read_log(dev, reg) ({					\
@@ -709,29 +665,26 @@ u16  b43_phy_ac_classifier(struct b43_wldev *dev, u16 mask, u16 val);
 void b43_phy_ac_reset_cca(struct b43_wldev *dev);
 
 /*
- * Un turno del poll del rivelatore radar: mac_suspend, i livelli delle due FIFO
- * degli impulsi (PHY 0x0251 e 0x0252), lo svuotamento di quelle non vuote,
- * mac_enable. Il core lo chiama ogni 150 ms finche' mac80211 chiede la
- * rilevazione, anche dopo che il check si e' chiuso: e' in-service monitoring.
- * Ritorna se dall'ultimo poll e' arrivato almeno un impulso.
+ * One turn of the radar detector poll: mac_suspend, the levels of the two
+ * pulse FIFOs (PHY 0x0251 and 0x0252), draining the non-empty ones,
+ * mac_enable. The core calls it every 150 ms while mac80211 asks for
+ * detection, also after the check has closed. Returns whether a pulse
+ * arrived since the last poll.
  */
 bool b43_phy_ac_radar_poll(struct b43_wldev *dev);
 
 /*
- * Il BSS e' su dopo un channel availability check: le calibrazioni che
- * trasmettono, che il check teneva fuori. La chiama il tick periodico che
- * trova il check chiuso dal core; la riga AMT del BSS la riapre il core. Su un
- * canale senza guardia non c'e' niente da fare: le calibrazioni sono gia'
- * passate allo switch.
+ * The BSS is up after a channel availability check: run the calibrations
+ * that transmit, which the check held back. Called from the core's
+ * cac_done hook; the core reopens the BSS AMT row. Nothing to do on a
+ * channel without the radar duty, where the switch already calibrated.
  */
 void b43_phy_ac_bss_up(struct b43_wldev *dev);
 
 /*
  * Post-channel-setup calibrations, in the order
- * b43_phy_ac_set_channel_calibrations() calls them; that function documents
- * the rounds. Each of these is a phase transcribed from a capture, with its
- * internal structure, op counts and still-transcribed values documented next
- * to the code.
+ * b43_phy_ac_calibration_block() calls them. Each is a phase transcribed
+ * from a capture, documented at its definition.
  */
 void b43_phy_ac_post_cal_finalize(struct b43_wldev *dev);
 void b43_phy_ac_post_cal_finalize_iter3(struct b43_wldev *dev);
@@ -740,7 +693,7 @@ void b43_phy_ac_post_rxiqcal_stage2(struct b43_wldev *dev);
 void b43_phy_ac_rxcal_afe_calibrate(struct b43_wldev *dev);
 void b43_phy_ac_rxcal_afe_finalize_gain_luts(struct b43_wldev *dev);
 
-/* Open-loop TX power; INDEX_DEFAULT is the capture's fixed value. */
+/* Open-loop TX power; INDEX_DEFAULT is the captured fixed index. */
 #define B43_PHY_AC_TXPWR_INDEX_DEFAULT	0x40
 void b43_phy_ac_txpwr_by_index(struct b43_wldev *dev, u8 idx);
 
@@ -765,23 +718,21 @@ void b43_phy_ac_radio_iqcal_teardown(struct b43_wldev *dev);
 void b43_phy_ac_rxiqcal_teardown_apply_defaults(struct b43_wldev *dev);
 void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev);
 
-/* I quattro campi del blocco RX gain che seguono la larghezza; vedi phy_ac.c. */
+/* The four RX gain block fields that follow the width; see phy_ac.c. */
 struct b43_phy_ac_rxgain_bw {
 	u16 f73a_07, f739_7e, f73a_08, f73a_60;
 };
 const struct b43_phy_ac_rxgain_bw *b43_phy_ac_rxgain_bw(struct b43_wldev *dev);
 /*
- * The bss-up burst the vendor emits ~0.5 s after the probe phase: per-rate
- * power, TX power LUTs, the cal coefficient write-back, MAC/GPIO, the analog
- * arm and the PMU release. Not part of switch_channel; no b43 hook is wired to
- * it yet, see the function's comment and docs/retrace-todo.md.
+ * One pass of the probe-response PLCP and duration, for callers outside
+ * the channel setup.
  */
 void b43_phy_ac_prb_rsp_plcp_pass(struct b43_wldev *dev);
 
 /*
- * One AFE cal iteration: arm a command on 0x0380, wait on the busy bit, read
- * the result back and rewrite it at wr_off. Used by both iteration groups.
- * core_off is core * 0x200.
+ * One AFE cal iteration: arm a command on 0x0380, wait on the busy bit,
+ * read the result back and rewrite it at @wr_off. @core_off is
+ * core * 0x200.
  */
 void b43_phy_ac_rxcal_afe_iter(struct b43_wldev *dev,
 			       u16 cmd, u16 core_off,
@@ -789,9 +740,8 @@ void b43_phy_ac_rxcal_afe_iter(struct b43_wldev *dev,
 			       u16 rd_off, u8 rw_len, u16 wr_off);
 
 /*
- * One round of the loopback gain search. core_mask selects the round's cores
- * and r734_vals[] is indexed by core number. The convergence criterion and the
- * caller are in phy_ac.c.
+ * One round of the loopback gain search. @core_mask selects the round's
+ * cores and @r734_vals is indexed by core number.
  */
 void b43_phy_ac_gainctrl_final_apply(struct b43_wldev *dev,
 				     bool with_peek_preamble,
@@ -799,41 +749,36 @@ void b43_phy_ac_gainctrl_final_apply(struct b43_wldev *dev,
 				     const u16 r734_vals[3]);
 
 /*
- * Un giro del watchdog, a cadenza di un secondo dal bring-up alla discesa
- * della radio: fase di campionamento, statistiche, ogni dieci giri il measure
- * block, ogni trenta il dump della regione. Decide da solo cosa portare sul
- * giro, dal contatore @wd_turns; il chiamante da' solo il tick. Vedi il
- * commento in phy_ac.c.
+ * One watchdog turn, once a second from the bring-up to the radio going
+ * down: sampling phase, statistics, the tempsense every temps_period
+ * turns, the region dump every thirty. What the turn carries follows from
+ * its own counters; the caller only ticks it.
  */
 void b43_phy_ac_watchdog(struct b43_wldev *dev);
 bool b43_phy_ac_txpwr_recalc(struct b43_wldev *dev);
 
 /*
- * Il completamento del campione di rumore: il core lo chiama dal suo percorso
- * di interruzione, non il PHY dalla coda di una funzione. Vedi il commento
- * sulla definizione.
+ * Completion of the noise sample, called by the core from its interrupt
+ * path; see the definition.
  */
 void b43_phy_ac_noise_sample_done(struct b43_wldev *dev);
 
-/* Il valore di shm 0x00ce, che anche l'harness emette; derivazione in phy_ac.c. */
+/* shm 0x00ce, also emitted by the harness; derived in phy_ac.c. */
 u16 b43_phy_ac_beacon_pwr_offset(struct b43_wldev *dev);
-/* Il valore di shm 0x00cc della config BSS, la maschera di catena; in phy_ac.c. */
+/* shm 0x00cc of the BSS configuration, the chain mask; in phy_ac.c. */
 u16 b43_phy_ac_bss_cc(struct b43_wldev *dev);
 
-/* Helper trasversali al confine MAC/PHY; razionale in helpers_phy_ac.c. */
+/* Helpers across the MAC/PHY boundary; rationale in helpers_phy_ac.c. */
 void b43_phy_ac_mhf_maskset(struct b43_wldev *dev, u16 slot, u16 mask, u16 val);
 void b43_mac_bw_set(struct b43_wldev *dev, u32 bw);
 void b43_phy_ac_force_clock(struct b43_wldev *dev, bool force);
 
 /*
- * Function-boundary markers for the userspace test harness. B43_AC_FN() at the
- * top of a function makes the harness bracket the ops that follow with the
- * function name, so fn_map.py can segment the generated trace by exact
- * boundaries instead of guessing fingerprints from source. The exit
- * marker is emitted automatically on scope exit (any return) via GCC's
- * cleanup attribute, so nested calls nest correctly. No-op in the kernel
- * build; the harness defines B43_AC_FN_TRACE and provides the hooks, which
- * emit only when enabled at runtime, so the compare.py trace stays clean.
+ * Function-boundary markers for the userspace test harness. B43_AC_FN() at
+ * the top of a function makes the harness bracket the ops that follow with
+ * the function name, so fn_map.py can segment the trace by exact
+ * boundaries. The exit marker is emitted on any return through GCC's
+ * cleanup attribute, so nested calls nest. No-op in the kernel build.
  */
 #ifdef B43_AC_FN_TRACE
 void b43_ac_fn_enter(const char *fn);
@@ -847,20 +792,15 @@ static inline void b43_ac_fn_cleanup(const char *const *fn) { b43_ac_fn_leave(*f
 #endif
 
 /*
- * Block markers, for when a function is too coarse. A function-level
- * [capture-ref: ...] marker collapses every stretch of the capture a long
- * function accounts for into one interval, and op_switch_channel() alone covers
- * about forty distinct sections. B43_AC_BLOCK("name") names the section that
- * starts there, so anchors.py can write a marker for it: the granularity is
- * chosen per case, by hand, where a section is worth locating -- not per op,
- * which would be unreadable, and not automatically, which would guess.
+ * Block markers, for sections of a long function worth locating on their
+ * own: a function-level capture marker collapses every stretch a function
+ * accounts for into one interval, and op_switch_channel() covers about
+ * forty. B43_AC_BLOCK("name") names the section that starts there, so
+ * anchors.py can write a marker for it; the granularity is chosen by hand.
  *
- * Unlike B43_AC_FN this is a POINT marker, with no closing counterpart, and
- * deliberately so: the sections worth naming are stretches of straight-line
- * code delimited by comments, not braced blocks, and requiring a scope would
- * mean restructuring the function to annotate it. A block runs until the next
- * block marker, or until the enclosing function returns -- which the tools
- * close for it, so nothing has to be kept balanced by hand.
+ * A point marker, with no closing counterpart: the sections are stretches
+ * of straight-line code, not braced blocks. A block runs until the next
+ * marker or the end of the function, which the tools close.
  */
 #ifdef B43_AC_FN_TRACE
 void b43_ac_block_mark(const char *name);
@@ -871,11 +811,10 @@ void b43_ac_block_mark(const char *name);
 
 #if UNIT_TEST
 /*
- * Core work the stock driver runs inside the PHY's own sequences, which b43
- * runs from the core or from mac80211 at another time. Each site is work
- * whose owner and content are known and which does not stay in the PHY:
- * test/unit emits the core's operations at the stock driver's point so that
- * the op-for-op comparison keeps its order. Nothing not understood goes here.
+ * Core work the stock driver runs inside the PHY's sequences, which b43
+ * runs from the core or from mac80211 at another time. test/unit emits the
+ * core's operations at the stock driver's point, so that the op-for-op
+ * comparison keeps its order. Only work whose owner and content are known.
  */
 enum b43_phy_ac_core_site {
 	/* b43_wireless_core_reset(): the MACCONTROL write after a core reset */
