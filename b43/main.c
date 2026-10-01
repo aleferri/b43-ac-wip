@@ -3731,7 +3731,6 @@ static int b43_chip_init(struct b43_wldev *dev)
 	 */
 	if (phy->type == B43_PHYTYPE_AC) {
 		b43_chip_init_mac(dev);
-		b43_mgmtframe_txantenna(dev, B43_ANTENNA_DEFAULT);
 	} else {
 		err = b43_phy_bringup(dev);
 		if (err)
