@@ -3455,16 +3455,16 @@ static void b43_adjust_opmode(struct b43_wldev *dev)
 				(ctl & B43_MACCTL_INFRA) && !(ctl & B43_MACCTL_AP) ?
 				0x0183 : 0x003a);
 
-	/* FIXME: We don't currently implement the PMQ mechanism,
-	 *        so always disable it. If we want to implement PMQ,
-	 *        we need to enable it here (clear DISCPMQ) in AP mode.
-	 *
-	 * TODO: the AC cores' stock driver does, in AP mode (MACCONTROL
-	 * 0x44060402 -> 0x04060402 at the bus on the agcombo). It needs the
-	 * B43_IRQ_PMQ handler to drain the queue and report each station's
-	 * power-save change to mac80211; see docs/retrace-todo.md.
+	/*
+	 * The power management queue: the AC's stock driver keeps it in AP
+	 * mode (MACCONTROL 0x44060402 -> 0x04060402 at the bus on the
+	 * agcombo). The ucode then holds back the frames to a station in power
+	 * save; handle_irq_pmq() drains the queue, and mac80211 follows each
+	 * station's power save from the frames it receives. Where the AC TX
+	 * status says a frame was held back is not known, so such a frame is
+	 * reported as not acknowledged. The other PHYs keep discarding it.
 	 */
-	if (0  /* ctl & B43_MACCTL_AP */)
+	if ((ctl & B43_MACCTL_AP) && dev->phy.type == B43_PHYTYPE_AC)
 		b43_maskset32(dev, B43_MMIO_MACCTL, ~B43_MACCTL_DISCPMQ, 0);
 	else
 		b43_maskset32(dev, B43_MMIO_MACCTL, ~0, B43_MACCTL_DISCPMQ);

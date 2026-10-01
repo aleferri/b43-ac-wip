@@ -44,8 +44,8 @@ core itself, seen on the agcombo bus capture:
 - In AP mode the stock driver runs with `DISCPMQ` clear and without
   `SHM_ENABLED` (`0x0416040x`). `SHM_ENABLED` is set by neither stock
   driver nor by brcmsmac (`MCTL_SHM_EN`), and the AC no longer sets it in
-  `b43_chip_init()`; b43 now runs with `0x4416040x`, `DISCPMQ` the one bit
-  left, under "Power management queue" below. `BEACPROMISC` is set for an AP by
+  `b43_chip_init()`. With `DISCPMQ` too (see "Power management queue"
+  below) the AP value is the capture's, `0x0416040x`. `BEACPROMISC` is set for an AP by
   `b43_adjust_opmode()`, as the stock driver does on the AC.
 - The mode bits the stock driver toggles inside the PHY's phases -- beacon
   promiscuity off in the calibration flush and at the tail of the channel
@@ -300,9 +300,24 @@ of `test/unit/compare.py`. To implement it:
 
 ### Power management queue
 
-b43 keeps `B43_MACCTL_DISCPMQ` set; the AC stock driver clears it in AP mode
-(`0x44060402` → `0x04060402` on the agcombo) and drains the queue on
-`B43_IRQ_PMQ`. The TODO is in `b43_adjust_opmode()` (`b43/main.c`).
+The AC stock driver clears `B43_MACCTL_DISCPMQ` in AP mode (`0x44060402` →
+`0x04060402` on the agcombo), and so does the AC, in `b43_adjust_opmode()`:
+its AP MACCONTROL matches the capture's. With the queue on, the ucode holds
+back frames to a station in power save; frames mac80211 sends to a sleeping
+station on purpose (`NO_PS_BUFFER`, `CLEAR_PS_FILT`) carry
+`B43_TXH_MAC_IGNPMQ`. `handle_irq_pmq()` drains the queue; mac80211 follows
+each station's power save from the frames it receives (b43 does not declare
+`AP_LINK_PS`). Not exercised by any capture: the agcombo's has no client in
+power save, so no `B43_IRQ_PMQ` and no suppressed status.
+
+Open: the suppression field of the AC TX status. `b43_txstatus_read_ac()`
+maps only the frame ID and the acknowledgement, so a frame the ucode held
+back is reported as not acknowledged instead of
+`IEEE80211_TX_STAT_TX_FILTERED`, and mac80211 does not buffer it again. The
+pre-AC field, bits 4:2 of the first word, is not it: on the 368 statuses of
+the MacBookAir6,1 traffic capture (`wl-tx`) bit 3 is set on acknowledged
+frames too (`0x810b`). Bits 7:4 are 0 on all of them, which neither confirms
+nor excludes them: that capture is a station and has no suppression to show.
 
 ### MAC and DMA, from the bus captures
 

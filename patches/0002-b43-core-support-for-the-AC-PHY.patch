@@ -529,12 +529,12 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
  drivers/net/wireless/broadcom/b43/dma.h       |    2 +
  drivers/net/wireless/broadcom/b43/leds.c      |  172 +--
  drivers/net/wireless/broadcom/b43/leds.h      |   19 +-
- drivers/net/wireless/broadcom/b43/main.c      | 1063 +++++++++++++++--
+ drivers/net/wireless/broadcom/b43/main.c      | 1071 +++++++++++++++--
  .../net/wireless/broadcom/b43/phy_common.c    |   56 +-
  .../net/wireless/broadcom/b43/phy_common.h    |   32 +-
- drivers/net/wireless/broadcom/b43/xmit.c      |   41 +-
+ drivers/net/wireless/broadcom/b43/xmit.c      |   51 +-
  drivers/net/wireless/broadcom/b43/xmit.h      |   21 +
- 12 files changed, 1343 insertions(+), 230 deletions(-)
+ 12 files changed, 1357 insertions(+), 234 deletions(-)
 
 diff --git a/drivers/net/wireless/broadcom/b43/Kconfig b/drivers/net/wireless/broadcom/b43/Kconfig
 index 4559549..616aa17 100644
@@ -1209,7 +1209,7 @@ index 5ebd1b2..eb68796 100644
  
  #endif /* B43_LEDS_H_ */
 diff --git a/drivers/net/wireless/broadcom/b43/main.c b/drivers/net/wireless/broadcom/b43/main.c
-index 92ca0b2..233ff45 100644
+index 92ca0b2..6d6a5e6 100644
 --- a/drivers/net/wireless/broadcom/b43/main.c
 +++ b/drivers/net/wireless/broadcom/b43/main.c
 @@ -316,6 +316,23 @@ static struct ieee80211_channel b43_5ghz_aphy_chantable[] = {
@@ -1858,10 +1858,13 @@ index 92ca0b2..233ff45 100644
  
  	/* Workaround: On old hardware the HW-MAC-address-filter
  	 * doesn't work properly, so always run promisc in filter
-@@ -3139,9 +3444,25 @@ static void b43_adjust_opmode(struct b43_wldev *dev)
+@@ -3139,11 +3444,27 @@ static void b43_adjust_opmode(struct b43_wldev *dev)
  	}
  	b43_write16(dev, 0x612, cfp_pretbtt);
  
+-	/* FIXME: We don't currently implement the PMQ mechanism,
+-	 *        so always disable it. If we want to implement PMQ,
+-	 *        we need to enable it here (clear DISCPMQ) in AP mode.
 +	/*
 +	 * Beacon TSF offset. Both the 6.30 and the 7.14 AC microcode start from
 +	 * 0x183, the band initvals' value; 7.14 moves it to 0x3a in the BSS
@@ -1873,17 +1876,20 @@ index 92ca0b2..233ff45 100644
 +				(ctl & B43_MACCTL_INFRA) && !(ctl & B43_MACCTL_AP) ?
 +				0x0183 : 0x003a);
 +
- 	/* FIXME: We don't currently implement the PMQ mechanism,
- 	 *        so always disable it. If we want to implement PMQ,
- 	 *        we need to enable it here (clear DISCPMQ) in AP mode.
-+	 *
-+	 * TODO: the AC cores' stock driver does, in AP mode (MACCONTROL
-+	 * 0x44060402 -> 0x04060402 at the bus on the agcombo). It needs the
-+	 * B43_IRQ_PMQ handler to drain the queue and report each station's
-+	 * power-save change to mac80211; see docs/retrace-todo.md.
++	/*
++	 * The power management queue: the AC's stock driver keeps it in AP
++	 * mode (MACCONTROL 0x44060402 -> 0x04060402 at the bus on the
++	 * agcombo). The ucode then holds back the frames to a station in power
++	 * save; handle_irq_pmq() drains the queue, and mac80211 follows each
++	 * station's power save from the frames it receives. Where the AC TX
++	 * status says a frame was held back is not known, so such a frame is
++	 * reported as not acknowledged. The other PHYs keep discarding it.
  	 */
- 	if (0  /* ctl & B43_MACCTL_AP */)
+-	if (0  /* ctl & B43_MACCTL_AP */)
++	if ((ctl & B43_MACCTL_AP) && dev->phy.type == B43_PHYTYPE_AC)
  		b43_maskset32(dev, B43_MMIO_MACCTL, ~B43_MACCTL_DISCPMQ, 0);
+ 	else
+ 		b43_maskset32(dev, B43_MMIO_MACCTL, ~0, B43_MACCTL_DISCPMQ);
 @@ -3172,6 +3493,7 @@ static void b43_rate_memory_init(struct b43_wldev *dev)
  	case B43_PHYTYPE_LP:
  	case B43_PHYTYPE_HT:
@@ -2970,7 +2976,7 @@ index 5ec5233..e0d0c65 100644
  
  #endif /* LINUX_B43_PHY_COMMON_H_ */
 diff --git a/drivers/net/wireless/broadcom/b43/xmit.c b/drivers/net/wireless/broadcom/b43/xmit.c
-index 7651b1b..ebff115 100644
+index 7651b1b..8efe559 100644
 --- a/drivers/net/wireless/broadcom/b43/xmit.c
 +++ b/drivers/net/wireless/broadcom/b43/xmit.c
 @@ -254,7 +254,8 @@ int b43_generate_txhdr(struct b43_wldev *dev,
@@ -2991,7 +2997,24 @@ index 7651b1b..ebff115 100644
  	case B43_FW_HDR_598:
  		b43_generate_plcp_hdr((struct b43_plcp_hdr4 *)(&txhdr->format_598.plcp),
  				      plcp_fragment_len, rate);
-@@ -439,6 +441,7 @@ int b43_generate_txhdr(struct b43_wldev *dev,
+@@ -403,6 +405,16 @@ int b43_generate_txhdr(struct b43_wldev *dev,
+ 		mac_ctl |= B43_TXH_MAC_HWSEQ;
+ 	if (info->flags & IEEE80211_TX_CTL_FIRST_FRAGMENT)
+ 		mac_ctl |= B43_TXH_MAC_STMSDU;
++	/*
++	 * With the power management queue on (an AC AP, b43_adjust_opmode())
++	 * the ucode holds back the frames to a station in power save. The
++	 * ones mac80211 sends to it anyway -- a PS-Poll or U-APSD answer, the
++	 * first after a wake-up -- must pass.
++	 */
++	if (phy->type == B43_PHYTYPE_AC &&
++	    (info->flags & (IEEE80211_TX_CTL_NO_PS_BUFFER |
++			    IEEE80211_TX_CTL_CLEAR_PS_FILT)))
++		mac_ctl |= B43_TXH_MAC_IGNPMQ;
+ 	if (!phy->gmode)
+ 		mac_ctl |= B43_TXH_MAC_5GHZ;
+ 
+@@ -439,6 +451,7 @@ int b43_generate_txhdr(struct b43_wldev *dev,
  			struct ieee80211_cts *cts;
  
  			switch (dev->fw.hdr_format) {
@@ -2999,7 +3022,7 @@ index 7651b1b..ebff115 100644
  			case B43_FW_HDR_598:
  				cts = (struct ieee80211_cts *)
  					(txhdr->format_598.rts_frame);
-@@ -461,6 +464,7 @@ int b43_generate_txhdr(struct b43_wldev *dev,
+@@ -461,6 +474,7 @@ int b43_generate_txhdr(struct b43_wldev *dev,
  			struct ieee80211_rts *rts;
  
  			switch (dev->fw.hdr_format) {
@@ -3007,7 +3030,7 @@ index 7651b1b..ebff115 100644
  			case B43_FW_HDR_598:
  				rts = (struct ieee80211_rts *)
  					(txhdr->format_598.rts_frame);
-@@ -484,6 +488,7 @@ int b43_generate_txhdr(struct b43_wldev *dev,
+@@ -484,6 +498,7 @@ int b43_generate_txhdr(struct b43_wldev *dev,
  
  		/* Generate the PLCP headers for the RTS/CTS frame */
  		switch (dev->fw.hdr_format) {
@@ -3015,7 +3038,7 @@ index 7651b1b..ebff115 100644
  		case B43_FW_HDR_598:
  			plcp = &txhdr->format_598.rts_plcp;
  			break;
-@@ -501,6 +506,7 @@ int b43_generate_txhdr(struct b43_wldev *dev,
+@@ -501,6 +516,7 @@ int b43_generate_txhdr(struct b43_wldev *dev,
  				      len, rts_rate_fb);
  
  		switch (dev->fw.hdr_format) {
@@ -3023,7 +3046,7 @@ index 7651b1b..ebff115 100644
  		case B43_FW_HDR_598:
  			hdr = (struct ieee80211_hdr *)
  				(&txhdr->format_598.rts_frame);
-@@ -541,6 +547,7 @@ int b43_generate_txhdr(struct b43_wldev *dev,
+@@ -541,6 +557,7 @@ int b43_generate_txhdr(struct b43_wldev *dev,
  
  	/* Magic cookie */
  	switch (dev->fw.hdr_format) {
@@ -3031,7 +3054,7 @@ index 7651b1b..ebff115 100644
  	case B43_FW_HDR_598:
  		txhdr->format_598.cookie = cpu_to_le16(cookie);
  		break;
-@@ -640,6 +647,8 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
+@@ -640,6 +657,8 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
  	u16 chanstat, mactime;
  	u32 macstat;
  	u16 chanid;
@@ -3040,7 +3063,7 @@ index 7651b1b..ebff115 100644
  	int padding, rate_idx;
  
  	memset(&status, 0, sizeof(status));
-@@ -648,6 +657,7 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
+@@ -648,6 +667,7 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
  	phystat0 = le16_to_cpu(rxhdr->phy_status0);
  	phystat3 = le16_to_cpu(rxhdr->phy_status3);
  	switch (dev->fw.hdr_format) {
@@ -3048,7 +3071,7 @@ index 7651b1b..ebff115 100644
  	case B43_FW_HDR_598:
  		macstat = le32_to_cpu(rxhdr->format_598.mac_status);
  		mactime = le16_to_cpu(rxhdr->format_598.mac_time);
-@@ -661,6 +671,18 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
+@@ -661,6 +681,18 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
  		break;
  	}
  
@@ -3067,7 +3090,7 @@ index 7651b1b..ebff115 100644
  	if (unlikely(macstat & B43_RX_MAC_FCSERR)) {
  		dev->wl->ieee_stats.dot11FCSErrorCount++;
  		status.flag |= RX_FLAG_FAILED_FCS_CRC;
-@@ -716,7 +738,11 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
+@@ -716,7 +748,11 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
  	}
  
  	/* Link quality statistics */
@@ -3080,7 +3103,7 @@ index 7651b1b..ebff115 100644
  	case B43_PHYTYPE_HT:
  		/* TODO: is max the right choice? */
  		status.signal = max_t(__s8,
-@@ -741,8 +767,7 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
+@@ -741,8 +777,7 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
  	}
  
  	if (phystat0 & B43_RX_PHYST0_OFDM)
@@ -3090,7 +3113,7 @@ index 7651b1b..ebff115 100644
  	else
  		rate_idx = b43_plcp_get_bitrate_idx_cck(plcp);
  	if (unlikely(rate_idx == -1)) {
-@@ -775,7 +800,7 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
+@@ -775,7 +810,7 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
  	}
  
  	chanid = (chanstat & B43_RX_CHAN_ID) >> B43_RX_CHAN_ID_SHIFT;
@@ -3099,7 +3122,7 @@ index 7651b1b..ebff115 100644
  	case B43_PHYTYPE_G:
  		status.band = NL80211_BAND_2GHZ;
  		/* Somewhere between 478.104 and 508.1084 firmware for G-PHY
-@@ -791,13 +816,17 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
+@@ -791,13 +826,17 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
  	case B43_PHYTYPE_HT:
  		/* chanid is the SHM channel cookie. Which is the plain
  		 * channel number in b43. */
