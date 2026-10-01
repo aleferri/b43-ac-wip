@@ -194,6 +194,26 @@ static const struct {
 	{ 36, 21 }, { 40, 21 }, { 44, 21 }, { 48, 21 }, { 100, 26 },
 };
 
+/*
+ * Quello che cfg80211_chandef_usable() chiede alla banda prima di accettare
+ * una larghezza: il 40 vuole HT con SUP_WIDTH_20_40, l'80 vuole VHT. Senza,
+ * hostapd non arriva a start_ap con quella chandef, e una suite che la
+ * imponesse misurerebbe una configurazione che sul ferro non esiste.
+ */
+static bool shim_width_usable(const struct ieee80211_supported_band *sb,
+			      long bw)
+{
+	switch (bw) {
+	case 40:
+		return sb->ht_cap.ht_supported &&
+		       (sb->ht_cap.cap & IEEE80211_HT_CAP_SUP_WIDTH_20_40);
+	case 80:
+		return sb->ht_cap.ht_supported && sb->vht_cap.vht_supported;
+	default:
+		return true;
+	}
+}
+
 static struct ieee80211_hw *g_hw;
 
 static void apply_regdomain(struct ieee80211_supported_band *sb)
@@ -251,6 +271,12 @@ int ieee80211_register_hw(struct ieee80211_hw *hw)
 	if (!pick) {
 		b43_trace_note("b43 non ha registrato nessuna banda%d\n", 0);
 		return 0;
+	}
+
+	if (!shim_width_usable(hw->wiphy->bands[pick->band], bw)) {
+		b43_trace_note("B43_BW=%d: la banda non annuncia la larghezza, "
+			       "cfg80211 la rifiuterebbe\n", (int)bw);
+		return -EINVAL;
 	}
 
 	hw->conf.chandef.chan = pick;

@@ -1046,6 +1046,12 @@ struct b43_wl {
 	/* The device LEDs. */
 	struct b43_leds leds;
 
+	/*
+	 * The 5 GHz band of an AC PHY. Its HT and VHT capabilities depend on
+	 * the board's receive chains, so each device has its own copy.
+	 */
+	struct ieee80211_supported_band band_5ghz_ac;
+
 	/* Kmalloc'ed scratch space for PIO TX/RX. Protected by wl->mutex. */
 	u8 pio_scratchspace[118] __attribute__((__aligned__(8)));
 	u8 pio_tailspace[4] __attribute__((__aligned__(8)));

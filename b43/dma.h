@@ -174,7 +174,13 @@ struct b43_dmadesc_generic {
 #define B43_RXRING_SLOTS		256
 #define B43_DMA0_RX_FW598_BUFSIZE	(B43_DMA0_RX_FW598_FO + IEEE80211_MAX_FRAME_LEN)
 #define B43_DMA0_RX_FW351_BUFSIZE	(B43_DMA0_RX_FW351_FO + IEEE80211_MAX_FRAME_LEN)
-#define B43_DMA0_RX_AC_BUFSIZE		(B43_DMA0_RX_AC_FO + IEEE80211_MAX_FRAME_LEN)
+/*
+ * The AC PHY announces VHT, whose MPDUs may be as long as 3895 bytes; the
+ * buffer holds one after the PLCP header and its two bytes of padding.
+ */
+#define B43_DMA0_RX_AC_BUFSIZE		(B43_DMA0_RX_AC_FO + \
+					 sizeof(struct b43_plcp_hdr6) + 2 + \
+					 IEEE80211_MAX_MPDU_LEN_VHT_3895)
 
 /* Pointer poison */
 #define B43_DMA_PTR_POISON		((void *)ERR_PTR(-ENOMEM))

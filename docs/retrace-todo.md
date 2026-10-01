@@ -319,6 +319,29 @@ the MacBookAir6,1 traffic capture (`wl-tx`) bit 3 is set on acknowledged
 frames too (`0x810b`). Bits 7:4 are 0 on all of them, which neither confirms
 nor excludes them: that capture is a station and has no suppression to show.
 
+### HT and VHT
+
+The AC announces HT 20/40 and VHT 80 on 5 GHz (`b43_ac_set_ht_vht_cap()`),
+from the capabilities of the stock beacon in the agcombo bus capture
+(`ch36.bin`, template RAM through `TPLWRPTR`/`TPLWRDATA`): HT `0x086e`
+(`0x086f`, LDPC added, in its later beacons), MCS `ff ff ff`, TX MCS set not
+defined; VHT `0x0f825832`, MCS 0-9 on three streams both ways. The port
+takes the streams from the SROM `rxchain` and leaves out what b43 does not
+do: A-MPDU and A-MSDU, MPDUs over 3895 bytes, LDPC, beamforming, link
+adaptation, and HT and VHT rates in transmission. What is open:
+
+- **TX.** The TX header is the pre-AC layout, `format_598`, with legacy
+  rates only: with no TX MCS set and an empty VHT TX map mac80211 picks
+  OFDM rates, and `b43_op_tx()` drops a frame that asks for an MCS. The AC
+  ucode's header for HT and VHT, and whether it is the 598 one at all, is in
+  DMA memory, which no capture records.
+- **RX rates.** `b43_rx()` decodes the rate from the PLCP with the legacy
+  rules. How the AC ucode marks an HT or VHT frame in its receive header, and
+  what the six PLCP bytes then hold, is in DMA memory too; an HT or VHT
+  frame is dropped as a bad PLCP or reported at a wrong legacy rate.
+- **Receive buffer.** `B43_DMA0_RX_AC_BUFSIZE` holds a 3895-byte MPDU, the
+  VHT minimum; the stock driver's own buffer size is not in any capture.
+
 ### MAC and DMA, from the bus captures
 
 `router-data/archer-t5e/` (hybrid `wl` 6.30.223, x86) and the agcombo's

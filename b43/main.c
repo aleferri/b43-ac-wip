@@ -4132,6 +4132,12 @@ static void b43_tx_work(struct work_struct *work)
 	mutex_unlock(&wl->mutex);
 }
 
+static bool b43_tx_rate_is_mcs(const struct ieee80211_tx_rate *rate)
+{
+	return rate->idx >= 0 &&
+	       (rate->flags & (IEEE80211_TX_RC_MCS | IEEE80211_TX_RC_VHT_MCS));
+}
+
 static void b43_op_tx(struct ieee80211_hw *hw,
 		      struct ieee80211_tx_control *control,
 		      struct sk_buff *skb)
@@ -4144,6 +4150,17 @@ static void b43_op_tx(struct ieee80211_hw *hw,
 		return;
 	}
 	B43_WARN_ON(skb_shinfo(skb)->nr_frags);
+	/*
+	 * The TX header carries legacy rates only. Rate control never picks
+	 * an MCS, see b43_ac_set_ht_vht_cap(), but an injected frame can ask
+	 * for one, and b43_generate_txhdr() would read it as an index into the
+	 * legacy rate table.
+	 */
+	if (unlikely(b43_tx_rate_is_mcs(&IEEE80211_SKB_CB(skb)->control.rates[0]) ||
+		     b43_tx_rate_is_mcs(&IEEE80211_SKB_CB(skb)->control.rates[1]))) {
+		ieee80211_free_txskb(hw, skb);
+		return;
+	}
 
 	skb_queue_tail(&wl->tx_queue[skb->queue_mapping], skb);
 	if (!wl->tx_queue_stopped[skb->queue_mapping]) {
@@ -6053,6 +6070,60 @@ static const struct ieee80211_iface_combination b43_if_comb_dfs = {
 			       BIT(NL80211_CHAN_WIDTH_80),
 };
 
+/*
+ * What the AC PHY tells cfg80211 and mac80211 it can do in HT and VHT. The
+ * starting point is what the stock driver puts in its beacon (agcombo,
+ * 7.14.43, ch36/80): HT 20/40 with the short guard interval on both, SM
+ * power save disabled; VHT at 80 MHz with the short guard interval; MCS 0-7
+ * and 0-9 on every receive chain. Left out, because b43 does not do them:
+ *
+ *  - aggregation: the A-MPDU parameters stay at their minimum, and with no
+ *    ampdu_action mac80211 opens no block ack session either way;
+ *  - transmitting HT and VHT rates: the TX MCS set is not defined and the
+ *    VHT TX map is empty, so mac80211 picks legacy rates only, see
+ *    b43_op_tx();
+ *  - the long MPDUs and A-MSDUs, beyond the receive buffer;
+ *  - LDPC, beamforming and the link adaptation the stock driver announces
+ *    on VHT: nothing configures or decodes them.
+ *
+ * The stock beacon carries the 4360's three streams; the streams here are
+ * the board's receive chains, the SROM rxchain the PHY also uses.
+ */
+static void b43_ac_set_ht_vht_cap(struct b43_wldev *dev,
+				  struct ieee80211_supported_band *band)
+{
+	struct ieee80211_sta_ht_cap *ht = &band->ht_cap;
+	struct ieee80211_sta_vht_cap *vht = &band->vht_cap;
+	u8 chains = dev->dev->bus_sprom->rxchain & 0x07;
+	unsigned int nss, i;
+	u16 map = 0;
+
+	if (!chains)
+		chains = 0x03;
+	nss = hweight8(chains);
+
+	memset(ht, 0, sizeof(*ht));
+	ht->ht_supported = true;
+	ht->cap = IEEE80211_HT_CAP_SUP_WIDTH_20_40 |
+		  IEEE80211_HT_CAP_SGI_20 |
+		  IEEE80211_HT_CAP_SGI_40 |
+		  (WLAN_HT_CAP_SM_PS_DISABLED << IEEE80211_HT_CAP_SM_PS_SHIFT);
+	ht->ampdu_factor = IEEE80211_HT_MAX_AMPDU_8K;
+	ht->ampdu_density = IEEE80211_HT_MPDU_DENSITY_NONE;
+	for (i = 0; i < nss; i++)
+		ht->mcs.rx_mask[i] = 0xff;
+
+	for (i = 0; i < 8; i++)
+		map |= (i < nss ? IEEE80211_VHT_MCS_SUPPORT_0_9 :
+				  IEEE80211_VHT_MCS_NOT_SUPPORTED) << (2 * i);
+	memset(vht, 0, sizeof(*vht));
+	vht->vht_supported = true;
+	vht->cap = IEEE80211_VHT_CAP_MAX_MPDU_LENGTH_3895 |
+		   IEEE80211_VHT_CAP_SHORT_GI_80;
+	vht->vht_mcs.rx_mcs_map = cpu_to_le16(map);
+	vht->vht_mcs.tx_mcs_map = cpu_to_le16(0xffff);
+}
+
 static int b43_setup_bands(struct b43_wldev *dev,
 			   bool have_2ghz_phy, bool have_5ghz_phy)
 {
@@ -6071,9 +6142,14 @@ static int b43_setup_bands(struct b43_wldev *dev,
 		hw->wiphy->bands[NL80211_BAND_2GHZ] = limited_2g ?
 			&b43_band_2ghz_limited : &b43_band_2GHz;
 	if (dev->phy.type == B43_PHYTYPE_AC) {
-		if (have_5ghz_phy)
-			hw->wiphy->bands[NL80211_BAND_5GHZ] =
-				&b43_band_5GHz_acphy;
+		if (have_5ghz_phy) {
+			struct ieee80211_supported_band *band =
+				&dev->wl->band_5ghz_ac;
+
+			*band = b43_band_5GHz_acphy;
+			b43_ac_set_ht_vht_cap(dev, band);
+			hw->wiphy->bands[NL80211_BAND_5GHZ] = band;
+		}
 	} else
 	if (dev->phy.type == B43_PHYTYPE_N) {
 		if (have_5ghz_phy)
