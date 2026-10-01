@@ -4481,6 +4481,30 @@ static bool b43_ac_retune_needed(struct b43_wldev *dev,
 }
 
 /*
+ * A channel change on a running AC interface. The stock driver changes
+ * channel only through a down and an up; this is that cycle for the PHY.
+ * The up's core resets, ucode load and PLL setup are left out: the PLL
+ * words are the same on every channel of every capture. The PHY's state is
+ * kept: op_prepare_structs() goes with the core reset of
+ * b43_wireless_core_init(), which clears the hardware state the PHY tracks,
+ * and here nothing is reset. phy->do_full_init stays false, so
+ * b43_phy_init() takes the hot path and writes the new chanspec first.
+ *
+ * A failed b43_phy_init() leaves the radio off and asks for a full init,
+ * which a running core cannot take; the controller restart gives it one.
+ */
+static int b43_ac_phy_recycle(struct b43_wldev *dev)
+{
+	int err;
+
+	b43_software_rfkill(dev, true);
+	err = b43_phy_init(dev);
+	if (err)
+		b43_controller_restart(dev, "PHY cycle failed");
+	return err;
+}
+
+/*
  * The channel availability check mutes the MAC, so that the BSS neither
  * transmits nor answers on a channel it may not use yet. Three things, in the
  * order the stock driver writes them at the bus:
@@ -4580,7 +4604,13 @@ static int b43_op_config(struct ieee80211_hw *hw, u32 changed)
 			/* Switch to the requested channel.
 			 * The firmware takes care of races with the TX handler.
 			 */
-			b43_switch_channel(dev, phy->channel);
+			if (ac && dev->tuned_chandef.chan) {
+				err = b43_ac_phy_recycle(dev);
+				if (err)
+					goto out_mac_enable;
+			} else {
+				b43_switch_channel(dev, phy->channel);
+			}
 			switched = true;
 			if (ac)
 				dev->tuned_chandef = conf->chandef;

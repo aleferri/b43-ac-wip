@@ -98,6 +98,16 @@ pieces in order. On the D6220 `cold01` (folded, op numbers of
   hop/`up` split of the tail rests on 6.30 alone: on the 7.14 boards, in AP
   mode, the channel changes only through `wl down`, so every 7.14 capture of
   a new channel is a whole `up`, the agcombo bus ones included.
+  The port follows 7.14 without the core part of the cycle: on the AC a
+  channel change on a tuned interface takes the PHY down and up again
+  (`b43_ac_phy_recycle()`) on the hot path, keeps the PHY's own state, which
+  `op_prepare_structs()` resets only together with a core reset, and leaves
+  out the core resets, the ucode load and the PLL words, which are the same
+  on every channel of every 7.14 capture. In the integration harness a
+  ch36 -> ch40 change after the AP start finds 20349 of the 25023
+  ops of the D6220 hot `up` on ch40 (`02-up-ch40-bw20`), with no MACCONTROL
+  reset, no ucode jump and no PLL write; its reads still come from the ch36
+  oracle, so the values and the polls past its end do not count.
 - Not yet checked the same way: `_CAL_BCNPROMISC_OFF` (probe cycle),
   `_BEACON_WD` (watchdog counter passes; the reload is on the other CPU in
   `cold01`, op 11930), `_CAC_CLOSE`, `_BEACON_START`, `_DOWN_OPMODE`,
