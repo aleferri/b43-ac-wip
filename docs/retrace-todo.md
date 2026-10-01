@@ -163,8 +163,10 @@ driver:
 
 ### Key-table clearing
 
-The stock driver clears the address match rows inside the channel setup, right
-after `shm_zero_05e0`; b43 does it from `b43_security_init()` at the tail of
+The stock driver initialises the key table inside the channel setup: it reads
+the key table pointer (`0x0056`, `0x087a`), zeroes the key material from
+`0x10f4` and the key index block at `0x05e0`, and clears the address match
+rows; b43 does it from `b43_security_init()` at the tail of
 `b43_wireless_core_init()`. `test/unit` emits them at the stock point
 (`B43_AC_SITE_KEYS_CLEAR`) with the stock count. What remains in the core:
 
@@ -174,17 +176,22 @@ after `shm_zero_05e0`; b43 does it from `b43_security_init()` at the tail of
 - **The first pair.** The stock driver writes the station row with `0x8008`
   and the BSSID row without flags first, after `0x018a`/`0x018c`
   (`B43_AC_SITE_MACFILTER_FIRST`); b43 does not.
-- **Double key material.** The PHY zeroes `0x10f4`–`0x14b2` and `0x05e0`–`0x0666`
-  (`shm_zero_10f4`/`shm_zero_05e0`), and `b43_security_init()` writes the key
-  material and index block again, the index block as `(kidx << 4) | algo`
-  over 54 words where the stock driver writes zeros over 68.
+- **Key material and index block.** The stock driver zeroes 480 words of
+  key material and 68 of index block. `b43_security_init()` writes the
+  material of its own 54 slots, 432 words, and the last six slots stay as
+  they are: the key material lies above the 4 KiB of shared memory that
+  `b43_upload_microcode()` zeroes. The index block it writes as
+  `(kidx << 4) | algo` over 54 words; the other 14 are inside those 4 KiB.
+  `test/unit` emits the stock zeroing with the rows; at the bus the
+  integration gates miss its 548 words per `up`.
 
 ### Shared-memory cells emitted from the PHY
 
-`b43_phy_ac_shm_readback_block()` and the two zeroing runs write MAC cells,
-not PHY ones. They sit in the PHY because the captures put them between the
-PHY write of `0x0339` and the host flag that follows, and the core has no hook
-there. Moving them needs a core entry point at that position.
+`b43_phy_ac_shm_readback_block()` writes MAC cells, not PHY ones. It sits
+in the PHY because the captures put it between the PHY write of `0x0339` and
+the host flag that follows, and the core has no hook there. Moving it needs a
+core entry point at that position. The key table init the stock driver runs
+at the same point is under "Key-table clearing".
 
 ### Host-flag order
 

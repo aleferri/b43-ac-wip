@@ -11531,36 +11531,18 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 		b43_shm_read16(dev, B43_SHM_SHARED, off);
 	b43_shm_read16(dev, B43_SHM_SHARED, 0x0056);
 	/*
-	 * 0x10f4-0x14b2 zeroed, 480 words. In the blob this is a table load
-	 * from rodata and the table is all zeros, so the loop replaces it
-	 * without losing anything. Once per attach, immediately after RFATT,
-	 * and the same 480 zero words on every segment checked, at every
-	 * channel and width.
+	 * 0x0056 is the key table pointer, B43_SHM_SH_KTP: 0x087a, the key
+	 * material at 0x10f4. Here the stock driver zeroes it, 480 words up to
+	 * 0x14b2, then the key index block of corerev 42 at 0x05e0-0x0666
+	 * (b43_shm_sh_keyidxblock()), 68 words, then the key rows of the address
+	 * match table: the key table init of the stock up. In b43 it is
+	 * b43_security_init()'s, at the core init, once per up.
 	 */
 	/* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
-	 *   12311-12790]
+	 *   12311-12858]
 	 * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
-	 *   7998-8477]
+	 *   7998-8545]
 	 */
-	B43_AC_BLOCK("shm_zero_10f4");
-	for (off = 0x10f4; off <= 0x14b2; off += 2)
-		b43_shm_write16(dev, B43_SHM_SHARED, off, 0x0000);
-	/*
-	 * Second zeroing, attached to the first: 68 words from 0x05e0 to
-	 * 0x0666, identical on every segment checked. The first ten fall in the
-	 * KEYIDXBLOCK block that b43.h declares the core's, but the vendor
-	 * writes them in this run and nowhere else -- each cell appears exactly
-	 * once in the capture -- so the run is reproduced whole and the
-	 * perimeter of compare.py is restricted accordingly.
-	 */
-	/* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
-	 *   12791-12858]
-	 * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
-	 *   8478-8545]
-	 */
-	B43_AC_BLOCK("shm_zero_05e0");
-	for (off = 0x05e0; off <= 0x0666; off += 2)
-		b43_shm_write16(dev, B43_SHM_SHARED, off, 0x0000);
 #if UNIT_TEST
 	b43_phy_ac_core_site(dev, B43_AC_SITE_KEYS_CLEAR);
 #endif

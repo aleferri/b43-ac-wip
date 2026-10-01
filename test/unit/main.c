@@ -811,6 +811,17 @@ static void emit_core_top_row(bool self, u16 flags)
 #define B43_TEST_KEY_ROWS	0x38
 
 /*
+ * La tabella chiavi del corerev 42 come il vendor la azzera prima delle
+ * righe: il materiale da KTP (0x087a, 0x10f4), 480 parole, e il blocco
+ * degli indici, 0x05e0-0x0666, 68 parole. b43_security_init() lo fa nel
+ * core init, per le sue voci.
+ */
+#define B43_TEST_KEY_MATERIAL	0x10f4
+#define B43_TEST_KEY_MATERIAL_WORDS	480
+#define B43_TEST_KEYIDX_BLOCK	0x05e0
+#define B43_TEST_KEYIDX_WORDS	68
+
+/*
  * Doppioni del core sul bring-up a freddo: la MACCONTROL di
  * b43_wireless_core_reset() (IHR | AWAKE, quattro reset nella cattura), il
  * salto a 0 del PSM e il suo avvio in b43_upload_microcode(), e in coda la
@@ -930,6 +941,12 @@ void b43_phy_ac_core_site(struct b43_wldev *dev, enum b43_phy_ac_core_site site)
 		emit_core_ucode_start();
 		break;
 	case B43_AC_SITE_KEYS_CLEAR:
+		for (i = 0; i < B43_TEST_KEY_MATERIAL_WORDS; i++)
+			b43_shm_write16(dev, B43_SHM_SHARED,
+					B43_TEST_KEY_MATERIAL + 2 * i, 0);
+		for (i = 0; i < B43_TEST_KEYIDX_WORDS; i++)
+			b43_shm_write16(dev, B43_SHM_SHARED,
+					B43_TEST_KEYIDX_BLOCK + 2 * i, 0);
 		for (i = 0; i < B43_TEST_KEY_ROWS; i++) {
 			b43_test_emit_addrm(i);
 			b43_test_emit_amt(i, 0);

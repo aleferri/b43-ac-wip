@@ -56,8 +56,8 @@ Measured on 2026-09-30.
 | unit, cold TG789vac v2 `cold01` ch36/20 | 99.91% |
 | unit, cold TG789vac v2, all 43 segments | min 99.77% (ch149/40), median 99.91%, max 99.98% |
 | unit, periodic watchdog tick | **`MATCH`** |
-| integration, cold `cold01` | `probe: 0`, `start: 0`; 83.87% (29253/34879) |
-| integration, agcombo ch36/80 at the bus | 65.59% (88588/135062), with the 561 interrupts and 283 received frames of the capture replayed |
+| integration, cold `cold01` | `probe: 0`, `start: 0`; 82.30% (28705/34879) |
+| integration, agcombo ch36/80 at the bus | 64.78% (87492/135062), with the 561 interrupts and 283 received frames of the capture replayed |
 | SROM rev 11 extractor | 74/79/80 PASS, 0 FAIL (DSL-3580L, D6220, agcombo) |
 
 The agcombo unit row was not re-measured on this date; the integration rows
@@ -68,7 +68,8 @@ cold01 integration row measured 90.90% (29003/31905) while the whole cold
 preamble ran in `b43_phy_init()`: the window opens at the first PHY read of
 the attach AFE arm, which then came after b43's core init, so the core init
 fell outside it. With the arm back in the attach it is inside, and its 2970
-extra ops are the drop; 250 more vendor ops are matched.
+extra ops are the drop; 250 more vendor ops are matched. Since the key
+table init left the PHY its 548 words per `up` are missing on both rows.
 
 The number to quote is the `grezzo` line of `cmp_skip.py`; how to reproduce
 and read it is in [`test/unit/README.md`](test/unit/README.md). Ops are
