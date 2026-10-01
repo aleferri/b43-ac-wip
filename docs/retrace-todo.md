@@ -305,7 +305,8 @@ The AC stock driver clears `B43_MACCTL_DISCPMQ` in AP mode (`0x44060402` →
 its AP MACCONTROL matches the capture's. With the queue on, the ucode holds
 back frames to a station in power save; frames mac80211 sends to a sleeping
 station on purpose (`NO_PS_BUFFER`, `CLEAR_PS_FILT`) carry
-`B43_TXH_MAC_IGNPMQ`. `handle_irq_pmq()` drains the queue; mac80211 follows
+`B43_TXH_MAC_IGNPMQ`. `handle_irq_pmq()` drains the queue, at most 256
+reads per interrupt, and warns if it is still not empty; mac80211 follows
 each station's power save from the frames it receives (b43 does not declare
 `AP_LINK_PS`). Not exercised by any capture: the agcombo's has no client in
 power save, so no `B43_IRQ_PMQ` and no suppressed status.

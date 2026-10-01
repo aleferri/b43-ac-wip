@@ -107,8 +107,9 @@ How the pieces fit is in [`docs/driver-status.md`](docs/driver-status.md).
   (`docs/retrace-todo.md`, "2.4 GHz").
 - Radar detection without pattern matching: `CONFIG_B43_DFS` reports every
   pulse as a radar.
-- Probe-response offload and the power management queue: deliberately off, see
-  `docs/retrace-todo.md`.
+- Probe-response offload: deliberately off, see `docs/retrace-todo.md`. The
+  power management queue is on in AP mode and only drained: the suppression
+  field of the TX status is not mapped.
 - Temperature: raw tempsense samples are collected and not converted
   ([`docs/tempsense-wiring-evidence.md`](docs/tempsense-wiring-evidence.md)).
 
