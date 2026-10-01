@@ -405,16 +405,6 @@ int b43_generate_txhdr(struct b43_wldev *dev,
 		mac_ctl |= B43_TXH_MAC_HWSEQ;
 	if (info->flags & IEEE80211_TX_CTL_FIRST_FRAGMENT)
 		mac_ctl |= B43_TXH_MAC_STMSDU;
-	/*
-	 * With the power management queue on (an AC AP, b43_adjust_opmode())
-	 * the ucode holds back the frames to a station in power save. The
-	 * ones mac80211 sends to it anyway -- a PS-Poll or U-APSD answer, the
-	 * first after a wake-up -- must pass.
-	 */
-	if (phy->type == B43_PHYTYPE_AC &&
-	    (info->flags & (IEEE80211_TX_CTL_NO_PS_BUFFER |
-			    IEEE80211_TX_CTL_CLEAR_PS_FILT)))
-		mac_ctl |= B43_TXH_MAC_IGNPMQ;
 	if (!phy->gmode)
 		mac_ctl |= B43_TXH_MAC_5GHZ;
 

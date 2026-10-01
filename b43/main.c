@@ -1803,15 +1803,18 @@ static void handle_irq_atim_end(struct b43_wldev *dev)
 static void handle_irq_pmq(struct b43_wldev *dev)
 {
 	unsigned int i;
+	u32 tmp;
 
 	//TODO: AP mode.
 
 	for (i = 0; i < B43_PMQ_DRAIN_MAX; i++) {
-		if (!(b43_read32(dev, B43_MMIO_PS_STATUS) & 0x00000008))
+		tmp = b43_read32(dev, B43_MMIO_PS_STATUS);
+		if (!(tmp & 0x00000008))
 			break;
 	}
-	if (i == B43_PMQ_DRAIN_MAX && net_ratelimit())
-		b43warn(dev->wl, "Power management queue not drained\n");
+	if (i == B43_PMQ_DRAIN_MAX)
+		b43warn(dev->wl, "Power management queue not drained: 0x%08x\n",
+			tmp);
 	/* 16bit write is odd, but correct. */
 	b43_write16(dev, B43_MMIO_PS_STATUS, 0x0002);
 }
@@ -3498,16 +3501,11 @@ static void b43_adjust_opmode(struct b43_wldev *dev)
 				(ctl & B43_MACCTL_INFRA) && !(ctl & B43_MACCTL_AP) ?
 				0x0183 : 0x003a);
 
-	/*
-	 * The power management queue: the AC's stock driver keeps it in AP
-	 * mode (MACCONTROL 0x44060402 -> 0x04060402 at the bus on the
-	 * agcombo). The ucode then holds back the frames to a station in power
-	 * save; handle_irq_pmq() drains the queue, and mac80211 follows each
-	 * station's power save from the frames it receives. Where the AC TX
-	 * status says a frame was held back is not known, so such a frame is
-	 * reported as not acknowledged. The other PHYs keep discarding it.
+	/* FIXME: We don't currently implement the PMQ mechanism,
+	 *        so always disable it. If we want to implement PMQ,
+	 *        we need to enable it here (clear DISCPMQ) in AP mode.
 	 */
-	if ((ctl & B43_MACCTL_AP) && dev->phy.type == B43_PHYTYPE_AC)
+	if (0  /* ctl & B43_MACCTL_AP */)
 		b43_maskset32(dev, B43_MMIO_MACCTL, ~B43_MACCTL_DISCPMQ, 0);
 	else
 		b43_maskset32(dev, B43_MMIO_MACCTL, ~0, B43_MACCTL_DISCPMQ);

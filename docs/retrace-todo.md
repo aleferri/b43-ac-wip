@@ -44,9 +44,10 @@ core itself, seen on the agcombo bus capture:
 - In AP mode the stock driver runs with `DISCPMQ` clear and without
   `SHM_ENABLED` (`0x0416040x`). `SHM_ENABLED` is set by neither stock
   driver nor by brcmsmac (`MCTL_SHM_EN`), and the AC no longer sets it in
-  `b43_chip_init()`. With `DISCPMQ` too (see "Power management queue"
-  below) the AP value is the capture's, `0x0416040x`. `BEACPROMISC` is set for an AP by
-  `b43_adjust_opmode()`, as the stock driver does on the AC.
+  `b43_chip_init()`. `DISCPMQ` stays set, so the AP value is `0x4416040x`:
+  the power management queue is out of scope (see below). `BEACPROMISC` is
+  set for an AP by `b43_adjust_opmode()`, as the stock driver does on the
+  AC.
 - The mode bits the stock driver toggles inside the PHY's phases -- beacon
   promiscuity off in the calibration flush and at the tail of the channel
   switch, INFRA off / DISCPMQ on / AP off on the down -- have no core site in
@@ -300,21 +301,21 @@ of `test/unit/compare.py`. To implement it:
 
 ### Power management queue
 
-The AC stock driver clears `B43_MACCTL_DISCPMQ` in AP mode (`0x44060402` →
-`0x04060402` on the agcombo), and so does the AC, in `b43_adjust_opmode()`:
-its AP MACCONTROL matches the capture's. With the queue on, the ucode holds
-back frames to a station in power save; frames mac80211 sends to a sleeping
-station on purpose (`NO_PS_BUFFER`, `CLEAR_PS_FILT`) carry
-`B43_TXH_MAC_IGNPMQ`. `handle_irq_pmq()` drains the queue, at most 256
-reads per interrupt, and warns if it is still not empty; mac80211 follows
-each station's power save from the frames it receives (b43 does not declare
-`AP_LINK_PS`). Not exercised by any capture: the agcombo's has no client in
-power save, so no `B43_IRQ_PMQ` and no suppressed status.
+Out of scope. The AC stock driver clears `B43_MACCTL_DISCPMQ` in AP mode
+(`0x44060402` → `0x04060402` on the agcombo); b43 keeps it set on every PHY,
+so the ucode holds nothing back and mac80211 buffers for the stations in
+power save on its own. The AP `MACCONTROL` differs from the capture's by
+that bit on the integration gate, and `test/unit` emits the stock value
+from its own model of the core (`emit_core_bss_mode()`).
 
-Open: a frame the ucode held back comes with suppression reason 1, which
-`b43_txstatus_read_ac()` decodes into `supp_reason`, but
-`b43_fill_txstatus_report()` reports it as not acknowledged instead of
-`IEEE80211_TX_STAT_TX_FILTERED`, and mac80211 does not buffer it again.
+What turning it on takes: `B43_TXH_MAC_IGNPMQ` on the frames mac80211 sends
+to a sleeping station on purpose (`NO_PS_BUFFER`, `CLEAR_PS_FILT`);
+`IEEE80211_TX_STAT_TX_FILTERED` for a status with suppression reason 1,
+which `b43_txstatus_read_ac()` already decodes; and a reading of the queue
+entries, which no capture shows the stock driver doing: the agcombo has no
+client in power save, so no `B43_IRQ_PMQ`. `handle_irq_pmq()` drains at
+most 256 entries per interrupt and warns with the last value read if the
+queue is still not empty.
 
 ### HT and VHT
 

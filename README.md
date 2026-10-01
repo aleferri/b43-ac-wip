@@ -57,7 +57,7 @@ Measured on 2026-09-30.
 | unit, cold TG789vac v2, all 43 segments | min 99.77% (ch149/40), median 99.91%, max 99.98% |
 | unit, periodic watchdog tick | **`MATCH`** |
 | integration, cold `cold01` | `probe: 0`, `start: 0`; 82.30% (28706/34878) |
-| integration, agcombo ch36/80 at the bus | 65.03% (87697/134854), with the 561 interrupts and 283 received frames of the capture replayed |
+| integration, agcombo ch36/80 at the bus | 64.86% (87540/134978), with the 561 interrupts and 283 received frames of the capture replayed |
 | SROM rev 11 extractor | 77/82/83 PASS, 0 FAIL (DSL-3580L, D6220, agcombo) |
 
 The agcombo unit row was not re-measured on this date; the integration rows
@@ -107,9 +107,8 @@ How the pieces fit is in [`docs/driver-status.md`](docs/driver-status.md).
   (`docs/retrace-todo.md`, "2.4 GHz").
 - Radar detection without pattern matching: `CONFIG_B43_DFS` reports every
   pulse as a radar.
-- Probe-response offload: deliberately off, see `docs/retrace-todo.md`. The
-  power management queue is on in AP mode and only drained: a frame the
-  microcode holds back is reported as not acknowledged.
+- Probe-response offload and the power management queue: deliberately off, see
+  `docs/retrace-todo.md`.
 - Temperature: raw tempsense samples are collected and not converted
   ([`docs/tempsense-wiring-evidence.md`](docs/tempsense-wiring-evidence.md)).
 

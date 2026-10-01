@@ -890,9 +890,10 @@ static void emit_core_opmode(u32 mask, u32 set)
 /*
  * Il blocco di configurazione del BSS del core che precede l'adjust del TX
  * power: TBTT hold alzato e abbassato (b43_time_lock/unlock intorno al
- * beacon interval), AP e INFRA con DISCPMQ abbassato (b43_adjust_opmode), il
- * PRETBTT a 2 (b43_set_pretbtt) e la promiscuita' sui beacon fra un enable
- * e una suspend.
+ * beacon interval), AP e INFRA (b43_adjust_opmode), il PRETBTT a 2
+ * (b43_set_pretbtt) e la promiscuita' sui beacon fra un enable e una
+ * suspend. DISCPMQ si abbassa come fa il vendor; b43 lo tiene alzato, la
+ * coda di power management e' fuori scopo (docs/retrace-todo.md).
  */
 static void emit_core_bss_mode(void)
 {
