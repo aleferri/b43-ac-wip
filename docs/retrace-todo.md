@@ -16,7 +16,7 @@ is known work that moves to the core, none stands for work not understood.
 ### MACCONTROL of the core reset and of the ucode start
 
 The PHY writes no MACCONTROL value of the core's: the four `0x04000400`
-of the cold attach are `b43_wireless_core_reset()`'s, `0x04000404` and
+of the first `up` are `b43_wireless_core_reset()`'s, `0x04000404` and
 `0x04020402` are `b43_upload_microcode()`'s, the GPOUT clear and the empty
 GPIO control are `b43_gpio_init()`'s, and the MAC toggle plus `0x04000400`
 of the down are `b43_wireless_core_stop()`'s and the exit's. `test/unit`
@@ -50,6 +50,58 @@ core itself, seen on the agcombo bus capture:
   and the `b43_software_rfkill()` bracket, so the MAC stays suspended from
   the stop to the core disable. `test/unit` emits them raw at the stock
   points (`B43_AC_SITE_DOWN_OPMODE`, `_DOWN_OPMODE_END`, `_CORE_DOWN`).
+
+### Core sites inside the PHY: where the stock flow has a boundary
+
+A `B43_AC_SITE_*` is core work the harness emits at the stock point because
+b43 does it elsewhere. Before a site stays, the question is whether the PHY
+function around it is one stock call or two pieces with the core in
+between, in which case the PHY function splits and the core calls the
+pieces in order. On the D6220 `cold01` (folded, op numbers of
+`trace_filter.py --retvals` on the stripped segment) the evidence is:
+
+- **The cold preamble spanned two driver entry points.** Ops 48-84 run in
+  the stock attach (cpu1): the cold AFE arm with `0x02e4`, the seven
+  host-flag clears, the second AFE arm, the PMU request and the slot 2/3/3
+  host flags. Op 85 comes 2268 ms later on cpu0, in the `up`. That part now
+  runs at b43's attach reset (`b43_phy_ac_attach_mac_preamble()`). What
+  remains in `b43_phy_ac_cold_mac_preamble()` is the stock `up`: core reset,
+  PMU and clock, LED GPIO, slot 4, two resets, slot 0 (the first that
+  reaches shared memory), a reset, the PMU release, ucode load, the seven
+  clears again, ucode start. Its sites are perimeter: the three extra
+  resets are stock only (b43 resets once), and the first reset, the ucode
+  load and the ucode start are b43's own, earlier. The host flags reach
+  the same cells either way: `b43_upload_microcode()` zeroes shared memory
+  after the PSM jump, and this part writes them after the ucode is up.
+- **The tail of `b43_phy_ac_op_switch_channel()` alternates.** Ops 85-11906
+  are one chain (cpu0, 200 ms, no gap above 22 ms), but in blocks: PHY up
+  to op 11094; then core only, no PHY or radio op, ops 11094-11390 -- the
+  `0x05e0` zeroing, the 56 key rows (`_KEYS_CLEAR`), the MAC configuration
+  cells, the first top rows (`_MACFILTER_FIRST`); PHY again, ops 11390-11834
+  (chain mask, TX power control setup, AFE gains, 310 PHY writes); core only,
+  ops 11834-11906 (`_OPMODE_FILTERS`, host flags, `_MACFILTER`). The two
+  core blocks are room for the core: the tail splits into PHY pieces, and on
+  the first bring-up b43 runs `b43_security_init()`, the MAC cells,
+  `b43_upload_card_macaddress()`, `b43_adjust_opmode()` and
+  `b43_macfilter_set()` between them. The `0x05e0` zeroing and
+  `0x018a`/`0x018c` go with the first core block (see "Shared-memory cells
+  emitted from the PHY").
+- **That tail is the `up`'s, not the channel switch's.** Every D6220 and
+  TG789vac capture is a down/up per channel, so they cannot tell. The two
+  6.30 captures with a scan can: on the MacBookAir6,1 first load (38
+  segments) and on the archer-t5e (25) the `0x05e0`-`0x0666` zeroing comes
+  only in the first segment, the `up`; `0x018a`, `0x003c`, `0x0074`,
+  `0x0082`, `0x00ba` and `0x007c` only there and at the association; the TX
+  power target `0x0646` and the width cell `0x005a` on every hop. The port
+  runs the whole tail on every `op_switch_channel()`, so a mac80211 scan
+  zeroes those cells and rewrites the MAC configuration on each hop. The
+  hop/`up` split of the tail rests on 6.30 alone: on the 7.14 boards, in AP
+  mode, the channel changes only through `wl down`, so every 7.14 capture of
+  a new channel is a whole `up`, the agcombo bus ones included.
+- Not yet checked the same way: `_CAL_BCNPROMISC_OFF` (probe cycle),
+  `_BEACON_WD` (watchdog counter passes; the reload is on the other CPU in
+  `cold01`, op 11930), `_CAC_CLOSE`, `_BEACON_START`, `_DOWN_OPMODE`,
+  `_DOWN_OPMODE_END`, `_CORE_DOWN`.
 
 ### Order of the core init and of the exit around the PHY
 

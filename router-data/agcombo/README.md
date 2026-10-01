@@ -24,7 +24,7 @@ driver   0x70e2b15 ~ 7.14.43.21   ucode 0x3a004b1 ~ 3.160.4.177
 | `hot-sweep.zip` | 26 hot `up` segments, `NN-up-chC-bwB.txt` |
 | `bss-up.zip` | one bss-up on ch100/80 with the extended hook set (AMT, ADDRM, OBJ.BULK, PHY.FGC) |
 | `up-nobss-ioctl.zip` | `up` without a BSS on ch36/80 then ch100/80, with the `wlc_ioctl` hook |
-| `ch36.bin`, `ch100.bin`, `ch149-wep.bin` | `wl-mmio-trap` captures at the bus: a cold attach on ch36, hot ups on ch100 and ch149 with WEP, each ending with a down. Decode with `reverse-tools/mmio2ops.py` |
+| `ch36.bin`, `ch100.bin`, `ch149-wep.bin` | `wl-mmio-trap` captures at the bus, each an `up` ending with a down, with the attach done before the capture started (no EROM, no SROM, no attach AFE unit): on ch36 the first `up` after the module load, whose slot 0 host flag still reaches shared memory before the ucode load; on ch100 and on ch149 with WEP later ones. The channel changes only through a down, so none holds a channel switch on a running interface. Decode with `reverse-tools/mmio2ops.py` |
 | `mmio-decoded.zip` | the three `.bin` decoded (`.txt` raw, `.ops` through mmio2ops) and the MAC table of ch36 |
 | `cold-sweep-partial.tar.gz` | an older partial cold split, `split-agcombo/`; does not trace `OBJ` |
 

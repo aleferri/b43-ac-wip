@@ -79,8 +79,9 @@ B43_BOARD=agcombo B43_READ_ORACLE=/tmp/ch36.m2o B43_CHANNEL=36 B43_BW=80 \
     B43_TIMELINE=/tmp/ch36.tl B43_TRACE_OUT=/tmp/int36.trace ./b43-trace
 ```
 
-`ch36` is a cold attach; `ch100` and `ch149-wep` are hot ups and read no
-`UCODEREV`, so their probe takes its reads from `ch36`.
+None of the three holds the attach, which ran before the capture. `ch36` is
+the first `up` after the module load; `ch100` and `ch149-wep` are later ups
+and read no `UCODEREV`, so their probe takes its reads from `ch36`.
 
 ### Why `--bus`
 
