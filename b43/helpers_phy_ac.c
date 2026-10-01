@@ -90,22 +90,3 @@ void b43_mac_bw_set(struct b43_wldev *dev, u32 bw)
 	b43_phy_bw_clk_set(dev, clk);
 	b43_read32(dev, B43_MMIO_MACCTL);
 }
-
-/*
- * Read/modify/write of B43_MMIO_MACCTL. The b43 core has no such helper;
- * call sites inline b43_maskset32() instead. Wrapping it here keeps the
- * AC-PHY setup readable and gives the trace harness a symbol to intercept.
- *
- * While the channel availability check runs the MAC is muted, and the AP
- * bit does not reach the register: the stock driver's mode setup asks for
- * it on every bring-up, the register carries it only once the check has
- * ended (0x44020402 where a channel without the check has 0x44060402, at
- * the bus on the agcombo). b43_ac_cac_match_gate() in the core sets it when
- * it opens.
- */
-void b43_maccontrol_set(struct b43_wldev *dev, u32 mask, u32 set)
-{
-	if (dev->cac_pending)
-		set &= ~B43_MACCTL_AP;
-	b43_maskset32(dev, B43_MMIO_MACCTL, mask, set);
-}

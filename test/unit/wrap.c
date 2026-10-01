@@ -1275,8 +1275,6 @@ void __wrap_b43_actab_fill_r11(struct b43_wldev *dev,
  * b43_phy_ac_status() da dev->mac_suspended, che i wrapper di
  * b43_mac_suspend/enable qui sotto mantengono come fa il core.
  */
-#define B43_MACCTL_ENABLED  0x00000001u
-
 void __wrap_b43_maccontrol_set(struct b43_wldev *dev, u32 mask, u32 set)
 {
 	fprintf(trace(),

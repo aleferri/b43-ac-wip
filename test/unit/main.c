@@ -810,11 +810,125 @@ static void emit_core_top_row(bool self, u16 flags)
 
 #define B43_TEST_KEY_ROWS	0x38
 
+/*
+ * Doppioni del core sul bring-up a freddo: la MACCONTROL di
+ * b43_wireless_core_reset() (IHR | AWAKE, quattro reset nella cattura), il
+ * salto a 0 del PSM e il suo avvio in b43_upload_microcode(), e in coda la
+ * pulizia di GPOUT con la GPIO.CTL vuota di b43_gpio_init(). Il vendor li
+ * intercala alle host flag del preambolo del PHY; b43 li fa da main.c
+ * prima di b43_phy_init(), quindi il PHY non li emette e stanno qui.
+ */
+static void emit_core_reset_mctrl(void)
+{
+	b43_maccontrol_set(&g_wldev, 0, B43_MACCTL_IHR_ENABLED |
+			   B43_MACCTL_AWAKE);
+}
+
+static void emit_core_ucode_load(void)
+{
+	b43_maccontrol_set(&g_wldev, 0, B43_MACCTL_IHR_ENABLED |
+			   B43_MACCTL_AWAKE | B43_MACCTL_PSM_JMP0);
+}
+
+static void emit_core_ucode_start(void)
+{
+	b43_maccontrol_set(&g_wldev, 0, B43_MACCTL_IHR_ENABLED |
+			   B43_MACCTL_AWAKE | B43_MACCTL_INFRA |
+			   B43_MACCTL_PSM_RUN);
+	b43_maccontrol_set(&g_wldev, (u32)~B43_MACCTL_GPOUTSMSK, 0);
+	bcma_chipco_gpio_control(&g_wldev.dev->bdev->bus->drv_cc, 0, 0);
+}
+
+/*
+ * La coda del down del vendor: enable e suspend del MAC (wlc_bmac_down) e la
+ * MACCONTROL del core reset che precede lo spegnimento dell'analogico. Fra
+ * l'enable e la suspend il vendor spegne i due LED (wlc_bmac_led, del core),
+ * che restano nel perimetro del confronto.
+ */
+/*
+ * I toggle del MAC che il vendor fa dentro al proprio down. In b43 il down
+ * del PHY gira col MAC tenuto sospeso da b43_wireless_core_stop() e dal
+ * bracket di b43_software_rfkill(), a contatore 2: le coppie enable/suspend
+ * di li' non toccano il registro, e per questo si emettono qui in forma
+ * grezza, fuori dal contatore.
+ */
+static void emit_core_mac_toggle(bool on)
+{
+	b43_maccontrol_set(&g_wldev, ~(u32)B43_MACCTL_ENABLED,
+			   on ? B43_MACCTL_ENABLED : 0);
+}
+
+static void emit_core_down(void)
+{
+	emit_core_mac_toggle(true);
+	emit_core_mac_toggle(false);
+	emit_core_reset_mctrl();
+}
+
+/*
+ * Il modo operativo del core, che il vendor riscrive dentro alle fasi del
+ * PHY: la promiscuita' sui beacon (bit 20), i filtri KEEP_* e, al down,
+ * INFRA/DISCPMQ e AP. In b43 e' b43_adjust_opmode(); qui si emette il bit
+ * che il vendor tocca in quel punto.
+ */
+static void emit_core_opmode(u32 mask, u32 set)
+{
+	b43_maccontrol_set(&g_wldev, mask, set);
+}
+
+/*
+ * Il blocco di configurazione del BSS del core che precede l'adjust del TX
+ * power: TBTT hold alzato e abbassato (b43_time_lock/unlock intorno al
+ * beacon interval), AP e INFRA con DISCPMQ abbassato (b43_adjust_opmode), il
+ * PRETBTT a 2 (b43_set_pretbtt) e la promiscuita' sui beacon fra un enable
+ * e una suspend.
+ */
+static void emit_core_bss_mode(void)
+{
+	b43_maccontrol_set(&g_wldev, ~0x10000000u, 0x10000000);
+	b43_maccontrol_set(&g_wldev, ~0x10000000u, 0);
+	b43_maccontrol_set(&g_wldev, ~(u32)B43_MACCTL_AP, B43_MACCTL_AP);
+	b43_maccontrol_set(&g_wldev, ~0x48020000u, B43_MACCTL_INFRA);
+	b43_shm_write16(&g_wldev, B43_SHM_SHARED, B43_SHM_SH_PRETBTT, 2);
+	b43_mac_enable(&g_wldev);
+	b43_maccontrol_set(&g_wldev, ~0x00100000u, 0x00100000);
+	b43_mac_suspend(&g_wldev);
+}
+
 void b43_phy_ac_core_site(struct b43_wldev *dev, enum b43_phy_ac_core_site site)
 {
 	u16 i;
 
 	switch (site) {
+	case B43_AC_SITE_CORE_DOWN:
+		emit_core_down();
+		break;
+	case B43_AC_SITE_CAL_BCNPROMISC_OFF:
+		emit_core_opmode(~0x00100000u, 0);
+		break;
+	case B43_AC_SITE_OPMODE_FILTERS:
+		emit_core_opmode(~0x00100000u, 0);
+		emit_core_opmode(~0x01c00000u, 0);
+		break;
+	case B43_AC_SITE_DOWN_OPMODE:
+		emit_core_mac_toggle(true);
+		emit_core_opmode(~0x48020000u, 0x40000000);
+		emit_core_mac_toggle(false);
+		emit_core_opmode(~(u32)B43_MACCTL_AP, 0);
+		emit_core_mac_toggle(true);
+		break;
+	case B43_AC_SITE_DOWN_OPMODE_END:
+		emit_core_mac_toggle(false);
+		break;
+	case B43_AC_SITE_CORE_RESET:
+		emit_core_reset_mctrl();
+		break;
+	case B43_AC_SITE_UCODE_LOAD:
+		emit_core_ucode_load();
+		break;
+	case B43_AC_SITE_UCODE_START:
+		emit_core_ucode_start();
+		break;
 	case B43_AC_SITE_KEYS_CLEAR:
 		for (i = 0; i < B43_TEST_KEY_ROWS; i++) {
 			b43_test_emit_addrm(i);
@@ -844,6 +958,22 @@ void b43_phy_ac_core_site(struct b43_wldev *dev, enum b43_phy_ac_core_site site)
 		}
 		break;
 	}
+}
+
+/*
+ * La testa del down del vendor prima che tocchi il PHY: la lettura di un
+ * contatore a 32 bit (hi/lo/hi su 0x077c), la promiscuita' sui beacon giu' e
+ * la suspend del MAC. In b43 e' b43_wireless_core_stop(), che sospende il MAC
+ * prima di b43_phy_exit(); il contatore e il bit di modo sono suoi e non del
+ * PHY.
+ */
+static void emit_core_stop(void)
+{
+	b43_shm_read16(&g_wldev, B43_SHM_SHARED, 0x077e);
+	b43_shm_read16(&g_wldev, B43_SHM_SHARED, 0x077c);
+	b43_shm_read16(&g_wldev, B43_SHM_SHARED, 0x077e);
+	emit_core_opmode(~0x00100000u, 0);
+	b43_mac_suspend(&g_wldev);
 }
 
 static void run_switch_channel(void)
@@ -1286,8 +1416,10 @@ static void run_switch_channel(void)
 	 */
 	emit_core_bss_config();
 	if (b43_phyops_ac.recalc_txpower(&g_wldev, true) ==
-	    B43_TXPWR_RES_NEED_ADJUST)
+	    B43_TXPWR_RES_NEED_ADJUST) {
+		emit_core_bss_mode();
 		b43_phyops_ac.adjust_txpower(&g_wldev);
+	}
 	emit_core_conf_tx_passes();
 
 	if (r == 0)
@@ -1302,9 +1434,17 @@ static void run_switch_channel(void)
 	 * timeline della cattura; poi la discesa della radio, che su hardware
 	 * e' software_rfkill(true) da b43_phy_exit().
 	 */
+	/*
+	 * Il down come lo fa b43: b43_wireless_core_stop() sospende il MAC, poi
+	 * b43_phy_exit() passa da b43_software_rfkill(), che sospende e
+	 * riabilita attorno all'op del PHY.
+	 */
 	if (r == 0) {
 		run_timeline();
+		emit_core_stop();
+		b43_mac_suspend(&g_wldev);
 		b43_phyops_ac.software_rfkill(&g_wldev, true);
+		b43_mac_enable(&g_wldev);
 	}
 
 	fprintf(stderr, "test: switch_channel returned %d\n", r);

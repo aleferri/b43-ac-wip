@@ -815,7 +815,6 @@ u16 b43_phy_ac_bss_cc(struct b43_wldev *dev);
 
 /* Helper trasversali al confine MAC/PHY; razionale in helpers_phy_ac.c. */
 void b43_phy_ac_mhf_maskset(struct b43_wldev *dev, u16 slot, u16 mask, u16 val);
-void b43_maccontrol_set(struct b43_wldev *dev, u32 mask, u32 set);
 void b43_mac_bw_set(struct b43_wldev *dev, u32 bw);
 void b43_phy_ac_force_clock(struct b43_wldev *dev, bool force);
 
@@ -872,6 +871,25 @@ void b43_ac_block_mark(const char *name);
  * the op-for-op comparison keeps its order. Nothing not understood goes here.
  */
 enum b43_phy_ac_core_site {
+	/* b43_wireless_core_reset(): the MACCONTROL write after a core reset */
+	B43_AC_SITE_CORE_RESET,
+	/* b43_upload_microcode(): the PSM jump to 0 before the upload */
+	B43_AC_SITE_UCODE_LOAD,
+	/* b43_upload_microcode() starting the PSM, then b43_gpio_init() */
+	B43_AC_SITE_UCODE_START,
+	/* the stock driver's last MAC toggle and the core reset of its down */
+	B43_AC_SITE_CORE_DOWN,
+	/* b43_adjust_opmode(): beacon promiscuity off, inside a calibration flush */
+	B43_AC_SITE_CAL_BCNPROMISC_OFF,
+	/* b43_adjust_opmode(): beacon promiscuity and filter bits, switch tail */
+	B43_AC_SITE_OPMODE_FILTERS,
+	/*
+	 * Leaving the BSS on a down, INFRA off / DISCPMQ on then AP off, with
+	 * the stock driver's MAC toggles around them: b43 sets the mode from
+	 * remove_interface and keeps the MAC suspended through the down
+	 */
+	B43_AC_SITE_DOWN_OPMODE,
+	B43_AC_SITE_DOWN_OPMODE_END,
 	/* b43_security_init(): the key rows of the address match table */
 	B43_AC_SITE_KEYS_CLEAR,
 	/* b43_upload_card_macaddress() before the BSSID is known */

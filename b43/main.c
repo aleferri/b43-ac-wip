@@ -3383,6 +3383,13 @@ static void b43_adjust_opmode(struct b43_wldev *dev)
 		ctl |= B43_MACCTL_KEEP_BADPLCP;
 	if (wl->filter_flags & FIF_BCN_PRBRESP_PROMISC)
 		ctl |= B43_MACCTL_BEACPROMISC;
+	/*
+	 * The AC cores' stock driver runs an AP with beacon promiscuity on
+	 * (MACCONTROL 0x0416040x at the bus on every board captured); it sets
+	 * it wherever an AP is active on an HT-capable band.
+	 */
+	if ((ctl & B43_MACCTL_AP) && dev->phy.type == B43_PHYTYPE_AC)
+		ctl |= B43_MACCTL_BEACPROMISC;
 
 	/* Workaround: On old hardware the HW-MAC-address-filter
 	 * doesn't work properly, so always run promisc in filter
@@ -3654,6 +3661,29 @@ static void b43_chip_init_mac(struct b43_wldev *dev)
 	}
 }
 
+/* Turn the Analog on and initialize the PHY, then the antenna defaults. */
+static int b43_phy_bringup(struct b43_wldev *dev)
+{
+	struct b43_phy *phy = &dev->phy;
+	int err;
+
+	phy->ops->switch_analog(dev, 1);
+	err = b43_phy_init(dev);
+	if (err)
+		return err;
+
+	/* Disable Interference Mitigation. */
+	if (phy->ops->interf_mitigation)
+		phy->ops->interf_mitigation(dev, B43_INTERFMODE_NONE);
+
+	/* Select the antennae */
+	if (phy->ops->set_rx_antenna)
+		phy->ops->set_rx_antenna(dev, B43_ANTENNA_DEFAULT);
+	b43_mgmtframe_txantenna(dev, B43_ANTENNA_DEFAULT);
+
+	return 0;
+}
+
 static int b43_chip_init(struct b43_wldev *dev)
 {
 	struct b43_phy *phy = &dev->phy;
@@ -3692,27 +3722,21 @@ static int b43_chip_init(struct b43_wldev *dev)
 	}
 
 	/*
-	 * The AC cores' stock driver sets the MAC up before it touches the
-	 * PHY, and its calibration during the PHY init needs the MAC-PHY
-	 * clock on.
+	 * The AC cores' stock driver sets the whole MAC up before it touches
+	 * the PHY: the MAC init here, then the shared-memory cells, host
+	 * flags, DMA rings and address tables of b43_wireless_core_init(),
+	 * and the PHY init last. Its calibration during the PHY init also
+	 * needs the MAC-PHY clock on. So the PHY is brought up at the end of
+	 * b43_wireless_core_init() on the AC, and here on the other PHYs.
 	 */
-	if (phy->type == B43_PHYTYPE_AC)
+	if (phy->type == B43_PHYTYPE_AC) {
 		b43_chip_init_mac(dev);
-
-	/* Turn the Analog on and initialize the PHY. */
-	phy->ops->switch_analog(dev, 1);
-	err = b43_phy_init(dev);
-	if (err)
-		goto err_gpio_clean;
-
-	/* Disable Interference Mitigation. */
-	if (phy->ops->interf_mitigation)
-		phy->ops->interf_mitigation(dev, B43_INTERFMODE_NONE);
-
-	/* Select the antennae */
-	if (phy->ops->set_rx_antenna)
-		phy->ops->set_rx_antenna(dev, B43_ANTENNA_DEFAULT);
-	b43_mgmtframe_txantenna(dev, B43_ANTENNA_DEFAULT);
+		b43_mgmtframe_txantenna(dev, B43_ANTENNA_DEFAULT);
+	} else {
+		err = b43_phy_bringup(dev);
+		if (err)
+			goto err_gpio_clean;
+	}
 
 	if (phy->type == B43_PHYTYPE_B) {
 		value16 = b43_read16(dev, 0x005E);
@@ -4466,9 +4490,8 @@ static bool b43_ac_retune_needed(struct b43_wldev *dev,
  *    on the way in MACCONTROL is read before each;
  *  - the station row of the address match table is cleared, address and
  *    flags, and written again with both;
- *  - MACCONTROL does not carry B43_MACCTL_AP. b43_maccontrol_set() and
- *    b43_adjust_opmode() keep it clear while the check is pending, the
- *    opening sets it.
+ *  - MACCONTROL does not carry B43_MACCTL_AP. b43_adjust_opmode() keeps
+ *    it clear while the check is pending, the opening sets it.
  */
 static void b43_ac_cac_match_gate(struct b43_wldev *dev, bool open)
 {
@@ -5341,8 +5364,13 @@ static void b43_set_pretbtt(struct b43_wldev *dev)
 {
 	u16 pretbtt;
 
-	/* The time value is in microseconds. */
-	if (b43_is_mode(dev->wl, NL80211_IFTYPE_ADHOC))
+	/*
+	 * The time value is in microseconds. The AC microcode builds the
+	 * beacon from template RAM on its own, and its stock driver writes 2
+	 * in AP mode too.
+	 */
+	if (b43_is_mode(dev->wl, NL80211_IFTYPE_ADHOC) ||
+	    dev->phy.type == B43_PHYTYPE_AC)
 		pretbtt = 2;
 	else
 		pretbtt = 250;
@@ -5359,6 +5387,15 @@ static void b43_wireless_core_exit(struct b43_wldev *dev)
 		return;
 
 	b43_set_status(dev, B43_STAT_UNINIT);
+
+	/*
+	 * The AC PHY's down sequence brackets its writes with MAC enable and
+	 * suspend, which want the microcode running: the stock driver runs it
+	 * before it resets the core, so the PHY goes down before the PSM
+	 * stops here.
+	 */
+	if (dev->phy.type == B43_PHYTYPE_AC)
+		b43_chip_exit(dev);
 
 	/* Stop the microcode PSM. */
 	b43_maskset32(dev, B43_MMIO_MACCTL, ~B43_MACCTL_PSM_RUN,
@@ -5379,7 +5416,8 @@ static void b43_wireless_core_exit(struct b43_wldev *dev)
 
 	b43_dma_free(dev);
 	b43_pio_free(dev);
-	b43_chip_exit(dev);
+	if (dev->phy.type != B43_PHYTYPE_AC)
+		b43_chip_exit(dev);
 	dev->phy.ops->switch_analog(dev, 0);
 	if (dev->wl->current_beacon) {
 		dev_kfree_skb_any(dev->wl->current_beacon);
@@ -5596,6 +5634,13 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
 	b43_upload_card_macaddress(dev);
 	b43_security_init(dev);
 
+	/* The AC PHY comes up after the MAC is set up, see b43_chip_init(). */
+	if (phy->type == B43_PHYTYPE_AC) {
+		err = b43_phy_bringup(dev);
+		if (err)
+			goto err_dma_free;
+	}
+
 	ieee80211_wake_queues(dev->wl->hw);
 
 	b43_set_status(dev, B43_STAT_INITIALIZED);
@@ -5603,8 +5648,16 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
 out:
 	return err;
 
+err_dma_free:
+	b43_dma_free(dev);
+	b43_pio_free(dev);
+	b43_gpio_cleanup(dev);
+	goto err_busdown;
 err_chip_exit:
-	b43_chip_exit(dev);
+	if (phy->type == B43_PHYTYPE_AC)
+		b43_gpio_cleanup(dev);
+	else
+		b43_chip_exit(dev);
 err_busdown:
 	b43_bus_may_powerdown(dev);
 	B43_WARN_ON(b43_status(dev) != B43_STAT_UNINIT);

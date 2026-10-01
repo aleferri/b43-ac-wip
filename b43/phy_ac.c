@@ -139,10 +139,18 @@ static void b43_phy_ac_txpwr_adjust(struct b43_wldev *dev);
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   9295-9714]
  */
+/*
+ * Runs from the TX power work with the MAC enabled, and the tables it
+ * programs want it suspended. The stock driver's BSS mode block that
+ * precedes it -- TBTT hold, AP and INFRA, PRETBTT, beacon promiscuity -- is
+ * b43_adjust_opmode(), b43_set_beacon_int() and b43_set_pretbtt() in main.c.
+ */
 static void b43_phy_ac_op_adjust_txpower(struct b43_wldev *dev)
 {
 	B43_AC_FN();
+	b43_mac_suspend(dev);
 	b43_phy_ac_txpwr_adjust(dev);
+	b43_mac_enable(dev);
 	dev->phy.ac->txpwr_adjust_due = false;
 }
 
@@ -6236,27 +6244,6 @@ static void b43_phy_ac_txpwr_adjust(struct b43_wldev *dev)
 	B43_AC_FN();
 	struct b43_phy_ac *ac = dev->phy.ac;
 
-	b43_maccontrol_set(dev, ~0x10000000u, 0x10000000);
-	b43_maccontrol_set(dev, ~0x10000000u, 0);
-	b43_maccontrol_set(dev, ~0x00040000u, 0x00040000);
-	b43_maccontrol_set(dev, ~0x48020000u, 0x00020000);
-
-	/*
-	 * PRETBTT, il preavviso in microsecondi rispetto al TBTT. La cella e'
-	 * M_PRETBTT, 0x4b*2. brcmsmac la definisce e non la scrive mai, quindi
-	 * lascia il default dell'hardware; b43 la scrive con 250 in AP e 2 in
-	 * adhoc (b43_set_pretbtt()), e la cattura porta 2 pur essendo in AP.
-	 *
-	 * Lo split 250/2 di b43 e' logica dei core vecchi. Qui il beacon lo
-	 * costruisce l'ucode dal template in template RAM, che e' il carico che
-	 * emit_core_bss_ssid() rispecchia, quindi l'host non ha niente da
-	 * preparare e il preavviso lungo non serve. Il 2 lo si emette percio'
-	 * come valore di questo core, non come il ramo adhoc di b43.
-	 */
-	b43_shm_write16(dev, B43_SHM_SHARED, 0x0096, 2);
-	b43_mac_enable(dev);
-	b43_maccontrol_set(dev, ~0x00100000u, 0x00100000);
-	b43_mac_suspend(dev);
 	/* The chain mask into 0x00cc, see b43_phy_ac_bss_cc(). */
 	b43_phy_ac_bss_cc_update(dev, B43_PHY_AC_CHAIN_TXPWR);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00ce,
@@ -6841,31 +6828,17 @@ static bool b43_phy_ac_cold_preamble_due(struct b43_wldev *dev)
 }
 
 /*
- * Cold-bring-up MAC preamble, bracketed by the PMU resource request. The
- * vendor emits it between the analog preamble and the radio body: regctl
- * bit 1 raised, rounds of MHF and MACCTL, then regctl bit 1 lowered.
- *
- * The placement follows the capture rather than subsystem affinity: what is
- * in here is MAC, not analog. b43 has no hook between switch_analog and
- * software_rfkill, and this is the phase in which the vendor does it.
- *
- * Not reproduced here: the write to BCMA_CC_PMU_CTL and the poll of
- * BCMA_CLKCTLST -- the first belongs to the bcma PMU init in patch 0007, and
- * b43_bcma_wireless_core_reset() already does the second -- and the chipcommon
- * GPIO block the vendor interleaves after the first MACCTL write. That block
- * is wlc_bmac_hw_up()'s LED init: gpiocontrol, gpiotimeroutmask, gpioout and
- * gpioouten on the LED lines the board's ledbh values select, with the
- * mirror in wlc_bmac_led_hw_deinit() at unload and the per-LED toggles of
- * wlc_bmac_led() at bss up and down. LEDs are the core's -- b43 drives them
- * from leds.c on sprom->gpio0..3 -- and have no effect on the PHY, so the
- * comparison keeps them in its perimeter rather than the PHY emitting them.
- * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
- *   584-645]
+ * Host-flag preamble of a cold bring-up, bracketed by the PMU resource
+ * request. The stock driver interleaves it with core work that b43 does
+ * from main.c on its own schedule: the MACCONTROL write of each core reset
+ * (b43_wireless_core_reset()), the PSM jump and start around the ucode
+ * upload (b43_upload_microcode()) and the GPOUT clear plus chipcommon GPIO
+ * setup of b43_gpio_init(). Those stay out of the PHY -- b43 runs this
+ * function after the ucode is up, and a PSM_JMP0 here would restart it --
+ * and test/unit emits them at the stock points through the core sites.
  */
 static void b43_phy_ac_cold_mac_preamble(struct b43_wldev *dev)
 {
-	struct bcma_drv_cc *cc = &dev->dev->bdev->bus->drv_cc;
-
 	B43_AC_FN();
 
 	b43_phy_ac_pmu_req(dev, true);
@@ -6873,66 +6846,44 @@ static void b43_phy_ac_cold_mac_preamble(struct b43_wldev *dev)
 	b43_phy_ac_mhf_maskset(dev, 2, (u16)~0x0040, 0);
 	b43_phy_ac_mhf_maskset(dev, 3, (u16)~0x0040, 0x0040);
 	b43_phy_ac_mhf_maskset(dev, 3, (u16)~0x0040, 0x0040);
-	b43_maccontrol_set(dev, 0, 0x04000400);
+#if UNIT_TEST
+	b43_phy_ac_core_site(dev, B43_AC_SITE_CORE_RESET);
+#endif
 
 	b43_phy_ac_mhf_maskset(dev, 4, (u16)~0x0080, 0x0080);
-	b43_maccontrol_set(dev, 0, 0x04000400);
-	b43_maccontrol_set(dev, 0, 0x04000400);
+#if UNIT_TEST
+	b43_phy_ac_core_site(dev, B43_AC_SITE_CORE_RESET);
+	b43_phy_ac_core_site(dev, B43_AC_SITE_CORE_RESET);
+#endif
 	/*
-	 * From here on a HOSTFn change reaches the cell. Both captures put the
-	 * transition between these two calls: the slot 4 write above leaves no
-	 * OBJ.WR behind, the slot 0 write below does. See the comment on
-	 * mhf_writethrough.
+	 * From here on a HOSTFn change reaches the cell: the slot 4 write above
+	 * leaves no OBJ.WR behind, the slot 0 write below does.
 	 */
 	dev->phy.ac->mhf_writethrough = true;
 	b43_phy_ac_mhf_maskset(dev, 0, (u16)~0x0100, 0x0100);
-	b43_maccontrol_set(dev, 0, 0x04000400);
+#if UNIT_TEST
+	b43_phy_ac_core_site(dev, B43_AC_SITE_CORE_RESET);
+#endif
 
 	/*
-	 * A second write of the 0x2e4 field, on the channels that carry the
-	 * radar-detection duty. The others take one write, done in the AFE
-	 * unit above.
-	 *
-	 * This second write is emitted only on the channels that carry the
-	 * radar-detection duty. Counting the writes of that register per
-	 * segment gives 1 on ch36-48 and on ch144-165, 3 on everything from
-	 * ch52 to ch140. Both bandwidths agree, 43 segments out of 43. So the
-	 * family is the duty and not the frequency, the same conclusion the
-	 * POLL events of timeline.py reach for the poll and may_calibrate_tx()
-	 * for the calibrations.
-	 *
-	 * The field is the radar pulse threshold, see b43_phy_ac_radar_thresh().
-	 * On the channels with the duty the vendor writes it three times
-	 * against the port's two:
-	 * the third sits in the channel-setup tail and no site here emits it,
-	 * see docs/retrace-todo.md.
+	 * Second write of the radar pulse threshold, on the channels that
+	 * carry the radar-detection duty only: one write on ch36-48 and
+	 * ch144-165, three from ch52 to ch140, at both widths, 43 segments
+	 * out of 43. The third is in the channel-setup tail and no site here
+	 * emits it, see docs/retrace-todo.md.
 	 */
 	if (b43_phy_ac_chan_has_radar_duty(dev))
 		b43_phy_ac_radar_thresh(dev);
 
 	b43_phy_ac_pmu_req(dev, false);
 
-	b43_maccontrol_set(dev, 0, 0x04000404);
+#if UNIT_TEST
+	b43_phy_ac_core_site(dev, B43_AC_SITE_UCODE_LOAD);
+#endif
 	b43_phy_ac_mhf_bringup_clears(dev);
-
-	/*
-	 * Tail of the preamble, before the radio body. The GPIO control write
-	 * with an empty mask changes nothing, but the stock driver emits it, so
-	 * it stays here rather than leaving a hole in the sequence.
-	 */
-	b43_maccontrol_set(dev, 0, 0x04020402);
-	b43_maccontrol_set(dev, (u32)~0x0000c000u, 0);
-	bcma_chipco_gpio_control(cc, 0x00000000, 0x00000000);
-
-	/*
-	 * The preamble does NOT end with a fourth MACCONTROL write setting INFRA
-	 * and DISCPMQ and clearing AP. Those are the core's operating mode, not
-	 * the front end's, and b43_adjust_opmode() sets them: the PHY has no
-	 * business writing them. The captures agree -- the stock driver
-	 * emits it after the core has written its chip-init cells to shared
-	 * memory, not with the GPIO setup: in the capture two shared-memory
-	 * writes sit between the GPIO control write above and this one.
-	 */
+#if UNIT_TEST
+	b43_phy_ac_core_site(dev, B43_AC_SITE_UCODE_START);
+#endif
 }
 
 /* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
@@ -10076,15 +10027,14 @@ static void b43_phy_ac_probe_cycle(struct b43_wldev *dev, unsigned int n_iter,
 		if (closes_sequence && iter + 1 == n_iter) {
 			/*
 			 * The flush that closes the whole probe and measure
-			 * sequence also drops bit 20 of MACCONTROL, between
-			 * the enable and the suspend. Verified on both the
-			 * attach and the down-to-bss paths.
-			 *
-			 * SALAME: that bit is not tracked; probably a
-			 * calibration-complete flag or a MAC gate.
+			 * sequence. Between its enable and suspend the stock
+			 * driver drops beacon promiscuity, which
+			 * b43_adjust_opmode() owns.
 			 */
 			b43_mac_enable(dev);
-			b43_maccontrol_set(dev, ~0x00100000u, 0);
+#if UNIT_TEST
+			b43_phy_ac_core_site(dev, B43_AC_SITE_CAL_BCNPROMISC_OFF);
+#endif
 			b43_mac_suspend(dev);
 			continue;
 		}
@@ -11013,15 +10963,10 @@ static void b43_phy_ac_down(struct b43_wldev *dev)
 	u16 (*txiqlo_coef)[3] = dev->phy.ac->txiqlo_coef;
 
 	/*
-	 * A seventh 32-bit counter, read on its own and outside every sweep: one
-	 * hi/lo/hi on 0x077c, bracketed by two reads of UCODESTAT that are the
-	 * core's. It is already in the ctr32[] list of the statistics poll, so
-	 * the read itself is the poll's shape; what is separate is this one
-	 * occurrence, which no poll accounts for.
-	 */
-	b43_phy_ac_wd_shm_read32x3(dev, 0x077c);
-
-	/*
+	 * Entered with the MAC suspended by b43_wireless_core_stop(). The stock
+	 * driver's down reads one more statistics counter and drops beacon
+	 * promiscuity before its own suspend; both are the core's.
+	 *
 	 * Third and last pass of the twelve-rate loop, with the same shm
 	 * prologue as the second one: the chain mask into 0x00cc, the beacon
 	 * power offset on 0x00ce and the zero on 0x00d0, then the chain-mask
@@ -11041,12 +10986,6 @@ static void b43_phy_ac_down(struct b43_wldev *dev)
 	 * three boards, cold and hot, and no condition these captures cover
 	 * turns it on. A condition that does means this site has to be revised.
 	 */
-	/*
-	 * The maccontrol bracket that opens the block: clear bit 20, then
-	 * suspend. The second site raises that bit where this one lowers it.
-	 */
-	b43_maccontrol_set(dev, (u32)~0x00100000u, 0x00000000);
-	b43_mac_suspend(dev);
 	b43_phy_ac_bss_cc_update(dev, B43_PHY_AC_CHAIN_SETUP);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00ce,
 			b43_phy_ac_beacon_pwr_offset(dev));
@@ -11087,14 +11026,21 @@ static void b43_phy_ac_down(struct b43_wldev *dev)
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
 	b43_phy_ac_afe_gain_regs_reemit(dev);
 
-	/* MAC sequence: 4× toggle bit 0 + 1× clr bit 18 + MHF. */
-	b43_mac_enable(dev);
-	b43_maccontrol_set(dev, ~0x48020000u, 0x40000000);  /* multi-bit config */
-	b43_mac_suspend(dev);
-	b43_maccontrol_set(dev, ~0x00040000u, 0);
-	b43_mac_enable(dev);
+	/*
+	 * Here the stock driver leaves the BSS -- INFRA off and DISCPMQ on,
+	 * then AP off -- toggling the MAC around each write. The mode is
+	 * b43_adjust_opmode()'s, from remove_interface, and b43 keeps the MAC
+	 * suspended through the down: b43_wireless_core_stop() and the
+	 * b43_software_rfkill() bracket both hold it, so a toggle from here
+	 * would not reach the register anyway.
+	 */
+#if UNIT_TEST
+	b43_phy_ac_core_site(dev, B43_AC_SITE_DOWN_OPMODE);
+#endif
 	b43_phy_ac_mhf_maskset(dev, 0, (u16)~0x4000, 0);
-	b43_mac_suspend(dev);
+#if UNIT_TEST
+	b43_phy_ac_core_site(dev, B43_AC_SITE_DOWN_OPMODE_END);
+#endif
 
 	/*
 	 * Per core: restore of the TX IQ/LO coefficients saved in block D,
@@ -11138,13 +11084,14 @@ static void b43_phy_ac_down(struct b43_wldev *dev)
 	}
 
 	/*
-	 * MAC final toggle + MAC.MCTRL multi-bit. Between the enable and the
-	 * suspend the vendor switches the two LEDs off (wlc_bmac_led(), the
-	 * core's): in the comparison's perimeter, not emitted here.
+	 * Here the stock driver's down path toggles the MAC once more, switches
+	 * the LEDs off and resets the core: b43_wireless_core_stop() and
+	 * b43_wireless_core_exit() own that, and on a runtime rfkill the MAC
+	 * stays up, so nothing of it is written from the PHY.
 	 */
-	b43_mac_enable(dev);
-	b43_mac_suspend(dev);
-	b43_maccontrol_set(dev, 0, 0x04000400);   /* mask=~0=0xffffffff */
+#if UNIT_TEST
+	b43_phy_ac_core_site(dev, B43_AC_SITE_CORE_DOWN);
+#endif
 
 	/* The front end powered down, without a save of its own, then the
 	 * PMU release. */
@@ -11185,10 +11132,6 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	 * enable/suspend pairs into no-ops. Nothing here has to undo the
 	 * suspend, so the entry state does not need remembering: the enable is
 	 * the caller's, see the end of the function.
-	 *
-	 * The preamble writes MACCTL through b43_maccontrol_set(), which does
-	 * not go through the refcount: two routes to the same bit, to be
-	 * unified.
 	 */
 	if (!dev->mac_suspended)
 		b43_mac_suspend(dev);
@@ -11668,8 +11611,9 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x003c, 0x000a);
 	b43_phy_ac_chainmask_block(dev, B43_PHY_AC_CHAIN_SETUP);
 	b43_phy_ac_basic_rate_map(dev);
-	b43_maccontrol_set(dev, ~0x00100000u, 0);
-	b43_maccontrol_set(dev, ~0x01c00000u, 0);
+#if UNIT_TEST
+	b43_phy_ac_core_site(dev, B43_AC_SITE_OPMODE_FILTERS);
+#endif
 	b43_mac_enable(dev);
 	/*
 	 * The four PWRIND_BLKS cells preceding the 0x0308 that

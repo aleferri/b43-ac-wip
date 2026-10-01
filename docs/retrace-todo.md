@@ -13,6 +13,67 @@ is known work that moves to the core, none stands for work not understood.
 
 ## Core
 
+### MACCONTROL of the core reset and of the ucode start
+
+The PHY writes no MACCONTROL value of the core's: the four `0x04000400`
+of the cold attach are `b43_wireless_core_reset()`'s, `0x04000404` and
+`0x04020402` are `b43_upload_microcode()`'s, the GPOUT clear and the empty
+GPIO control are `b43_gpio_init()`'s, and the MAC toggle plus `0x04000400`
+of the down are `b43_wireless_core_stop()`'s and the exit's. `test/unit`
+emits them at the stock points (`B43_AC_SITE_CORE_RESET`, `_UCODE_LOAD`,
+`_UCODE_START`, `_CORE_DOWN`). What differs from the stock driver in the
+core itself, seen on the agcombo bus capture:
+
+- `b43_wireless_core_reset()` writes IHR only; the stock driver writes
+  IHR | AWAKE at every reset (brcmsmac does the same), and b43 sets AWAKE
+  at the first `b43_mac_enable()`.
+- The PHY reset bracket: stock `0x14f -> 0x141 -> 0x145` (FGC high while
+  in reset, FGC and PHY_CLKEN low on release, then clock), b43
+  `0x14d -> 0x143 -> 0x145`.
+- `b43_bcma_wireless_core_reset()` requests the two PLLs on `clk_ctl_st`
+  (`0x300`); the stock driver never does, `EXTRESST` is already 7.
+- In AP mode the stock driver runs with `DISCPMQ` clear and without
+  `SHM_ENABLED` (`0x0416040x`); b43 keeps both (`0x4416050x`), the first
+  under "Power management queue" below. `BEACPROMISC` is set for an AP by
+  `b43_adjust_opmode()`, as the stock driver does on the AC.
+- The mode bits the stock driver toggles inside the PHY's phases -- beacon
+  promiscuity off in the calibration flush and at the tail of the channel
+  switch, INFRA off / DISCPMQ on / AP off on the down -- have no core site in
+  b43: `b43_adjust_opmode()` sets the mode once and the exit does not rewrite
+  it. `test/unit` emits them at the stock points (`B43_AC_SITE_CAL_BCNPROMISC_OFF`,
+  `_OPMODE_FILTERS`, `_DOWN_BCNPROMISC_OFF`, `_DOWN_OPMODE_INFRA`, `_DOWN_OPMODE_AP`);
+  the BSS mode block before the TX power adjust -- TBTT hold, AP, INFRA,
+  PRETBTT 2, beacon promiscuity -- is emitted by the flow before
+  `adjust_txpower`, which now suspends the MAC around its own body.
+- The MAC toggles the stock driver makes inside its down have no effect
+  in b43: the PHY's down runs under `b43_wireless_core_stop()`'s suspend
+  and the `b43_software_rfkill()` bracket, so the MAC stays suspended from
+  the stop to the core disable. `test/unit` emits them raw at the stock
+  points (`B43_AC_SITE_DOWN_OPMODE`, `_DOWN_OPMODE_END`, `_CORE_DOWN`).
+
+### Order of the core init and of the exit around the PHY
+
+The stock driver brings the whole MAC up before it touches the PHY -- ucode,
+initvals, TX FIFOs, shared-memory cells, host flags, DMA rings, address
+tables -- and on the AC `b43_wireless_core_init()` does the same:
+`b43_chip_init()` stops after the MAC init and the PHY comes up at its end,
+after `b43_security_init()`. At exit the PHY goes down before the PSM stops,
+as the stock driver runs its down before the core reset. What still differs
+at the bus:
+
+- the six DMA interrupt masks: b43 writes all six, the stock driver
+  `0x0024 = 0x10000` only;
+- the template RAM: the stock driver fills every template at init, b43 at
+  start_ap;
+- the BSS bring-up. The stock driver's `wl up` runs the channel switch, the
+  BSS configuration, the operating mode, the TX power adjust, the EDCF
+  parameters and then the post-switch calibrations in one sequence. Under
+  mac80211 the BSS configuration and the operating mode arrive at start_ap,
+  after `config` and the `conf_tx` calls, so b43 runs the adjust and the
+  calibrations from `b43_op_config()`, before the BSS exists. Moving them to
+  `BSS_CHANGED_BEACON_ENABLED` would put them after the mode block as the
+  stock driver has them; `conf_tx` cannot move. Open.
+
 ### Key-table clearing
 
 The stock driver clears the address match rows inside the channel setup, right
