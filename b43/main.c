@@ -832,6 +832,23 @@ void b43_macfilter_set(struct b43_wldev *dev, u16 offset, const u8 *mac)
 	b43_write16(dev, B43_MMIO_MACFILTER_DATA, data);
 }
 
+/* The AC microcode keeps the station address in template RAM, padded to eight bytes. */
+#define B43_TPL_AC_MACADDR	0x0048
+
+static void b43_write_macaddr_template_ac(struct b43_wldev *dev, const u8 *mac)
+{
+	struct b43_ram_seq seq = {
+		.next = U16_MAX,
+		.swap = !!(b43_read32(dev, B43_MMIO_MACCTL) & B43_MACCTL_BE),
+	};
+
+	b43_ram_seq_write(dev, &seq, B43_TPL_AC_MACADDR,
+			  (u32)mac[0] | (u32)mac[1] << 8 |
+			  (u32)mac[2] << 16 | (u32)mac[3] << 24);
+	b43_ram_seq_write(dev, &seq, B43_TPL_AC_MACADDR + sizeof(u32),
+			  (u32)mac[4] | (u32)mac[5] << 8);
+}
+
 static void b43_write_mac_bssid_templates(struct b43_wldev *dev)
 {
 	const u8 *mac;
@@ -844,6 +861,11 @@ static void b43_write_mac_bssid_templates(struct b43_wldev *dev)
 	mac = dev->wl->mac_addr;
 
 	b43_macfilter_set(dev, B43_MACFILTER_BSSID, bssid);
+
+	if (dev->phy.type == B43_PHYTYPE_AC) {
+		b43_write_macaddr_template_ac(dev, mac);
+		return;
+	}
 
 	memcpy(mac_bssid, mac, ETH_ALEN);
 	memcpy(mac_bssid + ETH_ALEN, bssid, ETH_ALEN);

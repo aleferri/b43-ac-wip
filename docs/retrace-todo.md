@@ -353,6 +353,15 @@ adaptation, and HT and VHT rates in transmission. What is open:
   `b0g0initvals42.fw`/`b0g0bsinitvals42.fw` of 6.30.163; the 6.30.223 values
   (decoded ops #1140–#1480) have not been diffed against them.
 - **Missing:** the null-data template at template RAM `0x2c` (power save).
+  The AC writes the station address at template RAM `0x48`, eight bytes, and
+  b43 does the same; nothing is written at `0x20`, where the older microcode
+  keeps it. In front of the null-data frame the MacBookAir6,1 `wl-init`
+  capture also writes the BSSID, the station address and the BSSID again at
+  `0x30` (18 bytes) when the station associates, which belongs with that
+  template and is not written. The D6220's AP bring-up writes `0x48` twice
+  and nothing at `0x30`. `test/integration` cannot score it: the port's
+  writes are raw `REG.*` operations and the D6220 capture has the `TPL.RAMW`
+  class only.
 - **TX status, partly mapped.** `B43_FW_HDR_AC` reads the eight words and
   takes the frame ID, the acknowledgement (bit 15) and the number of attempts
   (low byte of word 2, at least one on an acknowledged frame); bits 1-14 of
