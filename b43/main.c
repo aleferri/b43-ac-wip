@@ -1536,8 +1536,8 @@ void b43_wireless_core_reset(struct b43_wldev *dev, bool gmode)
  *
  * The frame ID is in the high half of the first word and bit 15 is the
  * acknowledgement: it is clear on every broadcast probe request of the
- * wl 6.30.223 capture and set on the unicast frames. The rest is not
- * mapped, so the transmit count is taken as one and no status is treated as
+ * wl 6.30.223 capture and set on the unicast frames. The low byte of the
+ * third word is the number of transmit attempts. No status is treated as
  * intermediate: every entry completes its frame.
  */
 static bool b43_txstatus_read_ac(struct b43_wldev *dev,
@@ -1547,19 +1547,21 @@ static bool b43_txstatus_read_ac(struct b43_wldev *dev,
 		B43_MMIO_XMITSTAT_0, B43_MMIO_XMITSTAT_1,
 		B43_MMIO_XMITSTAT_2, B43_MMIO_XMITSTAT_3,
 	};
-	u32 w0;
+	u32 w[ARRAY_SIZE(reg)];
 	int i;
 
-	w0 = b43_read32(dev, B43_MMIO_XMITSTAT_0);
-	if (!(w0 & 0x00000001))
+	w[0] = b43_read32(dev, reg[0]);
+	if (!(w[0] & 0x00000001))
 		return false;
-	for (i = 1; i < 2 * ARRAY_SIZE(reg); i++)
-		b43_read32(dev, reg[i % ARRAY_SIZE(reg)]);
+	for (i = 1; i < ARRAY_SIZE(reg); i++)
+		w[i] = b43_read32(dev, reg[i]);
+	for (i = 0; i < ARRAY_SIZE(reg); i++)
+		b43_read32(dev, reg[i]);
 
 	memset(stat, 0, sizeof(*stat));
-	stat->cookie = w0 >> 16;
-	stat->acked = !!(w0 & 0x00008000);
-	stat->frame_count = 1;
+	stat->cookie = w[0] >> 16;
+	stat->acked = !!(w[0] & 0x00008000);
+	stat->frame_count = max_t(u32, w[2] & 0xff, stat->acked);
 	return true;
 }
 

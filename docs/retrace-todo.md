@@ -311,8 +311,8 @@ each station's power save from the frames it receives (b43 does not declare
 power save, so no `B43_IRQ_PMQ` and no suppressed status.
 
 Open: the suppression field of the AC TX status. `b43_txstatus_read_ac()`
-maps only the frame ID and the acknowledgement, so a frame the ucode held
-back is reported as not acknowledged instead of
+maps the frame ID, the acknowledgement and the attempt count, so a frame the
+ucode held back is reported as not acknowledged instead of
 `IEEE80211_TX_STAT_TX_FILTERED`, and mac80211 does not buffer it again. The
 pre-AC field, bits 4:2 of the first word, is not it: on the 368 statuses of
 the MacBookAir6,1 traffic capture (`wl-tx`) bit 3 is set on acknowledged
@@ -354,11 +354,15 @@ adaptation, and HT and VHT rates in transmission. What is open:
   (decoded ops #1140–#1480) have not been diffed against them.
 - **Missing:** the null-data template at template RAM `0x2c` (power save).
 - **TX status, partly mapped.** `B43_FW_HDR_AC` reads the eight words and
-  takes the frame ID and the acknowledgement (bit 15); bits 1–14 of the first
-  word and words 1–7 are not mapped, so the transmit count is fixed at one.
-  Bit 6 is set, with no acknowledgement and word 1 at 0, on three probe
-  requests of the archer-t5e; word 2 looks like per-rate counts. A capture
-  with retries would say.
+  takes the frame ID, the acknowledgement (bit 15) and the number of attempts
+  (low byte of word 2, at least one on an acknowledged frame); bits 1-14 of
+  the first word and the other words are not mapped. On the 368 statuses of
+  the MacBookAir6,1 `wl-tx` capture the attempts run from 1 to 11 and equal
+  bits 11:8 of the first word on 353 of them. Of the other 15, twelve have 2
+  or 3 where the nibble says 1, two acknowledged ones have 0 in the low byte
+  and the count in bits 23:16, and one unacknowledged has 0 there; what bits
+  23:16 count is open. Bit 6 is set, with no acknowledgement and word 1 at 0,
+  on three probe requests of the archer-t5e.
 - **Scratch and shared memory look alike to the comparison.**
   `tracelib.normalize()` drops `sel=`, and wl-diag prints a scratch word at
   four times its index, so scratch word 3 and shared `0x000c` are the same op
