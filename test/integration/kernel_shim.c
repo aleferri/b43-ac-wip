@@ -265,7 +265,6 @@ unsigned long _find_next_bit(const unsigned long *addr1, unsigned long nbits,
 }
 
 void __local_bh_enable_ip(unsigned long ip, unsigned int cnt) { }
-void *skb_pull(void *skb, unsigned int len) { return NULL; }
 char pcpu_hot[256];
 
 unsigned long strnlen(const char *s, unsigned long n)

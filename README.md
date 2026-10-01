@@ -56,11 +56,14 @@ Measured on 2026-09-30.
 | unit, cold TG789vac v2 `cold01` ch36/20 | 99.91% |
 | unit, cold TG789vac v2, all 43 segments | min 99.77% (ch149/40), median 99.91%, max 99.98% |
 | unit, periodic watchdog tick | **`MATCH`** |
-| integration, cold `cold01` | `probe: 0`, `start: 0`; 87.98% (29023/32990) |
-| integration, agcombo ch36/80 at the bus | 64.63% (73799/114190) |
+| integration, cold `cold01` | `probe: 0`, `start: 0`; 90.90% (29003/31905) |
+| integration, agcombo ch36/80 at the bus | 65.58% (88586/135072), with the 561 interrupts and 283 received frames of the capture replayed |
 | SROM rev 11 extractor | 74/79/80 PASS, 0 FAIL (DSL-3580L, D6220, agcombo) |
 
-The agcombo and the two integration rows were not re-measured on this date.
+The agcombo unit row was not re-measured on this date; the integration rows
+were, on 2026-10-01. The agcombo bus row measured 70.07% before the
+interrupts were replayed: the union grew by the five DMA channels b43 reads
+and acknowledges on every interrupt where the stock driver touches one.
 
 The number to quote is the `grezzo` line of `cmp_skip.py`; how to reproduce
 and read it is in [`test/unit/README.md`](test/unit/README.md). Ops are

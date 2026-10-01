@@ -67,7 +67,7 @@ KFLAGS += -fno-inline -g
 endif
 
 # I file di b43 che si compilano come sono. Tutti e tre a zero errori.
-UPSTREAM := main.c phy_common.c bus.c xmit.c leds.c rfkill.c \
+UPSTREAM := main.c phy_common.c bus.c xmit.c dma.c leds.c rfkill.c \
             phy_ac.c tables_phy_ac.c radio_2069.c \
             helpers_phy_ac.c ppr_ac.c
 
@@ -77,7 +77,7 @@ BCMA := bcma/core.c
 
 # I nostri: il bus finto che emette le op. L'aggancio e' la vtable
 # bcma_host_ops, non i simboli bcma_* che il link chiede.
-LOCAL := bcma_stub.c subsystem_stub.c main.c
+LOCAL := bcma_stub.c subsystem_stub.c dma_stub.c main.c
 
 # trace_out.c e' codice UTENTE: gli servono stdio e getenv, e non e' codice di
 # driver. Si compila coi flag normali, non con -nostdinc.

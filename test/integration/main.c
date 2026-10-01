@@ -119,6 +119,7 @@ extern struct ieee80211_hw *b43_test_hw;
 void b43_test_run_until(unsigned long until);
 void b43_test_irq(void);
 void b43_test_raise_irq(u32 reason);
+void b43_test_raise_dma0(u32 reason);
 
 /*
  * Il campione di rumore pronto, bit di B43_MMIO_GEN_IRQ_REASON: e' il
@@ -223,6 +224,13 @@ static void test_cac_end(void)
  * come quello di b43.
  *
  *   NOISE   il campione pronto: B43_IRQ_NOISESAMPLE_OK dall'hard handler
+ *   IRQ     un'interruzione del microcodice come la cattura l'ha vista:
+ *           la causa in GEN_IRQ_REASON e lo stato del canale DMA 0, RX_DONE
+ *           quando c'e' un frame. Cosa b43 ne fa -- l'ACK, le maschere, la
+ *           lettura dell'anello di ricezione -- e' suo. Quelle cadute
+ *           durante il bring-up del vendor arrivano tutte insieme all'inizio,
+ *           perche' qui il bring-up e' una sola chiamata e l'orologio parte
+ *           dopo.
  *   TPL     il beacon cambiato: bss_info_changed(BSS_CHANGED_BEACON)
  *   BSS_UP  il check chiuso: il rilascio del canale e start_ap
  *   WD, POLL  i timer del driver, che scattano da se'
@@ -231,6 +239,7 @@ static void test_environment(bool cac)
 {
 	long long t0, t1, t;
 	char kind[16];
+	u32 a0, a1;
 	int n;
 
 	if (!b43_test_timeline_wd(&t0, &t1, &n) || n < 2) {
@@ -238,7 +247,7 @@ static void test_environment(bool cac)
 			test_cac_end();
 		return;
 	}
-	while (b43_test_timeline_next(&t, kind, sizeof(kind))) {
+	while (b43_test_timeline_next(&t, kind, sizeof(kind), &a0, &a1)) {
 		long long rel = t - t0;
 		unsigned long j = HZ + (unsigned long)
 			(rel < 0 ? 0 : rel * (n - 1) * HZ / (t1 - t0));
@@ -246,6 +255,10 @@ static void test_environment(bool cac)
 		b43_test_run_until(j);
 		if (!strcmp(kind, "NOISE")) {
 			b43_test_raise_irq(TEST_IRQ_NOISESAMPLE_OK);
+			b43_test_irq();
+		} else if (!strcmp(kind, "IRQ")) {
+			b43_test_raise_irq(a0);
+			b43_test_raise_dma0(a1);
 			b43_test_irq();
 		} else if (!strcmp(kind, "TPL")) {
 			test_bss(BSS_CHANGED_BEACON);

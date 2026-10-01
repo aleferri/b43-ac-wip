@@ -56,7 +56,16 @@ After `start` the suite does what mac80211 does for an AP (`add_interface`,
 with the release and the retune in between), then plays the timeline. The
 driver's timers are jiffies advanced only by the timeline, one second per
 vendor watchdog turn; `NOISE` raises `B43_IRQ_NOISESAMPLE_OK`, `TPL` is
-`bss_info_changed(BEACON)`, `BSS_UP` ends the check.
+`bss_info_changed(BEACON)`, `BSS_UP` ends the check, `IRQ` raises the reason
+the capture has in `GEN_IRQ_REASON` and the DMA channel 0 status the vendor
+acknowledged (a bus capture only: the wl-diag ones have no MAC registers).
+`dma.c` is compiled with `dma_stub.c` under it, so the interrupt handler
+programs the rings, acknowledges the channels and, on `RX_DONE`, walks the
+receive ring up to the slot the oracle reports; the buffers hold the poison
+`dma.c` puts there, so every frame is dropped and recycled, which is the same
+register traffic as a received frame with b43's ring geometry. Interrupts the
+vendor took during its bring-up are delivered together when the environment
+starts, since here the bring-up is one call.
 
 **A capture taken at the bus.** The agcombo's `wl-mmio-trap` captures
 (`router-data/agcombo/*.bin`) also carry the MAC registers, the wrapper and

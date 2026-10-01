@@ -74,6 +74,31 @@ at the bus:
   `BSS_CHANGED_BEACON_ENABLED` would put them after the mode block as the
   stock driver has them; `conf_tx` cannot move. Open.
 
+### Interrupts and DMA at the bus
+
+With the agcombo capture's interrupts replayed (`IRQ` events of
+`reverse-tools/timeline.py`, `dma.c` in the integration build), the
+interrupt path and the rings are measurable. What differs from the stock
+driver:
+
+- `GEN_IRQ_MASK`: b43 runs with `0x38058264`, the stock driver with
+  `0xb2e7a864`. The low half agrees on TBTT, ATIM, PMQ, MAC TX error and
+  DMA; the stock driver also unmasks `0x0800`, `0x2000`, `0x20000`,
+  `0x00e00000`, `0x02000000` and `0x80000000` and leaves `0x10000` and
+  `0x08000000` masked, which b43 unmasks. What those bits mean on this
+  microcode is not established; b43's names for them are the pre-AC ones.
+- Per interrupt b43 reads and acknowledges five DMA channels; the stock
+  driver acknowledges channel 0 only, and only when it has a frame.
+- Ring control: the stock driver writes `0x03700841` (TX) and `0x00500851`
+  (RX), b43 `0x00000801` and `0x00000851`: enable, parity disable and the
+  40-byte receive frame offset agree, the burst-length and prefetch fields
+  above bit 16 b43 leaves at zero.
+- The receive index: the stock driver writes the low 32 bits of the
+  descriptor's address, b43 the offset in the ring. Both address the same
+  descriptor with the 64 KB ring alignment `dma.c` gives the AC cores.
+- The stock driver reads the receive status twice per frame and the TSF
+  once; b43 once and never.
+
 ### Key-table clearing
 
 The stock driver clears the address match rows inside the channel setup, right

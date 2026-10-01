@@ -56,6 +56,7 @@ void b43_trace_note(const char *fmt, int arg);
  * vendor e quanti sono; _next() l'evento successivo, 0 alla fine.
  */
 int b43_test_timeline_wd(long long *first_us, long long *last_us, int *n);
-int b43_test_timeline_next(long long *t_us, char *kind, int len);
+int b43_test_timeline_next(long long *t_us, char *kind, int len,
+			   u32 *arg0, u32 *arg1);
 
 #endif /* B43_TEST_TRACE_OUT_H */

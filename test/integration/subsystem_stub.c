@@ -90,6 +90,7 @@ void bcma_chipco_regctl_maskset(struct bcma_drv_cc *cc, u32 offset,
 
 int ssb_bus_powerup(struct ssb_bus *bus, bool dynamic_pctl) { return 0; }
 int ssb_bus_may_powerdown(struct ssb_bus *bus) { return 0; }
+u32 ssb_dma_translation(struct ssb_device *dev) { return 0; }
 void ssb_device_enable(struct ssb_device *dev, u32 core_specific_flags) { }
 void ssb_device_disable(struct ssb_device *dev, u32 core_specific_flags) { }
 int ssb_device_is_enabled(struct ssb_device *dev) { return 1; }
@@ -412,19 +413,15 @@ ieee80211_get_response_rate(struct ieee80211_supported_band *sband,
 	return sband && sband->bitrates ? &sband->bitrates[0] : NULL;
 }
 
-/* --- i sottosistemi di b43: nessuno emette op sul percorso di init ----
+/* --- i sottosistemi di b43 -------------------------------------------------
  *
- * DMA e PIO sono i percorsi dati: init deve RIUSCIRE, o
- * b43_wireless_core_init esce prima di b43_security_init. Non emettono op
- * sulla traccia che confrontiamo, ma il loro esito e' un gate.
+ * dma.c si compila com'e', con dma_stub.c sotto: programma gli anelli e
+ * serve i frame che la timeline consegna con gli eventi IRQ. PIO e' l'altro
+ * percorso dati, che b43 non prende su PCIe: init deve riuscire lo stesso o
+ * b43_wireless_core_init esce prima di b43_security_init.
  */
 struct b43_wldev;
 
-int b43_dma_init(struct b43_wldev *dev) { return 0; }
-void b43_dma_free(struct b43_wldev *dev) { }
-void b43_dma_tx(struct b43_wldev *dev, struct sk_buff *skb) { }
-void b43_dma_rx(void *ring) { }
-void b43_dma_handle_rx_overflow(void *ring) { }
 int b43_pio_init(struct b43_wldev *dev) { return 0; }
 void b43_pio_free(struct b43_wldev *dev) { }
 void b43_pio_tx(struct b43_wldev *dev, struct sk_buff *skb) { }
@@ -460,11 +457,8 @@ void wiphy_rfkill_set_hw_state_reason(struct wiphy *wiphy, bool blocked,
  * op sul bring-up. `handle_txstatus` non viene chiamato affatto qui, non
  * essendoci trasmissione.
  */
-void b43_dma_tx_suspend(struct b43_wldev *dev) { }
-void b43_dma_tx_resume(struct b43_wldev *dev) { }
 void b43_pio_tx_suspend(struct b43_wldev *dev) { }
 void b43_pio_tx_resume(struct b43_wldev *dev) { }
-void b43_dma_handle_txstatus(struct b43_wldev *dev, const void *status) { }
 void b43_pio_handle_txstatus(struct b43_wldev *dev, const void *status) { }
 
 /* --- mac80211: utilita' pure, nessuna emette op ----------------------- */

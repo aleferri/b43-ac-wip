@@ -349,17 +349,21 @@ int b43_test_timeline_wd(long long *first_us, long long *last_us, int *n)
 	return *n;
 }
 
-int b43_test_timeline_next(long long *t_us, char *kind, int len)
+int b43_test_timeline_next(long long *t_us, char *kind, int len,
+			   u32 *arg0, u32 *arg1)
 {
 	FILE *f = timeline_file();
 	char line[128], k[16];
+	unsigned int a0 = 0, a1 = 0;
 	double t;
 
 	while (f && fgets(line, sizeof(line), f)) {
-		if (sscanf(line, "%lf %*d %15s", &t, k) != 2)
+		if (sscanf(line, "%lf %*d %15s %x %x", &t, k, &a0, &a1) < 2)
 			continue;
 		*t_us = (long long)(t * 1e6 + 0.5);
 		snprintf(kind, len, "%s", k);
+		*arg0 = a0;
+		*arg1 = a1;
 		return 1;
 	}
 	return 0;

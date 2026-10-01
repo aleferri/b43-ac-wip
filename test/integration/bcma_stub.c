@@ -70,7 +70,26 @@ static u32 irq_pending;
 
 void b43_test_raise_irq(u32 reason)
 {
-	irq_pending |= reason;
+	/* MAC_SUSPENDED e' di stato e segue MACCONTROL, vedi la lettura. */
+	irq_pending |= reason & ~B43_IRQ_MAC_SUSPENDED;
+}
+
+/*
+ * Lo stato d'interruzione del canale DMA 0, quello di ricezione: RX_DONE
+ * quando la timeline porta un frame. b43 lo legge in B43_MMIO_DMA0_REASON e
+ * lo azzera riscrivendolo; gli altri cinque canali qui non alzano niente.
+ * Non passa dall'oracolo: il vendor legge il registro una volta per
+ * interruzione, b43 una per ogni canale, e le code per indirizzo non
+ * allineerebbero.
+ */
+static u32 dma0_pending;
+
+/* Il registro di controllo dell'anello di ricezione, per il suo stato. */
+static u32 rxctl;
+
+void b43_test_raise_dma0(u32 reason)
+{
+	dma0_pending |= reason;
 }
 
 /*
@@ -308,6 +327,14 @@ static void note_write(struct bcma_device *core, u16 off, u32 val, int width)
 		irq_pending &= ~val;
 		b43_trace_raw("REG.WR", off, val, width);
 		return;
+	case B43_MMIO_DMA0_REASON:
+		dma0_pending &= ~val;
+		b43_trace_raw("REG.WR", off, val, width);
+		return;
+	case 0x0220:
+		rxctl = val;
+		b43_trace_raw("REG.WR", off, val, width);
+		return;
 	case BCMA_CLKCTLST:
 		clkctlst_init = true;
 		clkctlst_req = val & 0xffff;
@@ -423,9 +450,36 @@ static u32 note_read(struct bcma_device *core, u16 off, int width)
 	 *
 	 * Non e' un latch come MACCONTROL: b43 scrive qui per fare l'ACK
 	 * degli interrupt, e un latch restituirebbe l'ACK invece dello stato.
+	 * MAC_SUSPENDED segue il bit ENABLED del latch di MACCONTROL, come il
+	 * microcodice: alto finche' il MAC e' fermo, basso quando gira, cosi'
+	 * le cause che la timeline porta arrivano a b43 come il vendor le ha
+	 * lette, senza quel bit sopra.
 	 */
 	case B43_MMIO_GEN_IRQ_REASON:
-		v = B43_IRQ_MAC_SUSPENDED | irq_pending;
+		v = irq_pending;
+		if (!(macctl & B43_MACCTL_ENABLED))
+			v |= B43_IRQ_MAC_SUSPENDED;
+		break;
+	case 0x0230:
+		/*
+		 * Lo stato dell'anello di ricezione: lo slot corrente e' del
+		 * vendor, dall'oracolo, ma il campo di stato segue il registro
+		 * di controllo che b43 ha scritto, o il reset dell'anello che
+		 * il vendor non fa mai non finirebbe.
+		 */
+		v = b43_trace_read_raw(off, width);
+		if (!(rxctl & 1))
+			v &= ~0xF0000000u;
+		break;
+	case B43_MMIO_DMA0_REASON:
+		v = dma0_pending;
+		break;
+	case B43_MMIO_DMA1_REASON:
+	case B43_MMIO_DMA2_REASON:
+	case B43_MMIO_DMA3_REASON:
+	case B43_MMIO_DMA4_REASON:
+	case B43_MMIO_DMA5_REASON:
+		v = 0;
 		break;
 	default:
 		v = b43_trace_read_raw(off, width);

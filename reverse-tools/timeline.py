@@ -27,6 +27,14 @@ does on each event is the driver's, and none of it is in this file.
   BSS_UP  the AP is up after the channel availability check: the first write
           of the BSS row of the address match table with its flags, AMT.WR
           idx=0x3f a3!=0, after the arm.
+  IRQ     an interrupt from the microcode, bus captures only: the read of
+          GEN_IRQ_REASON (0x0128) that the interrupt handler follows within
+          a few operations with the mask-off write GEN_IRQ_MASK (0x012c) = 0.
+          Carries two words: the reason read, and the DMA channel 0 status
+          the handler acknowledges before it restores the mask (the write of
+          0x0020, 0x00010000 for a received frame), or 0. A read of 0x0128
+          that no mask-off follows is a poll of MAC_SUSPENDED, the driver's
+          own, not an event.
 
 A capture taken at the MMIO bus (reverse-tools/mmio2ops.py) has none of the
 accessor classes, so there each marker has its bus form: a maskset is the read
@@ -40,7 +48,8 @@ commits it; the region dump is the run
 of reads that starts at 0x00e0. Which set applies is read off the capture:
 one with REG.* or WRAP.* operations is a bus capture.
 
-Lines are `<t> <op#> <kind>`, sorted by time. Two things about the driver's
+Lines are `<t> <op#> <kind> [<arg>...]`, sorted by time; only IRQ has
+arguments. Two things about the driver's
 state at the start of the flow come out of the same pass, because the harness
 cannot know them otherwise:
 
@@ -267,6 +276,8 @@ def events(ops):
             else:
                 out.append((t, n, "TPL"))
 
+    out += interrupts(ops)
+
     out.sort(key=lambda e: (e[0], e[1]))
 
     # The watchdog counter's phase: the measure block falls where the
@@ -309,6 +320,36 @@ def events(ops):
                 phase = cand
                 break
     return out, phase, pre, entry
+
+
+def interrupts(ops):
+    """IRQ events: one per interrupt the handler takes, with what it saw."""
+    out = []
+    taken = set()
+    for i, (t, n, op, rest) in enumerate(ops):
+        if op != "REG.RD" or not rest.startswith("off=0x0128"):
+            continue
+        reason = val(rest)
+        if not reason:
+            continue
+        # The mask-off is the handler's first write; a MACCONTROL read or a
+        # PHY access of another context can sit between the two, and the
+        # handler may read the reason twice before it.
+        j = next((k for k in range(i + 1, min(i + 8, len(ops)))
+                  if ops[k][2] == "REG.WR" and
+                  ops[k][3].startswith("off=0x012c val=0x00000000")), None)
+        if j is None or j in taken:
+            continue
+        taken.add(j)
+        dma0 = 0
+        for k in range(j + 1, min(j + 400, len(ops))):
+            _, _, o, r = ops[k]
+            if o == "REG.WR" and r.startswith("off=0x012c") and val(r):
+                break
+            if o == "REG.WR" and r.startswith("off=0x0020"):
+                dma0 = val(r)
+        out.append((t, n, "IRQ 0x%08x 0x%08x" % (reason, dma0)))
+    return out
 
 
 def main():
