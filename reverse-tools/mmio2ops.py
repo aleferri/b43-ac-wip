@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """Decode a bus-level capture of a PCIe BCMA wireless chip into op classes.
 
-Three capture formats, the same device traffic:
+Four capture formats, the same device traffic:
 
     mmiotrace     the Linux kernel's mmiotrace text, taken on an x86 host
                   (router-data/archer-t5e);
     wl-mmio-trap  the binary records of wl-mmio-trap/, taken on a MIPS
                   big-endian router (router-data/agcombo/*.bin);
     bpftrace      `<ns> R32|W16|... <va> <val>` lines from kprobes on the
-                  hybrid wl's osl_read*/osl_write* (router-data/macbookair6-1).
+                  hybrid wl's osl_read*/osl_write* (router-data/macbookair6-1);
+    ftrace        the kprobe events of the same accessors as the ftrace
+                  buffer prints them, plus osl_pci_write_config
+                  (router-data/macbookair6-1, the wl-firstload and wl-tx ones).
 
 The trace is the raw MMIO traffic on BAR0 (16 KiB, PCIe gen2 layout):
 
@@ -20,7 +23,10 @@ The trace is the raw MMIO traffic on BAR0 (16 KiB, PCIe gen2 layout):
 The window moves through PCI config space, which mmiotrace does not record,
 so the core behind the sliding window is inferred: unambiguous register
 offsets (chipcommon OTP/SROM/PMU words, D11 PHY/radio/SHM ports, ...) set
-the state, ambiguous ones inherit it.
+the state, ambiguous ones inherit it. The ftrace captures record the config
+writes: there the window is known, the cores come from the EROM the driver
+reads, and an access to a core other than chipcommon and D11 is CORE.*.
+The other config writes are PCICFG.WR.
 
 Output lines follow the vendor capture format read by tracelib.py:
 
@@ -28,10 +34,12 @@ Output lines follow the vendor capture format read by tracelib.py:
 
 with the bus vocabulary of test/integration (PHY.WR/RD, RAD.WR/RD, OBJ.WR/RD
 with sel=, MAC.MCTRL, MAC.MCMD, REG.WR/RD off=) plus CC.*, SROM.RD, WRAP.*,
-PCIE.* and EROM.RD for the parts the vendor tracer never saw.
+PCIE.*, EROM.RD, CORE.* and PCICFG.WR for the parts the vendor tracer never
+saw.
 """
 import argparse
 import collections
+import re
 import struct
 import sys
 
@@ -51,6 +59,15 @@ PHY_CTL = 0x3fc
 PHY_DATA = 0x3fe
 
 SHM_SEL = 1
+
+# PCI config space of the BCMA host bridge
+PCI_BAR0_WIN = 0x80
+PCI_BAR0_WRAP = (0x70, 0xac)    # wrapper window: PCIe gen2, gen1
+
+SI_ENUM_BASE = 0x18000000       # chipcommon
+CORE_CC = 0x800
+CORE_D11 = 0x812
+CC_EROMPTR = 0xfc
 
 # chipcommon registers whose offset no D11 core uses: one of these in the
 # sliding window means the window is on the chipcommon. The OTP block
@@ -139,29 +156,81 @@ def parse_bpftrace(path):
 
     The addresses are kernel virtual addresses of wl's BAR0 mapping; the base
     is the page of the lowest one, which is the sliding window at BAR0 + 0.
-    The osl_delay lines are not bus traffic and are skipped."""
-    acc = []
+    The osl_delay lines are not bus traffic and are skipped. The script keys
+    the open read by thread, so a read nested in an interrupt on the same
+    thread loses its address and prints 0: those are dropped, and counted."""
+    acc, lost = [], 0
     for line in open(path):
         f = line.split()
         if len(f) == 4 and f[1][0] in "RW" and f[1][1:] in ("8", "16", "32"):
+            if int(f[2], 16) == 0:
+                lost += 1
+                continue
             acc.append((int(f[0]), f[1][0], int(f[1][1:]) // 8,
                         int(f[2], 16), int(f[3], 16)))
+    if lost:
+        print(f"{path}: {lost} reads without their address dropped", file=sys.stderr)
     base = min(a[3] for a in acc) & ~0xfff
     for ts, kind, width, addr, val in acc:
         yield Op(ts / 1e9, kind, width, addr - base, val)
 
 
+FTRACE_LINE = re.compile(r"^\s*.+?-(?P<pid>\d+)\s+\[(?P<cpu>\d+)\]\s+\S+\s+(?P<ts>[\d.]+): "
+                         r"(?P<ev>\w+): \([^)]*\)(?P<args>.*)$")
+
+
+def parse_ftrace(path):
+    """Accesses of an ftrace capture of osl_read*/osl_write* and of
+    osl_pci_write_config, as the trace buffer prints the kprobe events.
+
+    A read is two events of its task, the entry with the address (r32) and
+    the return with the value (r32r), paired by task, and by CPU for the idle
+    tasks, which all have pid 0. An interrupt can take the CPU between the
+    two and read on its own, so each task keeps a stack of open reads; a read
+    takes its place and time from its return. The base is found as in
+    bpftrace. A
+    config write is an Op of kind 'C' with the config offset in `off`. The
+    osl_delay events are not bus traffic and are skipped."""
+    acc, pending = [], collections.defaultdict(list)
+    for line in open(path):
+        m = FTRACE_LINE.match(line)
+        if not m:
+            continue
+        ev = m["ev"]
+        pid = m["pid"] if m["pid"] != "0" else "0/" + m["cpu"]
+        args = dict(kv.split("=", 1) for kv in m["args"].split() if "=" in kv)
+        ts = float(m["ts"])
+        if ev == "cfgw":
+            acc.append((ts, "C", int(args["size"]), int(args["off"], 16), int(args["val"], 16)))
+        elif ev in ("w8", "w16", "w32"):
+            acc.append((ts, "W", int(ev[1:]) // 8, int(args["addr"], 16), int(args["val"], 16)))
+        elif ev in ("r8", "r16", "r32"):
+            pending[pid].append((ts, int(ev[1:]) // 8, int(args["addr"], 16)))
+        elif ev in ("r8r", "r16r", "r32r"):
+            if not pending[pid] or pending[pid][-1][1] != int(ev[1:-1]) // 8:
+                print(f"{path}: {ev} of task {pid} at {ts} without its entry", file=sys.stderr)
+                continue
+            _, width, addr = pending[pid].pop()
+            acc.append((ts, "R", width, addr, int(args["ret"], 16)))
+    base = min(a[3] for a in acc if a[1] != "C") & ~0xfff
+    for ts, kind, width, addr, val in acc:
+        yield Op(ts, kind, width, addr if kind == "C" else addr - base, val)
+
+
 PARSERS = {"mmiotrace": parse_mmiotrace, "wl-mmio-trap": parse_wl_mmio_trap,
-           "bpftrace": parse_bpftrace}
+           "bpftrace": parse_bpftrace, "ftrace": parse_ftrace}
 
 
 def guess_format(path):
     with open(path, "rb") as f:
         head = f.read(64)
     try:
-        head.decode("ascii")
+        text = head.decode("ascii")
     except UnicodeDecodeError:
         return "wl-mmio-trap"
+    # Both are ftrace buffers; mmiotrace names its own tracer.
+    if text.startswith("# tracer:") and not text.startswith("# tracer: mmiotrace"):
+        return "ftrace"
     return "mmiotrace"
 
 
@@ -172,6 +241,12 @@ class Decoder:
         self.mark_windows = mark_windows
         self.window = "CC"
         self.erom_next = None
+        self.erom_words = {}
+        # Set by the first config write: the window is known from then on.
+        self.exact = False
+        self.erom_base = None
+        self.cores = {}
+        self.win_core = None
         self.phy_addr = None
         self.radio_addr = None
         self.objaddr = 0
@@ -199,6 +274,8 @@ class Decoder:
         return o == 0x18 and op.kind == "W" and bool(op.val & 0x80000000)
 
     def track_window(self, op):
+        if self.exact:
+            return
         if self.window == "EROM":
             if op.off == self.erom_next or op.off == self.erom_next - 4:
                 self.erom_next = op.off + 4
@@ -212,9 +289,32 @@ class Decoder:
     def after(self, op):
         """The eromptr read is the last chipcommon access before the window
         moves onto the EROM."""
-        if self.window == "CC" and op.off == 0xfc and op.kind == "R":
+        if self.window != "CC" or op.off != CC_EROMPTR or op.kind != "R":
+            return
+        if self.exact:
+            self.erom_base = op.val & ~0xfff
+            return
+        self.window = "EROM"
+        self.erom_next = 0
+
+    def move_window(self, op):
+        """A write of the BAR0 window in PCI config space. The EROM is read
+        through the window before any other core, so the cores it lists name
+        every later position."""
+        self.exact = True
+        if op.off != PCI_BAR0_WIN:
+            return
+        if self.window == "EROM" and not self.cores:
+            self.cores = {addr: c["id"] for c in erom_cores(
+                [self.erom_words[k] for k in sorted(self.erom_words)])
+                for addr, kind in c["addr"] if kind == "slave"}
+        base = op.val & ~0xfff
+        if base == self.erom_base:
             self.window = "EROM"
-            self.erom_next = 0
+            return
+        self.win_core = self.cores.get(base, CORE_CC if base == SI_ENUM_BASE else None)
+        self.win_base = base
+        self.window = {CORE_CC: "CC", CORE_D11: "D11"}.get(self.win_core, "CORE")
 
     # -- emission -----------------------------------------------------------
 
@@ -223,6 +323,15 @@ class Decoder:
             if op.kind == "M":
                 yield from ((op.ts, o) for o in self.flush_bulk())
                 yield op.ts, f"MARK '{op.val}'"
+                continue
+            if op.kind == "C":
+                yield from ((op.ts, o) for o in self.flush_bulk())
+                before = self.window
+                self.move_window(op)
+                if op.off not in (PCI_BAR0_WIN,) + PCI_BAR0_WRAP:
+                    yield op.ts, f"PCICFG.WR off=0x{op.off:02x} val=0x{op.val:08x}"
+                elif self.mark_windows and op.off == PCI_BAR0_WIN:
+                    yield op.ts, f"WIN core={self.window} from={before} base=0x{op.val:08x}"
                 continue
             before = self.window
             self.track_window(op)
@@ -247,7 +356,12 @@ class Decoder:
             name = WRAP_NAMES.get(o - 0x1000, "")
             yield f"WRAP.{rw(op)} off=0x{o - 0x1000:04x} val={hexw(op)}" + (f" reg={name}" if name else "")
         elif self.window == "EROM":
+            self.erom_words[o] = op.val
             yield f"EROM.RD off=0x{o:04x} val={hexw(op)}"
+        elif self.window == "CORE":
+            core = f"core=0x{self.win_core:03x}" if self.win_core is not None \
+                else f"base=0x{self.win_base:08x}"
+            yield f"CORE.{rw(op)} {core} off=0x{o:04x} val={hexw(op)}"
         elif self.window == "CC":
             yield from self.cc(op, o)
         else:
@@ -364,9 +478,10 @@ def rw(op):
     return "WR" if op.kind == "W" else "RD"
 
 
-CORE_NAMES = {0x800: "chipcommon", 0x812: "d11", 0x83e: "pcie2", 0x83c: "gci",
-              0x81a: "armcr4", 0x820: "pmu", 0x135: "default", 0x367: "apb-bridge",
-              0x366: "erom", 0x301: "axi2apb"}
+# BCMA_CORE_* of include/linux/bcma/bcma.h; the ARM ones (mfg 0x43b) by role.
+CORE_NAMES = {0x800: "chipcommon", 0x812: "d11", 0x83c: "pcie2", 0x83e: "armcr4",
+              0x81a: "usb20dev", 0x840: "gci", 0x820: "pcie", 0x827: "pmu",
+              0x135: "default", 0x367: "oob-router", 0x366: "erom", 0x301: "axi2apb"}
 
 
 def erom_cores(words):
@@ -403,12 +518,9 @@ def erom_cores(words):
 
 def erom_report(ops, out):
     dec = Decoder()
-    words = {}
-    for op in ops:
-        dec.track_window(op)
-        if dec.window == "EROM" and op.off < 0x1000:
-            words[op.off] = op.val
-        dec.after(op)
+    for _ in dec.decode(ops):
+        pass
+    words = dec.erom_words
     for c in erom_cores([words[k] for k in sorted(words)]):
         name = CORE_NAMES.get(c["id"], "?")
         addr = ", ".join(f"{a:#x}/{k}" for a, k in c["addr"])

@@ -35,11 +35,14 @@ gate. The comparison itself is `test/unit/compare.py` (positional) and
 
 ### Bus-level captures
 
-- **mmio2ops.py** decodes raw BAR0 accesses, an x86 mmiotrace or the binary
-  records of `../wl-mmio-trap/`, into the same vocabulary (`PHY.*`, `RAD.*`,
+- **mmio2ops.py** decodes raw BAR0 accesses, an x86 mmiotrace, the binary
+  records of `../wl-mmio-trap/` or the bpftrace and ftrace kprobe captures of
+  the hybrid `wl`'s accessors, into the same vocabulary (`PHY.*`, `RAD.*`,
   `OBJ.*` with `sel=`, `MAC.*`, `REG.*`, plus `CC.*`, `SROM.RD`, `WRAP.*`,
   `PCIE.*`, `EROM.RD`). The window's core is inferred from unambiguous offsets
-  (`--mark-windows`); `--erom` lists the cores, `--srom` writes the SROM words.
+  (`--mark-windows`), except in the ftrace captures, which record the PCI
+  config writes: there it is known, and the other cores' accesses are
+  `CORE.*`. `--erom` lists the cores, `--srom` writes the SROM words.
   A 32-bit shared-memory access is split low half first, and the PHY_VER read
   after every PHY write is dropped unless `--keep-flush`.
 - **ops_fold.py** `fold` rebuilds accessor-level ops from their bus footprint

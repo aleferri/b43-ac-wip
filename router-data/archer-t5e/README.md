@@ -6,7 +6,7 @@ traced; it does not show config space (window moves) or host memory
 (descriptors, frames).
 
 ```
-chipid   0x15134352: chip 0x4352 rev 3, 5 cores    corerev 42 (chipcommon 43, pcie2 2, gci 1, armcr4 17)
+chipid   0x15134352: chip 0x4352 rev 3, 5 cores    corerev 42 (chipcommon 43, ARM CR4 2, PCIe Gen2 1, USB 2.0 device 17)
 PHY      AC rev 1 (0xcb01)     radio 2069 rev 4    ucode 10850 dwords
 SROM     rev 11, boardtype 0x619, boardrev 0x1123, ccode US, subband5gver 4
 chains   3x3 (txchain=rxchain=7), dual-band (aa2g=aa5g=7), MAC OUI c0:25:e9

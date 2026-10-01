@@ -209,11 +209,18 @@ def events(ops):
 
     # The host-flag clear that ends the channel switch. The first turn after
     # it reads the statistics window without latching it and carries no
-    # sampling phase, so its marker is the first head word of the poll.
-    mhf = max(i for i in range(turns[0]) if mk.mhf_clear(ops, i))
-    first = next(i for i in range(mhf, turns[0])
-                 if match(ops[i][2], ops[i][3], "OBJ.RD", 0x10e))
-    turns = [first] + turns
+    # sampling phase, so its marker is the first head word of the poll. A
+    # capture that starts on a running interface has turns before any
+    # switch, and its first turn is an ordinary one.
+    clears = [i for i in range(turns[0]) if mk.mhf_clear(ops, i)]
+    mhf = clears[-1] if clears else 0
+    first = next((i for i in range(mhf, turns[0])
+                  if match(ops[i][2], ops[i][3], "OBJ.RD", 0x10e)), None) \
+        if clears else None
+    if first is None:
+        first = turns[0]
+    else:
+        turns = [first] + turns
 
     # The four scattered cells that head the poll come in one of two orders:
     # 0x010e 0x010c 0x0158 0x015e entering the phase, 0x010e 0x0158 0x010c
