@@ -42,8 +42,10 @@ core itself, seen on the agcombo bus capture:
   no PHY register before the first MACCONTROL write), and b43's first reset
   of the attach comes before `b43_phy_versioning()`.
 - In AP mode the stock driver runs with `DISCPMQ` clear and without
-  `SHM_ENABLED` (`0x0416040x`); b43 keeps both (`0x4416050x`), the first
-  under "Power management queue" below. `BEACPROMISC` is set for an AP by
+  `SHM_ENABLED` (`0x0416040x`). `SHM_ENABLED` is set by neither stock
+  driver nor by brcmsmac (`MCTL_SHM_EN`), and the AC no longer sets it in
+  `b43_chip_init()`; b43 now runs with `0x4416040x`, `DISCPMQ` the one bit
+  left, under "Power management queue" below. `BEACPROMISC` is set for an AP by
   `b43_adjust_opmode()`, as the stock driver does on the AC.
 - The mode bits the stock driver toggles inside the PHY's phases -- beacon
   promiscuity off in the calibration flush and at the tail of the channel

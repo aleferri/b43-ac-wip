@@ -3726,13 +3726,20 @@ static int b43_chip_init(struct b43_wldev *dev)
 	u32 macctl;
 	u16 value16;
 
-	/* Initialize the MAC control */
-	macctl = B43_MACCTL_IHR_ENABLED | B43_MACCTL_SHM_ENABLED;
+	/*
+	 * Initialize the MAC control. The AC's stock drivers, 6.30 and 7.14,
+	 * keep the ucode awake here and never set SHM_ENABLED, nor does
+	 * brcmsmac (MCTL_SHM_EN); shared memory is reached through the
+	 * object window all the same.
+	 */
+	macctl = B43_MACCTL_IHR_ENABLED;
+	if (dev->phy.type == B43_PHYTYPE_AC)
+		macctl |= B43_MACCTL_AWAKE;
+	else
+		macctl |= B43_MACCTL_SHM_ENABLED;
 	if (dev->phy.gmode)
 		macctl |= B43_MACCTL_GMODE;
 	macctl |= B43_MACCTL_INFRA;
-	if (dev->phy.type == B43_PHYTYPE_AC)
-		macctl |= B43_MACCTL_AWAKE;
 	b43_write32(dev, B43_MMIO_MACCTL, macctl);
 
 	err = b43_upload_microcode(dev);
