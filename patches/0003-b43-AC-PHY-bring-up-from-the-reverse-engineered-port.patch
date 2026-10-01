@@ -14,7 +14,7 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     4 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |    92 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 11872 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 11961 +++++++++++++++-
  drivers/net/wireless/broadcom/b43/phy_ac.h    |   884 +-
  drivers/net/wireless/broadcom/b43/ppr_ac.c    |   276 +
  drivers/net/wireless/broadcom/b43/ppr_ac.h    |    84 +
@@ -22,7 +22,7 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
  .../net/wireless/broadcom/b43/radio_2069.h    |    48 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1153 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    79 +
- 10 files changed, 16213 insertions(+), 23 deletions(-)
+ 10 files changed, 16302 insertions(+), 23 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -145,7 +145,7 @@ index 0000000..2e3420a
 +	b43_read32(dev, B43_MMIO_MACCTL);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index 756cd44..24a1c24 100644
+index 756cd44..e70df66 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -1,23 +1,56 @@
@@ -212,7 +212,7 @@ index 756cd44..24a1c24 100644
  	if (!phy_ac)
  		return -ENOMEM;
  	dev->phy.ac = phy_ac;
-@@ -62,27 +95,11826 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -62,27 +95,11915 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -3406,39 +3406,115 @@ index 756cd44..24a1c24 100644
 + * need this revisited.
 + */
 +
-+/* Tabella di controllo FEM: blocco 32B su tbl id 0xa, off 0/0x20/0x40. */
++/*
++ * FEM control table: table 0x0a, 32 bytes per core at 0x20 * core.
++ *
++ * The table is chosen per core by femctrl and by femctrl_sub, the low three
++ * bits of boardflags3, and written with the PHY tables on reset. Nothing
++ * rewrites it on a channel or band change: the MacBookAir6,1 5 GHz capture
++ * writes it once and keeps it through 302 chanspecs on both bands. The
++ * tables are named .rodata objects of wlD6220.o (7.14.89), fectrl_<name>.
++ *
++ * Only the pairs a capture shows are here, since a FEM driven with another
++ * one's table gets the PA enabled or the T/R switch wrong:
++ *
++ *   femctrl 6, sub 0  femctrl6 on every core: d6220, DSL-3580L, agcombo,
++ *                     tg789vac.
++ *   femctrl 2, sub 1  fem5516_fc1 on cores 0 and 2, x29c_c1_fc2_sub1 on
++ *                     core 1: MacBookAir6,1, which follows the table with
++ *                     b43_phy_ac_fem2_sub1_setup().
++ *
++ * TODO: femctrl 2 sub 2 (femctrl2_sub2_c0 on core 0, femctrl2_sub2_c12 on
++ * cores 1 and 2) needs a capture of a board with it.
++ */
 +/* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
 + *   5272-5386]
 + * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
 + *   942-1056]
++ * [capture-ref: router-data/macbookair6-1/wl-firstload-20260926-190438.trace.xz;
++ *   #7287-#7426]
 + */
++#define B43_BFL3_FEMCTRL_SUB	0x00000007
++
++static const u8 b43_phy_ac_fem_femctrl6[32] = {
++	0x00, 0x00, 0x06, 0x02,  0x00, 0x00, 0x06, 0x02,
++	0x00, 0x01, 0x00, 0x00,  0x00, 0x00, 0x00, 0x00,
++	0x00, 0x00, 0x06, 0x02,  0x00, 0x00, 0x06, 0x02,
++	0x00, 0x01, 0x00, 0x00,  0x00, 0x00, 0x00, 0x00,
++};
++
++static const u8 b43_phy_ac_fem_fem5516_fc1[32] = {
++	0x00, 0x00, 0x04, 0x00,  0x00, 0x00, 0x04, 0x00,
++	0x00, 0x01, 0x00, 0x00,  0x00, 0x00, 0x00, 0x00,
++	0x00, 0x00, 0x04, 0x00,  0x00, 0x00, 0x04, 0x00,
++	0x00, 0x02, 0x00, 0x00,  0x00, 0x00, 0x00, 0x00,
++};
++
++static const u8 b43_phy_ac_fem_x29c_c1_fc2_sub1[32] = {
++	0x00, 0x00, 0x30, 0x20,  0x00, 0x00, 0x30, 0x20,
++	0x00, 0x80, 0x00, 0x00,  0x00, 0x00, 0x00, 0x00,
++	0x40, 0x40, 0x46, 0x42,  0x40, 0x40, 0x46, 0x42,
++	0x40, 0x41, 0x40, 0x40,  0x40, 0x40, 0x40, 0x40,
++};
++
++struct b43_phy_ac_fem {
++	u8 femctrl, sub;
++	const u8 *tbl[3];
++	void (*setup)(struct b43_wldev *dev);
++};
++
++/*
++ * What the MacBookAir6,1 writes between its FEM table and the release of the
++ * table-write gate, where the bus shows the value change. After 0x0414 it
++ * also reads and writes back unchanged 0x0418, 0x040a and the three
++ * chipcommon GPIO registers; with no change to see, the field and value of
++ * those are not known and they are left out (docs/retrace-todo.md, "2.4 GHz").
++ */
++static void b43_phy_ac_fem2_sub1_setup(struct b43_wldev *dev)
++{
++	B43_AC_FN();
++	b43_phy_set(dev, 0x040a, 0x0100);
++	b43_phy_write(dev, 0x0414, 0x0555);
++	bcma_cc_set32(&dev->dev->bdev->bus->drv_cc, BCMA_CC_CHIPCTL, 0x00000008);
++}
++
++static const struct b43_phy_ac_fem b43_phy_ac_fems[] = {
++	{ 6, 0, { b43_phy_ac_fem_femctrl6, b43_phy_ac_fem_femctrl6,
++		  b43_phy_ac_fem_femctrl6 }, NULL },
++	{ 2, 1, { b43_phy_ac_fem_fem5516_fc1, b43_phy_ac_fem_x29c_c1_fc2_sub1,
++		  b43_phy_ac_fem_fem5516_fc1 }, b43_phy_ac_fem2_sub1_setup },
++};
++
++static const struct b43_phy_ac_fem *b43_phy_ac_fem_lookup(struct b43_wldev *dev)
++{
++	struct ssb_sprom *sprom = dev->dev->bus_sprom;
++	u8 sub = sprom->boardflags3 & B43_BFL3_FEMCTRL_SUB;
++	unsigned int i;
++
++	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_fems); i++)
++		if (b43_phy_ac_fems[i].femctrl == sprom->femctrl &&
++		    b43_phy_ac_fems[i].sub == sub)
++			return &b43_phy_ac_fems[i];
++	return NULL;
++}
++
 +static void b43_phy_ac_set_regtbl_on_femctrl(struct b43_wldev *dev)
 +{
 +	B43_AC_FN();
-+	/*
-+	 * Scaffolding: this table is femctrl 6's, the only value observed --
-+	 * all three boards in the repository share it, confirmed in their
-+	 * NVRAM. It is not generic. It drives the PA enable lines and the
-+	 * T/R switch state, so on a different FEM it means the PA enabled
-+	 * when it should not be, or the switch in the wrong state during TX.
-+	 * Hence the gate: a bring-up that fails is the better outcome.
-+	 */
-+	if (dev->dev->bus_sprom->femctrl != 6) {
++	struct ssb_sprom *sprom = dev->dev->bus_sprom;
++	const struct b43_phy_ac_fem *fem = b43_phy_ac_fem_lookup(dev);
++	u8 core;
++	u16 saved;
++
++	if (!fem) {
 +		b43warn(dev->wl,
-+			"AC-PHY: femctrl=%u non supportato: la tabella di controllo FEM "
-+			"portata e' quella di femctrl 6. Pilotare un FEM diverso con "
-+			"questa tabella puo' danneggiare il front-end.\n",
-+			dev->dev->bus_sprom->femctrl);
++			"AC-PHY: femctrl=%u femctrl_sub=%u non supportato: nessuna "
++			"tabella di controllo FEM verificata su una cattura. "
++			"Pilotare il FEM con la tabella di un altro puo' "
++			"danneggiare il front-end.\n",
++			sprom->femctrl, sprom->boardflags3 & B43_BFL3_FEMCTRL_SUB);
 +		return;
 +	}
-+
-+	static const u8 fem6_tbl[32] = {
-+		0x00, 0x00, 0x06, 0x02,  0x00, 0x00, 0x06, 0x02,
-+		0x00, 0x01, 0x00, 0x00,  0x00, 0x00, 0x00, 0x00,
-+		0x00, 0x00, 0x06, 0x02,  0x00, 0x00, 0x06, 0x02,
-+		0x00, 0x01, 0x00, 0x00,  0x00, 0x00, 0x00, 0x00,
-+	};
-+	u16 saved;
 +
 +	/* Verified only on phy rev 1. */
 +	if (dev->phy.rev != 1)
@@ -3446,9 +3522,22 @@ index 756cd44..24a1c24 100644
 +
 +	saved = b43_phy_ac_tbl_write_lock(dev);
 +
-+	b43_actab_write_bulk(dev, 0x0a, 0x00, 8, 32, fem6_tbl);
-+	b43_actab_write_bulk(dev, 0x0a, 0x20, 8, 32, fem6_tbl);
-+	b43_actab_write_bulk(dev, 0x0a, 0x40, 8, 32, fem6_tbl);
++	for (core = 0; core < min_t(u8, dev->phy.ac->num_cores,
++				    ARRAY_SIZE(fem->tbl)); core++)
++		b43_actab_write_bulk(dev, 0x0a, 0x20 * core, 8, 32,
++				     fem->tbl[core]);
++
++	if (fem->setup)
++		fem->setup(dev);
++
++	/*
++	 * Bluetooth coexistence: the MacBookAir6,1, whose boardflags have it,
++	 * sets bit 24 of the chipcommon chipcontrol here; the routers, which
++	 * do not, leave the register alone.
++	 */
++	if (sprom->boardflags_lo & B43_BFL_BTCOEXIST)
++		bcma_cc_set32(&dev->dev->bdev->bus->drv_cc, BCMA_CC_CHIPCTL,
++			      0x01000000);
 +
 +	b43_phy_ac_tbl_write_unlock(dev, saved);
 +}

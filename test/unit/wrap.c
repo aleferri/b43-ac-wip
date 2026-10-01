@@ -1666,6 +1666,18 @@ void bcma_chipco_regctl_maskset(struct bcma_drv_cc *cc, u32 offset,
 }
 
 /*
+ * A chipcommon register set the way the vendor's si_corereg() is traced,
+ * with the bits the driver sets as both value and mask.
+ */
+void bcma_cc_set32(struct bcma_drv_cc *cc, u16 offset, u32 set)
+{
+	(void)cc;
+	fprintf(trace(),
+		"cpu1 SI.COREREG core=0x0000 off=0x%04x val=0x%08x mask=0x%08x\n",
+		offset, set, set);
+}
+
+/*
  * PLL readback for the driver's own PLLCTL verification. Not traced: the
  * reference captures were taken before the tracer logged PLL reads, so
  * emitting a line here would desync compare.py; the value is what the

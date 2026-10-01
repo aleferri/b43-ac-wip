@@ -692,16 +692,24 @@ Table `0x21` is written as zeros on 2.4 GHz, as on both boards.
   the only 2.4 GHz target captured is the MacBook's ch6 calibration, `0x2e`.
   The per-rate cells (`0x099a`… OFDM, `0x0a3a`… CCK) are flat `0x18` on the
   archer-t5e, whose 2.4 GHz offsets are all zero and `maxp2ga` 80, and zero on
-  the MacBook, whose SROM is not available. Two boards and one known SROM do
-  not fix a rule; a `wl srdump` of the MacBook would.
+  the MacBook, whose SROM (`router-data/macbookair6-1/srom-raw.txt`) has
+  `mcsbw202gpo = mcsbw402gpo = 0xaa555000`, `dot11agofdmhrbw202gpo = 0x4400`,
+  CCK offsets 0 and `maxp2ga` 80. The rule is still to find.
 - **First cell of each noise-shaping run.** 6.30 and 7.14 already write it
   differently on 5 GHz; 2.4 GHz keeps 7.14's 5 GHz value and warns.
 - **Board data.** `0x06dd`, `0x06df`, `0x06e1`–`0x06e5` and table `0x07`
   `[0xf9 + core]` change between the two boards on the same core; `0x06e1`
   does on 5 GHz too, where the port writes the D6220's `0x0018`. The CCK rate
   cells `0x0a3a`… need the SROM's CCK offsets.
-- **FEM control.** The archer-t5e has `femctrl = 1`; the port has only
-  `femctrl = 6`'s table and stops there with its warning.
+- **FEM control.** The port has the tables of `femctrl 6, femctrl_sub 0` (the
+  routers) and `femctrl 2, femctrl_sub 1` (the MacBook, `boardflags3 = 1`),
+  and stops with its warning on any other: the archer-t5e has `femctrl = 1`,
+  and `femctrl 2, femctrl_sub 2` waits for a capture. After its table the
+  MacBook reads and writes back unchanged `0x0418` (`0x0010`), `0x040a`
+  (`0x0390`) and the chipcommon `gpioout`, `gpioouten` (`0xa7`) and
+  `gpiocontrol`; with no change on the bus, field and value are not known
+  and the port does not emit them. The 6.30 `ifup` captures (`wl-init-*`)
+  do not write the table at all, where 7.14 rewrites it on every `up`.
 - **Radio `0x002c`.** The core transition works on `0x002c` instead of
   `0x0033`; the bus shows a read and a write of the same value, so field and
   value are not known.

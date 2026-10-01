@@ -188,6 +188,8 @@ struct ssb_sprom {
 	u16 dot11agduplrpo;
 
 	u8 revision;
+	u16 boardflags_lo, boardflags_hi;
+	u16 boardflags2_lo, boardflags2_hi;
 	u8 rxchain;
 	u8 subband;
 	u8 subband5gver;
@@ -379,6 +381,11 @@ u32 bcma_chipco_pll_read(struct bcma_drv_cc *cc, u32 offset);
 void b43_test_pll_set(u32 offset, u32 val);
 void bcma_chipco_regctl_maskset(struct bcma_drv_cc *cc, u32 offset,
 				u32 mask, u32 set);
+#define BCMA_CC_CHIPCTL 0x0028
+void bcma_cc_set32(struct bcma_drv_cc *cc, u16 offset, u32 set);
+
+/* SPROM boardflags_lo, as in b43.h. */
+#define B43_BFL_BTCOEXIST	0x0001
 
 /* MMIO offsets touched via b43_write16/b43_read16 in scratch. */
 #define B43_MMIO_PHY_CONTROL      0x3FC

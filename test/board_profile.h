@@ -87,6 +87,8 @@ struct board_profile {
 	 * MMIO di B43_MMIO_MAC_HW_CAP che l'harness non modella. */
 	u16 core_rev;
 	u32 mac_hw_cap;
+	/* boardflags, boardflags2, boardflags3: SROM words 66-71 on rev 11. */
+	u32 boardflags, boardflags2, boardflags3;
 	/* LED behaviour per GPIO pin: 0-3 from SROM ledbh0-3 (words 77-78 on
 	 * rev 11), 4-15 from NVRAM ledbh4..15. 0xff is "no field", and on
 	 * 0-3 it is what selects b43's defaults, as it does the stock
@@ -103,6 +105,8 @@ struct board_profile {
  * Per ch36 (5180 MHz) con subband5gver=4 → grp=0, a1/b0/b1 = pa5ga0[0..2].
  */
 static const struct board_profile PROFILE_D6220 = {
+	/* boardflags, boardflags2, boardflags3 (NVRAM). */
+	.boardflags = 0x10000000, .boardflags2 = 0x2, .boardflags3 = 0x0,
 	/* rpcal2g, rpcal5gb0..3 = 0, 299, 297, 297, 65342 (NVRAM and SROM). */
 	.rpcal = { 0x0000, 0x012b, 0x0129, 0x0129, 0xff3e },
 	.name = "d6220", .chip_id = 0x4352, .radio_rev = 4,
@@ -161,6 +165,8 @@ static const struct board_profile PROFILE_D6220 = {
 };
 
 static const struct board_profile PROFILE_AGCOMBO = {
+	/* boardflags, boardflags2, boardflags3 (NVRAM). */
+	.boardflags = 0x10000000, .boardflags2 = 0x2, .boardflags3 = 0x0,
 	/* rpcal2g, rpcal5gb0..3 from the agcombo NVRAM. */
 	.rpcal = { 0x0000, 0x172b, 0x1823, 0x1021, 0x1c30 },
 	.name = "agcombo", .chip_id = 0x4360, .radio_rev = 4,
@@ -233,6 +239,8 @@ static const struct board_profile PROFILE_AGCOMBO = {
  * below. Same chip as the D6220 but older wl, so it is the version witness.
  */
 static const struct board_profile PROFILE_DSL = {
+	/* boardflags, boardflags2, boardflags3 (NVRAM). */
+	.boardflags = 0x10000000, .boardflags2 = 0x2, .boardflags3 = 0x0,
 	.name = "dsl", .chip_id = 0x4352, .radio_rev = 4,
 	/* deviceid dalla lista PCI di router_info.txt; il chiprev di wl1 non
 	 * e' in nessun dump, e' quello del D6220, stesso chip. */
@@ -289,6 +297,8 @@ static const struct board_profile PROFILE_DSL = {
  * le due fonti sono la stessa board.
  */
 static const struct board_profile PROFILE_TG789 = {
+	/* boardflags, boardflags2, boardflags3 (NVRAM). */
+	.boardflags = 0x10000000, .boardflags2 = 0x2, .boardflags3 = 0x0,
 	.name = "tg789", .chip_id = 0x4360, .radio_rev = 4,
 	.chip_rev = 0x3, .pci_device = 0x43a2,
 	/* macaddr=12:13:31:f6:da:77, il segnaposto del file di mappa. */
@@ -351,6 +361,8 @@ static const struct board_profile PROFILE_TG789 = {
  * tssifloor5g is not decoded and takes the routers' value.
  */
 static const struct board_profile PROFILE_ARCHER = {
+	/* boardflags, boardflags2, boardflags3 (SROM). */
+	.boardflags = 0x10001000, .boardflags2 = 0x2, .boardflags3 = 0x0,
 	.name = "archer", .chip_id = 0x4352, .radio_rev = 4,
 	.chip_rev = 0x3, .pci_device = 0x43a0,
 	.macaddr = { 0xc0, 0x25, 0xe9, 0x29, 0x03, 0xcd },
@@ -391,6 +403,64 @@ static const struct board_profile PROFILE_ARCHER = {
 	/* pdoffset40ma/80ma and every mcsbw*po word are zero in this SROM. */
 };
 
+/*
+ * MacBookAir6,1: BCM4360 (chip 0x4360 rev 3), 2x2 dual-band, hybrid wl
+ * 6.30.223. Every SROM field is decoded from router-data/macbookair6-1/
+ * srom-raw.txt with the rev 11 offsets of bcma/drivers/bcma/sprom.c; core 2
+ * is unprogrammed there (0xffff, 0xff) and is carried as bcma extracts it.
+ * rccal and MAC_HW_CAP are the reads of wl-firstload-20260926-190438.
+ * femctrl is 2: the FEM control table stops with its warning here too.
+ * The hybrid wl has no NVRAM, so ledbh4..15 are absent.
+ */
+static const struct board_profile PROFILE_MACBOOK = {
+	/* boardflags, boardflags2, boardflags3 (SROM). */
+	.boardflags = 0x10401001, .boardflags2 = 0x2, .boardflags3 = 0x1,
+	.name = "macbook", .chip_id = 0x4360, .radio_rev = 4,
+	.chip_rev = 0x3, .pci_device = 0x43a0,
+	.macaddr = { 0x84, 0x38, 0x35, 0x4d, 0x18, 0x6e },
+	.core_rev = 42, .mac_hw_cap = 0xb0518c05,
+	.fem_cfg1 = 0x1101, .fem_cfg2 = 0x0101,
+	.thermal = 0x62ff, .tempdelta = 0x5128,
+	.tssifloor5g = { 0x3ff, 0x3ff, 0x3ff, 0x3ff },
+	.radio_ver = 0x2069, .phy_rev = 1,
+	.ledbh = { [0 ... 15] = 0xff },
+	.num_cores = 3, .coremask = 0x3, .rxchain = 3,
+	.subband5gver = 0x4,
+	.pa5ga = {
+		{ 0xff3a, 0x15cf, 0xfd44, 0xff36, 0x16b2, 0xfd29,
+		  0xff3e, 0x15f1, 0xfd45, 0xff30, 0x155b, 0xfd4d },
+		{ 0xff61, 0x1820, 0xfd0c, 0xff56, 0x17a1, 0xfd0e,
+		  0xff5a, 0x17cb, 0xfd0f, 0xff5a, 0x17d9, 0xfd0d },
+		{ 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff,
+		  0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff },
+	},
+	.maxp5ga = {
+		{ 72, 76, 76, 76 },
+		{ 72, 76, 76, 76 },
+		{ 255, 255, 255, 255 },
+	},
+	.rxgains_5gl_elnagain = { 3, 3, 7 },
+	.rxgains_5gl_triso    = { 7, 6, 15 },
+	.pa2ga = {
+		{ 0xff39, 0x1776, 0xfd13 },
+		{ 0xff32, 0x17c1, 0xfd0d },
+		{ 0xffff, 0xffff, 0xffff },
+	},
+	.rxgains_2g_elnagain = { 4, 3, 7 },
+	.rxgains_2g_triso    = { 7, 6, 15 },
+	.rccal_e = 0x0a7e, .rccal_f = 0x0b53,
+	.rccal_g = 0x01eb,
+	.antgain_raw = { 6, 6 },
+	.pdoffset40ma = { 0x3323, 0x3334, 0x3332 },
+	.pdoffset80ma = { 0x2322, 0x1112, 0x2332 },
+	.rpcal = { 0x007c, 0x0079, 0x0067, 0x0052, 0x0060 },
+	.mcsbw5g_po = {
+		{ 0xdd666000, 0xdd666000, 0xdd666000 },
+		{ 0xdd777000, 0xdd777000, 0xdd777000 },
+		{ 0xdd888000, 0xdd888000, 0xdd888000 },
+	},
+};
+
 /* One-shot mock storage. Lives for the whole run. */
 /* Il profilo per nome, come lo passano le due suite (argv o B43_BOARD). */
 static inline const struct board_profile *board_profile_lookup(const char *name)
@@ -403,6 +473,8 @@ static inline const struct board_profile *board_profile_lookup(const char *name)
 		return &PROFILE_TG789;
 	if (name && !strcmp(name, "archer"))
 		return &PROFILE_ARCHER;
+	if (name && !strcmp(name, "macbook"))
+		return &PROFILE_MACBOOK;
 	return &PROFILE_D6220;
 }
 
@@ -422,6 +494,11 @@ static inline void board_profile_to_sprom(const struct board_profile *p,
 	/* The 802.11 core's address, which bcma takes from the same NVRAM
 	 * key: b43 registers it as the permanent address. */
 	memcpy(s->il0mac, p->macaddr, sizeof(s->il0mac));
+	s->boardflags_lo = p->boardflags & 0xffff;
+	s->boardflags_hi = p->boardflags >> 16;
+	s->boardflags2_lo = p->boardflags2 & 0xffff;
+	s->boardflags2_hi = p->boardflags2 >> 16;
+	s->boardflags3 = p->boardflags3;
 	s->rxchain = p->rxchain;
 	s->subband5gver = p->subband5gver;
 	for (b = 0; b < 2; b++)
