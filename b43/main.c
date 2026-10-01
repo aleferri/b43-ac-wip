@@ -832,7 +832,7 @@ void b43_macfilter_set(struct b43_wldev *dev, u16 offset, const u8 *mac)
 	b43_write16(dev, B43_MMIO_MACFILTER_DATA, data);
 }
 
-/* The AC microcode keeps the station address in template RAM, padded to eight bytes. */
+/* The station address in AC template RAM, padded to eight bytes. */
 #define B43_TPL_AC_MACADDR	0x0048
 
 static void b43_write_macaddr_template_ac(struct b43_wldev *dev, const u8 *mac)
@@ -862,10 +862,9 @@ static void b43_write_mac_bssid_templates(struct b43_wldev *dev)
 
 	b43_macfilter_set(dev, B43_MACFILTER_BSSID, bssid);
 
-	if (dev->phy.type == B43_PHYTYPE_AC) {
-		b43_write_macaddr_template_ac(dev, mac);
+	/* On the AC the station address goes to B43_TPL_AC_MACADDR. */
+	if (dev->phy.type == B43_PHYTYPE_AC)
 		return;
-	}
 
 	memcpy(mac_bssid, mac, ETH_ALEN);
 	memcpy(mac_bssid + ETH_ALEN, bssid, ETH_ALEN);
@@ -905,6 +904,8 @@ static void b43_upload_card_macaddress(struct b43_wldev *dev)
 {
 	b43_write_mac_bssid_templates(dev);
 	b43_macfilter_set(dev, B43_MACFILTER_SELF, dev->wl->mac_addr);
+	if (dev->phy.type == B43_PHYTYPE_AC)
+		b43_write_macaddr_template_ac(dev, dev->wl->mac_addr);
 	b43_shm_macaddr_set(dev, dev->wl->mac_addr);
 }
 
@@ -1550,17 +1551,27 @@ void b43_wireless_core_reset(struct b43_wldev *dev, bool gmode)
 	b43_write32(dev, B43_MMIO_MACCTL, macctl);
 }
 
+#define B43_TXST_AC_INTERMEDIATE	0x00000004
+#define B43_TXST_AC_PM_INDICATED	0x00000008
+#define B43_TXST_AC_SUPP		0x000000f0
+#define B43_TXST_AC_SUPP_SHIFT		4
+#define B43_TXST_AC_ACKED		0x00008000
+
+/* Transmit attempts at two rates, the low byte of each half of a word. */
+static u8 b43_txstatus_ac_tries(u32 word)
+{
+	return (word & 0xff) + ((word >> 16) & 0xff);
+}
+
 /*
- * One TX status of the AC microcode: eight words, read as two passes over
- * XMITSTAT_0..3. Bit 0 of the first word says an entry is there, and the
- * second pass has it set too, so the entry is read whole before the next
- * one is looked at. Returns false when the queue is empty.
+ * One TX status of the AC microcode: two packages of four words, read as two
+ * passes over XMITSTAT_0..3. Bit 0 of the first word says an entry is there,
+ * and the second package has it set too, so the entry is read whole before
+ * the next one is looked at. Returns false when the queue is empty.
  *
- * The frame ID is in the high half of the first word and bit 15 is the
- * acknowledgement: it is clear on every broadcast probe request of the
- * wl 6.30.223 capture and set on the unicast frames. The low byte of the
- * third word is the number of transmit attempts. No status is treated as
- * intermediate: every entry completes its frame.
+ * In the first package word 0 holds the frame ID in its high half and the
+ * status bits in its low half, words 2 and 3 the transmit attempts at rates
+ * 0-1 and 2-3. The second package is not decoded.
  */
 static bool b43_txstatus_read_ac(struct b43_wldev *dev,
 				 struct b43_txstatus *stat)
@@ -1582,8 +1593,12 @@ static bool b43_txstatus_read_ac(struct b43_wldev *dev,
 
 	memset(stat, 0, sizeof(*stat));
 	stat->cookie = w[0] >> 16;
-	stat->acked = !!(w[0] & 0x00008000);
-	stat->frame_count = max_t(u32, w[2] & 0xff, stat->acked);
+	stat->acked = !!(w[0] & B43_TXST_AC_ACKED);
+	stat->intermediate = !!(w[0] & B43_TXST_AC_INTERMEDIATE);
+	stat->pm_indicated = !!(w[0] & B43_TXST_AC_PM_INDICATED);
+	stat->supp_reason = (w[0] & B43_TXST_AC_SUPP) >> B43_TXST_AC_SUPP_SHIFT;
+	stat->frame_count = b43_txstatus_ac_tries(w[2]) +
+			    b43_txstatus_ac_tries(w[3]);
 	return true;
 }
 

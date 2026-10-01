@@ -311,14 +311,10 @@ each station's power save from the frames it receives (b43 does not declare
 `AP_LINK_PS`). Not exercised by any capture: the agcombo's has no client in
 power save, so no `B43_IRQ_PMQ` and no suppressed status.
 
-Open: the suppression field of the AC TX status. `b43_txstatus_read_ac()`
-maps the frame ID, the acknowledgement and the attempt count, so a frame the
-ucode held back is reported as not acknowledged instead of
-`IEEE80211_TX_STAT_TX_FILTERED`, and mac80211 does not buffer it again. The
-pre-AC field, bits 4:2 of the first word, is not it: on the 368 statuses of
-the MacBookAir6,1 traffic capture (`wl-tx`) bit 3 is set on acknowledged
-frames too (`0x810b`). Bits 7:4 are 0 on all of them, which neither confirms
-nor excludes them: that capture is a station and has no suppression to show.
+Open: a frame the ucode held back comes with suppression reason 1, which
+`b43_txstatus_read_ac()` decodes into `supp_reason`, but
+`b43_fill_txstatus_report()` reports it as not acknowledged instead of
+`IEEE80211_TX_STAT_TX_FILTERED`, and mac80211 does not buffer it again.
 
 ### HT and VHT
 
@@ -354,25 +350,38 @@ adaptation, and HT and VHT rates in transmission. What is open:
   `b0g0initvals42.fw`/`b0g0bsinitvals42.fw` of 6.30.163; the 6.30.223 values
   (decoded ops #1140–#1480) have not been diffed against them.
 - **Missing:** the null-data template at template RAM `0x2c` (power save).
-  The AC writes the station address at template RAM `0x48`, eight bytes, and
-  b43 does the same; nothing is written at `0x20`, where the older microcode
-  keeps it. In front of the null-data frame the MacBookAir6,1 `wl-init`
-  capture also writes the BSSID, the station address and the BSSID again at
-  `0x30` (18 bytes) when the station associates, which belongs with that
-  template and is not written. The D6220's AP bring-up writes `0x48` twice
-  and nothing at `0x30`. `test/integration` cannot score it: the port's
-  writes are raw `REG.*` operations and the D6220 capture has the `TPL.RAMW`
-  class only.
-- **TX status, partly mapped.** `B43_FW_HDR_AC` reads the eight words and
-  takes the frame ID, the acknowledgement (bit 15) and the number of attempts
-  (low byte of word 2, at least one on an acknowledged frame); bits 1-14 of
-  the first word and the other words are not mapped. On the 368 statuses of
-  the MacBookAir6,1 `wl-tx` capture the attempts run from 1 to 11 and equal
-  bits 11:8 of the first word on 353 of them. Of the other 15, twelve have 2
-  or 3 where the nibble says 1, two acknowledged ones have 0 in the low byte
-  and the count in bits 23:16, and one unacknowledged has 0 there; what bits
-  23:16 count is open. Bit 6 is set, with no acknowledgement and word 1 at 0,
-  on three probe requests of the archer-t5e.
+  The AC writes the station address at template RAM `0x48`, eight bytes,
+  right after the address-match row of the station (index 63), and b43 does
+  the same in `b43_upload_card_macaddress()`; nothing is written at `0x20`,
+  where the older microcode keeps it. In front of the null-data frame the
+  MacBookAir6,1 `wl-init` capture also writes the BSSID, the station address
+  and the BSSID again at `0x30` (18 bytes) when the station associates,
+  which belongs with that template and is not written. The agcombo `ch36`
+  bus capture writes `0x48` twice, both times after row 63; b43 writes it on
+  every address upload, three times there, two of them with the address
+  still zero.
+- **TX status.** `B43_FW_HDR_AC` reads both packages of an entry and decodes
+  the first. In the low half of its first word bit 0 is the valid bit, bit 1
+  is set on every first package, bit 2 marks an intermediate status, bit 3
+  the PM bit indicated to the AP, bits 7:4 are the suppression reason with
+  the pre-AC codes (1 PMQ, 4 channel mismatch), bits 14:8 the number of
+  MPDUs the status covers and bit 15 the acknowledgement. The third and
+  fourth words hold the transmit attempts at four rates, rates 0 and 1 in
+  bits 7:0 and 23:16 of the third, rates 2 and 3 in the same bits of the
+  fourth; `frame_count` is their sum. Bits 15:8 and 31:24 next to each count
+  are zero or add up to bits 14:8 on all 472 statuses of the two captures,
+  the MacBookAir6,1 `wl-tx` (368) and the archer-t5e (104). On those
+  statuses: two unacknowledged frames end after 3 + 1 + 1 + 2 = 7 attempts,
+  the short retry limit; the three probe requests of the archer-t5e scan
+  have suppression reason 4 and no attempt; the acknowledged statuses whose
+  count sits in bits 23:16 only are aggregates of 2 and 4 MPDUs sent at
+  rate 1; `0x810b`, bit 3 on an acknowledged frame, is the MacBook in power
+  save. The field names are those of `TX_STATUS40_*` in Broadcom's `d11.h`
+  (see `PROVENANCE.md`). Open: `b43_fill_txstatus_report()` splits the sum
+  between the rate and its fallback by the retry limit instead of taking
+  the per-rate counts, because which rates the AC microcode tries follows
+  from the TX header, which is not mapped; the second package is read and
+  dropped, the low half of its first word is `0x0001` on every entry.
 - **Scratch and shared memory look alike to the comparison.**
   `tracelib.normalize()` drops `sel=`, and wl-diag prints a scratch word at
   four times its index, so scratch word 3 and shared `0x000c` are the same op
