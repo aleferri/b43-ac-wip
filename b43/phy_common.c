@@ -375,11 +375,18 @@ void b43_phy_take_out_of_reset(struct b43_wldev *dev)
 	switch (dev->dev->bus_type) {
 #ifdef CONFIG_B43_BCMA
 	case B43_BUS_BCMA:
-		/* Unset reset bit (with forcing clock) */
+		/*
+		 * Unset reset bit (with forcing clock). The AC's stock driver
+		 * releases the force in the same write, 0x141, where b43 keeps
+		 * it until the PHY clock is back, 0x143.
+		 */
 		tmp = bcma_aread32(dev->dev->bdev, BCMA_IOCTL);
 		tmp &= ~B43_BCMA_IOCTL_PHY_RESET;
 		tmp &= ~B43_BCMA_IOCTL_PHY_CLKEN;
-		tmp |= BCMA_IOCTL_FGC;
+		if (b43_is_ac_core(dev))
+			tmp &= ~BCMA_IOCTL_FGC;
+		else
+			tmp |= BCMA_IOCTL_FGC;
 		bcma_awrite32(dev->dev->bdev, BCMA_IOCTL, tmp);
 		udelay(1);
 

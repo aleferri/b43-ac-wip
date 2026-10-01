@@ -56,8 +56,8 @@ Measured on 2026-09-30.
 | unit, cold TG789vac v2 `cold01` ch36/20 | 99.91% |
 | unit, cold TG789vac v2, all 43 segments | min 99.77% (ch149/40), median 99.91%, max 99.98% |
 | unit, periodic watchdog tick | **`MATCH`** |
-| integration, cold `cold01` | `probe: 0`, `start: 0`; 82.30% (28705/34879) |
-| integration, agcombo ch36/80 at the bus | 64.83% (87530/135024), with the 561 interrupts and 283 received frames of the capture replayed |
+| integration, cold `cold01` | `probe: 0`, `start: 0`; 82.30% (28706/34878) |
+| integration, agcombo ch36/80 at the bus | 64.83% (87530/135021), with the 561 interrupts and 283 received frames of the capture replayed |
 | SROM rev 11 extractor | 74/79/80 PASS, 0 FAIL (DSL-3580L, D6220, agcombo) |
 
 The agcombo unit row was not re-measured on this date; the integration rows

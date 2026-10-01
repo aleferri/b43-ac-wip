@@ -1417,6 +1417,13 @@ static void b43_bcma_phy_reset(struct b43_wldev *dev)
 	flags = bcma_aread32(dev->dev->bdev, BCMA_IOCTL);
 	flags |= B43_BCMA_IOCTL_PHY_RESET;
 	flags |= dev->phy.bw_clkbits ?: B43_BCMA_IOCTL_PHY_BW_20MHZ;
+
+	/*
+	 * The AC's stock driver, 6.30 and 7.14 alike, forces the clock while
+	 * the PHY is in reset: 0x14f. b43_phy_take_out_of_reset() continues.
+	 */
+	if (b43_is_ac_core(dev))
+		flags |= BCMA_IOCTL_FGC;
 	bcma_awrite32(dev->dev->bdev, BCMA_IOCTL, flags);
 	udelay(2);
 
@@ -1436,7 +1443,7 @@ static void b43_bcma_wireless_core_reset(struct b43_wldev *dev, bool gmode)
 		flags |= B43_BCMA_IOCTL_GMODE;
 	b43_device_enable(dev, flags);
 
-	if (dev->phy.type == B43_PHYTYPE_AC) {
+	if (b43_is_ac_core(dev)) {
 		u16 tmp;
 
 		tmp = bcma_aread32(dev->dev->bdev, BCMA_IOCTL);
@@ -1455,7 +1462,12 @@ static void b43_bcma_wireless_core_reset(struct b43_wldev *dev, bool gmode)
 
 	bcma_core_set_clockmode(dev->dev->bdev, BCMA_CLKMODE_FAST);
 	b43_bcma_phy_reset(dev);
-	bcma_core_pll_ctl(dev->dev->bdev, req, status, true);
+	/*
+	 * Neither stock driver requests the two PLLs on the AC, 6.30 and 7.14
+	 * alike: both status bits are already up when it reads clk_ctl_st.
+	 */
+	if (!b43_is_ac_core(dev))
+		bcma_core_pll_ctl(dev->dev->bdev, req, status, true);
 }
 #endif
 
@@ -1506,6 +1518,13 @@ void b43_wireless_core_reset(struct b43_wldev *dev, bool gmode)
 	if (gmode)
 		macctl |= B43_MACCTL_GMODE;
 	macctl |= B43_MACCTL_IHR_ENABLED;
+	/*
+	 * The AC's stock driver keeps the ucode awake whenever the MAC is
+	 * disabled, from the first reset on: 0x04000400 here. b43 forces it
+	 * around a suspend; before the first b43_mac_enable() nothing did.
+	 */
+	if (b43_is_ac_core(dev))
+		macctl |= B43_MACCTL_AWAKE;
 	b43_write32(dev, B43_MMIO_MACCTL, macctl);
 }
 
@@ -3712,6 +3731,8 @@ static int b43_chip_init(struct b43_wldev *dev)
 	if (dev->phy.gmode)
 		macctl |= B43_MACCTL_GMODE;
 	macctl |= B43_MACCTL_INFRA;
+	if (dev->phy.type == B43_PHYTYPE_AC)
+		macctl |= B43_MACCTL_AWAKE;
 	b43_write32(dev, B43_MMIO_MACCTL, macctl);
 
 	err = b43_upload_microcode(dev);
@@ -3942,7 +3963,7 @@ static void b43_periodic_tasks_setup(struct b43_wldev *dev)
 /* Check if communication with the device works correctly. */
 static int b43_validate_chipaccess(struct b43_wldev *dev)
 {
-	u32 v, backup0, backup4;
+	u32 v, expected, backup0, backup4;
 
 	backup0 = b43_shm_read32(dev, B43_SHM_SHARED, 0);
 	backup4 = b43_shm_read32(dev, B43_SHM_SHARED, 4);
@@ -3987,7 +4008,10 @@ static int b43_validate_chipaccess(struct b43_wldev *dev)
 
 	v = b43_read32(dev, B43_MMIO_MACCTL);
 	v |= B43_MACCTL_GMODE;
-	if (v != (B43_MACCTL_GMODE | B43_MACCTL_IHR_ENABLED))
+	expected = B43_MACCTL_GMODE | B43_MACCTL_IHR_ENABLED;
+	if (b43_is_ac_core(dev))
+		expected |= B43_MACCTL_AWAKE;
+	if (v != expected)
 		goto error;
 
 	return 0;
@@ -5190,7 +5214,7 @@ static int b43_phy_versioning(struct b43_wldev *dev)
 		analog_type, phy_type, b43_phy_name(dev, phy_type), phy_rev);
 
 	/* Get RADIO versioning */
-	if (core_rev == 40 || core_rev == 42) {
+	if (b43_is_ac_core(dev)) {
 		radio_manuf = 0x17F;
 
 		b43_write16f(dev, B43_MMIO_RADIO24_CONTROL, 0);

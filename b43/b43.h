@@ -1148,6 +1148,18 @@ static inline void b43_write32(struct b43_wldev *dev, u16 offset, u32 value)
 	dev->dev->write32(dev->dev, offset, value);
 }
 
+/*
+ * The 802.11 cores of the AC chips, known before the PHY is: the stock
+ * driver takes them from the core revision the EROM lists and resets them
+ * the AC way from its first reset on, before it reads a PHY register. b43
+ * has the same revision from the bus scan, and the resets that come before
+ * b43_phy_versioning() ask this instead of the PHY type.
+ */
+static inline bool b43_is_ac_core(struct b43_wldev *dev)
+{
+	return dev->dev->core_rev == 40 || dev->dev->core_rev == 42;
+}
+
 static inline void b43_maskset32(struct b43_wldev *dev, u16 offset, u32 mask,
 				 u32 set)
 {

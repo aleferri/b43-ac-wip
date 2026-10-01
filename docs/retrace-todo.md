@@ -24,14 +24,23 @@ emits them at the stock points (`B43_AC_SITE_CORE_RESET`, `_UCODE_LOAD`,
 `_UCODE_START`, `_CORE_DOWN`). What differs from the stock driver in the
 core itself, seen on the agcombo bus capture:
 
-- `b43_wireless_core_reset()` writes IHR only; the stock driver writes
-  IHR | AWAKE at every reset (brcmsmac does the same), and b43 sets AWAKE
-  at the first `b43_mac_enable()`.
-- The PHY reset bracket: stock `0x14f -> 0x141 -> 0x145` (FGC high while
-  in reset, FGC and PHY_CLKEN low on release, then clock), b43
-  `0x14d -> 0x143 -> 0x145`.
-- `b43_bcma_wireless_core_reset()` requests the two PLLs on `clk_ctl_st`
-  (`0x300`); the stock driver never does, `EXTRESST` is already 7.
+- `b43_wireless_core_reset()` wrote IHR only; the stock driver writes
+  IHR | AWAKE at every reset (brcmsmac does the same). The AC now does too
+  (see `AWAKE` under "Interrupts and DMA at the bus").
+- The PHY reset bracket, `0x14f -> 0x141 -> 0x145` on 6.30 and 7.14 alike
+  (FGC high while in reset, reset, FGC and PHY_CLKEN low together on
+  release, then the clock), where b43 wrote `0x14d -> 0x143 -> 0x145`: the
+  AC now follows it in `b43_bcma_phy_reset()`. The stock driver writes the
+  first value twice; the port once.
+- `b43_bcma_wireless_core_reset()` requested the two PLLs on `clk_ctl_st`
+  (`0x300`); neither stock driver does, 6.30 and 7.14 alike, and the PLL
+  status bits read up before any request (`0x03` on the MacBookAir6,1,
+  `EXTRESST` 7 on the agcombo). The AC no longer requests them.
+- The resets ask `b43_is_ac_core()`, the 802.11 core revision, not the PHY
+  type: the stock driver resets the AC way from its first reset on, after
+  reading only the EROM, chipcommon and the SROM (MacBookAir6,1 first load,
+  no PHY register before the first MACCONTROL write), and b43's first reset
+  of the attach comes before `b43_phy_versioning()`.
 - In AP mode the stock driver runs with `DISCPMQ` clear and without
   `SHM_ENABLED` (`0x0416040x`); b43 keeps both (`0x4416050x`), the first
   under "Power management queue" below. `BEACPROMISC` is set for an AP by
@@ -173,6 +182,14 @@ driver:
   brcmsmac the watchdog restarts the controller, the timer is stopped,
   `PHY_TXERR` is only acknowledged; the power-up and the reserved bits have
   no handler. The mask writes differ from the capture by those two bits.
+- `AWAKE`: both stock drivers keep it set on every MACCONTROL write with
+  the MAC disabled (agcombo 85/85, MacBook 532/532); the 6.30 station
+  clears it only with the MAC enabled, and sets it again before every
+  suspend. b43 forces it around a suspend, but from the core reset to the
+  first `b43_mac_enable()` it wrote 11 values without it, the ucode upload
+  and start included. The AC now sets it at the core reset and in
+  `b43_chip_init()`, and `b43_validate_chipaccess()` expects it there. No `PWRUP` (`0x00200000`) is raised in either capture: the
+  ucode never reports a wake-up there.
 - Per interrupt b43 reads and acknowledges the DMA channels; the stock
   driver acknowledges channel 0 only, and only when it has a frame. Same on
   6.30: 672 acknowledgements of `0x0020` in the MacBook traffic capture and
