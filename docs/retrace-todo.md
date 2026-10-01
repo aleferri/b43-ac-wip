@@ -41,7 +41,7 @@ core itself, seen on the agcombo bus capture:
   switch, INFRA off / DISCPMQ on / AP off on the down -- have no core site in
   b43: `b43_adjust_opmode()` sets the mode once and the exit does not rewrite
   it. `test/unit` emits them at the stock points (`B43_AC_SITE_CAL_BCNPROMISC_OFF`,
-  `_OPMODE_FILTERS`, `_DOWN_BCNPROMISC_OFF`, `_DOWN_OPMODE_INFRA`, `_DOWN_OPMODE_AP`);
+  `_OPMODE_FILTERS`, `_DOWN_OPMODE`, `_DOWN_OPMODE_END`);
   the BSS mode block before the TX power adjust -- TBTT hold, AP, INFRA,
   PRETBTT 2, beacon promiscuity -- is emitted by the flow before
   `adjust_txpower`, which now suspends the MAC around its own body.
@@ -549,6 +549,12 @@ Table `0x21` is written as zeros on 2.4 GHz, as on both boards.
   unit twice in the preamble, with the PLL rewritten in between; the D6220
   once. The gate in `op_switch_analog` is on `chip_id`. The TG789vac v2 cold
   sweep (4360, 7.14.89) can tell chip from version and has not been checked.
+- **PMU resource mask.** `bcma/` sets `max_res_mask = 0x7ff` on every
+  4352/4360, the value read back on the agcombo and the DSL-3580L. The
+  hybrid `wl` 6.30.223 on the MacBookAir6,1 (4360 rev 3, 11 resources) writes
+  `0x1ff` twice in its attach, and leaves `0x1fb` up. Whether the mask is the
+  chip revision's or the driver's is open: the `wl-diag` captures trace the
+  PLL and regulator accessors (`PMU.PLL`, `PMU.RC`), not the resource masks.
 - **TG789vac `watchdog=70000`.** Every rule counted in watchdog turns was built
   on the D6220's 1.004 s beat; measure the distance between two
   `PHY.MOD 0x0520 mask=0xc` on that board before reusing them.

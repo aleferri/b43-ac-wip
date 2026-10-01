@@ -1,0 +1,30 @@
+#!/usr/bin/env bpftrace
+// Full register-access trace of wl.ko. Argument order from the decompiled
+// callers: osl_writeX(value, addr), osl_readX(addr), osl_delay(usecs).
+// PHY writes appear as W32 to <core base>+0x3fc with value (data << 16) | reg.
+
+BEGIN { printf("wl trace start\n"); }
+
+kprobe:osl_writel { printf("%llu W32 %lx %08x\n", nsecs, arg1, arg0 & 0xffffffff); }
+kprobe:osl_writew { printf("%llu W16 %lx %04x\n", nsecs, arg1, arg0 & 0xffff); }
+kprobe:osl_writeb { printf("%llu W8 %lx %02x\n", nsecs, arg1, arg0 & 0xff); }
+
+kprobe:osl_readl { @r32[tid] = arg0; }
+kretprobe:osl_readl /@r32[tid]/ {
+	printf("%llu R32 %lx %08x\n", nsecs, @r32[tid], retval & 0xffffffff);
+	delete(@r32[tid]);
+}
+kprobe:osl_readw { @r16[tid] = arg0; }
+kretprobe:osl_readw /@r16[tid]/ {
+	printf("%llu R16 %lx %04x\n", nsecs, @r16[tid], retval & 0xffff);
+	delete(@r16[tid]);
+}
+kprobe:osl_readb { @r8[tid] = arg0; }
+kretprobe:osl_readb /@r8[tid]/ {
+	printf("%llu R8 %lx %02x\n", nsecs, @r8[tid], retval & 0xff);
+	delete(@r8[tid]);
+}
+
+kprobe:osl_delay { printf("%llu DELAY %d\n", nsecs, arg0); }
+
+END { clear(@r32); clear(@r16); clear(@r8); printf("wl trace end\n"); }

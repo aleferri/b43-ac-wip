@@ -1,0 +1,40 @@
+000 chipid         15034360
+028 chipcontrol    01000008
+02c chipstatus     00008a4d
+064 gpioout        00000006
+068 gpioouten      000000a7
+06c gpiocontrol    00000000
+600 pmucontrol     01770181
+604 pmucap         10a22b11
+608 pmustatus      0000003e
+60c res_state      000001fb
+618 min_res_mask   0000013b
+61c max_res_mask   000001ff
+chipctl[0] bdbbbbb0
+chipctl[1] 00000210
+chipctl[2] ffffffff
+chipctl[3] ffffffff
+chipctl[4] ffffffff
+chipctl[5] ffffffff
+chipctl[6] ffffffff
+chipctl[7] ffffffff
+regctl[0] 00000000
+regctl[1] 00000000
+regctl[2] ffffffff
+regctl[3] ffffffff
+regctl[4] ffffffff
+regctl[5] ffffffff
+regctl[6] ffffffff
+regctl[7] ffffffff
+pllctl[0] 00000000
+pllctl[1] 00000000
+pllctl[2] 00000c31
+pllctl[3] 0000100e
+pllctl[4] 06060c03
+pllctl[5] 00000606
+pllctl[6] 09048562
+pllctl[7] 00000002
+sprom rev 11 boardflags lo 1001 hi 1040 flags2 lo 0002 hi 0000 board_rev 1204 board_type 0117
+sprom ant_avail a ff bg ff txchain 6 rxchain 0 antswitch 6
+sprom fem2g tssipos 1 extpa_gain 3 pdet_range 31 tr_iso 2 antswlut 12
+sprom fem5g tssipos 0 extpa_gain 2 pdet_range 4 tr_iso 6 antswlut 31
