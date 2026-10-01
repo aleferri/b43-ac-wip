@@ -45,7 +45,7 @@ The TX power model -- locale caps, legacy and CCK rules, chain choice -- is in
 
 ## Current state
 
-Measured on 2026-09-30.
+Measured on 2026-09-30 and 2026-10-01, see below.
 
 | gate | result |
 |---|---|
@@ -56,8 +56,8 @@ Measured on 2026-09-30.
 | unit, cold TG789vac v2 `cold01` ch36/20 | 99.91% |
 | unit, cold TG789vac v2, all 43 segments | min 99.77% (ch149/40), median 99.91%, max 99.98% |
 | unit, periodic watchdog tick | **`MATCH`** |
-| integration, cold `cold01` | `probe: 0`, `start: 0`; 82.30% (28706/34878) |
-| integration, agcombo ch36/80 at the bus | 64.86% (87540/134978), with the 561 interrupts and 283 received frames of the capture replayed |
+| integration, cold `cold01` | `probe: 0`, `start: 0`; 82.61% (28765/34819) |
+| integration, agcombo ch36/80 at the bus | 67.53% (89699/132825), with the 561 interrupts and 283 received frames of the capture replayed |
 | SROM rev 11 extractor | 77/82/83 PASS, 0 FAIL (DSL-3580L, D6220, agcombo) |
 
 The agcombo unit row was not re-measured on this date; the integration rows
@@ -71,12 +71,17 @@ fell outside it. With the arm back in the attach it is inside, and its 2970
 extra ops are the drop; 250 more vendor ops are matched. Since the key
 table init left the PHY its 548 words per `up` are missing on both rows.
 
-The number to quote is the `grezzo` line of `cmp_skip.py`; how to reproduce
-and read it is in [`test/unit/README.md`](test/unit/README.md). Ops are
-matched in blocks of at least two (see there); the numbers before that rule
-were a few ops higher on the unit gates and 85.00% on the integration one. The six
-weather-radar segments (ch120/124/128 at 20 MHz, ch116/124 at 40, ch116 at 80)
-end before their availability check completes and measure a partial attach.
+The number to quote is the `grezzo` line of `cmp_skip.py`, with its two
+parameters; how to reproduce and read it is in
+[`test/unit/README.md`](test/unit/README.md). The integration rows and the
+cold `cold01` unit row are measured with `--min-block 8 --gap-tol 2` on
+2026-10-01; the other unit rows were measured on 2026-09-30, before the two
+parameters, with blocks of at least two and no tolerance, which on `cold01`
+gives the same count. The integration rows measured 82.30% and 64.86% under
+that rule, which counted every equal op of an aligned block at the bus,
+however short the run around it between two wrong values. The six
+weather-radar segments (ch120/124/128 at 20 MHz, ch116/124 at 40, ch116 at
+80) end before their availability check completes and measure a partial attach.
 
 There is no recent run on hardware.
 

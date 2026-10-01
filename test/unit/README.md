@@ -13,12 +13,13 @@ unzip -d /tmp/cold ../../router-data/d6220/cold-sweep.zip
 unzip -d /tmp/hot  ../../router-data/d6220/hot-sweep.zip
 make
 
-./gates.sh                                      # cold01 ch36 bw20
-./gates.sh /tmp/cold/cold05-ch52-bw20.txt       # another segment
-./gates.sh /tmp/cold/cold[0-9][0-9]-ch*.txt     # all 43
-./gates.sh --hot                                # three default up segments
-./gates.sh --hot --flow switch_channel DIR      # one row per channel
-./gates.sh --board tg789 SEGMENT                # another board's profile
+B="--min-block 8 --gap-tol 2"
+./gates.sh $B                                   # cold01 ch36 bw20
+./gates.sh $B /tmp/cold/cold05-ch52-bw20.txt    # another segment
+./gates.sh $B /tmp/cold/cold[0-9][0-9]-ch*.txt  # all 43
+./gates.sh $B --hot                             # three default up segments
+./gates.sh $B --hot --flow switch_channel DIR   # one row per channel
+./gates.sh $B --board tg789 SEGMENT             # another board's profile
 
 AC_READ_ORACLE=../../router-data/d6220/wl-diag-wl1-steady-tick-ch36-bw20.txt \
     ./ac_trace periodic d6220 > /tmp/p.out
@@ -58,11 +59,12 @@ values (`reverse-tools/trace_filter.py --retvals`), or every read looks absent.
 ## Reading the score
 
 ```
-grezzo          : 29817/29849 = 99.89%   16 regioni
+grezzo          : 29817/29849 = 99.89%   [blocco>=8 tol=2]   4 blocchi
                   2 col valore sbagliato, 27 op di wl mancanti, 1 op del port di troppo
+                  0 coppie uguali in blocchi troppo corti, 14 op non corrispondenti tollerate nei blocchi
 ```
 
-(cold01 of the d6220 on 2026-09-30; 26 of the 27 missing ops are core cells
+(cold01 of the d6220 on 2026-10-01; 26 of the 27 missing ops are core cells
 outside the PHY's perimeter, and the one extra op is the block alignment's
 artefact around a wrong value.)
 
@@ -71,9 +73,18 @@ streams, so it reaches 100% only when they coincide.
 
 Ops are matched in order, in blocks: `tracelib.align_opcodes()` anchors the
 two streams on runs of eight ops found in both, extends each anchor while the
-ops agree and searches the gaps between anchors the same way. A block of one
-op is not a match -- one op equal to one op says nothing about where the two
-streams are -- so it counts as missing on one side and extra on the other. The three counts are three
+ops agree and searches the gaps between anchors the same way; it keeps no
+block shorter than two. On top of that alignment `cmp_skip.py` counts only
+the equal pairs of blocks of at least `--min-block` pairs, where a block is a
+chain of equal runs with at most `--gap-tol` non-corresponding ops between one
+run and the next (a wrong value is one, a missing or extra op is one, three
+stock ops against five of the port are five). The equal pairs of a shorter
+block are no evidence that the two streams are at the same point and count
+as missing on one side and extra on the other; the non-corresponding ops a
+block tolerates stay non-corresponding. Both parameters are required and go
+with the number: a percentage without them cannot be compared. The quoted
+numbers use `--min-block 8 --gap-tol 2`, eight being the alignment's anchor.
+The three counts are three
 different jobs:
 
 | count | meaning | the job |
@@ -88,8 +99,8 @@ different jobs:
 ## Finding the next divergence
 
 ```sh
-GATE_TMP=/tmp/gate ./gates.sh                   # keeps seg, merged, full, cmp
-python3 cmp_skip.py /tmp/gate/merged /tmp/gate/full 167:LAST --verbose
+GATE_TMP=/tmp/gate ./gates.sh $B                # keeps seg, merged, full, cmp
+python3 cmp_skip.py /tmp/gate/merged /tmp/gate/full 167:LAST $B --verbose
 AC_FN_MARKERS=1 AC_CHANNEL=36 AC_BW=20 AC_FIRST_INIT=1 ./ac_trace full d6220
 ```
 

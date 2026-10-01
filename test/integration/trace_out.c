@@ -83,7 +83,57 @@ struct oracle_key {
 	u32 *vals;
 	unsigned n, cap, pos;
 	u32 last;
+	int written;
 };
+
+/*
+ * Registri che rileggono l'ultimo valore scritto: dopo la prima scrittura
+ * del driver si rende l'ombra, prima la coda. Dalla coda, una lettura in piu'
+ * o in meno del port sfaserebbe tutte le successive.
+ *
+ *   0x019e  B43_PHY_AC_REG_TBL_WRITE_GATE
+ */
+static const struct { const char *cls; u16 addr; } oracle_latch[] = {
+	{ "PHY.RD", 0x019e },
+};
+
+/*
+ * Le letture dalle porte dati delle tabelle del PHY (0x000f-0x0011) hanno
+ * una coda per indirizzo di tabella, id da 0x000d e offset da 0x000e: le
+ * letture di un accesso consumano in ordine la coda del suo indirizzo
+ * d'inizio, e una tabella che il port legge e il vendor no non tocca le code
+ * delle altre.
+ */
+static u16 vendor_tbl_id, vendor_tbl_off, port_tbl_id, port_tbl_off;
+
+static int tbl_port(const char *cls, u16 addr)
+{
+	return !strcmp(cls, "PHY.RD") && addr >= 0x000f && addr <= 0x0011;
+}
+
+static void tbl_key(char *buf, size_t len, u16 id, u16 off)
+{
+	snprintf(buf, len, "TBL.RD@%04x.%04x", id, off);
+}
+
+static void tbl_note_addr(u16 *id, u16 *off, u16 addr, u32 val)
+{
+	if (addr == 0x000d)
+		*id = (u16)val;
+	else if (addr == 0x000e)
+		*off = (u16)val;
+}
+
+static int oracle_is_latch(const char *cls, u16 addr)
+{
+	unsigned i;
+
+	for (i = 0; i < sizeof(oracle_latch) / sizeof(oracle_latch[0]); i++)
+		if (oracle_latch[i].addr == addr &&
+		    !strcmp(oracle_latch[i].cls, cls))
+			return 1;
+	return 0;
+}
 
 static struct oracle_key okeys[ORACLE_KEYS];
 static unsigned n_okeys;
@@ -168,8 +218,10 @@ static void shm_key(char *buf, size_t len, u32 routing)
  * Le righe della cattura: `<ts> #<ep> cpuN <CLASSE> addr=0x.. val=0x..`, e
  * `off=` al posto di `addr=` per i registri del MAC (REG.RD), che porta solo
  * una cattura presa al bus (reverse-tools/mmio2ops.py).
- * Si prendono solo le letture, perche' l'oracolo risponde a quelle; le
- * scritture del vendor sono il termine di confronto, non un ingresso.
+ * Si prendono le letture, perche' l'oracolo risponde a quelle; delle
+ * scritture del vendor solo l'indirizzo di tabella (0x000d, 0x000e), che da'
+ * la chiave alle letture delle porte dati. Le altre sono il termine di
+ * confronto, non un ingresso.
  */
 static void oracle_load(void)
 {
@@ -218,7 +270,15 @@ static void oracle_load(void)
 				sscanf(sel, " sel=0x%x", &routing);
 			shm_key(cls, sizeof(cls), routing);
 			oracle_push(cls, (u16)addr, val);
-		} else if (strstr(cls, ".RD"))
+		} else if (tbl_port(cls, (u16)addr)) {
+			char key[32];
+
+			tbl_key(key, sizeof(key), vendor_tbl_id, vendor_tbl_off);
+			oracle_push(key, (u16)addr, val);
+		} else if (!strcmp(cls, "PHY.WR"))
+			tbl_note_addr(&vendor_tbl_id, &vendor_tbl_off,
+				      (u16)addr, val);
+		else if (strstr(cls, ".RD"))
 			oracle_push(cls, (u16)addr, val);
 		else if (!strcmp(cls, "PHY.MOD") || !strcmp(cls, "PHY.AND") ||
 			 !strcmp(cls, "PHY.OR"))
@@ -247,9 +307,17 @@ static u32 oracle_lookup(const char *cls, u16 addr, int width)
 		}
 		return 0;
 	}
-	k = okey(cls, addr, 0);
+	if (tbl_port(cls, addr)) {
+		char key[32];
+
+		tbl_key(key, sizeof(key), port_tbl_id, port_tbl_off);
+		k = okey(key, addr, 0);
+	} else
+		k = okey(cls, addr, 0);
 	if (!k || !k->n)
 		return 0;
+	if (k->written && oracle_is_latch(cls, addr))
+		return k->last;
 	while (k->pos < k->n) {
 		u32 v = k->vals[k->pos++];
 
@@ -270,10 +338,14 @@ static void oracle_note_write(const char *wr_cls, u16 addr, u32 val)
 
 	if (n < 3 || strcmp(wr_cls + n - 3, ".WR"))
 		return;
+	if (!strcmp(wr_cls, "PHY.WR"))
+		tbl_note_addr(&port_tbl_id, &port_tbl_off, addr, val);
 	snprintf(cls, sizeof(cls), "%.*s.RD", (int)(n - 3), wr_cls);
 	k = okey(cls, addr, 0);
-	if (k)
+	if (k) {
 		k->last = val;
+		k->written = 1;
+	}
 }
 
 /*

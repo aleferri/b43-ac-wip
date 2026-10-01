@@ -60,7 +60,8 @@ def load_ops(path, vendor):
 # ---------------------------------------------------------------------------
 
 def matched_in_order(a, b):
-    """Ops matched in order, the same measure as test/unit/cmp_skip.py."""
+    """Ops matched in order: the alignment of test/unit/cmp_skip.py, without
+    its minimum block and gap tolerance."""
     return sum(i2 - i1 for tag, i1, i2, _, _ in T.align_opcodes(a, b)
                if tag == 'equal')
 

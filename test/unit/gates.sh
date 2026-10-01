@@ -61,6 +61,10 @@
 #   ./gates.sh --hot --flow switch_channel DIR  one row per channel, over a dir
 #   ./gates.sh --board tg789 [segment...]      another board's profile
 #
+# --min-block N --gap-tol M are required, except with --table: cmp_skip.py
+# counts the equal pairs of blocks of at least N pairs, with at most M
+# non-corresponding ops between one run and the next (see its score()).
+#
 # Environment: COLD, HOT override the segment directories; GATE_TMP keeps the
 # working files (seg, merged, full, cmp) in that directory instead of a
 # temporary one.
@@ -92,11 +96,17 @@ while [ $# -gt 0 ]; do
 	--flow) FLOW=$2;   shift 2 ;;
 	--table) TABLE=1;  shift ;;
 	--board) BOARD=$2;  shift 2 ;;
+	--min-block) MIN_BLOCK=$2; shift 2 ;;
+	--gap-tol) GAP_TOL=$2; shift 2 ;;
 	--) shift; break ;;
 	-*) echo "unknown option: $1" >&2; exit 2 ;;
 	*) break ;;
 	esac
 done
+if [ "$TABLE" = 0 ] && { [ -z "${MIN_BLOCK:-}" ] || [ -z "${GAP_TOL:-}" ]; }; then
+	echo "--min-block and --gap-tol are required" >&2
+	exit 2
+fi
 
 # The regulatory ceiling. The stock driver's limits are conducted and per
 # width -- the same 56 on ch36-48/20 on the d6220, the agcombo and the
@@ -305,7 +315,8 @@ PY
 	echo "  --- cmp_skip ---"
 	python3 "$HERE/cmp_skip.py" "$TMP/merged" "$TMP/full" \
 		"$from:$last" --board "$BOARD" --led-pins "$LED_PINS" \
-		| grep -E 'grezzo|spostate|nel perimetro|CON  ecce|fuori perimetro|op saltate|valore sbagliato|op di wl mancanti|solo vendor|solo port|invisibili|bulk espanse'
+		--min-block "$MIN_BLOCK" --gap-tol "$GAP_TOL" \
+		| grep -E 'grezzo|spostate|nel perimetro|CON  ecce|fuori perimetro|op saltate|valore sbagliato|op di wl mancanti|solo vendor|solo port|invisibili|bulk espanse|blocchi troppo corti'
 	echo "  --- compare ---"
 	python3 "$HERE/compare.py" "$TMP/merged" "$TMP/full" \
 		--range "$from:$last" --auto-align --led-pins "$LED_PINS" \

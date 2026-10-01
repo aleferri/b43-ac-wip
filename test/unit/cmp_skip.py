@@ -19,7 +19,8 @@ eccezioni e' anche il modo piu' comodo di far tornare un numero.
      marcate `cascata=True`: in quel caso il confronto a valle e' sospetto e il
      tool lo segnala.
 
-Uso: cmp_skip.py vendor.txt test.txt lo:hi [--board agcombo] [--verbose]
+Uso: cmp_skip.py vendor.txt test.txt lo:hi --min-block N --gap-tol M
+     [--board agcombo] [--bus] [--verbose]
 """
 import argparse
 import re
@@ -324,7 +325,7 @@ PORTE = {('PHY.WR', '0xd'), ('PHY.WR', '0xe'), ('PHY.WR', '0xf'),
 # E una che c'e' ma non e' un pericolo per l'accoppiamento: MAC.MHF scrive la
 # cella HOSTF corrispondente in cinque casi su undici, quindi un MHF mancante
 # porta con se' una OBJ.WR mancante. Sono due op tracciate e contano due, ma
-# non si accoppiano fra loro -- le classi sono diverse -- quindi classify() non
+# non si accoppiano fra loro -- le classi sono diverse -- quindi _pair_gap() non
 # le confonde. Vedi "Host-flag order" in docs/retrace-todo.md.
 
 
@@ -345,13 +346,6 @@ def chiavi(ops):
     return out
 
 
-def lcs_stats(V, T):
-    oc = tracelib.align_opcodes(V, T)
-    eq = sum(b - a for k, a, b, c, d in oc if k == 'equal')
-    diff = [o for o in oc if o[0] != 'equal']
-    return eq, len(diff), diff
-
-
 def ident(o):
     """Identita' di un'op senza il valore: classe e registro, o la sola classe
     per quelle che un registro non lo hanno (MAC.MCTRL, GPIO.*)."""
@@ -361,21 +355,50 @@ def ident(o):
     return o.split(' ', 1)[0]
 
 
-def bus_stats(V, T, C):
-    """Allineamento e conteggi per il profilo bus.
+def _pair_gap(kv, kt, V, a, b, c, d):
+    """Coppie dello stesso registro dentro una regione non allineata.
 
-    Una traccia presa al bus ha i valori pieni; il vendor svolto ha la lettura
-    di un MOD senza valore e la scrittura vincolata a maschera. Le due stringhe
-    non sono mai uguali, quindi l'allineamento va fatto sull'identita' -- classe
-    e registro -- e il valore si giudica dentro i blocchi allineati con
-    ops_equal() di compare.py, che le maschere e le wildcard le conosce. Fuori
-    dai blocchi allineati le identita' differiscono per costruzione: la' e'
-    tutto mancante o di troppo, non c'e' un valore da confrontare.
+    Un'op emessa sul registro giusto col valore sbagliato compare due volte
+    nel diff -- manca la versione di wl e sopravanza quella del port -- e
+    contarla come "una mancante piu' una di troppo" gonfia il difetto e lo
+    chiama col nome sbagliato. L'accoppiamento e' per identita' (chiavi()):
+    un registro per le classi normali, il registro piu' il marcatore TBL per
+    le porte delle tabelle. Un'op del vendor col valore jolly (`val=*`, vedi
+    canon()) appaiata cosi' non ha un valore da sbagliare e torna come uguale.
+
+    Ritorna (uguali, valore sbagliato, mancanti, di troppo).
     """
-    kv = [ident(o) for o in V]
-    kt = [ident(o) for o in T]
-    eq = wrong = missing = surplus = 0
-    diff = []
+    avail = {}
+    for x in kt[c:d]:
+        if x is not None:
+            avail[x] = avail.get(x, 0) + 1
+    jolly = wrong = 0
+    for i, x in enumerate(kv[a:b]):
+        if x is not None and avail.get(x):
+            avail[x] -= 1
+            if 'val=*' in V[a + i]:
+                jolly += 1
+            else:
+                wrong += 1
+    paired = jolly + wrong
+    return jolly, wrong, (b - a) - paired, (d - c) - paired
+
+
+def segments(V, T, C, bus):
+    """L'allineamento come sequenza di tratti, nell'ordine dei due flussi.
+
+    ('run', n): n coppie di op corrispondenti, consecutive su entrambi i lati.
+    ('gap', nv, nt, eq, wrong, missing, surplus): nv op di wl e nt del port
+    fra un tratto e il successivo; eq di quelle coppie valgono come uguali
+    (il jolly, vedi _pair_gap()), le altre sono non corrispondenti.
+
+    Col profilo bus una traccia ha i valori pieni e il vendor svolto ha la
+    lettura di un MOD senza valore e la scrittura vincolata a maschera: le
+    stringhe non sono mai uguali, quindi si allinea sull'identita' -- classe
+    e registro -- e dentro i blocchi allineati il valore si giudica con
+    ops_equal() di compare.py; un valore sbagliato spezza il tratto. Senza
+    profilo bus si allinea sulle stringhe.
+    """
     def same(v, t):
         # canon() ha reso 'val=*' la lettura senza valore; ops_equal() la
         # conosce come UNDEFINED. Il lato a livello di accessor puo' essere
@@ -386,60 +409,89 @@ def bus_stats(V, T, C):
         return (C.ops_equal(v.replace('val=*', 'val=UNDEFINED'), t) or
                 C.ops_equal(t.replace('val=*', 'val=UNDEFINED'), v))
 
-    for k, a, b, c, d in tracelib.align_opcodes(kv, kt):
-        if k == 'equal':
-            bad = [i for i in range(b - a) if not same(V[a + i], T[c + i])]
-            eq += (b - a) - len(bad)
-            wrong += len(bad)
-            for i in bad:
-                diff.append(('value', a + i, a + i + 1, c + i, c + i + 1))
+    kv, kt = (None, None) if bus else (chiavi(V), chiavi(T))
+    av, at = ([ident(o) for o in V], [ident(o) for o in T]) if bus else (V, T)
+    segs, diff = [], []
+
+    def run(n):
+        if segs and segs[-1][0] == 'run':
+            segs[-1] = ('run', segs[-1][1] + n)
+        else:
+            segs.append(('run', n))
+
+    for k, a, b, c, d in tracelib.align_opcodes(av, at):
+        if k != 'equal':
+            # Col profilo bus le identita' fuori dai blocchi allineati
+            # differiscono per costruzione: tutto mancante o di troppo.
+            pg = ((0, 0, b - a, d - c) if bus else
+                  _pair_gap(kv, kt, V, a, b, c, d))
+            segs.append(('gap', b - a, d - c) + pg)
+            diff.append((k, a, b, c, d))
             continue
-        missing += b - a
-        surplus += d - c
-        diff.append((k, a, b, c, d))
-    return eq, len(diff), diff, wrong, missing, surplus
+        if not bus:
+            run(b - a)
+            continue
+        n = 0
+        for i in range(b - a):
+            if same(V[a + i], T[c + i]):
+                n += 1
+                continue
+            if n:
+                run(n)
+            n = 0
+            segs.append(('gap', 1, 1, 0, 1, 0, 0))
+            diff.append(('value', a + i, a + i + 1, c + i, c + i + 1))
+        if n:
+            run(n)
+    return segs, diff
 
 
-def classify(V, T):
-    """Separa il valore sbagliato dall'op di troppo.
+def score(segs, min_block, gap_tol):
+    """Le coppie uguali che stanno in blocchi abbastanza lunghi.
 
-    Un'op emessa sul registro giusto col valore sbagliato compare due volte nel
-    diff -- manca la versione di wl e sopravanza quella del port -- e contarla
-    come "una mancante piu' una di troppo" gonfia il difetto e lo chiama col
-    nome sbagliato: il registro e' quello giusto, il numero no.
+    Un blocco e' una sequenza di tratti separati da non piu' di gap_tol op
+    non corrispondenti, contate come max(nv, nt) meno le coppie che valgono
+    come uguali: un valore sbagliato e' una, un'op mancante e' una, tre op
+    di wl contro cinque del port sono cinque. Un blocco conta se ha almeno
+    min_block coppie uguali; le op non corrispondenti che tollera restano
+    non corrispondenti. Le coppie dei blocchi piu' corti contano come una
+    mancante e una di troppo.
 
-    L'accoppiamento e' per identita' dentro la stessa regione sostituita, dove
-    l'identita' viene da chiavi(): un registro per le classi normali, il
-    registro piu' il marcatore TBL per le porte delle tabelle. Senza quella
-    distinzione due scritture sulla porta dati verrebbero appaiate solo perche'
-    l'indirizzo e' lo stesso, e l'indirizzo di una porta e' sempre lo stesso.
-
-    Un'op del vendor col valore jolly (`val=*`, vedi canon()) appaiata cosi'
-    non ha un valore da sbagliare: per ops_equal() di compare.py e' uguale, e
-    torna a parte come quarto valore perche' il chiamante la conti fra le
-    uguali. L'allineamento esatto non la vede, perche' confronta stringhe.
+    Ritorna (uguali contate, blocchi contati, uguali scartate, op non
+    corrispondenti tollerate dentro i blocchi contati).
     """
-    kv, kt = chiavi(V), chiavi(T)
-    wrong = missing = surplus = jolly = 0
-    for k, a, b, c, d in tracelib.align_opcodes(V, T):
-        if k == 'equal':
+    eq = nblk = lost = tol = 0
+    cur = cur_tol = 0
+    pending = None
+
+    def close():
+        nonlocal eq, nblk, lost, tol
+        if cur >= min_block:
+            eq += cur
+            nblk += 1
+            tol += cur_tol
+        else:
+            lost += cur
+
+    for sg in segs:
+        if sg[0] == 'gap':
+            if pending is None:
+                pending = [0, 0]
+            nc = max(sg[1], sg[2]) - sg[3]
+            pending[0] += nc
+            pending[1] += sg[3]
             continue
-        avail = {}
-        for x in kt[c:d]:
-            if x is not None:
-                avail[x] = avail.get(x, 0) + 1
-        paired = 0
-        for i, x in enumerate(kv[a:b]):
-            if x is not None and avail.get(x):
-                avail[x] -= 1
-                paired += 1
-                if 'val=*' in V[a + i]:
-                    jolly += 1
-                else:
-                    wrong += 1
-        missing += (b - a) - paired
-        surplus += (d - c) - paired
-    return wrong, missing, surplus, jolly
+        if pending is not None and cur and pending[0] <= gap_tol:
+            cur += pending[1] + sg[1]
+            cur_tol += pending[0]
+        else:
+            if cur:
+                close()
+            cur, cur_tol = sg[1], 0
+        pending = None
+    if cur:
+        close()
+    return eq, nblk, lost, tol
 
 
 def main():
@@ -452,8 +504,20 @@ def main():
     ap.add_argument('--board', default='agcombo')
     ap.add_argument('--led-pins', type=lambda v: int(v, 0), default=0,
                     help='pin GPIO dei LED, da ./ac_trace led_pins BOARD')
+    ap.add_argument('--min-block', type=int, required=True,
+                    help='coppie uguali minime di un blocco perche\' conti '
+                         f'(almeno {tracelib.MIN_BLOCK}, il minimo '
+                         'dell\'allineamento)')
+    ap.add_argument('--gap-tol', type=int, required=True,
+                    help='op non corrispondenti tollerate fra un tratto e il '
+                         'successivo dello stesso blocco')
     ap.add_argument('--verbose', action='store_true')
     args = ap.parse_args()
+    if args.min_block < tracelib.MIN_BLOCK:
+        ap.error(f'--min-block sotto {tracelib.MIN_BLOCK}: l\'allineamento '
+                 'non produce blocchi piu\' corti')
+    if args.gap_tol < 0:
+        ap.error('--gap-tol negativo')
 
     C = load_compare()
     lo, hi = (int(x) for x in args.range.split(':'))
@@ -485,17 +549,16 @@ def main():
     T, sp = C.drop_solo_port(T, V0)
 
     def stats(V, T):
-        if args.bus:
-            return bus_stats(V, T, C)
-        eq, nreg, diff = lcs_stats(V, T)
-        wrong, missing, surplus, jolly = classify(V, T)
-        return (eq + jolly, nreg, diff, wrong, missing, surplus)
+        segs, diff = segments(V, T, C, args.bus)
+        eq, nblk, lost, tol = score(segs, args.min_block, args.gap_tol)
+        cls = [sum(sg[i] for sg in segs if sg[0] == 'gap') for i in (4, 5, 6)]
+        return eq, nblk, diff, (lost, tol), cls
 
-    eq0, nreg0, _, *cls0 = stats(V0, T)
+    eq0, nblk0, _, bl0, cls0 = stats(V0, T)
     VP, outside, keys = C.apply_perimeter(V0, args.led_pins)
-    eqp, nregp, _, *clsp = stats(VP, T)
+    eqp, nblkp, _, blp, clsp = stats(VP, T)
     V1, skipped, used = apply_skips(VP, rules, args.verbose)
-    eq1, nreg1, diff1, *cls1 = stats(V1, T)
+    eq1, nblk1, diff1, bl1, cls1 = stats(V1, T)
 
     print(f"board {args.board}, finestra {lo}:{hi}")
     if espanse:
@@ -514,22 +577,31 @@ def main():
     print("op di wl PIU' quelle che il port emette e wl no, perche' un'op di")
     print("troppo e' un difetto quanto una mancante -- il driver deve emettere")
     print("le op di wl, non le sue. Fa 100% solo se i due flussi coincidono.")
+    print("Il numeratore sono le coppie uguali nei blocchi di almeno")
+    print(f"{args.min_block} coppie, con al piu' {args.gap_tol} op non "
+          "corrispondenti fra un tratto e il")
+    print("successivo.")
     print("'nel perimetro' toglie cio' che l'harness non puo' emettere e serve")
     print("a navigare, non a dare un punteggio: quel debito e' in")
     print("docs/retrace-todo.md.\n")
+    par = f"[blocco>={args.min_block} tol={args.gap_tol}]"
 
-    def riga(nome, eq, nv, nt, nreg, cls):
-        tot = nv + (nt - eq)
+    def riga(nome, eq, nv, nt, nblk, bl, cls):
+        tot = nv + nt - eq
         wrong, missing, surplus = cls
-        print(f"{nome:16s}: {eq}/{tot} = {100.0 * eq / tot:.2f}%   {nreg} regioni")
+        lost, tol = bl
+        print(f"{nome:16s}: {eq}/{tot} = {100.0 * eq / tot:.2f}%   {par}   "
+              f"{nblk} blocchi")
         print(f"                  {wrong} col valore sbagliato, "
               f"{missing} op di wl mancanti, {surplus} op del port di troppo")
+        print(f"                  {lost} coppie uguali in blocchi troppo corti, "
+              f"{tol} op non corrispondenti tollerate nei blocchi")
 
-    riga("grezzo", eq0, len(V0), len(T), nreg0, cls0)
-    riga("nel perimetro", eqp, len(VP), len(T), nregp, clsp)
+    riga("grezzo", eq0, len(V0), len(T), nblk0, bl0, cls0)
+    riga("nel perimetro", eqp, len(VP), len(T), nblkp, blp, clsp)
     print(f"                  {len(outside)} op fuori perimetro su "
           f"{len(keys)} celle dichiarate di altri")
-    riga("CON  eccezioni", eq1, len(V1), len(T), nreg1, cls1)
+    riga("CON  eccezioni", eq1, len(V1), len(T), nblk1, bl1, cls1)
     print(f"                  {len(skipped)} op saltate su {len(rules)} regole\n")
 
     for k, r in enumerate(C.PERIMETER):
