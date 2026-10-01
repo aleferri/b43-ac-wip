@@ -162,14 +162,17 @@ With the agcombo capture's interrupts replayed (`IRQ` events of
 interrupt path and the rings are measurable. What differs from the stock
 driver:
 
-- `GEN_IRQ_MASK`: b43 runs with `0x38058264`, the agcombo's 7.14.43 with
-  `0xb2e7a864`, the MacBookAir6,1's 6.30.223 (a station) with `0xb0e7a860`.
-  Both stock drivers unmask `0x80000000`, `0x00e00000`, `0x00020000`,
-  `0x2000` and `0x0800`, which b43 leaves masked, and leave masked `0x0200`
-  and `0x08000000`, which b43 unmasks (its `MAC_TXERR` and `UCODE_DEBUG`).
-  `0x02000000` and TBTT (`0x4`) are the AP's only. What the bits mean on
-  this microcode is not established; b43's names are the pre-AC ones. Both
-  stock drivers write the mask as 0 and back around every interrupt.
+- `GEN_IRQ_MASK`: the agcombo's 7.14.43 runs with `0xb2e7a864` (after one
+  `0xb0e7a860` before the AP comes up), the MacBookAir6,1's 6.30.223, a
+  station, with `0xb0e7a860`: the AP adds TBTT and `0x02000000`. The AC now
+  runs with every bit of `0xb2e7a864` plus b43's `MAC_TXERR` and
+  `UCODE_DEBUG`, which the stock drivers mask, for its own reports:
+  `0xbae7aa64` (`B43_IRQ_MASKTEMPLATE_AC`), where b43 had `0x38058264`. That
+  unmasks the PSM watchdog, CCA, radio power-up, the general-purpose timer,
+  the three reserved bits of brcmsmac's `d11.h` and `PHY_TXERR`. As in
+  brcmsmac the watchdog restarts the controller, the timer is stopped,
+  `PHY_TXERR` is only acknowledged; the power-up and the reserved bits have
+  no handler. The mask writes differ from the capture by those two bits.
 - Per interrupt b43 reads and acknowledges the DMA channels; the stock
   driver acknowledges channel 0 only, and only when it has a frame. Same on
   6.30: 672 acknowledgements of `0x0020` in the MacBook traffic capture and

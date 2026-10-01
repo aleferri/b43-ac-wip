@@ -2220,7 +2220,13 @@ static void b43_do_interrupt_thread(struct b43_wldev *dev)
 	if (unlikely(reason & B43_IRQ_MAC_TXERR))
 		b43err(dev->wl, "MAC transmission error\n");
 
-	if (unlikely(reason & B43_IRQ_PHY_TXERR)) {
+	/*
+	 * The AC runs with PHY_TXERR unmasked, as the stock driver does, and
+	 * like brcmsmac only acknowledges it; the other PHYs mask it outside
+	 * debug, where this handler counts towards a restart.
+	 */
+	if (unlikely(reason & B43_IRQ_PHY_TXERR) &&
+	    dev->phy.type != B43_PHYTYPE_AC) {
 		b43err(dev->wl, "PHY transmission error\n");
 		rmb();
 		if (unlikely(atomic_dec_and_test(&dev->phy.txerr_cnt))) {
@@ -2248,6 +2254,16 @@ static void b43_do_interrupt_thread(struct b43_wldev *dev)
 
 	if (unlikely(reason & B43_IRQ_UCODE_DEBUG))
 		handle_irq_ucode_debug(dev);
+	if (dev->phy.type == B43_PHYTYPE_AC) {
+		/* As brcmsmac: the PSM watchdog resets, the timer is stopped. */
+		if (unlikely(reason & B43_IRQ_TIMER0)) {
+			b43err(dev->wl, "PSM microcode watchdog fired\n");
+			b43_controller_restart(dev, "PSM watchdog");
+			return;
+		}
+		if (reason & B43_IRQ_TIMEOUT)
+			b43_write32(dev, B43_MMIO_GPTIMER, 0);
+	}
 	if (reason & B43_IRQ_TBTT_INDI)
 		handle_irq_tbtt_indication(dev);
 	if (reason & B43_IRQ_ATIM_END)
@@ -5308,9 +5324,13 @@ static void setup_struct_wldev_for_init(struct b43_wldev *dev)
 	/* IRQ related flags */
 	dev->irq_reason = 0;
 	memset(dev->dma_reason, 0, sizeof(dev->dma_reason));
-	dev->irq_mask = B43_IRQ_MASKTEMPLATE;
-	if (b43_modparam_verbose < B43_VERBOSITY_DEBUG)
-		dev->irq_mask &= ~B43_IRQ_PHY_TXERR;
+	if (dev->phy.type == B43_PHYTYPE_AC) {
+		dev->irq_mask = B43_IRQ_MASKTEMPLATE_AC;
+	} else {
+		dev->irq_mask = B43_IRQ_MASKTEMPLATE;
+		if (b43_modparam_verbose < B43_VERBOSITY_DEBUG)
+			dev->irq_mask &= ~B43_IRQ_PHY_TXERR;
+	}
 
 	dev->mac_suspended = 1;
 

@@ -26,6 +26,7 @@
 #endif
 
 /* MMIO offsets */
+#define B43_MMIO_GPTIMER		0x18	/* General-purpose timer */
 #define B43_MMIO_DMA0_REASON		0x20
 #define B43_MMIO_DMA0_IRQ_MASK		0x24
 #define B43_MMIO_DMA1_REASON		0x28
@@ -593,6 +594,37 @@ enum {
 					 B43_IRQ_UCODE_DEBUG | \
 					 B43_IRQ_RFKILL | \
 					 B43_IRQ_TX_OK)
+
+/*
+ * The AC cores run with every bit of the stock driver's mask: 0xb2e7a864 on
+ * the agcombo (7.14, AP), 0xb0e7a860 on the MacBookAir6,1 (6.30, station),
+ * which lacks only the AP's TBTT and 0x02000000. b43 adds MAC_TXERR and
+ * UCODE_DEBUG, which both leave masked, for its own reports. brcmsmac's
+ * d11.h names TIMER0 the PSM microcode watchdog (MI_GP0) and TIMEOUT the
+ * general-purpose timer (MI_TO), and gives the bits b43 has no name for:
+ */
+#define B43_IRQ_PWRUP			0x00200000	/* radio/PHY powered back up */
+#define B43_IRQ_RESERVED3		0x00400000
+#define B43_IRQ_RESERVED2		0x00800000
+#define B43_IRQ_RESERVED1		0x02000000
+#define B43_IRQ_MASKTEMPLATE_AC		(B43_IRQ_TBTT_INDI | \
+					 B43_IRQ_ATIM_END | \
+					 B43_IRQ_PMQ | \
+					 B43_IRQ_MAC_TXERR | \
+					 B43_IRQ_PHY_TXERR | \
+					 B43_IRQ_TIMER0 | \
+					 B43_IRQ_DMA | \
+					 B43_IRQ_TXFIFO_FLUSH_OK | \
+					 B43_IRQ_CCA_MEASURE_OK | \
+					 B43_IRQ_NOISESAMPLE_OK | \
+					 B43_IRQ_PWRUP | \
+					 B43_IRQ_RESERVED3 | \
+					 B43_IRQ_RESERVED2 | \
+					 B43_IRQ_RESERVED1 | \
+					 B43_IRQ_UCODE_DEBUG | \
+					 B43_IRQ_RFKILL | \
+					 B43_IRQ_TX_OK | \
+					 B43_IRQ_TIMEOUT)
 
 /* The firmware register to fetch the debug-IRQ reason from. */
 #define B43_DEBUGIRQ_REASON_REG		63
