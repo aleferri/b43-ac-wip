@@ -5698,6 +5698,16 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
 	    b43_bus_host_is_sdio(dev->dev)) {
 		dev->__using_pio_transfers = true;
 		err = b43_pio_init(dev);
+	} else if (dev->use_pio && phy->type == B43_PHYTYPE_AC) {
+		/*
+		 * pio.c reads the receive header in the pre-AC layouts only, so
+		 * the AC stays on DMA, also after a fatal DMA error asked for
+		 * PIO.
+		 */
+		b43err(dev->wl, "PIO is not supported on the AC-PHY, using DMA\n");
+		dev->use_pio = false;
+		dev->__using_pio_transfers = false;
+		err = b43_dma_init(dev);
 	} else if (dev->use_pio) {
 		b43warn(dev->wl, "Forced PIO by use_pio module parameter. "
 			"This should not be needed and will result in lower "
