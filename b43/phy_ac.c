@@ -161,7 +161,8 @@ static void b43_phy_ac_op_prepare_structs(struct b43_wldev *dev)
 {
 	struct b43_phy_ac *phy_ac = dev->phy.ac;
 	u16 mhfs[ARRAY_SIZE(phy_ac->mhfs)];
-	bool writethrough;
+	bool writethrough, attached;
+	u16 pmu_req;
 
 	/*
 	 * b43_wireless_core_init() calls this on every ifconfig up, but the
@@ -170,15 +171,21 @@ static void b43_phy_ac_op_prepare_structs(struct b43_wldev *dev)
 	 * accumulated by the previous cycle -- 0x0060 in HOSTF4 and 0x0088 in
 	 * HOSTF5 -- where a cold cycle flushes 0x0040 and 0x0080. So it is
 	 * carried across the reset here, and what zeroes it is the kzalloc in
-	 * op_allocate().
+	 * op_allocate(). So is the attach part of the cold preamble, which
+	 * runs once per probe, and the PMU request it leaves raised until the
+	 * first bring-up: no reset lowers the chipcommon bit.
 	 */
 	memcpy(mhfs, phy_ac->mhfs, sizeof(mhfs));
 	writethrough = phy_ac->mhf_writethrough;
+	attached = phy_ac->attach_preamble_done;
+	pmu_req = phy_ac->status_mask & B43_PHY_AC_STATE_PMU_REQ;
 
 	memset(phy_ac, 0, sizeof(*phy_ac));
 
 	memcpy(phy_ac->mhfs, mhfs, sizeof(mhfs));
 	phy_ac->mhf_writethrough = writethrough;
+	phy_ac->attach_preamble_done = attached;
+	phy_ac->status_mask = pmu_req;
 }
 
 /* Mode-bit clears. These ops are not contiguous in the capture: they are
@@ -6800,9 +6807,10 @@ static void b43_phy_ac_pmu_req(struct b43_wldev *dev, bool on)
  *
  * b43 calls switch_analog(dev, true) from four sites: the attach reset, right
  * after b43_phy_allocate() has made phy->ops non-NULL, the core-init reset,
- * b43_chip_init() and b43_phy_init(). The vendor emits the preamble once per
- * bring-up, so
- * three of the four entries must do nothing but the analog bank.
+ * b43_chip_init() and b43_phy_init(). The vendor splits the preamble between
+ * its attach and its first up: the attach reset takes the first part, see
+ * b43_phy_ac_op_switch_analog(), and of the three entries left one takes the
+ * rest.
  *
  * The discriminant is the channel. b43 only has one from b43_phy_init()
  * onwards -- that function points phy->chandef at the hardware config on the
@@ -6828,16 +6836,11 @@ static bool b43_phy_ac_cold_preamble_due(struct b43_wldev *dev)
 }
 
 /*
- * Host-flag preamble of a cold bring-up, bracketed by the PMU resource
- * request. The stock driver interleaves it with core work that b43 does
- * from main.c on its own schedule: the MACCONTROL write of each core reset
- * (b43_wireless_core_reset()), the PSM jump and start around the ucode
- * upload (b43_upload_microcode()) and the GPOUT clear plus chipcommon GPIO
- * setup of b43_gpio_init(). Those stay out of the PHY -- b43 runs this
- * function after the ucode is up, and a PSM_JMP0 here would restart it --
- * and test/unit emits them at the stock points through the core sites.
+ * The end of the stock attach: the PMU resource request goes up, and stays
+ * up until b43_phy_ac_cold_mac_preamble() in the first bring-up, and three
+ * host flags reach the shadow only.
  */
-static void b43_phy_ac_cold_mac_preamble(struct b43_wldev *dev)
+static void b43_phy_ac_attach_mac_preamble(struct b43_wldev *dev)
 {
 	B43_AC_FN();
 
@@ -6846,6 +6849,23 @@ static void b43_phy_ac_cold_mac_preamble(struct b43_wldev *dev)
 	b43_phy_ac_mhf_maskset(dev, 2, (u16)~0x0040, 0);
 	b43_phy_ac_mhf_maskset(dev, 3, (u16)~0x0040, 0x0040);
 	b43_phy_ac_mhf_maskset(dev, 3, (u16)~0x0040, 0x0040);
+}
+
+/*
+ * Host-flag preamble of a cold bring-up, up to the release of the PMU
+ * request raised at attach. The stock driver interleaves it with core work
+ * that b43 does from main.c on its own schedule: the MACCONTROL write of
+ * each core reset (b43_wireless_core_reset()), the PSM jump and start
+ * around the ucode upload (b43_upload_microcode()) and the GPOUT clear plus
+ * chipcommon GPIO setup of b43_gpio_init(). Those stay out of the PHY -- b43
+ * runs this function after the ucode is up, and a PSM_JMP0 here would
+ * restart it -- and test/unit emits them at the stock points through the
+ * core sites.
+ */
+static void b43_phy_ac_cold_mac_preamble(struct b43_wldev *dev)
+{
+	B43_AC_FN();
+
 #if UNIT_TEST
 	b43_phy_ac_core_site(dev, B43_AC_SITE_CORE_RESET);
 #endif
@@ -6896,14 +6916,16 @@ static void b43_phy_ac_switch_analog_once(struct b43_wldev *dev, bool on,
 	u16 saved_417, saved_416;
 
 	/*
-	 * Only the cold entry emits anything. b43 calls switch_analog(dev,
-	 * true) from three sites before b43_phy_init() -- the attach reset, the
-	 * core-init reset and b43_chip_init() -- and the vendor emits nothing
-	 * at any of them: in the cold capture the AFE_ON bank appears three
-	 * times in the whole trace, twice in the cold preamble, which enters
-	 * twice, and once at bss-up. Each entry that did emit it would also
-	 * re-read the ten save registers, so the reads the preamble needs would
-	 * arrive four times where the vendor makes them once.
+	 * Only the cold entry emits anything, and that is the attach reset: the
+	 * stock driver arms the AFE in its attach, 2.3 s before its up on the
+	 * D6220 cold01, and b43's attach resets the core with the PHY ops in
+	 * place. The other three entries -- the attach tail, the core-init
+	 * reset and b43_chip_init() -- emit nothing: in the cold capture the
+	 * AFE_ON bank appears three times in the whole trace, twice inside
+	 * this one attach entry and once at bss-up. Each entry that did
+	 * emit it would also re-read the ten save registers, so the reads the
+	 * preamble needs would arrive four times where the vendor makes them
+	 * once.
 	 *
 	 * Nor does the power-down, before the preamble has run: the AFE_DOWN
 	 * bank appears once, and that one is b43_phy_ac_mode_init()'s.
@@ -6968,7 +6990,7 @@ static void b43_phy_ac_switch_analog_once(struct b43_wldev *dev, bool on,
 	 *
 	 * On a later bring-up the d6220 does not touch 0x02e4 at all. Which
 	 * entry is the cold one is the caller's decision, see
-	 * b43_phy_ac_cold_preamble_due(). The DSL (wl 6.30) writes 0x0800 there
+	 * b43_phy_ac_op_switch_analog(). The DSL (wl 6.30) writes 0x0800 there
 	 * on its down->up instead: a version divergence, tracked in
 	 * retrace-todo.md, not reproduced here.
 	 *
@@ -7005,16 +7027,18 @@ static void b43_phy_ac_switch_analog_once(struct b43_wldev *dev, bool on,
  */
 static void b43_phy_ac_op_switch_analog(struct b43_wldev *dev, bool on)
 {
-	bool cold = on && b43_phy_ac_cold_preamble_due(dev);
+	bool attach = on && !dev->phy.ac->attach_preamble_done;
 
 	B43_AC_FN();
-	b43_phy_ac_switch_analog_once(dev, on, cold);
+	b43_phy_ac_switch_analog_once(dev, on, attach);
 
-	if (!cold)
-		return;
-
-	b43_phy_ac_cold_mac_preamble(dev);
-	dev->phy.ac->status_mask |= B43_PHY_AC_STATE_COLD_PREAMBLE;
+	if (attach) {
+		b43_phy_ac_attach_mac_preamble(dev);
+		dev->phy.ac->attach_preamble_done = true;
+	} else if (on && b43_phy_ac_cold_preamble_due(dev)) {
+		b43_phy_ac_cold_mac_preamble(dev);
+		dev->phy.ac->status_mask |= B43_PHY_AC_STATE_COLD_PREAMBLE;
+	}
 }
 
 /* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;

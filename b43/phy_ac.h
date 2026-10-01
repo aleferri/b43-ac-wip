@@ -144,8 +144,8 @@ struct ieee80211_channel;
  */
 #define B43_PHY_AC_STATE_PMU_REQ	0x0400
 /*
- * The cold preamble -- the 0x02e4 field, the mode-bit clears, the second AFE
- * copy and the front-end GPIO block -- has been emitted for this core init.
+ * The bring-up part of the cold preamble -- the front-end GPIO block and the
+ * host flags up to the PMU release -- has been emitted for this core init.
  * b43 calls switch_analog() from four sites and the vendor emits the preamble
  * once; see b43_phy_ac_cold_preamble_due().
  */
@@ -603,6 +603,13 @@ struct b43_phy_ac {
 	 */
 	u16 mhfs[5];
 	bool mhf_writethrough;
+	/*
+	 * The attach part of the cold preamble has run: the AFE arm with the
+	 * 0x02e4 field and the mode-bit clears, the PMU request, three host
+	 * flags. Once per probe, at the first switch_analog(dev, true) after
+	 * op_allocate(), which is the attach reset.
+	 */
+	bool attach_preamble_done;
 	/*
 	 * Puntatori dei blocchi per-rate degli otto rate OFDM, presi durante la
 	 * scansione delle direct-map in op_switch_channel(). Il vendor non li

@@ -2014,11 +2014,12 @@ static void run_full(void)
 	/*
 	 * Le tre entrate che b43 fa prima di b43_phy_init(): il reset
 	 * dell'attach (main.c:1455 da 5650), la coda dell'attach (5664) e il
-	 * reset del core-init (1455 da 4956). Nessuna e' quella fredda -- il
-	 * preambolo lo porta l'entrata di b43_phy_init() -- e nessuna deve
-	 * emettere niente: nella cattura il banco AFE_ON compare tre volte in
-	 * tutto (#557, #576 nel preambolo e #36534 nel bss-up) e il banco
-	 * AFE_DOWN una sola, a #1262, che e' mode_init.
+	 * reset del core-init (1455 da 4956). Il reset dell'attach porta la
+	 * parte del preambolo che il vendor fa nel proprio attach -- il banco
+	 * AFE_ON due volte (#557, #576), le sette clear, la richiesta del PMU --
+	 * e il resto lo porta l'entrata di b43_phy_init(); le altre due non
+	 * emettono niente. Il banco AFE_ON torna solo nel bss-up (#36534) e il
+	 * banco AFE_DOWN compare una sola volta, a #1262, che e' mode_init.
 	 *
 	 * Stanno qui perche' senza di loro il difetto non era visibile:
 	 * l'harness chiamava switch_analog una volta sola, la fredda, e la

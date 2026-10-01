@@ -545,10 +545,18 @@ Table `0x21` is written as zeros on 2.4 GHz, as on both boards.
 
 ## Chip and board differences
 
-- **Double analog programming.** The agcombo (4360, 7.14.43) enters the AFE arm
-  unit twice in the preamble, with the PLL rewritten in between; the D6220
-  once. The gate in `op_switch_analog` is on `chip_id`. The TG789vac v2 cold
-  sweep (4360, 7.14.89) can tell chip from version and has not been checked.
+- **Double analog programming.** Recorded on the agcombo (4360, 7.14.43): the
+  AFE arm unit entered twice in the preamble, with the PLL rewritten in
+  between. The port does not reproduce it and has no chip gate for it: it
+  follows the D6220 (4352) and the TG789vac v2 (4360), both on 7.14.89, which
+  agree. In their `cold01` the attach writes PLL control 2 and 3, then runs
+  one unit -- AFE arm, `0x02e4`, the seven host-flag clears, AFE arm again,
+  no core reset in between -- and the `up` writes the PLL again before the
+  chanspec and arms the AFE once more inside `op_init`. The agcombo `cold01`
+  has the same shape (its unit moves from cpu1 to cpu0 half-way, the same
+  task migrating); where the double entry was seen is not recorded. On the
+  hybrid 6.30.223 (MacBookAir6,1) the two arms of the attach are two entries,
+  each after its own core reset, with the DMA rings probed in between.
 - **PMU resource mask.** `bcma/` sets `max_res_mask = 0x7ff` on every
   4352/4360, the value read back on the agcombo and the DSL-3580L. The
   hybrid `wl` 6.30.223 on the MacBookAir6,1 (4360 rev 3, 11 resources) writes
