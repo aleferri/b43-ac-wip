@@ -108,10 +108,29 @@ pieces in order. On the D6220 `cold01` (folded, op numbers of
   ops of the D6220 hot `up` on ch40 (`02-up-ch40-bw20`), with no MACCONTROL
   reset, no ucode jump and no PLL write; its reads still come from the ch36
   oracle, so the values and the polls past its end do not count.
-- Not yet checked the same way: `_CAL_BCNPROMISC_OFF` (probe cycle),
-  `_BEACON_WD` (watchdog counter passes; the reload is on the other CPU in
-  `cold01`, op 11930), `_CAC_CLOSE`, `_BEACON_START`, `_DOWN_OPMODE`,
-  `_DOWN_OPMODE_END`, `_CORE_DOWN`.
+- **What stays perimeter.** A site stays under `UNIT_TEST` when b43 does the
+  same core work at another point with the same effect; it leaves when the
+  work has to happen at that point, or must not happen on some path the PHY
+  function also serves. The key index block was of the second kind (see
+  "Shared-memory cells emitted from the PHY"). The others are of the first:
+  - `_MACFILTER_FIRST`, `_MACFILTER`: the BSSID and own-address rows, which
+    `b43_upload_card_macaddress()` and `b43_macfilter_set()` write at the
+    core init and on a BSSID change; the PHY cycle of a channel change does
+    not reset the core, so the rows stay valid.
+  - `_KEYS_CLEAR` (the rows; the key material and the index block are now
+    with them in the harness):
+    `b43_security_init()` at the core init, before mac80211 installs a key.
+  - `_OPMODE_FILTERS`, `_CAL_BCNPROMISC_OFF`, `_DOWN_OPMODE`,
+    `_DOWN_OPMODE_END`: MACCONTROL mode bits. b43 sets them in
+    `b43_adjust_opmode()` and keeps beacon promiscuity on for an AC AP; the
+    stock driver drops it around the calibration flush and the switch tail,
+    which receives no beacon that matters there.
+  - `_CAC_CLOSE`: `b43_ac_cac_match_gate()`, from `b43_op_config()` right
+    after the switch that armed the check.
+  - `_BEACON_START`, `_BEACON_WD`: beacon template reloads, which b43 does
+    from `b43_update_templates()` on the beacon changes and interrupts.
+  - `_CORE_DOWN`: the core's down, `b43_wireless_core_stop()` and the exit.
+  - `_CORE_RESET` x4, `_UCODE_LOAD`, `_UCODE_START`: see the preamble above.
 
 ### Order of the core init and of the exit around the PHY
 
@@ -143,23 +162,33 @@ With the agcombo capture's interrupts replayed (`IRQ` events of
 interrupt path and the rings are measurable. What differs from the stock
 driver:
 
-- `GEN_IRQ_MASK`: b43 runs with `0x38058264`, the stock driver with
-  `0xb2e7a864`. The low half agrees on TBTT, ATIM, PMQ, MAC TX error and
-  DMA; the stock driver also unmasks `0x0800`, `0x2000`, `0x20000`,
-  `0x00e00000`, `0x02000000` and `0x80000000` and leaves `0x10000` and
-  `0x08000000` masked, which b43 unmasks. What those bits mean on this
-  microcode is not established; b43's names for them are the pre-AC ones.
-- Per interrupt b43 reads and acknowledges five DMA channels; the stock
-  driver acknowledges channel 0 only, and only when it has a frame.
-- Ring control: the stock driver writes `0x03700841` (TX) and `0x00500851`
-  (RX), b43 `0x00000801` and `0x00000851`: enable, parity disable and the
-  40-byte receive frame offset agree, the burst-length and prefetch fields
-  above bit 16 b43 leaves at zero.
+- `GEN_IRQ_MASK`: b43 runs with `0x38058264`, the agcombo's 7.14.43 with
+  `0xb2e7a864`, the MacBookAir6,1's 6.30.223 (a station) with `0xb0e7a860`.
+  Both stock drivers unmask `0x80000000`, `0x00e00000`, `0x00020000`,
+  `0x2000` and `0x0800`, which b43 leaves masked, and leave masked `0x0200`
+  and `0x08000000`, which b43 unmasks (its `MAC_TXERR` and `UCODE_DEBUG`).
+  `0x02000000` and TBTT (`0x4`) are the AP's only. What the bits mean on
+  this microcode is not established; b43's names are the pre-AC ones. Both
+  stock drivers write the mask as 0 and back around every interrupt.
+- Per interrupt b43 reads and acknowledges the DMA channels; the stock
+  driver acknowledges channel 0 only, and only when it has a frame. Same on
+  6.30: 672 acknowledgements of `0x0020` in the MacBook traffic capture and
+  none of `0x0028`-`0x0048`, whose reasons it reads 43 times in all. b43's
+  reads of the other channels are what catches a fatal DMA error on the TX
+  rings.
+- Ring control: the low half agrees everywhere -- enable, parity disable,
+  the 40-byte receive frame offset -- and the burst-length, prefetch-control
+  and prefetch-threshold fields above bit 16, which b43 leaves at zero,
+  differ between the two stock drivers: TX `0x03700841` on 7.14,
+  `0x03780841` on 6.30 (burst 4 against 6); RX `0x00500851` on 7.14,
+  `0x036c0851` on 6.30. Not a value to copy from one capture.
 - The receive index: the stock driver writes the low 32 bits of the
   descriptor's address, b43 the offset in the ring. Both address the same
-  descriptor with the 64 KB ring alignment `dma.c` gives the AC cores.
+  descriptor with the 64 KB ring alignment `dma.c` gives the AC cores. 6.30
+  writes it twice in a whole capture, `0xffffffff` and then an address.
 - The stock driver reads the receive status twice per frame and the TSF
-  once; b43 once and never.
+  once; b43 once and never. On 6.30 the TSF pair (`0x0180`/`0x0184`) also
+  comes before every TX descriptor post.
 
 ### Key-table clearing
 
