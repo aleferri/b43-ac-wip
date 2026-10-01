@@ -125,12 +125,12 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
 ---
  drivers/bcma/driver_chipcommon_pmu.c      |  42 +++++
  drivers/bcma/host_pci.c                   |   1 +
- drivers/bcma/sprom.c                      | 205 +++++++++++++++++++++-
+ drivers/bcma/sprom.c                      | 210 +++++++++++++++++++++-
  drivers/firmware/broadcom/bcm47xx_sprom.c | 124 ++++++++++---
  include/linux/bcm47xx_sprom.h             |  16 ++
  include/linux/ssb/ssb.h                   |  74 ++++++++
- include/linux/ssb/ssb_regs.h              | 109 ++++++++++++
- 7 files changed, 548 insertions(+), 23 deletions(-)
+ include/linux/ssb/ssb_regs.h              | 110 ++++++++++++
+ 7 files changed, 554 insertions(+), 23 deletions(-)
 
 diff --git a/drivers/bcma/driver_chipcommon_pmu.c b/drivers/bcma/driver_chipcommon_pmu.c
 index 263ef6f..cf93698 100644
@@ -210,7 +210,7 @@ index 9606321..27e5104 100644
  	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 43227) },	/* 0xa8db, BCM43217 (sic!) */
  	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 43228) },	/* 0xa8dc */
 diff --git a/drivers/bcma/sprom.c b/drivers/bcma/sprom.c
-index e668ad7..9821c11 100644
+index e668ad7..24852ad 100644
 --- a/drivers/bcma/sprom.c
 +++ b/drivers/bcma/sprom.c
 @@ -11,6 +11,7 @@
@@ -221,7 +221,7 @@ index e668ad7..9821c11 100644
  #include <linux/pci.h>
  #include <linux/io.h>
  #include <linux/dma-mapping.h>
-@@ -474,6 +475,200 @@ static void bcma_sprom_extract_r8(struct bcma_bus *bus, const u16 *sprom)
+@@ -474,6 +475,205 @@ static void bcma_sprom_extract_r8(struct bcma_bus *bus, const u16 *sprom)
  	     SSB_SPROM8_TEMPDELTA_HYSTERESIS_SHIFT);
  }
  
@@ -254,6 +254,11 @@ index e668ad7..9821c11 100644
 +
 +	SPEX(board_rev, SSB_SPROM8_BOARDREV, ~0, 0);
 +	SPEX(board_type, SSB_SPROM1_SPID, ~0, 0);
++	SPEX(boardflags_lo, SSB_SPROM8_BFLLO, ~0, 0);
++	SPEX(boardflags_hi, SSB_SPROM8_BFLHI, ~0, 0);
++	SPEX(boardflags2_lo, SSB_SPROM8_BFL2LO, ~0, 0);
++	SPEX(boardflags2_hi, SSB_SPROM8_BFL2HI, ~0, 0);
++	SPEX32(boardflags3, SSB_SPROM11_BFL3, ~0, 0);
 +
 +	SPEX(country_code, SSB_SPROM11_CCODE, ~0, 0);
 +	SPEX(gpio0, SSB_SPROM11_GPIOA, SSB_SPROM8_GPIOA_P0, 0);
@@ -422,7 +427,7 @@ index e668ad7..9821c11 100644
  /*
   * Indicates the presence of external SPROM.
   */
-@@ -640,8 +835,16 @@ int bcma_sprom_get(struct bcma_bus *bus)
+@@ -640,8 +840,16 @@ int bcma_sprom_get(struct bcma_bus *bus)
  		bcma_warn(bus, "Invalid SPROM read from the PCIe card, trying to use fallback SPROM\n");
  		err = bcma_fill_sprom_with_fallback(bus, &bus->sprom);
  	} else {
@@ -745,16 +750,17 @@ index 1f326da..98b72dd 100644
  
  /* Information about the PCB the circuitry is soldered on. */
 diff --git a/include/linux/ssb/ssb_regs.h b/include/linux/ssb/ssb_regs.h
-index 210f464..7d3c350 100644
+index 210f464..f5b2a23 100644
 --- a/include/linux/ssb/ssb_regs.h
 +++ b/include/linux/ssb/ssb_regs.h
-@@ -606,6 +606,115 @@
+@@ -606,6 +606,116 @@
  #define SSB_SPROM8_BW40PO		0x0196
  #define SSB_SPROM8_BWDUPPO		0x0198
  
 +/* SROM revision 11. Only the header fields whose absolute offset moved
 + * are redefined; the bitfield masks/shifts are reused from rev 8.
 + */
++#define SSB_SPROM11_BFL3		0x008C	/* boardflags3, 32 bits */
 +#define SSB_SPROM11_IL0MAC		0x0090	/* 6 byte MAC address */
 +#define SSB_SPROM11_CCODE		0x0096	/* 2 byte country code */
 +#define SSB_SPROM11_GPIOA		0x009A	/* ledbh0 low byte, ledbh1 high */

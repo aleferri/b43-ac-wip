@@ -58,7 +58,7 @@ Measured on 2026-09-30.
 | unit, periodic watchdog tick | **`MATCH`** |
 | integration, cold `cold01` | `probe: 0`, `start: 0`; 82.30% (28706/34878) |
 | integration, agcombo ch36/80 at the bus | 65.03% (87697/134854), with the 561 interrupts and 283 received frames of the capture replayed |
-| SROM rev 11 extractor | 74/79/80 PASS, 0 FAIL (DSL-3580L, D6220, agcombo) |
+| SROM rev 11 extractor | 77/82/83 PASS, 0 FAIL (DSL-3580L, D6220, agcombo) |
 
 The agcombo unit row was not re-measured on this date; the integration rows
 were, on 2026-10-01. The agcombo bus row measured 70.07% before the

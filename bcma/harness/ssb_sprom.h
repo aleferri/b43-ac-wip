@@ -41,6 +41,9 @@ struct ssb_sprom {
 	u8 il0mac[6];
 	u16 board_rev;
 	u16 board_type;
+	u16 boardflags_lo, boardflags_hi;
+	u16 boardflags2_lo, boardflags2_hi;
+	u32 boardflags3;
 	u16 country_code;
 	u8 ant_available_a;
 	u8 ant_available_bg;

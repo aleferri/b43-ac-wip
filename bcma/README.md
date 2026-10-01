@@ -20,6 +20,9 @@ AC-PHY reads:
   and the five `rpcal` words (182, 183, 190, 191, 198);
 - the sub-band row offsets, `pdoffset40ma`/`pdoffset80ma`, `tssifloor*`, the
   FEM block (`femctrl`, …) and `subband5gver`;
+- `boardflags`, `boardflags2` (words 66-69, the rev 8 offsets) and
+  `boardflags3` (words 70-71), which a PCIe card without NVRAM, such as the
+  MacBookAir6,1, has only there;
 - antenna gain decoded into `antenna_gain_qdb[]`;
 - `SSB_SPROM11_CCODE` at `0x0096`.
 

@@ -215,6 +215,12 @@ int synth_srom_from_nvram(const struct nvram *nv, u16 *srom, size_t words)
 		write_u16_at_byte(srom, SSB_SPROM1_SPID, v); }
 	{ u16 v = 0; if (nv_u16(nv, "ccode",     &v) == 0)
 		write_u16_at_byte(srom, SSB_SPROM11_CCODE, v); }
+	{ u32 v = 0; if (nv_u32(nv, "boardflags",  &v) == 0)
+		write_u32_at_byte(srom, SSB_SPROM8_BFLLO, v); }
+	{ u32 v = 0; if (nv_u32(nv, "boardflags2", &v) == 0)
+		write_u32_at_byte(srom, SSB_SPROM8_BFL2LO, v); }
+	{ u32 v = 0; if (nv_u32(nv, "boardflags3", &v) == 0)
+		write_u32_at_byte(srom, SSB_SPROM11_BFL3, v); }
 
 	/* ANTAVAIL packs aa5g (high byte) | aa2g (low byte) at 0xA0. */
 	{

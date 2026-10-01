@@ -609,6 +609,7 @@
 /* SROM revision 11. Only the header fields whose absolute offset moved
  * are redefined; the bitfield masks/shifts are reused from rev 8.
  */
+#define SSB_SPROM11_BFL3		0x008C	/* boardflags3, 32 bits */
 #define SSB_SPROM11_IL0MAC		0x0090	/* 6 byte MAC address */
 #define SSB_SPROM11_CCODE		0x0096	/* 2 byte country code */
 #define SSB_SPROM11_GPIOA		0x009A	/* ledbh0 low byte, ledbh1 high */

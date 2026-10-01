@@ -265,6 +265,13 @@ int main(int argc, char **argv)
 	printf("[ Header ]\n");
 	check_u_hard(&nv, "boardrev",   bus.sprom.board_rev,        "board_rev");
 	check_u_hard(&nv, "boardtype",  bus.sprom.board_type,       "board_type");
+	check_u_hard(&nv, "boardflags",
+		     (u32)bus.sprom.boardflags_hi << 16 | bus.sprom.boardflags_lo,
+		     "boardflags");
+	check_u_hard(&nv, "boardflags2",
+		     (u32)bus.sprom.boardflags2_hi << 16 | bus.sprom.boardflags2_lo,
+		     "boardflags2");
+	check_u_hard(&nv, "boardflags3", bus.sprom.boardflags3, "boardflags3");
 	check_u_hard(&nv, "aa2g",       bus.sprom.ant_available_bg, "ant_available_bg");
 	check_u_hard(&nv, "aa5g",       bus.sprom.ant_available_a,  "ant_available_a");
 	check_u_hard(&nv, "txchain",    bus.sprom.txchain,          "txchain");

@@ -504,6 +504,11 @@ static void bcma_sprom_extract_r11(struct bcma_bus *bus, const u16 *sprom)
 
 	SPEX(board_rev, SSB_SPROM8_BOARDREV, ~0, 0);
 	SPEX(board_type, SSB_SPROM1_SPID, ~0, 0);
+	SPEX(boardflags_lo, SSB_SPROM8_BFLLO, ~0, 0);
+	SPEX(boardflags_hi, SSB_SPROM8_BFLHI, ~0, 0);
+	SPEX(boardflags2_lo, SSB_SPROM8_BFL2LO, ~0, 0);
+	SPEX(boardflags2_hi, SSB_SPROM8_BFL2HI, ~0, 0);
+	SPEX32(boardflags3, SSB_SPROM11_BFL3, ~0, 0);
 
 	SPEX(country_code, SSB_SPROM11_CCODE, ~0, 0);
 	SPEX(gpio0, SSB_SPROM11_GPIOA, SSB_SPROM8_GPIOA_P0, 0);
