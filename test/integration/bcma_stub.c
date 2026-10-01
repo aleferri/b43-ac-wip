@@ -37,6 +37,7 @@
  * e diceva "FOUND UNSUPPORTED PHY (Analog 0, Type 0, Revision 0)".
  */
 #include "b43.h"
+#include "dma.h"
 
 
 /*
@@ -331,7 +332,7 @@ static void note_write(struct bcma_device *core, u16 off, u32 val, int width)
 		dma0_pending &= ~val;
 		b43_trace_raw("REG.WR", off, val, width);
 		return;
-	case 0x0220:
+	case B43_MMIO_DMA64_BASE0 + B43_DMA64_RXCTL:
 		rxctl = val;
 		b43_trace_raw("REG.WR", off, val, width);
 		return;
@@ -460,7 +461,7 @@ static u32 note_read(struct bcma_device *core, u16 off, int width)
 		if (!(macctl & B43_MACCTL_ENABLED))
 			v |= B43_IRQ_MAC_SUSPENDED;
 		break;
-	case 0x0230:
+	case B43_MMIO_DMA64_BASE0 + B43_DMA64_RXSTATUS:
 		/*
 		 * Lo stato dell'anello di ricezione: lo slot corrente e' del
 		 * vendor, dall'oracolo, ma il campo di stato segue il registro
@@ -468,8 +469,8 @@ static u32 note_read(struct bcma_device *core, u16 off, int width)
 		 * il vendor non fa mai non finirebbe.
 		 */
 		v = b43_trace_read_raw(off, width);
-		if (!(rxctl & 1))
-			v &= ~0xF0000000u;
+		if (!(rxctl & B43_DMA64_RXENABLE))
+			v &= ~B43_DMA64_RXSTAT;
 		break;
 	case B43_MMIO_DMA0_REASON:
 		v = dma0_pending;

@@ -26,6 +26,7 @@ void b43_test_plan_radio_reads(u16 addr, const u16 *results, int cap);
  * l'harness non compila. */
 void b43_test_emit_amt(u16 idx, u16 flags);
 void b43_test_emit_addrm(u32 idx);
+void b43_test_emit_mctrl(u32 mask, u32 set);
 void b43_test_plan_mmio_reads(u16 addr, const u16 *results, int cap);
 void b43_test_plans_reset(void);
 void b43_test_plans_report(FILE *f);

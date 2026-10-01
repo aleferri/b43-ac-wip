@@ -327,15 +327,6 @@ void b43_mac_suspend_enable(struct b43_wldev *dev);
 void b43_mac_phy_clock_set(struct b43_wldev *dev, bool on);
 
 /*
- * b43_maccontrol_set: r/m/w del registro MAC MMIO_MACCTL (0x120).
- *   new = (old & mask) | set
- * Wrap emette `MAC.MCTRL val=<set> mask=<~mask>` — dove `mask` nel tracer
- * indica i bit toccati (bits_touched = ~b43_mask). In b43 mainline è
- * static in main.c, qui è extern per essere chiamato da phy_ac.c.
- */
-void b43_maccontrol_set(struct b43_wldev *dev, u32 mask, u32 set);
-
-/*
  * Master Host Feature maskset — helper AC-PHY-specifico.
  *
  * b43 mainline ha `void b43_hf_write(struct b43_wldev *dev, u64 value)`
@@ -429,7 +420,5 @@ void bcma_chipco_regctl_maskset(struct bcma_drv_cc *cc, u32 offset,
 #define B43_DMA64_TXSUSPEND       0x00000002	/* dma.h */
 #define B43_MMIO_MACCMD           0x124
 #define B43_MACCMD_BGNOISE        0x00000010
-
-void b43_maskset32(struct b43_wldev *dev, u16 offset, u32 mask, u32 set);
 
 #endif /* _STUB_B43_H */

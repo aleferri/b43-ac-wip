@@ -1263,19 +1263,17 @@ void __wrap_b43_actab_fill_r11(struct b43_wldev *dev,
 /* ============ MAC / misc helpers ============ */
 
 /*
- * b43_maccontrol_set: r/m/w di MMIO_MACCTL con `new = (old & mask) | set`.
- * Emette MAC.MCTRL con `mask` nel tracer = ~b43_mask (bit toccati).
- *
- * b43_mac_suspend/enable in mainline chiamano internamente questo helper
- * per clear/set del bit 0 (B43_MACCTL_ENABLED). Nel test wrap replichiamo
- * quella semantica — se il porting driver chiama mac_suspend in punti dove
- * il vendor non emette la stessa op, è un bug DEL PORTING, non del wrap.
+ * MAC.MCTRL come la traccia del vendor la registra, `new = (old & mask) | set`
+ * col `mask` del tracer uguale ai bit toccati, ~mask. E' l'op delle
+ * scritture di MACCONTROL del core che l'harness emette ai punti del vendor
+ * (vedi b43_phy_ac_core_site() in main.c) e di b43_mac_suspend/enable qui
+ * sotto.
  *
  * Lo stato del MAC per le REQUIRE del driver non si tiene qui: lo legge
  * b43_phy_ac_status() da dev->mac_suspended, che i wrapper di
  * b43_mac_suspend/enable qui sotto mantengono come fa il core.
  */
-void __wrap_b43_maccontrol_set(struct b43_wldev *dev, u32 mask, u32 set)
+void b43_test_emit_mctrl(u32 mask, u32 set)
 {
 	fprintf(trace(),
 		"cpu1 MAC.MCTRL val=0x%08x mask=0x%08x\n",
@@ -1299,16 +1297,6 @@ void b43_write32(struct b43_wldev *dev, u16 off, u32 val)
 {
 	(void)dev;
 	fprintf(trace(), "cpu1 REG.WR   off=0x%04x val=0x%08x\n", off, val);
-}
-
-/*
- * Accessor del core che il corpo di b43_maccontrol_set() usa. Nell'harness
- * quel corpo non gira mai -- il --wrap sopra intercetta la chiamata -- ma
- * helpers_phy_ac.c ora e' nel link e il simbolo va risolto.
- */
-void b43_maskset32(struct b43_wldev *dev, u16 offset, u32 mask, u32 set)
-{
-	(void)dev; (void)offset; (void)mask; (void)set;
 }
 
 /*
@@ -1370,7 +1358,7 @@ void b43_test_mac_reset(void) { }
 void __wrap_b43_mac_enable(struct b43_wldev *dev)
 {
 	if (!mac_rc()) {
-		b43_maccontrol_set(dev, ~B43_MACCTL_ENABLED,
+		b43_test_emit_mctrl(~B43_MACCTL_ENABLED,
 				   B43_MACCTL_ENABLED);
 		return;
 	}
@@ -1378,7 +1366,7 @@ void __wrap_b43_mac_enable(struct b43_wldev *dev)
 		fprintf(stderr, "mac: ENA %d -> %d\n",
 			dev->mac_suspended, dev->mac_suspended - 1);
 	if (--dev->mac_suspended == 0)
-		b43_maccontrol_set(dev, ~B43_MACCTL_ENABLED,
+		b43_test_emit_mctrl(~B43_MACCTL_ENABLED,
 				   B43_MACCTL_ENABLED);
 	if (dev->mac_suspended < 0)
 		fprintf(stderr, "wrap: mac_suspended = %d (enable senza suspend)\n",
@@ -1388,14 +1376,14 @@ void __wrap_b43_mac_enable(struct b43_wldev *dev)
 void __wrap_b43_mac_suspend(struct b43_wldev *dev)
 {
 	if (!mac_rc()) {
-		b43_maccontrol_set(dev, ~B43_MACCTL_ENABLED, 0);
+		b43_test_emit_mctrl(~B43_MACCTL_ENABLED, 0);
 		return;
 	}
 	if (mac_trace)
 		fprintf(stderr, "mac: SUS %d -> %d\n",
 			dev->mac_suspended, dev->mac_suspended + 1);
 	if (dev->mac_suspended++ == 0)
-		b43_maccontrol_set(dev, ~B43_MACCTL_ENABLED, 0);
+		b43_test_emit_mctrl(~B43_MACCTL_ENABLED, 0);
 }
 
 void __wrap_b43_mac_suspend_enable(struct b43_wldev *dev) { (void)dev; }

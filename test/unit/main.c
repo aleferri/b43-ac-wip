@@ -820,22 +820,22 @@ static void emit_core_top_row(bool self, u16 flags)
  */
 static void emit_core_reset_mctrl(void)
 {
-	b43_maccontrol_set(&g_wldev, 0, B43_MACCTL_IHR_ENABLED |
+	b43_test_emit_mctrl(0, B43_MACCTL_IHR_ENABLED |
 			   B43_MACCTL_AWAKE);
 }
 
 static void emit_core_ucode_load(void)
 {
-	b43_maccontrol_set(&g_wldev, 0, B43_MACCTL_IHR_ENABLED |
+	b43_test_emit_mctrl(0, B43_MACCTL_IHR_ENABLED |
 			   B43_MACCTL_AWAKE | B43_MACCTL_PSM_JMP0);
 }
 
 static void emit_core_ucode_start(void)
 {
-	b43_maccontrol_set(&g_wldev, 0, B43_MACCTL_IHR_ENABLED |
+	b43_test_emit_mctrl(0, B43_MACCTL_IHR_ENABLED |
 			   B43_MACCTL_AWAKE | B43_MACCTL_INFRA |
 			   B43_MACCTL_PSM_RUN);
-	b43_maccontrol_set(&g_wldev, (u32)~B43_MACCTL_GPOUTSMSK, 0);
+	b43_test_emit_mctrl((u32)~B43_MACCTL_GPOUTSMSK, 0);
 	bcma_chipco_gpio_control(&g_wldev.dev->bdev->bus->drv_cc, 0, 0);
 }
 
@@ -854,7 +854,7 @@ static void emit_core_ucode_start(void)
  */
 static void emit_core_mac_toggle(bool on)
 {
-	b43_maccontrol_set(&g_wldev, ~(u32)B43_MACCTL_ENABLED,
+	b43_test_emit_mctrl(~(u32)B43_MACCTL_ENABLED,
 			   on ? B43_MACCTL_ENABLED : 0);
 }
 
@@ -873,7 +873,7 @@ static void emit_core_down(void)
  */
 static void emit_core_opmode(u32 mask, u32 set)
 {
-	b43_maccontrol_set(&g_wldev, mask, set);
+	b43_test_emit_mctrl(mask, set);
 }
 
 /*
@@ -885,13 +885,13 @@ static void emit_core_opmode(u32 mask, u32 set)
  */
 static void emit_core_bss_mode(void)
 {
-	b43_maccontrol_set(&g_wldev, ~0x10000000u, 0x10000000);
-	b43_maccontrol_set(&g_wldev, ~0x10000000u, 0);
-	b43_maccontrol_set(&g_wldev, ~(u32)B43_MACCTL_AP, B43_MACCTL_AP);
-	b43_maccontrol_set(&g_wldev, ~0x48020000u, B43_MACCTL_INFRA);
+	b43_test_emit_mctrl(~0x10000000u, 0x10000000);
+	b43_test_emit_mctrl(~0x10000000u, 0);
+	b43_test_emit_mctrl(~(u32)B43_MACCTL_AP, B43_MACCTL_AP);
+	b43_test_emit_mctrl(~0x48020000u, B43_MACCTL_INFRA);
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, B43_SHM_SH_PRETBTT, 2);
 	b43_mac_enable(&g_wldev);
-	b43_maccontrol_set(&g_wldev, ~0x00100000u, 0x00100000);
+	b43_test_emit_mctrl(~0x00100000u, 0x00100000);
 	b43_mac_suspend(&g_wldev);
 }
 
@@ -1653,7 +1653,7 @@ static void emit_core_shm_chipinit(const struct board_profile *p)
 	 * l'abbiamo spostato qui, che e' dove il vendor lo emette -- fra
 	 * ANTSWAP e WLCOREREV, non con la GPIO.CTL.
 	 */
-	b43_maccontrol_set(&g_wldev, (u32)~0x40060000u, 0x40020000);
+	b43_test_emit_mctrl((u32)~0x40060000u, 0x40020000);
 
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x0016, p->core_rev);
 	b43_shm_write16(&g_wldev, B43_SHM_SHARED, 0x00c0,
