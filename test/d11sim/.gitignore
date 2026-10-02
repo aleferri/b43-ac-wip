@@ -1,0 +1,9 @@
+d11sim
+*.o
+# derived from proprietary wl objects / captures, kept out of the tree
+*.bin
+*.ops
+*.state
+*.ucode
+__pycache__/
+*.pyc
