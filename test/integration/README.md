@@ -82,6 +82,16 @@ python3 ../unit/cmp_skip.py /tmp/ch36.m2o /tmp/int36.trace \
     1:$(grep -c . /tmp/ch36.m2o) --board agcombo --bus --min-block 8 --gap-tol 2
 ```
 
+With `B43_FW_DIR` the harness loads the ucode and the initvals from a
+directory instead of the minimal blob, so that b43 writes the init lists the
+stock driver writes. A bus capture of the stock `up` holds both:
+
+```sh
+python3 ../../reverse-tools/fw_from_capture.py \
+    ../../router-data/agcombo/ch36.bin -o /tmp/fw-agcombo
+B43_FW_DIR=/tmp/fw-agcombo B43_BOARD=agcombo ... ./b43-trace
+```
+
 None of the three holds the attach, which ran before the capture. `ch36` is
 the first `up` after the module load; `ch100` and `ch149-wep` are later ups
 and read no `UCODEREV`, so their probe takes its reads from `ch36`.
@@ -125,7 +135,12 @@ The regulatory ceiling is not a knob: the D6220 has an empty `ccode`, and
 | `trace_out.c` | trace output and the environment |
 
 `bcma_core_enable/disable`, `bcma_core_set_clockmode` and `bcma_core_pll_ctl`
-are `drivers/bcma/core.c` itself, fetched with b43.
+are `drivers/bcma/core.c` itself, fetched with b43, and so are bcma's
+ChipCommon, PMU and PCIe2 drivers (the port's `driver_chipcommon_pmu.c`),
+which the harness runs before the probe as `bcma_bus_register()` does. Their
+accesses go out as `CC.*` and `PCIE.*`; the ChipCommon reset words come from
+`../board_profile.h` (`cc_caps`, `cc_capext`, `cc_chipstatus`, `pmu_caps`),
+and with them at zero the PMU init does not run.
 
 **When a gate stops the probe**, take the value b43 reads from the dumps in
 `router-data/`; an invented value makes b43 take the wrong branch silently.

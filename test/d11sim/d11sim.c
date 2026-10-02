@@ -18,6 +18,7 @@
 #include "psm42.h"
 #include "ops.h"
 #include "snapshot.h"
+#include "chip.h"
 
 static uint8_t *read_file(const char *path, size_t *len)
 {
@@ -75,7 +76,9 @@ static int cmd_replay(int argc, char **argv)
 	struct d11_core core;
 	struct fakephy phy;
 	struct psm42 psm;
+	static struct d11_chip chip;
 	core_init(&core);
+	chip_init(&chip);
 	fakephy_init(&phy, 0x0000, 0x0000);
 	psm42_attach(&psm, &core);
 
@@ -92,24 +95,26 @@ static int cmd_replay(int argc, char **argv)
 	FILE *in = fopen(ops_path, "r");
 	if (!in) { perror(ops_path); return 1; }
 	struct replay_stats st;
-	replay_stream(in, &core, &phy, &st);
+	replay_stream(in, &core, &phy, &chip, &st);
 	fclose(in);
 
 	FILE *out = fopen(dump_path, "w");
 	if (!out) { perror(dump_path); return 1; }
 	snapshot_write(&core, out, include_ucode);
+	chip_snapshot_write(&chip, out);
 	fclose(out);
 
 	fprintf(stderr,
 		"[%s] lines=%lu applied=%lu ignored=%lu parse_err=%lu\n"
 		"      REG wr=%lu rd=%lu | OBJ wr=%lu rd=%lu | MAC mctrl=%lu mcmd=%lu\n"
 		"      PHY wr=%lu rd=%lu (readback-diverge=%lu) | RAD wr=%lu rd=%lu\n"
-		"      ucode words=%zu | psm booted=%s | bulk-folded(skipped)=%lu\n"
+		"      ucode words=%zu | psm booted=%s | bulk-folded(skipped)=%lu | chip wr=%lu\n"
 		"      dump -> %s%s\n",
 		label, st.lines, st.applied, st.ignored, st.parse_errors,
 		st.reg_wr, st.reg_rd, st.obj_wr, st.obj_rd, st.mac_mctrl, st.mac_mcmd,
 		st.phy_wr, st.phy_rd, phy.phy_readback_diverge, st.rad_wr, st.rad_rd,
 		core.ucode_words, core.psm_booted ? "yes" : "no", st.bulk_skipped,
+		st.chip_wr,
 		dump_path, include_ucode ? " (with ucode)" : "");
 
 	if (st.bulk_skipped)

@@ -87,9 +87,14 @@ struct b43_dmadesc32 {
 #define		B43_DMA64_TXSUSPEND			0x00000002
 #define		B43_DMA64_TXLOOPBACK		0x00000004
 #define		B43_DMA64_TXFLUSH			0x00000010
+#define		B43_DMA64_TXMR_MASK			0x000000C0	/* Multiple outstanding reads */
+#define		B43_DMA64_TXMR_SHIFT			6
 #define		B43_DMA64_TXPARITYDISABLE		0x00000800
 #define		B43_DMA64_TXADDREXT_MASK		0x00030000
 #define		B43_DMA64_TXADDREXT_SHIFT		16
+#define		B43_DMA64_TXBURST_SHIFT		18	/* Burst length, 16 << n bytes */
+#define		B43_DMA64_TXPFCTL_SHIFT		21	/* Prefetch control */
+#define		B43_DMA64_TXPFTHR_SHIFT		24	/* Prefetch threshold */
 #define B43_DMA64_TXINDEX				0x04
 #define B43_DMA64_TXRINGLO				0x08
 #define B43_DMA64_TXRINGHI				0x0C
@@ -118,6 +123,9 @@ struct b43_dmadesc32 {
 #define		B43_DMA64_RXPARITYDISABLE		0x00000800
 #define		B43_DMA64_RXADDREXT_MASK		0x00030000
 #define		B43_DMA64_RXADDREXT_SHIFT		16
+#define		B43_DMA64_RXBURST_SHIFT		18	/* Burst length, 16 << n bytes */
+#define		B43_DMA64_RXPFCTL_SHIFT		21	/* Prefetch control */
+#define		B43_DMA64_RXPFTHR_SHIFT		24	/* Prefetch threshold */
 #define B43_DMA64_RXINDEX				0x24
 #define B43_DMA64_RXRINGLO				0x28
 #define B43_DMA64_RXRINGHI				0x2C
@@ -245,6 +253,9 @@ struct b43_dmaring {
 	u8 *txhdr_cache;
 	/* (Unadjusted) DMA base bus-address of the ring memory. */
 	dma_addr_t dmabase;
+	/* What the DMA64 index registers count from: the low word of the ring
+	 * address on the AC cores, zero on the others. */
+	u32 index_base;
 	/* Number of descriptor slots in the ring. */
 	int nr_slots;
 	/* Number of used descriptor slots. */

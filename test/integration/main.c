@@ -31,6 +31,9 @@
 #include <linux/etherdevice.h>
 
 #include "../board_profile.h"
+#include "bcma/bcma_private.h"
+
+void b43_test_cc_seed(u16 off, u32 val);
 #include "trace_out.h"
 
 extern const struct bcma_host_ops b43_test_bcma_ops;
@@ -65,6 +68,7 @@ static struct pci_dev test_pci;
 static struct bcma_bus test_bus;
 static struct bcma_device test_core;
 static struct bcma_device test_cc_core;
+static struct bcma_device test_pcie2_core;
 
 static void build_core(void)
 {
@@ -85,7 +89,21 @@ static void build_core(void)
 	 */
 	test_cc_core.bus = &test_bus;
 	test_cc_core.id.id = BCMA_CORE_CHIPCOMMON;
+	/* Rev 43 on the 4360 family (archer-t5e EROM); bcma reads chipstatus
+	 * and capabilities_ext only from rev 11 and 35. */
+	test_cc_core.id.rev = 43;
 	test_bus.drv_cc.core = &test_cc_core;
+	b43_test_cc_seed(BCMA_CC_ID, board->chip_id |
+			 ((u32)board->chip_rev << BCMA_CC_ID_REV_SHIFT));
+	b43_test_cc_seed(BCMA_CC_CAP, board->cc_caps);
+	b43_test_cc_seed(BCMA_CC_CAP_EXT, board->cc_capext);
+	b43_test_cc_seed(BCMA_CC_CHIPSTAT, board->cc_chipstatus);
+	b43_test_cc_seed(BCMA_CC_PMU_CAP, board->pmu_caps);
+
+	/* The PCIe2 host bridge of the 4360 family, rev 1 in the archer's EROM. */
+	test_pcie2_core.bus = &test_bus;
+	test_pcie2_core.id.id = BCMA_CORE_PCIE2;
+	test_pcie2_core.id.rev = 1;
 
 	/*
 	 * La SROM. Senza, b43 gira su una board azzerata: femctrl=0 -- che il
@@ -104,6 +122,43 @@ static void build_core(void)
 	test_core.id.rev = TEST_CORE_REV;
 	test_core.id.manuf = BCMA_MANUF_BCM;
 	test_core.core_index = 0;
+}
+
+struct bcma_device *bcma_find_core_unit(struct bcma_bus *bus, u16 coreid,
+					u8 unit)
+{
+	if (unit)
+		return NULL;
+	switch (coreid) {
+	case BCMA_CORE_CHIPCOMMON:
+		return &test_cc_core;
+	case BCMA_CORE_PCIE2:
+		return &test_pcie2_core;
+	case TEST_CORE_ID:
+		return &test_core;
+	}
+	return NULL;
+}
+
+/*
+ * What bcma_bus_register() runs before it registers the cores' drivers: the
+ * ChipCommon and PMU init, then the PCIe2 workarounds. With the capability
+ * words of the profile at zero the PMU stays out, as on a board the suite
+ * has no reset values for.
+ */
+static void test_bcma_bus_init(void)
+{
+	bcma_core_chipcommon_early_init(&test_bus.drv_cc);
+	bcma_core_chipcommon_init(&test_bus.drv_cc);
+	/*
+	 * Without the capability words the PMU init does not run, and leaves
+	 * no PMU core for the regulator and PLL accesses b43 makes later; they
+	 * go to the ChipCommon, where the PMU of these chips sits.
+	 */
+	if (!test_bus.drv_cc.pmu.core)
+		test_bus.drv_cc.pmu.core = &test_cc_core;
+	test_bus.drv_pcie2.core = &test_pcie2_core;
+	bcma_core_pcie2_init(&test_bus.drv_pcie2);
 }
 
 /*
@@ -276,6 +331,7 @@ int main(void)
 	int err;
 
 	build_core();
+	test_bcma_bus_init();
 
 	err = init_module();
 	if (err) {

@@ -542,12 +542,6 @@ static inline void b43_shm_control_word(struct b43_wldev *dev,
 	control <<= 16;
 	control |= offset;
 	b43_write32(dev, B43_MMIO_SHM_CONTROL, control);
-	/*
-	 * The AC cores' stock driver reads the object address back after every
-	 * write of it, on the x86 hybrid build as on the MIPS routers.
-	 */
-	if (dev->phy.type == B43_PHYTYPE_AC)
-		b43_read32(dev, B43_MMIO_SHM_CONTROL);
 }
 
 u32 b43_shm_read32(struct b43_wldev *dev, u16 routing, u16 offset)
@@ -916,15 +910,17 @@ static void b43_set_slot_time(struct b43_wldev *dev, u16 slot_time)
 	/*
 	 * The shared-memory slot time was left alone here because writing it
 	 * hurt the transmit rate on BCM4311, and that was never understood. It
-	 * is still left alone on those cores. From revision 42 it is written,
-	 * and it is the only thing done on 5 GHz: there the OEM driver writes
-	 * 9 and nothing else, which is the 802.11a slot time, and the IFS slot
-	 * register below is a 2.4 GHz affair -- this function used to return
-	 * early on 5 GHz for that reason.
+	 * is still left alone on those cores. From revision 42 both are
+	 * written on either band, the IFS slot register first: the bus
+	 * captures of the agcombo (7.14) and of the MacBookAir6,1 (6.30) write
+	 * 0x0207 and then 9 on 5 GHz.
 	 */
-	if (dev->dev->core_rev >= 42)
+	if (dev->dev->core_rev >= 42) {
+		b43_write16(dev, B43_MMIO_IFSSLOT, 510 + slot_time);
 		b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_SLOTT,
 				slot_time);
+		return;
+	}
 
 	if (b43_current_band(dev->wl) == NL80211_BAND_5GHZ)
 		return;
@@ -1038,9 +1034,13 @@ static void key_write(struct b43_wldev *dev,
 	u16 value;
 	u16 kidx;
 
-	/* Key index/algo block */
+	/* Key index/algo block. An empty slot of the AC ucode is all zero. */
 	kidx = b43_kidx_to_fw(dev, index);
-	value = ((kidx << 4) | algorithm);
+	if (dev->fw.hdr_format == B43_FW_HDR_AC &&
+	    algorithm == B43_SEC_ALGO_NONE)
+		value = 0;
+	else
+		value = ((kidx << 4) | algorithm);
 	b43_shm_write16(dev, B43_SHM_SHARED,
 			b43_shm_sh_keyidxblock(dev) + (kidx * 2), value);
 
@@ -1488,8 +1488,11 @@ static void b43_bcma_wireless_core_reset(struct b43_wldev *dev, bool gmode)
 	/*
 	 * Neither stock driver requests the two PLLs on the AC, 6.30 and 7.14
 	 * alike: both status bits are already up when it reads clk_ctl_st.
+	 * Requesting them only when they are not keeps that sequence and does
+	 * not leave the core without them on a board where they are down.
 	 */
-	if (!b43_is_ac_core(dev))
+	if (!b43_is_ac_core(dev) ||
+	    (bcma_read32(dev->dev->bdev, BCMA_CLKCTLST) & status) != status)
 		bcma_core_pll_ctl(dev->dev->bdev, req, status, true);
 }
 #endif
@@ -1905,6 +1908,33 @@ static u16 b43_antenna_to_phyctl(int antenna)
 	return 0;
 }
 
+/*
+ * The PHY TX control words of the beacon, the ACK/CTS and the probe
+ * response in shared memory have the pre-AC layout. The AC cores' stock
+ * driver never writes them and leaves the initvals' values.
+ */
+static bool b43_phytxctl_in_shm(struct b43_wldev *dev)
+{
+	return dev->fw.hdr_format != B43_FW_HDR_AC;
+}
+
+static void b43_write_beacon_phytxctl(struct b43_wldev *dev, u16 rate)
+{
+	u16 ctl;
+
+	ctl = b43_shm_read16(dev, B43_SHM_SHARED, B43_SHM_SH_BEACPHYCTL);
+	/* We can't send beacons with short preamble. Would get PHY errors. */
+	ctl &= ~B43_TXH_PHY_SHORTPRMBL;
+	ctl &= ~B43_TXH_PHY_ANT;
+	ctl &= ~B43_TXH_PHY_ENC;
+	ctl |= b43_antenna_to_phyctl(B43_ANTENNA_DEFAULT);
+	if (b43_is_cck_rate(rate))
+		ctl |= B43_TXH_PHY_ENC_CCK;
+	else
+		ctl |= B43_TXH_PHY_ENC_OFDM;
+	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_BEACPHYCTL, ctl);
+}
+
 static void b43_write_beacon_template(struct b43_wldev *dev,
 				      u16 ram_offset,
 				      u16 shm_size_offset)
@@ -1914,8 +1944,6 @@ static void b43_write_beacon_template(struct b43_wldev *dev,
 	const u8 *ie;
 	bool tim_found = false;
 	unsigned int rate;
-	u16 ctl;
-	int antenna;
 	struct ieee80211_tx_info *info;
 	unsigned long flags;
 	struct sk_buff *beacon_skb;
@@ -1940,20 +1968,8 @@ static void b43_write_beacon_template(struct b43_wldev *dev,
 	b43_write_template_common(dev, (const u8 *)bcn,
 				  len, ram_offset, shm_size_offset, rate);
 
-	/* Write the PHY TX control parameters. */
-	antenna = B43_ANTENNA_DEFAULT;
-	antenna = b43_antenna_to_phyctl(antenna);
-	ctl = b43_shm_read16(dev, B43_SHM_SHARED, B43_SHM_SH_BEACPHYCTL);
-	/* We can't send beacons with short preamble. Would get PHY errors. */
-	ctl &= ~B43_TXH_PHY_SHORTPRMBL;
-	ctl &= ~B43_TXH_PHY_ANT;
-	ctl &= ~B43_TXH_PHY_ENC;
-	ctl |= antenna;
-	if (b43_is_cck_rate(rate))
-		ctl |= B43_TXH_PHY_ENC_CCK;
-	else
-		ctl |= B43_TXH_PHY_ENC_OFDM;
-	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_BEACPHYCTL, ctl);
+	if (b43_phytxctl_in_shm(dev))
+		b43_write_beacon_phytxctl(dev, rate);
 
 	/* Find the position of the TIM and the DTIM_period value
 	 * and write them to SHM. */
@@ -3375,14 +3391,14 @@ void b43_mac_switch_freq(struct b43_wldev *dev, u8 spurmode)
 
 	if (chip_id == BCMA_CHIP_ID_BCM4352 || chip_id == BCMA_CHIP_ID_BCM4360) {
 		/*
-		 * The PMU PLL of these chips runs the VCO at 963 MHz
-		 * (40 MHz * 24.075, pllcontrol[2..3] = 0x0c31, 0x133333) and
-		 * the MAC at a sixth of it, 160.5 MHz: 2^26/160.5 = 0x6614b.
-		 * The initvals leave 0x66662 (160 MHz) here, and the OEM
-		 * driver corrects it once after the PLL read-back, with no
-		 * spur mode involved.
+		 * bcma programs the PMU PLL of these chips with
+		 * pllcontrol[2..3] = 0x0c31, 0x100e: the VCO runs at
+		 * 40 MHz * (24 + 0x100e / 2^24) and the MAC at a sixth of it,
+		 * 160.0016 MHz, so 2^26 / 160.0016 = 0x66662. The OEM driver
+		 * writes it after reading the PLL back, with no spur mode
+		 * involved.
 		 */
-		b43_write16(dev, B43_MMIO_TSF_CLK_FRAC_LOW, 0x614b);
+		b43_write16(dev, B43_MMIO_TSF_CLK_FRAC_LOW, 0x6662);
 		b43_write16(dev, B43_MMIO_TSF_CLK_FRAC_HIGH, 0x6);
 	} else if (chip_id == BCMA_CHIP_ID_BCM4331) {
 		switch (spurmode) {
@@ -3496,10 +3512,16 @@ static void b43_adjust_opmode(struct b43_wldev *dev)
 	 * setup of an AP, and the 6.30 station keeps 0x183. IBSS, which also
 	 * beacons, has no capture and takes the AP value.
 	 */
-	if (dev->dev->core_rev >= 42)
+	if (dev->dev->core_rev >= 42) {
+		bool sta = (ctl & B43_MACCTL_INFRA) && !(ctl & B43_MACCTL_AP);
+
+		/* A beaconing BSS restarts its DTIM count, as on the agcombo. */
+		if (!sta)
+			b43_shm_write16(dev, B43_SHM_SCRATCH,
+					B43_SHM_SC_DTIMC, 0);
 		b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_BTSFOFF,
-				(ctl & B43_MACCTL_INFRA) && !(ctl & B43_MACCTL_AP) ?
-				0x0183 : 0x003a);
+				sta ? 0x0183 : 0x003a);
+	}
 
 	/* FIXME: We don't currently implement the PMQ mechanism,
 	 *        so always disable it. If we want to implement PMQ,
@@ -3560,6 +3582,9 @@ static void b43_set_phytxctl_defaults(struct b43_wldev *dev)
 {
 	u16 ctl = 0;
 
+	if (!b43_phytxctl_in_shm(dev))
+		return;
+
 	ctl |= B43_TXH_PHY_ENC_CCK;
 	ctl |= B43_TXH_PHY_ANT01AUTO;
 	ctl |= B43_TXH_PHY_TXPWR;
@@ -3575,6 +3600,8 @@ static void b43_mgmtframe_txantenna(struct b43_wldev *dev, int antenna)
 	u16 ant;
 	u16 tmp;
 
+	if (!b43_phytxctl_in_shm(dev))
+		return;
 	ant = b43_antenna_to_phyctl(antenna);
 
 	/* For ACK/CTS */
@@ -3664,6 +3691,81 @@ static int b43_txfifo_init_rev42(struct b43_wldev *dev)
 		}
 	}
 	return 0;
+}
+
+/*
+ * Airtime of an OFDM frame of @len bytes at 5 GHz, preamble and SIGNAL
+ * included, from the bits per symbol of its rate.
+ */
+static u16 b43_ofdm_airtime(unsigned int len, unsigned int ndbps)
+{
+	return 20 + 4 * DIV_ROUND_UP(16 + 8 * len + 6, ndbps);
+}
+
+/*
+ * What the AC cores' stock driver writes after the band initvals, the same
+ * on the agcombo (7.14) and on the MacBookAir6,1 (6.30), where it repeats
+ * on every band init:
+ *
+ *  - four cells whose meaning is not known: 0x000c = 0x00c0,
+ *    0x000e = 0x000a, 0x17d2 = 0x042b, 0x17d4 = 0x0100;
+ *  - for each OFDM rate, in the block the direct map points to, SIFS plus
+ *    the airtime of a 14-, 32- and 20-byte frame (ACK, BlockAck, RTS) at
+ *    +6, +16 and +18;
+ *  - the first three words of the 9 Mb/s block, the one rate the initvals
+ *    leave empty: 0x0014, 0x01c0 | SIGNAL rate, 0x0002.
+ */
+#define B43_RT_ACK_TIME		6
+#define B43_RT_BA_TIME		16
+#define B43_RT_RTS_TIME		18
+#define B43_SIFS_5GHZ		16
+
+static void b43_bsinit_ac(struct b43_wldev *dev)
+{
+	static const struct {
+		u8 signal;
+		u8 ndbps;
+	} rates[] = {
+		{ 0xb, 24 }, { 0xf, 36 }, { 0xa, 48 }, { 0xe, 72 },
+		{ 0x9, 96 }, { 0xd, 144 }, { 0x8, 192 }, { 0xc, 216 },
+	};
+	unsigned int i;
+
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x000c, 0x00c0);
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x000e, 0x000a);
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x17d2, 0x042b);
+	b43_shm_write16(dev, B43_SHM_SHARED, 0x17d4, 0x0100);
+
+	for (i = 0; i < ARRAY_SIZE(rates); i++) {
+		u16 block = 2 * b43_shm_read16(dev, B43_SHM_SHARED,
+					       B43_SHM_SH_OFDMDIRECT +
+					       2 * rates[i].signal);
+
+		if (rates[i].signal == 0xf) {
+			b43_shm_write16(dev, B43_SHM_SHARED, block, 0x0014);
+			b43_shm_write16(dev, B43_SHM_SHARED, block + 2,
+					0x01c0 | rates[i].signal);
+			b43_shm_write16(dev, B43_SHM_SHARED, block + 4, 0x0002);
+		}
+		b43_shm_write16(dev, B43_SHM_SHARED, block + B43_RT_ACK_TIME,
+				B43_SIFS_5GHZ +
+				b43_ofdm_airtime(14, rates[i].ndbps));
+		b43_shm_write16(dev, B43_SHM_SHARED, block + B43_RT_BA_TIME,
+				B43_SIFS_5GHZ +
+				b43_ofdm_airtime(32, rates[i].ndbps));
+		b43_shm_write16(dev, B43_SHM_SHARED, block + B43_RT_RTS_TIME,
+				B43_SIFS_5GHZ +
+				b43_ofdm_airtime(20, rates[i].ndbps));
+	}
+}
+
+static int b43_bsinit(struct b43_wldev *dev)
+{
+	int err = b43_upload_initvals_band(dev);
+
+	if (!err && dev->phy.type == B43_PHYTYPE_AC)
+		b43_bsinit_ac(dev);
+	return err;
 }
 
 /* This is the opposite of b43_chip_init() */
@@ -3795,7 +3897,7 @@ static int b43_chip_init(struct b43_wldev *dev)
 	if (err)
 		goto err_gpio_clean;
 
-	err = b43_upload_initvals_band(dev);
+	err = b43_bsinit(dev);
 	if (err)
 		goto err_gpio_clean;
 
@@ -4075,8 +4177,9 @@ static void b43_security_init(struct b43_wldev *dev)
 	 * So multiply by two.
 	 */
 	dev->ktp *= 2;
-	/* Number of RCMTA address slots */
-	b43_write16(dev, B43_MMIO_RCMTA_COUNT, B43_NR_PAIRWISE_KEYS);
+	/* Number of RCMTA address slots; the AC ucode is not told. */
+	if (dev->fw.hdr_format != B43_FW_HDR_AC)
+		b43_write16(dev, B43_MMIO_RCMTA_COUNT, B43_NR_PAIRWISE_KEYS);
 	/* Clear the key memory. */
 	b43_clear_keys(dev);
 }
@@ -4512,7 +4615,7 @@ static int b43_switch_band(struct b43_wldev *dev,
 	}
 	b43_phy_take_out_of_reset(dev);
 
-	b43_upload_initvals_band(dev);
+	b43_bsinit(dev);
 
 	b43_phy_init(dev);
 
@@ -5666,6 +5769,17 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
 	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_LFFBLIM, 2);
 
 	/*
+	 * The initvals leave IFSCTL at 0x0f0b and the four entries of the
+	 * table behind it at 2. Both stock drivers captured at the bus, 7.14
+	 * on the agcombo and 6.30 on the MacBookAir6,1, clear bit 3 and set
+	 * entry 0, the one IFSCTL then selects, to 1.
+	 */
+	if (phy->type == B43_PHYTYPE_AC) {
+		b43_maskset16(dev, B43_MMIO_IFSCTL, ~B43_MMIO_IFSCTL_BIT3, 0);
+		b43_write16(dev, B43_MMIO_IFSTBL, 1);
+	}
+
+	/*
 	 * Cells b43 has been leaving at whatever the microcode starts them
 	 * with, and that the OEM driver writes. Every value below is the same
 	 * on a BCM4352 and on a BCM4360, across every channel and both driver
@@ -5701,8 +5815,6 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
 				B43_SHM_SH_HOSTF4, 0x0060);
 		b43_shm_write16(dev, B43_SHM_SHARED,
 				B43_SHM_SH_HOSTF5, 0x8088);
-		b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_EDCFQ, 0);
-		b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_PSM, 0);
 	}
 
 	/*
@@ -5762,6 +5874,9 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
 	if (err)
 		goto err_chip_exit;
 	b43_qos_init(dev);
+	/* Both stock drivers captured at the bus write it once, here. */
+	if (phy->type == B43_PHYTYPE_AC)
+		b43_write32(dev, B43_MMIO_UNK_3DC, 10000000);
 	b43_set_synth_pu_delay(dev, 1);
 	b43_bluetooth_coext_enable(dev);
 

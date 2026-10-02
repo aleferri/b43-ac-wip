@@ -1028,6 +1028,105 @@ static u16 b43_phy_ac_rate_po(const struct b43_phy_ac *ac, u8 spacing)
 	return dist;
 }
 
+/* Whether legacy rates take the capped form of b43_phy_ac_rate_po_capped(). */
+static bool b43_phy_ac_legacy_capped(struct b43_wldev *dev)
+{
+	return dev->dev->chip_id == 0x4360;
+}
+
+/*
+ * The same distance on the BCM4360, where a legacy rate sits at its own entry
+ * of the finished table, @power, capped like every rate by the ceiling and
+ * under the legacy limit, instead of keeping its SROM distance from a capped
+ * target. Where a cap binds every legacy rate below it lands on it: on
+ * ch36-48/20 the tg789vac and the agcombo write zero on all eight under a
+ * target of 56, where their SROM spacing goes to 2 dB, and on ch100/20 the
+ * tg789vac writes zero at 76 over rows that go to 2.5 dB. The d6220, a
+ * BCM4352, keeps its spacing under the same cap (ch100/20, 0/16/32/48).
+ */
+static u16 b43_phy_ac_rate_po_capped(const struct b43_phy_ac *ac, u8 power,
+				     u16 cap)
+{
+	int target = b43_ppr_ac_get_max(&ac->txpwr_ppr);
+	int p = power;
+
+	if (cap)
+		p = min(p, (int)cap - 6);
+	return target > p ? (u16)(target - p) * 4 : 0;
+}
+
+/* A limit per primary channel range, for the tables below and the locale's. */
+struct b43_phy_ac_locale_row {
+	u8 first, last;		/* primary channel range, inclusive */
+	u8 limit;		/* quarter-dBm */
+};
+
+/*
+ * The BCM4360's legacy limit for one chain, in quarter-dBm before the margin,
+ * per primary channel and width. The legacy rates go out on the chains of
+ * 0x05d6, and their limit is this one less the CDD offset of that many
+ * chains (3 and 5 dB on two and three): with it the tg789vac (7.14.89) and
+ * the agcombo (7.14.43), whose 0x05d6 differ on ch100-140/20, ch36 at 40
+ * and 80 MHz and ch100/80, give the same single-chain limit on every
+ * configuration both have, to 1 dB on the agcombo's ch36 first pass and
+ * ch100/80. Measured from the per-rate fields of both cold sweeps.
+ */
+static const struct b43_phy_ac_locale_row b43_phy_ac_legacy_4360_20[] = {
+	{  36,  48, 62 },
+	{  52, 144, 94 },
+};
+
+static const struct b43_phy_ac_locale_row b43_phy_ac_legacy_4360_40[] = {
+	{  36,  44, 74 },
+	{  52,  52, 98 },
+	{  60,  60, 78 },
+	{ 100, 100, 86 },
+	{ 108, 140, 98 },
+};
+
+static const struct b43_phy_ac_locale_row b43_phy_ac_legacy_4360_80[] = {
+	{  36,  36, 74 },
+	{  52,  52, 90 },
+	{ 100, 128, 90 },
+	{ 132, 144, 98 },
+};
+
+static void b43_phy_ac_chain_pair(struct b43_wldev *dev,
+				  enum b43_phy_ac_chain_site site, u16 *out);
+
+static u16 b43_phy_ac_legacy_cap_4360(struct b43_wldev *dev,
+				      enum b43_phy_ac_chain_site site,
+				      enum nl80211_chan_width width)
+{
+	static const u8 off_cdd[] = { 0, 0, 12, 20 };
+	struct b43_phy_ac *ac = dev->phy.ac;
+	const struct b43_phy_ac_locale_row *rows;
+	unsigned int n, i, chains;
+	u16 pair[2];
+
+	switch (width) {
+	case NL80211_CHAN_WIDTH_80:
+		rows = b43_phy_ac_legacy_4360_80;
+		n = ARRAY_SIZE(b43_phy_ac_legacy_4360_80);
+		break;
+	case NL80211_CHAN_WIDTH_40:
+		rows = b43_phy_ac_legacy_4360_40;
+		n = ARRAY_SIZE(b43_phy_ac_legacy_4360_40);
+		break;
+	default:
+		rows = b43_phy_ac_legacy_4360_20;
+		n = ARRAY_SIZE(b43_phy_ac_legacy_4360_20);
+		break;
+	}
+	b43_phy_ac_chain_pair(dev, site, pair);
+	chains = min_t(unsigned int, hweight8((u8)pair[0]), 3);
+	for (i = 0; i < n; i++)
+		if (ac->cal_channel >= rows[i].first &&
+		    ac->cal_channel <= rows[i].last)
+			return rows[i].limit - off_cdd[chains];
+	return 0;
+}
+
 /*
  * Field at +0x0e of the per-rate block: the rate's power offset, in
  * sixteenths of a dB. brcmsmac has nothing at this offset.
@@ -1059,11 +1158,15 @@ static u16 b43_phy_ac_rate_po(const struct b43_phy_ac *ac, u8 spacing)
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   8703-8762, 9313-9372, 28607-28634]
  */
-static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev)
+static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev,
+				       enum b43_phy_ac_chain_site site)
 {
 	B43_AC_FN();
 	struct b43_phy_ac *ac = dev->phy.ac;
 	const struct b43_ppr_ac *sp = &ac->txpwr_spacing;
+	bool capped = b43_phy_ac_legacy_capped(dev);
+	u16 cap = capped ?
+		  b43_phy_ac_legacy_cap_4360(dev, site, ac->cal_width) : 0;
 	unsigned int i;
 
 	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_prb_rsp_rates); i++) {
@@ -1077,6 +1180,11 @@ static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev)
 
 		if (r->cck)
 			val = b43_phy_ac_cck_rate_po(ac);
+		else if (capped)
+			val = b43_phy_ac_rate_po_capped(ac,
+					b43_ppr_ac_ofdm(&ac->txpwr_ppr,
+							ac->cal_width, r->ofdm),
+					cap);
 		else
 			val = b43_phy_ac_rate_po(ac,
 						 b43_ppr_ac_ofdm(sp, ac->cal_width,
@@ -1105,12 +1213,34 @@ static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev)
  * The stock driver overlays a field masked 0x700, left at zero here: no
  * capture shows the cell above 0x100, so its meaning is unknown.
  */
-u16 b43_phy_ac_beacon_pwr_offset(struct b43_wldev *dev)
+static u16 b43_phy_ac_beacon_pwr_offset_at(struct b43_wldev *dev,
+					   enum b43_phy_ac_chain_site site)
 {
 	const struct b43_phy_ac *ac = dev->phy.ac;
 
+	/*
+	 * On the BCM4360 the cell is the 6 Mbit/s field in the capped form:
+	 * at 20 and 40 MHz that of the operating width; at 80 MHz that of the
+	 * 20 MHz row under the 20 MHz legacy limit, which on ch36, ch52, ch116
+	 * and ch132 gives the beacon power of both boards (ch100 is 2 to 3 dB
+	 * above it on both).
+	 */
+	if (b43_phy_ac_legacy_capped(dev)) {
+		enum nl80211_chan_width w = ac->cal_width;
+
+		if (w == NL80211_CHAN_WIDTH_80)
+			w = NL80211_CHAN_WIDTH_20;
+		return b43_phy_ac_rate_po_capped(ac,
+				b43_ppr_ac_ofdm(&ac->txpwr_ppr, w, 0),
+				b43_phy_ac_legacy_cap_4360(dev, site, w));
+	}
 	return b43_phy_ac_rate_po(ac, b43_ppr_ac_ofdm(&ac->txpwr_spacing,
 						      NL80211_CHAN_WIDTH_20, 0));
+}
+
+u16 b43_phy_ac_beacon_pwr_offset(struct b43_wldev *dev)
+{
+	return b43_phy_ac_beacon_pwr_offset_at(dev, B43_PHY_AC_CHAIN_SETUP);
 }
 
 /*
@@ -1610,11 +1740,6 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
  * txpwrctrl pass on ch36/ch44 at 40 and 80 MHz (68) is not here; see
  * docs/retrace-todo.md.
  */
-struct b43_phy_ac_locale_row {
-	u8 first, last;		/* primary channel range, inclusive */
-	u8 limit;		/* quarter-dBm */
-};
-
 static const struct b43_phy_ac_locale_row b43_phy_ac_locale_20[] = {
 	{  36,  48, 62 },
 	{  64,  64, 82 },
@@ -1768,11 +1893,14 @@ static const struct b43_phy_ac_locale_row b43_phy_ac_ofdm_limit_80[] = {
 	{ 100, 128, 78 },
 };
 
-static u16 b43_phy_ac_reg_ofdm_ceiling(struct b43_phy_ac *ac)
+static u16 b43_phy_ac_reg_ofdm_ceiling(struct b43_wldev *dev)
 {
+	struct b43_phy_ac *ac = dev->phy.ac;
 	const struct b43_phy_ac_locale_row *rows;
 	unsigned int n, i;
 
+	if (b43_phy_ac_legacy_capped(dev))
+		return 0;
 	switch (ac->cal_width) {
 	case NL80211_CHAN_WIDTH_80:
 		rows = b43_phy_ac_ofdm_limit_80;
@@ -1858,7 +1986,7 @@ bool b43_phy_ac_txpwr_recalc(struct b43_wldev *dev)
 	max = b43_ppr_ac_get_max(ppr);
 
 	ac->txpwr_maxp = maxp;
-	ac->txpwr_ofdm_ceiling = b43_phy_ac_reg_ofdm_ceiling(ac);
+	ac->txpwr_ofdm_ceiling = b43_phy_ac_reg_ofdm_ceiling(dev);
 
 	if (b43_ppr_ac_sprom_has_subband_po(sprom) && !ac->txpwr_calc_chan)
 		b43warn(dev->wl,
@@ -5710,12 +5838,12 @@ static void b43_phy_ac_txpwr_adjust(struct b43_wldev *dev)
 	/* The chain mask into 0x00cc, see b43_phy_ac_bss_cc(). */
 	b43_phy_ac_bss_cc_update(dev, B43_PHY_AC_CHAIN_TXPWR);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00ce,
-			b43_phy_ac_beacon_pwr_offset(dev));
+			b43_phy_ac_beacon_pwr_offset_at(dev, B43_PHY_AC_CHAIN_TXPWR));
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00d0, 0x0000);
 
 	/* Second pass of the twelve-rate loop. */
 	b43_phy_ac_chainmask_block(dev, B43_PHY_AC_CHAIN_TXPWR);
-	b43_phy_ac_prb_rsp_rate_po(dev);
+	b43_phy_ac_prb_rsp_rate_po(dev, B43_PHY_AC_CHAIN_TXPWR);
 	b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);                               /* peek */
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);      /* relock */
 
@@ -10024,10 +10152,10 @@ static void b43_phy_ac_down(struct b43_wldev *dev)
 	 */
 	b43_phy_ac_bss_cc_update(dev, B43_PHY_AC_CHAIN_SETUP);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00ce,
-			b43_phy_ac_beacon_pwr_offset(dev));
+			b43_phy_ac_beacon_pwr_offset_at(dev, B43_PHY_AC_CHAIN_SETUP));
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00d0, 0x0000);
 	b43_phy_ac_chainmask_block(dev, B43_PHY_AC_CHAIN_SETUP);
-	b43_phy_ac_prb_rsp_rate_po(dev);
+	b43_phy_ac_prb_rsp_rate_po(dev, B43_PHY_AC_CHAIN_SETUP);
 
 	/*
 	 * Final AFE configuration: peek and lock the gate, then the programming
@@ -10508,7 +10636,7 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	b43_phy_ac_wd_stats_poll_opt(dev, true, 0, true);
 	/* After the sweep and the four CCK blocks not understood yet. */
 	b43_phy_ac_chainmask_block(dev, B43_PHY_AC_CHAIN_SETUP);
-	b43_phy_ac_prb_rsp_rate_po(dev);
+	b43_phy_ac_prb_rsp_rate_po(dev, B43_PHY_AC_CHAIN_SETUP);
 	b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
 

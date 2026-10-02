@@ -40,6 +40,7 @@ finds b43-tools through `B43_TOOLS` (or `--b43-tools`).
 | file | role |
 |---|---|
 | `d11_core.{c,h}` | corerev-42 core state: registers + object memory + handshake |
+| `chip.{c,h}` | ChipCommon, PMU indirect words, PCIe2 (and its config space), agent |
 | `fakephy.{c,h}` | fictional PHY/radio behind the PHY/radio ports |
 | `psm42.{c,h}` | load the blob into ucode memory; static inventory |
 | `ops.{c,h}` | replay a decoded op stream (mmio2ops / trace_out vocabulary) |
@@ -52,6 +53,11 @@ finds b43-tools through `B43_TOOLS` (or `--b43-tools`).
 ## Extract the blob
 
     ../../reverse-tools/extract_ucode.py wlD6220.o_save --rev 42 -o d11ucode42.bin
+
+A bus capture of the stock `up` carries the same blob, uploaded word by word:
+`../../reverse-tools/fw_from_capture.py ch36.bin -o DIR` writes it as
+`DIR/d11ucode42.bin`, next to the initvals the b43 side needs (see
+`../integration/README.md`).
 
 The blob is derived from a proprietary object; it stays out of the tree
 (`.gitignore`), like the `wl*.o_save` in `PROVENANCE.md`.

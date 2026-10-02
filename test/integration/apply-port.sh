@@ -20,6 +20,7 @@ REPO=$HERE/../..
 test -f "$DIR/main.c" || { echo "prima: make fetch" >&2; exit 1; }
 
 cp "$REPO"/b43/* "$DIR/"
+cp "$REPO"/bcma/drivers/bcma/driver_chipcommon_pmu.c "$DIR/bcma/"
 mkdir -p "$HERE/kinc/linux/ssb"
 cp "$REPO"/bcma/include/linux/ssb/ssb.h "$REPO"/bcma/include/linux/ssb/ssb_regs.h \
     "$HERE/kinc/linux/ssb/"

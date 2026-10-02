@@ -1,6 +1,6 @@
 CC      ?= gcc
 CFLAGS  ?= -O2 -Wall -Wextra -std=c11
-OBJS     = d11_core.o fakephy.o psm42.o ops.o snapshot.o d11sim.o
+OBJS     = d11_core.o fakephy.o psm42.o ops.o snapshot.o chip.o d11sim.o
 
 d11sim: $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $(OBJS)
@@ -11,9 +11,10 @@ d11sim: $(OBJS)
 d11_core.o: d11_core.c d11_core.h
 fakephy.o:  fakephy.c fakephy.h
 psm42.o:    psm42.c psm42.h d11_core.h
-ops.o:      ops.c ops.h d11_core.h fakephy.h
+ops.o:      ops.c ops.h d11_core.h fakephy.h chip.h
+chip.o:     chip.c chip.h
 snapshot.o: snapshot.c snapshot.h d11_core.h
-d11sim.o:   d11sim.c d11_core.h fakephy.h psm42.h ops.h snapshot.h
+d11sim.o:   d11sim.c d11_core.h fakephy.h psm42.h ops.h snapshot.h chip.h
 
 clean:
 	rm -f $(OBJS) d11sim

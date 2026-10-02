@@ -51,6 +51,18 @@ static u16 radio_addr;
 static u32 shm_routing_off;
 
 /*
+ * Il registro di controllo porta, sopra l'indice, la routing negli 8 bit
+ * bassi della meta' alta e i due bit di auto-incremento sopra quella
+ * (B43_SHM_AUTOINC_W/_R): un accesso a 32 bit alla porta dati con il bit
+ * del suo verso acceso fa avanzare l'indice di una parola, come fa
+ * reverse-tools/mmio2ops.py per la cattura. Lo usano l'upload dell'ucode e
+ * le liste di initval.
+ */
+#define SHM_CTL_ROUTING		0x00ff0000u
+#define SHM_CTL_AUTOINC_W	((u32)B43_SHM_AUTOINC_W << 16)
+#define SHM_CTL_AUTOINC_R	((u32)B43_SHM_AUTOINC_R << 16)
+
+/*
  * MACCONTROL non lo puo' servire l'oracolo: il tracer del vendor registra
  * l'argomento della maskset e non la rilettura, quindi le 137 MAC.MCTRL del
  * segmento di riferimento non hanno una sola RETVAL. Il valore lo determinano
@@ -176,7 +188,7 @@ static bool shm_model_load(u32 routing, u16 byte_off, u16 *val)
  */
 static u16 shm_byte_off(u16 port)
 {
-	u16 routing = (u16)(shm_routing_off >> 16);
+	u16 routing = (u16)((shm_routing_off & SHM_CTL_ROUTING) >> 16);
 	u16 idx = (u16)(shm_routing_off & 0xffff);
 
 	if (routing != B43_SHM_SHARED)
@@ -186,20 +198,17 @@ static u16 shm_byte_off(u16 port)
 
 /*
  * Un accesso a 32 bit allineato e' UN accesso sul bus e DUE op per il vendor,
- * che legge e scrive la shared memory solo a 16 bit. La parola bassa
- * dell'offset porta la meta' ALTA del valore.
+ * che legge e scrive la shared memory solo a 16 bit. La porta dati e'
+ * little-endian come il resto del core: la parola all'offset porta la meta'
+ * BASSA del valore, quella a +2 la meta' alta. E' la regola del ramo non
+ * allineato di b43_shm_write32()/read32(), e la conferma la cattura al bus
+ * dell'agcombo, dove `wl` scrive 0x002a0000 all'indice 5 e il corerev 42
+ * finisce a B43_SHM_SH_WLCOREREV (0x0016).
  *
- * Quell'ordine non e' una convenzione scelta qui, lo decide la cattura: sul
- * segmento di riferimento b43_validate_chipaccess() scrive 0x55aaaa55 e
- * rilegge, e il vendor fa lo stesso test alle op #511-#522 con 0x55aa a byte 0
- * e 0xaa55 a byte 2. Ricomporre nell'altro verso fa fallire il test contro i
- * valori che l'hardware ha davvero restituito. Lo confermano le celle
- * dell'ucoderev, 0x03a0 a byte 0 e 0x2715 a byte 2, che la revinfo da come
- * 0x03a02715.
- *
- * La seconda meta' del self-test, quella non allineata, il vendor non la
- * esegue: la servono le quattro celle modellate qui sopra. Vedi il commento
- * di shm_model_slot() per il perche' il write-through su quelle e' misurato e
+ * Il self-test di b43_validate_chipaccess() rilegge cio' che ha scritto
+ * dalle quattro celle modellate qui sopra, quindi non dipende dai valori del
+ * test del vendor, che usa pattern suoi a 16 bit. Vedi il commento di
+ * shm_model_slot() per il perche' il write-through su quelle e' misurato e
  * perche' la lista e' corta.
  */
 static void shm_word_write(u32 routing, u16 off, u16 val)
@@ -224,39 +233,46 @@ static u16 shm_word_read(u32 routing, u16 off)
  * e il vendor al bus le legge e scrive cosi', una op per parola
  * (OBJ.WR sel=0x40000 addr=0x007e val=0x0102c000 sulla riga della stazione).
  */
+static void shm_autoinc(u32 flag, int width)
+{
+	if (width == 32 && (shm_routing_off & flag))
+		shm_routing_off = (shm_routing_off & ~0xffffu) |
+				  (u16)(shm_routing_off + 1);
+}
+
 static void shm_note_write(u16 port, u32 val, int width)
 {
-	u32 routing = shm_routing_off & 0xffff0000u;
+	u32 routing = shm_routing_off & SHM_CTL_ROUTING;
 	u16 off = shm_byte_off(port);
 
 	if (width != 32) {
 		shm_word_write(routing, off, (u16)val);
-		return;
-	}
-	if (routing >> 16 != B43_SHM_SHARED) {
+	} else if (routing >> 16 != B43_SHM_SHARED) {
 		b43_trace_shm("OBJ.WR", routing | off, val, 32);
-		return;
+	} else {
+		shm_word_write(routing, off, (u16)val);
+		shm_word_write(routing, (u16)(off + 2), (u16)(val >> 16));
 	}
-	shm_word_write(routing, off, (u16)(val >> 16));
-	shm_word_write(routing, (u16)(off + 2), (u16)val);
+	shm_autoinc(SHM_CTL_AUTOINC_W, width);
 }
 
 static u32 shm_note_read(u16 port, int width)
 {
-	u32 routing = shm_routing_off & 0xffff0000u;
+	u32 routing = shm_routing_off & SHM_CTL_ROUTING;
 	u16 off = shm_byte_off(port);
-	u32 hi;
+	u32 v;
 
-	if (width != 32)
-		return shm_word_read(routing, off);
-	if (routing >> 16 != B43_SHM_SHARED) {
-		u32 v = b43_trace_read_shm(routing, off, 32);
-
+	if (width != 32) {
+		v = shm_word_read(routing, off);
+	} else if (routing >> 16 != B43_SHM_SHARED) {
+		v = b43_trace_read_shm(routing, off, 32);
 		b43_trace_shm("OBJ.RD", routing | off, v, 32);
-		return v;
+	} else {
+		v = shm_word_read(routing, off);
+		v |= (u32)shm_word_read(routing, (u16)(off + 2)) << 16;
 	}
-	hi = shm_word_read(routing, off);
-	return (hi << 16) | shm_word_read(routing, (u16)(off + 2));
+	shm_autoinc(SHM_CTL_AUTOINC_R, width);
+	return v;
 }
 
 /*
@@ -293,8 +309,72 @@ static u32 clkctlst_read(void)
 	return v;
 }
 
+/*
+ * ChipCommon and the PCIe2 core, for bcma's own init. They are registers
+ * with no side effect the suite needs, so a write is kept and a read returns
+ * the capture's value when the oracle has one, the last write or the reset
+ * value the harness seeded otherwise. The trace uses the bus classes of
+ * reverse-tools/mmio2ops.py.
+ */
+#define OTHER_REGS	(0x1000 / 4)
+
+static u32 cc_regs[OTHER_REGS], pcie2_regs[OTHER_REGS];
+
+void b43_test_cc_seed(u16 off, u32 val)
+{
+	cc_regs[(off & 0xfff) / 4] = val;
+}
+
+static u32 *other_core_regs(struct bcma_device *core, const char **cls)
+{
+	switch (core->id.id) {
+	case BCMA_CORE_CHIPCOMMON:
+		*cls = "CC";
+		return cc_regs;
+	case BCMA_CORE_PCIE2:
+		*cls = "PCIE";
+		return pcie2_regs;
+	default:
+		return NULL;
+	}
+}
+
+static bool other_core_write(struct bcma_device *core, u16 off, u32 val,
+			     int width)
+{
+	const char *base;
+	u32 *regs = other_core_regs(core, &base);
+	char cls[16];
+
+	if (!regs)
+		return false;
+	regs[(off & 0xfff) / 4] = val;
+	snprintf(cls, sizeof(cls), "%s.WR", base);
+	b43_trace_raw(cls, off, val, width);
+	return true;
+}
+
+static bool other_core_read(struct bcma_device *core, u16 off, int width,
+			    u32 *val)
+{
+	const char *base;
+	u32 *regs = other_core_regs(core, &base);
+	char cls[16];
+
+	if (!regs)
+		return false;
+	snprintf(cls, sizeof(cls), "%s.RD", base);
+	if (b43_trace_has(cls, off))
+		regs[(off & 0xfff) / 4] = b43_trace_read(cls, off, width);
+	*val = regs[(off & 0xfff) / 4];
+	b43_trace_raw(cls, off, *val, width);
+	return true;
+}
+
 static void note_write(struct bcma_device *core, u16 off, u32 val, int width)
 {
+	if (other_core_write(core, off, val, width))
+		return;
 	switch (off) {
 	case B43_MMIO_PHY_CONTROL:
 		phy_addr = (u16)val;
@@ -378,6 +458,8 @@ static u32 note_read(struct bcma_device *core, u16 off, int width)
 {
 	u32 v;
 
+	if (other_core_read(core, off, width, &v))
+		return v;
 	switch (off) {
 	case B43_MMIO_PHY_VER:
 		v = phy_version_word();

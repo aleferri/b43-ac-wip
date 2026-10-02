@@ -210,10 +210,20 @@ static void op64_fill_descriptor(struct b43_dmaring *ring,
 	desc->dma64.address_high = cpu_to_le32(addrhi);
 }
 
+/*
+ * The DMA64 index registers hold the address of a descriptor, its low word,
+ * as brcmsmac writes them and as the AC cores' stock driver does at the bus.
+ * The older cores compare only the offset bits inside their 8K-aligned ring,
+ * so b43 has written the offset alone, which index_base keeps there.
+ */
+static u32 op64_slot_index(struct b43_dmaring *ring, int slot)
+{
+	return ring->index_base + (u32)(slot * sizeof(struct b43_dmadesc64));
+}
+
 static void op64_poke_tx(struct b43_dmaring *ring, int slot)
 {
-	b43_dma_write(ring, B43_DMA64_TXINDEX,
-		      (u32) (slot * sizeof(struct b43_dmadesc64)));
+	b43_dma_write(ring, B43_DMA64_TXINDEX, op64_slot_index(ring, slot));
 }
 
 static void op64_tx_suspend(struct b43_dmaring *ring)
@@ -233,15 +243,14 @@ static int op64_get_current_rxslot(struct b43_dmaring *ring)
 	u32 val;
 
 	val = b43_dma_read(ring, B43_DMA64_RXSTATUS);
-	val &= B43_DMA64_RXSTATDPTR;
+	val = (val - ring->index_base) & B43_DMA64_RXSTATDPTR;
 
 	return (val / sizeof(struct b43_dmadesc64));
 }
 
 static void op64_set_current_rxslot(struct b43_dmaring *ring, int slot)
 {
-	b43_dma_write(ring, B43_DMA64_RXINDEX,
-		      (u32) (slot * sizeof(struct b43_dmadesc64)));
+	b43_dma_write(ring, B43_DMA64_RXINDEX, op64_slot_index(ring, slot));
 }
 
 static const struct b43_dma_ops dma64_ops = {
@@ -408,16 +417,10 @@ static inline
  * Descriptor-ring memory size (and, via dma_alloc_coherent()'s power-of-two
  * alignment, its alignment): 4K for 30/32-bit DMA, 8K for 64-bit DMA. The 8K
  * alignment matters because of a hardware bug where bit 0x00001000 of the DMA
- * address leaks into B43_DMA64_RXSTATUS. The BCM4352-family AC-PHY DMA64
- * engine additionally requires the ring to be 64 KB-aligned and to never
- * cross a 64 KB boundary (found empirically by raising the ring alignment
- * until the engine came up); the ring itself is far smaller, so a 64 KB allocation
- * both gives that alignment and keeps the ring inside one 64 KB block.
+ * address leaks into B43_DMA64_RXSTATUS.
  */
 static unsigned int b43_dma_ringmemsize(struct b43_dmaring *ring)
 {
-	if (ring->dev->phy.type == B43_PHYTYPE_AC)
-		return 64 * 1024;
 	return (ring->type == B43_DMA_64BIT) ?
 		B43_DMA64_RINGMEMSIZE : B43_DMA32_RINGMEMSIZE;
 }
@@ -677,6 +680,26 @@ static int alloc_initial_descbuffers(struct b43_dmaring *ring)
  * Reset the controller, write the ring busaddress
  * and switch the "enable" bit on.
  */
+/*
+ * The engine parameters of the AC cores' stock driver, 7.14 on the agcombo:
+ * TX 0x0370004x (two outstanding reads, burst 256 bytes, prefetch control 3,
+ * threshold 3) and RX 0x0050xxxx (burst 256 bytes, prefetch control 2).
+ * The 6.30 hybrid writes other bursts and prefetches (TX 0x03780841, RX
+ * 0x036c0851); the reference driver is 7.14.
+ */
+static u32 b43_dma64_ac_tuning(struct b43_dmaring *ring)
+{
+	if (ring->dev->phy.type != B43_PHYTYPE_AC)
+		return 0;
+	if (ring->tx)
+		return (1 << B43_DMA64_TXMR_SHIFT) |
+		       (4 << B43_DMA64_TXBURST_SHIFT) |
+		       (3 << B43_DMA64_TXPFCTL_SHIFT) |
+		       (3 << B43_DMA64_TXPFTHR_SHIFT);
+	return (4 << B43_DMA64_RXBURST_SHIFT) |
+	       (2 << B43_DMA64_RXPFCTL_SHIFT);
+}
+
 static int dmacontroller_setup(struct b43_dmaring *ring)
 {
 	int err = 0;
@@ -692,10 +715,13 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
 			addrext = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_EXT);
 			addrlo = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_LOW);
 			addrhi = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_HIGH);
+			ring->index_base = ring->dev->phy.type == B43_PHYTYPE_AC ?
+					   addrlo : 0;
 
 			value = B43_DMA64_TXENABLE;
 			value |= (addrext << B43_DMA64_TXADDREXT_SHIFT)
 			    & B43_DMA64_TXADDREXT_MASK;
+			value |= b43_dma64_ac_tuning(ring);
 			if (!parity)
 				value |= B43_DMA64_TXPARITYDISABLE;
 			b43_dma_write(ring, B43_DMA64_TXCTL, value);
@@ -723,9 +749,12 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
 			addrext = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_EXT);
 			addrlo = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_LOW);
 			addrhi = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_HIGH);
+			ring->index_base = ring->dev->phy.type == B43_PHYTYPE_AC ?
+					   addrlo : 0;
 
 			value = (ring->frameoffset << B43_DMA64_RXFROFF_SHIFT);
 			value |= B43_DMA64_RXENABLE;
+			value |= b43_dma64_ac_tuning(ring);
 			value |= (addrext << B43_DMA64_RXADDREXT_SHIFT)
 			    & B43_DMA64_RXADDREXT_MASK;
 			if (!parity)
@@ -733,8 +762,8 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
 			b43_dma_write(ring, B43_DMA64_RXCTL, value);
 			b43_dma_write(ring, B43_DMA64_RXRINGLO, addrlo);
 			b43_dma_write(ring, B43_DMA64_RXRINGHI, addrhi);
-			b43_dma_write(ring, B43_DMA64_RXINDEX, ring->nr_slots *
-				      sizeof(struct b43_dmadesc64));
+			b43_dma_write(ring, B43_DMA64_RXINDEX,
+				      op64_slot_index(ring, ring->nr_slots));
 		} else {
 			u32 ringbase = (u32) (ring->dmabase);
 			addrext = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_EXT);

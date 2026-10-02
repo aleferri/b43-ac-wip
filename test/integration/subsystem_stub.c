@@ -20,6 +20,7 @@
  * CONFIG_B43_BCMA e il ramo ssb non viene percorso, ma il link li chiede
  * comunque.
  */
+#include <linux/platform_device.h>
 #include <linux/bcma/bcma.h>
 #include <linux/ssb/ssb.h>
 #include <linux/etherdevice.h>
@@ -40,50 +41,32 @@ int bcma_host_pci_irq_ctl(struct bcma_bus *bus, struct bcma_device *core,
 	return 0;
 }
 
-/* --- ChipCommon: QUESTE EMETTONO OP ------------------------------------
+/* --- ChipCommon e PMU -----------------------------------------------------
  *
- * A differenza dei simboli qui sopra, i GPIO e i registri del PMU compaiono
- * nella traccia del vendor, con le classi che il decoder gli da': GPIO.CTL,
- * GPIO.OUT, GPIO.OE, PMU.PLL, PMU.RC. Il port li usa nel bring-up, quindi
- * stubbarli a no-op cancellerebbe op che devono essere confrontate -- e il
- * punteggio salirebbe togliendo lavoro, che e' il modo peggiore di sbagliare.
- *
- * `gpio_outen` la traccia la chiama GPIO.OE: e' lo stesso registro con due
- * nomi, l'harness lo prende dal simbolo bcma e il tracer vendor dal registro,
- * e la normalizzazione di reverse-tools/tracelib.py li allinea gia'.
+ * Sono il codice vero di bcma (driver_chipcommon.c, driver_chipcommon_pmu.c,
+ * driver_pcie2.c): i loro accessi passano dallo stub del bus come quelli del
+ * core 802.11, e escono come CC.RD/CC.WR e PCIE.RD/PCIE.WR al bus, la stessa
+ * classe che reverse-tools/mmio2ops.py da' alla cattura.
  */
-u32 bcma_chipco_gpio_control(struct bcma_drv_cc *cc, u32 mask, u32 value)
+
+/* Quello che il codice di bcma chiede al resto di bcma e al kernel. */
+bool bcma_wait_value(struct bcma_device *core, u16 reg, u32 mask, u32 value,
+		     int timeout)
 {
-	b43_trace_gpio("GPIO.CTL", value, mask);
-	return value;
+	int i;
+
+	for (i = 0; i < 100; i++)
+		if ((bcma_read32(core, reg) & mask) == value)
+			return true;
+	return false;
 }
 
-u32 bcma_chipco_gpio_out(struct bcma_drv_cc *cc, u32 mask, u32 value)
+int bcma_sflash_init(struct bcma_drv_cc *cc) { return -EOPNOTSUPP; }
+int pcie_set_readrq(struct pci_dev *dev, int rq) { return 0; }
+struct platform_device *
+platform_device_register_full(const struct platform_device_info *pdevinfo)
 {
-	b43_trace_gpio("GPIO.OUT", value, mask);
-	return value;
-}
-
-u32 bcma_chipco_gpio_outen(struct bcma_drv_cc *cc, u32 mask, u32 value)
-{
-	b43_trace_gpio("GPIO.OUTEN", value, mask);
-	return value;
-}
-
-u32 bcma_chipco_pll_read(struct bcma_drv_cc *cc, u32 offset)
-{
-	u32 v = b43_trace_read("PMU.PLL", (u16)offset, 32);
-
-	b43_trace_op("PMU.PLL", (u16)offset, v, 0, -1);
-	return v;
-}
-
-/* La mask del tracer sono i bit toccati, cioe' il complemento di quella
- * del kernel: la stessa convenzione di MAC.MCTRL e dei MOD. */
-void bcma_chipco_regctl_maskset(struct bcma_drv_cc *cc, u32 offset,
-				u32 mask, u32 set)
-{
-	b43_trace_op32("PMU.RC", (u16)offset, set, ~mask);
+	return ERR_PTR(-ENODEV);
 }
 
 /* --- ssb: non percorso, ma il link lo chiede -------------------------- */
@@ -176,25 +159,6 @@ static enum nl80211_chan_width shim_width(long bw)
 }
 
 /*
- * Il regdomain che cfg80211 applica ai canali alla registrazione, abbassando
- * il max_power che il driver ha dichiarato. La cattura a freddo e' di un wl
- * con ccode= vuoto nel NVRAM, cioe' con la sua locale interna, e i tetti che
- * quella scrive sono board-independent: 21 dBm EIRP su ch36-48 a 20 MHz e 26
- * su ch100 (vedi b43_phy_ac_reg_ceiling in b43/phy_ac.c). Non c'e' niente
- * nel bordo da cui ricavarli, e sul ferro cfg80211 applicherebbe il world
- * regdomain, che e' un altro numero per policy: qui vale la locale del
- * vendor, perche' e' la sua traccia che si confronta. Gli altri canali
- * restano al max_power che b43 registra e il tetto non lega, come sul
- * vendor a caldo.
- */
-static const struct {
-	u16 chan;
-	s8 dbm;
-} wl_default_locale_5g[] = {
-	{ 36, 21 }, { 40, 21 }, { 44, 21 }, { 48, 21 }, { 100, 26 },
-};
-
-/*
  * Quello che cfg80211_chandef_usable() chiede alla banda prima di accettare
  * una larghezza: il 40 vuole HT con SUP_WIDTH_20_40, l'80 vuole VHT. Senza,
  * hostapd non arriva a start_ap con quella chandef, e una suite che la
@@ -216,9 +180,17 @@ static bool shim_width_usable(const struct ieee80211_supported_band *sb,
 
 static struct ieee80211_hw *g_hw;
 
+/*
+ * Il regdomain che cfg80211 applica ai canali alla registrazione. La cattura
+ * a freddo e' di un wl con ccode= vuoto nel NVRAM, cioe' con la sua locale
+ * interna, i cui tetti sono per larghezza di banda e stanno in
+ * b43_phy_ac_locale_ceiling(). Qui non si abbassa il max_power dei canali:
+ * un tetto per canale da 20 MHz, come cfg80211 lo esprime, varrebbe anche
+ * per i blocchi da 40 e 80 MHz, dove la locale del vendor e' piu' alta.
+ */
 static void apply_regdomain(struct ieee80211_supported_band *sb)
 {
-	unsigned int i, j;
+	unsigned int i;
 
 	/* Il dovere radar, come lo marca cfg80211: U-NII-2A e U-NII-2C. */
 	for (i = 0; i < sb->n_channels; i++) {
@@ -227,11 +199,6 @@ static void apply_regdomain(struct ieee80211_supported_band *sb)
 		if ((f >= 5260 && f <= 5320) || (f >= 5500 && f <= 5720))
 			sb->channels[i].flags |= IEEE80211_CHAN_RADAR;
 	}
-	for (i = 0; i < sb->n_channels; i++)
-		for (j = 0; j < ARRAY_SIZE(wl_default_locale_5g); j++)
-			if (sb->channels[i].hw_value == wl_default_locale_5g[j].chan &&
-			    sb->channels[i].max_power > wl_default_locale_5g[j].dbm)
-				sb->channels[i].max_power = wl_default_locale_5g[j].dbm;
 }
 
 int ieee80211_register_hw(struct ieee80211_hw *hw)
@@ -290,6 +257,12 @@ int ieee80211_register_hw(struct ieee80211_hw *hw)
 	 * the TX power check -- and adjust_txpower behind it -- never runs.
 	 */
 	hw->conf.power_level = pick->max_power;
+	/*
+	 * The retry limits mac80211 starts from, wiphy->retry_short/long as
+	 * cfg80211 sets them; with zero b43_op_config() writes zero limits.
+	 */
+	hw->conf.short_frame_max_tx_count = 7;
+	hw->conf.long_frame_max_tx_count = 4;
 	return 0;
 }
 void ieee80211_unregister_hw(struct ieee80211_hw *hw) { }
@@ -436,7 +409,21 @@ const struct ieee80211_rate *
 ieee80211_get_response_rate(struct ieee80211_supported_band *sband,
 			    u32 basic_rates, int bitrate)
 {
-	return sband && sband->bitrates ? &sband->bitrates[0] : NULL;
+	struct ieee80211_rate *rate = NULL;
+	int i;
+
+	if (!sband || !sband->bitrates)
+		return NULL;
+	/* mac80211's: the highest basic rate not above @bitrate. */
+	for (i = 0; i < sband->n_bitrates; i++) {
+		struct ieee80211_rate *r = &sband->bitrates[i];
+
+		if (!(basic_rates & BIT(i)) || r->bitrate > bitrate)
+			continue;
+		if (!rate || rate->bitrate < r->bitrate)
+			rate = r;
+	}
+	return rate ? rate : &sband->bitrates[0];
 }
 
 /* --- i sottosistemi di b43 -------------------------------------------------

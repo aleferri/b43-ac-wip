@@ -53,6 +53,15 @@ struct board_profile {
 	 * agcombo aga0..2 are all 133, so which of the three wl reads does not
 	 * matter there. */
 	u8 antgain_raw[2];
+	/*
+	 * ChipCommon at reset, as bcma's chipcommon and PMU init read it:
+	 * capabilities, capabilities_ext, chipstatus and pmucapabilities.
+	 * Zero leaves the PMU out of the harness's bcma init. The 4360 values
+	 * are a rev 3's, from the MacBookAir6,1 firstload capture; chipstatus
+	 * bit 0 is the 40 MHz crystal the agcombo's PCIe PM clock period
+	 * (0x32) also implies.
+	 */
+	u32 cc_caps, cc_capext, cc_chipstatus, pmu_caps;
 	/* Power-detector offsets per chain, one nibble per pa5g sub-band; NVRAM
 	 * pdoffset40ma{0,1,2} and pdoffset80ma{0,1,2}. Feed table 0x21. */
 	u16 pdoffset40ma[3];
@@ -170,6 +179,8 @@ static const struct board_profile PROFILE_AGCOMBO = {
 	/* rpcal2g, rpcal5gb0..3 from the agcombo NVRAM. */
 	.rpcal = { 0x0000, 0x172b, 0x1823, 0x1021, 0x1c30 },
 	.name = "agcombo", .chip_id = 0x4360, .radio_rev = 4,
+	.cc_caps = 0x58680001, .cc_capext = 0x00000003,
+	.cc_chipstatus = 0x0000024d, .pmu_caps = 0x10a22b11,
 	.chip_rev = 0x3, .pci_device = 0x43a2,
 	/* macaddr=00:c0:02:01:07:24 (agcombo/wl1_nvram.txt) */
 	.macaddr = { 0x00, 0xc0, 0x02, 0x01, 0x07, 0x24 },
@@ -300,6 +311,8 @@ static const struct board_profile PROFILE_TG789 = {
 	/* boardflags, boardflags2, boardflags3 (NVRAM). */
 	.boardflags = 0x10000000, .boardflags2 = 0x2, .boardflags3 = 0x0,
 	.name = "tg789", .chip_id = 0x4360, .radio_rev = 4,
+	.cc_caps = 0x58680001, .cc_capext = 0x00000003,
+	.cc_chipstatus = 0x0000024d, .pmu_caps = 0x10a22b11,
 	.chip_rev = 0x3, .pci_device = 0x43a2,
 	/* macaddr=12:13:31:f6:da:77, il segnaposto del file di mappa. */
 	.macaddr = { 0x12, 0x13, 0x31, 0xf6, 0xda, 0x77 },

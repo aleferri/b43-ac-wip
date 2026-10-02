@@ -53,7 +53,7 @@ static int class_is(const char *cls, const char *name)
 }
 
 void replay_stream(FILE *in, struct d11_core *core, struct fakephy *phy,
-		   struct replay_stats *st)
+		   struct d11_chip *chip, struct replay_stats *st)
 {
 	char line[512];
 
@@ -111,8 +111,19 @@ void replay_stream(FILE *in, struct d11_core *core, struct fakephy *phy,
 			} else st->parse_errors++;
 		} else if (class_is(cls, "RAD.RD")) {
 			st->rad_rd++; st->ignored++;
+		} else if (class_is(cls, "CC.WR") || class_is(cls, "PCIE.WR") ||
+			   class_is(cls, "WRAP.WR")) {
+			if (!field_u32(cls, "off=", &off) ||
+			    !field_u32(cls, "val=", &val)) { st->parse_errors++; continue; }
+			if (cls[0] == 'C')
+				chip_cc_write(chip, off, val);
+			else if (cls[0] == 'P')
+				chip_pcie_write(chip, off, val);
+			else
+				chip_wrap_write(chip, off, val);
+			st->chip_wr++; st->applied++;
 		} else {
-			/* WRAP/CC/PCIE/EROM/SROM/CORE/WIN: not core RAM state here */
+			/* EROM/SROM/CORE/WIN and reads: not state here */
 			st->ignored++;
 		}
 	}

@@ -73,7 +73,8 @@ UPSTREAM := main.c phy_common.c bus.c xmit.c dma.c leds.c rfkill.c \
 
 # La gestione del core di bcma, anche lei com'e': reset, clock e PLL del
 # core passano dal wrapper e da clk_ctl_st, che lo stub traccia.
-BCMA := bcma/core.c
+BCMA := bcma/core.c bcma/driver_chipcommon.c bcma/driver_chipcommon_pmu.c \
+        bcma/driver_pcie2.c
 
 # I nostri: il bus finto che emette le op. L'aggancio e' la vtable
 # bcma_host_ops, non i simboli bcma_* che il link chiede.
@@ -99,7 +100,7 @@ endif
 
 # Cio' che trace_out.c chiede a libc: si risolve al link finale, quindi va
 # tenuto fuori dal conto del lavoro rimasto o il numero mente.
-LIBC := memmove|fprintf|fopen|fclose|fgets|fwrite|getenv|memset|memcpy|stdout|stderr|strcmp|strstr|strnlen|snprintf|sscanf|__isoc99_sscanf|calloc|realloc|free|abort|_GLOBAL_OFFSET_TABLE_|__stack_chk_fail|__printf_chk|__fprintf_chk|__vfprintf_chk|setvbuf|strtol|rewind|strlen|__snprintf_chk
+LIBC := memmove|fprintf|fopen|fclose|fgets|fwrite|getenv|memset|memcpy|stdout|stderr|strcmp|strstr|strnlen|snprintf|sscanf|__isoc99_sscanf|calloc|realloc|free|abort|_GLOBAL_OFFSET_TABLE_|__stack_chk_fail|__printf_chk|__fprintf_chk|__vfprintf_chk|setvbuf|strtol|rewind|fseek|ftell|fread|__fread_chk|malloc|strlen|__snprintf_chk
 
 .PHONY: all check link run clean fetch
 all: b43-trace

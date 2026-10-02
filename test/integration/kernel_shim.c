@@ -21,13 +21,17 @@
  *   - request_firmware RIESCE, con un blob minimo valido: se fallisce,
  *     b43_chip_init ritorna errore e b43_phy_init non viene mai chiamata.
  *     L'ucode vero non serve, e dev->fw.rev nemmeno si inietta: b43 lo legge
- *     dalla shared memory, quindi lo serve l'oracolo. Vedi il commento sul
- *     firmware piu' sotto.
+ *     dalla shared memory, quindi lo serve l'oracolo. Con B43_FW_DIR i
+ *     file si leggono da li'. Vedi il commento sul firmware piu' sotto.
  */
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* Il debug dinamico del kernel: muto. */
+void __dynamic_pr_debug(void *descriptor, const char *fmt, ...) { }
+void __dynamic_dev_dbg(void *descriptor, const void *dev, const char *fmt, ...) { }
 
 /* --- diagnostica ------------------------------------------------------- */
 
@@ -370,9 +374,57 @@ static struct shim_firmware *shim_fw_build(const char *name)
 	return &shim_fw[slot];
 }
 
+/*
+ * Il firmware vero, se B43_FW_DIR lo indica: `name` e' il percorso che b43
+ * chiede a /lib/firmware ("b43/ucode42.fw"), qui relativo a quella cartella.
+ * reverse-tools/fw_from_capture.py la ricava da una cattura al bus del `up`
+ * del driver stock, che scrive ucode e initvals dalle stesse porte di b43:
+ * con il blob minimo gli initvals sono vuoti e lo stato finale del core non
+ * si puo' confrontare con quello della cattura. Un file che manca nella
+ * cartella prende il blob minimo, come senza B43_FW_DIR.
+ */
+static struct shim_firmware *shim_fw_load(const char *name)
+{
+	const char *dir = getenv("B43_FW_DIR");
+	struct shim_firmware *fw;
+	char path[512];
+	unsigned char *data;
+	long len;
+	FILE *f;
+
+	if (!dir || !*dir)
+		return NULL;
+	snprintf(path, sizeof(path), "%s/%s", dir, name);
+	f = fopen(path, "rb");
+	if (!f)
+		return NULL;
+	fseek(f, 0, SEEK_END);
+	len = ftell(f);
+	rewind(f);
+	fw = calloc(1, sizeof(*fw));
+	data = malloc(len > 0 ? len : 1);
+	if (!fw || !data || fread(data, 1, len, f) != (size_t)len) {
+		fclose(f);
+		free(fw);
+		free(data);
+		return NULL;
+	}
+	fclose(f);
+	fw->size = len;
+	fw->data = data;
+	return fw;
+}
+
+static struct shim_firmware *shim_fw_get(const char *name)
+{
+	struct shim_firmware *fw = shim_fw_load(name);
+
+	return fw ? fw : shim_fw_build(name);
+}
+
 int request_firmware(const void **fw, const char *name, void *dev)
 {
-	*fw = shim_fw_build(name);
+	*fw = shim_fw_get(name);
 	return 0;
 }
 
@@ -398,7 +450,7 @@ int request_firmware_nowait(void *mod, int uevent, const char *name,
 
 	if (!cb)
 		return -22;
-	cb(shim_fw_build(name), ctx);
+	cb(shim_fw_get(name), ctx);
 	return 0;
 }
 

@@ -164,6 +164,9 @@
 #define B43_MMIO_RNG			0x65A
 #define B43_MMIO_IFSSLOT		0x684	/* Interframe slot time */
 #define B43_MMIO_IFSCTL			0x688	/* Interframe space control */
+#define  B43_MMIO_IFSCTL_BIT3		0x0008	/* Set by the AC initvals, cleared by the stock driver */
+#define B43_MMIO_IFSTBL			0x69C	/* Table indexed by IFSCTL bits 13:12 (name ours) */
+#define B43_MMIO_UNK_3DC		0x3DC	/* AC: 10,000,000 from the stock driver, purpose unknown */
 #define B43_MMIO_IFSSTAT		0x690
 #define B43_MMIO_IFSMEDBUSYCTL		0x692
 #define B43_MMIO_IFTXDUR		0x694

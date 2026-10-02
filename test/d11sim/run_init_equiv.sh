@@ -57,7 +57,7 @@ python3 "$MMIO2OPS" "$WL_BIN" --no-bulk -o "$WORK/wl.ops"
 WL_UC=
 if [ -n "$WL_BLOB" ]; then
 	python3 "$UCODE_INIT" "$WL_BLOB" --start "$START" --out "$WORK/wl.ucode"
-	WL_UC="--ucode-a $WORK/wl.ucode"
+	WL_UC="--ucode-b $WORK/wl.ucode"
 fi
 
 echo "## b43 side"
@@ -65,7 +65,7 @@ echo "## b43 side"
 B43_UC=
 if [ -n "$B43_BLOB" ]; then
 	python3 "$UCODE_INIT" "$B43_BLOB" --start "$START" --out "$WORK/b43.ucode"
-	B43_UC="--ucode-b $WORK/b43.ucode"
+	B43_UC="--ucode-a $WORK/b43.ucode"
 fi
 
 echo "## equivalence"

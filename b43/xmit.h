@@ -312,6 +312,8 @@ struct b43_rxhdr_fw4 {
 #define  B43_RX_PHYST0_OFDM		0x0001 /* Frame type: OFDM */
 #define  B43_RX_PHYST0_PRE_N		0x0002 /* Pre-standard N-PHY frame */
 #define  B43_RX_PHYST0_STD_N		0x0003 /* Standard N-PHY frame */
+#define  B43_RX_PHYST0_HT		0x0002 /* AC microcode: HT frame */
+#define  B43_RX_PHYST0_VHT		0x0003 /* AC microcode: VHT frame */
 
 /* PHY RX Status 2 */
 #define B43_RX_PHYST2_LNAG		0xC000 /* LNA Gain */

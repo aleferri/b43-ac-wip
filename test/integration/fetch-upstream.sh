@@ -29,7 +29,8 @@ FILES="main.c phy_common.c bus.c xmit.c phy_ac.c dma.c leds.c rfkill.c
 # vero e non si stubba: sono gli accessi al wrapper e a clk_ctl_st che una
 # cattura al bus (reverse-tools/mmio2ops.py) mostra, e senza il loro codice
 # b43 li chiamerebbe senza emettere niente.
-BCMA_FILES="core.c bcma_private.h"
+BCMA_FILES="core.c bcma_private.h driver_chipcommon.c driver_chipcommon_pmu.c
+            driver_pcie2.c"
 
 mkdir -p "$DIR/bcma"
 echo "b43 da $TAG"

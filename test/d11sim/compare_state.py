@@ -24,6 +24,9 @@ import argparse
 import sys
 
 REVINFO_SHM = {0x0000, 0x0002, 0x0004, 0x0006}
+CHIP_REGIONS = {"CC", "PMUPLL", "PMUREG", "PMUCHIP", "PCIE", "PCIECFG", "WRAP"}
+# ChipCommon GPIO: output, enable, control and the LED timers.
+CC_GPIO = {0x064, 0x068, 0x06c, 0x080, 0x084, 0x088, 0x08c}
 VOLATILE_REG = {0x0128, 0x0124}  # GEN_IRQ_REASON, MACCMD
 
 
@@ -40,6 +43,10 @@ def load(path):
 
 
 def bucket(region, key, ucode_keys):
+    if region == "CC" and key in CC_GPIO:
+        return "chip_gpio"
+    if region in CHIP_REGIONS:
+        return "chip"
     if region == "UCODE":
         return "ucode_image"
     if (region, key) in ucode_keys:
@@ -106,15 +113,19 @@ def main():
         sb = "--------" if vb is None else f"{vb:08x}"
         return f"    {region:5s} 0x{key:04x}  {la}={sa}  {lb}={sb}"
 
-    order = ["host", "volatile_reg", "ucode_revinfo", "ucode_image"]
+    order = ["host", "chip", "chip_gpio", "volatile_reg", "ucode_revinfo",
+             "ucode_image"]
     titles = {
         "host": "HOST CONFIGURATION SURFACE  (REG/SHM/SCR/HW/RCMTA)",
+        "chip": "BACKPLANE  (ChipCommon, PMU PLL/regulator/chip control, PCIe2, agent)",
+        "chip_gpio": "ChipCommon GPIO [informational]",
         "volatile_reg": "volatile registers (IRQ latch, MAC command) [informational]",
         "ucode_revinfo": "shared memory written by the ucode [real execution]",
         "ucode_image": "ucode image [build provenance, not host init]",
     }
 
     host_ok = True
+    chip_ok = True
     for bk in order:
         if bk not in cat:
             continue
@@ -130,6 +141,8 @@ def main():
 
         if bk == "host" and (diff or oa or ob):
             host_ok = False
+        if bk == "chip" and (diff or oa or ob):
+            chip_ok = False
 
         for name, rows in (("differ", d["differ"]),
                            ("only_" + la, d["only_a"]),
@@ -143,6 +156,10 @@ def main():
                 print(f"      ... +{len(rows) - args.show} more")
         print()
 
+    if "chip" in cat:
+        print("BACKPLANE:", "IDENTICAL" if chip_ok else "DIFFERENT",
+              f"between {la} and {lb} (a capture that starts after the attach"
+              " has none of the attach's cells)")
     print("VERDICT: host-configuration surface is",
           "IDENTICAL" if host_ok else "DIFFERENT",
           f"between {la} and {lb}")

@@ -199,16 +199,17 @@ driver:
   none of `0x0028`-`0x0048`, whose reasons it reads 43 times in all. b43's
   reads of the other channels are what catches a fatal DMA error on the TX
   rings.
-- Ring control: the low half agrees everywhere -- enable, parity disable,
-  the 40-byte receive frame offset -- and the burst-length, prefetch-control
-  and prefetch-threshold fields above bit 16, which b43 leaves at zero,
-  differ between the two stock drivers: TX `0x03700841` on 7.14,
-  `0x03780841` on 6.30 (burst 4 against 6); RX `0x00500851` on 7.14,
-  `0x036c0851` on 6.30. Not a value to copy from one capture.
+- Ring control: b43 writes the 7.14 engine parameters on the AC
+  (`b43_dma64_ac_tuning()`): TX `0x03700841`, RX `0x00500851`. The 6.30
+  hybrid writes TX `0x03780841` and RX `0x036c0851`; whether the D6220's
+  7.14.89 matches the agcombo's 7.14.43 is not in any capture, since the
+  wl-diag ones have no MAC registers.
 - The receive index: the stock driver writes the low 32 bits of the
-  descriptor's address, b43 the offset in the ring. Both address the same
-  descriptor with the 64 KB ring alignment `dma.c` gives the AC cores. 6.30
-  writes it twice in a whole capture, `0xffffffff` and then an address.
+  descriptor's address, and so does b43 on the AC (`op64_slot_index()`),
+  with the default 8K ring. Whether the AC engine compares the whole word or
+  only the offset bits is not known; the 64 KB rings b43 used to allocate
+  made the two the same. 6.30 writes it twice in a whole capture,
+  `0xffffffff` and then an address.
 - The stock driver reads the receive status twice per frame and the TSF
   once; b43 once and never. On 6.30 the TSF pair (`0x0180`/`0x0184`) also
   comes before every TX descriptor post.
@@ -232,8 +233,8 @@ rows; b43 does it from `b43_security_init()` at the tail of
   key material and 68 of index block. `b43_security_init()` writes the
   material of its own 54 slots, 432 words, and the last six slots stay as
   they are: the key material lies above the 4 KiB of shared memory that
-  `b43_upload_microcode()` zeroes. The index block it writes as
-  `(kidx << 4) | algo` over 54 words; the other 14 are inside those 4 KiB.
+  `b43_upload_microcode()` zeroes. The index block it zeroes over 54 words,
+  as the AC ucode reads an empty slot; the other 14 are inside those 4 KiB.
   `test/unit` emits the stock zeroing with the rows; at the bus the
   integration gates miss its 548 words per `up`.
 
@@ -333,10 +334,12 @@ adaptation, and HT and VHT rates in transmission. What is open:
   OFDM rates, and `b43_op_tx()` drops a frame that asks for an MCS. The AC
   ucode's header for HT and VHT, and whether it is the 598 one at all, is in
   DMA memory, which no capture records.
-- **RX rates.** `b43_rx()` decodes the rate from the PLCP with the legacy
-  rules. How the AC ucode marks an HT or VHT frame in its receive header, and
-  what the six PLCP bytes then hold, is in DMA memory too; an HT or VHT
-  frame is dropped as a bad PLCP or reported at a wrong legacy rate.
+- **RX rates.** `b43_rx_rate_ac()` takes the frame type from PHY RX status
+  0 with HT at 2 and VHT at 3, Broadcom's FT_HT and FT_VHT for these PHYs,
+  and reads HT-SIG and VHT-SIG-A from the six bytes in front of the frame.
+  That the AC ucode puts the SIG fields there, as it puts the legacy PLCP,
+  is not checked against a capture: the receive header is in DMA memory,
+  which none records. The signal strength is not reported.
 - **Receive buffer.** `B43_DMA0_RX_AC_BUFSIZE` holds a 3895-byte MPDU, the
   VHT minimum; the stock driver's own buffer size is not in any capture.
 
@@ -396,6 +399,29 @@ adaptation, and HT and VHT rates in transmission. What is open:
   writes.
 - At rmmod the stock driver issues `SI.COREREG core=0 off=0x80 val=4`
   (`pcie_watchdog_reset()`); bcma has no equivalent.
+
+### ChipCommon and PMU
+
+`test/integration` runs bcma's own ChipCommon, PMU and PCIe2 init, and
+`test/d11sim` keeps their state (regions `CC`, `PMUPLL`, `PMUREG`,
+`PMUCHIP`, `PCIE`, `PCIECFG`, `WRAP`). On the agcombo's `ch36` the cells both
+sides write agree; what is open:
+
+- **`max_res_mask`.** bcma writes `0x7ff` on the 4352 and the 4360, the
+  value the agcombo's PMU reads after a `wl down`. On the MacBookAir6,1, a
+  4360 rev 3 as well, `wl` 6.30 writes `0x1ff` and the register reads `0x1ff`
+  with b43 loaded. Whether the mask is per board, per driver build or the
+  hardware's implemented resources is not established, and bcma has one
+  value for both chips.
+- **`pmucontrol` `NOILPONW`.** bcma sets it on every PMU revision but 1
+  (`bcma_pmu_init()`); `wl` 6.30 on the MacBookAir6,1 clears it (`0x01770381`
+  read, `0x01770581` written) and the register reads `0x01770181` with b43
+  loaded. The agcombo capture starts after the attach and does not show it.
+- **Rewrites.** At every `up` `wl` writes `res_table_sel`/`res_updn_timer`
+  (`6`/`0x00200001`), the PCIe2 `clk_control` (`0x00030050`) and the agent's
+  out-of-band selectors (`0x02848180`/`3`) with the values it reads; b43
+  leaves them, so the simulator reports them as written by `wl` alone.
+- The ChipCommon GPIO cells are the LEDs, which b43 drives from the MAC.
 
 ### `do_full_init` does not tell cold from hot
 
@@ -543,6 +569,19 @@ build's own legacy table, so a port can follow one reference only; it
 follows the d6220 (7.14.89, the two full sweeps).
 
 ### Per-rate field `+0x0e`
+
+On the BCM4360 the legacy rates take the capped form
+(`b43_phy_ac_rate_po_capped()`): each rate at its own entry of the finished
+table, under a legacy limit that is a single-chain limit per channel and
+width less the CDD offset of the chains in 0x05d6
+(`b43_phy_ac_legacy_cap_4360()`). The beacon cell takes the same form, on the
+20 MHz row at 80 MHz. On the final pass, the tg789vac's 43 cold segments are
+within 0 dB on 32, 2 dB at most elsewhere but ch100/80's beacon (3 dB); the
+agcombo's 26 are within 0 dB on 22 when the chain masks follow its driver's
+antenna gain of 0. Open: the second pass at 40 and 80 MHz, where the stock
+single-chain limit is 1 dB higher on ch52/40, ch108-140/40 and ch132/80 and
+the tg789vac's legacy rows are flat; ch149 at 40 and 80 MHz, where they do not
+follow the 40 or 80 MHz SROM row.
 
 The distance of each rate from the target, in sixteenths of a dB. At 20 MHz
 it is closed: the legacy OFDM rows sit under their own limit, 76 after the
