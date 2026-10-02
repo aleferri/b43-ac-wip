@@ -1002,29 +1002,22 @@ static void b43_phy_ac_bss_cc_update(struct b43_wldev *dev,
 
 /*
  * Distance of a legacy OFDM rate from the target, in sixteenths of a dB,
- * for the per-rate block and the beacon cell.
+ * for the per-rate block and the beacon cell, on the BCM4352.
  *
  * @spacing is the rate's entry in txpwr_spacing, the SROM rows laid out from
- * 0x7f so that no entry saturates. The field is the rate's SROM spacing under
- * the top row, saturated by the legacy limit of b43_phy_ac_reg_ofdm_ceiling()
- * where that binds: on ch104-144/20 both boards write target - 76 on the
- * rates the spacing would put higher.
- *
- * The general ceiling moves the target and leaves the spacing (d6220
- * ch100/20). Whether it also clamps the rows on a board whose rows differ
- * across the OFDM groups is open (docs/retrace-todo.md).
+ * 0x7f so that no entry saturates. The rows keep their distance from a capped
+ * target -- on the d6220's ch100/20 the target sits 1 dB under the top row
+ * and the fields are still the SROM's 0/16/32/48 -- and the legacy limit of
+ * b43_phy_ac_legacy_cap(), @cap, saturates the rates it would put higher.
  */
-static u16 b43_phy_ac_rate_po(const struct b43_phy_ac *ac, u8 spacing)
+static u16 b43_phy_ac_rate_po(const struct b43_phy_ac *ac, u8 spacing,
+			      u16 cap)
 {
 	u16 dist = (u16)(b43_ppr_ac_get_max(&ac->txpwr_spacing) - spacing) * 4;
+	int target = b43_ppr_ac_get_max(&ac->txpwr_ppr);
 
-	if (ac->txpwr_ofdm_ceiling) {
-		int target = b43_ppr_ac_get_max(&ac->txpwr_ppr);
-		int cap = (int)ac->txpwr_ofdm_ceiling - 6;
-
-		if (target > cap)
-			dist = max(dist, (u16)(target - cap) * 4);
-	}
+	if (cap && target > (int)cap - 6)
+		dist = max(dist, (u16)(target - ((int)cap - 6)) * 4);
 	return dist;
 }
 
@@ -1062,21 +1055,22 @@ struct b43_phy_ac_locale_row {
 };
 
 /*
- * The BCM4360's legacy limit for one chain, in quarter-dBm before the margin,
- * per primary channel and width. The legacy rates go out on the chains of
+ * The legacy limit for one chain, in quarter-dBm before the margin, per
+ * primary channel and width. The legacy rates go out on the chains of
  * 0x05d6, and their limit is this one less the CDD offset of that many
- * chains (3 and 5 dB on two and three): with it the tg789vac (7.14.89) and
- * the agcombo (7.14.43), whose 0x05d6 differ on ch100-140/20, ch36 at 40
- * and 80 MHz and ch100/80, give the same single-chain limit on every
- * configuration both have, to 1 dB on the agcombo's ch36 first pass and
- * ch100/80. Measured from the per-rate fields of both cold sweeps.
+ * chains (3 and 5 dB on two and three). The same table serves both chips:
+ * the tg789vac (4360, 7.14.89), the agcombo (4360, 7.14.43) and the d6220
+ * (4352, 7.14.89), whose 0x05d6 differ across many configurations, give the
+ * same single-chain limit on every one they share, to 1 dB on the agcombo's
+ * ch36 first pass and ch100/80 and on the d6220's ch60/40 and ch100/40.
+ * Measured from the per-rate fields of the three cold sweeps.
  */
-static const struct b43_phy_ac_locale_row b43_phy_ac_legacy_4360_20[] = {
+static const struct b43_phy_ac_locale_row b43_phy_ac_legacy_20[] = {
 	{  36,  48, 62 },
 	{  52, 144, 94 },
 };
 
-static const struct b43_phy_ac_locale_row b43_phy_ac_legacy_4360_40[] = {
+static const struct b43_phy_ac_locale_row b43_phy_ac_legacy_40[] = {
 	{  36,  44, 74 },
 	{  52,  52, 98 },
 	{  60,  60, 78 },
@@ -1084,7 +1078,7 @@ static const struct b43_phy_ac_locale_row b43_phy_ac_legacy_4360_40[] = {
 	{ 108, 140, 98 },
 };
 
-static const struct b43_phy_ac_locale_row b43_phy_ac_legacy_4360_80[] = {
+static const struct b43_phy_ac_locale_row b43_phy_ac_legacy_80[] = {
 	{  36,  36, 74 },
 	{  52,  52, 90 },
 	{ 100, 128, 90 },
@@ -1094,7 +1088,7 @@ static const struct b43_phy_ac_locale_row b43_phy_ac_legacy_4360_80[] = {
 static void b43_phy_ac_chain_pair(struct b43_wldev *dev,
 				  enum b43_phy_ac_chain_site site, u16 *out);
 
-static u16 b43_phy_ac_legacy_cap_4360(struct b43_wldev *dev,
+static u16 b43_phy_ac_legacy_cap(struct b43_wldev *dev,
 				      enum b43_phy_ac_chain_site site,
 				      enum nl80211_chan_width width)
 {
@@ -1106,16 +1100,16 @@ static u16 b43_phy_ac_legacy_cap_4360(struct b43_wldev *dev,
 
 	switch (width) {
 	case NL80211_CHAN_WIDTH_80:
-		rows = b43_phy_ac_legacy_4360_80;
-		n = ARRAY_SIZE(b43_phy_ac_legacy_4360_80);
+		rows = b43_phy_ac_legacy_80;
+		n = ARRAY_SIZE(b43_phy_ac_legacy_80);
 		break;
 	case NL80211_CHAN_WIDTH_40:
-		rows = b43_phy_ac_legacy_4360_40;
-		n = ARRAY_SIZE(b43_phy_ac_legacy_4360_40);
+		rows = b43_phy_ac_legacy_40;
+		n = ARRAY_SIZE(b43_phy_ac_legacy_40);
 		break;
 	default:
-		rows = b43_phy_ac_legacy_4360_20;
-		n = ARRAY_SIZE(b43_phy_ac_legacy_4360_20);
+		rows = b43_phy_ac_legacy_20;
+		n = ARRAY_SIZE(b43_phy_ac_legacy_20);
 		break;
 	}
 	b43_phy_ac_chain_pair(dev, site, pair);
@@ -1165,8 +1159,7 @@ static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev,
 	struct b43_phy_ac *ac = dev->phy.ac;
 	const struct b43_ppr_ac *sp = &ac->txpwr_spacing;
 	bool capped = b43_phy_ac_legacy_capped(dev);
-	u16 cap = capped ?
-		  b43_phy_ac_legacy_cap_4360(dev, site, ac->cal_width) : 0;
+	u16 cap = b43_phy_ac_legacy_cap(dev, site, ac->cal_width);
 	unsigned int i;
 
 	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_prb_rsp_rates); i++) {
@@ -1188,7 +1181,8 @@ static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev,
 		else
 			val = b43_phy_ac_rate_po(ac,
 						 b43_ppr_ac_ofdm(sp, ac->cal_width,
-								 r->ofdm));
+								 r->ofdm),
+						 cap);
 
 		b43_shm_read16(dev, B43_SHM_SHARED, cell);
 		b43_shm_write16(dev, B43_SHM_SHARED, cell, val);
@@ -1217,25 +1211,24 @@ static u16 b43_phy_ac_beacon_pwr_offset_at(struct b43_wldev *dev,
 					   enum b43_phy_ac_chain_site site)
 {
 	const struct b43_phy_ac *ac = dev->phy.ac;
+	enum nl80211_chan_width w = ac->cal_width;
+	u16 cap;
 
 	/*
-	 * On the BCM4360 the cell is the 6 Mbit/s field in the capped form:
-	 * at 20 and 40 MHz that of the operating width; at 80 MHz that of the
-	 * 20 MHz row under the 20 MHz legacy limit, which on ch36, ch52, ch116
-	 * and ch132 gives the beacon power of both boards (ch100 is 2 to 3 dB
-	 * above it on both).
+	 * The cell is the 6 Mbit/s field, in each chip's form: at 20 and
+	 * 40 MHz that of the operating width; at 80 MHz that of the 20 MHz row
+	 * under the 20 MHz legacy limit, which on ch36, ch52, ch116 and ch132
+	 * gives the beacon power of the three boards (ch100 is 2 to 3 dB above
+	 * it on all of them).
 	 */
-	if (b43_phy_ac_legacy_capped(dev)) {
-		enum nl80211_chan_width w = ac->cal_width;
-
-		if (w == NL80211_CHAN_WIDTH_80)
-			w = NL80211_CHAN_WIDTH_20;
+	if (w == NL80211_CHAN_WIDTH_80)
+		w = NL80211_CHAN_WIDTH_20;
+	cap = b43_phy_ac_legacy_cap(dev, site, w);
+	if (b43_phy_ac_legacy_capped(dev))
 		return b43_phy_ac_rate_po_capped(ac,
-				b43_ppr_ac_ofdm(&ac->txpwr_ppr, w, 0),
-				b43_phy_ac_legacy_cap_4360(dev, site, w));
-	}
+				b43_ppr_ac_ofdm(&ac->txpwr_ppr, w, 0), cap);
 	return b43_phy_ac_rate_po(ac, b43_ppr_ac_ofdm(&ac->txpwr_spacing,
-						      NL80211_CHAN_WIDTH_20, 0));
+						      w, 0), cap);
 }
 
 u16 b43_phy_ac_beacon_pwr_offset(struct b43_wldev *dev)
@@ -1864,65 +1857,6 @@ static u16 b43_phy_ac_reg_ceiling(struct b43_wldev *dev)
 }
 
 /*
- * Regulatory limit on the legacy OFDM rates, in quarter-dBm before the
- * margin, or 0 when none applies.
- *
- * The stock locale limits the rate classes separately, and the legacy OFDM
- * rates sit under a limit of their own where MCS goes higher. It shows only
- * in the per-rate offsets, since the target is the maximum over every rate.
- * The rows are where both the d6220 and the tg789vac put every legacy rate
- * at the same power under a higher target:
- *  - 20 MHz, ch52-144: 76 after the margin;
- *  - 80 MHz, ch100-128: 72;
- *  - 40 MHz, ch108-140: 84 (tg789vac only; the d6220's rows stop at 80).
- * At 40 MHz on ch52-64 and ch100 the two boards write different legacy
- * powers under the same target and no row fits both (docs/retrace-todo.md).
- *
- * Sources: d6220 cold10-ch104-bw20 and cold41-ch116-bw80, tg789vac-v2
- * cold31-ch108-bw40.
- */
-static const struct b43_phy_ac_locale_row b43_phy_ac_ofdm_limit_20[] = {
-	{  52, 144, 82 },
-};
-
-static const struct b43_phy_ac_locale_row b43_phy_ac_ofdm_limit_40[] = {
-	{ 108, 140, 90 },
-};
-
-static const struct b43_phy_ac_locale_row b43_phy_ac_ofdm_limit_80[] = {
-	{ 100, 128, 78 },
-};
-
-static u16 b43_phy_ac_reg_ofdm_ceiling(struct b43_wldev *dev)
-{
-	struct b43_phy_ac *ac = dev->phy.ac;
-	const struct b43_phy_ac_locale_row *rows;
-	unsigned int n, i;
-
-	if (b43_phy_ac_legacy_capped(dev))
-		return 0;
-	switch (ac->cal_width) {
-	case NL80211_CHAN_WIDTH_80:
-		rows = b43_phy_ac_ofdm_limit_80;
-		n = ARRAY_SIZE(b43_phy_ac_ofdm_limit_80);
-		break;
-	case NL80211_CHAN_WIDTH_40:
-		rows = b43_phy_ac_ofdm_limit_40;
-		n = ARRAY_SIZE(b43_phy_ac_ofdm_limit_40);
-		break;
-	default:
-		rows = b43_phy_ac_ofdm_limit_20;
-		n = ARRAY_SIZE(b43_phy_ac_ofdm_limit_20);
-		break;
-	}
-	for (i = 0; i < n; i++)
-		if (ac->cal_channel >= rows[i].first &&
-		    ac->cal_channel <= rows[i].last)
-			return rows[i].limit;
-	return 0;
-}
-
-/*
  * TX power target: the per-rate table and its maximum per core.
  *
  * This is brcmsmac's wlc_phy_txpower_recalc_target() and the body of
@@ -1986,7 +1920,6 @@ bool b43_phy_ac_txpwr_recalc(struct b43_wldev *dev)
 	max = b43_ppr_ac_get_max(ppr);
 
 	ac->txpwr_maxp = maxp;
-	ac->txpwr_ofdm_ceiling = b43_phy_ac_reg_ofdm_ceiling(dev);
 
 	if (b43_ppr_ac_sprom_has_subband_po(sprom) && !ac->txpwr_calc_chan)
 		b43warn(dev->wl,

@@ -570,18 +570,21 @@ follows the d6220 (7.14.89, the two full sweeps).
 
 ### Per-rate field `+0x0e`
 
-On the BCM4360 the legacy rates take the capped form
-(`b43_phy_ac_rate_po_capped()`): each rate at its own entry of the finished
-table, under a legacy limit that is a single-chain limit per channel and
-width less the CDD offset of the chains in 0x05d6
-(`b43_phy_ac_legacy_cap_4360()`). The beacon cell takes the same form, on the
-20 MHz row at 80 MHz. On the final pass, the tg789vac's 43 cold segments are
-within 0 dB on 32, 2 dB at most elsewhere but ch100/80's beacon (3 dB); the
-agcombo's 26 are within 0 dB on 22 when the chain masks follow its driver's
-antenna gain of 0. Open: the second pass at 40 and 80 MHz, where the stock
-single-chain limit is 1 dB higher on ch52/40, ch108-140/40 and ch132/80 and
-the tg789vac's legacy rows are flat; ch149 at 40 and 80 MHz, where they do not
-follow the 40 or 80 MHz SROM row.
+Both chips take the legacy limit of `b43_phy_ac_legacy_cap()`: a
+single-chain limit per channel and width less the CDD offset of the chains in
+0x05d6, the same table for the d6220 (4352), the tg789vac and the agcombo
+(4360). What differs is the rows: on the 4352 they keep their SROM distance
+from a capped target (`b43_phy_ac_rate_po()`), on the 4360 each rate sits at
+its own entry of the finished table (`b43_phy_ac_rate_po_capped()`). The
+beacon cell takes each chip's form, on the 20 MHz row at 80 MHz. On the final
+pass of the cold sweeps the fields and the beacon cell are within 0 dB on 38
+of the d6220's 43 segments (1 dB at most elsewhere but ch100/80's beacon,
+3 dB) and on 32 of the tg789vac's 43; the agcombo's 26 are within 0 dB on 22
+when the chain masks follow its driver's antenna gain of 0. Open: the second
+pass at 40 and 80 MHz, where the stock single-chain limit is 1 dB higher on
+ch52/40, ch108-140/40 and ch132/80 and the tg789vac's legacy rows are flat;
+ch149 at 40 and 80 MHz on the tg789vac; the beacon at ch100/80 on all
+three.
 
 The distance of each rate from the target, in sixteenths of a dB. At 20 MHz
 it is closed: the legacy OFDM rows sit under their own limit, 76 after the
