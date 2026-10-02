@@ -1,0 +1,872 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alessio Ferri <alessio.ferri.3012@gmail.com>
+Date: Wed, 17 Jun 2026 20:55:58 +0000
+Subject: [PATCH 1/3] bcma: ssb: support the BCM4352/BCM4360 family
+
+Everything the BCM4352/BCM4360 family needs from bcma, ssb and the
+bcm47xx NVRAM parser, in one place. Each section below is one change,
+with its reasons.
+
+Add SPROM revision 11 extraction
+--------------------------------
+
+SPROM revision 11 is introduced with the BCM4352/BCM4360 family. Extend
+struct ssb_sprom with the rev-11 fields actually parsed (per-band rxgains,
+per-chain maxp/pa power info, 80 MHz MCS power offsets, pdoffset40ma)
+and add bcma_sprom_extract_r11(), dispatched from bcma_sprom_get() when the
+SPROM revision word reads as 11. bcma_sprom_get() already probes the rev-11
+buffer size, and bcma_sprom_valid() populates bus->sprom.revision before
+the dispatch. Revisions <= 10 keep the extract_r8 path.
+
+The rev-11 field set and word offsets follow the public bcmdhd SROM
+parser table (include/bcmsrom_tbl.h, GPLv2).
+
+Header fields (IL0MAC/ANTAVAIL/TXRXC/CCODE and the ledbh0-3 LED
+behaviours in gpio0-3) reuse the rev-8 masks/shifts; only the absolute
+offsets moved. CCODE uses 0x96, since rev-8 0x92 collides with the middle
+word of the rev-11 IL0MAC block. The LED words are 0x9A/0x9C: extract_r8
+would read them from 0x96/0x98, which on rev 11 are CCODE and REGREV, and
+leaving them unset gives b43 zeros instead of the 0xff that selects its
+LED defaults.
+
+Also extracts the explicit per-rate-group offsets of the bonded channels'
+sub-band rows (sb20in40*, sb20in80and160*, sb40and80*, dot11agdup*,
+mcslr5g*; SROM11 words 200-218 of bcmsrom_fmt.h) and decodes the antenna
+gain (agbg0/aga0, whole dB in [5:0] plus quarter dB in [7:6]) into
+antenna_gain_qdb[], which the regulatory ceiling subtracts from EIRP, and pdoffset80ma, the
+per-chain power-detector offsets of the 80 MHz rate groups.
+
+The five rpcal words, the TX beamforming RX path calibration for 2.4 GHz
+and the four 5 GHz sub-bands, are words 182, 183, 190, 191 and 198,
+between the per-rate words. Rev 11 has no 160 MHz per-rate field in the
+SPROM: those words are the rpcal ones.
+
+The temperature fields -- tempthresh, tempoffset, rawtempsense, measpower,
+tempsense_slope, tempcorrx, tempsense_option, phycal_tempdelta,
+temps_period and temps_hysteresis -- sit in rev 11 four bytes below their
+rev-8 words with the same layout, so the SPROM8 masks apply. The
+TG789vac v2 dump, the one board here that programs them, has THERMAL =
+0x7800 and TEMPDELTA = 0x5500, matching tempthresh=120 and
+temps_period=5 in its NVRAM.
+
+PMU init (PLL + resources) for the BCM4352/BCM4360 family
+---------------------------------------------------------
+
+Neither bcma_pmu_pll_init() nor bcma_pmu_resources_init() have a case
+for the BCM4352/BCM4360 family; both are no-ops for this chip today.
+
+PLL: the stock driver writes PLLCTL2/PLLCTL3 unconditionally during
+attach. Values captured from an MMIO trace of the stock driver's
+attach sequence on a BCM43b3 (BCM4352-family) device (Netgear D6220,
+wl-diag-d6220-4352-wl1-attach.txt, #161359-161360, last of three observed
+attach cycles in the capture -- see commit message discussion for why
+the earlier two are not used as-is). Only one crystal/board sample is
+available, so this is not split by xtalfreq like the existing 43142
+case; revisit if a board with a different crystal shows different
+values.
+
+Resources: program the PMU max resource mask to 0x7ff. This value was
+read back at runtime from the ChipCommon PMU of a live BCM4360 and is
+applied as-is; not yet confirmed on BCM4352 (D6220/DSL-3580L).
+
+Add BCM4352 (0x43b3) to the PCI bridge table
+--------------------------------------------
+
+The BCM4352 is an AC PHY. It is missing from bcma_pci_bridge_tbl[],
+so bcma-pci-bridge does not bind. Add the ID.
+
+The chip identifies as BCM4352 (chip rev 3, PHY type AC); b43 with AC-PHY
+support handles it once bcma reaches the D11 core.
+
+Carry the NVRAM ledbh4..ledbh15 LED mappings
+--------------------------------------------
+
+The SPROM has fields for the LEDs on GPIO pins 0-3 only, ledbh0-3, and
+struct ssb_sprom mirrors that as gpio0-3. Broadcom boards map LEDs on any
+of the sixteen GPIO lines through NVRAM ledbh4..ledbh15, which the stock
+driver reads with the same device prefix as ledbh0-3; on the Netgear D6220
+and the D-Link DSL-3580L the 5 GHz activity LED is ledbh10=0x88.
+
+On those boards the 802.11 core is a PCIe device with its own SPROM, so
+bcma reads the SPROM from the device and the NVRAM fallback never runs:
+whatever the board says in NVRAM about the device is lost. The stock
+driver merges the two; do the same for the variables the SPROM has no word
+for.
+
+Add gpio_ext[12] for pins 4-15. bcm47xx_sprom fills it in two places: in
+bcm47xx_sprom_fill_auto(), next to ledbh0-3, for a SPROM that comes from
+NVRAM, and through bcm47xx_sprom_fill_bcma_nvram(), which resolves the
+bus's prefix as the fallback does, for a SPROM read from the device; bcma
+calls the latter after extracting the device SPROM. The prefix resolution
+moves out of bcm47xx_get_sprom_bcma() into a helper the two share. Like
+the fallback, this exists only with bcma built in; elsewhere the call is
+an inline no-op.
+
+Carry boardflags3 and AvVmid_c0..2 from NVRAM
+---------------------------------------------
+
+The AC-PHY programs each chain's power-detector input with a pair, Av and
+Vmid, per band. A board gives the pairs in NVRAM as AvVmid_c0..2 -- ten
+comma-separated values, Av,Vmid for 2g, 5gl, 5gml, 5gmu and 5gh, as in the
+public Broadcom NVRAM files -- and the stock driver takes them from there
+only when boardflags3 has BFL3_AvVim (0x40000000), "load AvVim from nvram"
+in the same files; without the flag it uses a default set of its own.
+
+AvVmid has no field in struct ssb_sprom; add avvmid[3][5][2] and
+avvmid_valid, the chains whose variable parsed, so that a flag without the
+variable leaves the driver on its defaults. boardflags3 has one, filled
+from NVRAM by bcm47xx_sprom_fill_auto() for a SPROM that comes from NVRAM,
+but nothing fills it for a SPROM read from the device: the rev 11
+extraction does not take the word. Read both in
+bcm47xx_sprom_fill_nvram_only(), next to ledbh4..15, which runs in either
+case.
+
+Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
+---
+ drivers/bcma/driver_chipcommon_pmu.c      |  42 +++++
+ drivers/bcma/host_pci.c                   |   1 +
+ drivers/bcma/sprom.c                      | 210 +++++++++++++++++++++-
+ drivers/firmware/broadcom/bcm47xx_sprom.c | 124 ++++++++++---
+ include/linux/bcm47xx_sprom.h             |  16 ++
+ include/linux/ssb/ssb.h                   |  74 ++++++++
+ include/linux/ssb/ssb_regs.h              | 110 ++++++++++++
+ 7 files changed, 554 insertions(+), 23 deletions(-)
+
+diff --git a/drivers/bcma/driver_chipcommon_pmu.c b/drivers/bcma/driver_chipcommon_pmu.c
+index 263ef6f..cf93698 100644
+--- a/drivers/bcma/driver_chipcommon_pmu.c
++++ b/drivers/bcma/driver_chipcommon_pmu.c
+@@ -156,6 +156,32 @@ static void bcma_pmu_pll_init(struct bcma_drv_cc *cc)
+ 			xtalfreq = 20000;
+ 		bcma_pmu2_pll_init0(cc, xtalfreq);
+ 		break;
++	case BCMA_CHIP_ID_BCM4352:
++	case BCMA_CHIP_ID_BCM4360:
++		/*
++		 * PLLCTL2/PLLCTL3 on a cold attach, same values on both chips:
++		 * agcombo (4360) and D6220 (4352) both write 0x0c31 and 0x100e
++		 * with a full mask, then read them back later in the same
++		 * sequence (D6220 attach-to-bss-up #15, #23, then #164, #172).
++		 * A down->up capture only shows the reads, which is why these
++		 * writes were once thought to be 4360-only.
++		 *
++		 * The DSL-3580L, also a 4352, is a known exception: its stock
++		 * driver is missing the fractional vcofreq support (checked with
++		 * strings), leaves PLLCTL3 at the ROM value 0x00133333, and
++		 * works that way. Newer stock drivers do set vcofreq. Writing
++		 * these values there is therefore untested, not a fix.
++		 */
++		bcma_chipco_pll_write(cc, BCMA_CC_PMU_PLL_CTL2, 0x0c31);
++		bcma_chipco_pll_write(cc, BCMA_CC_PMU_PLL_CTL3, 0x100e);
++		/*
++		 * Latch them: the PMU only takes the new PLL control values on
++		 * PLL_UPD. The stock driver raises it immediately after these
++		 * two writes. Same flush bcma_pmu2_pll_init0() already does for
++		 * the PMU15 path.
++		 */
++		bcma_pmu_set32(cc, BCMA_CC_PMU_CTL, BCMA_CC_PMU_CTL_PLL_UPD);
++		break;
+ 	}
+ }
+ 
+@@ -188,11 +214,27 @@ static void bcma_pmu_resources_init(struct bcma_drv_cc *cc)
+ 			  BCMA_RES_4314_WL_CORE_READY;
+ 		max_msk = 0x3FFFFFFF;
+ 		break;
++	case BCMA_CHIP_ID_BCM4352:
++	case BCMA_CHIP_ID_BCM4360:
++		/*
++		 * Confirmed by reading the live PMU on both a BCM4360
++		 * (agcombo) and a BCM4352 (DSL-3580L): max_res_mask reads
++		 * back 0x7ff on hardware. min_res_mask is left untouched
++		 * (min_msk stays 0) as the ROM value (observed 0x7fb).
++		 */
++		max_msk = 0x7ff;
++		break;
+ 	default:
+ 		bcma_debug(bus, "PMU resource config unknown or not needed for device 0x%04X\n",
+ 			   bus->chipinfo.id);
+ 	}
+ 
++	bcma_debug(bus,
++		   "PMU res mask pre-write: min=0x%08x max=0x%08x (writing min=0x%08x max=0x%08x)\n",
++		   bcma_pmu_read32(cc, BCMA_CC_PMU_MINRES_MSK),
++		   bcma_pmu_read32(cc, BCMA_CC_PMU_MAXRES_MSK),
++		   min_msk, max_msk);
++
+ 	/* Set the resource masks. */
+ 	if (min_msk)
+ 		bcma_pmu_write32(cc, BCMA_CC_PMU_MINRES_MSK, min_msk);
+diff --git a/drivers/bcma/host_pci.c b/drivers/bcma/host_pci.c
+index 3dc2985..f6cf722 100644
+--- a/drivers/bcma/host_pci.c
++++ b/drivers/bcma/host_pci.c
+@@ -298,6 +298,7 @@ static const struct pci_device_id bcma_pci_bridge_tbl[] = {
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 0x43a9) },
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 0x43aa) },
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 0x43b1) },
++	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 0x43b3) },
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 0x4727) },
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 43227) },	/* 0xa8db, BCM43217 (sic!) */
+ 	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 43228) },	/* 0xa8dc */
+diff --git a/drivers/bcma/sprom.c b/drivers/bcma/sprom.c
+index e668ad7..24852ad 100644
+--- a/drivers/bcma/sprom.c
++++ b/drivers/bcma/sprom.c
+@@ -11,6 +11,7 @@
+ 
+ #include <linux/bcma/bcma.h>
+ #include <linux/bcma/bcma_regs.h>
++#include <linux/bcm47xx_sprom.h>
+ #include <linux/pci.h>
+ #include <linux/io.h>
+ #include <linux/dma-mapping.h>
+@@ -474,6 +475,205 @@ static void bcma_sprom_extract_r8(struct bcma_bus *bus, const u16 *sprom)
+ 	     SSB_SPROM8_TEMPDELTA_HYSTERESIS_SHIFT);
+ }
+ 
++static void bcma_sprom_unpack_rxgains(struct ssb_sprom_rxgains *out,
++				      int chain, u8 packed)
++{
++	out->trelnabyp[chain] = (packed >> 7) & 0x01;
++	out->triso[chain]     = (packed >> 3) & 0x0f;
++	out->elnagain[chain]  =  packed       & 0x07;
++}
++
++static void bcma_sprom_extract_r11(struct bcma_bus *bus, const u16 *sprom)
++{
++	static const u16 pwr_info_offset[] = {
++		SSB_SPROM11_PWR_INFO_CORE0,
++		SSB_SPROM11_PWR_INFO_CORE1,
++		SSB_SPROM11_PWR_INFO_CORE2,
++	};
++	u16 v;
++	int i, j;
++
++	BUILD_BUG_ON(ARRAY_SIZE(pwr_info_offset) >
++		     ARRAY_SIZE(bus->sprom.core_pwr_info));
++
++	/* Header: rev-11 offsets, rev-8 masks/shifts. */
++	for (i = 0; i < 3; i++) {
++		v = sprom[SPOFF(SSB_SPROM11_IL0MAC) + i];
++		*(((__be16 *)bus->sprom.il0mac) + i) = cpu_to_be16(v);
++	}
++
++	SPEX(board_rev, SSB_SPROM8_BOARDREV, ~0, 0);
++	SPEX(board_type, SSB_SPROM1_SPID, ~0, 0);
++	SPEX(boardflags_lo, SSB_SPROM8_BFLLO, ~0, 0);
++	SPEX(boardflags_hi, SSB_SPROM8_BFLHI, ~0, 0);
++	SPEX(boardflags2_lo, SSB_SPROM8_BFL2LO, ~0, 0);
++	SPEX(boardflags2_hi, SSB_SPROM8_BFL2HI, ~0, 0);
++	SPEX32(boardflags3, SSB_SPROM11_BFL3, ~0, 0);
++
++	SPEX(country_code, SSB_SPROM11_CCODE, ~0, 0);
++	SPEX(gpio0, SSB_SPROM11_GPIOA, SSB_SPROM8_GPIOA_P0, 0);
++	SPEX(gpio1, SSB_SPROM11_GPIOA, SSB_SPROM8_GPIOA_P1,
++	     SSB_SPROM8_GPIOA_P1_SHIFT);
++	SPEX(gpio2, SSB_SPROM11_GPIOB, SSB_SPROM8_GPIOB_P2, 0);
++	SPEX(gpio3, SSB_SPROM11_GPIOB, SSB_SPROM8_GPIOB_P3,
++	     SSB_SPROM8_GPIOB_P3_SHIFT);
++	SPEX(ant_available_a, SSB_SPROM11_ANTAVAIL, SSB_SPROM8_ANTAVAIL_A,
++	     SSB_SPROM8_ANTAVAIL_A_SHIFT);
++	SPEX(ant_available_bg, SSB_SPROM11_ANTAVAIL, SSB_SPROM8_ANTAVAIL_BG,
++	     SSB_SPROM8_ANTAVAIL_BG_SHIFT);
++	SPEX(txchain, SSB_SPROM11_TXRXC, SSB_SPROM8_TXRXC_TXCHAIN,
++	     SSB_SPROM8_TXRXC_TXCHAIN_SHIFT);
++	SPEX(rxchain, SSB_SPROM11_TXRXC, SSB_SPROM8_TXRXC_RXCHAIN,
++	     SSB_SPROM8_TXRXC_RXCHAIN_SHIFT);
++	SPEX(antswitch, SSB_SPROM11_TXRXC, SSB_SPROM8_TXRXC_SWITCH,
++	     SSB_SPROM8_TXRXC_SWITCH_SHIFT);
++	SPEX(subband5gver, SSB_SPROM11_SUBBAND5GVER, 0x00ff, 0);
++
++	/* FEM / PA control block. */
++	SPEX(tssiposslope2g, SSB_SPROM11_FEM_CFG1,
++	     SSB_SPROM11_FEM_TSSIPOSSLOPE, 0);
++	SPEX(epagain2g, SSB_SPROM11_FEM_CFG1, SSB_SPROM11_FEM_EPAGAIN,
++	     SSB_SPROM11_FEM_EPAGAIN_SHIFT);
++	SPEX(pdgain2g, SSB_SPROM11_FEM_CFG1, SSB_SPROM11_FEM_PDGAIN,
++	     SSB_SPROM11_FEM_PDGAIN_SHIFT);
++	SPEX(tworangetssi2g, SSB_SPROM11_FEM_CFG1,
++	     SSB_SPROM11_FEM_TWORANGETSSI, SSB_SPROM11_FEM_TWORANGETSSI_SHIFT);
++	SPEX(papdcap2g, SSB_SPROM11_FEM_CFG1, SSB_SPROM11_FEM_PAPDCAP,
++	     SSB_SPROM11_FEM_PAPDCAP_SHIFT);
++	SPEX(femctrl, SSB_SPROM11_FEM_CFG1, SSB_SPROM11_FEM_CTRL,
++	     SSB_SPROM11_FEM_CTRL_SHIFT);
++	SPEX(tssiposslope5g, SSB_SPROM11_FEM_CFG2,
++	     SSB_SPROM11_FEM_TSSIPOSSLOPE, 0);
++	SPEX(epagain5g, SSB_SPROM11_FEM_CFG2, SSB_SPROM11_FEM_EPAGAIN,
++	     SSB_SPROM11_FEM_EPAGAIN_SHIFT);
++	SPEX(pdgain5g, SSB_SPROM11_FEM_CFG2, SSB_SPROM11_FEM_PDGAIN,
++	     SSB_SPROM11_FEM_PDGAIN_SHIFT);
++	SPEX(tworangetssi5g, SSB_SPROM11_FEM_CFG2,
++	     SSB_SPROM11_FEM_TWORANGETSSI, SSB_SPROM11_FEM_TWORANGETSSI_SHIFT);
++	SPEX(papdcap5g, SSB_SPROM11_FEM_CFG2, SSB_SPROM11_FEM_PAPDCAP,
++	     SSB_SPROM11_FEM_PAPDCAP_SHIFT);
++	SPEX(gainctrlsph, SSB_SPROM11_FEM_CFG2,
++	     SSB_SPROM11_FEM_GAINCTRLSPH, SSB_SPROM11_FEM_GAINCTRLSPH_SHIFT);
++
++	/* TSSI floor. */
++	SPEX(tssifloor2g, SSB_SPROM11_TSSIFLOOR_2G,
++	     SSB_SPROM11_TSSIFLOOR_MASK, 0);
++	for (i = 0; i < 4; i++)
++		SPEX(tssifloor5g[i], SSB_SPROM11_TSSIFLOOR_5GL + i * 2,
++		     SSB_SPROM11_TSSIFLOOR_MASK, 0);
++
++	/* Per-chain power info. */
++	for (i = 0; i < ARRAY_SIZE(pwr_info_offset); i++) {
++		struct ssb_sprom_core_pwr_info *p = &bus->sprom.core_pwr_info[i];
++		u16 base = pwr_info_offset[i];
++
++		p->maxp2ga = sprom[SPOFF(base + SSB_SPROM11_PWR_MAXP2GA)] & 0xff;
++
++		for (j = 0; j < 3; j++)
++			p->pa2ga[j] = sprom[SPOFF(base + SSB_SPROM11_PWR_PA2GA) + j];
++
++		v = sprom[SPOFF(base + SSB_SPROM11_PWR_MAXP5GA)];
++		p->maxp5ga[0] = v & 0xff;
++		p->maxp5ga[1] = (v >> 8) & 0xff;
++		v = sprom[SPOFF(base + SSB_SPROM11_PWR_MAXP5GA) + 1];
++		p->maxp5ga[2] = v & 0xff;
++		p->maxp5ga[3] = (v >> 8) & 0xff;
++
++		for (j = 0; j < 12; j++)
++			p->pa5ga[j] = sprom[SPOFF(base + SSB_SPROM11_PWR_PA5GA) + j];
++
++		v = sprom[SPOFF(base + SSB_SPROM11_PWR_RXGAINS0)];
++		bcma_sprom_unpack_rxgains(&bus->sprom.rxgains_5gm, i,  v       & 0xff);
++		bcma_sprom_unpack_rxgains(&bus->sprom.rxgains_5gh, i, (v >> 8) & 0xff);
++		v = sprom[SPOFF(base + SSB_SPROM11_PWR_RXGAINS1)];
++		bcma_sprom_unpack_rxgains(&bus->sprom.rxgains_2g,  i,  v       & 0xff);
++		bcma_sprom_unpack_rxgains(&bus->sprom.rxgains_5gl, i, (v >> 8) & 0xff);
++	}
++
++	SPEX(rpcal2g,    SSB_SPROM11_RPCAL_2G,  ~0, 0);
++	SPEX(rpcal5gb[0], SSB_SPROM11_RPCAL_5GL, ~0, 0);
++	SPEX(rpcal5gb[1], SSB_SPROM11_RPCAL_5GM, ~0, 0);
++	SPEX(rpcal5gb[2], SSB_SPROM11_RPCAL_5GH, ~0, 0);
++	SPEX(rpcal5gb[3], SSB_SPROM11_RPCAL_5GU, ~0, 0);
++
++	for (i = 0; i < 3; i++) {
++		bus->sprom.pdoffset40ma[i] =
++			sprom[SPOFF(SSB_SPROM11_PDOFFSET40MA) + i];
++		bus->sprom.pdoffset80ma[i] =
++			sprom[SPOFF(SSB_SPROM11_PDOFFSET80MA) + i];
++	}
++
++	SPEX(cckbw202gpo,           SSB_SPROM11_CCKBW202GPO,           ~0, 0);
++	SPEX(cckbw20ul2gpo,         SSB_SPROM11_CCKBW20UL2GPO,         ~0, 0);
++	SPEX32(mcsbw202gpo,         SSB_SPROM11_MCSBW202GPO,           ~0, 0);
++	SPEX32(mcsbw402gpo,         SSB_SPROM11_MCSBW402GPO,           ~0, 0);
++	SPEX(dot11agofdmhrbw202gpo, SSB_SPROM11_DOT11AGOFDMHRBW202GPO, ~0, 0);
++	SPEX(ofdmlrbw202gpo,        SSB_SPROM11_OFDMLRBW202GPO,        ~0, 0);
++	SPEX32(mcsbw205glpo,        SSB_SPROM11_MCSBW205GLPO,          ~0, 0);
++	SPEX32(mcsbw405glpo,        SSB_SPROM11_MCSBW405GLPO,          ~0, 0);
++	SPEX32(mcsbw805glpo,        SSB_SPROM11_MCSBW805GLPO,          ~0, 0);
++	SPEX32(mcsbw205gmpo,        SSB_SPROM11_MCSBW205GMPO,          ~0, 0);
++	SPEX32(mcsbw405gmpo,        SSB_SPROM11_MCSBW405GMPO,          ~0, 0);
++	SPEX32(mcsbw805gmpo,        SSB_SPROM11_MCSBW805GMPO,          ~0, 0);
++	SPEX32(mcsbw205ghpo,        SSB_SPROM11_MCSBW205GHPO,          ~0, 0);
++	SPEX32(mcsbw405ghpo,        SSB_SPROM11_MCSBW405GHPO,          ~0, 0);
++	SPEX32(mcsbw805ghpo,        SSB_SPROM11_MCSBW805GHPO,          ~0, 0);
++
++	SPEX(mcslr5gpo[0],          SSB_SPROM11_MCSLR5GLPO,            ~0, 0);
++	SPEX(mcslr5gpo[1],          SSB_SPROM11_MCSLR5GMPO,            ~0, 0);
++	SPEX(mcslr5gpo[2],          SSB_SPROM11_MCSLR5GHPO,            ~0, 0);
++	SPEX(sb20in40hrpo,          SSB_SPROM11_SB20IN40HRPO,          ~0, 0);
++	SPEX(sb20in40lrpo,          SSB_SPROM11_SB20IN40LRPO,          ~0, 0);
++	SPEX(sb20in80and160hr5gpo[0], SSB_SPROM11_SB20IN80AND160HR5GLPO, ~0, 0);
++	SPEX(sb20in80and160hr5gpo[1], SSB_SPROM11_SB20IN80AND160HR5GMPO, ~0, 0);
++	SPEX(sb20in80and160hr5gpo[2], SSB_SPROM11_SB20IN80AND160HR5GHPO, ~0, 0);
++	SPEX(sb20in80and160lr5gpo[0], SSB_SPROM11_SB20IN80AND160LR5GLPO, ~0, 0);
++	SPEX(sb20in80and160lr5gpo[1], SSB_SPROM11_SB20IN80AND160LR5GMPO, ~0, 0);
++	SPEX(sb20in80and160lr5gpo[2], SSB_SPROM11_SB20IN80AND160LR5GHPO, ~0, 0);
++	SPEX(sb40and80hr5gpo[0],    SSB_SPROM11_SB40AND80HR5GLPO,      ~0, 0);
++	SPEX(sb40and80hr5gpo[1],    SSB_SPROM11_SB40AND80HR5GMPO,      ~0, 0);
++	SPEX(sb40and80hr5gpo[2],    SSB_SPROM11_SB40AND80HR5GHPO,      ~0, 0);
++	SPEX(sb40and80lr5gpo[0],    SSB_SPROM11_SB40AND80LR5GLPO,      ~0, 0);
++	SPEX(sb40and80lr5gpo[1],    SSB_SPROM11_SB40AND80LR5GMPO,      ~0, 0);
++	SPEX(sb40and80lr5gpo[2],    SSB_SPROM11_SB40AND80LR5GHPO,      ~0, 0);
++	SPEX(dot11agduphrpo,        SSB_SPROM11_DOT11AGDUPHRPO,        ~0, 0);
++	SPEX(dot11agduplrpo,        SSB_SPROM11_DOT11AGDUPLRPO,        ~0, 0);
++
++	SPEX(tempthresh, SSB_SPROM11_THERMAL, SSB_SPROM8_THERMAL_TRESH,
++	     SSB_SPROM8_THERMAL_TRESH_SHIFT);
++	SPEX(tempoffset, SSB_SPROM11_THERMAL, SSB_SPROM8_THERMAL_OFFSET,
++	     SSB_SPROM8_THERMAL_OFFSET_SHIFT);
++	SPEX(rawtempsense, SSB_SPROM11_RAWTS, SSB_SPROM8_RAWTS_RAWTEMP,
++	     SSB_SPROM8_RAWTS_RAWTEMP_SHIFT);
++	SPEX(measpower, SSB_SPROM11_RAWTS, SSB_SPROM8_RAWTS_MEASPOWER,
++	     SSB_SPROM8_RAWTS_MEASPOWER_SHIFT);
++	SPEX(tempsense_slope, SSB_SPROM11_OPT_CORRX,
++	     SSB_SPROM8_OPT_CORRX_TEMP_SLOPE,
++	     SSB_SPROM8_OPT_CORRX_TEMP_SLOPE_SHIFT);
++	SPEX(tempcorrx, SSB_SPROM11_OPT_CORRX, SSB_SPROM8_OPT_CORRX_TEMPCORRX,
++	     SSB_SPROM8_OPT_CORRX_TEMPCORRX_SHIFT);
++	SPEX(tempsense_option, SSB_SPROM11_OPT_CORRX,
++	     SSB_SPROM8_OPT_CORRX_TEMP_OPTION,
++	     SSB_SPROM8_OPT_CORRX_TEMP_OPTION_SHIFT);
++	SPEX(phycal_tempdelta, SSB_SPROM11_TEMPDELTA,
++	     SSB_SPROM8_TEMPDELTA_PHYCAL,
++	     SSB_SPROM8_TEMPDELTA_PHYCAL_SHIFT);
++	SPEX(temps_period, SSB_SPROM11_TEMPDELTA, SSB_SPROM8_TEMPDELTA_PERIOD,
++	     SSB_SPROM8_TEMPDELTA_PERIOD_SHIFT);
++	SPEX(temps_hysteresis, SSB_SPROM11_TEMPDELTA,
++	     SSB_SPROM8_TEMPDELTA_HYSTERESIS,
++	     SSB_SPROM8_TEMPDELTA_HYSTERESIS_SHIFT);
++
++	/* Whole dB in bits [5:0], sign-extended, quarter dB in bits [7:6]. */
++	for (i = 0; i < 2; i++) {
++		u8 raw = i ? (sprom[SSB_SPROM11_AGBG2A0 / 2] >> 8) & 0xff
++			 : sprom[SSB_SPROM11_AGBG10 / 2] & 0xff;
++		s8 gain = (s8)((raw & 0x3f) << 2) >> 2;
++
++		bus->sprom.antenna_gain_qdb[i] = (s8)(4 * gain + (raw >> 6));
++	}
++}
++
+ /*
+  * Indicates the presence of external SPROM.
+  */
+@@ -640,8 +840,16 @@ int bcma_sprom_get(struct bcma_bus *bus)
+ 		bcma_warn(bus, "Invalid SPROM read from the PCIe card, trying to use fallback SPROM\n");
+ 		err = bcma_fill_sprom_with_fallback(bus, &bus->sprom);
+ 	} else {
+-		bcma_sprom_extract_r8(bus, sprom);
++		if (bus->sprom.revision == 11)
++			bcma_sprom_extract_r11(bus, sprom);
++		else
++			bcma_sprom_extract_r8(bus, sprom);
+ 		kfree(sprom);
++		/*
++		 * The board's NVRAM may say more about this device than its
++		 * SPROM has words for. Not having NVRAM here is the norm.
++		 */
++		bcm47xx_sprom_fill_bcma_nvram(bus, &bus->sprom);
+ 	}
+ 
+ 	return err;
+diff --git a/drivers/firmware/broadcom/bcm47xx_sprom.c b/drivers/firmware/broadcom/bcm47xx_sprom.c
+index bca03fd..333c111 100644
+--- a/drivers/firmware/broadcom/bcm47xx_sprom.c
++++ b/drivers/firmware/broadcom/bcm47xx_sprom.c
+@@ -29,6 +29,7 @@
+ #include <linux/bcm47xx_nvram.h>
+ #include <linux/bcm47xx_sprom.h>
+ #include <linux/bcma/bcma.h>
++#include <linux/err.h>
+ #include <linux/etherdevice.h>
+ #include <linux/hex.h>
+ #include <linux/if_ether.h>
+@@ -172,6 +173,58 @@ static void nvram_read_alpha2(const char *prefix, const char *name,
+ 	memcpy(val, buf, 2);
+ }
+ 
++/*
++ * AvVmid_c<core>: Av,Vmid of the chain's power-detector input for 2g, 5gl,
++ * 5gml, 5gmu and 5gh. Taken whole or not at all: a list that does not parse
++ * into ten values leaves the chain on the driver's defaults.
++ */
++static void nvram_read_avvmid(const char *prefix, int core,
++			      struct ssb_sprom *sprom, bool fallback)
++{
++	char name[sizeof("AvVmid_c0")];
++	char buf[64], *p = buf, *tok;
++	u8 v[10];
++	int n = 0;
++
++	snprintf(name, sizeof(name), "AvVmid_c%d", core);
++	if (get_nvram_var(prefix, NULL, name, buf, sizeof(buf), fallback) < 0)
++		return;
++	while (n < ARRAY_SIZE(v) && (tok = strsep(&p, ",")) != NULL) {
++		if (kstrtou8(strim(tok), 0, &v[n]))
++			return;
++		n++;
++	}
++	if (n != ARRAY_SIZE(v))
++		return;
++	memcpy(sprom->avvmid[core], v, sizeof(v));
++	sprom->avvmid_valid |= BIT(core);
++}
++
++/*
++ * The variables no SPROM revision has a word for: the board sets them in
++ * NVRAM only, next to the device's other entries, and the stock driver
++ * reads them with the same prefix. Read both when the SPROM comes from
++ * NVRAM and on top of a SPROM read from the device.
++ */
++static void bcm47xx_sprom_fill_nvram_only(struct ssb_sprom *sprom,
++					  const char *prefix, bool fallback)
++{
++	char name[sizeof("ledbh15")];
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(sprom->gpio_ext); i++) {
++		snprintf(name, sizeof(name), "ledbh%d", i + 4);
++		nvram_read_u8(prefix, NULL, name, &sprom->gpio_ext[i], 0xff,
++			      fallback);
++	}
++
++	nvram_read_u32(prefix, NULL, "boardflags3", &sprom->boardflags3, 0,
++		       fallback);
++	sprom->avvmid_valid = 0;
++	for (i = 0; i < ARRAY_SIZE(sprom->avvmid); i++)
++		nvram_read_avvmid(prefix, i, sprom, fallback);
++}
++
+ /* This is one-function-only macro, it uses local "sprom" variable! */
+ #define ENTRY(_revmask, _type, _prefix, _name, _val, _allset, _fallback) \
+ 	if (_revmask & BIT(sprom->revision)) \
+@@ -209,6 +262,8 @@ static void bcm47xx_sprom_fill_auto(struct ssb_sprom *sprom,
+ 	ENTRY(0xfffffffe, u8, pre, "ledbh1", gpio1, 0xff, fb);
+ 	ENTRY(0xfffffffe, u8, pre, "ledbh2", gpio2, 0xff, fb);
+ 	ENTRY(0xfffffffe, u8, pre, "ledbh3", gpio3, 0xff, fb);
++	if (sprom->revision)
++		bcm47xx_sprom_fill_nvram_only(sprom, pre, fb);
+ 
+ 	ENTRY(0x0000070e, u16, pre, "pa0b0", pa0b0, 0, fb);
+ 	ENTRY(0x0000070e, u16, pre, "pa0b1", pa0b1, 0, fb);
+@@ -647,45 +702,70 @@ static void bcm47xx_sprom_apply_prefix_alias(char *prefix, size_t prefix_size)
+ 	}
+ }
+ 
+-static int bcm47xx_get_sprom_bcma(struct bcma_bus *bus, struct ssb_sprom *out)
++/*
++ * The NVRAM prefix of a bcma bus's variables: pci/<bus>/<slot>/ or its
++ * devpathN alias for a PCI device, sb/<core>/ for the SoC's own core.
++ * Returns the prefix, NULL for a SoC bus without an 802.11 core, or an
++ * error pointer for a host type NVRAM knows nothing about. *fallback is
++ * set when the caller may fall back to unprefixed variables.
++ */
++static char *bcm47xx_sprom_bcma_prefix(struct bcma_bus *bus, char *buf,
++				       size_t size, bool *fallback)
+ {
+-	struct bcma_boardinfo *binfo = &bus->boardinfo;
+ 	struct bcma_device *core;
+-	char buf[10];
+-	char *prefix;
+-	bool fallback = false;
+ 
++	*fallback = false;
+ 	switch (bus->hosttype) {
+ 	case BCMA_HOSTTYPE_PCI:
+-		memset(out, 0, sizeof(struct ssb_sprom));
+ 		/* On BCM47XX all PCI buses share the same domain */
+ 		if (IS_ENABLED(CONFIG_BCM47XX))
+-			snprintf(buf, sizeof(buf), "pci/%u/%u/",
++			snprintf(buf, size, "pci/%u/%u/",
+ 				 bus->host_pci->bus->number + 1,
+ 				 PCI_SLOT(bus->host_pci->devfn));
+ 		else
+-			snprintf(buf, sizeof(buf), "pci/%u/%u/",
++			snprintf(buf, size, "pci/%u/%u/",
+ 				 pci_domain_nr(bus->host_pci->bus) + 1,
+ 				 bus->host_pci->bus->number);
+-		bcm47xx_sprom_apply_prefix_alias(buf, sizeof(buf));
+-		prefix = buf;
+-		break;
++		bcm47xx_sprom_apply_prefix_alias(buf, size);
++		return buf;
+ 	case BCMA_HOSTTYPE_SOC:
+-		memset(out, 0, sizeof(struct ssb_sprom));
+ 		core = bcma_find_core(bus, BCMA_CORE_80211);
+-		if (core) {
+-			snprintf(buf, sizeof(buf), "sb/%u/",
+-				 core->core_index);
+-			prefix = buf;
+-			fallback = true;
+-		} else {
+-			prefix = NULL;
+-		}
+-		break;
++		if (!core)
++			return NULL;
++		snprintf(buf, size, "sb/%u/", core->core_index);
++		*fallback = true;
++		return buf;
+ 	default:
++		return ERR_PTR(-EINVAL);
++	}
++}
++
++int bcm47xx_sprom_fill_bcma_nvram(struct bcma_bus *bus, struct ssb_sprom *out)
++{
++	char buf[10];
++	char *prefix;
++	bool fallback;
++
++	prefix = bcm47xx_sprom_bcma_prefix(bus, buf, sizeof(buf), &fallback);
++	if (IS_ERR(prefix))
++		return PTR_ERR(prefix);
++	bcm47xx_sprom_fill_nvram_only(out, prefix, fallback);
++	return 0;
++}
++
++static int bcm47xx_get_sprom_bcma(struct bcma_bus *bus, struct ssb_sprom *out)
++{
++	struct bcma_boardinfo *binfo = &bus->boardinfo;
++	char buf[10];
++	char *prefix;
++	bool fallback;
++
++	prefix = bcm47xx_sprom_bcma_prefix(bus, buf, sizeof(buf), &fallback);
++	if (IS_ERR(prefix)) {
+ 		pr_warn("Unable to fill SPROM for given bustype.\n");
+-		return -EINVAL;
++		return PTR_ERR(prefix);
+ 	}
++	memset(out, 0, sizeof(struct ssb_sprom));
+ 
+ 	nvram_read_u16(prefix, NULL, "boardvendor", &binfo->vendor, 0, true);
+ 	if (!binfo->vendor)
+diff --git a/include/linux/bcm47xx_sprom.h b/include/linux/bcm47xx_sprom.h
+index 40a7da3..b52c028 100644
+--- a/include/linux/bcm47xx_sprom.h
++++ b/include/linux/bcm47xx_sprom.h
+@@ -9,6 +9,7 @@
+ #include <linux/types.h>
+ #include <linux/vmalloc.h>
+ 
++struct bcma_bus;
+ struct ssb_sprom;
+ 
+ #ifdef CONFIG_BCM47XX_SPROM
+@@ -28,4 +29,19 @@ static inline int bcm47xx_sprom_register_fallbacks(void)
+ };
+ #endif
+ 
++/*
++ * The NVRAM-only variables of a bus whose SPROM was read from the device:
++ * what bcm47xx_fill_sprom() would read for it that the SPROM has no word
++ * for. Like the fallback itself, only with bcma built in.
++ */
++#if defined(CONFIG_BCM47XX_SPROM) && IS_BUILTIN(CONFIG_BCMA)
++int bcm47xx_sprom_fill_bcma_nvram(struct bcma_bus *bus, struct ssb_sprom *out);
++#else
++static inline int bcm47xx_sprom_fill_bcma_nvram(struct bcma_bus *bus,
++						struct ssb_sprom *out)
++{
++	return -ENOTSUPP;
++}
++#endif
++
+ #endif /* __BCM47XX_SPROM_H */
+diff --git a/include/linux/ssb/ssb.h b/include/linux/ssb/ssb.h
+index 7fee9af..ec5c666 100644
+--- a/include/linux/ssb/ssb.h
++++ b/include/linux/ssb/ssb.h
+@@ -23,6 +23,19 @@ struct ssb_sprom_core_pwr_info {
+ 	u8 itssi_2g, itssi_5g;
+ 	u8 maxpwr_2g, maxpwr_5gl, maxpwr_5g, maxpwr_5gh;
+ 	u16 pa_2g[4], pa_5gl[4], pa_5g[4], pa_5gh[4];
++
++	/* SROM rev 11 */
++	u8 maxp2ga;
++	u8 maxp5ga[4];
++	u16 pa2ga[3];
++	u16 pa5ga[12];
++};
++
++/* Per-band rx gain context, one value per RF chain. SROM rev 11. */
++struct ssb_sprom_rxgains {
++	u8 elnagain[3];
++	u8 triso[3];
++	u8 trelnabyp[3];
+ };
+ 
+ struct ssb_sprom {
+@@ -63,6 +76,11 @@ struct ssb_sprom {
+ 	u8 gpio1;		/* GPIO pin 1 */
+ 	u8 gpio2;		/* GPIO pin 2 */
+ 	u8 gpio3;		/* GPIO pin 3 */
++	u8 gpio_ext[12];	/* GPIO pins 4-15; NVRAM ledbh4-ledbh15 only,
++				 * no SPROM revision carries them */
++	u8 avvmid[3][5][2];	/* NVRAM AvVmid_c0..2: {Av, Vmid} for 2g, 5gl,
++				 * 5gml, 5gmu, 5gh */
++	u8 avvmid_valid;	/* bit per chain whose AvVmid_cN parsed */
+ 	u8 maxpwr_bg;		/* 2.4GHz Amplifier Max Power (in dBm Q5.2) */
+ 	u8 maxpwr_al;		/* 5.2GHz Amplifier Max Power (in dBm Q5.2) */
+ 	u8 maxpwr_a;		/* 5.3GHz Amplifier Max Power (in dBm Q5.2) */
+@@ -192,6 +210,62 @@ struct ssb_sprom {
+ 	u16 legofdm40duppo;
+ 	u8 sar2g;
+ 	u8 sar5g;
++
++	/* SROM rev 11. Populated only by the rev 11 extractor; zero on
++	 * rev <= 10 boards.
++	 */
++	struct ssb_sprom_rxgains rxgains_2g;
++	struct ssb_sprom_rxgains rxgains_5gl;
++	struct ssb_sprom_rxgains rxgains_5gm;
++	struct ssb_sprom_rxgains rxgains_5gh;
++	u8 subband5gver;
++	/* Antenna gain in quarter dB, per band: agbg0 for 2.4 GHz, aga0 for
++	 * 5 GHz, decoded from the SROM's whole-dB [5:0] + quarter-dB [7:6]
++	 * encoding. */
++	s8 antenna_gain_qdb[2];
++	u16 dot11agofdmhrbw202gpo;
++	u16 ofdmlrbw202gpo;
++	u32 mcsbw805glpo;
++	u32 mcsbw805gmpo;
++	u32 mcsbw805ghpo;
++	/* TX beamforming RX path calibration, one word for 2.4 GHz and one per
++	 * 5 GHz sub-band (l, m, h, u). */
++	u16 rpcal2g;
++	u16 rpcal5gb[4];
++	u16 pdoffset40ma[3];
++	u16 pdoffset80ma[3];
++	/* Explicit per-rate-group power offsets of the bonded channels'
++	 * sub-band rows (20-in-40, 20-in-80/160, 40-in-80, duplicate legacy),
++	 * low-rate and high-rate halves, and the MCS 8-9 offsets; nibbles.
++	 * Index 0..2 is the 5 GHz l/m/h band. */
++	u16 mcslr5gpo[3];
++	u16 sb20in40hrpo;
++	u16 sb20in40lrpo;
++	u16 sb20in80and160hr5gpo[3];
++	u16 sb20in80and160lr5gpo[3];
++	u16 sb40and80hr5gpo[3];
++	u16 sb40and80lr5gpo[3];
++	u16 dot11agduphrpo;
++	u16 dot11agduplrpo;
++	/* FEM / PA control block (SROM11_FEM_CFG1/2). femctrl seleziona lo
++	 * schema di controllo del front-end module: un driver che programma
++	 * la tabella di controllo FEM deve verificarlo, non assumerlo.
++	 */
++	u8 tssiposslope2g;
++	u8 epagain2g;
++	u8 pdgain2g;
++	u8 tworangetssi2g;
++	u8 papdcap2g;
++	u8 femctrl;
++	u8 tssiposslope5g;
++	u8 epagain5g;
++	u8 pdgain5g;
++	u8 tworangetssi5g;
++	u8 papdcap5g;
++	u8 gainctrlsph;
++	/* TSSI floor: 0x3ff quando il campo non e' programmato. */
++	u16 tssifloor2g;
++	u16 tssifloor5g[4];
+ };
+ 
+ /* Information about the PCB the circuitry is soldered on. */
+diff --git a/include/linux/ssb/ssb_regs.h b/include/linux/ssb/ssb_regs.h
+index 210f464..f5b2a23 100644
+--- a/include/linux/ssb/ssb_regs.h
++++ b/include/linux/ssb/ssb_regs.h
+@@ -606,6 +606,116 @@
+ #define SSB_SPROM8_BW40PO		0x0196
+ #define SSB_SPROM8_BWDUPPO		0x0198
+ 
++/* SROM revision 11. Only the header fields whose absolute offset moved
++ * are redefined; the bitfield masks/shifts are reused from rev 8.
++ */
++#define SSB_SPROM11_BFL3		0x008C	/* boardflags3, 32 bits */
++#define SSB_SPROM11_IL0MAC		0x0090	/* 6 byte MAC address */
++#define SSB_SPROM11_CCODE		0x0096	/* 2 byte country code */
++#define SSB_SPROM11_GPIOA		0x009A	/* ledbh0 low byte, ledbh1 high */
++#define SSB_SPROM11_GPIOB		0x009C	/* ledbh2 low byte, ledbh3 high */
++#define SSB_SPROM11_ANTAVAIL		0x00A0
++#define SSB_SPROM11_AGBG10		0x00A2	/* agbg0 low byte, agbg1 high */
++#define SSB_SPROM11_AGBG2A0		0x00A4	/* agbg2 low byte, aga0 high */
++#define SSB_SPROM11_AGA21		0x00A6	/* aga1 low byte, aga2 high */
++#define SSB_SPROM11_TXRXC		0x00A8
++/* FEM / PA control block. Layout canonico da bcmsrom_tbl.h (SROM11_FEM_CFG1/2);
++ * offset verificato sui dump raw di DSL-3580L e D6220, dove le due word
++ * decodificano tutti e sei i campi di ciascuna: 0x30A1 e 0x00A1.
++ */
++#define SSB_SPROM11_FEM_CFG1		0x00AA
++#define SSB_SPROM11_FEM_CFG2		0x00AC
++#define SSB_SPROM11_FEM_TSSIPOSSLOPE	0x0001
++#define SSB_SPROM11_FEM_EPAGAIN		0x000E
++#define SSB_SPROM11_FEM_EPAGAIN_SHIFT	1
++#define SSB_SPROM11_FEM_PDGAIN		0x01F0
++#define SSB_SPROM11_FEM_PDGAIN_SHIFT	4
++#define SSB_SPROM11_FEM_TWORANGETSSI	0x0200
++#define SSB_SPROM11_FEM_TWORANGETSSI_SHIFT	9
++#define SSB_SPROM11_FEM_PAPDCAP		0x0400
++#define SSB_SPROM11_FEM_PAPDCAP_SHIFT	10
++#define SSB_SPROM11_FEM_CTRL		0xF800	/* CFG1: femctrl */
++#define SSB_SPROM11_FEM_CTRL_SHIFT	11
++#define SSB_SPROM11_FEM_GAINCTRLSPH	0xF800	/* CFG2: gainctrlsph */
++#define SSB_SPROM11_FEM_GAINCTRLSPH_SHIFT	11
++/*
++ * Temperature words: SROM8's, four bytes lower, with the same field layout,
++ * so the SSB_SPROM8_THERMAL, _RAWTS, _OPT_CORRX and _TEMPDELTA masks apply.
++ * Verified on the TG789vac v2 dump, which programs THERMAL = 0x7800
++ * (tempthresh=120, tempoffset=0) and TEMPDELTA = 0x5500 (temps_period=5,
++ * temps_hysteresis=5, phycal_tempdelta=0) as its NVRAM says; the D6220 and
++ * DSL-3580L dumps leave all four at 0xffff.
++ */
++#define SSB_SPROM11_THERMAL		0x00AE
++#define SSB_SPROM11_RAWTS		0x00B0
++#define SSB_SPROM11_OPT_CORRX		0x00B2
++#define SSB_SPROM11_TEMPDELTA		0x00B8
++/* TSSI floor, mask 0x03ff. 2G single, 5G array of 4 (5GL/5GM/5GH/5GU).
++ * Word indices 95..99 per bcmsrom_fmt.h; verified 0xffff (unprogrammed,
++ * masks to 0x3ff) on DSL-3580L and D6220 raw dumps.
++ */
++#define SSB_SPROM11_TSSIFLOOR_2G	0x00BE
++#define SSB_SPROM11_TSSIFLOOR_5GL	0x00C0
++#define SSB_SPROM11_TSSIFLOOR_MASK	0x03FF
++#define SSB_SPROM11_PDOFFSET40MA	0x00CA	/* 3 x u16, one per chain */
++#define SSB_SPROM11_PDOFFSET80MA	0x00D0	/* 3 x u16, one per chain */
++#define SSB_SPROM11_SUBBAND5GVER	0x00D6
++
++/* Per-chain power info blocks. Stride 0x28 bytes; field layout given by
++ * SSB_SPROM11_PWR_* below.
++ */
++#define SSB_SPROM11_PWR_INFO_CORE0	0x00D8
++#define SSB_SPROM11_PWR_INFO_CORE1	0x0100
++#define SSB_SPROM11_PWR_INFO_CORE2	0x0128
++
++#define SSB_SPROM11_PWR_MAXP2GA		0x0000	/* u8 in low byte */
++#define SSB_SPROM11_PWR_PA2GA		0x0002	/* 3 x u16 */
++#define SSB_SPROM11_PWR_RXGAINS0	0x0008	/* 5gm (lo) / 5gh (hi) */
++#define SSB_SPROM11_PWR_RXGAINS1	0x000A	/* 2g  (lo) / 5gl (hi) */
++#define SSB_SPROM11_PWR_MAXP5GA		0x000C	/* 2 x u16 -> 4 x u8 */
++#define SSB_SPROM11_PWR_PA5GA		0x0010	/* 12 x u16 */
++
++/* Power-per-rate region. */
++#define SSB_SPROM11_CCKBW202GPO		0x0150
++#define SSB_SPROM11_CCKBW20UL2GPO	0x0152
++#define SSB_SPROM11_MCSBW202GPO		0x0154
++#define SSB_SPROM11_MCSBW402GPO		0x0158
++#define SSB_SPROM11_DOT11AGOFDMHRBW202GPO 0x015C
++#define SSB_SPROM11_OFDMLRBW202GPO	0x015E
++#define SSB_SPROM11_MCSBW205GLPO	0x0160
++#define SSB_SPROM11_MCSBW405GLPO	0x0164
++#define SSB_SPROM11_MCSBW805GLPO	0x0168
++#define SSB_SPROM11_RPCAL_2G		0x016C
++#define SSB_SPROM11_RPCAL_5GL		0x016E
++#define SSB_SPROM11_MCSBW205GMPO	0x0170
++#define SSB_SPROM11_MCSBW405GMPO	0x0174
++#define SSB_SPROM11_MCSBW805GMPO	0x0178
++#define SSB_SPROM11_RPCAL_5GM		0x017C
++#define SSB_SPROM11_RPCAL_5GH		0x017E
++#define SSB_SPROM11_MCSBW205GHPO	0x0180
++#define SSB_SPROM11_MCSBW405GHPO	0x0184
++#define SSB_SPROM11_MCSBW805GHPO	0x0188
++#define SSB_SPROM11_RPCAL_5GU		0x018C
++#define SSB_SPROM11_MCSLR5GLPO		0x0190
++#define SSB_SPROM11_MCSLR5GMPO		0x0192
++#define SSB_SPROM11_MCSLR5GHPO		0x0194
++#define SSB_SPROM11_SB20IN40HRPO	0x0196
++#define SSB_SPROM11_SB20IN80AND160HR5GLPO 0x0198
++#define SSB_SPROM11_SB40AND80HR5GLPO	0x019A
++#define SSB_SPROM11_SB20IN80AND160HR5GMPO 0x019C
++#define SSB_SPROM11_SB40AND80HR5GMPO	0x019E
++#define SSB_SPROM11_SB20IN80AND160HR5GHPO 0x01A0
++#define SSB_SPROM11_SB40AND80HR5GHPO	0x01A2
++#define SSB_SPROM11_SB20IN40LRPO	0x01A4
++#define SSB_SPROM11_SB20IN80AND160LR5GLPO 0x01A6
++#define SSB_SPROM11_SB40AND80LR5GLPO	0x01A8
++#define SSB_SPROM11_SB20IN80AND160LR5GMPO 0x01AA
++#define SSB_SPROM11_SB40AND80LR5GMPO	0x01AC
++#define SSB_SPROM11_SB20IN80AND160LR5GHPO 0x01AE
++#define SSB_SPROM11_SB40AND80LR5GHPO	0x01B0
++#define SSB_SPROM11_DOT11AGDUPHRPO	0x01B2
++#define SSB_SPROM11_DOT11AGDUPLRPO	0x01B4
++
+ /* Values for boardflags_lo read from SPROM */
+ #define SSB_BFL_BTCOEXIST		0x0001	/* implements Bluetooth coexistance */
+ #define SSB_BFL_PACTRL			0x0002	/* GPIO 9 controlling the PA */
