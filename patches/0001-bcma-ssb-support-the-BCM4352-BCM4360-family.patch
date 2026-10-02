@@ -198,7 +198,7 @@ index 263ef6f..cf93698 100644
  	if (min_msk)
  		bcma_pmu_write32(cc, BCMA_CC_PMU_MINRES_MSK, min_msk);
 diff --git a/drivers/bcma/host_pci.c b/drivers/bcma/host_pci.c
-index 9606321..27e5104 100644
+index 3dc2985..f6cf722 100644
 --- a/drivers/bcma/host_pci.c
 +++ b/drivers/bcma/host_pci.c
 @@ -298,6 +298,7 @@ static const struct pci_device_id bcma_pci_bridge_tbl[] = {
@@ -446,7 +446,7 @@ index e668ad7..24852ad 100644
  
  	return err;
 diff --git a/drivers/firmware/broadcom/bcm47xx_sprom.c b/drivers/firmware/broadcom/bcm47xx_sprom.c
-index 14fbcd1..712779f 100644
+index bca03fd..333c111 100644
 --- a/drivers/firmware/broadcom/bcm47xx_sprom.c
 +++ b/drivers/firmware/broadcom/bcm47xx_sprom.c
 @@ -29,6 +29,7 @@
@@ -455,9 +455,9 @@ index 14fbcd1..712779f 100644
  #include <linux/bcma/bcma.h>
 +#include <linux/err.h>
  #include <linux/etherdevice.h>
+ #include <linux/hex.h>
  #include <linux/if_ether.h>
- #include <linux/ssb/ssb.h>
-@@ -171,6 +172,58 @@ static void nvram_read_alpha2(const char *prefix, const char *name,
+@@ -172,6 +173,58 @@ static void nvram_read_alpha2(const char *prefix, const char *name,
  	memcpy(val, buf, 2);
  }
  
@@ -516,7 +516,7 @@ index 14fbcd1..712779f 100644
  /* This is one-function-only macro, it uses local "sprom" variable! */
  #define ENTRY(_revmask, _type, _prefix, _name, _val, _allset, _fallback) \
  	if (_revmask & BIT(sprom->revision)) \
-@@ -208,6 +261,8 @@ static void bcm47xx_sprom_fill_auto(struct ssb_sprom *sprom,
+@@ -209,6 +262,8 @@ static void bcm47xx_sprom_fill_auto(struct ssb_sprom *sprom,
  	ENTRY(0xfffffffe, u8, pre, "ledbh1", gpio1, 0xff, fb);
  	ENTRY(0xfffffffe, u8, pre, "ledbh2", gpio2, 0xff, fb);
  	ENTRY(0xfffffffe, u8, pre, "ledbh3", gpio3, 0xff, fb);
@@ -525,7 +525,7 @@ index 14fbcd1..712779f 100644
  
  	ENTRY(0x0000070e, u16, pre, "pa0b0", pa0b0, 0, fb);
  	ENTRY(0x0000070e, u16, pre, "pa0b1", pa0b1, 0, fb);
-@@ -646,45 +701,70 @@ static void bcm47xx_sprom_apply_prefix_alias(char *prefix, size_t prefix_size)
+@@ -647,45 +702,70 @@ static void bcm47xx_sprom_apply_prefix_alias(char *prefix, size_t prefix_size)
  	}
  }
  
@@ -619,11 +619,11 @@ index 14fbcd1..712779f 100644
  	nvram_read_u16(prefix, NULL, "boardvendor", &binfo->vendor, 0, true);
  	if (!binfo->vendor)
 diff --git a/include/linux/bcm47xx_sprom.h b/include/linux/bcm47xx_sprom.h
-index f8254fd..0af1b9c 100644
+index 40a7da3..b52c028 100644
 --- a/include/linux/bcm47xx_sprom.h
 +++ b/include/linux/bcm47xx_sprom.h
 @@ -9,6 +9,7 @@
- #include <linux/kernel.h>
+ #include <linux/types.h>
  #include <linux/vmalloc.h>
  
 +struct bcma_bus;
@@ -651,7 +651,7 @@ index f8254fd..0af1b9c 100644
 +
  #endif /* __BCM47XX_SPROM_H */
 diff --git a/include/linux/ssb/ssb.h b/include/linux/ssb/ssb.h
-index 1f326da..98b72dd 100644
+index 7fee9af..ec5c666 100644
 --- a/include/linux/ssb/ssb.h
 +++ b/include/linux/ssb/ssb.h
 @@ -23,6 +23,19 @@ struct ssb_sprom_core_pwr_info {

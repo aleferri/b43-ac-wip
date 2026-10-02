@@ -14,7 +14,7 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     4 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |    92 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 10834 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 10832 +++++++++++++++-
  drivers/net/wireless/broadcom/b43/phy_ac.h    |   822 +-
  drivers/net/wireless/broadcom/b43/ppr_ac.c    |   276 +
  drivers/net/wireless/broadcom/b43/ppr_ac.h    |    84 +
@@ -22,7 +22,7 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
  .../net/wireless/broadcom/b43/radio_2069.h    |    48 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1153 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    79 +
- 10 files changed, 15113 insertions(+), 23 deletions(-)
+ 10 files changed, 15112 insertions(+), 22 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -145,10 +145,10 @@ index 0000000..2e3420a
 +	b43_read32(dev, B43_MMIO_MACCTL);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index 756cd44..a3d10ee 100644
+index fe102ea..a3d10ee 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
-@@ -1,23 +1,52 @@
+@@ -1,17 +1,46 @@
  // SPDX-License-Identifier: GPL-2.0-or-later
  /*
 - * Broadcom B43 wireless driver
@@ -201,13 +201,6 @@ index 756cd44..a3d10ee 100644
  
  static int b43_phy_ac_op_allocate(struct b43_wldev *dev)
  {
- 	struct b43_phy_ac *phy_ac;
- 
--	phy_ac = kzalloc(sizeof(*phy_ac), GFP_KERNEL);
-+	phy_ac = kzalloc_obj(*phy_ac);
- 	if (!phy_ac)
- 		return -ENOMEM;
- 	dev->phy.ac = phy_ac;
 @@ -62,27 +91,10792 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
