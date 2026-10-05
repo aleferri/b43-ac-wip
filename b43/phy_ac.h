@@ -390,7 +390,10 @@ struct b43_phy_ac {
 	u16 crs_low;
 	/* RX-IQ accumulators of the measurement, consumed by the solve. */
 	struct b43_phy_ac_iq_acc iq_acc[B43_PHY_AC_MAX_CORES];
-	/* Saved by tempsense_radio_setup(), restored by _restore(). */
+	/*
+	 * Saved by tempsense_radio_setup(), restored by
+	 * tempsense_radio_restore().
+	 */
 	u16 tempsense_radio_saved[B43_PHY_AC_MAX_CORES][7];
 	/*
 	 * TX baseband multiplier, IQLOCAL 0x63 + 4*core mirrored at 0x73 +
@@ -432,7 +435,7 @@ struct b43_phy_ac {
 	 * 25 registers of b43_phy_ac_rxgain_cfg_regs[] plus 0x073e, and the
 	 * three RFSEQ gain rows 0x0100/0x0103/0x0106 + core, read by
 	 * rxgain_config_readback() and written back by
-	 * rxiq_teardown_apply_defaults().
+	 * rxiqcal_teardown_apply_defaults().
 	 */
 	u16 lo_dac[B43_PHY_AC_MAX_CORES][4];
 	u16 txiqlo_coef[B43_PHY_AC_MAX_CORES][3];
@@ -500,14 +503,6 @@ struct b43_phy_ac {
 	/* Operating width of the same configuration. */
 	enum nl80211_chan_width cal_width;
 
-	/*
-	 * SSID length in bytes. Not PHY state: the probe response length
-	 * depends on it, and the PLCP of the eight rates
-	 * b43_phy_ac_prb_rsp_plcp() computes depends on that. Set by the core
-	 * (on hardware, from mac80211's template). The recapture's SSID is
-	 * `test-ap5`; see docs/retrace-todo.md.
-	 */
-	u8 ssid_len;
 	/*
 	 * TX power target, the output of b43_phy_ac_txpwr_recalc(): the
 	 * per-rate table after SROM, regulatory ceiling and margin, its
@@ -639,7 +634,6 @@ extern const struct b43_phy_operations b43_phyops_ac;
 
 
 bool b43_phy_ac_force_rf_sequence(struct b43_wldev *dev, u16 rf_seq, u16 gate);
-u16  b43_phy_ac_classifier(struct b43_wldev *dev, u16 mask, u16 val);
 
 /*
  * A read whose value nobody uses, a potential logic error: the log puts
@@ -649,14 +643,14 @@ u16  b43_phy_ac_classifier(struct b43_wldev *dev, u16 mask, u16 val);
 #define b43_phy_read_log(dev, reg) ({					\
 	u16 __r = (reg), __v = b43_phy_read((dev), __r);		\
 	if (B43_DEBUG)							\
-		b43dbg((dev)->wl, "phy   rd 0x%04x = 0x%04x\n",		\
+		b43info((dev)->wl, "phy   rd 0x%04x = 0x%04x\n",		\
 		       __r, __v);					\
 	__v;								\
 })
 #define b43_radio_read_log(dev, reg) ({					\
 	u16 __r = (reg), __v = b43_radio_read((dev), __r);		\
 	if (B43_DEBUG)							\
-		b43dbg((dev)->wl, "radio rd 0x%04x = 0x%04x\n",		\
+		b43info((dev)->wl, "radio rd 0x%04x = 0x%04x\n",		\
 		       __r, __v);					\
 	__v;								\
 })
@@ -717,17 +711,6 @@ void b43_phy_ac_radio_iqcal_teardown(struct b43_wldev *dev);
 void b43_phy_ac_rxiqcal_teardown_apply_defaults(struct b43_wldev *dev);
 void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev);
 
-/* The four RX gain block fields that follow the width; see phy_ac.c. */
-struct b43_phy_ac_rxgain_bw {
-	u16 f73a_07, f739_7e, f73a_08, f73a_60;
-};
-const struct b43_phy_ac_rxgain_bw *b43_phy_ac_rxgain_bw(struct b43_wldev *dev);
-/*
- * One pass of the probe-response PLCP and duration, for callers outside
- * the channel setup.
- */
-void b43_phy_ac_prb_rsp_plcp_pass(struct b43_wldev *dev);
-
 /*
  * One AFE cal iteration: arm a command on 0x0380, wait on the busy bit,
  * read the result back and rewrite it at @wr_off. @core_off is
@@ -762,94 +745,25 @@ bool b43_phy_ac_txpwr_recalc(struct b43_wldev *dev);
  */
 void b43_phy_ac_noise_sample_done(struct b43_wldev *dev);
 
-/* shm 0x00ce, also emitted by the harness; derived in phy_ac.c. */
-u16 b43_phy_ac_beacon_pwr_offset(struct b43_wldev *dev);
-/* shm 0x00cc of the BSS configuration, the chain mask; in phy_ac.c. */
-u16 b43_phy_ac_bss_cc(struct b43_wldev *dev);
-
 /* Helpers across the MAC/PHY boundary; rationale in helpers_phy_ac.c. */
 void b43_phy_ac_mhf_maskset(struct b43_wldev *dev, u16 slot, u16 mask, u16 val);
 void b43_mac_bw_set(struct b43_wldev *dev, u32 bw);
 void b43_phy_ac_force_clock(struct b43_wldev *dev, bool force);
 
 /*
- * Function-boundary markers for the userspace test harness. B43_AC_FN() at
- * the top of a function makes the harness bracket the ops that follow with
- * the function name, so fn_map.py can segment the trace by exact
- * boundaries. The exit marker is emitted on any return through GCC's
- * cleanup attribute, so nested calls nest. No-op in the kernel build.
+ * Trace points of the userspace harnesses in test/, which define them.
+ * B43_AC_BLOCK() also names the sections of the bring-up in the kernel log,
+ * so a hang shows the last one reached.
  */
-#ifdef B43_AC_FN_TRACE
-void b43_ac_fn_enter(const char *fn);
-void b43_ac_fn_leave(const char *fn);
-static inline void b43_ac_fn_cleanup(const char *const *fn) { b43_ac_fn_leave(*fn); }
-#define B43_AC_FN() \
-	const char *const __b43_fn __attribute__((cleanup(b43_ac_fn_cleanup))) = __func__; \
-	b43_ac_fn_enter(__func__)
-#else
+#ifndef B43_AC_FN
 #define B43_AC_FN() do { } while (0)
 #endif
-
-/*
- * Block markers, for sections of a long function worth locating on their
- * own: a function-level capture marker collapses every stretch a function
- * accounts for into one interval, and op_switch_channel() covers about
- * forty. B43_AC_BLOCK("name") names the section that starts there, so
- * anchors.py can write a marker for it; the granularity is chosen by hand.
- *
- * A point marker, with no closing counterpart: the sections are stretches
- * of straight-line code, not braced blocks. A block runs until the next
- * marker or the end of the function, which the tools close.
- */
-#ifdef B43_AC_FN_TRACE
-void b43_ac_block_mark(const char *name);
-#define B43_AC_BLOCK(name) b43_ac_block_mark(name)
-#else
-#define B43_AC_BLOCK(name) do { (void)sizeof(name); } while (0)
+#ifndef B43_AC_BLOCK
+#define B43_AC_BLOCK(dev, name) \
+	b43info((dev)->wl, "AC-PHY: %s: %s\n", __func__, name)
 #endif
-
-#if UNIT_TEST
-/*
- * Core work the stock driver runs inside the PHY's sequences, which b43
- * runs from the core or from mac80211 at another time. test/unit emits the
- * core's operations at the stock driver's point, so that the op-for-op
- * comparison keeps its order. Only work whose owner and content are known.
- */
-enum b43_phy_ac_core_site {
-	/* b43_wireless_core_reset(): the MACCONTROL write after a core reset */
-	B43_AC_SITE_CORE_RESET,
-	/* b43_upload_microcode(): the PSM jump to 0 before the upload */
-	B43_AC_SITE_UCODE_LOAD,
-	/* b43_upload_microcode() starting the PSM, then b43_gpio_init() */
-	B43_AC_SITE_UCODE_START,
-	/* the stock driver's last MAC toggle and the core reset of its down */
-	B43_AC_SITE_CORE_DOWN,
-	/* b43_adjust_opmode(): beacon promiscuity off, inside a calibration flush */
-	B43_AC_SITE_CAL_BCNPROMISC_OFF,
-	/* b43_adjust_opmode(): beacon promiscuity and filter bits, switch tail */
-	B43_AC_SITE_OPMODE_FILTERS,
-	/*
-	 * Leaving the BSS on a down, INFRA off / DISCPMQ on then AP off, with
-	 * the stock driver's MAC toggles around them: b43 sets the mode from
-	 * remove_interface and keeps the MAC suspended through the down
-	 */
-	B43_AC_SITE_DOWN_OPMODE,
-	B43_AC_SITE_DOWN_OPMODE_END,
-	/* b43_security_init(): the key rows of the address match table */
-	B43_AC_SITE_KEYS_CLEAR,
-	/* b43_upload_card_macaddress() before the BSSID is known */
-	B43_AC_SITE_MACFILTER_FIRST,
-	/* b43_macfilter_set() of BSSID and station, with their flags */
-	B43_AC_SITE_MACFILTER,
-	/* b43_ac_cac_match_gate(false) from b43_op_config() */
-	B43_AC_SITE_CAC_CLOSE,
-	/* b43_update_templates() on start_ap */
-	B43_AC_SITE_BEACON_START,
-	/* b43_update_templates() between two watchdog counter passes */
-	B43_AC_SITE_BEACON_WD,
-};
-
-void b43_phy_ac_core_site(struct b43_wldev *dev, enum b43_phy_ac_core_site site);
+#ifndef B43_AC_CORE_SITE
+#define B43_AC_CORE_SITE(dev, site) do { } while (0)
 #endif
 
 #endif /* B43_PHY_AC_H_ */

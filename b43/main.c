@@ -3889,19 +3889,23 @@ static int b43_chip_init(struct b43_wldev *dev)
 	if (err)
 		goto out;	/* firmware is released later */
 
+	b43info(dev->wl, "init: GPIO\n");
 	err = b43_gpio_init(dev);
 	if (err)
 		goto out;	/* firmware is released later */
 
+	b43info(dev->wl, "init: initvals\n");
 	err = b43_upload_initvals(dev);
 	if (err)
 		goto err_gpio_clean;
 
+	b43info(dev->wl, "init: band initvals\n");
 	err = b43_bsinit(dev);
 	if (err)
 		goto err_gpio_clean;
 
 	if (dev->dev->core_rev == 42) {
+		b43info(dev->wl, "init: TX FIFOs\n");
 		err = b43_txfifo_init_rev42(dev);
 		if (err)
 			goto err_gpio_clean;
@@ -3917,6 +3921,7 @@ static int b43_chip_init(struct b43_wldev *dev)
 	 * b43_wireless_core_init() on the AC, and here on the other PHYs.
 	 */
 	if (phy->type == B43_PHYTYPE_AC) {
+		b43info(dev->wl, "init: MAC\n");
 		b43_chip_init_mac(dev);
 	} else {
 		err = b43_phy_bringup(dev);
@@ -5262,6 +5267,8 @@ static int b43_wireless_core_start(struct b43_wldev *dev)
 	ieee80211_wake_queues(dev->wl->hw);
 	b43_set_status(dev, B43_STAT_STARTED);
 
+	b43info(dev->wl, "start: enabling the MAC\n");
+
 	/* Start data flow (TX/RX). */
 	b43_mac_enable(dev);
 	b43_write32(dev, B43_MMIO_GEN_IRQ_MASK, dev->irq_mask);
@@ -5847,6 +5854,8 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
 	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_PHYTYPE, phy->type);
 	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_PHYVER, phy->rev);
 
+	b43info(dev->wl, "init: DMA\n");
+
 	if (b43_bus_host_is_pcmcia(dev->dev) ||
 	    b43_bus_host_is_sdio(dev->dev)) {
 		dev->__using_pio_transfers = true;
@@ -5894,11 +5903,13 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
 			b43_amt_write(dev, i, NULL, 0);
 	}
 
+	b43info(dev->wl, "init: address match and keys\n");
 	b43_upload_card_macaddress(dev);
 	b43_security_init(dev);
 
 	/* The AC PHY comes up after the MAC is set up, see b43_chip_init(). */
 	if (phy->type == B43_PHYTYPE_AC) {
+		b43info(dev->wl, "init: PHY\n");
 		err = b43_phy_bringup(dev);
 		if (err)
 			goto err_dma_free;

@@ -223,6 +223,13 @@ static void bcma_pmu_resources_init(struct bcma_drv_cc *cc)
 		 * (min_msk stays 0) as the ROM value (observed 0x7fb).
 		 */
 		max_msk = 0x7ff;
+		/*
+		 * The up/down time of resource 6, which the stock driver sets
+		 * on the BCM4360 (agcombo, wl 7.14) and the BCM4352 (Archer
+		 * T5E, wl 6.30.223) alike, before the masks take effect.
+		 */
+		bcma_pmu_write32(cc, BCMA_CC_PMU_RES_TABSEL, 6);
+		bcma_pmu_write32(cc, BCMA_CC_PMU_RES_UPDNTM, 0x00200001);
 		break;
 	default:
 		bcma_debug(bus, "PMU resource config unknown or not needed for device 0x%04X\n",

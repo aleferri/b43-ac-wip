@@ -123,17 +123,53 @@ case.
 
 Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
 ---
- drivers/bcma/driver_chipcommon_pmu.c      |  42 +++++
+ drivers/bcma/core.c                       |   2 +-
+ drivers/bcma/driver_chipcommon.c          |  10 ++
+ drivers/bcma/driver_chipcommon_pmu.c      |  49 +++++
  drivers/bcma/host_pci.c                   |   1 +
  drivers/bcma/sprom.c                      | 210 +++++++++++++++++++++-
  drivers/firmware/broadcom/bcm47xx_sprom.c | 124 ++++++++++---
  include/linux/bcm47xx_sprom.h             |  16 ++
  include/linux/ssb/ssb.h                   |  74 ++++++++
  include/linux/ssb/ssb_regs.h              | 110 ++++++++++++
- 7 files changed, 554 insertions(+), 23 deletions(-)
+ 9 files changed, 572 insertions(+), 24 deletions(-)
 
+diff --git a/drivers/bcma/core.c b/drivers/bcma/core.c
+index 37a5ffe..f424668 100644
+--- a/drivers/bcma/core.c
++++ b/drivers/bcma/core.c
+@@ -100,7 +100,7 @@ void bcma_core_set_clockmode(struct bcma_device *core,
+ 			bcma_err(core->bus, "HT force timeout\n");
+ 		break;
+ 	case BCMA_CLKMODE_DYNAMIC:
+-		bcma_set32(core, BCMA_CLKCTLST, ~BCMA_CLKCTLST_FORCEHT);
++		bcma_mask32(core, BCMA_CLKCTLST, ~BCMA_CLKCTLST_FORCEHT);
+ 		break;
+ 	}
+ }
+diff --git a/drivers/bcma/driver_chipcommon.c b/drivers/bcma/driver_chipcommon.c
+index fd91a39..46cc081 100644
+--- a/drivers/bcma/driver_chipcommon.c
++++ b/drivers/bcma/driver_chipcommon.c
+@@ -227,6 +227,16 @@ void bcma_core_chipcommon_init(struct bcma_drv_cc *cc)
+ 			((leddc_on << BCMA_CC_GPIOTIMER_ONTIME_SHIFT) |
+ 			 (leddc_off << BCMA_CC_GPIOTIMER_OFFTIME_SHIFT)));
+ 	}
++
++	/*
++	 * Bits 5:2 of corecontrol, which the stock driver sets next to the
++	 * GPIO timer: wl 6.30.223 writes 0x3c on the Archer T5E, wl 6.30.102.7
++	 * pulses the bits low and back high on the DSL-3580L. Bit 3 is
++	 * UARTCLKEN; bits 2, 4 and 5 are not named here.
++	 */
++	if (cc->core->bus->chipinfo.id == BCMA_CHIP_ID_BCM4352 ||
++	    cc->core->bus->chipinfo.id == BCMA_CHIP_ID_BCM4360)
++		bcma_cc_set32(cc, BCMA_CC_CORECTL, 0x3c);
+ 	cc->ticks_per_ms = bcma_chipco_watchdog_ticks_per_ms(cc);
+ 
+ 	cc->setup_done = true;
 diff --git a/drivers/bcma/driver_chipcommon_pmu.c b/drivers/bcma/driver_chipcommon_pmu.c
-index 263ef6f..cf93698 100644
+index 263ef6f..18a7870 100644
 --- a/drivers/bcma/driver_chipcommon_pmu.c
 +++ b/drivers/bcma/driver_chipcommon_pmu.c
 @@ -156,6 +156,32 @@ static void bcma_pmu_pll_init(struct bcma_drv_cc *cc)
@@ -169,7 +205,7 @@ index 263ef6f..cf93698 100644
  	}
  }
  
-@@ -188,11 +214,27 @@ static void bcma_pmu_resources_init(struct bcma_drv_cc *cc)
+@@ -188,11 +214,34 @@ static void bcma_pmu_resources_init(struct bcma_drv_cc *cc)
  			  BCMA_RES_4314_WL_CORE_READY;
  		max_msk = 0x3FFFFFFF;
  		break;
@@ -182,6 +218,13 @@ index 263ef6f..cf93698 100644
 +		 * (min_msk stays 0) as the ROM value (observed 0x7fb).
 +		 */
 +		max_msk = 0x7ff;
++		/*
++		 * The up/down time of resource 6, which the stock driver sets
++		 * on the BCM4360 (agcombo, wl 7.14) and the BCM4352 (Archer
++		 * T5E, wl 6.30.223) alike, before the masks take effect.
++		 */
++		bcma_pmu_write32(cc, BCMA_CC_PMU_RES_TABSEL, 6);
++		bcma_pmu_write32(cc, BCMA_CC_PMU_RES_UPDNTM, 0x00200001);
 +		break;
  	default:
  		bcma_debug(bus, "PMU resource config unknown or not needed for device 0x%04X\n",

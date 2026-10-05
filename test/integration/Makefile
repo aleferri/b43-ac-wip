@@ -52,7 +52,7 @@ KFLAGS := -nostdinc -I$(CURDIR)/$(UP) $(KINC) -D__KERNEL__ -DMODULE -DKBUILD_MOD
           -mno-red-zone \
           -Werror=implicit-function-declaration \
           -include $(CURDIR)/compat.h \
-          -DB43_AC_FN_TRACE
+          -include $(CURDIR)/../ac_trace.h
 
 # CONFIG_BCM63XX: il bersaglio e le board della collezione sono router BCM63xx
 # con la radio su PCIe, e su quegli host b43 rilegge gli indirizzi dei

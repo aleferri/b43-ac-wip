@@ -12,6 +12,8 @@ over the tag `scripts/regen-patches.sh` fetches. They become
 | `drivers/firmware/broadcom/bcm47xx_sprom.c`, `include/linux/bcm47xx_sprom.h` | `ledbh4..15`, `boardflags3` and `AvVmid_c0..2` from NVRAM |
 | `drivers/bcma/driver_chipcommon_pmu.c` | PLL and resource init for the family |
 | `drivers/bcma/host_pci.c` | the BCM4352 PCI ID, `0x43b3` |
+| `drivers/bcma/driver_chipcommon.c` | corecontrol bits 5:2 next to the GPIO timer, as the stock driver sets them |
+| `drivers/bcma/core.c` | `BCMA_CLKMODE_DYNAMIC` clears FORCEHT instead of setting every other bit |
 
 The SROM rev 11 extractor adds `bcma_sprom_extract_r11()` and the fields the
 AC-PHY reads:

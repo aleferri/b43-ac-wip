@@ -1071,7 +1071,6 @@ static const struct b43_phy_ac_table_desc b43_phy_ac_tables_rev0[] = {
 
 /* Init */
 
-/* TODO: calibrate. */
 /* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   1272-4987]
  */
@@ -1128,8 +1127,6 @@ void b43_actab_write_r11(struct b43_wldev *dev,
 	 * It does not rely on the offset auto-incrementing, which is what
 	 * actab_write_bulk() does; it reselects id and offset for every cell.
 	 * Five ops per cell over 464 cells, so 2320 ops.
-	 *
-	 * The TBL.WR label comes from the tracer's wrap; see test/unit/wrap.c.
 	 */
 	for (i = 0; i < len; i++) {
 		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);

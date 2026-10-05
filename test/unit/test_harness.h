@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0
- * Test-harness public API. Included by main.c and wrap.c only; the
- * scratch driver code must NOT depend on this file.
+ * Test-harness public API, for the harness's own files; the scratch
+ * driver code must NOT depend on this file.
  *
  * Read plans: before invoking a flow, register a fixed sequence of
  * return values for each address that the code polls or otherwise
@@ -57,5 +57,10 @@ void b43_test_oracle_report(void);
 
 /* Riporta il contatore MAC allo stato d'ingresso dei flow: MAC sospeso. */
 void b43_test_mac_reset(void);
+
+/* The PHY's share of core writes, defined in phy_ac_test.c. */
+u16 b43_phy_ac_bss_cc(struct b43_wldev *dev);
+u16 b43_phy_ac_beacon_pwr_offset(struct b43_wldev *dev);
+void b43_phy_ac_prb_rsp_plcp_pass(struct b43_wldev *dev, unsigned int ssid_len);
 
 #endif

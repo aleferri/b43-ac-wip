@@ -27,9 +27,8 @@ struct ssb_sprom;
  *
  * This is the decode `wl curpower` prints as "Board Limits" on the agcombo and
  * DSL-3580L dumps (docs/txpwr-target-derivation.md). The table therefore holds
- * one row of eight groups per bandwidth, and b43_ppr_ac_ofdm() and
- * b43_ppr_ac_mcs() translate a rate into its group. There is no CCK field for
- * 5 GHz in rev 11.
+ * one row of eight groups per bandwidth, and b43_ppr_ac_ofdm() translates a
+ * legacy rate into its group. There is no CCK field for 5 GHz in rev 11.
  *
  * A channel loads the 20 MHz row at every width, the 40 MHz row from 40 MHz up
  * and the 80 MHz row at 80: those are the 20-in-40, 20-in-80 and 40-in-80 rate
@@ -40,7 +39,6 @@ struct ssb_sprom;
 #define B43_PPR_AC_GROUPS	8
 #define B43_PPR_AC_ROWS		3	/* 20, 40, 80 MHz */
 #define B43_PPR_AC_OFDM_RATES	8	/* 6, 9, 12, 18, 24, 36, 48, 54 Mb/s */
-#define B43_PPR_AC_MCS		10	/* MCS 0-9 */
 
 struct b43_ppr_ac {
 	union {
@@ -59,13 +57,11 @@ u8 b43_ppr_ac_get_max(const struct b43_ppr_ac *ppr);
 
 /*
  * The power of one rate on the row of @width. @rate indexes the legacy OFDM
- * rates in bitrate order, 0 = 6 Mb/s to 7 = 54 Mb/s; @mcs is the MCS index,
- * 0 to 9. A row the table did not load reads as zero.
+ * rates in bitrate order, 0 = 6 Mb/s to 7 = 54 Mb/s. A row the table did not
+ * load reads as zero.
  */
 u8 b43_ppr_ac_ofdm(const struct b43_ppr_ac *ppr, enum nl80211_chan_width width,
 		   unsigned int rate);
-u8 b43_ppr_ac_mcs(const struct b43_ppr_ac *ppr, enum nl80211_chan_width width,
-		  unsigned int mcs);
 
 bool b43_ppr_ac_sprom_has_subband_po(const struct ssb_sprom *sprom);
 

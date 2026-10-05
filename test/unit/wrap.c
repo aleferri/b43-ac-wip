@@ -1666,6 +1666,17 @@ void bcma_chipco_regctl_maskset(struct bcma_drv_cc *cc, u32 offset,
 }
 
 /*
+ * clk_ctl_st of the 802.11 core is an MMIO access, which no accessor capture
+ * holds: nothing to trace.
+ */
+void bcma_core_set_clockmode(struct bcma_device *core,
+			     enum bcma_clkmode clkmode)
+{
+	(void)core;
+	(void)clkmode;
+}
+
+/*
  * A chipcommon register set the way the vendor's si_corereg() is traced,
  * with the bits the driver sets as both value and mask.
  */

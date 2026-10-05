@@ -121,7 +121,7 @@ at zero proves the register absent, not the phase;
 
 `compare.py` holds `SOLO_VENDOR`, `SOLO_PORT`, `SOLO_PORT_SENZA_CLASSE`,
 `PERIMETER`, `VAL_NONDET` and `VAL_TOLLERANZA`, and `cmp_skip.py` holds `MOVED`
-(empty: see the `UNIT_TEST` sites below) and `KNOWN`, each entry with its
+(empty: see the core sites below) and `KNOWN`, each entry with its
 reason. They are the only place where an
 operation is declared not to count, and every entry suspends a piece of the
 goal:
@@ -141,14 +141,23 @@ goal:
   intercepted at link time with `-Wl,--wrap=<sym>` (`WRAP_SYMS` in the
   `Makefile`). A new driver helper that touches hardware needs a line there, or
   its operations vanish.
-- **Two defines.** `-DALLOW_24=true`, temporary, lifts `switch_channel`'s
-  refusal of 2.4 GHz; `AC_CHANNEL` 1 to 14 is that band. `-DUNIT_TEST=1`
-  compiles the `b43_phy_ac_core_site()` calls in the PHY: the points where the
-  stock driver runs core work inside a PHY sequence -- the address match
-  rows, the beacon reloads, the gate of the availability check -- which b43
-  runs from the core at another time. `main.c` emits the core's operations
-  there, so the positional gate keeps the stock order. A site is only for work
-  that is known and belongs to the core; what is not understood stays out.
+- **What the driver leaves to the harness.** `-DALLOW_24=true`, temporary,
+  lifts `switch_channel`'s refusal of 2.4 GHz; `AC_CHANNEL` 1 to 14 is that
+  band. `../ac_trace.h` (shared with `../integration`) and `core_sites.h` are
+  force-included and give a body to the trace points the driver leaves as
+  no-ops: `B43_AC_FN()` and `B43_AC_BLOCK()`, and `B43_AC_CORE_SITE()`, the
+  points where the stock driver runs core work inside a PHY sequence -- the
+  address match rows, the beacon reloads, the gate of the availability check
+  -- which b43 runs from the core at another time. `main.c` emits the core's
+  operations there, so the positional gate keeps the stock order. A site is
+  only for work that is known and belongs to the core; what is not understood
+  stays out.
+- **`phy_ac_test.c`** compiles the driver's `phy_ac.c` together with the
+  harness's RX-IQ estimator and the PHY's share of the core writes the core
+  mirrors emit; they reach `phy_ac.c`'s static helpers that way, and none of
+  it is in the driver.
+- **Warnings are errors**, unused ones included: driver code the build does
+  not reach shows up here.
 - **`wrap.c`** emits a wl-diag line per access, keeps a mirror of the writes and
   serves reads from the oracle, then any read plan, then the mirror. Table
   cells have their own oracle and mirror keyed by `(id, offset)`.

@@ -134,8 +134,7 @@ static unsigned int g_edcf_reload_mask = 0x1;
 
 /*
  * Lunghezza dell'SSID della cattura, in byte. Un ingresso solo: da lui
- * dipendono la cella 0x001e, le celle BTL e -- via g_ac.ssid_len -- i PLCP
- * degli otto rate. Lo sweep ricatturato usa `test-ap5`, otto caratteri; quello
+ * dipendono la cella 0x001e, le celle BTL e i PLCP degli otto rate. Lo sweep ricatturato usa `test-ap5`, otto caratteri; quello
  * vecchio ne usava sette, ed e' la ragione per cui i valori derivati erano
  * tutti uno sotto. Leva perche' la prossima cattura potra' usarne un terzo.
  */
@@ -446,7 +445,6 @@ static void mount_board(const struct board_profile *p)
 
 		if (e && *e)
 			g_ssid_len = (unsigned int)strtoul(e, NULL, 0);
-		g_ac.ssid_len = (u8)g_ssid_len;
 	}
 	{
 		const char *e = getenv("AC_EDCF_RELOADS");
@@ -914,9 +912,6 @@ void b43_phy_ac_core_site(struct b43_wldev *dev, enum b43_phy_ac_core_site site)
 	switch (site) {
 	case B43_AC_SITE_CORE_DOWN:
 		emit_core_down();
-		break;
-	case B43_AC_SITE_CAL_BCNPROMISC_OFF:
-		emit_core_opmode(~0x00100000u, 0);
 		break;
 	case B43_AC_SITE_OPMODE_FILTERS:
 		emit_core_opmode(~0x00100000u, 0);
@@ -1803,7 +1798,7 @@ static void emit_core_beacon_reload(unsigned int which)
 	b43_shm_write16(dev, B43_SHM_SHARED, btl, beacon_tpl_len());
 
 	b43_mac_suspend(dev);
-	b43_phy_ac_prb_rsp_plcp_pass(dev);
+	b43_phy_ac_prb_rsp_plcp_pass(dev, g_ssid_len);
 	b43_mac_enable(dev);
 
 	/*
@@ -1884,7 +1879,7 @@ static void emit_core_bss_config(void)
 	 * cold01 li mette a #13625, subito dopo PRSSIDLEN, e poi di nuovo in
 	 * fondo a ognuna delle quattro passate conf_tx.
 	 */
-	b43_phy_ac_prb_rsp_plcp_pass(&g_wldev);
+	b43_phy_ac_prb_rsp_plcp_pass(&g_wldev, g_ssid_len);
 }
 
 /*
@@ -1977,7 +1972,7 @@ static void emit_core_conf_tx_pass(unsigned int n)
 	emit_core_edcf_queue(&edcf_queues[n]);
 	if (g_edcf_reload_mask & (1u << n))
 		emit_core_bss_config1();
-	b43_phy_ac_prb_rsp_plcp_pass(&g_wldev);
+	b43_phy_ac_prb_rsp_plcp_pass(&g_wldev, g_ssid_len);
 }
 
 static void emit_core_conf_tx_passes(void)
@@ -1992,9 +1987,17 @@ static void emit_core_conf_tx_passes(void)
 	 * riprenda: cold01 lo mette subito prima del peek su PHY 0x019e della
 	 * seconda meta'. E' l'impulso che il ciclo di channel_setup_tail
 	 * contava insieme agli altri quattro.
+	 *
+	 * Il suspend dell'impulso e' quello della lettura di temperatura con
+	 * cui channel_calibrate apre. Senza lettura (phycal_tempdelta 0, i
+	 * quattro segmenti del secondo boot del TG789vac) il vendor emette solo
+	 * l'enable e calibra col MAC acceso: qui il MAC resta sospeso e
+	 * quell'enable lo emette channel_calibrate.
 	 */
-	b43_mac_enable(&g_wldev);
-	b43_mac_suspend(&g_wldev);
+	if (g_sprom.phycal_tempdelta) {
+		b43_mac_enable(&g_wldev);
+		b43_mac_suspend(&g_wldev);
+	}
 }
 
 static void emit_core_amt(const struct board_profile *p)
@@ -2319,7 +2322,9 @@ int main(int argc, char **argv)
 		 * just before the radio init rather than inside it: in the
 		 * attach capture that carries the OBJ class the chanspec is at
 		 * episode 35395 and the first op of b43_radio_2069_init() at
-		 * 35396, with the prefregs at 35420.
+		 * 35396, with the prefregs at 35420. The driver writes it from
+		 * b43_phy_ac_op_software_rfkill(), which this flow does not
+		 * run: keep the two in step.
 		 */
 		b43_phy_ac_write_chanspec(&g_wldev);
 		{

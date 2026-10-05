@@ -81,9 +81,6 @@ u8 b43_ppr_ac_get_max(const struct b43_ppr_ac *ppr)
 static const u8 b43_ppr_ac_ofdm_group[B43_PPR_AC_OFDM_RATES] = {
 	0, 0, 0, 0, 1, 2, 3, 4
 };
-static const u8 b43_ppr_ac_mcs_group[B43_PPR_AC_MCS] = {
-	0, 0, 0, 1, 2, 3, 4, 5, 6, 7
-};
 
 u8 b43_ppr_ac_ofdm(const struct b43_ppr_ac *ppr, enum nl80211_chan_width width,
 		   unsigned int rate)
@@ -103,14 +100,6 @@ u8 b43_ppr_ac_row_max(const struct b43_ppr_ac *ppr,
 	for (g = 0; g < B43_PPR_AC_GROUPS; g++)
 		m = max(m, row[g]);
 	return m;
-}
-
-u8 b43_ppr_ac_mcs(const struct b43_ppr_ac *ppr, enum nl80211_chan_width width,
-		  unsigned int mcs)
-{
-	if (WARN_ON_ONCE(mcs >= B43_PPR_AC_MCS))
-		return 0;
-	return ppr->rows[b43_ppr_ac_row(width)][b43_ppr_ac_mcs_group[mcs]];
 }
 
 /*

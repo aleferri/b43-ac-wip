@@ -34,8 +34,7 @@ void b43_actab_zerofill_locked(struct b43_wldev *dev,
  * b43_phy_ac_post_noise_shaping_rx_regprog() leaves it. Emits peek +
  * idempotent relock + WR TABLE_ID/OFFSET/DATA, so one op more than
  * write_bulk. The vendor blob has a single write_bulk that senses the gate
- * state at runtime; the variants are spelled out here because the trace
- * harness does not model the register.
+ * state at runtime; here the callers pick the variant.
  */
 void b43_actab_write_bulk_reopen(struct b43_wldev *dev,
 				 u16 id, u16 offset, u8 width,

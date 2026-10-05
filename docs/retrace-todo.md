@@ -8,8 +8,9 @@ Core items (`b43/` outside the AC-PHY files) cannot be seen by `test/unit`,
 which compiles the AC-PHY files only; they need `test/integration`. Core work
 the stock driver runs inside a PHY sequence, and b43 runs from the core at
 another time, is emitted by `test/unit` at the stock driver's point through the
-`#if UNIT_TEST` sites of `b43_phy_ac_core_site()` (`b43/phy_ac.h`); each site
-is known work that moves to the core, none stands for work not understood.
+`B43_AC_CORE_SITE()` sites (`test/unit/core_sites.h`, a no-op in the driver);
+each site is known work that moves to the core, none stands for work not
+understood.
 
 ## Core
 
@@ -120,7 +121,7 @@ pieces in order. On the D6220 `cold01` (folded, op numbers of
   ops of the D6220 hot `up` on ch40 (`02-up-ch40-bw20`), with no MACCONTROL
   reset, no ucode jump and no PLL write; its reads still come from the ch36
   oracle, so the values and the polls past its end do not count.
-- **What stays perimeter.** A site stays under `UNIT_TEST` when b43 does the
+- **What stays perimeter.** A site stays a `B43_AC_CORE_SITE()` when b43 does the
   same core work at another point with the same effect; it leaves when the
   work has to happen at that point, or must not happen on some path the PHY
   function also serves. The key index block was of the second kind (see

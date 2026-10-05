@@ -384,6 +384,13 @@ void bcma_chipco_regctl_maskset(struct bcma_drv_cc *cc, u32 offset,
 #define BCMA_CC_CHIPCTL 0x0028
 void bcma_cc_set32(struct bcma_drv_cc *cc, u16 offset, u32 set);
 
+enum bcma_clkmode {
+	BCMA_CLKMODE_FAST,
+	BCMA_CLKMODE_DYNAMIC,
+};
+void bcma_core_set_clockmode(struct bcma_device *core,
+			     enum bcma_clkmode clkmode);
+
 /* SPROM boardflags_lo, as in b43.h. */
 #define B43_BFL_BTCOEXIST	0x0001
 

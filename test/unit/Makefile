@@ -23,10 +23,10 @@ AC_HDRS := $(addprefix $(SCRATCH)/,phy_ac.h tables_phy_ac.h radio_2069.h \
 # We include our stubs FIRST (via -I) so kernel headers <linux/*.h> and
 # the b43 project headers resolve to our minimal versions. The copied AC-PHY
 # directory comes next for its own headers ("phy_ac.h" etc.).
-CFLAGS  := -O0 -g -Wall -Wno-unused-parameter -Wno-unused-function \
-           -Wno-unused-variable -Wno-unused-but-set-variable \
+CFLAGS  := -O0 -g -Wall -Werror -Wno-unused-parameter \
            -Wno-pointer-sign -Wno-sign-compare \
-           -DB43_AC_FN_TRACE -DALLOW_24=true -DUNIT_TEST=1 \
+           -DALLOW_24=true \
+           -include ../ac_trace.h -include core_sites.h \
            -I$(STUBS) -I$(SCRATCH) \
            -include stubs/linux/types.h \
            -include stubs/linux/errno.h \
@@ -58,14 +58,14 @@ LDFLAGS := $(foreach s,$(WRAP_SYMS),-Wl,--wrap=$(s))
 # The AC-PHY files of the driver, copied into $(SCRATCH).
 SCRATCH_SRCS_FULL := \
     $(SCRATCH)/tables_phy_ac.c \
-    $(SCRATCH)/phy_ac.c \
     $(SCRATCH)/radio_2069.c \
     $(SCRATCH)/helpers_phy_ac.c \
     $(SCRATCH)/ppr_ac.c
 
-# rxiqcal_phy_ac.c is the harness's own RX-IQ estimator, which validates the
-# solve against the captures; the driver does not use it.
-SRCS := $(SCRATCH_SRCS_FULL) rxiqcal_phy_ac.c wrap.c main.c
+# phy_ac_test.c compiles the driver's phy_ac.c together with what only the
+# harness needs: its RX-IQ estimator (rxiqcal_phy_ac.c), which validates the
+# solve against the captures, and the PHY's share of the core writes it emits.
+SRCS := $(SCRATCH_SRCS_FULL) phy_ac_test.c wrap.c main.c
 OBJS := $(patsubst %.c,build/%.o,$(notdir $(SRCS)))
 
 vpath %.c .
@@ -89,6 +89,8 @@ build/%.o: $(SCRATCH)/%.c $(AC_HDRS) | build
 
 build/%.o: %.c $(AC_HDRS) | build
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+
+build/phy_ac_test.o: $(SCRATCH)/phy_ac.c
 
 $(BIN): $(OBJS)
 	$(CC) $(LDFLAGS) $^ -o $@

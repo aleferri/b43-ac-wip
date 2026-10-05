@@ -1373,7 +1373,7 @@ void b43_radio_2069_rccal(struct b43_wldev *dev)
 	u16 chipnum = dev->dev->chip_id;
 
 	if (chipnum != 0x4352 && chipnum != 0x4360) {
-		b43dbg(dev->wl, "radio 2069: rccal skipped, chipnum 0x%04x not supported\n",
+		b43info(dev->wl, "radio 2069: rccal skipped, chipnum 0x%04x not supported\n",
 		       chipnum);
 		return;
 	}
@@ -1394,7 +1394,7 @@ void b43_radio_2069_rccal(struct b43_wldev *dev)
 
 				dev->phy.ac->lpf_cap0 = cap;
 				dev->phy.ac->lpf_cap1 = cap;
-				b43dbg(dev->wl,
+				b43info(dev->wl,
 				       "radio 2069: rccal lpf cap 0x%02x (E=0x%04x F=0x%04x)\n",
 				       cap, (u16)e, (u16)f);
 			} else {
@@ -1499,7 +1499,7 @@ void b43_radio_2069_afecal(struct b43_wldev *dev)
 		post[1] = b43_radio_read_log(dev, R2069_AFE_CAL_STAT | rbase);
 		udelay(10);
 
-		b43dbg(dev->wl,
+		b43info(dev->wl,
 		       "radio 2069: afecal core %u ctrl=0x%04x stat post(0/1/10us)=0x%04x/0x%04x\n",
 		       core, ctrl, post[0], post[1]);
 
@@ -1553,62 +1553,6 @@ static void b43_r2069_prefregs_init(struct b43_wldev *dev)
  * around the radio body, the same pattern as b43_radio_2069_afecal in this
  * file.
  */
-
-/*
- * Per-chain LO-leakage trim, run only below 5250 MHz.
- *
- * The bipartition is exact in the cold sweep: the seven segments whose centre
- * frequency is under 5250 do this on four chains, and the nineteen above it do
- * not do it at all. That is the pa5g_group boundary, the same one that keys the
- * channel table and the CRS sub-band reset.
- *
- * The shape is save, clear, walk, restore: six registers are read and zeroed,
- * ten single-bit fields are then set or cleared one at a time, and the six go
- * back at the end -- 0x003d to 0x000f rather than to what it held, which is
- * what the capture shows on every one of the seven.
- *
- * Each step is a read-modify-write, so the bits the trim leaves behind depend
- * on the readback; the values here are the masks, not the results.
- */
-static void b43_radio_2069_lo_trim_unii1(struct b43_wldev *dev)
-{
-	static const struct { u16 reg, mask, val; } steps[10] = {
-		{ 0x0023, 0x0100, 0x0000 },
-		{ 0x003d, 0x0010, 0x0000 },
-		{ 0x0023, 0x0020, 0x0000 },
-		{ 0x0023, 0x0040, 0x0000 },
-		{ 0x0021, 0x0020, 0x0000 },
-		{ 0x0021, 0x0004, 0x0004 },
-		{ 0x0023, 0x0001, 0x0001 },
-		{ 0x0023, 0x0200, 0x0200 },
-		{ 0x0021, 0x0003, 0x0000 },
-		{ 0x0023, 0x0006, 0x0000 },
-	};
-	static const u16 saved_regs[6] = {
-		0x0020, 0x0021, 0x0022, 0x0023, 0x003a, 0x003d,
-	};
-	u8 chain, num_cores = dev->phy.ac->num_cores;
-	unsigned int i;
-
-	B43_AC_FN();
-
-	for (chain = 0; chain < num_cores + 1; chain++) {
-		u16 base = (u16)(chain * 0x200);
-
-		for (i = 0; i < ARRAY_SIZE(saved_regs); i++)
-			b43_radio_read(dev, saved_regs[i] + base);
-		for (i = 0; i < ARRAY_SIZE(saved_regs); i++)
-			b43_radio_write(dev, saved_regs[i] + base, 0x0000);
-
-		for (i = 0; i < ARRAY_SIZE(steps); i++)
-			b43_radio_maskset(dev, steps[i].reg + base,
-					  (u16)~steps[i].mask, steps[i].val);
-
-		for (i = 0; i < ARRAY_SIZE(saved_regs) - 1; i++)
-			b43_radio_write(dev, saved_regs[i] + base, 0x0000);
-		b43_radio_write(dev, 0x003d + base, 0x000f);
-	}
-}
 
 /* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   692-850]
@@ -1739,6 +1683,6 @@ void b43_radio_2069_pwron(struct b43_wldev *dev)
 	b43_radio_set(dev,     0x08ea, 0x0080);
 	b43_radio_maskset(dev, 0x08ed, (u16)~0x0600, 0x0400);
 
-	b43dbg(dev->wl, "phy-ac: radio pwron 0x040b readback: %04x %04x\n",
+	b43info(dev->wl, "phy-ac: radio pwron 0x040b readback: %04x %04x\n",
 	       pon0, pon1);
 }
