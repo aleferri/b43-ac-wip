@@ -283,7 +283,7 @@ index cf889fc..31e59e4 100644
  	default:
  		pcie2->reqsize = 128;
 diff --git a/drivers/bcma/host_pci.c b/drivers/bcma/host_pci.c
-index 3dc2985..f6cf722 100644
+index 9606321..27e5104 100644
 --- a/drivers/bcma/host_pci.c
 +++ b/drivers/bcma/host_pci.c
 @@ -298,6 +298,7 @@ static const struct pci_device_id bcma_pci_bridge_tbl[] = {
@@ -295,7 +295,7 @@ index 3dc2985..f6cf722 100644
  	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 43227) },	/* 0xa8db, BCM43217 (sic!) */
  	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 43228) },	/* 0xa8dc */
 diff --git a/drivers/bcma/sprom.c b/drivers/bcma/sprom.c
-index e668ad7..3586392 100644
+index 6024d6b..04018ed 100644
 --- a/drivers/bcma/sprom.c
 +++ b/drivers/bcma/sprom.c
 @@ -11,6 +11,7 @@
@@ -306,18 +306,18 @@ index e668ad7..3586392 100644
  #include <linux/pci.h>
  #include <linux/io.h>
  #include <linux/dma-mapping.h>
-@@ -60,8 +61,8 @@ static int bcma_fill_sprom_with_fallback(struct bcma_bus *bus,
- 	if (err)
- 		goto fail;
+@@ -67,8 +68,8 @@ static int bcma_fill_sprom_with_fallback(struct bcma_bus *bus,
+ 		return err;
+ 	}
  
 -	bcma_debug(bus, "Using SPROM revision %d provided by platform.\n",
 -		   bus->sprom.revision);
 +	bcma_info(bus, "Using SPROM revision %d provided by platform.\n",
 +		  bus->sprom.revision);
+ 
  	return 0;
- fail:
- 	bcma_warn(bus, "Using fallback SPROM failed (err %d)\n", err);
-@@ -171,7 +172,7 @@ static int bcma_sprom_valid(struct bcma_bus *bus, const u16 *sprom,
+ }
+@@ -176,7 +177,7 @@ static int bcma_sprom_valid(struct bcma_bus *bus, const u16 *sprom,
  	}
  
  	bus->sprom.revision = revision;
@@ -326,7 +326,7 @@ index e668ad7..3586392 100644
  
  	return 0;
  }
-@@ -474,6 +475,205 @@ static void bcma_sprom_extract_r8(struct bcma_bus *bus, const u16 *sprom)
+@@ -479,6 +480,205 @@ static void bcma_sprom_extract_r8(struct bcma_bus *bus, const u16 *sprom)
  	     SSB_SPROM8_TEMPDELTA_HYSTERESIS_SHIFT);
  }
  
@@ -532,7 +532,7 @@ index e668ad7..3586392 100644
  /*
   * Indicates the presence of external SPROM.
   */
-@@ -640,8 +840,16 @@ int bcma_sprom_get(struct bcma_bus *bus)
+@@ -645,8 +845,16 @@ int bcma_sprom_get(struct bcma_bus *bus)
  		bcma_warn(bus, "Invalid SPROM read from the PCIe card, trying to use fallback SPROM\n");
  		err = bcma_fill_sprom_with_fallback(bus, &bus->sprom);
  	} else {
@@ -551,7 +551,7 @@ index e668ad7..3586392 100644
  
  	return err;
 diff --git a/drivers/firmware/broadcom/bcm47xx_sprom.c b/drivers/firmware/broadcom/bcm47xx_sprom.c
-index bca03fd..333c111 100644
+index 14fbcd1..712779f 100644
 --- a/drivers/firmware/broadcom/bcm47xx_sprom.c
 +++ b/drivers/firmware/broadcom/bcm47xx_sprom.c
 @@ -29,6 +29,7 @@
@@ -560,9 +560,9 @@ index bca03fd..333c111 100644
  #include <linux/bcma/bcma.h>
 +#include <linux/err.h>
  #include <linux/etherdevice.h>
- #include <linux/hex.h>
  #include <linux/if_ether.h>
-@@ -172,6 +173,58 @@ static void nvram_read_alpha2(const char *prefix, const char *name,
+ #include <linux/ssb/ssb.h>
+@@ -171,6 +172,58 @@ static void nvram_read_alpha2(const char *prefix, const char *name,
  	memcpy(val, buf, 2);
  }
  
@@ -621,7 +621,7 @@ index bca03fd..333c111 100644
  /* This is one-function-only macro, it uses local "sprom" variable! */
  #define ENTRY(_revmask, _type, _prefix, _name, _val, _allset, _fallback) \
  	if (_revmask & BIT(sprom->revision)) \
-@@ -209,6 +262,8 @@ static void bcm47xx_sprom_fill_auto(struct ssb_sprom *sprom,
+@@ -208,6 +261,8 @@ static void bcm47xx_sprom_fill_auto(struct ssb_sprom *sprom,
  	ENTRY(0xfffffffe, u8, pre, "ledbh1", gpio1, 0xff, fb);
  	ENTRY(0xfffffffe, u8, pre, "ledbh2", gpio2, 0xff, fb);
  	ENTRY(0xfffffffe, u8, pre, "ledbh3", gpio3, 0xff, fb);
@@ -630,7 +630,7 @@ index bca03fd..333c111 100644
  
  	ENTRY(0x0000070e, u16, pre, "pa0b0", pa0b0, 0, fb);
  	ENTRY(0x0000070e, u16, pre, "pa0b1", pa0b1, 0, fb);
-@@ -647,45 +702,70 @@ static void bcm47xx_sprom_apply_prefix_alias(char *prefix, size_t prefix_size)
+@@ -646,45 +701,70 @@ static void bcm47xx_sprom_apply_prefix_alias(char *prefix, size_t prefix_size)
  	}
  }
  
@@ -724,11 +724,11 @@ index bca03fd..333c111 100644
  	nvram_read_u16(prefix, NULL, "boardvendor", &binfo->vendor, 0, true);
  	if (!binfo->vendor)
 diff --git a/include/linux/bcm47xx_sprom.h b/include/linux/bcm47xx_sprom.h
-index 40a7da3..b52c028 100644
+index f8254fd..0af1b9c 100644
 --- a/include/linux/bcm47xx_sprom.h
 +++ b/include/linux/bcm47xx_sprom.h
 @@ -9,6 +9,7 @@
- #include <linux/types.h>
+ #include <linux/kernel.h>
  #include <linux/vmalloc.h>
  
 +struct bcma_bus;
@@ -756,7 +756,7 @@ index 40a7da3..b52c028 100644
 +
  #endif /* __BCM47XX_SPROM_H */
 diff --git a/include/linux/ssb/ssb.h b/include/linux/ssb/ssb.h
-index 7fee9af..ec5c666 100644
+index e1fb11e..fa651bd 100644
 --- a/include/linux/ssb/ssb.h
 +++ b/include/linux/ssb/ssb.h
 @@ -23,6 +23,19 @@ struct ssb_sprom_core_pwr_info {
