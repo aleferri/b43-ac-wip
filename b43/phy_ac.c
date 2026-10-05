@@ -4909,7 +4909,7 @@ static void b43_phy_ac_txpwrctrl_enable(struct b43_wldev *dev)
 				break;
 		}
 		if (!(stat & 0x0100))
-			b43info(dev->wl,
+			b43warn(dev->wl,
 			       "radio 2069: PLL lock timeout (0x90b=0x%04x)\n",
 			       stat);
 	}
@@ -6470,7 +6470,8 @@ void b43_phy_ac_post_cal_finalize_iter3(struct b43_wldev *dev)
 	/*
 	 * Make sure the MAC is suspended without nesting: op_switch_channel()
 	 * already suspended it, and a second suspend would leave the refcount
-	 * at 2, turning the pairs in rxiqcal_finalize() into no-ops. The caller expects the MAC suspended on return.
+	 * at 2, turning the pairs in rxiqcal_finalize() into no-ops. The
+	 * caller expects the MAC suspended on return.
 	 */
 	if (!dev->mac_suspended)
 		b43_mac_suspend(dev);

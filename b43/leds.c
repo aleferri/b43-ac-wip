@@ -18,30 +18,39 @@
 #include "rfkill.h"
 
 
-static void b43_led_turn_on(struct b43_wldev *dev, u8 led_index,
-			    bool activelow)
+/*
+ * Drive an LED pin. On the AC cores the LED pins stay on the ChipCommon, see
+ * b43_gpio_init(); on the others the MAC drives them.
+ */
+static void b43_led_set_pin(struct b43_wldev *dev, u8 led_index, bool high)
 {
 	u16 ctl;
 
+#ifdef CONFIG_B43_BCMA
+	if (b43_is_ac_core(dev)) {
+		bcma_chipco_gpio_out(&dev->dev->bdev->bus->drv_cc, BIT(led_index),
+				     high ? BIT(led_index) : 0);
+		return;
+	}
+#endif
 	ctl = b43_read16(dev, B43_MMIO_GPIO_CONTROL);
-	if (activelow)
-		ctl &= ~(1 << led_index);
-	else
+	if (high)
 		ctl |= (1 << led_index);
+	else
+		ctl &= ~(1 << led_index);
 	b43_write16(dev, B43_MMIO_GPIO_CONTROL, ctl);
+}
+
+static void b43_led_turn_on(struct b43_wldev *dev, u8 led_index,
+			    bool activelow)
+{
+	b43_led_set_pin(dev, led_index, !activelow);
 }
 
 static void b43_led_turn_off(struct b43_wldev *dev, u8 led_index,
 			     bool activelow)
 {
-	u16 ctl;
-
-	ctl = b43_read16(dev, B43_MMIO_GPIO_CONTROL);
-	if (activelow)
-		ctl |= (1 << led_index);
-	else
-		ctl &= ~(1 << led_index);
-	b43_write16(dev, B43_MMIO_GPIO_CONTROL, ctl);
+	b43_led_set_pin(dev, led_index, activelow);
 }
 
 static void b43_led_update(struct b43_wldev *dev,
@@ -241,8 +250,12 @@ static bool b43_led_get_sprominfo(struct b43_wldev *dev,
 		*activelow = false;
 		switch (led_index) {
 		case 0:
+			/*
+			 * The AC cores' stock driver writes pin 0 low with
+			 * its LED off, on every board captured.
+			 */
 			*behaviour = B43_LED_ACTIVITY;
-			*activelow = true;
+			*activelow = !b43_is_ac_core(dev);
 			if (dev->dev->board_vendor == PCI_VENDOR_ID_COMPAQ)
 				*behaviour = B43_LED_RADIO_ALL;
 			break;
@@ -266,7 +279,7 @@ static bool b43_led_get_sprominfo(struct b43_wldev *dev,
 	return true;
 }
 
-/* The GPIO pins the registered LEDs sit on, for the MAC to take over. */
+/* The GPIO pins the registered LEDs sit on. */
 u32 b43_leds_gpio_mask(struct b43_wl *wl)
 {
 	u32 mask = 0;
@@ -274,6 +287,18 @@ u32 b43_leds_gpio_mask(struct b43_wl *wl)
 
 	for (i = 0; i < ARRAY_SIZE(wl->leds.led); i++)
 		if (wl->leds.led[i].wl)
+			mask |= BIT(wl->leds.led[i].index);
+	return mask;
+}
+
+/* Of those, the pins that are high with their LED off. */
+u32 b43_leds_gpio_activelow(struct b43_wl *wl)
+{
+	u32 mask = 0;
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(wl->leds.led); i++)
+		if (wl->leds.led[i].wl && wl->leds.led[i].activelow)
 			mask |= BIT(wl->leds.led[i].index);
 	return mask;
 }

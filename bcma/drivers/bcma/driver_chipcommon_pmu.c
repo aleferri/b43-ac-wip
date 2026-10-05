@@ -149,6 +149,7 @@ static void bcma_pmu_pll_init(struct bcma_drv_cc *cc)
 {
 	struct bcma_bus *bus = cc->core->bus;
 	u32 xtalfreq = bcma_pmu_xtalfreq(cc);
+	u32 ctl2, ctl3;
 
 	switch (bus->chipinfo.id) {
 	case BCMA_CHIP_ID_BCM43142:
@@ -172,6 +173,10 @@ static void bcma_pmu_pll_init(struct bcma_drv_cc *cc)
 		 * works that way. Newer stock drivers do set vcofreq. Writing
 		 * these values there is therefore untested, not a fix.
 		 */
+		ctl2 = bcma_chipco_pll_read(cc, BCMA_CC_PMU_PLL_CTL2);
+		ctl3 = bcma_chipco_pll_read(cc, BCMA_CC_PMU_PLL_CTL3);
+		bcma_info(bus, "PMU PLL pre-write: ctl2=0x%08x ctl3=0x%08x\n",
+			  ctl2, ctl3);
 		bcma_chipco_pll_write(cc, BCMA_CC_PMU_PLL_CTL2, 0x0c31);
 		bcma_chipco_pll_write(cc, BCMA_CC_PMU_PLL_CTL3, 0x100e);
 		/*
@@ -236,11 +241,11 @@ static void bcma_pmu_resources_init(struct bcma_drv_cc *cc)
 			   bus->chipinfo.id);
 	}
 
-	bcma_debug(bus,
-		   "PMU res mask pre-write: min=0x%08x max=0x%08x (writing min=0x%08x max=0x%08x)\n",
-		   bcma_pmu_read32(cc, BCMA_CC_PMU_MINRES_MSK),
-		   bcma_pmu_read32(cc, BCMA_CC_PMU_MAXRES_MSK),
-		   min_msk, max_msk);
+	bcma_info(bus,
+		  "PMU res mask pre-write: min=0x%08x max=0x%08x (writing min=0x%08x max=0x%08x)\n",
+		  bcma_pmu_read32(cc, BCMA_CC_PMU_MINRES_MSK),
+		  bcma_pmu_read32(cc, BCMA_CC_PMU_MAXRES_MSK),
+		  min_msk, max_msk);
 
 	/* Set the resource masks. */
 	if (min_msk)
@@ -337,8 +342,8 @@ void bcma_pmu_early_init(struct bcma_drv_cc *cc)
 	pmucap = bcma_pmu_read32(cc, BCMA_CC_PMU_CAP);
 	cc->pmu.rev = (pmucap & BCMA_CC_PMU_CAP_REVISION);
 
-	bcma_debug(bus, "Found rev %u PMU (capabilities 0x%08X)\n", cc->pmu.rev,
-		   pmucap);
+	bcma_info(bus, "Found rev %u PMU (capabilities 0x%08X)\n", cc->pmu.rev,
+		  pmucap);
 }
 
 void bcma_pmu_init(struct bcma_drv_cc *cc)

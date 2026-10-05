@@ -14,6 +14,7 @@ over the tag `scripts/regen-patches.sh` fetches. They become
 | `drivers/bcma/host_pci.c` | the BCM4352 PCI ID, `0x43b3` |
 | `drivers/bcma/driver_chipcommon.c` | corecontrol bits 5:2 next to the GPIO timer, as the stock driver sets them |
 | `drivers/bcma/core.c` | `BCMA_CLKMODE_DYNAMIC` clears FORCEHT instead of setting every other bit |
+| `drivers/bcma/driver_pcie2.c` | the HT available request of the PCIe2 core, which the stock driver sets |
 
 The SROM rev 11 extractor adds `bcma_sprom_extract_r11()` and the fields the
 AC-PHY reads:

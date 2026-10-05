@@ -21,7 +21,7 @@ REPO=$HERE/../..
 test -f "$DIR/main.c" || { echo "prima: make fetch" >&2; exit 1; }
 
 cp "$REPO"/b43/* "$DIR/"
-for f in core.c driver_chipcommon.c driver_chipcommon_pmu.c; do
+for f in core.c driver_chipcommon.c driver_chipcommon_pmu.c driver_pcie2.c; do
 	cp "$REPO/bcma/drivers/bcma/$f" "$DIR/bcma/"
 done
 mkdir -p "$HERE/kinc/linux/ssb"

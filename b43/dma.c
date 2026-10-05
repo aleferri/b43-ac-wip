@@ -700,6 +700,17 @@ static u32 b43_dma64_ac_tuning(struct b43_dmaring *ring)
 	       (2 << B43_DMA64_RXPFCTL_SHIFT);
 }
 
+/*
+ * Whether the DMA64 engine takes descriptor addresses rather than offsets in
+ * an aligned ring: the AC cores, aligndesc_4k = 0 in the stock driver. Such
+ * an engine needs its ring address before it is enabled; the older ones get
+ * it after, as b43 has always done.
+ */
+static bool b43_dma64_ring_unaligned(struct b43_dmaring *ring)
+{
+	return ring->dev->phy.type == B43_PHYTYPE_AC;
+}
+
 static int dmacontroller_setup(struct b43_dmaring *ring)
 {
 	int err = 0;
@@ -712,21 +723,30 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
 	if (ring->tx) {
 		if (ring->type == B43_DMA_64BIT) {
 			u64 ringbase = (u64) (ring->dmabase);
+			u32 enable;
+
 			addrext = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_EXT);
 			addrlo = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_LOW);
 			addrhi = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_HIGH);
-			ring->index_base = ring->dev->phy.type == B43_PHYTYPE_AC ?
+			ring->index_base = b43_dma64_ring_unaligned(ring) ?
 					   addrlo : 0;
 
-			value = B43_DMA64_TXENABLE;
-			value |= (addrext << B43_DMA64_TXADDREXT_SHIFT)
+			value = (addrext << B43_DMA64_TXADDREXT_SHIFT)
 			    & B43_DMA64_TXADDREXT_MASK;
 			value |= b43_dma64_ac_tuning(ring);
+			enable = B43_DMA64_TXENABLE;
 			if (!parity)
-				value |= B43_DMA64_TXPARITYDISABLE;
-			b43_dma_write(ring, B43_DMA64_TXCTL, value);
-			b43_dma_write(ring, B43_DMA64_TXRINGLO, addrlo);
-			b43_dma_write(ring, B43_DMA64_TXRINGHI, addrhi);
+				enable |= B43_DMA64_TXPARITYDISABLE;
+			if (b43_dma64_ring_unaligned(ring)) {
+				b43_dma_write(ring, B43_DMA64_TXCTL, value);
+				b43_dma_write(ring, B43_DMA64_TXRINGLO, addrlo);
+				b43_dma_write(ring, B43_DMA64_TXRINGHI, addrhi);
+				b43_dma_write(ring, B43_DMA64_TXCTL, value | enable);
+			} else {
+				b43_dma_write(ring, B43_DMA64_TXCTL, value | enable);
+				b43_dma_write(ring, B43_DMA64_TXRINGLO, addrlo);
+				b43_dma_write(ring, B43_DMA64_TXRINGHI, addrhi);
+			}
 		} else {
 			u32 ringbase = (u32) (ring->dmabase);
 			addrext = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_EXT);
@@ -749,7 +769,7 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
 			addrext = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_EXT);
 			addrlo = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_LOW);
 			addrhi = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_HIGH);
-			ring->index_base = ring->dev->phy.type == B43_PHYTYPE_AC ?
+			ring->index_base = b43_dma64_ring_unaligned(ring) ?
 					   addrlo : 0;
 
 			value = (ring->frameoffset << B43_DMA64_RXFROFF_SHIFT);
@@ -759,9 +779,15 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
 			    & B43_DMA64_RXADDREXT_MASK;
 			if (!parity)
 				value |= B43_DMA64_RXPARITYDISABLE;
-			b43_dma_write(ring, B43_DMA64_RXCTL, value);
-			b43_dma_write(ring, B43_DMA64_RXRINGLO, addrlo);
-			b43_dma_write(ring, B43_DMA64_RXRINGHI, addrhi);
+			if (b43_dma64_ring_unaligned(ring)) {
+				b43_dma_write(ring, B43_DMA64_RXRINGLO, addrlo);
+				b43_dma_write(ring, B43_DMA64_RXRINGHI, addrhi);
+				b43_dma_write(ring, B43_DMA64_RXCTL, value);
+			} else {
+				b43_dma_write(ring, B43_DMA64_RXCTL, value);
+				b43_dma_write(ring, B43_DMA64_RXRINGLO, addrlo);
+				b43_dma_write(ring, B43_DMA64_RXRINGHI, addrhi);
+			}
 			b43_dma_write(ring, B43_DMA64_RXINDEX,
 				      op64_slot_index(ring, ring->nr_slots));
 		} else {

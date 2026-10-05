@@ -753,14 +753,16 @@ void b43_phy_ac_force_clock(struct b43_wldev *dev, bool force);
 /*
  * Trace points of the userspace harnesses in test/, which define them.
  * B43_AC_BLOCK() also names the sections of the bring-up in the kernel log,
- * so a hang shows the last one reached.
+ * so a hang shows the last one reached. Unlike b43info(), which is rate
+ * limited once the core has started, it never drops a line: a dropped one
+ * would point at the wrong section.
  */
 #ifndef B43_AC_FN
 #define B43_AC_FN() do { } while (0)
 #endif
 #ifndef B43_AC_BLOCK
 #define B43_AC_BLOCK(dev, name) \
-	b43info((dev)->wl, "AC-PHY: %s: %s\n", __func__, name)
+	wiphy_info((dev)->wl->hw->wiphy, "AC-PHY: %s: %s\n", __func__, name)
 #endif
 #ifndef B43_AC_CORE_SITE
 #define B43_AC_CORE_SITE(dev, site) do { } while (0)

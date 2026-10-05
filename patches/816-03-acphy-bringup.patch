@@ -6,15 +6,15 @@ Subject: [PATCH 2/2] b43: AC-PHY bring-up from the reverse-engineered port
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     4 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |    92 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 10623 +++++++++++++++-
- drivers/net/wireless/broadcom/b43/phy_ac.h    |   736 +-
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 10624 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.h    |   738 +-
  drivers/net/wireless/broadcom/b43/ppr_ac.c    |   265 +
  drivers/net/wireless/broadcom/b43/ppr_ac.h    |    80 +
  .../net/wireless/broadcom/b43/radio_2069.c    |  1688 +++
  .../net/wireless/broadcom/b43/radio_2069.h    |    48 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1150 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    78 +
- 10 files changed, 14742 insertions(+), 22 deletions(-)
+ 10 files changed, 14745 insertions(+), 22 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -137,7 +137,7 @@ index 0000000..2e3420a
 +	b43_read32(dev, B43_MMIO_MACCTL);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index fe102ea..291ce71 100644
+index fe102ea..1c33a46 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -1,17 +1,46 @@
@@ -193,7 +193,7 @@ index fe102ea..291ce71 100644
  
  static int b43_phy_ac_op_allocate(struct b43_wldev *dev)
  {
-@@ -62,27 +91,10583 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -62,27 +91,10584 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -5028,7 +5028,7 @@ index fe102ea..291ce71 100644
 +				break;
 +		}
 +		if (!(stat & 0x0100))
-+			b43info(dev->wl,
++			b43warn(dev->wl,
 +			       "radio 2069: PLL lock timeout (0x90b=0x%04x)\n",
 +			       stat);
 +	}
@@ -6589,7 +6589,8 @@ index fe102ea..291ce71 100644
 +	/*
 +	 * Make sure the MAC is suspended without nesting: op_switch_channel()
 +	 * already suspended it, and a second suspend would leave the refcount
-+	 * at 2, turning the pairs in rxiqcal_finalize() into no-ops. The caller expects the MAC suspended on return.
++	 * at 2, turning the pairs in rxiqcal_finalize() into no-ops. The
++	 * caller expects the MAC suspended on return.
 +	 */
 +	if (!dev->mac_suspended)
 +		b43_mac_suspend(dev);
@@ -10791,7 +10792,7 @@ index fe102ea..291ce71 100644
 +	(void)b43_phy_ac_farrow_vals_432x_media_a1;
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.h b/drivers/net/wireless/broadcom/b43/phy_ac.h
-index 02eb6c0..a369764 100644
+index 02eb6c0..fc7a004 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.h
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.h
 @@ -3,6 +3,12 @@
@@ -10885,7 +10886,7 @@ index 02eb6c0..a369764 100644
  #define B43_PHY_AC_C1_CLIP			0x6d4
  #define  B43_PHY_AC_C1_CLIP_DIS			0x4000
  #define B43_PHY_AC_C2_CLIP			0x8d4
-@@ -31,9 +91,679 @@
+@@ -31,9 +91,681 @@
  #define B43_PHY_AC_C3_CLIP			0xad4
  #define  B43_PHY_AC_C3_CLIP_DIS			0x4000
  
@@ -11551,14 +11552,16 @@ index 02eb6c0..a369764 100644
 +/*
 + * Trace points of the userspace harnesses in test/, which define them.
 + * B43_AC_BLOCK() also names the sections of the bring-up in the kernel log,
-+ * so a hang shows the last one reached.
++ * so a hang shows the last one reached. Unlike b43info(), which is rate
++ * limited once the core has started, it never drops a line: a dropped one
++ * would point at the wrong section.
 + */
 +#ifndef B43_AC_FN
 +#define B43_AC_FN() do { } while (0)
 +#endif
 +#ifndef B43_AC_BLOCK
 +#define B43_AC_BLOCK(dev, name) \
-+	b43info((dev)->wl, "AC-PHY: %s: %s\n", __func__, name)
++	wiphy_info((dev)->wl->hw->wiphy, "AC-PHY: %s: %s\n", __func__, name)
 +#endif
 +#ifndef B43_AC_CORE_SITE
 +#define B43_AC_CORE_SITE(dev, site) do { } while (0)

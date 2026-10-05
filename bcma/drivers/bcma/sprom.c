@@ -61,8 +61,8 @@ static int bcma_fill_sprom_with_fallback(struct bcma_bus *bus,
 	if (err)
 		goto fail;
 
-	bcma_debug(bus, "Using SPROM revision %d provided by platform.\n",
-		   bus->sprom.revision);
+	bcma_info(bus, "Using SPROM revision %d provided by platform.\n",
+		  bus->sprom.revision);
 	return 0;
 fail:
 	bcma_warn(bus, "Using fallback SPROM failed (err %d)\n", err);
@@ -172,7 +172,7 @@ static int bcma_sprom_valid(struct bcma_bus *bus, const u16 *sprom,
 	}
 
 	bus->sprom.revision = revision;
-	bcma_debug(bus, "Found SPROM revision %d\n", revision);
+	bcma_info(bus, "Found SPROM revision %d\n", revision);
 
 	return 0;
 }

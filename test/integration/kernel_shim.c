@@ -84,8 +84,8 @@ void __warn_printk(const char *fmt, ...)
 }
 
 /*
- * dev_err/dev_warn, che bcma usa per i suoi timeout: stesso canale di
- * _printk. Il device non si stampa, la suite ne ha uno solo.
+ * dev_err/dev_warn/dev_info, che bcma usa per i suoi messaggi: stesso
+ * canale di _printk. Il device non si stampa, la suite ne ha uno solo.
  */
 static void shim_dev_printk(const char *level, const char *fmt, va_list ap)
 {
@@ -108,6 +108,15 @@ void _dev_warn(const void *dev, const char *fmt, ...)
 
 	va_start(ap, fmt);
 	shim_dev_printk("warn", fmt, ap);
+	va_end(ap);
+}
+
+void _dev_info(const void *dev, const char *fmt, ...)
+{
+	va_list ap;
+
+	va_start(ap, fmt);
+	shim_dev_printk("info", fmt, ap);
 	va_end(ap);
 }
 

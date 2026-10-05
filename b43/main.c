@@ -3209,6 +3209,28 @@ static struct ssb_device *b43_ssb_gpio_dev(struct b43_wldev *dev)
 }
 #endif
 
+#ifdef CONFIG_B43_BCMA
+/*
+ * The GPIO setup of the AC cores' stock driver, wl 6.30 and 7.14 alike: the
+ * MAC gets no pin, and the ChipCommon drives the LED pins, under the LED
+ * timer, written dark before their outputs are enabled. b43_led_turn_on()
+ * drives them there on these cores.
+ */
+static void b43_gpio_init_ac(struct b43_wldev *dev)
+{
+	struct bcma_drv_cc *cc = &dev->dev->bdev->bus->drv_cc;
+	u32 leds = b43_leds_gpio_mask(dev->wl);
+
+	b43_maskset32(dev, B43_MMIO_MACCTL, ~B43_MACCTL_GPOUTSMSK, 0);
+	b43_write16(dev, B43_MMIO_GPIO_MASK, 0);
+
+	bcma_chipco_gpio_control(cc, leds, 0);
+	bcma_cc_maskset32(cc, BCMA_CC_GPIOTOUTM, ~leds, leds);
+	bcma_chipco_gpio_out(cc, leds, b43_leds_gpio_activelow(dev->wl));
+	bcma_chipco_gpio_outen(cc, leds, leds);
+}
+#endif
+
 static int b43_gpio_init(struct b43_wldev *dev)
 {
 #ifdef CONFIG_B43_SSB
@@ -3216,6 +3238,13 @@ static int b43_gpio_init(struct b43_wldev *dev)
 #endif
 	u32 leds = b43_leds_gpio_mask(dev->wl);
 	u32 mask, set;
+
+#ifdef CONFIG_B43_BCMA
+	if (b43_is_ac_core(dev)) {
+		b43_gpio_init_ac(dev);
+		return 0;
+	}
+#endif
 
 	b43_maskset32(dev, B43_MMIO_MACCTL, ~B43_MACCTL_GPOUTSMSK, 0);
 	b43_maskset16(dev, B43_MMIO_GPIO_MASK, ~0, 0xF | leds);
@@ -5263,11 +5292,11 @@ static int b43_wireless_core_start(struct b43_wldev *dev)
 		}
 	}
 
+	b43info(dev->wl, "start: enabling the MAC\n");
+
 	/* We are ready to run. */
 	ieee80211_wake_queues(dev->wl->hw);
 	b43_set_status(dev, B43_STAT_STARTED);
-
-	b43info(dev->wl, "start: enabling the MAC\n");
 
 	/* Start data flow (TX/RX). */
 	b43_mac_enable(dev);

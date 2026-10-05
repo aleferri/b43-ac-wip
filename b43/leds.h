@@ -69,6 +69,7 @@ void b43_leds_init(struct b43_wldev *dev);
 void b43_leds_exit(struct b43_wldev *dev);
 void b43_leds_stop(struct b43_wldev *dev);
 u32 b43_leds_gpio_mask(struct b43_wl *wl);
+u32 b43_leds_gpio_activelow(struct b43_wl *wl);
 
 
 #else /* CONFIG_B43_LEDS */
@@ -94,6 +95,10 @@ static inline void b43_leds_stop(struct b43_wldev *dev)
 {
 }
 static inline u32 b43_leds_gpio_mask(struct b43_wl *wl)
+{
+	return 0;
+}
+static inline u32 b43_leds_gpio_activelow(struct b43_wl *wl)
 {
 	return 0;
 }
