@@ -3107,16 +3107,16 @@ static void b43_phy_ac_set_analog_tx_lpf(struct b43_wldev *dev, u16 stages,
 }
 
 /*
- * Wait for the RF sequencer: bit 0 of 0x0403 is busy, and the sequence is
- * done when it reads back clear.
+ * Wait for the RF sequencer to clear @busy in 0x0403: the bit of the command
+ * kicked in 0x0402, bit 0 for the sample-play kicks.
  *
- * The number of reads follows the first value: on all 58 sites of the
- * captures, a first read of 0x0000 is the only one, a first read of 0x0101
- * is followed by a second that returns 0x0000. The capture waits 1027 us
- * between the two, so the wait is real; udelay(200) per turn caps it at
- * 2 ms.
+ * The number of reads follows the first value: a first read of 0x0000 is
+ * the only one, a busy one is followed by reads until it clears. The
+ * MacBook Air at 2.4 GHz reads 0x0202 after command 0x0002 and 0x2020 after
+ * 0x0020, and the stock driver waits for both; the D6220 captures waited up
+ * to 1027 us on 0x0101. udelay(200) per turn caps the wait at 2 ms.
  */
-static void b43_phy_ac_rfseq_wait_done(struct b43_wldev *dev)
+static void b43_phy_ac_rfseq_wait_done(struct b43_wldev *dev, u16 busy)
 {
 	unsigned int i;
 
@@ -3124,7 +3124,7 @@ static void b43_phy_ac_rfseq_wait_done(struct b43_wldev *dev)
 		u16 v = b43_phy_read_log(dev, 0x0403);
 
 		udelay(200);
-		if (!(v & 0x0001))
+		if (!(v & busy))
 			break;
 	}
 }
@@ -3149,7 +3149,7 @@ static void b43_phy_ac_run_rfseq_cmd(struct b43_wldev *dev, u16 cmd_bit)
 	b43_phy_set(dev, 0x0400, 0x0003);
 	b43_phy_set(dev, 0x0402, cmd_bit);
 
-	b43_phy_ac_rfseq_wait_done(dev);
+	b43_phy_ac_rfseq_wait_done(dev, cmd_bit);
 
 	b43_phy_write(dev, 0x0400, 0x0001);
 	b43_phy_write(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, 0x03d0);  /* inner unlock via plain write */
@@ -6957,7 +6957,7 @@ void b43_phy_ac_post_rxiqcal_stage2(struct b43_wldev *dev)
 		b43_phy_mask(dev, B43_PHY_AC_SAMP_PLAY_CTL, (u16)~B43_PHY_AC_SAMP_PLAY_START);
 		b43_phy_mask(dev, 0x0382, (u16)~0xc000);
 		b43_phy_set(dev, 0x0382, 0x8000);
-		b43_phy_ac_rfseq_wait_done(dev);
+		b43_phy_ac_rfseq_wait_done(dev, 0x0001);
 		b43_phy_write(dev, 0x0400, 0x0000);
 
 		/*
@@ -7743,7 +7743,7 @@ void b43_phy_ac_rxiqcal_prep_second_iter(struct b43_wldev *dev)
 	b43_phy_mask(dev,      B43_PHY_AC_SAMP_PLAY_CTL, (u16)~B43_PHY_AC_SAMP_PLAY_START);
 	b43_phy_mask(dev,      0x0382, (u16)~0xc000);
 	b43_phy_set(dev,       0x0382, 0x8000);
-	b43_phy_ac_rfseq_wait_done(dev);
+	b43_phy_ac_rfseq_wait_done(dev, 0x0001);
 	b43_phy_write(dev,     0x0400, 0x0000);
 
 	/* Every silicon core: clear bit 8 of 0x?73a, set bit 10 of 0x?725. */
@@ -7920,7 +7920,7 @@ void b43_phy_ac_rxiqcal_apply_second_stage(struct b43_wldev *dev)
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0001, 0x0001); /* bit 0, not the gate */
 	b43_phy_set(dev,      0x0400, 0x0003);
 	b43_phy_set(dev,      0x0402, 0x0020);
-	b43_phy_ac_rfseq_wait_done(dev);
+	b43_phy_ac_rfseq_wait_done(dev, 0x0020);
 	b43_phy_write(dev,    0x0400, 0x0000);
 
 	/* Gate reset: full overwrite. */
@@ -8297,7 +8297,7 @@ static void b43_phy_ac_rxiqcal_meas_readback_kick_tail(struct b43_wldev *dev)
 	b43_phy_mask(dev,      B43_PHY_AC_SAMP_PLAY_CTL, (u16)~B43_PHY_AC_SAMP_PLAY_START);
 	b43_phy_mask(dev,      0x0382, (u16)~0xc000);
 	b43_phy_set(dev,       B43_PHY_AC_SAMP_PLAY_CTL, B43_PHY_AC_SAMP_PLAY_START);
-	b43_phy_ac_rfseq_wait_done(dev);
+	b43_phy_ac_rfseq_wait_done(dev, 0x0001);
 	b43_phy_write(dev,     0x0400, 0x0000);
 
 	/* D: common tail */

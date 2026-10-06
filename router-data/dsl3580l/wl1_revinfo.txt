@@ -1,0 +1,18 @@
+# wl -i wl1 revinfo
+vendorid 0x14e4
+deviceid 0x43b3
+radiorev 0x42069000
+chipnum 0x4352
+chiprev 0x3
+chippackage 0x1
+corerev 0x2a
+boardid 0x668
+boardvendor 0x14e4
+boardrev P353
+driverrev 0x61ea317
+ucoderev 0x32200cc
+bus 0x1
+phytype 0xb
+phyrev 0x1
+anarev 0x0
+nvramrev 0
