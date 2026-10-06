@@ -17,17 +17,17 @@
 #include <string.h>
 
 #include <asm/branch.h>
+#include "kern_syms.h"
 #include "mips_mmio_emulate.h"
 
 static int fails;
 static int compute_calls;
 static unsigned long compute_target = 0xdead0000;
 
-int __compute_return_epc_for_insn(struct pt_regs *regs,
-				  union mips_instruction insn)
+int ks_compute_return_epc(struct pt_regs *regs, u32 insn)
 {
 	compute_calls++;
-	if ((insn.word >> 26) == 0x3f)	/* the test's "uncomputable" marker */
+	if ((insn >> 26) == 0x3f)	/* the test's "uncomputable" marker */
 		return -14;
 	regs->cp0_epc = compute_target;
 	return 0;

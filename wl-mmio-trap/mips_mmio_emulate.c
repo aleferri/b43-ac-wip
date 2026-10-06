@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Target: kernel 3.4.x, MIPS32R1, big-endian, o32.
+ * Target: kernels 2.6.30 and 3.4.x, MIPS32R1, big-endian, o32.
  *
  * MIPS32 I-type layout:
  *
@@ -16,6 +16,7 @@
 #include <asm/branch.h>
 #include <asm/inst.h>
 
+#include "kern_syms.h"
 #include "mips_mmio_emulate.h"
 
 #define OP_LB	0x20
@@ -49,7 +50,7 @@ static inline void gpr_put(struct pt_regs *regs, unsigned int n, unsigned long v
 		regs->regs[n] = v;
 }
 
-/* __compute_return_epc_for_insn() handles every branch on this
+/* The kernel's branch evaluator handles every branch on this
  * architecture, but two families pull in state that does not belong to the
  * faulting context: the COP1 condition branches read fcr31 out of the
  * current thread's FPU state, and bposge32 needs the DSP ASE (it calls
@@ -117,7 +118,7 @@ enum mmio_emu_status mips_mmio_emulate_one(struct pt_regs *regs,
 	 * order reproduces the hardware's. It also means nothing has been
 	 * written to the bus if the branch turns out to be uncomputable. */
 	if (bd) {
-		if (__compute_return_epc_for_insn(regs, binsn) < 0)
+		if (ks_compute_return_epc(regs, binsn.word) < 0)
 			return MMIO_EMU_DELAY_SLOT;
 	} else {
 		regs->cp0_epc += 4;

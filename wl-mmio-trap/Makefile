@@ -5,6 +5,11 @@
 #        ARCH=mips CROSS_COMPILE=mips-linux-gnu- \
 #        -j
 #
+# The same sources build for the 2.6.30 kernel of the DSL-3580L; point KDIR
+# at that tree instead. compat.h holds the version tests. 2.6.30 does not
+# export kallsyms_lookup_name, so the module is loaded with
+# klookup=0x<address from /proc/kallsyms>.
+#
 # KDIR must point at a kernel ALREADY configured with the firmware's own
 # .config and Module.symvers/headers, or vermagic/CRC will not match and
 # insmod will refuse the module.
@@ -13,10 +18,10 @@
 #
 #   CONFIG_KALLSYMS=y   fixup_exception, flush_icache_range's R4K back end
 #                       and flush_tlb_kernel_range are resolved by name;
-#                       none of the three is exported to modules. Data
-#                       symbols are NOT needed, so KALLSYMS_ALL is not
-#                       required (init_mm is reached through init_task,
-#                       which is exported).
+#                       none of the three is exported to modules, nor, before
+#                       3.3, __compute_return_epc. Data symbols are NOT
+#                       needed, so KALLSYMS_ALL is not required (init_mm is
+#                       reached through init_task, which is exported).
 #   CONFIG_PCI=y        for the BAR discovery. Without it, pass win_base
 #                       and win_len by hand.
 #
@@ -29,14 +34,14 @@
 # itself and waits for it: insmod before wl, after wl, or between two
 # `ifconfig up` cycles all work.
 #
-# tools/ holds host-side (not cross-compiled) checks of the two pure-logic
+# tools/ holds host-side (not cross-compiled) checks of the pure-logic
 # units. Run them before trusting anything built from them on hardware:
 #   make -C tools check
 
 obj-m := wl_mmio_trap.o
 wl_mmio_trap-objs := wl_mmio_trap_main.o mips_mmio_emulate.o mmio_pte.o \
                      win_find.o win_redirect.o bp_hook.o mips_opcode.o \
-                     kern_syms.o
+                     kern_syms.o wl_ring.o
 
 KDIR ?= /lib/modules/$(shell uname -r)/build
 

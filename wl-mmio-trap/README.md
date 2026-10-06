@@ -9,7 +9,8 @@ before `wl`, after it, or between two `ifconfig up`. The agcombo captures in
 
 ## How it works
 
-The kernel facts below were checked against the v3.4 sources.
+The kernel facts below were checked against the v3.4 sources; the 2.6.30
+differences are listed under "Kernel 2.6.30".
 
 1. **The hook is a `break` at the first word of `fixup_exception()`.** On this
    build `do_page_fault()` notifies nobody (`notify_die(DIE_PAGE_FAULT)` is under
@@ -53,9 +54,43 @@ make -C tools check
 ```
 
 Same `KDIR` requirements as `wl-diag`; needs `CONFIG_KALLSYMS=y` and
-`CONFIG_PCI=y`, not `CONFIG_KPROBES`. 3.4 only: the 2.6.30 tree does not export
-`kallsyms_lookup_name`. `tools/` compiles the real encoders and emulator against
+`CONFIG_PCI=y`, not `CONFIG_KPROBES`. The same sources build for 3.4 and for
+2.6.30, see below. `tools/` compiles the real encoders and emulator against
 `tools/shim/` and tests them natively; it says nothing about a real exception.
+
+## Kernel 2.6.30
+
+The DSL-3580L runs 2.6.30; point `KDIR` at that tree with
+`CROSS_COMPILE=mips-linux-`. `compat.h` holds the version tests. What differs:
+
+- **`kallsyms_lookup_name` is not exported** (it is from 2.6.33). Pass its
+  address as `klookup=0x...`, from `/proc/kallsyms`; the module calls it to
+  resolve `fixup_exception`, the icache and TLB flushers and
+  `__compute_return_epc`. Without it the module refuses to load.
+- **There is no `DIE_BREAK`** (2.6.36). `do_bp()` reaches the die chain
+  through `do_trap_or_bp()` as `DIE_TRAP`, and the notifier matches on the
+  break's address as before. The break code is 515 where the kernel does not
+  define `BRK_KPROBE_BP`.
+- **`__compute_return_epc_for_insn` does not exist** (3.3). The unexported
+  `__compute_return_epc()` is used instead; it reads the branch at `cp0_epc`,
+  which is the word the emulator has just fetched.
+- `init_mm` is exported by the 2.6.30 sources, but the module does not link
+  against it: the vendor kernel may not export it. If the scan does not find
+  it, pass `init_mm_addr=` from `System.map`.
+
+On the DSL-3580L the radio is `0000:02:00.0` with BAR0 at `0xa0000000`, above
+the 512 MB that `__ioremap()` reaches through CKSEG1, so `wl` maps it with
+ptes and `redirect=1` is not needed.
+
+```sh
+grep ' kallsyms_lookup_name$' /proc/kallsyms
+insmod wl_mmio_trap.ko autoarm=0 klookup=0x<address>
+```
+
+The build was checked against the vanilla 2.6.30 headers; it has not been run
+on the router's own kernel. Before loading, look in `/proc/kallsyms` for
+`fixup_exception`, `r4k_flush_icache_range`, `flush_tlb_kernel_range` and
+`__compute_return_epc`.
 
 ## Capture
 

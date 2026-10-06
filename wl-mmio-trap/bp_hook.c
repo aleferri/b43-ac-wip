@@ -12,6 +12,7 @@
 #include <asm/break.h>
 
 #include "bp_hook.h"
+#include "compat.h"
 #include "mips_opcode.h"
 #include "kern_syms.h"
 
@@ -47,7 +48,7 @@ static int bp_notify(struct notifier_block *nb, unsigned long val, void *data)
 	struct pt_regs *regs;
 	struct bp_site *s;
 
-	if (val != DIE_BREAK || !args || !args->regs)
+	if (val != MMIO_BP_DIE_EVENT || !args || !args->regs)
 		return NOTIFY_DONE;
 	regs = args->regs;
 	if (user_mode(regs))

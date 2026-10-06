@@ -1,8 +1,11 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * The four kernel facilities this module needs that a 3.4 MIPS build does
- * not export to modules:
+ * The kernel facilities this module needs that the target builds do not
+ * export to modules:
  *
+ *   kallsyms_lookup_name    not exported before 2.6.33. Reached by address,
+ *                           which the caller passes in (klookup=); it is
+ *                           what resolves everything below.
  *   init_mm                 a data symbol, so invisible to a kallsyms built
  *                           without KALLSYMS_ALL, and not exported on 3.4.
  *                           init_task.active_mm is NOT a way to reach it:
@@ -25,6 +28,9 @@
  *   flush_tlb_kernel_range  text, SMP-only, not exported.
  *   fixup_exception         text, not exported; the address the D11 trap
  *                           plants its breakpoint on.
+ *   __compute_return_epc    text, not exported; only before 3.3, where
+ *                           __compute_return_epc_for_insn does not exist
+ *                           yet.
  *
  * ks_init() resolves all of them and fails if any is missing, so every
  * later caller can assume they are there.
@@ -35,16 +41,25 @@
 #include <linux/types.h>
 
 struct mm_struct;
+struct pt_regs;
 
 /* init_mm_hint: the address of init_mm, from System.map, when neither
- * kallsyms nor the runtime candidates can supply it. 0 to leave it out. */
-int ks_init(unsigned long init_mm_hint);
+ * kallsyms nor the runtime candidates can supply it. 0 to leave it out.
+ *
+ * klookup: the address of kallsyms_lookup_name, from /proc/kallsyms.
+ * Required where the kernel does not export it, optional where it does. */
+int ks_init(unsigned long init_mm_hint, unsigned long klookup);
 
 struct mm_struct *ks_init_mm(void);
 unsigned long ks_fixup_exception(void);
 
 void ks_flush_icache(unsigned long start, unsigned long end);
 void ks_flush_tlb_kernel(unsigned long start, unsigned long end);
+
+/* Resolves the branch an exception hit the delay slot of, leaving cp0_epc
+ * at the address it goes to; <0 when it cannot. insn is the word at
+ * cp0_epc. */
+int ks_compute_return_epc(struct pt_regs *regs, u32 insn);
 
 /* For the optional, name-resolved extras; returns 0 when not found. */
 unsigned long ks_lookup(const char *name);

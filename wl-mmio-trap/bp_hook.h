@@ -3,14 +3,14 @@
  * One-word `break BRK_KPROBE_BP` sites in kernel text, dispatched from a
  * single die notifier.
  *
- * Why a break and not a jump detour: do_bp() calls
- * notify_die(DIE_BREAK, ...) unconditionally on this architecture -- it is
- * NOT inside the CONFIG_KPROBES guard the way do_page_fault()'s
- * DIE_PAGE_FAULT is -- and NOTIFY_STOP makes it return without signalling.
- * So a break is the one instrumentation point on a CONFIG_KPROBES=n 3.4
- * MIPS kernel from which execution can be resumed at an address the
- * handler chooses. wl_diag.c already relies on exactly this for the
- * prologues it cannot detour.
+ * Why a break and not a jump detour: do_bp() reaches the die chain whether
+ * or not CONFIG_KPROBES is set -- as DIE_BREAK on 3.4, as DIE_TRAP through
+ * do_trap_or_bp() on 2.6.30, where there is no DIE_BREAK -- while
+ * do_page_fault() notifies nobody without it. NOTIFY_STOP makes do_bp()
+ * return without signalling, so a break is the one instrumentation point on
+ * a CONFIG_KPROBES=n MIPS kernel from which execution can be resumed at an
+ * address the handler chooses. wl_diag.c's 3.4 variant relies on exactly
+ * this for the prologues it cannot detour.
  *
  * A one-word patch also removes the whole multi-word patch-ordering
  * problem: a single aligned 32-bit store has no intermediate state, so a

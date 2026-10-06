@@ -6,29 +6,53 @@
 #include <linux/mm.h>
 #include <linux/vmalloc.h>
 #include <asm/pgtable.h>
+#include <asm/branch.h>
+#include <asm/inst.h>
 
+#include "compat.h"
 #include "mmio_pte.h"
 
 #include "kern_syms.h"
 
 typedef void (*range_fn_t)(unsigned long, unsigned long);
+typedef unsigned long (*lookup_fn_t)(const char *);
 
 static struct mm_struct *p_init_mm;
 static range_fn_t p_flush_icache;
 static range_fn_t p_flush_tlb;
 static unsigned long p_fixup_exception;
+static lookup_fn_t p_lookup;
 
 unsigned long ks_lookup(const char *name)
 {
-	return kallsyms_lookup_name(name);
+	return p_lookup ? p_lookup(name) : 0;
 }
+
+#ifdef MMIO_RETURN_EPC_FOR_INSN
+int ks_compute_return_epc(struct pt_regs *regs, u32 insn)
+{
+	union mips_instruction i = { .word = insn };
+
+	return __compute_return_epc_for_insn(regs, i);
+}
+#else
+typedef int (*return_epc_fn_t)(struct pt_regs *);
+
+static return_epc_fn_t p_return_epc;
+
+int ks_compute_return_epc(struct pt_regs *regs, u32 insn)
+{
+	(void)insn;		/* __compute_return_epc() fetches it again */
+	return p_return_epc(regs);
+}
+#endif
 
 static range_fn_t resolve_range_fn(const char * const *cands, unsigned int n)
 {
 	unsigned int i;
 
 	for (i = 0; i < n; i++) {
-		unsigned long a = kallsyms_lookup_name(cands[i]);
+		unsigned long a = ks_lookup(cands[i]);
 
 		if (a) {
 			pr_info("wl_mmio_trap: %s -> %p\n", cands[i], (void *)a);
@@ -149,7 +173,7 @@ static struct mm_struct *resolve_init_mm(unsigned long hint)
 		struct mm_struct *mm;
 	} cand[] = {
 		{ "init_mm_addr=",        (struct mm_struct *)hint },
-		{ "kallsyms",             (struct mm_struct *)kallsyms_lookup_name("init_mm") },
+		{ "kallsyms",             (struct mm_struct *)ks_lookup("init_mm") },
 		{ "signature scan",       scan_for_init_mm() },
 		{ "init_task.active_mm",  init_task.active_mm },
 		{ "current->active_mm",   current->active_mm },
@@ -185,7 +209,7 @@ static struct mm_struct *resolve_init_mm(unsigned long hint)
 	return NULL;
 }
 
-int ks_init(unsigned long init_mm_hint)
+int ks_init(unsigned long init_mm_hint, unsigned long klookup)
 {
 	/* The R4K back end of the flush_icache_range pointer, in preference
 	 * order: the SMP-aware one first, so a patched word is visible to
@@ -201,6 +225,17 @@ int ks_init(unsigned long init_mm_hint)
 		"flush_tlb_kernel_range",
 		"local_flush_tlb_kernel_range",
 	};
+
+	if (klookup) {
+		p_lookup = (lookup_fn_t)klookup;
+	} else {
+#ifdef MMIO_KALLSYMS_EXPORTED
+		p_lookup = kallsyms_lookup_name;
+#else
+		pr_err("wl_mmio_trap: this kernel does not export kallsyms_lookup_name. Pass its address from /proc/kallsyms as klookup=0x...\n");
+		return -EINVAL;
+#endif
+	}
 
 	p_init_mm = resolve_init_mm(init_mm_hint);
 	if (!p_init_mm) {
@@ -220,11 +255,19 @@ int ks_init(unsigned long init_mm_hint)
 		return -ENOENT;
 	}
 
-	p_fixup_exception = kallsyms_lookup_name("fixup_exception");
+	p_fixup_exception = ks_lookup("fixup_exception");
 	if (!p_fixup_exception) {
 		pr_err("wl_mmio_trap: fixup_exception not resolvable\n");
 		return -ENOENT;
 	}
+
+#ifndef MMIO_RETURN_EPC_FOR_INSN
+	p_return_epc = (return_epc_fn_t)ks_lookup("__compute_return_epc");
+	if (!p_return_epc) {
+		pr_err("wl_mmio_trap: __compute_return_epc not resolvable\n");
+		return -ENOENT;
+	}
+#endif
 	pr_info("wl_mmio_trap: fixup_exception -> %p, init_mm -> %p\n",
 		(void *)p_fixup_exception, p_init_mm);
 	return 0;

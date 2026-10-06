@@ -18,9 +18,9 @@
  *     nothing is ever split in two and no window of validity is opened for
  *     another cpu to slip through.
  *   - The fault is caught at fixup_exception(), with a one-word
- *     `break BRK_KPROBE_BP`: do_bp() calls notify_die(DIE_BREAK)
- *     unconditionally on this architecture, which the DIE_PAGE_FAULT path
- *     in do_page_fault() does not (it is inside #ifdef CONFIG_KPROBES, and
+ *     `break BRK_KPROBE_BP`: do_bp() reaches the die chain with or without
+ *     CONFIG_KPROBES (bp_hook.h), which the DIE_PAGE_FAULT path in
+ *     do_page_fault() does not (it is inside #ifdef CONFIG_KPROBES, and
  *     this build has KPROBES off). fixup_exception() is chosen over
  *     do_page_fault() because it is only reached from no_context, i.e.
  *     essentially never in normal operation, so instrumenting it does not
@@ -38,7 +38,6 @@
 
 #include <linux/module.h>
 #include <linux/kernel.h>
-#include <linux/kfifo.h>
 #include <linux/vmalloc.h>
 #include <linux/mm.h>
 #include <linux/log2.h>
@@ -50,20 +49,22 @@
 #include <linux/spinlock.h>
 #include <linux/wait.h>
 #include <linux/workqueue.h>
-#include <linux/atomic.h>
 #include <linux/err.h>
+#include <asm/atomic.h>
 #include <asm/ptrace.h>
 #include <asm/io.h>
 #include <asm/page.h>
 #include <asm/cacheflush.h>
 #include <asm/addrspace.h>
 
+#include "compat.h"
 #include "kern_syms.h"
 #include "bp_hook.h"
 #include "mmio_pte.h"
 #include "win_find.h"
 #include "win_redirect.h"
 #include "mips_mmio_emulate.h"
+#include "wl_ring.h"
 
 #define PROC_NAME "wl_mmio_trap"
 
@@ -129,6 +130,10 @@ static ulong init_mm_addr;
 module_param(init_mm_addr, ulong, 0444);
 MODULE_PARM_DESC(init_mm_addr, "address of the kernel's init_mm, from System.map, when it cannot be found at runtime");
 
+static ulong klookup;
+module_param(klookup, ulong, 0444);
+MODULE_PARM_DESC(klookup, "address of kallsyms_lookup_name, from /proc/kallsyms; required on kernels that do not export it (before 2.6.33), which the module then calls to resolve everything else it needs");
+
 static int fifo_recs = FIFO_RECS_DEF;
 module_param(fifo_recs, int, 0444);
 MODULE_PARM_DESC(fifo_recs, "record capacity of the ring buffer, rounded up to a power of two (28 bytes each, vmalloc'd)");
@@ -157,7 +162,7 @@ struct wl_mmio_rec {
 	u8 op; u8 cpu; u16 _pad;
 } __packed;
 
-static DECLARE_KFIFO_PTR(fifo, struct wl_mmio_rec);
+static struct wl_ring ring;
 static void *fifo_buf;
 static DEFINE_RAW_SPINLOCK(fifo_lock);
 static atomic_t rec_seq = ATOMIC_INIT(0);
@@ -183,19 +188,15 @@ static void push_rec(struct wl_mmio_rec *r)
 	unsigned long flags;
 	bool full;
 
-	r->ts_ns = sched_clock();
+	r->ts_ns = mmio_now_ns();
 	r->seq = (u32)atomic_inc_return(&rec_seq);
 	r->cpu = (u8)raw_smp_processor_id();
 	r->_pad = 0;
 
 	raw_spin_lock_irqsave(&fifo_lock, flags);
-	if (kfifo_avail(&fifo) >= 1) {
-		kfifo_in(&fifo, r, 1);
-		full = false;
-	} else {
+	full = !wl_ring_put(&ring, r);
+	if (full)
 		atomic_inc(&drops);
-		full = true;
-	}
 	raw_spin_unlock_irqrestore(&fifo_lock, flags);
 
 	/* Disengaging means invalidating ptes and flushing the tlb, an IPI
@@ -761,12 +762,32 @@ static void print_status(void)
 		atomic_read(&n_not_ls));
 }
 
+/* Copies whole records, as many as fit in count, straight out of the ring.
+ * Returns the bytes copied, 0 when it is empty, or -EFAULT. */
+static ssize_t ring_to_user(char __user *buf, size_t count)
+{
+	size_t done = 0;
+
+	for (;;) {
+		const void *p;
+		u32 n = wl_ring_peek(&ring,
+				     (count - done) / sizeof(struct wl_mmio_rec),
+				     &p);
+
+		if (!n)
+			return done;
+		if (copy_to_user(buf + done, p, n * sizeof(struct wl_mmio_rec)))
+			return -EFAULT;
+		wl_ring_consume(&ring, n);
+		done += n * sizeof(struct wl_mmio_rec);
+	}
+}
+
 static ssize_t proc_read(struct file *f, char __user *buf, size_t count,
 			 loff_t *ppos)
 {
-	unsigned int copied;
+	ssize_t copied;
 	u32 d;
-	int ret;
 
 	if (count < sizeof(struct wl_mmio_rec))
 		return 0;
@@ -776,7 +797,7 @@ static ssize_t proc_read(struct file *f, char __user *buf, size_t count,
 		struct wl_mmio_rec r;
 
 		memset(&r, 0, sizeof(r));
-		r.ts_ns = sched_clock();
+		r.ts_ns = mmio_now_ns();
 		r.op = 255;		/* OP_DROP, same sentinel wl_diag uses */
 		r.aux = d;
 		if (copy_to_user(buf, &r, sizeof(r)))
@@ -785,25 +806,23 @@ static ssize_t proc_read(struct file *f, char __user *buf, size_t count,
 	}
 
 	for (;;) {
-		/* kfifo needs no lock on this side: the producers serialise
+		/* The ring needs no lock on this side: the producers serialise
 		 * against each other on fifo_lock and there is one consumer.
 		 * Copying straight to userspace, without the lock and without
 		 * a bounce buffer, is what lets a read drain as much as the
 		 * caller asked for -- a 32-record cap turned a burst into
 		 * hundreds of syscalls a second on a cpu that had none to
 		 * spare. */
-		ret = kfifo_to_user(&fifo, buf, count, &copied);
-		if (ret)
-			return ret;
+		copied = ring_to_user(buf, count);
 		if (copied)
-			return (ssize_t)copied;
+			return copied;
 		if (f->f_flags & O_NONBLOCK)
 			return -EAGAIN;
 		/* A timeout rather than a wakeup from the writer: the writer
 		 * is the fault path and stays as lean as it can. 50 ms of
 		 * latency on a trace nobody reads live costs nothing. */
 		if (wait_event_interruptible_timeout(rec_waitq,
-				!kfifo_is_empty(&fifo) || atomic_read(&drops),
+				wl_ring_len(&ring) || atomic_read(&drops),
 				HZ / 20) < 0)
 			return -ERESTARTSYS;
 		if (atomic_read(&drops))
@@ -856,21 +875,18 @@ static const struct file_operations proc_fops = {
 /* ---- init / exit --------------------------------------------------------- */
 static int __init wl_mmio_trap_init(void)
 {
-	size_t bytes;
+	u32 slots;
 	int ret;
 
-	ret = ks_init(init_mm_addr);
+	ret = ks_init(init_mm_addr, klookup);
 	if (ret)
 		return ret;
 
-	bytes = roundup_pow_of_two((unsigned int)fifo_recs) *
-		sizeof(struct wl_mmio_rec);
-	fifo_buf = vmalloc(bytes);
+	slots = roundup_pow_of_two((unsigned int)fifo_recs);
+	fifo_buf = vmalloc((size_t)slots * sizeof(struct wl_mmio_rec));
 	if (!fifo_buf)
 		return -ENOMEM;
-	ret = kfifo_init(&fifo, fifo_buf, bytes);
-	if (ret)
-		goto err_fifo;
+	wl_ring_init(&ring, fifo_buf, slots, sizeof(struct wl_mmio_rec));
 
 	ret = bp_hook_init();
 	if (ret)
