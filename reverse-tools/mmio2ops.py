@@ -151,18 +151,22 @@ def parse_wl_mmio_trap(path):
             print(f"{path}: {aux} records dropped before #{seq}", file=sys.stderr)
 
 
-def parse_bpftrace(path):
+def parse_bpftrace(path, keep_delay=False):
     """Accesses of a bpftrace capture of osl_read*/osl_write*.
 
     The addresses are kernel virtual addresses of wl's BAR0 mapping; the base
     is the page of the lowest one, which is the sliding window at BAR0 + 0.
-    The osl_delay lines are not bus traffic and are skipped. The script keys
-    the open read by thread, so a read nested in an interrupt on the same
-    thread loses its address and prints 0: those are dropped, and counted."""
+    The osl_delay lines are not bus traffic: they are skipped, or with
+    keep_delay kept as Ops of kind 'D' with the microseconds in `val`. The
+    script keys the open read by thread, so a read nested in an interrupt on
+    the same thread loses its address and prints 0: those are dropped, and
+    counted."""
     acc, lost = [], 0
     for line in open(path):
         f = line.split()
-        if len(f) == 4 and f[1][0] in "RW" and f[1][1:] in ("8", "16", "32"):
+        if keep_delay and len(f) == 3 and f[1] == "DELAY":
+            acc.append((int(f[0]), "D", 0, 0, int(f[2])))
+        elif len(f) == 4 and f[1][0] in "RW" and f[1][1:] in ("8", "16", "32"):
             if int(f[2], 16) == 0:
                 lost += 1
                 continue
@@ -170,16 +174,16 @@ def parse_bpftrace(path):
                         int(f[2], 16), int(f[3], 16)))
     if lost:
         print(f"{path}: {lost} reads without their address dropped", file=sys.stderr)
-    base = min(a[3] for a in acc) & ~0xfff
+    base = min(a[3] for a in acc if a[1] != "D") & ~0xfff
     for ts, kind, width, addr, val in acc:
-        yield Op(ts / 1e9, kind, width, addr - base, val)
+        yield Op(ts / 1e9, kind, width, addr if kind == "D" else addr - base, val)
 
 
 FTRACE_LINE = re.compile(r"^\s*.+?-(?P<pid>\d+)\s+\[(?P<cpu>\d+)\]\s+\S+\s+(?P<ts>[\d.]+): "
                          r"(?P<ev>\w+): \([^)]*\)(?P<args>.*)$")
 
 
-def parse_ftrace(path):
+def parse_ftrace(path, keep_delay=False):
     """Accesses of an ftrace capture of osl_read*/osl_write* and of
     osl_pci_write_config, as the trace buffer prints the kprobe events.
 
@@ -190,7 +194,7 @@ def parse_ftrace(path):
     takes its place and time from its return. The base is found as in
     bpftrace. A
     config write is an Op of kind 'C' with the config offset in `off`. The
-    osl_delay events are not bus traffic and are skipped."""
+    osl_delay events are handled as in bpftrace."""
     acc, pending = [], collections.defaultdict(list)
     for line in open(path):
         m = FTRACE_LINE.match(line)
@@ -202,6 +206,8 @@ def parse_ftrace(path):
         ts = float(m["ts"])
         if ev == "cfgw":
             acc.append((ts, "C", int(args["size"]), int(args["off"], 16), int(args["val"], 16)))
+        elif ev == "delay" and keep_delay:
+            acc.append((ts, "D", 0, 0, int(args["us"])))
         elif ev in ("w8", "w16", "w32"):
             acc.append((ts, "W", int(ev[1:]) // 8, int(args["addr"], 16), int(args["val"], 16)))
         elif ev in ("r8", "r16", "r32"):
@@ -212,9 +218,9 @@ def parse_ftrace(path):
                 continue
             _, width, addr = pending[pid].pop()
             acc.append((ts, "R", width, addr, int(args["ret"], 16)))
-    base = min(a[3] for a in acc if a[1] != "C") & ~0xfff
+    base = min(a[3] for a in acc if a[1] not in "CD") & ~0xfff
     for ts, kind, width, addr, val in acc:
-        yield Op(ts, kind, width, addr if kind == "C" else addr - base, val)
+        yield Op(ts, kind, width, addr if kind in "CD" else addr - base, val)
 
 
 PARSERS = {"mmiotrace": parse_mmiotrace, "wl-mmio-trap": parse_wl_mmio_trap,
@@ -323,6 +329,10 @@ class Decoder:
             if op.kind == "M":
                 yield from ((op.ts, o) for o in self.flush_bulk())
                 yield op.ts, f"MARK '{op.val}'"
+                continue
+            if op.kind == "D":
+                yield from ((op.ts, o) for o in self.flush_bulk())
+                yield op.ts, f"DELAY us={op.val}"
                 continue
             if op.kind == "C":
                 yield from ((op.ts, o) for o in self.flush_bulk())
@@ -559,9 +569,17 @@ def main():
                     help="emit a WIN line where the sliding window is inferred to move")
     ap.add_argument("--keep-flush", action="store_true",
                     help="keep the PHY_VER read that follows PHY writes (wl's write flush)")
+    ap.add_argument("--keep-delay", action="store_true",
+                    help="emit wl's osl_delay calls as DELAY us=N lines (bpftrace and ftrace only)")
     args = ap.parse_args()
 
-    ops = list(PARSERS[args.format or guess_format(args.trace)](args.trace))
+    fmt = args.format or guess_format(args.trace)
+    if args.keep_delay:
+        if fmt not in ("bpftrace", "ftrace"):
+            ap.error(f"--keep-delay: {fmt} captures do not record osl_delay")
+        ops = list(PARSERS[fmt](args.trace, keep_delay=True))
+    else:
+        ops = list(PARSERS[fmt](args.trace))
     if args.erom:
         erom_report(ops, sys.stdout)
         return

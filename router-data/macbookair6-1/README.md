@@ -40,6 +40,11 @@ python3 ../../reverse-tools/split_trace.py --on chanspec /tmp/tx.txt /tmp/tx/
 python3 ../../reverse-tools/timeline.py /tmp/tx.txt /tmp/tx.tl
 ```
 
+These are the only captures of the collection that record `osl_delay`, so
+they are the reference for the stock driver's delays and polling intervals:
+`--keep-delay` writes each call as a `DELAY us=N` line among the ops. The
+router captures have millisecond timestamps and cannot show them.
+
 ## What they contain
 
 - `wl-init-20260926`: `ifdown`, `ifup`, a scan over ch1-13 and ch36-161 at
