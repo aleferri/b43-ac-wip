@@ -1667,10 +1667,8 @@ void b43_radio_2069_pwron(struct b43_wldev *dev)
 	b43_radio_set(dev,   0x040b, 0x0001);	/* power-on kick */
 
 	/*
-	 * Bit 3 of 0x040b rises when the sequence completes. The stock driver
-	 * polls it every 10 us, then reads the register once more: the
-	 * MacBook Air reads 0x0161 and 0x0169 ten microseconds apart, the
-	 * routers 0x0169 at the first read.
+	 * Bit 3 of 0x040b rises when the sequence completes: poll it every
+	 * 10 us, then read the register once more, as the vendor does.
 	 */
 	for (polls = 1; polls <= R2069_PWRON_POLL_MAX; polls++) {
 		udelay(10);

@@ -35,7 +35,8 @@ Output lines follow the vendor capture format read by tracelib.py:
 with the bus vocabulary of test/integration (PHY.WR/RD, RAD.WR/RD, OBJ.WR/RD
 with sel=, MAC.MCTRL, MAC.MCMD, REG.WR/RD off=) plus CC.*, SROM.RD, WRAP.*,
 PCIE.*, EROM.RD, CORE.* and PCICFG.WR for the parts the vendor tracer never
-saw.
+saw. A PHY data access with no register select of its own is PHY.RDW or
+PHY.WRW, without an address, as the vendor tracer prints wl's wide reads.
 """
 import argparse
 import collections
@@ -254,6 +255,9 @@ class Decoder:
         self.cores = {}
         self.win_core = None
         self.phy_addr = None
+        # The PHY data accesses since the last register select: None right
+        # after a select, else the kind ('R' or 'W') of the previous one.
+        self.phy_last = None
         self.radio_addr = None
         self.objaddr = 0
         self.bulk_min = bulk_min
@@ -398,12 +402,27 @@ class Decoder:
         if o == PHY_CTL:
             if w == 4:
                 self.phy_addr = v & 0xffff
+                self.phy_last = "W"
                 yield f"PHY.WR addr=0x{self.phy_addr:04x} val=0x{v >> 16:04x}"
             else:
                 self.phy_addr = v
+                self.phy_last = None
             return
         if o == PHY_DATA:
-            yield f"PHY.{rw(op)} addr=0x{self.phy_addr or 0:04x} val=0x{v & 0xffff:04x}"
+            # phy_reg_read/write select the register before every access,
+            # and phy_reg_mod before its read, which its write follows. Any
+            # other data access with no select of its own is wl's wide access
+            # (phy_reg_read_wide and the stores of wlc_phy_write_table_ext),
+            # the next word of a multi-word table cell, printed as the vendor
+            # tracer prints it, without an address.
+            kind = rw(op)[0]
+            wide = not (self.phy_last is None or
+                        self.phy_last == "R" and kind == "W")
+            self.phy_last = kind
+            if wide:
+                yield f"PHY.{rw(op)}W val=0x{v & 0xffff:04x}"
+            else:
+                yield f"PHY.{rw(op)} addr=0x{self.phy_addr or 0:04x} val=0x{v & 0xffff:04x}"
             return
         if o == RADIO_CTL and w == 2:
             self.radio_addr = v

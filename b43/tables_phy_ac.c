@@ -30,6 +30,18 @@ void b43_phy_ac_tbl_write_unlock(struct b43_wldev *dev, u16 saved)
 /* Bulk table write */
 
 /*
+ * One 48-bit cell through the DATA_2 port. The first word selects the port,
+ * the other two go to the PHY data register without selecting it again, as
+ * the vendor does.
+ */
+static void actab_write_cell48(struct b43_wldev *dev, u16 w0, u16 w1, u16 w2)
+{
+	b43_phy_write(dev, B43_PHY_AC_TABLE_DATA_2, w0);
+	b43_write16(dev, B43_MMIO_PHY_DATA, w1);
+	b43_write16(dev, B43_MMIO_PHY_DATA, w2);
+}
+
+/*
  * Shared body of the bulk writes: write a contiguous run of values into one of
  * the PHY's internal tables. @peek decides whether to re-read the 0x019e gate
  * before the id/offset/data sequence. The stock driver re-reads it for every
@@ -51,16 +63,9 @@ static void actab_write_bulk_common(struct b43_wldev *dev,
 	switch (width) {
 	case 8: {
 		const u8 *p = data;
-		/*
-		 * id=0x20 usa un DATA register alternativo (0x011) invece del
-		 * default DATA_LO (0x00f).
-		 */
-		u16 data_reg = (id == 0x20)
-			? B43_PHY_AC_TABLE_DATA_2
-			: B43_PHY_AC_TABLE_DATA_LO;
 
 		for (i = 0; i < len; i++)
-			b43_phy_write(dev, data_reg, p[i]);
+			b43_phy_write(dev, B43_PHY_AC_TABLE_DATA_LO, p[i]);
 		break;
 	}
 	case 16: {
@@ -79,6 +84,13 @@ static void actab_write_bulk_common(struct b43_wldev *dev,
 			b43_phy_write(dev, B43_PHY_AC_TABLE_DATA_LO,
 				      (u16)(p[i] & 0xffff));
 		}
+		break;
+	}
+	case 48: {
+		const u16 *p = data;	/* three halfwords per entry, low first */
+
+		for (i = 0; i < len; i++)
+			actab_write_cell48(dev, p[i * 3], p[i * 3 + 1], p[i * 3 + 2]);
 		break;
 	}
 	default:
@@ -121,15 +133,7 @@ static void actab_zerofill_common(struct b43_wldev *dev, u16 id, u16 offset,
 	b43_phy_write(dev, B43_PHY_AC_TABLE_OFFSET, offset);
 
 	switch (width) {
-	case 8: {
-		u16 data_reg = (id == 0x20)
-			? B43_PHY_AC_TABLE_DATA_2
-			: B43_PHY_AC_TABLE_DATA_LO;
-
-		for (i = 0; i < len; i++)
-			b43_phy_write(dev, data_reg, 0);
-		break;
-	}
+	case 8:
 	case 16:
 		for (i = 0; i < len; i++)
 			b43_phy_write(dev, B43_PHY_AC_TABLE_DATA_LO, 0);
@@ -139,6 +143,10 @@ static void actab_zerofill_common(struct b43_wldev *dev, u16 id, u16 offset,
 			b43_phy_write(dev, B43_PHY_AC_TABLE_DATA_HI, 0);
 			b43_phy_write(dev, B43_PHY_AC_TABLE_DATA_LO, 0);
 		}
+		break;
+	case 48:
+		for (i = 0; i < len; i++)
+			actab_write_cell48(dev, 0, 0, 0);
 		break;
 	default:
 		b43warn(dev->wl,
@@ -735,10 +743,11 @@ void b43_actab_read_bulk(struct b43_wldev *dev,
 	case 48: {
 		u16 *p = data;	/* three halfwords per entry, low first */
 
+		/* As the writes: one select, then the data register twice. */
 		for (i = 0; i < len; i++) {
 			p[i * 3 + 0] = b43_phy_read(dev, B43_PHY_AC_TABLE_DATA_2);
-			p[i * 3 + 1] = b43_phy_read(dev, B43_PHY_AC_TABLE_DATA_2);
-			p[i * 3 + 2] = b43_phy_read(dev, B43_PHY_AC_TABLE_DATA_2);
+			p[i * 3 + 1] = b43_read16(dev, B43_MMIO_PHY_DATA);
+			p[i * 3 + 2] = b43_read16(dev, B43_MMIO_PHY_DATA);
 		}
 		break;
 	}
@@ -1108,43 +1117,4 @@ void b43_phy_ac_tables_init(struct b43_wldev *dev)
 	}
 
 	b43_phy_ac_tbl_write_unlock(dev, saved);
-}
-
-/*
- * Alternate-port table write (id 0x11 style). The blob programs this table
- * one word at a time via the data register 0x0011 (not DATA_LO 0x00f /
- * DATA_HI 0x010), re-selecting id+offset for every word and with no address
- * auto-increment -- see trace. Reproduced faithfully here.
- */
-void b43_actab_write_r11(struct b43_wldev *dev,
-			 u16 id, u16 offset, size_t len, const u16 *data)
-{
-	size_t i;
-
-	/*
-	 * The vendor's pattern for table 0x11, 464 u16s: for each cell, peek
-	 * 0x019e, write the table id, write the offset, write DATA_2 at 0x0011.
-	 * It does not rely on the offset auto-incrementing, which is what
-	 * actab_write_bulk() does; it reselects id and offset for every cell.
-	 * Five ops per cell over 464 cells, so 2320 ops.
-	 */
-	for (i = 0; i < len; i++) {
-		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-		b43_phy_write(dev, B43_PHY_AC_TABLE_ID, id);
-		b43_phy_write(dev, B43_PHY_AC_TABLE_OFFSET, (u16)(offset + i));
-		b43_phy_write(dev, B43_PHY_AC_TABLE_DATA_2, data[i]);
-	}
-}
-
-void b43_actab_fill_r11(struct b43_wldev *dev,
-			u16 id, u16 offset, size_t len, u16 val)
-{
-	size_t i;
-
-	for (i = 0; i < len; i++) {
-		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-		b43_phy_write(dev, B43_PHY_AC_TABLE_ID, id);
-		b43_phy_write(dev, B43_PHY_AC_TABLE_OFFSET, (u16)(offset + i));
-		b43_phy_write(dev, B43_PHY_AC_TABLE_DATA_2, val);
-	}
 }

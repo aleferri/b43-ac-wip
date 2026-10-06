@@ -585,11 +585,16 @@ SOLO_PORT = (
 #          si spegne.
 #   WRAP.*  lo spazio agent del core: reset, clock e bit PHY di IOCTL. Stesso
 #          caso, lo vedono solo le catture al bus.
+#   PHY.WRW la seconda e la terza parola di una cella a 48 bit, che
+#          wlc_phy_write_table_ext() scrive sul data port senza passare da
+#          phy_reg_write(), l'accessore agganciato. Le catture al bus le
+#          portano.
 SOLO_PORT_SENZA_CLASSE = (
     (r'^AMT\.', 'AMT.'),
     (r'^REG\.', 'REG.'),
     (r'^MAC\.MCMD\b', 'MAC.MCMD'),
     (r'^WRAP\.', 'WRAP.'),
+    (r'^PHY\.WRW\b', 'PHY.WRW'),
 )
 
 
@@ -951,7 +956,7 @@ def load_vendor(path, ep_range, profile=None, espanse=None):
 
 def load_test(path, profile=None):
     raws = [m.group(1) for line in open(path) for m in [TEST_LINE.match(line)] if m]
-    return op_forms(raws, profile)
+    return resolve_wide_reads(op_forms(raws, profile))
 
 def find_offset(test, target_op):
     """Return the index of `target_op` in test, or -1.

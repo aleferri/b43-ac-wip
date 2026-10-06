@@ -48,9 +48,7 @@ WRAP_SYMS := \
     b43_current_band b43_phy_init \
     b43_actab_read_bulk b43_actab_write_bulk b43_actab_write_bulk_reopen \
     b43_actab_write_bulk_scoped b43_actab_zerofill \
-    b43_actab_write_bulk_locked b43_actab_zerofill_locked \
-    b43_actab_write_r11 \
-    b43_actab_fill_r11
+    b43_actab_write_bulk_locked b43_actab_zerofill_locked
 
 LDFLAGS := $(foreach s,$(WRAP_SYMS),-Wl,--wrap=$(s))
 

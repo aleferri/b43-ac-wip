@@ -53,22 +53,6 @@ void b43_actab_read_bulk(struct b43_wldev *dev,
 			 size_t len, void *data);
 
 /*
- * Some tables (e.g. id 0x11) are written one cell at a time through the
- * alternate data register 0x0011 -- not DATA_LO/DATA_HI -- re-selecting
- * id+offset per word. This helper reproduces that access.
- */
-void b43_actab_write_r11(struct b43_wldev *dev,
-			 u16 id, u16 offset, size_t len, const u16 *data);
-
-/*
- * Same access with a single repeated value instead of a buffer, for the long
- * constant runs these tables carry. Emits the same ops as write_r11 over an
- * array of len copies of val.
- */
-void b43_actab_fill_r11(struct b43_wldev *dev,
-			u16 id, u16 offset, size_t len, u16 val);
-
-/*
  * Save+set / restore of bit 0x0002 of B43_PHY_AC_REG_TBL_WRITE_GATE (PHY reg
  * 0x19E).
  */

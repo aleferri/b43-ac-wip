@@ -186,9 +186,7 @@ static bool tbl_mirror_serve(u16 id, u16 offset, u8 width, size_t len)
 		plan_add(phy_plans, &phy_plans_n, B43_PHY_AC_TABLE_DATA_HI,
 			 tbl_mirror_hi, (int)len);
 	} else {
-		plan_add(phy_plans, &phy_plans_n,
-			 id == 0x20 ? B43_PHY_AC_TABLE_DATA_2
-				    : B43_PHY_AC_TABLE_DATA_LO,
+		plan_add(phy_plans, &phy_plans_n, B43_PHY_AC_TABLE_DATA_LO,
 			 tbl_mirror_lo, (int)len);
 	}
 	return true;
@@ -378,6 +376,79 @@ static void oracle_tbl_push(unsigned id, unsigned off, unsigned val)
 	oracle_push(oracle_tbl[id], off, val);
 }
 
+/* Whether the capture marks its table accesses with TBL.* lines. */
+static int capture_has_tbl_markers(FILE *f)
+{
+	char line[512];
+	int found = 0;
+
+	while (!found && fgets(line, sizeof(line), f))
+		found = strstr(line, " TBL.") != NULL;
+	rewind(f);
+	return found;
+}
+
+/*
+ * A capture taken at the bus has no TBL.* markers. Its table accesses are
+ * keyed by the id and offset it selects in 0x000d/0x000e, the offset moving
+ * on with each cell as the hardware's does: a cell begins at an access of
+ * DATA_LO or DATA_2 that selects it, and DATA_HI and the wide accesses
+ * (PHY.RDW, PHY.WRW) are further words of the cell. 32-bit cells are read
+ * low half first and written high half first, as tables_phy_ac.c does.
+ */
+struct bus_tbl {
+	unsigned id, next, cell;
+	int open, in_cell;
+};
+
+/* Returns 1 if the line was a table access and is consumed. */
+static int bus_tbl_line(struct bus_tbl *t, const char *line)
+{
+	const char *p;
+	unsigned addr, val;
+
+	if ((p = strstr(line, "PHY.RDW")) != NULL) {
+		if (!t->open || !t->in_cell ||
+		    sscanf(p, "PHY.RDW %*[^=]=%x", &val) != 1)
+			return 0;
+		oracle_tbl_push(t->id, t->cell, val);
+		return 1;
+	}
+	if (strstr(line, "PHY.WRW"))
+		return t->open;
+	if ((p = strstr(line, "PHY.WR")) != NULL &&
+	    sscanf(p, "PHY.WR %*[^=]=%x %*[^=]=%x", &addr, &val) == 2) {
+		if (addr == B43_PHY_AC_TABLE_ID) {
+			t->id = val;
+			t->open = 0;
+		} else if (addr == B43_PHY_AC_TABLE_OFFSET) {
+			t->next = val;
+			t->open = 1;
+			t->in_cell = 0;
+		} else if (t->open && (addr == B43_PHY_AC_TABLE_DATA_LO ||
+				       addr == B43_PHY_AC_TABLE_DATA_2)) {
+			t->next++;
+			t->in_cell = 0;
+		}
+		return 0;
+	}
+	if ((p = strstr(line, "PHY.RD")) != NULL && t->open &&
+	    sscanf(p, "PHY.RD %*[^=]=%x %*[^=]=%x", &addr, &val) == 2) {
+		if (addr == B43_PHY_AC_TABLE_DATA_LO ||
+		    addr == B43_PHY_AC_TABLE_DATA_2) {
+			t->cell = t->next++;
+			t->in_cell = 1;
+			oracle_tbl_push(t->id, t->cell, val);
+			return 1;
+		}
+		if (addr == B43_PHY_AC_TABLE_DATA_HI && t->in_cell) {
+			oracle_tbl_push(t->id, t->cell, val);
+			return 1;
+		}
+	}
+	return 0;
+}
+
 static void oracle_init(void)
 {
 	static int tried;
@@ -404,6 +475,8 @@ static void oracle_init(void)
 		return;
 	}
 	unsigned tbl_id = 0, tbl_off = 0, tbl_len = 0, tbl_words = 0;
+	struct bus_tbl bus = { 0 };
+	int bus_keyed = !capture_has_tbl_markers(f);
 	/*
 	 * A shared-memory region read whose words are not traced. The d6220
 	 * captures follow every `OBJ.BULKR` header with its words, so the
@@ -442,6 +515,9 @@ static void oracle_init(void)
 			if (ep < oracle_from)
 				continue;
 		}
+
+		if (bus_keyed && bus_tbl_line(&bus, line))
+			continue;
 
 		if ((p = strstr(line, "OBJ.BULKR")) != NULL) {
 			oracle_flush_bulk(&bulk_addr, &bulk_words);
@@ -705,30 +781,41 @@ static bool tbl_oracle_serve(u16 id, u16 offset, u8 width, size_t len)
 		plan_add(phy_plans, &phy_plans_n, B43_PHY_AC_TABLE_DATA_HI,
 			 tbl_mirror_hi, (int)len);
 	} else {
-		plan_add(phy_plans, &phy_plans_n,
-			 id == 0x20 ? B43_PHY_AC_TABLE_DATA_2
-				    : B43_PHY_AC_TABLE_DATA_LO,
+		plan_add(phy_plans, &phy_plans_n, B43_PHY_AC_TABLE_DATA_LO,
 			 tbl_mirror_lo, (int)len);
 	}
 	return true;
 }
 
-u16 __wrap_b43_phy_read(struct b43_wldev *dev, u16 reg)
+/*
+ * The PHY register the last access selected: a driver access to the data
+ * register that does not select one of its own (b43_read16/b43_write16 on
+ * B43_MMIO_PHY_DATA, the second and third word of a 48-bit table cell) goes
+ * there, as on the hardware.
+ */
+static u16 phy_selected;
+
+static bool is_tbl_data_port(u16 reg)
 {
-	struct read_plan *p;
+	return reg == B43_PHY_AC_TABLE_DATA_LO ||
+	       reg == B43_PHY_AC_TABLE_DATA_HI ||
+	       reg == B43_PHY_AC_TABLE_DATA_2;
+}
+
+static u16 phy_read_value(u16 reg)
+{
+	struct read_plan *p = plan_lookup(phy_plans, phy_plans_n, reg);
 	u16 v;
 
-	(void)dev;
+	/* A table read the keyed oracle or the mirror has served comes first. */
+	if (is_tbl_data_port(reg) && p && p->iter < p->cap)
+		return p->results[p->iter++];
 
 	if (oracle_take(oracle_phy, reg, &v))
-		goto out;
+		return v;
 
-	p = plan_lookup(phy_plans, phy_plans_n, reg);
-	if (p && p->iter < p->cap) {
-		v = p->results[p->iter];
-		p->iter++;
-		goto out;
-	}
+	if (p && p->iter < p->cap)
+		return p->results[p->iter++];
 	/* oracolo e plan assenti o esauriti: cadi sul mirror delle write. */
 	v = (reg < MIRROR_PHY_SZ) ? mirror_phy[reg] : 0;
 	/*
@@ -740,7 +827,16 @@ u16 __wrap_b43_phy_read(struct b43_wldev *dev, u16 reg)
 	 */
 	if (reg == 0x0270)
 		v &= (u16)~0x0001;
-out:
+	return v;
+}
+
+u16 __wrap_b43_phy_read(struct b43_wldev *dev, u16 reg)
+{
+	u16 v;
+
+	(void)dev;
+	phy_selected = reg;
+	v = phy_read_value(reg);
 	fprintf(trace(), "cpu1 PHY.RD   addr=0x%04x val=0x%04x\n", reg, v);
 	return v;
 }
@@ -798,6 +894,7 @@ static void phy_state_track(struct b43_wldev *dev, u16 reg, u16 val)
 
 void __wrap_b43_phy_write(struct b43_wldev *dev, u16 reg, u16 val)
 {
+	phy_selected = reg;
 	fprintf(trace(), "cpu1 PHY.WR   addr=0x%04x val=0x%04x\n", reg, val);
 	if (reg < MIRROR_PHY_SZ) mirror_phy[reg] = val;
 	phy_state_track(dev, reg, val);
@@ -814,6 +911,7 @@ void __wrap_b43_phy_mask(struct b43_wldev *dev, u16 reg, u16 mask)
 	 *   Verified: b43_phy_mask(0x0471, ~0x0001) at D6220 #82499 emits
 	 *   PHY.AND addr=0x0471 val=0xfffe.
 	 */
+	phy_selected = reg;
 	fprintf(trace(), "cpu1 PHY.AND  addr=0x%04x val=0x%04x\n", reg, mask);
 	if (reg < MIRROR_PHY_SZ) mirror_phy[reg] &= mask;
 }
@@ -828,6 +926,7 @@ void __wrap_b43_phy_set(struct b43_wldev *dev, u16 reg, u16 val)
 	 *   Verified: b43_phy_set(0x0400, 0x0001) at D6220 #82504 emits
 	 *   PHY.OR addr=0x0400 val=0x0001.
 	 */
+	phy_selected = reg;
 	fprintf(trace(), "cpu1 PHY.OR   addr=0x%04x val=0x%04x\n", reg, val);
 	if (reg < MIRROR_PHY_SZ) mirror_phy[reg] |= val;
 }
@@ -846,6 +945,7 @@ void __wrap_b43_phy_set(struct b43_wldev *dev, u16 reg, u16 val)
  */
 void __wrap_b43_phy_maskset(struct b43_wldev *dev, u16 reg, u16 mask, u16 set)
 {
+	phy_selected = reg;
 	fprintf(trace(), "cpu1 PHY.MOD  addr=0x%04x val=0x%04x mask=0x%04x\n",
 		reg, set, (u16)~mask);
 	if (reg < MIRROR_PHY_SZ) {
@@ -949,6 +1049,12 @@ u16 __wrap_b43_read16(struct b43_wldev *dev, u16 off)
 	struct read_plan *p = plan_lookup(mmio_plans, mmio_plans_n, off);
 	u16 v;
 
+	if (off == B43_MMIO_PHY_DATA) {
+		v = phy_read_value(phy_selected);
+		fprintf(trace(), "cpu1 PHY.RDW   val=0x%04x\n", v);
+		return v;
+	}
+
 	if (p && p->iter < p->cap) {
 		v = p->results[p->iter];
 		p->iter++;
@@ -962,6 +1068,14 @@ u16 __wrap_b43_read16(struct b43_wldev *dev, u16 off)
 void __wrap_b43_write16(struct b43_wldev *dev, u16 off, u16 val)
 {
 	(void)dev;
+	if (off == B43_MMIO_PHY_DATA) {
+		fprintf(trace(), "cpu1 PHY.WRW   val=0x%04x\n", val);
+		if (phy_selected < MIRROR_PHY_SZ)
+			mirror_phy[phy_selected] = val;
+		return;
+	}
+	if (off == B43_MMIO_PHY_CONTROL)
+		phy_selected = val;
 	fprintf(trace(), "cpu1 REG.WR   off=0x%04x val=0x%04x\n", off, val);
 	if (off < MIRROR_MMIO_SZ) mirror_mmio[off] = val;
 }
@@ -1214,50 +1328,6 @@ void __wrap_b43_actab_read_bulk(struct b43_wldev *dev,
 	if (pre >= 0)
 		mirror_phy[0x000f] = (u16)pre;
 	__real_b43_actab_read_bulk(dev, id, offset, width, len, data);
-}
-
-/*
- * actab_write_r11 wrap: il vendor emette TBL.WR label per-cella (len=1)
- * seguito dal pattern peek + WR ID + WR OFFSET + WR DATA_2. Emettiamo la
- * label riga per riga chiamando __real con len=1 per volta, così ogni
- * label è affiancata dalle sue 4 op PHY.
- */
-void __real_b43_actab_write_r11(struct b43_wldev *dev,
-				u16 id, u16 offset, size_t len,
-				const u16 *data);
-
-void __wrap_b43_actab_write_r11(struct b43_wldev *dev,
-				u16 id, u16 offset, size_t len,
-				const u16 *data)
-{
-	size_t i;
-
-	for (i = 0; i < len; i++) {
-		fprintf(trace(),
-			"cpu1 TBL.WR   id=0x%04x off=0x%04x len=1\n",
-			id, (u16)(offset + i));
-		tbl_mirror_store(id, (u16)(offset + i), 16, 1, &data[i]);
-		__real_b43_actab_write_r11(dev, id, (u16)(offset + i), 1,
-					   &data[i]);
-	}
-}
-
-/* Same, for the constant-fill companion. */
-void __real_b43_actab_fill_r11(struct b43_wldev *dev,
-			       u16 id, u16 offset, size_t len, u16 val);
-
-void __wrap_b43_actab_fill_r11(struct b43_wldev *dev,
-			       u16 id, u16 offset, size_t len, u16 val)
-{
-	size_t i;
-
-	for (i = 0; i < len; i++) {
-		fprintf(trace(),
-			"cpu1 TBL.WR   id=0x%04x off=0x%04x len=1\n",
-			id, (u16)(offset + i));
-		tbl_mirror_store(id, (u16)(offset + i), 16, 1, &val);
-		__real_b43_actab_fill_r11(dev, id, (u16)(offset + i), 1, val);
-	}
 }
 
 /* ============ MAC / misc helpers ============ */

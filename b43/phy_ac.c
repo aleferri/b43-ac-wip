@@ -98,8 +98,8 @@ static void b43_phy_ac_txpwrctrl_setup(struct b43_wldev *dev, u16 freq);
  *
  * 1. recalc_txpower / adjust_txpower are the TX power target: the core calls
  *    recalc from b43_op_config() and every minute, and adjust writes the
- *    target to the PHY only when recalc says it moved, as
- *    wlc_phy_txpower_recalc_target() and b43_nphy_op_recalc_txpower() do.
+ *    target to the PHY only when recalc says it moved, as the vendor and
+ *    b43_nphy_op_recalc_txpower() do.
  *    The computation is b43_phy_ac_txpwr_recalc(). The channel setup computes
  *    the same target before its own two write sites, so the core's calls
  *    change nothing unless the regulatory ceiling did.
@@ -328,6 +328,7 @@ static void b43_phy_ac_iq_acc_peek(struct b43_wldev *dev, unsigned int core,
 static void b43_phy_ac_loopback_gain_search(struct b43_wldev *dev);
 static void b43_phy_ac_pmu_req(struct b43_wldev *dev, bool on);
 static void b43_phy_ac_wd_stats_clear(struct b43_wldev *dev);
+static void b43_phy_ac_noise_sample_request(struct b43_wldev *dev);
 static void b43_phy_ac_radio_percore_setup_1(struct b43_wldev *dev);
 static void b43_phy_ac_tx_gain_bbmult_load(struct b43_wldev *dev);
 static bool b43_phy_ac_may_calibrate_tx(struct b43_wldev *dev);
@@ -357,7 +358,10 @@ static void b43_phy_ac_crs_block_e(struct b43_wldev *dev);
 static void b43_phy_ac_wd_stats_tail(struct b43_wldev *dev);
 static void b43_phy_ac_tempsense(struct b43_wldev *dev);
 static bool b43_phy_ac_cal_reads_temp(struct b43_wldev *dev);
-static void b43_phy_ac_rfseq_wait_done(struct b43_wldev *dev, u16 busy);
+static bool b43_phy_ac_rfseq_wait_done(struct b43_wldev *dev, u16 busy,
+				       unsigned int turns);
+static void b43_phy_ac_run_samples(struct b43_wldev *dev, u16 nsamp,
+				   bool iqmode);
 /*
  * The four scattered cells that open the watchdog sweep, and the flat sweep
  * of 0x0768-0x078a. They are two functions because on entering the probe
@@ -1113,9 +1117,8 @@ static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev,
  * differences: it is for the beacon rate only (6 Mbit/s at 5 GHz), and it is
  * always read on the 20 MHz row, not the operating width's.
  *
- * In the stock driver wlc_beacon_phytxctl() writes it from the first of the
- * 20/40/80 MHz powers wlc_stf_get_204080_pwrs() returns, which reads only
- * the ppr structure; so it can be derived from what the port already has.
+ * The vendor writes it from the 20 MHz power of the beacon rate, which
+ * depends only on the per-rate table, so it is derived from that.
  *
  * Verified on the 43 cold segments: it equals the 6 Mbit/s per-rate field on
  * 37, and the other six are exactly the 40 and 80 MHz ones where the 20 MHz
@@ -1480,19 +1483,7 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 			b43_phy_ac_bbmult_write(dev, c, &st[c].inner);
 
 		b43_phy_ac_cca_pulse(dev);
-		/* Clear bit 0: the stock driver emits an AND here, not an OR. */
-		b43_phy_mask(dev, 0x0471, (u16)~0x0001);
-		b43_phy_write(dev, B43_PHY_AC_SAMP_PLAY_NSAMP, 0x0000);
-		b43_phy_write(dev, B43_PHY_AC_SAMP_PLAY_LOOPS, 0xffff);
-		b43_phy_write(dev, B43_PHY_AC_SAMP_PLAY_WAIT, 0x003c);
-		b43_phy_read(dev, 0x0400);
-		b43_phy_set(dev, 0x0400, 0x0001);
-		b43_phy_mask(dev, B43_PHY_AC_SAMP_PLAY_CTL, (u16)~0x0004);
-		b43_phy_mask(dev, B43_PHY_AC_SAMP_PLAY_CTL, (u16)~B43_PHY_AC_SAMP_PLAY_START);
-		b43_phy_mask(dev, 0x0382, (u16)~0xc000);
-		b43_phy_set(dev, B43_PHY_AC_SAMP_PLAY_CTL, B43_PHY_AC_SAMP_PLAY_START);
-		b43_phy_ac_rfseq_wait_done(dev, 0x0001);
-		b43_phy_write(dev, 0x0400, 0x0000);
+		b43_phy_ac_run_samples(dev, 0x0000, false);
 		udelay(100);
 
 		/* Gain override on every chain, then put back in reverse. */
@@ -1684,9 +1675,8 @@ static u16 b43_phy_ac_locale_ceiling(struct b43_phy_ac *ac)
  * Regulatory ceiling for the configuration, in quarter-dBm, or 0 when none
  * applies.
  *
- * As brcmsmac's brcms_c_channel_reg_limits(): QDB(ch->max_power) - antgain,
- * clamped at zero, which wlc_phy_txpower_recalc_target() then uses as an
- * upper bound on the SROM limit. A bonded configuration is bounded by every
+ * QDB(ch->max_power) - antgain, clamped at zero: an upper bound on the SROM
+ * limit, as in brcmsmac. A bonded configuration is bounded by every
  * 20 MHz channel it occupies.
  *
  * The stock driver's ceilings do not bind on the hot sweeps; on a first
@@ -1761,8 +1751,7 @@ static u16 b43_phy_ac_reg_ceiling(struct b43_wldev *dev)
 /*
  * TX power target: the per-rate table and its maximum per core.
  *
- * This is brcmsmac's wlc_phy_txpower_recalc_target() and the body of
- * b43_nphy_op_recalc_txpower(), with the rev 11 table: for every rate the
+ * As in brcmsmac and in b43_nphy_op_recalc_txpower(), with the rev 11 table: for every rate the
  * channel carries, min(SROM limit, regulatory limit) less the 6-unit margin,
  * floored at 1 dBm. The maximum over the rates is what the PHY closes its
  * power loop on, written to 0x0646[7:0] per core.
@@ -2419,55 +2408,72 @@ void b43_phy_ac_txpwr_by_index(struct b43_wldev *dev, u8 idx)
  **************************************************/
 
 /*
- * Force a single RF sequence.
- *
- * The AC sequencer has no separate RF_SEQ_MODE register: the "mode" is
- * asserted by ORing 0x3 into RFCTL1 (0x400) and restoring it at exit. @gate
- * in REG_TBL_WRITE_GATE (0x19e) is set before the trigger and restored
- * after.
- *
- * @rf_seq is a trigger bit of B43_PHY_AC_RF_SEQ_TRIG; the only one named so
- * far is B43_PHY_AC_RF_SEQ_RST2RX.
- *
- * Polls up to 200 x udelay(1), the same wait as the N-PHY and HT-PHY
- * helpers; the roughly 1 ms DELAY in the blob is its retry granularity.
+ * Run one RF sequencer command as the vendor does: save RFCTL1 and the
+ * table-write gate, set bit 0 of the gate and bits 1:0 of RFCTL1, trigger
+ * @rf_seq (a B43_PHY_AC_RF_SEQ_* bit), wait for it to clear, then write both
+ * registers back.
  *
  * Returns true if the sequence completed, false on timeout.
  * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
- *   30615-30625]
+ *   6919-6931, 6932-6942, 30615-30625]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
- *   25897-25907]
+ *   2589-2601, 2602-2612, 25897-25907]
  */
-bool
-b43_phy_ac_force_rf_sequence(struct b43_wldev *dev, u16 rf_seq, u16 gate)
+bool b43_phy_ac_force_rf_sequence(struct b43_wldev *dev, u16 rf_seq)
 {
 	B43_AC_FN();
-	u16 saved_rfctl1, saved_gate;
-	bool timed_out = true;
-	unsigned int i;
+	u16 rfctl1 = b43_phy_read_log(dev, B43_PHY_AC_RFCTL1);
+	u16 gate = b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+	bool done;
 
-	saved_rfctl1 = b43_phy_read_log(dev, B43_PHY_AC_RFCTL1);
-	saved_gate = b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-
-	/* Open the gate with a maskset, mask = gate. */
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~gate, gate);
-	b43_phy_set(dev, B43_PHY_AC_RFCTL1, 0x3);
+	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE,
+			(u16)~B43_PHY_AC_RF_SEQ_OVERRIDE_GATE,
+			B43_PHY_AC_RF_SEQ_OVERRIDE_GATE);
+	b43_phy_set(dev, B43_PHY_AC_RFCTL1, 0x0003);
 	b43_phy_set(dev, B43_PHY_AC_RF_SEQ_TRIG, rf_seq);
 
-	for (i = 0; i < 200; i++) {
-		if (!(b43_phy_read(dev, B43_PHY_AC_RF_SEQ_STATUS) & rf_seq)) {
-			timed_out = false;
-			break;
-		}
-		udelay(1);
-	}
-	if (timed_out)
-		b43err(dev->wl, "Forcing RF sequence timeout\n");
+	done = b43_phy_ac_rfseq_wait_done(dev, rf_seq,
+					  B43_PHY_AC_RF_SEQ_FORCE_TURNS);
+	if (!done)
+		b43err(dev->wl, "AC-PHY: RF sequence 0x%04x timeout\n", rf_seq);
 
-	b43_phy_write(dev, B43_PHY_AC_RFCTL1, saved_rfctl1);
-	b43_phy_write(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, saved_gate);
+	b43_phy_write(dev, B43_PHY_AC_RFCTL1, rfctl1);
+	b43_phy_write(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, gate);
+	return done;
+}
 
-	return !timed_out;
+/*
+ * Play @nsamp + 1 samples of the loaded tone, looping. RFCTL1 bit 0 is held
+ * for the play and written back as it was found. With @iqmode the play is
+ * started through 0x0382, for the RX-IQ estimator, otherwise through the
+ * sample-play control.
+ */
+static void b43_phy_ac_run_samples(struct b43_wldev *dev, u16 nsamp,
+				   bool iqmode)
+{
+	u16 rfctl1;
+
+	b43_phy_mask(dev, 0x0471, (u16)~0x0001);
+	b43_phy_write(dev, B43_PHY_AC_SAMP_PLAY_NSAMP, nsamp);
+	b43_phy_write(dev, B43_PHY_AC_SAMP_PLAY_LOOPS, 0xffff);
+	b43_phy_write(dev, B43_PHY_AC_SAMP_PLAY_WAIT, 0x003c);
+	rfctl1 = b43_phy_read_log(dev, B43_PHY_AC_RFCTL1);
+	b43_phy_set(dev, B43_PHY_AC_RFCTL1, 0x0001);
+	b43_phy_mask(dev, B43_PHY_AC_SAMP_PLAY_CTL, (u16)~0x0004);
+	b43_phy_mask(dev, B43_PHY_AC_SAMP_PLAY_CTL,
+		     (u16)~B43_PHY_AC_SAMP_PLAY_START);
+	b43_phy_mask(dev, 0x0382, (u16)~0xc000);
+	if (iqmode)
+		b43_phy_set(dev, 0x0382, 0x8000);
+	else
+		b43_phy_set(dev, B43_PHY_AC_SAMP_PLAY_CTL,
+			    B43_PHY_AC_SAMP_PLAY_START);
+
+	if (!b43_phy_ac_rfseq_wait_done(dev, 0x0001,
+					B43_PHY_AC_RUN_SAMPLES_TURNS))
+		b43err(dev->wl, "AC-PHY: sample play timeout\n");
+
+	b43_phy_write(dev, B43_PHY_AC_RFCTL1, rfctl1);
 }
 
 /*
@@ -2644,7 +2650,6 @@ static void b43_phy_ac_channel_switch_prep(struct b43_wldev *dev)
 				   B43_PHY_AC_STATE_RX_WAITED;
 }
 
-static void b43_phy_ac_run_rfseq_cmd(struct b43_wldev *dev, u16 cmd_bit);
 
 /*
  * Quiesce the silicon RX cores the board does not wire.
@@ -2684,12 +2689,8 @@ static void b43_phy_ac_rxcore_setstate(struct b43_wldev *dev, u8 coremask)
 	b43_phy_maskset(dev, B43_PHY_AC_RF_SEQ_MODE, (u16)~0x0007, 0x0000);
 	b43_phy_maskset(dev, B43_PHY_AC_RFCTL1, (u16)~0x0001, 0x0001);
 
-	/*
-	 * Both force-sequences go through the inner lock, bit 0 of 0x019e, not
-	 * the outer one at bit 1: run_rfseq_cmd(), not force_rf_sequence().
-	 */
-	b43_phy_ac_run_rfseq_cmd(dev, 0x0001);
-	b43_phy_ac_run_rfseq_cmd(dev, 0x0002);
+	b43_phy_ac_force_rf_sequence(dev, B43_PHY_AC_RF_SEQ_RX2TX);
+	b43_phy_ac_force_rf_sequence(dev, B43_PHY_AC_RF_SEQ_TX2RX);
 
 	/*
 	 * Restore, in the stock driver's order: MOD ~0x0007, MOD ~0x7000, then
@@ -3100,51 +3101,18 @@ static void b43_phy_ac_set_analog_tx_lpf(struct b43_wldev *dev, u16 stages,
 
 /*
  * Wait for the RF sequencer to clear @busy in 0x0403: the bit of the command
- * kicked in 0x0402, bit 0 for the sample-play kicks.
- *
- * The number of reads follows the first value: a first read of 0x0000 is
- * the only one, a busy one is followed by reads until it clears. The
- * MacBook Air at 2.4 GHz reads 0x0202 after command 0x0002 and 0x2020 after
- * 0x0020, and the stock driver waits for both. Its osl_delay trace waits
- * 10 us between two reads; the budget caps the wait at 2 ms.
+ * kicked in 0x0402, bit 0 for the sample play. One read, then 10 us and
+ * another while busy, for at most @turns reads.
  */
-static void b43_phy_ac_rfseq_wait_done(struct b43_wldev *dev, u16 busy)
+static bool b43_phy_ac_rfseq_wait_done(struct b43_wldev *dev, u16 busy,
+				       unsigned int turns)
 {
-	unsigned int i;
-
-	for (i = 0; i < 200; i++) {
-		if (!(b43_phy_read_log(dev, 0x0403) & busy))
-			return;
+	while (turns--) {
+		if (!(b43_phy_read_log(dev, B43_PHY_AC_RF_SEQ_STATUS) & busy))
+			return true;
 		udelay(10);
 	}
-	b43err(dev->wl, "AC-PHY: RF sequencer busy timeout (0x0403 & 0x%04x)\n",
-	       busy);
-}
-
-/*
- * Run one RF sequencer command through 0x0400/0x0402/0x0403, under an inner
- * lock of the write gate 0x019e at bit 0. @cmd_bit is ORed into 0x0402;
- * 0x0001 then 0x0002 are the observed values.
- * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
- *   6919-6931, 6932-6942]
- * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
- *   2589-2601, 2602-2612]
- */
-static void b43_phy_ac_run_rfseq_cmd(struct b43_wldev *dev, u16 cmd_bit)
-{
-	B43_AC_FN();
-
-	b43_phy_read_log(dev, 0x0400);
-	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0001, 0x0001);  /* inner lock (bit 0) */
-
-	b43_phy_set(dev, 0x0400, 0x0003);
-	b43_phy_set(dev, 0x0402, cmd_bit);
-
-	b43_phy_ac_rfseq_wait_done(dev, cmd_bit);
-
-	b43_phy_write(dev, 0x0400, 0x0001);
-	b43_phy_write(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, 0x03d0);  /* inner unlock via plain write */
+	return false;
 }
 
 static void b43_phy_ac_chan_tables(struct b43_wldev *dev);
@@ -4015,20 +3983,9 @@ static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
 	/* Relocks the outer gate on exit. */
 	b43_phy_ac_post_rfseq_misc_setup(dev);
 
-	/*
-	 * Table 0x20, a 128-byte gain curve, through the alternate DATA port
-	 * 0x011 (actab_write_bulk() handles id 0x20): column 0 of the band's TX
-	 * gain table, low byte of each u16.
-	 */
-	{
-		const u16 (*txgain)[3] = b43_phy_ac_txgain_table(dev);
-		u8 gaincurve[128];
-		unsigned int k;
-
-		for (k = 0; k < 128; k++)
-			gaincurve[k] = (u8)(txgain[k][0] & 0xff);
-		b43_actab_write_bulk(dev, 0x20, 0x0000, 8, 128, gaincurve);
-	}
+	/* Table 0x20: the band's TX gain table, 128 cells of 48 bits. */
+	b43_actab_write_bulk(dev, 0x20, 0x0000, 48, 128,
+			     b43_phy_ac_txgain_table(dev)[0]);
 
 	/*
 	 * Per-chain PHY setup after table 0x20, the same on the d6220 and the
@@ -4194,18 +4151,20 @@ static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
 		const u16 **dly_tbl = wide ? dly_bw80 : dly_narrow;
 
 		/*
-		 * At 80 MHz the sequence opens with three cells of table 0x14,
-		 * through the alternate data register like table 0x11: the same
-		 * three values on every 80 MHz cold segment, absent at 20 and
-		 * 40 MHz.
+		 * At 80 MHz the sequence opens with three 48-bit cells of
+		 * table 0x14, one write each; absent at 20 and 40 MHz.
 		 */
 		if (dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_80) {
-			static const u16 t14_bw80[3] = {
-				0x0fd2, 0x0fc2, 0x0fd2,
+			static const u16 t14_bw80[3][3] = {
+				{ 0x0fd2, 0x0096, 0x0000 },
+				{ 0x0fc2, 0x0086, 0x0000 },
+				{ 0x0fd2, 0x0086, 0x0000 },
 			};
+			unsigned int k;
 
-			b43_actab_write_r11(dev, 0x0014, 0x0030,
-					    ARRAY_SIZE(t14_bw80), t14_bw80);
+			for (k = 0; k < ARRAY_SIZE(t14_bw80); k++)
+				b43_actab_write_bulk(dev, 0x0014, 0x0030 + k,
+						     48, 1, t14_bw80[k]);
 		}
 
 		for (core = 0; core < num_cores && core < 3; core++) {
@@ -4309,54 +4268,36 @@ static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
 }
 
 /*
- * Table id 0x11, 464 words, loaded through the alternate data register 0x0011
- * by b43_actab_write_r11().
+ * Table id 0x11, 464 cells of 48 bits, written one cell at a time.
  *
- * The twelve words at the head and the four at the tail are the same on
- * every board and driver version captured. The 448 between them repeat one
- * value per sub-band, a unit phasor 512 * e^(j theta) built from the SROM's
- * rpcal word for that sub-band (rpcal2g on 2.4 GHz, rpcal5gb0..3 on the
- * four pa5g sub-bands). With p the low byte of rpcal and a step of
- * 2 pi / 256:
- *
- *   I = round(512 * cos((p + 1) * step))
- *   Q = -round(512 * sin(p * step))
- *   word = (Q & 0x1f) << 11 | (I & 0x7ff)
- *
- * Exact on the six (rpcal, word) pairs of the two routers that load the
- * table. The high byte of rpcal does not enter. The 6.30 hybrid writes the
- * whole 48-bit entry instead: I in bits 10:0, Q in 21:11 and bit 22 set.
+ * The twelve cells at the head and the four at the tail are constants. The
+ * 448 between them repeat one value per sub-band, built
+ * from the SROM's rpcal word for that sub-band (rpcal2g on 2.4 GHz,
+ * rpcal5gb0..3 on the four pa5g sub-bands): each of its two bytes gives a
+ * 24-bit coefficient, the low byte in bits 23:0 of the cell and the high byte
+ * in bits 47:24.
  */
-static const u16 b43_acphy_tbl11_head[12] = {
-	0x005b, 0x8250, 0xc338, 0x4527, 0xa6a1, 0x081b,
-	0x8a18, 0x2c96, 0x8e17, 0x101b, 0x0020, 0x0020,
+static const u16 b43_acphy_tbl11_head[12][3] = {
+	{ 0x005b, 0x0000, 0x0000 }, { 0x8250, 0x0000, 0x0000 },
+	{ 0xc338, 0x0000, 0x0000 }, { 0x4527, 0x0001, 0x0000 },
+	{ 0xa6a1, 0x0001, 0x0000 }, { 0x081b, 0x0002, 0x0000 },
+	{ 0x8a18, 0x0002, 0x0000 }, { 0x2c96, 0x0003, 0x0000 },
+	{ 0x8e17, 0x0003, 0x0000 }, { 0x101b, 0x0004, 0x0000 },
+	{ 0x0020, 0x0000, 0x0000 }, { 0x0020, 0x0000, 0x0000 },
 };
-
-static const u16 b43_acphy_tbl11_tail[4] = { 0x0000, 0x0000, 0x0000, 0x0000 };
 
 #define B43_PHY_AC_TBL11_FILL_OFF	12
 #define B43_PHY_AC_TBL11_FILL_LEN	448
+#define B43_PHY_AC_TBL11_TAIL_LEN	4
 
-/* round(512 * sin(k * 2 pi / 256)) for k = 0..64. */
-static const u16 b43_phy_ac_sin512_q[65] = {
+/* round(512 * sin(k * 2 pi / 256)) for k = 0..63. */
+static const u16 b43_phy_ac_sin512_q[64] = {
 	  0,  13,  25,  38,  50,  63,  75,  88, 100, 112, 124, 137, 149,
 	161, 172, 184, 196, 207, 219, 230, 241, 252, 263, 274, 284, 295,
 	305, 315, 325, 334, 344, 353, 362, 371, 379, 388, 396, 404, 411,
 	419, 426, 433, 439, 445, 452, 457, 463, 468, 473, 478, 482, 486,
-	490, 493, 497, 500, 502, 504, 506, 508, 510, 511, 511, 512, 512,
+	490, 493, 497, 500, 502, 504, 506, 508, 510, 511, 511, 512,
 };
-
-static s16 b43_phy_ac_sin512(unsigned int k)
-{
-	k &= 0xff;
-	if (k <= 64)
-		return b43_phy_ac_sin512_q[k];
-	if (k <= 128)
-		return b43_phy_ac_sin512_q[128 - k];
-	if (k <= 192)
-		return -b43_phy_ac_sin512_q[k - 128];
-	return -b43_phy_ac_sin512_q[256 - k];
-}
 
 static u16 b43_phy_ac_rpcal(struct b43_wldev *dev)
 {
@@ -4367,13 +4308,48 @@ static u16 b43_phy_ac_rpcal(struct b43_wldev *dev)
 	return sp->rpcal5gb[b43_phy_ac_pa5g_group(dev, dev->phy.ac->cal_freq)];
 }
 
-static u16 b43_phy_ac_tbl11_fill(struct b43_wldev *dev)
+/*
+ * One rpcal byte as a 24-bit coefficient: bits 5:0 index the
+ * quarter-wave table, bits 7:6 pick the quadrant, I goes in bits 10:0 and Q
+ * in bits 21:11, both as 11-bit two's complement, and bit 22 is set.
+ */
+static u32 b43_phy_ac_rpcal_coeff(u8 v)
 {
-	unsigned int p = b43_phy_ac_rpcal(dev) & 0xff;
-	s16 i = b43_phy_ac_sin512(p + 1 + 64);
-	s16 q = -b43_phy_ac_sin512(p);
+	unsigned int k = v & 0x3f;
+	s16 a = b43_phy_ac_sin512_q[63 - k];
+	s16 b = b43_phy_ac_sin512_q[k];
+	s16 i, q;
 
-	return (u16)(((q & 0x1f) << 11) | (i & 0x7ff));
+	switch (v >> 6) {
+	case 0:
+		i = a;
+		q = -b;
+		break;
+	case 1:
+		i = -b;
+		q = -a;
+		break;
+	case 2:
+		i = -a;
+		q = b;
+		break;
+	default:
+		i = b;
+		q = a;
+		break;
+	}
+	return BIT(22) | (u32)(q & 0x7ff) << 11 | (u32)(i & 0x7ff);
+}
+
+static void b43_phy_ac_tbl11_fill(struct b43_wldev *dev, u16 cell[3])
+{
+	u16 rpcal = b43_phy_ac_rpcal(dev);
+	u64 v = b43_phy_ac_rpcal_coeff(rpcal & 0xff) |
+		(u64)b43_phy_ac_rpcal_coeff(rpcal >> 8) << 24;
+
+	cell[0] = (u16)v;
+	cell[1] = (u16)(v >> 16);
+	cell[2] = (u16)(v >> 32);
 }
 
 /*
@@ -4388,7 +4364,8 @@ static u16 b43_phy_ac_tbl11_fill(struct b43_wldev *dev)
 static void b43_phy_ac_chan_tables(struct b43_wldev *dev)
 {
 	B43_AC_FN();
-	u16 saved;
+	u16 saved, fill[3];
+	unsigned int k;
 
 	B43_PHY_AC_REQUIRE(dev,
 			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
@@ -4396,11 +4373,10 @@ static void b43_phy_ac_chan_tables(struct b43_wldev *dev)
 			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
 
 	/*
-	 * Table 0x11, 464 u16s, through the DATA_2 port at 0x011, reselecting
-	 * id and offset for every cell: peek 0x019e, id, offset, DATA_2, 2320
-	 * ops in all. The load takes the 0x019e gate and gives it back; the
-	 * noise-shaping tables (0x0b, 0x15, the per-core 0x44/0x45) are emitted
-	 * by op_switch_channel().
+	 * Table 0x11, one 48-bit cell per table write, so id and offset are
+	 * reselected for every cell. The load takes the 0x019e gate and gives
+	 * it back; the noise-shaping tables (0x0b, 0x15, the per-core
+	 * 0x44/0x45) are emitted by op_switch_channel().
 	 *
 	 * Loaded only where the SROM carries rpcal: on the d6220 and the
 	 * agcombo, not on the tg789vac or the DSL-3580L, whose five rpcal words
@@ -4415,16 +4391,17 @@ static void b43_phy_ac_chan_tables(struct b43_wldev *dev)
 			return;
 	}
 
+	b43_phy_ac_tbl11_fill(dev, fill);
+
 	saved = b43_phy_ac_tbl_write_lock(dev);
-	b43_actab_write_r11(dev, 0x11, 0, ARRAY_SIZE(b43_acphy_tbl11_head),
-			    b43_acphy_tbl11_head);
-	b43_actab_fill_r11(dev, 0x11, B43_PHY_AC_TBL11_FILL_OFF,
-			   B43_PHY_AC_TBL11_FILL_LEN,
-			   b43_phy_ac_tbl11_fill(dev));
-	b43_actab_write_r11(dev, 0x11,
-			    B43_PHY_AC_TBL11_FILL_OFF + B43_PHY_AC_TBL11_FILL_LEN,
-			    ARRAY_SIZE(b43_acphy_tbl11_tail),
-			    b43_acphy_tbl11_tail);
+	for (k = 0; k < ARRAY_SIZE(b43_acphy_tbl11_head); k++)
+		b43_actab_write_bulk(dev, 0x11, k, 48, 1, b43_acphy_tbl11_head[k]);
+	for (k = 0; k < B43_PHY_AC_TBL11_FILL_LEN; k++)
+		b43_actab_write_bulk(dev, 0x11, B43_PHY_AC_TBL11_FILL_OFF + k,
+				     48, 1, fill);
+	for (k = 0; k < B43_PHY_AC_TBL11_TAIL_LEN; k++)
+		b43_actab_zerofill(dev, 0x11, B43_PHY_AC_TBL11_FILL_OFF +
+				   B43_PHY_AC_TBL11_FILL_LEN + k, 48, 1);
 	b43_phy_ac_tbl_write_unlock(dev, saved);
 }
 
@@ -5750,9 +5727,7 @@ static void b43_phy_ac_tempsense_chain(struct b43_wldev *dev, u8 core)
  * Three sites run it, all with the MAC suspended: before the full
  * calibration (b43_phy_ac_op_channel_calibrate() when the channel is
  * available at once, b43_phy_ac_bss_up() after the availability check) and
- * from the watchdog every b43_phy_ac_temps_period() turns. The name is
- * Broadcom's (wlc_phy_tempsense_nphy() in brcmsmac, wl's phy_tempsense
- * iovar): the periodic copy follows the SROM's temps_period (10 s on the
+ * from the watchdog every b43_phy_ac_temps_period() turns. The periodic copy follows the SROM's temps_period (10 s on the
  * d6220, 5 s on the tg789vac), the bss-up copy sits where brcmsmac's
  * PHY_PERICAL_UP_BSS takes the temperature, and the reading drifts with the
  * device's thermal state.
@@ -6441,14 +6416,13 @@ void b43_phy_ac_post_cal_finalize_iter3(struct b43_wldev *dev)
 	b43_phy_write(dev, 0x0339, 0x0fff);
 
 	/*
-	 * Then the statistics window clear a watchdog tick does: the counters
-	 * have run since the channel setup, and the probe phase reads them on
-	 * every tick. Not over a sample in flight: on cold34 (ch132/40), where
-	 * a turn requested its sample right before this, the stock driver skips
-	 * it.
+	 * The statistics window clear and the noise-sample request, as on a
+	 * watchdog tick; both skipped over a sample in flight.
 	 */
-	if (!dev->phy.ac->noise_pending)
+	if (!dev->phy.ac->noise_pending) {
 		b43_phy_ac_wd_stats_clear(dev);
+		b43_phy_ac_noise_sample_request(dev);
+	}
 
 	/*
 	 * A shared-memory word, between the clear and the mac_suspend. Its
@@ -6892,9 +6866,11 @@ void b43_phy_ac_post_rxiqcal_stage2(struct b43_wldev *dev)
 	 * The clock force stays up across the whole B4b configuration window,
 	 * not only the CCA pulse: the capture has PHY.FGC 1 right before this
 	 * write and 0 right after the 0x0382 = 0 that closes the window, with a
-	 * cca_pulse nested inside (FGC 1,1,0,0 rather than 1,0,1,0).
+	 * cca_pulse nested inside (FGC 1,1,0,0 rather than 1,0,1,0). Only the
+	 * core's clock: at the bus PSM_PHY_HDR moves for the nested CCA reset
+	 * alone.
 	 */
-	b43_phy_ac_force_clock(dev, true);
+	b43_phy_force_clock(dev, true);
 	b43_phy_write(dev, 0x0382, 0x8a09);
 
 	/*
@@ -6940,18 +6916,7 @@ void b43_phy_ac_post_rxiqcal_stage2(struct b43_wldev *dev)
 
 		b43_phy_ac_bbmult_peek(dev);
 
-		b43_phy_mask(dev, 0x0471, (u16)~0x0001);
-		b43_phy_write(dev, B43_PHY_AC_SAMP_PLAY_NSAMP, b43_phy_ac_rxiqcal_kick_len(dev));
-		b43_phy_write(dev, B43_PHY_AC_SAMP_PLAY_LOOPS, 0xffff);
-		b43_phy_write(dev, B43_PHY_AC_SAMP_PLAY_WAIT, 0x003c);
-		b43_phy_read_log(dev, 0x0400);
-		b43_phy_set(dev, 0x0400, 0x0001);
-		b43_phy_mask(dev, B43_PHY_AC_SAMP_PLAY_CTL, (u16)~0x0004);
-		b43_phy_mask(dev, B43_PHY_AC_SAMP_PLAY_CTL, (u16)~B43_PHY_AC_SAMP_PLAY_START);
-		b43_phy_mask(dev, 0x0382, (u16)~0xc000);
-		b43_phy_set(dev, 0x0382, 0x8000);
-		b43_phy_ac_rfseq_wait_done(dev, 0x0001);
-		b43_phy_write(dev, 0x0400, 0x0000);
+		b43_phy_ac_run_samples(dev, b43_phy_ac_rxiqcal_kick_len(dev), true);
 		udelay(5);
 
 		/*
@@ -7339,7 +7304,7 @@ void b43_phy_ac_rxcal_afe_finalize_gain_luts(struct b43_wldev *dev)
 
 	b43_phy_ac_cca_pulse(dev);
 	b43_phy_write(dev, 0x0382, 0x0000);
-	b43_phy_ac_force_clock(dev, false);
+	b43_phy_force_clock(dev, false);
 
 	for (i = 0; i < 0x80; i++) {
 		for (core = 0; core < dev->phy.ac->num_cores; core++) {
@@ -7692,7 +7657,7 @@ void b43_phy_ac_rxiqcal_dds_seed(struct b43_wldev *dev)
 	static const u16 zeros[2] = { 0, 0 };
 
 	/* Arm command, with the clock forced until the window closes. */
-	b43_phy_ac_force_clock(dev, true);
+	b43_phy_force_clock(dev, true);
 	b43_phy_write(dev, 0x0382, 0x8a09);
 
 	/* Clear three two-slot areas of table 0x000c. */
@@ -7727,18 +7692,7 @@ void b43_phy_ac_rxiqcal_prep_second_iter(struct b43_wldev *dev)
 	b43_phy_ac_bbmult_peek(dev);
 
 	/* Segment B: kick sequence of the RX-IQ correlator. */
-	b43_phy_mask(dev,      0x0471, (u16)~0x0001);
-	b43_phy_write(dev,     B43_PHY_AC_SAMP_PLAY_NSAMP, b43_phy_ac_rxiqcal_kick_len(dev));
-	b43_phy_write(dev,     B43_PHY_AC_SAMP_PLAY_LOOPS, 0xffff);
-	b43_phy_write(dev,     B43_PHY_AC_SAMP_PLAY_WAIT, 0x003c);
-	b43_phy_read_log(dev,  0x0400);
-	b43_phy_set(dev,       0x0400, 0x0001);
-	b43_phy_mask(dev,      B43_PHY_AC_SAMP_PLAY_CTL, (u16)~0x0004);
-	b43_phy_mask(dev,      B43_PHY_AC_SAMP_PLAY_CTL, (u16)~B43_PHY_AC_SAMP_PLAY_START);
-	b43_phy_mask(dev,      0x0382, (u16)~0xc000);
-	b43_phy_set(dev,       0x0382, 0x8000);
-	b43_phy_ac_rfseq_wait_done(dev, 0x0001);
-	b43_phy_write(dev,     0x0400, 0x0000);
+	b43_phy_ac_run_samples(dev, b43_phy_ac_rxiqcal_kick_len(dev), true);
 	udelay(5);
 
 	/* Every silicon core: clear bit 8 of 0x?73a, set bit 10 of 0x?725. */
@@ -7855,7 +7809,7 @@ void b43_phy_ac_rxiqcal_apply_tx_bbmult_kick(struct b43_wldev *dev)
 	/* Final pulse and reset, closing the clock force opened at 0x8a09. */
 	b43_phy_ac_cca_pulse(dev);
 	b43_phy_write(dev, 0x0382, 0x0000);
-	b43_phy_ac_force_clock(dev, false);
+	b43_phy_force_clock(dev, false);
 }
 
 /*
@@ -7909,17 +7863,7 @@ void b43_phy_ac_rxiqcal_apply_second_stage(struct b43_wldev *dev)
 	u16 cell[2];
 	unsigned int c;
 
-	/* Kick sequence */
-	b43_phy_read_log(dev, 0x0400);
-	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0001, 0x0001); /* bit 0, not the gate */
-	b43_phy_set(dev,      0x0400, 0x0003);
-	b43_phy_set(dev,      0x0402, 0x0020);
-	b43_phy_ac_rfseq_wait_done(dev, 0x0020);
-	b43_phy_write(dev,    0x0400, 0x0000);
-
-	/* Gate reset: full overwrite. */
-	b43_phy_write(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, 0x03d0);
+	b43_phy_ac_force_rf_sequence(dev, B43_PHY_AC_RF_SEQ_RST2RX);
 
 	/* Zero 0x?6a0/0x?6a1 on every wired chain. */
 	for_each_set_bit(c, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
@@ -8282,18 +8226,7 @@ static void b43_phy_ac_rxiqcal_meas_readback_kick_tail(struct b43_wldev *dev)
 	b43_phy_ac_cca_pulse(dev);
 
 	/* C: kick sequence variant */
-	b43_phy_mask(dev,      0x0471, (u16)~0x0001);
-	b43_phy_write(dev,     B43_PHY_AC_SAMP_PLAY_NSAMP, b43_phy_ac_rxiqcal_kick_len(dev));
-	b43_phy_write(dev,     B43_PHY_AC_SAMP_PLAY_LOOPS, 0xffff);
-	b43_phy_write(dev,     B43_PHY_AC_SAMP_PLAY_WAIT, 0x003c);
-	b43_phy_read_log(dev,  0x0400);
-	b43_phy_set(dev,       0x0400, 0x0001);
-	b43_phy_mask(dev,      B43_PHY_AC_SAMP_PLAY_CTL, (u16)~0x0004);
-	b43_phy_mask(dev,      B43_PHY_AC_SAMP_PLAY_CTL, (u16)~B43_PHY_AC_SAMP_PLAY_START);
-	b43_phy_mask(dev,      0x0382, (u16)~0xc000);
-	b43_phy_set(dev,       B43_PHY_AC_SAMP_PLAY_CTL, B43_PHY_AC_SAMP_PLAY_START);
-	b43_phy_ac_rfseq_wait_done(dev, 0x0001);
-	b43_phy_write(dev,     0x0400, 0x0000);
+	b43_phy_ac_run_samples(dev, b43_phy_ac_rxiqcal_kick_len(dev), false);
 
 	/* D: common tail */
 	b43_phy_ac_rxgain_perchan_tail(dev);
@@ -9090,14 +9023,11 @@ static void b43_phy_ac_wd_stats_clear(struct b43_wldev *dev)
 /*
  * Ask the microcode for a noise sample; it answers with
  * B43_IRQ_NOISESAMPLE_OK and the core calls b43_phy_ac_noise_sample_done().
- * This is brcmsmac's MCMD_BG_NOISE, the bit b43 uses for the G-PHY. Whether
- * the AC microcode honours it is unverified: the stock tracer does not log
- * the MAC MMIO registers.
+ * The vendor writes the command bit alone, without reading MACCMD.
  */
 static void b43_phy_ac_noise_sample_request(struct b43_wldev *dev)
 {
-	b43_write32(dev, B43_MMIO_MACCMD,
-		    b43_read32(dev, B43_MMIO_MACCMD) | B43_MACCMD_BGNOISE);
+	b43_write32(dev, B43_MMIO_MACCMD, B43_MACCMD_BGNOISE);
 	dev->phy.ac->noise_pending = true;
 }
 
@@ -9484,8 +9414,7 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 	 * closing the scope.
 	 */
 	b43_phy_write(dev, 0x040f, 0x09ff);
-	b43_phy_ac_force_rf_sequence(dev, B43_PHY_AC_RF_SEQ_RST2RX,
-				     B43_PHY_AC_RF_SEQ_OVERRIDE_GATE);
+	b43_phy_ac_force_rf_sequence(dev, B43_PHY_AC_RF_SEQ_RST2RX);
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
 
 	/*
@@ -9762,10 +9691,9 @@ static void b43_phy_ac_post_bringup_tail(struct b43_wldev *dev)
 	b43_phy_ac_cac_arm(dev);
 
 	/*
-	 * The stock driver reloads the beacon template here, once or twice
-	 * (b43_update_templates(), the core's at mac80211's request), then
-	 * lights the two LEDs (gpio 2, gpio 10 active-low: wlc_bmac_led(), the
-	 * core's).
+	 * The vendor reloads the beacon template here, once or twice, then
+	 * lights the two LEDs (gpio 2, gpio 10 active-low); in b43 both belong
+	 * to the core.
 	 */
 
 	/*
@@ -9777,21 +9705,14 @@ static void b43_phy_ac_post_bringup_tail(struct b43_wldev *dev)
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x0026, 0xffff);
 
 	/*
-	 * The noise-sample arm, when the calibrations ran. Where the check is
-	 * pending there is nothing to arm, and block E comes after the latch of
-	 * the watchdog's first full turn (b43_phy_ac_watchdog()).
-	 *
-	 * This only arms: the latch and block E come from
-	 * b43_phy_ac_noise_sample_done(), which the core calls when the sample
-	 * is ready (the stock wlc_phy_noise_sample_intr()). The CPU tags of the
-	 * captures make it a separate context (see there), and with the
-	 * completion as an event the three orders the capture shows in the 3 ms
-	 * after the 0xffff cell come out of the same code.
+	 * When the calibrations ran, their last iteration requested a noise
+	 * sample, whose completion brings block E; otherwise block E comes
+	 * after the latch of the watchdog's first full turn. The latch and
+	 * block E come from b43_phy_ac_noise_sample_done(), which the core
+	 * calls when the sample is ready.
 	 */
-	if (b43_phy_ac_may_calibrate_tx(dev)) {
+	if (b43_phy_ac_may_calibrate_tx(dev))
 		dev->phy.ac->crs_update_pending = true;
-		b43_phy_ac_noise_sample_request(dev);
-	}
 
 	/*
 	 * The bring-up tail ends here; from now on the flow is events: watchdog

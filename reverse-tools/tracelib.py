@@ -139,6 +139,8 @@ def unfold_bus(op):
 
 
 _RD_OF = re.compile(r"^(PHY|RAD)\.RD\s+addr=(\S+)\s+val=(\S+)")
+_WIDE = re.compile(r"^PHY\.(RD|WR)W\s+(val=\S+)")
+_PHY_SEL = re.compile(r"^PHY\.(?:RD|WR|MOD|AND|OR)\s+addr=(\S+)")
 
 
 def unfold_bus_seq(raw_ops):
@@ -152,12 +154,26 @@ def unfold_bus_seq(raw_ops):
     MOD line stands for nothing on the bus and is dropped. PHY MODs carry no
     such shadow (52 of 3435 are followed by a read of the same register, no
     more than chance) and are left to unfold_bus().
+
+    A wide PHY access (PHY.RDW, PHY.WRW: the data port with no register
+    select of its own) goes to the register the previous PHY access
+    selected, and becomes a PHY.RD or PHY.WR of it, so a side that reselects
+    every word and one that does not compare equal.
     """
     out = []
+    sel = None
     i = 0
     n = len(raw_ops)
     while i < n:
         op = " ".join(raw_ops[i].split())
+        w = _WIDE.match(op)
+        if w and sel is not None:
+            out.append(norm(f"PHY.{w.group(1)} addr={sel} {w.group(2)}"))
+            i += 1
+            continue
+        a = _PHY_SEL.match(norm(op))
+        if a:
+            sel = a.group(1)
         m = _MOD.match(norm(op))
         if m and m.group(1) == "RAD" and i + 2 < n:
             r = _RD_OF.match(norm(raw_ops[i + 1]))

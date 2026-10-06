@@ -39,8 +39,17 @@ struct ieee80211_channel;
  * Trigger values for RF_SEQ_TRIG (and corresponding bits read from
  * RF_SEQ_STATUS).
  */
+#define  B43_PHY_AC_RF_SEQ_RX2TX		0x0001	/* force_rfseq cmd 0 */
+#define  B43_PHY_AC_RF_SEQ_TX2RX		0x0002	/* force_rfseq cmd 1 */
 #define  B43_PHY_AC_RF_SEQ_RST2RX		0x0020	/* force_rfseq cmd 2 */
 /* force_rfseq cmd->bit: 0=0x01 1=0x02 2=0x20(RST2RX) 3=0x04 4=0x08 5=0x10 */
+
+/*
+ * Status reads before giving up, 10 us apart: the vendor's limits for a
+ * forced RF sequence and for a sample play.
+ */
+#define B43_PHY_AC_RF_SEQ_FORCE_TURNS		20001
+#define B43_PHY_AC_RUN_SAMPLES_TURNS		101
 
 /*
  * PHY-side sample-play (tone) engine. The CORDIC tone / IQ buffer lives in
@@ -202,8 +211,7 @@ struct b43_phy_ac_iq_acc {
  * Per-rate TX power limits, in quarter-dBm.
  *
  * Same shape and units as struct txpwr_limits in brcmsmac/phy/phy_hal.h,
- * since it is filled by the computation brcmsmac carries as
- * wlc_phy_txpower_recalc_target(). The register this feeds, 0x0646, is in
+ * since it is filled by the same computation. The register this feeds, 0x0646, is in
  * the same unit; the SROM and regulatory values are in whole dB.
  *
  * Each modulation, bandwidth and stream count has its own row, so no single
@@ -354,8 +362,7 @@ struct b43_phy_ac {
 	bool crs_update_pending;
 	/*
 	 * A sample is in flight, armed and not consumed yet; no turn arms
-	 * another meanwhile (wlc_phy_noise_sample_request()'s
-	 * sampling_in_progress guard).
+	 * another meanwhile.
 	 */
 	bool noise_pending;
 	/* A radar pulse arrived since the last b43_phy_ac_radar_poll(). */
@@ -545,12 +552,9 @@ struct b43_phy_ac {
 	 * Shadow of the five HOSTFn shared-memory words, and whether a change
 	 * is written through to the cell.
 	 *
-	 * The stock driver keeps the same shadow; brcmsmac's brcms_b_mhf()
-	 * writes the cell only under
-	 *
-	 *   wlc_hw->clk && band->mhfs[idx] != save && band == wlc_hw->band
-	 *
-	 * so an unchanged word emits nothing. The captures agree: no read of
+	 * The vendor keeps the same shadow and writes the cell only when the
+	 * word changes, with the clock up and on the current band, so an
+	 * unchanged word emits nothing. The captures agree: no read of
 	 * the five cells, and the cell written on exactly the calls that change
 	 * the word (5 of 38 on the d6220, 4 of 56 on the DSL).
 	 *
@@ -633,7 +637,7 @@ struct b43_phy_ac {
 extern const struct b43_phy_operations b43_phyops_ac;
 
 
-bool b43_phy_ac_force_rf_sequence(struct b43_wldev *dev, u16 rf_seq, u16 gate);
+bool b43_phy_ac_force_rf_sequence(struct b43_wldev *dev, u16 rf_seq);
 
 /*
  * A read whose value nobody uses, a potential logic error: the log puts
