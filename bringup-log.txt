@@ -1,0 +1,325 @@
+[   20.340000] b43-phy0: Broadcom 6362 WLAN found (core revision 22)
+[   20.340000] b43-phy0: Found PHY: Analog 9, Type 4 (N), Revision 8
+[   20.350000] b43-phy0: Found Radio: Manuf 0x17F, ID 0x2057, Revision 8, Version 0
+[   20.360000] b43-phy1: Broadcom 4352 WLAN found (core revision 42)
+[   20.380000] b43-phy1: Found PHY: Analog 12, Type 11 (AC), Revision 1
+[   20.380000] b43-phy1: Found Radio: Manuf 0x17F, ID 0x2069, Revision 4, Version 0
+[   20.520000] b43 bcma0:1: Led b43-phy0::radio renamed to b43-phy0::radio_1 due to name collision
+[   20.710000] b43 bcma1:1: Led b43-phy1::radio renamed to b43-phy1::radio_1 due to name collision
+[   78.070000] b43-phy1: Loading firmware version 784.2 (2012-08-15 21:43:22)
+[   78.070000] b43-phy1: init: GPIO
+[   78.080000] b43-phy1: init: initvals
+[   78.080000] b43-phy1: init: band initvals
+[   78.080000] b43-phy1: init: TX FIFOs
+[   78.100000] b43-phy1: init: MAC
+[   78.100000] b43-phy1: init: DMA
+[   78.110000] b43-phy1: init: address match and keys
+[   78.110000] b43-phy1: init: PHY
+[   78.120000] b43-phy1: phy-ac: num_cores=3 coremask=0x3
+[   78.120000] b43-phy1: phy-ac: radio pwron 0x040b readback: 0169 after 2 polls
+[   78.130000] b43-phy1: radio 2069: rccal lpf cap 0xab (E=0x0ac5 F=0x0ba8)
+[   78.140000] b43-phy1: AC-PHY: PLLCTL3 = 0x0000100e on op_init entry
+[   78.150000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: probe_cores
+[   78.150000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: pre_init_frontend
+[   78.160000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: pmu_regctl_gpio
+[   78.170000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: mode_init
+[   78.170000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: tables_init
+[   78.180000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: init_regs
+[   78.190000] b43-phy1: phy-ac: set_channel ch36 (5180 MHz) start
+[   78.200000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: channel_state
+[   78.200000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: switch_prep
+[   78.210000] b43-phy1: phy-ac: channel_switch_prep 0x0140 cur=0x0df7 -> 0x0df4
+[   78.220000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: radio_channel_setup
+[   78.230000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: phy_channel_setup
+[   78.240000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: chan_tables
+[   78.250000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: noise_shaping
+[   78.260000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: rx_regprog
+[   78.270000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: crs_thresholds
+[   78.270000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: reset_cca
+[   78.280000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: afecal
+[   78.290000] b43-phy1: radio 2069: afecal core 0 ctrl=0x5830 stat=0x0003/0x0003
+[   78.300000] b43-phy1: radio 2069: afecal core 1 ctrl=0x5830 stat=0x0003/0x0003
+[   78.300000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: adc_reset_txpwrctrl
+[   78.310000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: idle_tssi
+[   78.320000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: tssi_path_enable
+[   78.330000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: rf_seq_mode_percore
+[   78.330000] b43-phy1: phy-ac: idle-tssi c0 meas: 0x013=0x000c 0x012=0x09a8 0x464=0x0001 radio 0x4e=0x8000 0x166=0x0000 prog=0x026a
+[   78.350000] b43-phy1: phy-ac: idle-tssi c1 meas: 0x013=0x0010 0x012=0x09c4 0x464=0x0001 radio 0x4e=0x8000 0x166=0x0000 prog=0x0271
+[   78.360000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: shm_readback
+[   78.370000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: shm_mac_config
+[   78.370000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: txpwrctrl_setup
+[   78.380000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: afe_gain
+[   78.390000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: shm_tail
+[   78.400000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: mac_toggles
+[   78.400000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: done
+[   78.440000] b43-phy1: start: enabling the MAC
+[   78.440000] b43-phy1: phy-ac: set_channel ch36 (5180 MHz) start
+[   78.480000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_channel_calibrate: tempsense
+[   78.480000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_channel_calibrate: post_switch_calibrations
+[   78.490000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: tssi_path_enable
+[   78.500000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: rf_seq_mode_percore
+[   78.510000] b43-phy1: phy-ac: idle-tssi c0 meas: 0x013=0x000c 0x012=0x09a8 0x464=0x0001 radio 0x4e=0x8000 0x166=0x0000 prog=0x026a
+[   78.520000] b43-phy1: phy-ac: idle-tssi c1 meas: 0x013=0x0010 0x012=0x09c4 0x464=0x0001 radio 0x4e=0x8000 0x166=0x0000 prog=0x0271
+[   78.530000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: tssi_path_enable
+[   78.540000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: rf_seq_mode_percore
+[   78.550000] b43-phy1: phy-ac: idle-tssi c0 meas: 0x013=0x0004 0x012=0x09a8 0x464=0x0001 radio 0x4e=0x8000 0x166=0x0000 prog=0x026a
+[   78.560000] b43-phy1: phy-ac: idle-tssi c1 meas: 0x013=0x0010 0x012=0x09c4 0x464=0x0001 radio 0x4e=0x8000 0x166=0x0000 prog=0x0271
+[   78.590000] b43-phy1: phy-ac: txpwr_by_index core 0 idx 64 gain 0000/2f13/00f3 bbmult 35
+[   78.600000] b43-phy1: phy-ac: txpwr_by_index core 1 idx 64 gain 0000/2f13/00f3 bbmult 35
+[   78.620000] b43-phy1: phy-ac: txpwr_by_index core 0 idx 64 gain 0000/2f13/00f3 bbmult 35
+[   78.630000] b43-phy1: phy-ac: txpwr_by_index core 1 idx 64 gain 0000/2f13/00f3 bbmult 35
+[   78.650000] b43-phy1 warning: AC-PHY: RX IQ coefficient b may be one LSB off the stock driver (about 1 point in 6, mostly core 1): image rejection may be slightly worse
+[   78.690000] b43 bcma1:1 phy1-ap0: entered allmulticast mode
+[   78.690000] b43 bcma1:1 phy1-ap0: entered promiscuous mode
+[   78.980000] b43-phy1: Loading firmware version 784.2 (2012-08-15 21:43:22)
+[   78.980000] b43-phy1: init: GPIO
+[   78.990000] b43-phy1: init: initvals
+[   78.990000] b43-phy1: init: band initvals
+[   78.990000] b43-phy1: init: TX FIFOs
+[   79.010000] b43-phy1: init: MAC
+[   79.010000] b43-phy1: init: DMA
+[   79.020000] b43-phy1: init: address match and keys
+[   79.020000] b43-phy1: init: PHY
+[   79.020000] b43-phy1: phy-ac: num_cores=3 coremask=0x3
+[   79.030000] b43-phy1: phy-ac: radio pwron 0x040b readback: 0169 after 2 polls
+[   79.040000] b43-phy1: radio 2069: rccal lpf cap 0xaa (E=0x0ac7 F=0x0ba9)
+[   79.050000] b43-phy1: AC-PHY: PLLCTL3 = 0x0000100e on op_init entry
+[   79.050000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: probe_cores
+[   79.060000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: pre_init_frontend
+[   79.070000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: pmu_regctl_gpio
+[   79.080000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: mode_init
+[   79.080000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: tables_init
+[   79.090000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: init_regs
+[   79.100000] b43-phy1: phy-ac: set_channel ch36 (5180 MHz) start
+[   79.100000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: channel_state
+[   79.110000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: switch_prep
+[   79.120000] b43-phy1: phy-ac: channel_switch_prep 0x0140 cur=0x0df7 -> 0x0df4
+[   79.130000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: radio_channel_setup
+[   79.140000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: phy_channel_setup
+[   79.150000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: chan_tables
+[   79.160000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: noise_shaping
+[   79.170000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: rx_regprog
+[   79.180000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: crs_thresholds
+[   79.180000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: reset_cca
+[   79.190000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: afecal
+[   79.200000] b43-phy1: radio 2069: afecal core 0 ctrl=0x5830 stat=0x0003/0x0003
+[   79.200000] b43-phy1: radio 2069: afecal core 1 ctrl=0x5830 stat=0x0003/0x0003
+[   79.210000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: adc_reset_txpwrctrl
+[   79.220000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: idle_tssi
+[   79.230000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: tssi_path_enable
+[   79.240000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: rf_seq_mode_percore
+[   79.240000] b43-phy1: phy-ac: idle-tssi c0 meas: 0x013=0x000c 0x012=0x09a8 0x464=0x0001 radio 0x4e=0x8000 0x166=0x0000 prog=0x026a
+[   79.260000] b43-phy1: phy-ac: idle-tssi c1 meas: 0x013=0x0014 0x012=0x09c4 0x464=0x0001 radio 0x4e=0x8000 0x166=0x0000 prog=0x0271
+[   79.270000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: shm_readback
+[   79.280000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: shm_mac_config
+[   79.280000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: txpwrctrl_setup
+[   79.290000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: afe_gain
+[   79.300000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: shm_tail
+[   79.310000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: mac_toggles
+[   79.310000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: done
+[   79.340000] b43-phy1: start: enabling the MAC
+[   79.360000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_channel_calibrate: tempsense
+[   79.360000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_channel_calibrate: post_switch_calibrations
+[   79.370000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: tssi_path_enable
+[   79.380000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: rf_seq_mode_percore
+[   79.390000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: tssi_path_enable
+[   79.400000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: rf_seq_mode_percore
+[   79.770000] b43-phy1: Loading firmware version 784.2 (2012-08-15 21:43:22)
+[   79.770000] b43-phy1: init: GPIO
+[   79.780000] b43-phy1: init: initvals
+[   79.780000] b43-phy1: init: band initvals
+[   79.780000] b43-phy1: init: TX FIFOs
+[   79.800000] b43-phy1: init: MAC
+[   79.800000] b43-phy1: init: DMA
+[   79.810000] b43-phy1: init: address match and keys
+[   79.810000] b43-phy1: init: PHY
+[   79.820000] b43-phy1: phy-ac: num_cores=3 coremask=0x3
+[   79.820000] b43-phy1: phy-ac: radio pwron 0x040b readback: 0169 after 2 polls
+[   79.830000] b43-phy1: radio 2069: rccal lpf cap 0xab (E=0x0ac7 F=0x0baa)
+[   79.840000] b43-phy1: AC-PHY: PLLCTL3 = 0x0000100e on op_init entry
+[   79.850000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: probe_cores
+[   79.850000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: pre_init_frontend
+[   79.860000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: pmu_regctl_gpio
+[   79.870000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: mode_init
+[   79.870000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: tables_init
+[   79.880000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: init_regs
+[   79.890000] b43-phy1: phy-ac: set_channel ch36 (5180 MHz) start
+[   79.900000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: channel_state
+[   79.900000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: switch_prep
+[   79.910000] b43-phy1: phy-ac: channel_switch_prep 0x0140 cur=0x0df7 -> 0x0df4
+[   79.920000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: radio_channel_setup
+[   79.930000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: phy_channel_setup
+[   79.940000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: chan_tables
+[   79.950000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: noise_shaping
+[   79.960000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: rx_regprog
+[   79.970000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: crs_thresholds
+[   79.980000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: reset_cca
+[   79.980000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: afecal
+[   79.990000] b43-phy1: radio 2069: afecal core 0 ctrl=0x5830 stat=0x0003/0x0003
+[   80.000000] b43-phy1: radio 2069: afecal core 1 ctrl=0x5830 stat=0x0003/0x0003
+[   80.000000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: adc_reset_txpwrctrl
+[   80.010000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: idle_tssi
+[   80.020000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: tssi_path_enable
+[   80.030000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: rf_seq_mode_percore
+[   80.040000] b43-phy1: phy-ac: idle-tssi c0 meas: 0x013=0x000c 0x012=0x09a4 0x464=0x0001 radio 0x4e=0x8000 0x166=0x0000 prog=0x0269
+[   80.050000] b43-phy1: phy-ac: idle-tssi c1 meas: 0x013=0x0010 0x012=0x09d0 0x464=0x0001 radio 0x4e=0x8000 0x166=0x0000 prog=0x0274
+[   80.060000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: shm_readback
+[   80.070000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: shm_mac_config
+[   80.080000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: txpwrctrl_setup
+[   80.090000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: afe_gain
+[   80.090000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: shm_tail
+[   80.100000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: mac_toggles
+[   80.110000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: done
+[   80.140000] b43-phy1: start: enabling the MAC
+[   80.160000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_channel_calibrate: tempsense
+[   80.170000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_channel_calibrate: post_switch_calibrations
+[   80.170000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: tssi_path_enable
+[   80.180000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: rf_seq_mode_percore
+[   80.190000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: tssi_path_enable
+[   80.200000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: rf_seq_mode_percore
+[   80.630000] b43-phy1: Loading firmware version 784.2 (2012-08-15 21:43:22)
+[   80.630000] b43-phy1: init: GPIO
+[   80.640000] b43-phy1: init: initvals
+[   80.640000] b43-phy1: init: band initvals
+[   80.640000] b43-phy1: init: TX FIFOs
+[   80.660000] b43-phy1: init: MAC
+[   80.660000] b43-phy1: init: DMA
+[   80.670000] b43-phy1: init: address match and keys
+[   80.670000] b43-phy1: init: PHY
+[   80.680000] b43-phy1: phy-ac: num_cores=3 coremask=0x3
+[   80.680000] b43-phy1: phy-ac: radio pwron 0x040b readback: 0169 after 2 polls
+[   80.690000] b43-phy1: radio 2069: rccal lpf cap 0xab (E=0x0ac7 F=0x0baa)
+[   80.700000] b43-phy1: AC-PHY: PLLCTL3 = 0x0000100e on op_init entry
+[   80.710000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: probe_cores
+[   80.710000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: pre_init_frontend
+[   80.720000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: pmu_regctl_gpio
+[   80.730000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: mode_init
+[   80.730000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: tables_init
+[   80.740000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: init_regs
+[   80.750000] b43-phy1: phy-ac: set_channel ch36 (5180 MHz) start
+[   80.760000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: channel_state
+[   80.760000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: switch_prep
+[   80.770000] b43-phy1: phy-ac: channel_switch_prep 0x0140 cur=0x0df7 -> 0x0df4
+[   80.780000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: radio_channel_setup
+[   80.790000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: phy_channel_setup
+[   80.800000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: chan_tables
+[   80.810000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: noise_shaping
+[   80.820000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: rx_regprog
+[   80.830000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: crs_thresholds
+[   80.840000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: reset_cca
+[   80.840000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: afecal
+[   80.850000] b43-phy1: radio 2069: afecal core 0 ctrl=0x5830 stat=0x0003/0x0003
+[   80.860000] b43-phy1: radio 2069: afecal core 1 ctrl=0x5830 stat=0x0003/0x0003
+[   80.860000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: adc_reset_txpwrctrl
+[   80.870000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: idle_tssi
+[   80.880000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: tssi_path_enable
+[   80.890000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: rf_seq_mode_percore
+[   80.900000] b43-phy1: phy-ac: idle-tssi c0 meas: 0x013=0x0004 0x012=0x09ac 0x464=0x0001 radio 0x4e=0x8000 0x166=0x0000 prog=0x026b
+[   80.910000] b43-phy1: phy-ac: idle-tssi c1 meas: 0x013=0x0010 0x012=0x09c4 0x464=0x0001 radio 0x4e=0x8000 0x166=0x0000 prog=0x0271
+[   80.920000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: shm_readback
+[   80.930000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: shm_mac_config
+[   80.940000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: txpwrctrl_setup
+[   80.950000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: afe_gain
+[   80.950000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: shm_tail
+[   80.960000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: mac_toggles
+[   80.970000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: done
+[   80.990000] b43-phy1: start: enabling the MAC
+[   81.010000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_channel_calibrate: tempsense
+[   81.010000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_channel_calibrate: post_switch_calibrations
+[   81.020000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: tssi_path_enable
+[   81.030000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: rf_seq_mode_percore
+[   81.040000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: tssi_path_enable
+[   81.050000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: rf_seq_mode_percore
+[   81.420000] b43-phy1: Loading firmware version 784.2 (2012-08-15 21:43:22)
+[   81.420000] b43-phy1: init: GPIO
+[   81.430000] b43-phy1: init: initvals
+[   81.430000] b43-phy1: init: band initvals
+[   81.430000] b43-phy1: init: TX FIFOs
+[   81.450000] b43-phy1: init: MAC
+[   81.450000] b43-phy1: init: DMA
+[   81.460000] b43-phy1: init: address match and keys
+[   81.460000] b43-phy1: init: PHY
+[   81.470000] b43-phy1: phy-ac: num_cores=3 coremask=0x3
+[   81.470000] b43-phy1: phy-ac: radio pwron 0x040b readback: 0169 after 2 polls
+[   81.480000] b43-phy1: radio 2069: rccal lpf cap 0xaa (E=0x0ac7 F=0x0ba9)
+[   81.490000] b43-phy1: AC-PHY: PLLCTL3 = 0x0000100e on op_init entry
+[   81.500000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: probe_cores
+[   81.500000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: pre_init_frontend
+[   81.510000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: pmu_regctl_gpio
+[   81.520000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: mode_init
+[   81.520000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: tables_init
+[   81.530000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_init: init_regs
+[   81.540000] b43-phy1: phy-ac: set_channel ch36 (5180 MHz) start
+[   81.540000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: channel_state
+[   81.550000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: switch_prep
+[   81.560000] b43-phy1: phy-ac: channel_switch_prep 0x0140 cur=0x0df7 -> 0x0df4
+[   81.570000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: radio_channel_setup
+[   81.580000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: phy_channel_setup
+[   81.590000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: chan_tables
+[   81.600000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: noise_shaping
+[   81.610000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: rx_regprog
+[   81.610000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: crs_thresholds
+[   81.620000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: reset_cca
+[   81.630000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: afecal
+[   81.640000] b43-phy1: radio 2069: afecal core 0 ctrl=0x5830 stat=0x0003/0x0003
+[   81.640000] b43-phy1: radio 2069: afecal core 1 ctrl=0x5830 stat=0x0003/0x0003
+[   81.650000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: adc_reset_txpwrctrl
+[   81.660000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: idle_tssi
+[   81.670000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: tssi_path_enable
+[   81.680000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: rf_seq_mode_percore
+[   81.680000] b43-phy1: phy-ac: idle-tssi c0 meas: 0x013=0x000c 0x012=0x09a8 0x464=0x0001 radio 0x4e=0x8000 0x166=0x0000 prog=0x026a
+[   81.700000] b43-phy1: phy-ac: idle-tssi c1 meas: 0x013=0x0010 0x012=0x09c0 0x464=0x0001 radio 0x4e=0x8000 0x166=0x0000 prog=0x0270
+[   81.710000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: shm_readback
+[   81.720000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: shm_mac_config
+[   81.720000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: txpwrctrl_setup
+[   81.730000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: afe_gain
+[   81.740000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: shm_tail
+[   81.750000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: mac_toggles
+[   81.750000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_switch_channel: done
+[   81.910000] b43-phy1: start: enabling the MAC
+[   81.930000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_channel_calibrate: tempsense
+[   81.930000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_channel_calibrate: post_switch_calibrations
+[   81.940000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: tssi_path_enable
+[   81.950000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: rf_seq_mode_percore
+[   81.960000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: tssi_path_enable
+[   81.970000] ieee80211 phy1: AC-PHY: b43_phy_ac_idle_tssi_meas: rf_seq_mode_percore
+[   83.030000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[   83.030000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_60sec: pwork_60sec
+[   84.090000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[   85.150000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[   86.170000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[   87.200000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[   88.240000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[   89.310000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[   90.320000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[   91.360000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[   92.400000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[   93.440000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[   94.480000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[   95.520000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[   96.560000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[   97.600000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[   98.640000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[   99.680000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[  100.720000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[  101.760000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[  102.800000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[  103.840000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[  104.880000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[  105.920000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[  106.960000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[  108.000000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[  109.040000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[  110.080000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[  111.120000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[  112.160000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[  113.200000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[  114.240000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[  115.290000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[  116.320000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[  117.370000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[  118.400000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[  119.450000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[  120.480000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[  121.520000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+[  122.560000] ieee80211 phy1: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
