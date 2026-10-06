@@ -6,15 +6,15 @@ Subject: [PATCH 2/2] b43: AC-PHY bring-up from the reverse-engineered port
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     4 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |    92 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 10624 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 10619 +++++++++++++++-
  drivers/net/wireless/broadcom/b43/phy_ac.h    |   738 +-
  drivers/net/wireless/broadcom/b43/ppr_ac.c    |   265 +
  drivers/net/wireless/broadcom/b43/ppr_ac.h    |    80 +
- .../net/wireless/broadcom/b43/radio_2069.c    |  1688 +++
+ .../net/wireless/broadcom/b43/radio_2069.c    |  1696 +++
  .../net/wireless/broadcom/b43/radio_2069.h    |    48 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1150 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    78 +
- 10 files changed, 14745 insertions(+), 22 deletions(-)
+ 10 files changed, 14748 insertions(+), 22 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -137,7 +137,7 @@ index 0000000..2e3420a
 +	b43_read32(dev, B43_MMIO_MACCTL);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index fe102ea..f51d564 100644
+index fe102ea..4b62d5a 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -1,17 +1,46 @@
@@ -193,7 +193,7 @@ index fe102ea..f51d564 100644
  
  static int b43_phy_ac_op_allocate(struct b43_wldev *dev)
  {
-@@ -62,27 +91,10584 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -62,27 +91,10579 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -476,6 +476,7 @@ index fe102ea..f51d564 100644
 +static void b43_phy_ac_wd_stats_tail(struct b43_wldev *dev);
 +static void b43_phy_ac_tempsense(struct b43_wldev *dev);
 +static bool b43_phy_ac_cal_reads_temp(struct b43_wldev *dev);
++static void b43_phy_ac_rfseq_wait_done(struct b43_wldev *dev, u16 busy);
 +/*
 + * The four scattered cells that open the watchdog sweep, and the flat sweep
 + * of 0x0768-0x078a. They are two functions because on entering the probe
@@ -1588,6 +1589,7 @@ index fe102ea..f51d564 100644
 +
 +		/* The bbmult cells as they stand mid-sequence, written back. */
 +		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
++		udelay(100);
 +		for_each_set_bit(c, &ac->coremask, ac->num_cores) {
 +			b43_actab_read_bulk(dev, 0x000c, (u16)(0x0063 + 4 * c),
 +					    16, 1, &st[c].inner);
@@ -1608,22 +1610,9 @@ index fe102ea..f51d564 100644
 +		b43_phy_mask(dev, B43_PHY_AC_SAMP_PLAY_CTL, (u16)~B43_PHY_AC_SAMP_PLAY_START);
 +		b43_phy_mask(dev, 0x0382, (u16)~0xc000);
 +		b43_phy_set(dev, B43_PHY_AC_SAMP_PLAY_CTL, B43_PHY_AC_SAMP_PLAY_START);
-+		/*
-+		 * Wait for completion as run_rfseq_cmd() does, reading while
-+		 * bit 0 is high. The number of reads follows the values: attach
-+		 * gives [2,1,2,2,...], a later bring-up 2 every time.
-+		 */
-+		{
-+			unsigned int k;
-+
-+			for (k = 0; k < 10; k++) {
-+				u16 v = b43_phy_read(dev, 0x0403);
-+
-+				if (!(v & 0x0001))
-+					break;
-+			}
-+		}
++		b43_phy_ac_rfseq_wait_done(dev, 0x0001);
 +		b43_phy_write(dev, 0x0400, 0x0000);
++		udelay(100);
 +
 +		/* Gain override on every chain, then put back in reverse. */
 +		for_each_set_bit(c, &ac->coremask, ac->num_cores) {
@@ -1636,6 +1625,7 @@ index fe102ea..f51d564 100644
 +			st[c].r725 = b43_phy_read(dev, 0x0725 + s);
 +			b43_phy_write(dev, 0x0725 + s, st[c].r725 | 0x0004);
 +		}
++		udelay(1);
 +		for (c = ac->num_cores; c-- > 0; ) {
 +			u16 s = (u16)(c * 0x200);
 +
@@ -1645,6 +1635,7 @@ index fe102ea..f51d564 100644
 +			b43_phy_write(dev, 0x073a + s, st[c].r73a);
 +			b43_phy_write(dev, 0x0739 + s, st[c].r739);
 +		}
++		udelay(100);
 +		/*
 +		 * Sample the measurement and average it. Each pass arms the
 +		 * measurement and reads 0x0013 then 0x0012; a pass with a zero
@@ -2643,6 +2634,7 @@ index fe102ea..f51d564 100644
 +			(u16)~B43_PHY_AC_BBCFG_RSTCCA, 0);
 +	phy_ac->status_mask &= ~B43_PHY_AC_STATE_CCA_RESET;
 +	b43_phy_ac_force_clock(dev, false);
++	udelay(2);
 +}
 +
 +/*
@@ -3232,20 +3224,20 @@ index fe102ea..f51d564 100644
 + * The number of reads follows the first value: a first read of 0x0000 is
 + * the only one, a busy one is followed by reads until it clears. The
 + * MacBook Air at 2.4 GHz reads 0x0202 after command 0x0002 and 0x2020 after
-+ * 0x0020, and the stock driver waits for both; the D6220 captures waited up
-+ * to 1027 us on 0x0101. udelay(200) per turn caps the wait at 2 ms.
++ * 0x0020, and the stock driver waits for both. Its osl_delay trace waits
++ * 10 us between two reads; the budget caps the wait at 2 ms.
 + */
 +static void b43_phy_ac_rfseq_wait_done(struct b43_wldev *dev, u16 busy)
 +{
 +	unsigned int i;
 +
-+	for (i = 0; i < 10; i++) {
-+		u16 v = b43_phy_read_log(dev, 0x0403);
-+
-+		udelay(200);
-+		if (!(v & busy))
-+			break;
++	for (i = 0; i < 200; i++) {
++		if (!(b43_phy_read_log(dev, 0x0403) & busy))
++			return;
++		udelay(10);
 +	}
++	b43err(dev->wl, "AC-PHY: RF sequencer busy timeout (0x0403 & 0x%04x)\n",
++	       busy);
 +}
 +
 +/*
@@ -5862,6 +5854,7 @@ index fe102ea..f51d564 100644
 +		b43_radio_maskset(dev, 0x000e + s, (u16)~0x0002, step[k].bit1);
 +		b43_radio_maskset(dev, 0x016e + s, (u16)~0x0001, 0x0001);
 +		b43_radio_maskset(dev, 0x000e + s, (u16)~0x0004, step[k].bit2);
++		udelay(10);
 +		for (i = 0; i < 8; i++)
 +			dev->phy.ac->tempsense_samples[core][k][i] =
 +				b43_phy_read_log(dev, 0x0013);
@@ -7078,6 +7071,7 @@ index fe102ea..f51d564 100644
 +		b43_phy_set(dev, 0x0382, 0x8000);
 +		b43_phy_ac_rfseq_wait_done(dev, 0x0001);
 +		b43_phy_write(dev, 0x0400, 0x0000);
++		udelay(5);
 +
 +		/*
 +		 * Three cores regardless of the coremask: clear bit 8 of
@@ -7864,6 +7858,7 @@ index fe102ea..f51d564 100644
 +	b43_phy_set(dev,       0x0382, 0x8000);
 +	b43_phy_ac_rfseq_wait_done(dev, 0x0001);
 +	b43_phy_write(dev,     0x0400, 0x0000);
++	udelay(5);
 +
 +	/* Every silicon core: clear bit 8 of 0x?73a, set bit 10 of 0x?725. */
 +	for (core = 0; core < dev->phy.ac->num_cores; core++) {
@@ -11927,10 +11922,10 @@ index 0000000..3a652b2
 +#endif /* B43_PPR_AC_H_ */
 diff --git a/drivers/net/wireless/broadcom/b43/radio_2069.c b/drivers/net/wireless/broadcom/b43/radio_2069.c
 new file mode 100644
-index 0000000..ee90890
+index 0000000..308a6ca
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/radio_2069.c
-@@ -0,0 +1,1688 @@
+@@ -0,0 +1,1696 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +/*
 + * Broadcom B43 wireless driver 2069 radio — per-channel tuning table, lookup,
@@ -13067,6 +13062,7 @@ index 0000000..ee90890
 +	 * touches bit 8 of 0x0728, setting then clearing it, so it is some kind
 +	 * of AFE-related trigger. */
 +	b43_phy_maskset(dev, 0x0728, (u16)~0x0100, 0x0100);
++	udelay(1);
 +	b43_phy_maskset(dev, 0x0728, (u16)~0x0100, 0x0000);
 +
 +	for (i = 0; i < ARRAY_SIZE(r2069_chan_writes); i++)
@@ -13403,7 +13399,7 @@ index 0000000..ee90890
 +		r2069_mod(dev, R2069_AFE_CAL_CLK | rbase, 0x1000, 0x0000);
 +	}
 +
-+	udelay(1);
++	udelay(100);
 +
 +	/* Pass 2: launch every active core, then finalize its PHY regs. */
 +	for_each_set_bit(core, &ac->coremask, ac->num_cores) {
@@ -13422,18 +13418,17 @@ index 0000000..ee90890
 +
 +		/*
 +		 * The vendor reads STAT only after the arming write, never before:
-+		 * a CTRL readback while still disarmed, the CTRL arm write, two
-+		 * STAT reads, then the CTRL disarm write.
++		 * a CTRL readback while still disarmed, the CTRL arm write, 10 us,
++		 * two STAT reads, then the CTRL disarm write.
 +		 */
 +		b43_radio_write(dev, R2069_AFE_CAL_CTRL | rbase,
 +				ctrl | 0x000f);
-+		post[0] = b43_radio_read_log(dev, R2069_AFE_CAL_STAT | rbase);
-+		udelay(5);
-+		post[1] = b43_radio_read_log(dev, R2069_AFE_CAL_STAT | rbase);
 +		udelay(10);
++		post[0] = b43_radio_read_log(dev, R2069_AFE_CAL_STAT | rbase);
++		post[1] = b43_radio_read_log(dev, R2069_AFE_CAL_STAT | rbase);
 +
 +		b43info(dev->wl,
-+		       "radio 2069: afecal core %u ctrl=0x%04x stat post(0/1/10us)=0x%04x/0x%04x\n",
++		       "radio 2069: afecal core %u ctrl=0x%04x stat=0x%04x/0x%04x\n",
 +		       core, ctrl, post[0], post[1]);
 +
 +		b43_radio_write(dev, R2069_AFE_CAL_CTRL | rbase, ctrl);
@@ -13559,14 +13554,17 @@ index 0000000..ee90890
 +	/* radio 0x040c bit4 low, PHY 0x0408 pulse, bit4 high. */
 +	b43_radio_mask(dev, 0x040c, (u16)~0x0010);
 +	b43_phy_write(dev, B43_PHY_AC_RFCTL_CMD, 0x0c06);
++	udelay(100);
 +	b43_radio_set(dev, 0x040c, 0x0010);
 +	b43_phy_write(dev, 0x0417, 0x000d);
++	udelay(100);
 +	b43_phy_write(dev, B43_PHY_AC_RFCTL_CMD, 0x0c02);
 +	b43_phy_write(dev, 0x0728, saved_728 | 0x0180);
-+	udelay(100);
 +	b43_phy_write(dev, 0x0417, 0x0004);
 +	b43_phy_write(dev, 0x0728, saved_728 & 0xfeff);
 +}
++
++#define R2069_PWRON_POLL_MAX	100
 +
 +/*
 + * Radio power-on sequence, run once right after b43_radio_2069_init
@@ -13580,7 +13578,8 @@ index 0000000..ee90890
 +void b43_radio_2069_pwron(struct b43_wldev *dev)
 +{
 +	B43_AC_FN();
-+	u16 pon0, pon1;
++	unsigned int polls;
++	u16 pon;
 +
 +	b43_radio_set(dev,   0x08ea, 0x0040);
 +	b43_radio_set(dev,   0x08ea, 0x0080);
@@ -13594,18 +13593,22 @@ index 0000000..ee90890
 +	b43_radio_mask(dev,  0x040b, ~0x0001);
 +	udelay(1);
 +	b43_radio_set(dev,   0x040b, 0x0001);	/* power-on kick */
-+	udelay(10);
 +
 +	/*
-+	 * Power-on readback: the blob reads 0x040b twice right
-+	 * after the kick+udelay. The register is HW-updated during the wait --
-+	 * the later mask writes back 0x0168, i.e. 0x040b had risen to
-+	 * 0x0169 on its own. Whether the pair is a done/valid poll or a
-+	 * settle/flush is not decidable from the trace (values UNDEFINED); log
-+	 * it so a live boot can tell us, then act on it.
++	 * Bit 3 of 0x040b rises when the sequence completes. The stock driver
++	 * polls it every 10 us, then reads the register once more: the
++	 * MacBook Air reads 0x0161 and 0x0169 ten microseconds apart, the
++	 * routers 0x0169 at the first read.
 +	 */
-+	pon0 = b43_radio_read(dev, 0x040b);
-+	pon1 = b43_radio_read(dev, 0x040b);
++	for (polls = 1; polls <= R2069_PWRON_POLL_MAX; polls++) {
++		udelay(10);
++		if (b43_radio_read(dev, 0x040b) & 0x0008)
++			break;
++	}
++	pon = b43_radio_read(dev, 0x040b);
++	if (!(pon & 0x0008))
++		b43warn(dev->wl, "radio 2069: power-on timeout (0x040b=0x%04x)\n",
++			pon);
 +
 +	b43_radio_mask(dev,  0x0548, ~0x0001);
 +	b43_radio_mask(dev,  0x08ea, ~0x0040);
@@ -13616,8 +13619,8 @@ index 0000000..ee90890
 +	b43_radio_set(dev,     0x08ea, 0x0080);
 +	b43_radio_maskset(dev, 0x08ed, (u16)~0x0600, 0x0400);
 +
-+	b43info(dev->wl, "phy-ac: radio pwron 0x040b readback: %04x %04x\n",
-+	       pon0, pon1);
++	b43info(dev->wl, "phy-ac: radio pwron 0x040b readback: %04x after %u polls\n",
++	       pon, polls);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/radio_2069.h b/drivers/net/wireless/broadcom/b43/radio_2069.h
 new file mode 100644

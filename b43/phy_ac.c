@@ -357,6 +357,7 @@ static void b43_phy_ac_crs_block_e(struct b43_wldev *dev);
 static void b43_phy_ac_wd_stats_tail(struct b43_wldev *dev);
 static void b43_phy_ac_tempsense(struct b43_wldev *dev);
 static bool b43_phy_ac_cal_reads_temp(struct b43_wldev *dev);
+static void b43_phy_ac_rfseq_wait_done(struct b43_wldev *dev, u16 busy);
 /*
  * The four scattered cells that open the watchdog sweep, and the flat sweep
  * of 0x0768-0x078a. They are two functions because on entering the probe
@@ -1469,6 +1470,7 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 
 		/* The bbmult cells as they stand mid-sequence, written back. */
 		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+		udelay(100);
 		for_each_set_bit(c, &ac->coremask, ac->num_cores) {
 			b43_actab_read_bulk(dev, 0x000c, (u16)(0x0063 + 4 * c),
 					    16, 1, &st[c].inner);
@@ -1489,22 +1491,9 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 		b43_phy_mask(dev, B43_PHY_AC_SAMP_PLAY_CTL, (u16)~B43_PHY_AC_SAMP_PLAY_START);
 		b43_phy_mask(dev, 0x0382, (u16)~0xc000);
 		b43_phy_set(dev, B43_PHY_AC_SAMP_PLAY_CTL, B43_PHY_AC_SAMP_PLAY_START);
-		/*
-		 * Wait for completion as run_rfseq_cmd() does, reading while
-		 * bit 0 is high. The number of reads follows the values: attach
-		 * gives [2,1,2,2,...], a later bring-up 2 every time.
-		 */
-		{
-			unsigned int k;
-
-			for (k = 0; k < 10; k++) {
-				u16 v = b43_phy_read(dev, 0x0403);
-
-				if (!(v & 0x0001))
-					break;
-			}
-		}
+		b43_phy_ac_rfseq_wait_done(dev, 0x0001);
 		b43_phy_write(dev, 0x0400, 0x0000);
+		udelay(100);
 
 		/* Gain override on every chain, then put back in reverse. */
 		for_each_set_bit(c, &ac->coremask, ac->num_cores) {
@@ -1517,6 +1506,7 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 			st[c].r725 = b43_phy_read(dev, 0x0725 + s);
 			b43_phy_write(dev, 0x0725 + s, st[c].r725 | 0x0004);
 		}
+		udelay(1);
 		for (c = ac->num_cores; c-- > 0; ) {
 			u16 s = (u16)(c * 0x200);
 
@@ -1526,6 +1516,7 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 			b43_phy_write(dev, 0x073a + s, st[c].r73a);
 			b43_phy_write(dev, 0x0739 + s, st[c].r739);
 		}
+		udelay(100);
 		/*
 		 * Sample the measurement and average it. Each pass arms the
 		 * measurement and reads 0x0013 then 0x0012; a pass with a zero
@@ -2524,6 +2515,7 @@ static void b43_phy_ac_cca_pulse(struct b43_wldev *dev)
 			(u16)~B43_PHY_AC_BBCFG_RSTCCA, 0);
 	phy_ac->status_mask &= ~B43_PHY_AC_STATE_CCA_RESET;
 	b43_phy_ac_force_clock(dev, false);
+	udelay(2);
 }
 
 /*
@@ -3113,20 +3105,20 @@ static void b43_phy_ac_set_analog_tx_lpf(struct b43_wldev *dev, u16 stages,
  * The number of reads follows the first value: a first read of 0x0000 is
  * the only one, a busy one is followed by reads until it clears. The
  * MacBook Air at 2.4 GHz reads 0x0202 after command 0x0002 and 0x2020 after
- * 0x0020, and the stock driver waits for both; the D6220 captures waited up
- * to 1027 us on 0x0101. udelay(200) per turn caps the wait at 2 ms.
+ * 0x0020, and the stock driver waits for both. Its osl_delay trace waits
+ * 10 us between two reads; the budget caps the wait at 2 ms.
  */
 static void b43_phy_ac_rfseq_wait_done(struct b43_wldev *dev, u16 busy)
 {
 	unsigned int i;
 
-	for (i = 0; i < 10; i++) {
-		u16 v = b43_phy_read_log(dev, 0x0403);
-
-		udelay(200);
-		if (!(v & busy))
-			break;
+	for (i = 0; i < 200; i++) {
+		if (!(b43_phy_read_log(dev, 0x0403) & busy))
+			return;
+		udelay(10);
 	}
+	b43err(dev->wl, "AC-PHY: RF sequencer busy timeout (0x0403 & 0x%04x)\n",
+	       busy);
 }
 
 /*
@@ -5743,6 +5735,7 @@ static void b43_phy_ac_tempsense_chain(struct b43_wldev *dev, u8 core)
 		b43_radio_maskset(dev, 0x000e + s, (u16)~0x0002, step[k].bit1);
 		b43_radio_maskset(dev, 0x016e + s, (u16)~0x0001, 0x0001);
 		b43_radio_maskset(dev, 0x000e + s, (u16)~0x0004, step[k].bit2);
+		udelay(10);
 		for (i = 0; i < 8; i++)
 			dev->phy.ac->tempsense_samples[core][k][i] =
 				b43_phy_read_log(dev, 0x0013);
@@ -6959,6 +6952,7 @@ void b43_phy_ac_post_rxiqcal_stage2(struct b43_wldev *dev)
 		b43_phy_set(dev, 0x0382, 0x8000);
 		b43_phy_ac_rfseq_wait_done(dev, 0x0001);
 		b43_phy_write(dev, 0x0400, 0x0000);
+		udelay(5);
 
 		/*
 		 * Three cores regardless of the coremask: clear bit 8 of
@@ -7745,6 +7739,7 @@ void b43_phy_ac_rxiqcal_prep_second_iter(struct b43_wldev *dev)
 	b43_phy_set(dev,       0x0382, 0x8000);
 	b43_phy_ac_rfseq_wait_done(dev, 0x0001);
 	b43_phy_write(dev,     0x0400, 0x0000);
+	udelay(5);
 
 	/* Every silicon core: clear bit 8 of 0x?73a, set bit 10 of 0x?725. */
 	for (core = 0; core < dev->phy.ac->num_cores; core++) {

@@ -1134,6 +1134,7 @@ void b43_radio_2069_channel_setup(struct b43_wldev *dev,
 	 * touches bit 8 of 0x0728, setting then clearing it, so it is some kind
 	 * of AFE-related trigger. */
 	b43_phy_maskset(dev, 0x0728, (u16)~0x0100, 0x0100);
+	udelay(1);
 	b43_phy_maskset(dev, 0x0728, (u16)~0x0100, 0x0000);
 
 	for (i = 0; i < ARRAY_SIZE(r2069_chan_writes); i++)
@@ -1470,7 +1471,7 @@ void b43_radio_2069_afecal(struct b43_wldev *dev)
 		r2069_mod(dev, R2069_AFE_CAL_CLK | rbase, 0x1000, 0x0000);
 	}
 
-	udelay(1);
+	udelay(100);
 
 	/* Pass 2: launch every active core, then finalize its PHY regs. */
 	for_each_set_bit(core, &ac->coremask, ac->num_cores) {
@@ -1489,18 +1490,17 @@ void b43_radio_2069_afecal(struct b43_wldev *dev)
 
 		/*
 		 * The vendor reads STAT only after the arming write, never before:
-		 * a CTRL readback while still disarmed, the CTRL arm write, two
-		 * STAT reads, then the CTRL disarm write.
+		 * a CTRL readback while still disarmed, the CTRL arm write, 10 us,
+		 * two STAT reads, then the CTRL disarm write.
 		 */
 		b43_radio_write(dev, R2069_AFE_CAL_CTRL | rbase,
 				ctrl | 0x000f);
-		post[0] = b43_radio_read_log(dev, R2069_AFE_CAL_STAT | rbase);
-		udelay(5);
-		post[1] = b43_radio_read_log(dev, R2069_AFE_CAL_STAT | rbase);
 		udelay(10);
+		post[0] = b43_radio_read_log(dev, R2069_AFE_CAL_STAT | rbase);
+		post[1] = b43_radio_read_log(dev, R2069_AFE_CAL_STAT | rbase);
 
 		b43info(dev->wl,
-		       "radio 2069: afecal core %u ctrl=0x%04x stat post(0/1/10us)=0x%04x/0x%04x\n",
+		       "radio 2069: afecal core %u ctrl=0x%04x stat=0x%04x/0x%04x\n",
 		       core, ctrl, post[0], post[1]);
 
 		b43_radio_write(dev, R2069_AFE_CAL_CTRL | rbase, ctrl);
@@ -1626,14 +1626,17 @@ void b43_radio_2069_init(struct b43_wldev *dev)
 	/* radio 0x040c bit4 low, PHY 0x0408 pulse, bit4 high. */
 	b43_radio_mask(dev, 0x040c, (u16)~0x0010);
 	b43_phy_write(dev, B43_PHY_AC_RFCTL_CMD, 0x0c06);
+	udelay(100);
 	b43_radio_set(dev, 0x040c, 0x0010);
 	b43_phy_write(dev, 0x0417, 0x000d);
+	udelay(100);
 	b43_phy_write(dev, B43_PHY_AC_RFCTL_CMD, 0x0c02);
 	b43_phy_write(dev, 0x0728, saved_728 | 0x0180);
-	udelay(100);
 	b43_phy_write(dev, 0x0417, 0x0004);
 	b43_phy_write(dev, 0x0728, saved_728 & 0xfeff);
 }
+
+#define R2069_PWRON_POLL_MAX	100
 
 /*
  * Radio power-on sequence, run once right after b43_radio_2069_init
@@ -1647,7 +1650,8 @@ void b43_radio_2069_init(struct b43_wldev *dev)
 void b43_radio_2069_pwron(struct b43_wldev *dev)
 {
 	B43_AC_FN();
-	u16 pon0, pon1;
+	unsigned int polls;
+	u16 pon;
 
 	b43_radio_set(dev,   0x08ea, 0x0040);
 	b43_radio_set(dev,   0x08ea, 0x0080);
@@ -1661,18 +1665,22 @@ void b43_radio_2069_pwron(struct b43_wldev *dev)
 	b43_radio_mask(dev,  0x040b, ~0x0001);
 	udelay(1);
 	b43_radio_set(dev,   0x040b, 0x0001);	/* power-on kick */
-	udelay(10);
 
 	/*
-	 * Power-on readback: the blob reads 0x040b twice right
-	 * after the kick+udelay. The register is HW-updated during the wait --
-	 * the later mask writes back 0x0168, i.e. 0x040b had risen to
-	 * 0x0169 on its own. Whether the pair is a done/valid poll or a
-	 * settle/flush is not decidable from the trace (values UNDEFINED); log
-	 * it so a live boot can tell us, then act on it.
+	 * Bit 3 of 0x040b rises when the sequence completes. The stock driver
+	 * polls it every 10 us, then reads the register once more: the
+	 * MacBook Air reads 0x0161 and 0x0169 ten microseconds apart, the
+	 * routers 0x0169 at the first read.
 	 */
-	pon0 = b43_radio_read(dev, 0x040b);
-	pon1 = b43_radio_read(dev, 0x040b);
+	for (polls = 1; polls <= R2069_PWRON_POLL_MAX; polls++) {
+		udelay(10);
+		if (b43_radio_read(dev, 0x040b) & 0x0008)
+			break;
+	}
+	pon = b43_radio_read(dev, 0x040b);
+	if (!(pon & 0x0008))
+		b43warn(dev->wl, "radio 2069: power-on timeout (0x040b=0x%04x)\n",
+			pon);
 
 	b43_radio_mask(dev,  0x0548, ~0x0001);
 	b43_radio_mask(dev,  0x08ea, ~0x0040);
@@ -1683,6 +1691,6 @@ void b43_radio_2069_pwron(struct b43_wldev *dev)
 	b43_radio_set(dev,     0x08ea, 0x0080);
 	b43_radio_maskset(dev, 0x08ed, (u16)~0x0600, 0x0400);
 
-	b43info(dev->wl, "phy-ac: radio pwron 0x040b readback: %04x %04x\n",
-	       pon0, pon1);
+	b43info(dev->wl, "phy-ac: radio pwron 0x040b readback: %04x after %u polls\n",
+	       pon, polls);
 }
