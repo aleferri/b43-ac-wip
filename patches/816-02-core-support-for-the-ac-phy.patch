@@ -7,7 +7,7 @@ Subject: [PATCH 1/2] b43: core support for the AC-PHY
  drivers/net/wireless/broadcom/b43/Kconfig     |   20 +-
  drivers/net/wireless/broadcom/b43/b43.h       |  144 +-
  drivers/net/wireless/broadcom/b43/bus.c       |    4 +
- drivers/net/wireless/broadcom/b43/dma.c       |  129 +-
+ drivers/net/wireless/broadcom/b43/dma.c       |  121 +-
  drivers/net/wireless/broadcom/b43/dma.h       |   19 +
  drivers/net/wireless/broadcom/b43/leds.c      |  221 ++-
  drivers/net/wireless/broadcom/b43/leds.h      |   24 +-
@@ -17,7 +17,7 @@ Subject: [PATCH 1/2] b43: core support for the AC-PHY
  drivers/net/wireless/broadcom/b43/pio.c       |   11 +-
  drivers/net/wireless/broadcom/b43/xmit.c      |  109 +-
  drivers/net/wireless/broadcom/b43/xmit.h      |   23 +
- 13 files changed, 1996 insertions(+), 332 deletions(-)
+ 13 files changed, 1988 insertions(+), 332 deletions(-)
 
 diff --git a/drivers/net/wireless/broadcom/b43/Kconfig b/drivers/net/wireless/broadcom/b43/Kconfig
 index 5f008b4..ceee266 100644
@@ -341,7 +341,7 @@ index 0bc4f83..5ae8ba4 100644
  	dev->dev = &core->dev;
  	dev->dma_dev = core->dma_dev;
 diff --git a/drivers/net/wireless/broadcom/b43/dma.c b/drivers/net/wireless/broadcom/b43/dma.c
-index e0a74f4..fd2cca7 100644
+index e0a74f4..bbbfe31 100644
 --- a/drivers/net/wireless/broadcom/b43/dma.c
 +++ b/drivers/net/wireless/broadcom/b43/dma.c
 @@ -210,10 +210,20 @@ static void op64_fill_descriptor(struct b43_dmaring *ring,
@@ -385,7 +385,7 @@ index e0a74f4..fd2cca7 100644
  }
  
  static const struct b43_dma_ops dma64_ops = {
-@@ -404,19 +413,29 @@ static inline
+@@ -404,19 +413,21 @@ static inline
  	}
  }
  
@@ -394,17 +394,9 @@ index e0a74f4..fd2cca7 100644
 + * alignment, its alignment): 4K for 30/32-bit DMA, 8K for 64-bit DMA. The 8K
 + * alignment matters because of a hardware bug where bit 0x00001000 of the DMA
 + * address leaks into B43_DMA64_RXSTATUS.
-+ *
-+ * The AC cores take 64K: with the ring 8K-aligned the DSL-3580L raises a
-+ * descriptor protocol error (bit 12 of controller 0's DMA reason) within
-+ * half a second of the MAC coming up, though the index registers hold the
-+ * descriptor's whole address. 64K-aligned, that address and the offset b43
-+ * used to write agree in the low 16 bits.
 + */
 +static unsigned int b43_dma_ringmemsize(struct b43_dmaring *ring)
 +{
-+	if (ring->dev->phy.type == B43_PHYTYPE_AC)
-+		return 64 * 1024;
 +	return (ring->type == B43_DMA_64BIT) ?
 +		B43_DMA64_RINGMEMSIZE : B43_DMA32_RINGMEMSIZE;
 +}
@@ -426,7 +418,7 @@ index e0a74f4..fd2cca7 100644
  
  	ring->descbase = dma_alloc_coherent(ring->dev->dev->dma_dev,
  					    ring_mem_size, &(ring->dmabase),
-@@ -429,8 +448,8 @@ static int alloc_ringmemory(struct b43_dmaring *ring)
+@@ -429,8 +440,8 @@ static int alloc_ringmemory(struct b43_dmaring *ring)
  
  static void free_ringmemory(struct b43_dmaring *ring)
  {
@@ -437,7 +429,7 @@ index e0a74f4..fd2cca7 100644
  	dma_free_coherent(ring->dev->dev->dma_dev, ring_mem_size,
  			  ring->descbase, ring->dmabase);
  }
-@@ -669,6 +688,26 @@ static int alloc_initial_descbuffers(struct b43_dmaring *ring)
+@@ -669,6 +680,26 @@ static int alloc_initial_descbuffers(struct b43_dmaring *ring)
   * Reset the controller, write the ring busaddress
   * and switch the "enable" bit on.
   */
@@ -464,7 +456,7 @@ index e0a74f4..fd2cca7 100644
  static int dmacontroller_setup(struct b43_dmaring *ring)
  {
  	int err = 0;
-@@ -684,10 +723,13 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
+@@ -684,10 +715,13 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
  			addrext = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_EXT);
  			addrlo = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_LOW);
  			addrhi = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_HIGH);
@@ -478,7 +470,7 @@ index e0a74f4..fd2cca7 100644
  			if (!parity)
  				value |= B43_DMA64_TXPARITYDISABLE;
  			b43_dma_write(ring, B43_DMA64_TXCTL, value);
-@@ -715,9 +757,12 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
+@@ -715,9 +749,12 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
  			addrext = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_EXT);
  			addrlo = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_LOW);
  			addrhi = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_HIGH);
@@ -491,7 +483,7 @@ index e0a74f4..fd2cca7 100644
  			value |= (addrext << B43_DMA64_RXADDREXT_SHIFT)
  			    & B43_DMA64_RXADDREXT_MASK;
  			if (!parity)
-@@ -725,8 +770,8 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
+@@ -725,8 +762,8 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
  			b43_dma_write(ring, B43_DMA64_RXCTL, value);
  			b43_dma_write(ring, B43_DMA64_RXRINGLO, addrlo);
  			b43_dma_write(ring, B43_DMA64_RXRINGHI, addrhi);
@@ -502,7 +494,7 @@ index e0a74f4..fd2cca7 100644
  		} else {
  			u32 ringbase = (u32) (ring->dmabase);
  			addrext = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_EXT);
-@@ -867,6 +912,12 @@ struct b43_dmaring *b43_setup_dmaring(struct b43_wldev *dev,
+@@ -867,6 +904,12 @@ struct b43_dmaring *b43_setup_dmaring(struct b43_wldev *dev,
  	} else {
  		if (ring->index == 0) {
  			switch (dev->fw.hdr_format) {
@@ -515,7 +507,7 @@ index e0a74f4..fd2cca7 100644
  			case B43_FW_HDR_598:
  				ring->rx_buffersize = B43_DMA0_RX_FW598_BUFSIZE;
  				ring->frameoffset = B43_DMA0_RX_FW598_FO;
-@@ -1175,8 +1226,8 @@ struct b43_dmaring *parse_cookie(struct b43_wldev *dev, u16 cookie, int *slot)
+@@ -1175,8 +1218,8 @@ struct b43_dmaring *parse_cookie(struct b43_wldev *dev, u16 cookie, int *slot)
  	}
  	*slot = (cookie & 0x0FFF);
  	if (unlikely(!ring || *slot < 0 || *slot >= ring->nr_slots)) {
@@ -526,7 +518,7 @@ index e0a74f4..fd2cca7 100644
  		return NULL;
  	}
  
-@@ -1446,9 +1497,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
+@@ -1446,9 +1489,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
  			skip = 2;
  			if (!err_out1) {
  				/* Report the error once. */
@@ -539,7 +531,7 @@ index e0a74f4..fd2cca7 100644
  				err_out1 = 1;
  			}
  		} else {
-@@ -1457,9 +1508,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
+@@ -1457,9 +1500,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
  			 * firmware, then reset the controller to
  			 * revive operation.
  			 */
@@ -552,7 +544,7 @@ index e0a74f4..fd2cca7 100644
  			if (dev->fw.opensource)
  				b43_controller_restart(dev, "Out of order TX");
  			return;
-@@ -1473,9 +1524,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
+@@ -1473,9 +1516,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
  		ops->idx2desc(ring, slot, &meta);
  
  		if (b43_dma_ptr_is_poisoned(meta->skb)) {
@@ -565,7 +557,7 @@ index e0a74f4..fd2cca7 100644
  			break;
  		}
  
-@@ -1499,9 +1550,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
+@@ -1499,9 +1542,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
  				/* This is a scatter-gather fragment of a frame,
  				 * so the skb pointer must not be NULL.
  				 */
@@ -578,7 +570,7 @@ index e0a74f4..fd2cca7 100644
  				break;
  			}
  
-@@ -1538,9 +1589,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
+@@ -1538,9 +1581,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
  			 * this is only the txhdr, which is not allocated.
  			 */
  			if (unlikely(meta->skb)) {
@@ -591,7 +583,7 @@ index e0a74f4..fd2cca7 100644
  				break;
  			}
  		}
-@@ -1610,7 +1661,7 @@ static void dma_rx(struct b43_dmaring *ring, int *slot)
+@@ -1610,7 +1653,7 @@ static void dma_rx(struct b43_dmaring *ring, int *slot)
  	if (unlikely(b43_rx_buffer_is_poisoned(ring, skb))) {
  		/* Something went wrong with the DMA.
  		 * The device did not touch the buffer and did not overwrite the poison. */
@@ -600,7 +592,7 @@ index e0a74f4..fd2cca7 100644
  		dmaaddr = meta->dmaaddr;
  		goto drop_recycle_buffer;
  	}
-@@ -1644,7 +1695,7 @@ static void dma_rx(struct b43_dmaring *ring, int *slot)
+@@ -1644,7 +1687,7 @@ static void dma_rx(struct b43_dmaring *ring, int *slot)
  	dmaaddr = meta->dmaaddr;
  	err = setup_rx_descbuffer(ring, desc, meta, GFP_ATOMIC);
  	if (unlikely(err)) {
