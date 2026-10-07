@@ -4744,7 +4744,6 @@ static void b43_phy_ac_adc_reset(struct b43_wldev *dev)
 {
 	B43_AC_FN();
 	u8 c, num_cores = dev->phy.ac->num_cores;
-	u16 saved;
 
 	B43_PHY_AC_REQUIRE(dev,
 			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
@@ -4764,10 +4763,8 @@ static void b43_phy_ac_adc_reset(struct b43_wldev *dev)
 	 */
 	for_each_set_bit(c, &dev->phy.ac->coremask, num_cores) {
 		struct b43_phy_ac_gaincurve gc;
-		u16 bbmult;
+		u16 bbmult, saved, inner;
 
-
-		/* Open the core: peek + relock. */
 		saved = b43_phy_ac_tbl_write_lock(dev);
 
 		/*
@@ -4781,21 +4778,14 @@ static void b43_phy_ac_adc_reset(struct b43_wldev *dev)
 		b43_actab_write_bulk(dev, 7, 0x103 + c, 16, 1, &gc.coeff[1]);
 		b43_actab_write_bulk(dev, 7, 0x106 + c, 16, 1, &gc.coeff[2]);
 
-		/* Mid-sync between the table 0x07 group and the 0x0c group. */
-		saved = b43_phy_ac_tbl_write_lock(dev);
-
+		/* The table 0x0c group, under its own nested lock. */
+		inner = b43_phy_ac_tbl_write_lock(dev);
 		b43_actab_write_bulk(dev, 0xc, 0x63 + c * 4, 16, 1, &bbmult);
 		b43_actab_write_bulk(dev, 0xc, 0x73 + c * 4, 16, 1, &bbmult);
+		b43_phy_ac_tbl_write_unlock(dev, inner);
 
-		/*
-		 * Per-core close: an idempotent relock then an unlock, explicit
-		 * because tbl_write_unlock(saved) with saved = 0x02 emits only
-		 * the relock.
-		 */
-		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
-		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0000);
+		b43_phy_ac_tbl_write_unlock(dev, saved);
 	}
-	(void)saved;
 }
 
 /*
