@@ -8238,17 +8238,8 @@ void b43_phy_ac_rxiqcal_meas_post_dds_apply(struct b43_wldev *dev)
 	b43_phy_read_log(dev, 0x0464);
 	b43_phy_set(dev,      B43_PHY_AC_SAMP_PLAY_CTL, B43_PHY_AC_SAMP_PLAY_STOP);
 	b43_phy_mask(dev,     B43_PHY_AC_SAMP_PLAY_CTL, (u16)~0x0004);
-	for_each_set_bit(c, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
-		u16 lo = (u16)(0x0063 + 4 * c);
-		u16 hi = (u16)(0x0073 + 4 * c);
-		const u16 *bbmult = &dev->phy.ac->bbmult_meas;
-
-		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
-		b43_actab_write_bulk(dev, 0x000c, lo, 16, 1, bbmult);
-		b43_actab_write_bulk(dev, 0x000c, hi, 16, 1, bbmult);
-		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
-	}
+	for_each_set_bit(c, &dev->phy.ac->coremask, dev->phy.ac->num_cores)
+		b43_phy_ac_bbmult_write(dev, c, &dev->phy.ac->bbmult_meas);
 
 	/* H: final pulse */
 	b43_phy_ac_cca_pulse(dev);
@@ -8509,17 +8500,8 @@ void b43_phy_ac_rxiqcal_meas_post_dds_apply_v2(struct b43_wldev *dev)
 	b43_phy_read_log(dev, 0x0464);
 	b43_phy_set(dev,      B43_PHY_AC_SAMP_PLAY_CTL, B43_PHY_AC_SAMP_PLAY_STOP);
 	b43_phy_mask(dev,     B43_PHY_AC_SAMP_PLAY_CTL, (u16)~0x0004);
-	for_each_set_bit(c, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
-		u16 lo = (u16)(0x0063 + 4 * c);
-		u16 hi = (u16)(0x0073 + 4 * c);
-		const u16 *bbmult = &dev->phy.ac->bbmult_meas;
-
-		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
-		b43_actab_write_bulk(dev, 0x000c, lo, 16, 1, bbmult);
-		b43_actab_write_bulk(dev, 0x000c, hi, 16, 1, bbmult);
-		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
-	}
+	for_each_set_bit(c, &dev->phy.ac->coremask, dev->phy.ac->num_cores)
+		b43_phy_ac_bbmult_write(dev, c, &dev->phy.ac->bbmult_meas);
 
 	/* H: final pulse */
 	b43_phy_ac_cca_pulse(dev);
