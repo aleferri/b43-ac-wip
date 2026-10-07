@@ -101,25 +101,24 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
 static void b43_phy_ac_txpwrctrl_setup(struct b43_wldev *dev, u16 freq);
 
 /*
- * The periodic work, split the way the b43 core splits it.
+ * The periodic work, split the way the b43 core splits it:
  *
- * 1. recalc_txpower / adjust_txpower are the TX power target: the core calls
+ * 1. recalc_txpower / adjust_txpower are the TX power target. The core calls
  *    recalc from b43_op_config() and every minute, and adjust writes the
- *    target to the PHY only when recalc says it moved, as the vendor and
- *    b43_nphy_op_recalc_txpower() do.
- *    The computation is b43_phy_ac_txpwr_recalc(). The channel setup computes
- *    the same target before its own two write sites, so the core's calls
- *    change nothing unless the regulatory ceiling did.
+ *    target only when recalc says it moved, as the vendor and
+ *    b43_nphy_op_recalc_txpower() do; the computation is
+ *    b43_phy_ac_txpwr_recalc(). The channel setup computes the same target
+ *    before its own two writes, so the core's calls change something only
+ *    when the regulatory ceiling did.
  *
- * 2. CRS min power is the pwork_60sec hook. The high byte of 0x0324 and
- *    friends is reset once in op_switch_channel; the low byte is the
- *    threshold recalculated by the crsmin chain (ladder, per-bandwidth
- *    anchoring, clamp and cold bump, verified against the d6220 7.14 blob)
- *    from the per-chain ring the watchdog fills from the noise window.
+ * 2. CRS min power is the pwork_60sec hook: the high byte of 0x0324 and
+ *    friends is reset once in op_switch_channel, the low byte is the crsmin
+ *    chain's threshold (ladder, per-bandwidth anchoring, clamp and cold
+ *    bump, verified against the d6220 7.14 blob) over the per-chain ring the
+ *    watchdog fills from the noise window.
  *
  * 3. The periodic cycle on 0x0725/0x0925 is the tempsense in
- *    b43_phy_ac_watchdog(), from the pwork_1sec hook, every temps_period
- *    turns.
+ *    b43_phy_ac_watchdog(), every temps_period turns of pwork_1sec.
  */
 static enum b43_txpwr_result
 b43_phy_ac_op_recalc_txpower(struct b43_wldev *dev, bool ignore_tssi)

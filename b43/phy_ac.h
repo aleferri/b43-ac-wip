@@ -427,22 +427,19 @@ struct b43_phy_ac {
 	/*
 	 * Cal state saved in block D of rxiqcal_finalize() and written back by
 	 * b43_phy_ac_down() at `wl down`: the LO DAC read-back of radio
-	 * 0x?002-0x?005, and the TX IQ/LO coefficients of IQLOCAL (table
-	 * 0x000c) per core at 0x60 + 4*core, {a, b} at +0/+1 and the LO leakage
-	 * word at +2.
+	 * 0x?002-0x?005, and per core the TX IQ/LO coefficients of IQLOCAL
+	 * (table 0x000c at 0x60 + 4*core: {a, b} at +0/+1, LO leakage at +2).
 	 *
-	 * @iqlo_saved says whether block D has run; the write-back depends on
-	 * it, since before the first save the arrays hold zeroes. It is not
-	 * b43_phy_ac_may_calibrate_tx(): above 5250 MHz a cold segment has
-	 * neither the save nor the write-back, while a hot one has both with
-	 * the calibration skipped (hot 09, ch52, writes radio 0x0002-0x0005
-	 * where cold05 writes nothing). A cold sweep alone cannot tell the two
-	 * apart.
+	 * @iqlo_saved says whether block D has run, since before it the arrays
+	 * hold zeroes. It is not b43_phy_ac_may_calibrate_tx(): above 5250 MHz
+	 * a cold segment has neither the save nor the write-back, a hot one
+	 * both with the calibration skipped (hot 09, ch52, writes radio
+	 * 0x0002-0x0005 where cold05 writes nothing).
 	 *
-	 * Then the RX gain configuration of each core across the RX-IQ cal: the
-	 * 25 registers of b43_phy_ac_rxgain_cfg_regs[] plus 0x073e, and the
-	 * three RFSEQ gain rows 0x0100/0x0103/0x0106 + core, read by
-	 * rxgain_config_readback() and written back by
+	 * Then each core's RX gain configuration across the RX-IQ cal (the 25
+	 * registers of b43_phy_ac_rxgain_cfg_regs[] plus 0x073e) and the three
+	 * RFSEQ gain rows 0x0100/0x0103/0x0106 + core, saved by
+	 * rxgain_config_readback(), written back by
 	 * rxiqcal_teardown_apply_defaults().
 	 */
 	u16 lo_dac[B43_PHY_AC_MAX_CORES][4];
@@ -600,23 +597,16 @@ struct b43_phy_ac {
 };
 
 /*
- * Precondition check. `want` bits must be set, `forbid` bits clear. On
- * mismatch: log an error, set FAULTED and return. Once FAULTED is set every
- * later REQUIRE returns immediately, so a broken invariant does not cascade
- * into the hardware.
+ * Precondition check: `want` bits must be set, `forbid` bits clear (zero
+ * means no requirement). On mismatch log an error, set FAULTED and return;
+ * once FAULTED every later REQUIRE returns at once, so a broken invariant
+ * does not cascade into the hardware. REQUIRE() is for void functions,
+ * REQUIRE_RET() for the others; `dev` is evaluated more than once.
  *
- * `dev` is evaluated more than once. A zero `want`/`forbid` means no
- * requirement on that side.
- *
- * REQUIRE() is for functions returning void, REQUIRE_RET() for the others.
- *
- * STATE_PHY_RUN has no mutator and must not appear in `want` or `forbid`:
- * it mirrors BBCFG[15] for parity with annotate_enables.py, and no captured
- * op touches that bit.
- *
- * STATE_MAC_EN is not stored: it is the core's dev->mac_suspended counter,
- * read at check time, since b43_mac_suspend()/b43_mac_enable() are the
- * core's.
+ * STATE_PHY_RUN mirrors BBCFG[15] for annotate_enables.py; no captured op
+ * touches that bit and nothing sets it, so it must not appear in `want` or
+ * `forbid`. STATE_MAC_EN is not stored but read at check time from the
+ * core's dev->mac_suspended.
  */
 #define b43_phy_ac_status(dev)						\
 	((dev)->phy.ac->status_mask |					\
