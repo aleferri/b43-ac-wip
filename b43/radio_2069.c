@@ -1016,24 +1016,16 @@ static const struct r2069_chan_write r2069_chan_writes[] = {
 
 /*
  * Low three bits of radio 0x066d, the only per-channel radio value that does
- * not come through the channel table.
- *
- * Four codes on 5 GHz, keyed on the primary channel's frequency and nothing
- * else -- the d6220 sweep gives the same value for a channel at 20, 40 and
- * 80 MHz, so neither the bandwidth nor the bonded centre enters:
+ * not come through the channel table; the upper bits are 0x18c0 on every
+ * capture. On 5 GHz four codes keyed on the primary channel's frequency
+ * alone (the d6220 sweep gives a channel the same code at 20, 40 and 80 MHz):
  *
  *   4  below 5240      3  5240 to 5499      1  5500 to 5539      0  from 5540
  *
- * Exact on all 26 sweep configurations. The code decreases with frequency and
- * skips 2, which is why this is a measured step function rather than an
- * arithmetic one: with 2 absent there is no reason to believe a formula in
- * frequency, and inventing one would extrapolate past the four groups the
- * captures actually pin.
- *
- * On 2.4 GHz the code is 0 on every channel, ch1 to ch13 on the MacBook and
- * ch1 to ch11 on the archer-t5e.
- *
- * The upper bits are 0x18c0 on every capture.
+ * Exact on all 26 sweep configurations. The code skips 2, so this is a
+ * measured step function: a formula in frequency would extrapolate past the
+ * four groups the captures pin. On 2.4 GHz the code is 0 on every channel
+ * (ch1-13 on the MacBook, ch1-11 on the archer-t5e).
  */
 static u16 b43_radio_2069_cal_066d(u16 freq)
 {
@@ -1065,23 +1057,16 @@ static u16 r2069_pick_value(const struct b43_phy_ac_channeltab_e_radio2069 *e,
 }
 
 /*
- * Per-core AFE + radio-LPF stage setup, run at the tail of the channel setup.
+ * Per-core AFE and radio-LPF stage setup. The stock driver runs it twice in
+ * a bring-up with this same body, differing only in the 0x3800 field of
+ * 0x0728 (@afe_728): 0x0800 from op_software_rfkill(), right after RC-cal
+ * and the 0x08ea RCCAL_EN cleanup, 0x0000 from channel_setup(). Each caller
+ * has its own preamble (0x08ea write, 0x02d1/0x02d2 mods).
  *
- * Reconstructed from the two occurrences in the d6220 bring-up. Both share
- * this exact per-core body and differ only in the
- * 0x0728 field 0x3800 (0x0800 vs 0x0000, here 'afe_728') and in a caller-side
- * preamble (0x08ea write / 0x02d1-2 mods) that is NOT part of this helper.
- * The radio 0x0049 writes read back 0x0030 / 0x0000 in the trace: those are the
- * RMW results of clearing already-set-or-clear fields over differing prior
- * state, not literals -- hence plain field masks here. Iterates num_cores (all
- * present cores are powered at channel-setup time, like the reset-time blocks),
- * not the antenna coremask. Exact purpose unverified; named for its registers.
- * Call site (verified by fingerprint segmentation): op_software_rfkill, right
- * after b43_radio_2069_rccal, immediately following the 0x08ea RCCAL_EN
- * cleanup and before the op_init set_pdet.
- * afe_728 = 0x0800 in the ch36/5GHz capture. A second call with afe_728=0x0000
- * is also observed in the same bring-up; its exact position is not yet pinned,
- * so only the 0x0800 call is wired here.
+ * The radio 0x0049 writes read back 0x0030 or 0x0000 in the trace: results
+ * of clearing fields over differing prior state, not literals, hence plain
+ * field masks. It iterates num_cores, not the coremask: every present core
+ * is powered at that point. Purpose not verified; named for its registers.
  * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   1112-1201, 5163-5252]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -1182,23 +1167,15 @@ void b43_radio_2069_channel_setup(struct b43_wldev *dev,
 	/*
 	 * One extra write on the lowest 40 MHz block of the band, right after
 	 * the one above and on the chain below it: 0x83e9 against 0x83e0, the
-	 * same register with the low nibble set.
+	 * same register with the low nibble set. Likely a synthesiser edge case
+	 * rather than configuration: the ch36 block sits against the bottom of
+	 * U-NII-1, centre 5190 MHz.
 	 *
-	 * It reads as a workaround for an edge case of the synthesiser rather
-	 * than as configuration: the block starting at ch36 sits against the
-	 * bottom of U-NII-1, its centre at 5190 MHz, and it is the only
-	 * bandwidth and channel combination that gets it.
-	 *
-	 * Twenty-one observations across three captures agree -- the d6220 cold
-	 * sweep, the agcombo cold sweep and the agcombo hot sweep -- three
-	 * positive on ch36 at 40 MHz and eighteen negative on every other
-	 * 40 MHz channel. The first segment of the 80 MHz group is also ch36
-	 * and does not get it, so the width is part of the condition and not
-	 * just the position in the sweep.
-	 *
-	 * Whether the real condition is "the lowest 40 MHz block" or "5190 MHz
-	 * exactly" cannot be told apart here: no 40 MHz block sits below this
-	 * one in the band.
+	 * Twenty-one observations agree (d6220 cold, agcombo cold and hot):
+	 * three positive on ch36/40 and eighteen negative on every other 40 MHz
+	 * channel. ch36 at 80 MHz does not get it, so the width is part of the
+	 * condition. "Lowest 40 MHz block" and "5190 MHz exactly" cannot be
+	 * told apart: no 40 MHz block sits below this one.
 	 */
 	if (dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_40 &&
 	    dev->phy.ac->cal_freq == 5190)
