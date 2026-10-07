@@ -6635,6 +6635,22 @@ static void b43_phy_ac_rxiqcal_apply_body_core(struct b43_wldev *dev,
 	}
 }
 
+static const u16 b43_phy_ac_chain_range_regs[7] = {
+	0x001a, 0x001b, 0x001c, 0x001e, 0x001f, 0x0024, 0x0170,
+};
+
+static void b43_phy_ac_chain_range_save(struct b43_wldev *dev,
+					unsigned int core)
+{
+	u16 *saved = dev->phy.ac->chain_range_saved[core];
+	u16 s = (u16)(core * 0x200);
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_chain_range_regs); i++)
+		saved[i] = b43_radio_read(dev,
+					  b43_phy_ac_chain_range_regs[i] + s);
+}
+
 /*
  * RX-IQ compensation apply, phase B2, the fourth iteration of the cal
  * cycle, called with the MAC suspended:
@@ -6700,14 +6716,7 @@ void b43_phy_ac_rxiqcal_apply(struct b43_wldev *dev)
 		for_each_set_bit(c, &dev->phy.ac->coremask, num_cores) {
 			u16 s = (u16)(c * 0x200);
 
-			b43_radio_read_log(dev, 0x001a + s);
-			b43_radio_read_log(dev, 0x001b + s);
-			b43_radio_read_log(dev, 0x001c + s);
-			b43_radio_read_log(dev, 0x001e + s);
-			b43_radio_read_log(dev, 0x001f + s);
-			b43_radio_read_log(dev, 0x0024 + s);
-			b43_radio_read_log(dev, 0x0170 + s);
-
+			b43_phy_ac_chain_range_save(dev, c);
 			b43_radio_maskset(dev, 0x001a + s, (u16)~0x00f0, 0x00b0);
 			b43_radio_maskset(dev, 0x001f + s, (u16)~0x0004, 0x0004);
 			b43_radio_maskset(dev, 0x0170 + s, (u16)~0x0100, 0x0100);
@@ -7363,8 +7372,8 @@ void b43_phy_ac_rxgain_defaults_pulse(struct b43_wldev *dev)
 }
 
 /*
- * Mixed RX and TX chain setup: write the base set of per-chain radio
- * registers, open a bracket (classifier, ADC hold, clip detect) that closes
+ * Mixed RX and TX chain setup: restore the per-chain radio registers saved
+ * by the previous step of the cal, open a bracket (classifier, ADC hold, clip detect) that closes
  * to a net zero, and with @with_tune add per-chain read-back and tuning.
  * The steps are labelled 3a to 3r in the stock driver's order. What the
  * bits of 0x02ed/f1/f5/f9 and the closing pulse do is not known.
@@ -7381,24 +7390,16 @@ void b43_phy_ac_radio_chain_range_setup(struct b43_wldev *dev, bool with_tune)
 			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
 			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
 
-	static const struct { u16 off; u16 val; } radio_wr[7] = {
-		{ 0x001a, 0x0014 },
-		{ 0x001b, 0x0280 },
-		{ 0x001c, 0x0044 },
-		{ 0x001e, 0x0014 },
-		{ 0x001f, 0x0000 },
-		{ 0x0024, 0x0000 },
-		{ 0x0170, 0x0100 },
-	};
 	unsigned int core, k;
 
-	/* 3a: seven radio writes per chain */
+	/* 3a: restore the chain range registers saved last */
 	for_each_set_bit(core, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
 		u16 stride = (u16)(core * 0x200);
 
-		for (k = 0; k < ARRAY_SIZE(radio_wr); k++)
-			b43_radio_write(dev, radio_wr[k].off + stride,
-					radio_wr[k].val);
+		for (k = 0; k < ARRAY_SIZE(b43_phy_ac_chain_range_regs); k++)
+			b43_radio_write(dev,
+					b43_phy_ac_chain_range_regs[k] + stride,
+					dev->phy.ac->chain_range_saved[core][k]);
 	}
 
 	/*
@@ -7452,14 +7453,7 @@ void b43_phy_ac_radio_chain_range_setup(struct b43_wldev *dev, bool with_tune)
 	for_each_set_bit(core, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
 		u16 s = (u16)(core * 0x200);
 
-		b43_radio_read_log(dev, 0x001a + s);
-		b43_radio_read_log(dev, 0x001b + s);
-		b43_radio_read_log(dev, 0x001c + s);
-		b43_radio_read_log(dev, 0x001e + s);
-		b43_radio_read_log(dev, 0x001f + s);
-		b43_radio_read_log(dev, 0x0024 + s);
-		b43_radio_read_log(dev, 0x0170 + s);
-
+		b43_phy_ac_chain_range_save(dev, core);
 		/* each maskset is MOD + RD + WR */
 		b43_radio_maskset(dev, 0x001a + s, (u16)~0x00f0, 0x00b0);
 		b43_radio_maskset(dev, 0x001f + s, (u16)~0x0004, 0x0004);
@@ -8064,9 +8058,15 @@ void b43_phy_ac_rxgain_config_apply(struct b43_wldev *dev)
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
 }
 
+/* The radio registers radio_iqcal_config() saves and clears. */
+static const u16 b43_phy_ac_iqcal_radio_regs[6] = {
+	0x0020, 0x0021, 0x0022, 0x0023, 0x003a, 0x003d,
+};
+
 /*
- * Radio 2069 IQ-cal configuration, per core (84 ops): read the six
- * registers, zero them, then ten bit-field MODs in the observed order.
+ * Radio 2069 IQ-cal configuration, per core (84 ops): save the six
+ * registers for radio_iqcal_teardown(), zero them, then ten bit-field MODs
+ * in the observed order.
  * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   28085-28200]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -8080,9 +8080,6 @@ void b43_phy_ac_radio_iqcal_config(struct b43_wldev *dev)
 			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
 			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
 
-	static const u16 rad_regs[6] = {
-		0x0020, 0x0021, 0x0022, 0x0023, 0x003a, 0x003d
-	};
 	struct rad_mod_op { u16 reg; u16 mask; u16 val; };
 	static const struct rad_mod_op configs[10] = {
 		{ 0x0023, 0x0100, 0x0000 },
@@ -8102,11 +8099,13 @@ void b43_phy_ac_radio_iqcal_config(struct b43_wldev *dev)
 	for_each_set_bit(core, &ac->coremask, ac->num_cores) {
 		u16 stride = (u16)(core * 0x200);
 
-		for (i = 0; i < ARRAY_SIZE(rad_regs); i++)
-			b43_radio_read_log(dev, rad_regs[i] + stride);
+		for (i = 0; i < ARRAY_SIZE(b43_phy_ac_iqcal_radio_regs); i++)
+			ac->iqcal_radio_saved[core][i] = b43_radio_read(dev,
+				b43_phy_ac_iqcal_radio_regs[i] + stride);
 
-		for (i = 0; i < ARRAY_SIZE(rad_regs); i++)
-			b43_radio_write(dev, rad_regs[i] + stride, 0);
+		for (i = 0; i < ARRAY_SIZE(b43_phy_ac_iqcal_radio_regs); i++)
+			b43_radio_write(dev,
+					b43_phy_ac_iqcal_radio_regs[i] + stride, 0);
 
 		for (i = 0; i < ARRAY_SIZE(configs); i++)
 			b43_radio_maskset(dev, configs[i].reg + stride,
@@ -8802,7 +8801,8 @@ void b43_phy_ac_rxiqcal_apply_coefficients(struct b43_wldev *dev)
 }
 
 /*
- * Radio 2069 IQ-cal teardown (12 ops).
+ * Radio 2069 IQ-cal teardown (12 ops): restore what radio_iqcal_config()
+ * saved.
  * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   30386-30397]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -8816,18 +8816,15 @@ void b43_phy_ac_radio_iqcal_teardown(struct b43_wldev *dev)
 			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
 			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
 
-	static const u16 rad_regs[6] = {
-		0x0020, 0x0021, 0x0022, 0x0023, 0x003a, 0x003d
-	};
-	/* All zero except 0x003d, which gets 0x000f. */
-	static const u16 rad_vals[6] = { 0, 0, 0, 0, 0, 0x000f };
 	unsigned int c, i;
 
 	for_each_set_bit(c, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
 		u16 stride = (u16)(c * 0x200);
 
-		for (i = 0; i < ARRAY_SIZE(rad_regs); i++)
-			b43_radio_write(dev, rad_regs[i] + stride, rad_vals[i]);
+		for (i = 0; i < ARRAY_SIZE(b43_phy_ac_iqcal_radio_regs); i++)
+			b43_radio_write(dev,
+					b43_phy_ac_iqcal_radio_regs[i] + stride,
+					dev->phy.ac->iqcal_radio_saved[c][i]);
 	}
 }
 

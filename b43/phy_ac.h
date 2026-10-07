@@ -451,6 +451,15 @@ struct b43_phy_ac {
 	u16 rxgain_cfg_saved[B43_PHY_AC_MAX_CORES][26];
 	u16 rfseq_gain_saved[B43_PHY_AC_MAX_CORES][3];
 	/*
+	 * Radio state saved across the RX-IQ cal: the chain range registers,
+	 * saved by rxiqcal_apply() and by the full radio_chain_range_setup()
+	 * and restored by the next radio_chain_range_setup(); the IQ-cal
+	 * registers, saved by radio_iqcal_config() and restored by
+	 * radio_iqcal_teardown().
+	 */
+	u16 chain_range_saved[B43_PHY_AC_MAX_CORES][7];
+	u16 iqcal_radio_saved[B43_PHY_AC_MAX_CORES][6];
+	/*
 	 * Results of the AFE cal's commit iterations, indexed by write offset.
 	 * The tail of rxcal_afe_calibrate() duplicates them per antenna.
 	 */
