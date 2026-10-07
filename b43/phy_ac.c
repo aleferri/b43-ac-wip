@@ -3200,17 +3200,19 @@ void b43_phy_ac_write_chanspec(struct b43_wldev *dev)
 static void b43_phy_ac_chanspec_tail(struct b43_wldev *dev);
 
 /*
- * The block that follows rfseq_tbl_init: quiesce the unwired RX cores,
- * relock the outer table-write gate and write 0x01ec = 0x9c40, whose
- * meaning is not known.
+ * The block that follows rfseq_tbl_init: quiesce the unwired RX cores, lock
+ * the table-write gate and write 0x01ec = 0x9c40, whose meaning is not
+ * known. Returns the lock's saved value; the caller unlocks.
  * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   6905-6950]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   2575-2620]
  */
-static void b43_phy_ac_post_rfseq_misc_setup(struct b43_wldev *dev)
+static u16 b43_phy_ac_post_rfseq_misc_setup(struct b43_wldev *dev)
 {
 	B43_AC_FN();
+	u16 gate;
+
 	/* Diagnostic peek. */
 	b43_phy_read_log(dev, 0x000b);
 
@@ -3223,11 +3225,9 @@ static void b43_phy_ac_post_rfseq_misc_setup(struct b43_wldev *dev)
 	if (hweight8(dev->phy.ac->coremask) != dev->phy.ac->num_cores)
 		b43_phy_ac_rxcore_setstate(dev, dev->phy.ac->coremask);
 
-	/* Relock the outer gate: a read-back, then an idempotent maskset. */
-	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
-
+	gate = b43_phy_ac_tbl_write_lock(dev);
 	b43_phy_write(dev, 0x01ec, 0x9c40);
+	return gate;
 }
 
 /*
@@ -3362,13 +3362,8 @@ static void b43_phy_ac_coeff_bank_init(struct b43_wldev *dev)
 			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
 			   B43_PHY_AC_STATE_CCA_RESET);
 
-	/* 1. Outer lock: unlock, peek, relock. */
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0000);
-	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
-
 	/*
-	 * 2. Bandwidth selector: the field in 0x0076 is the width index (1 at
+	 * 1. Bandwidth selector: the field in 0x0076 is the width index (1 at
 	 * 20 MHz, 2 at 40, 3 at 80), and bit 11 of 0x0140 and bit 4 of 0x0164
 	 * are set at 20 MHz and clear on a bonded channel. All 26 cold segments
 	 * agree.
@@ -3382,14 +3377,14 @@ static void b43_phy_ac_coeff_bank_init(struct b43_wldev *dev)
 		b43_phy_maskset(dev, 0x0164, (u16)~0x0010, 0x0010 & narrow);
 	}
 
-	/* 3. LUT 0x0180-0x0194: mask 0x001f on 0x0180, 0x07ff on the rest. */
+	/* 2. LUT 0x0180-0x0194: mask 0x001f on 0x0180, 0x07ff on the rest. */
 	b43_phy_maskset(dev, 0x0180, (u16)~0x001f, lut[0]);
 	for (i = 1; i < 21; i++)
 		b43_phy_maskset(dev, (u16)(0x0180 + i),
 				(u16)~0x07ff, lut[i]);
 
 	/*
-	 * 4. Extra register setup. Three depend on the bandwidth (D6220 sweep,
+	 * 3. Extra register setup. Three depend on the bandwidth (D6220 sweep,
 	 * 26 configurations over 52 segments):
 	 *
 	 *              20 MHz   40 MHz   80 MHz
@@ -3417,7 +3412,7 @@ static void b43_phy_ac_coeff_bank_init(struct b43_wldev *dev)
 	b43_phy_maskset(dev, 0x0312, (u16)~0x00ff, bw == 80 ? 0x0009 : 0x0013);
 	b43_phy_maskset(dev, 0x0313, (u16)~0xff00, bw == 80 ? 0x0900 : 0x1300);
 
-	/* 5. Per-core LUT 0x06ed/0x06ef, every silicon core. */
+	/* 4. Per-core LUT 0x06ed/0x06ef, every silicon core. */
 	for (core = 0; core < num_cores; core++) {
 		u16 stride = (u16)(core * 0x200);
 
@@ -3442,17 +3437,13 @@ static void b43_phy_ac_coeff_bank_init(struct b43_wldev *dev)
 					 : (bw == 40 ? 0x1600 : 0x2c00));
 	}
 
-	/* 6. Per-core 0x06ef[7:0], second write: 15 / 30 / 60. */
+	/* 5. Per-core 0x06ef[7:0], second write: 15 / 30 / 60. */
 	for (core = 0; core < num_cores; core++) {
 		u16 stride = (u16)(core * 0x200);
 
 		b43_phy_maskset(dev, 0x06ef + stride, (u16)~0x00ff,
 				(u16)(15 * (bw / 20)));
 	}
-
-	/* 7. Peek + relock of the outer gate, closing the block. */
-	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
 }
 
 /*
@@ -3948,6 +3939,7 @@ static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
 {
 	B43_AC_FN();
 	unsigned int i;
+	u16 gate, inner;
 
 	B43_PHY_AC_REQUIRE(dev,
 			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
@@ -3989,8 +3981,7 @@ static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
 		b43_phy_ac_tbl_write_unlock(dev, saved_outer);
 	}
 
-	/* Relocks the outer gate on exit. */
-	b43_phy_ac_post_rfseq_misc_setup(dev);
+	gate = b43_phy_ac_post_rfseq_misc_setup(dev);
 
 	/* Table 0x20: the band's TX gain table, 128 cells of 48 bits. */
 	b43_actab_write_bulk(dev, 0x20, 0x0000, 48, 128,
@@ -4080,13 +4071,13 @@ static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
 		}
 	}
 
+	b43_phy_ac_tbl_write_unlock(dev, gate);
+	gate = b43_phy_ac_tbl_write_lock(dev);
 	b43_phy_ac_coeff_bank_init(dev);
 
 	/*
-	 * Second pass of set_analog_tx_lpf, on stage 8 only. The gate is
-	 * already locked by coeff_bank_init(), which ends on a relock, so
-	 * the _locked variant is used and the closing idempotent unlock is
-	 * explicit.
+	 * Second pass of set_analog_tx_lpf, on stage 8 only, under a lock
+	 * nested in coeff_bank_init()'s, hence the _locked variant.
 	 *
 	 * This is where the bandwidth shows: the first pass lays down the 20
 	 * MHz base on every width, and this one replaces stage 8 with the base
@@ -4097,6 +4088,7 @@ static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
 	 * and the 4360 and the 4352 write the same bases, differing only in the
 	 * rccal cap in the high byte.
 	 */
+	inner = b43_phy_ac_tbl_write_lock(dev);
 	{
 		static const u16 stage8_base[3] = { 0x00db, 0x0123, 0x016b };
 		u16 base = stage8_base[b43_phy_ac_bw_step(dev)];
@@ -4109,7 +4101,7 @@ static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
 						    dev->phy.ac->lpf_cap0,
 						    0xffffffff);
 	}
-	b43_phy_ac_tbl_write_unlock(dev, B43_PHY_AC_TBL_WRITE_GATE_LOCK);
+	b43_phy_ac_tbl_write_unlock(dev, inner);
 
 	b43_phy_ac_rx_evm_shaping_override(dev);
 
@@ -4188,8 +4180,8 @@ static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
 	}
 
 	/*
-	 * 0x0197 and 0x0198, then unlock the outer gate so that the raw PHY
-	 * writes that follow get through. Both step once from 20 to 40 MHz and
+	 * 0x0197 and 0x0198, then unlock coeff_bank_init()'s gate so that the
+	 * raw PHY writes that follow get through. Both step once from 20 to 40 MHz and
 	 * hold: 0x14 and 0x10 at 20 MHz, 0x1e and 0x14 from 40 on, on every
 	 * channel.
 	 */
@@ -4200,7 +4192,7 @@ static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
 		b43_phy_write(dev, 0x0197, 0x001e);
 		b43_phy_write(dev, 0x0198, 0x0014);
 	}
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0000);
+	b43_phy_ac_tbl_write_unlock(dev, gate);
 
 	/*
 	 * Clear bits of 0x0410 and of the per-core 0x0?3a/0x0?25, not filtered
