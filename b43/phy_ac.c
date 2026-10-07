@@ -5414,6 +5414,8 @@ static bool b43_phy_ac_may_calibrate_tx(struct b43_wldev *dev)
 static void b43_phy_ac_calibration_block(struct b43_wldev *dev)
 {
 	B43_AC_FN();
+	u16 gate;
+
 	/* Post-cal finalize, iterations 2 and 3. */
 	b43_phy_ac_post_cal_finalize(dev);
 	b43_phy_ac_post_cal_finalize_iter3(dev);
@@ -5446,8 +5448,10 @@ static void b43_phy_ac_calibration_block(struct b43_wldev *dev)
 	b43_phy_ac_rxgain_defaults_pulse(dev);
 	b43_phy_ac_radio_chain_range_setup(dev, false);
 	b43_phy_ac_rxiqcal_apply_second_stage(dev);
+	gate = b43_phy_ac_tbl_write_lock(dev);
 	b43_phy_ac_rxgain_config_readback(dev);
 	b43_phy_ac_rxgain_config_apply(dev);
+	b43_phy_ac_tbl_write_unlock(dev, gate);
 	/* Radio IQ-cal configuration. */
 	b43_phy_ac_radio_iqcal_config(dev);
 
@@ -7759,18 +7763,8 @@ void b43_phy_ac_rxiqcal_apply_tx_bbmult_kick(struct b43_wldev *dev)
 	b43_phy_mask(dev, 0x0382, (u16)~0x8000);
 	b43_phy_mask(dev, B43_PHY_AC_SAMP_PLAY_CTL, (u16)~0x0004);
 
-	/* Per core: peek and lock, the two bbmult cells, unlock. */
-	for_each_set_bit(core, &ac->coremask, ac->num_cores) {
-		u16 lo = (u16)(0x0063 + 4 * core);
-		u16 hi = (u16)(0x0073 + 4 * core);
-		const u16 *bbmult = &ac->bbmult_cal[core];
-
-		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
-		b43_actab_write_bulk(dev, 0x000c, lo, 16, 1, bbmult);
-		b43_actab_write_bulk(dev, 0x000c, hi, 16, 1, bbmult);
-		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
-	}
+	for_each_set_bit(core, &ac->coremask, ac->num_cores)
+		b43_phy_ac_bbmult_write(dev, core, &ac->bbmult_cal[core]);
 
 	/* Final pulse and reset, closing the clock force opened at 0x8a09. */
 	b43_phy_ac_cca_pulse(dev);
@@ -7852,9 +7846,6 @@ void b43_phy_ac_rxiqcal_apply_second_stage(struct b43_wldev *dev)
 					    dev->phy.ac->afe_res[2 * c].v);
 	}
 
-	/* Close: peek and relock. */
-	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
 }
 
 /*
@@ -8031,9 +8022,6 @@ void b43_phy_ac_rxgain_config_apply(struct b43_wldev *dev)
 		b43_phy_read_log(dev, 0x0678 + stride);
 		b43_phy_maskset(dev, 0x0678 + stride, (u16)~0x0001, 0);
 	}
-
-	/* Trailer: gate unlock. */
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
 }
 
 /* The radio registers radio_iqcal_config() saves and clears. */
