@@ -30,20 +30,9 @@ void b43_actab_write_bulk_locked(struct b43_wldev *dev,
 void b43_actab_zerofill_locked(struct b43_wldev *dev,
 			       u16 id, u16 offset, u8 width, size_t len);
 /*
- * write_bulk for callers that enter with the 0x019e gate unlocked, as
- * b43_phy_ac_post_noise_shaping_rx_regprog() leaves it. Emits peek +
- * idempotent relock + WR TABLE_ID/OFFSET/DATA, so one op more than
- * write_bulk. The vendor blob has a single write_bulk that senses the gate
- * state at runtime; here the callers pick the variant.
- */
-void b43_actab_write_bulk_reopen(struct b43_wldev *dev,
-				 u16 id, u16 offset, u8 width,
-				 size_t len, const void *data);
-/*
- * Self-contained variant: peek 0x019e + relock + WR TABLE_ID/OFFSET/DATA +
- * closing unlock, so one op more than write_bulk_reopen. Each table write
- * carries its own gate scope instead of relying on a lock the caller holds
- * across several of them.
+ * Self-contained variant: the table write inside its own
+ * b43_phy_ac_tbl_write_lock()/unlock() pair, instead of relying on a lock
+ * the caller holds across several of them.
  */
 void b43_actab_write_bulk_scoped(struct b43_wldev *dev,
 				 u16 id, u16 offset, u8 width,

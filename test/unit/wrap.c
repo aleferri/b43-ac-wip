@@ -1147,26 +1147,6 @@ void __wrap_b43_actab_zerofill_locked(struct b43_wldev *dev,
 }
 
 /*
- * write_bulk_reopen: variante emessa quando il gate era unlockato
- * all'entrata (aggiunge relock intermedio). Il tracer emette la stessa
- * label TBL.WR — nel vendor trace il pattern label + peek + relock + WR ID
- * è indistinguibile dal caso normale (che ha solo label + peek + WR ID).
- */
-void __real_b43_actab_write_bulk_reopen(struct b43_wldev *dev,
-					u16 id, u16 offset, u8 width,
-					size_t len, const void *data);
-
-void __wrap_b43_actab_write_bulk_reopen(struct b43_wldev *dev,
-					u16 id, u16 offset, u8 width,
-					size_t len, const void *data)
-{
-	fprintf(trace(), "cpu1 TBL.WR   id=0x%04x off=0x%04x len=%zu\n",
-		id, offset, len);
-	tbl_mirror_store(id, offset, width, len, data);
-	__real_b43_actab_write_bulk_reopen(dev, id, offset, width, len, data);
-}
-
-/*
  * write_bulk_scoped: variante auto-contained (fase B4, vendor #41503+).
  * Emette lo stesso label TBL.WR; le op interne (peek + lock + WR ID + WR
  * data + unlock) sono generate dai wrap phy_read/phy_write/phy_maskset.

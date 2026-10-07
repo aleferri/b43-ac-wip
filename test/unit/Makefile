@@ -46,7 +46,7 @@ WRAP_SYMS := \
     b43_mac_phy_clock_set b43_phy_ac_mhf_maskset \
     b43_phyop_switch_analog_generic \
     b43_current_band b43_phy_init \
-    b43_actab_read_bulk b43_actab_write_bulk b43_actab_write_bulk_reopen \
+    b43_actab_read_bulk b43_actab_write_bulk \
     b43_actab_write_bulk_scoped b43_actab_zerofill \
     b43_actab_write_bulk_locked b43_actab_zerofill_locked
 

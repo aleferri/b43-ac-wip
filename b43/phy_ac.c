@@ -4463,11 +4463,7 @@ b43_phy_ac_post_noise_shaping_rx_regprog_core(struct b43_wldev *dev,
 	b43_phy_write(dev, 0x06dc + stride, cur);
 	b43_phy_write(dev, 0x06dd + stride, 0x0604);
 
-	/* The gate is unlocked here, hence _reopen. */
-	b43_actab_write_bulk_reopen(dev, 0x07, tbl_off, 16, 1, &tbl_val);
-
-	/* Unlock the outer gate after the table write. */
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0000);
+	b43_actab_write_bulk_scoped(dev, 0x07, tbl_off, 16, 1, &tbl_val);
 
 	/* Five groups: clear bit 1 of 0x06e3, then two writes. */
 	b43_phy_maskset(dev, 0x06e3 + stride, (u16)~0x0002, 0x0000);

@@ -102,9 +102,9 @@ static void actab_write_bulk_common(struct b43_wldev *dev,
 }
 
 /*
- * write_bulk for callers that enter with the 0x019e gate unlocked: emits a peek
- * and an idempotent relock before the id/offset/data writes. In the vendor blob
- * this is decided at runtime; here it is a function of its own.
+ * write_bulk with the gate peek the stock driver emits before the id/offset/data
+ * writes. Every capture finds the gate locked there, so what the stock driver
+ * does with an unlocked one is not known, and the peek is only logged.
  */
 void b43_actab_write_bulk(struct b43_wldev *dev,
 			  u16 id, u16 offset, u8 width,
@@ -168,45 +168,9 @@ void b43_actab_zerofill_locked(struct b43_wldev *dev,
 	actab_zerofill_common(dev, id, offset, width, len, false);
 }
 
-/* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
- *   11065-11070, 11118-11123, 11171-11176]
- * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
- *   6735-6740, 6788-6793, 6841-6846]
- */
-void b43_actab_write_bulk_reopen(struct b43_wldev *dev,
-				 u16 id, u16 offset, u8 width,
-				 size_t len, const void *data)
-{
-	B43_AC_FN();
-	size_t i;
-
-	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE,
-			(u16)~B43_PHY_AC_TBL_WRITE_GATE_LOCK,
-			B43_PHY_AC_TBL_WRITE_GATE_LOCK);
-
-	b43_phy_write(dev, B43_PHY_AC_TABLE_ID, id);
-	b43_phy_write(dev, B43_PHY_AC_TABLE_OFFSET, offset);
-
-	switch (width) {
-	case 16: {
-		const u16 *p = data;
-
-		for (i = 0; i < len; i++)
-			b43_phy_write(dev, B43_PHY_AC_TABLE_DATA_LO, p[i]);
-		break;
-	}
-	default:
-		b43warn(dev->wl,
-			"actab_write_bulk_reopen: unsupported width %u\n",
-			width);
-		break;
-	}
-}
-
 /*
  * Self-contained variant, as used in phase B4: each table write carries its own
- * gate scope -- peek 0x019e and lock on entry, unlock on exit. This is the
+ * gate scope, b43_phy_ac_tbl_write_lock() and unlock() around it. This is the
  * pattern for callers that do not hold an outer lock across several
  * consecutive operations.
  *
@@ -559,11 +523,7 @@ void b43_actab_write_bulk_scoped(struct b43_wldev *dev,
 {
 	B43_AC_FN();
 	size_t i;
-
-	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE,
-			(u16)~B43_PHY_AC_TBL_WRITE_GATE_LOCK,
-			B43_PHY_AC_TBL_WRITE_GATE_LOCK);
+	u16 saved = b43_phy_ac_tbl_write_lock(dev);
 
 	b43_phy_write(dev, B43_PHY_AC_TABLE_ID, id);
 	b43_phy_write(dev, B43_PHY_AC_TABLE_OFFSET, offset);
@@ -594,8 +554,7 @@ void b43_actab_write_bulk_scoped(struct b43_wldev *dev,
 		break;
 	}
 
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE,
-			(u16)~B43_PHY_AC_TBL_WRITE_GATE_LOCK, 0);
+	b43_phy_ac_tbl_write_unlock(dev, saved);
 }
 
 /* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
