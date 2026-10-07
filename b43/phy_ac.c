@@ -1597,23 +1597,21 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 		 *
 		 *   0x200 + sum(meas >> 2 over the non-zero passes) / passes
 		 *
-		 * where meas is 0x0012 masked to its measurement field, the
-		 * division truncates, and the divisor counts every pass, not
-		 * only those that carried a reading. Exact on all 52 sweep
-		 * segments, every width and both cores (312 writes of 0x0645
-		 * and 0x0845); dropping any of the three rules costs 11 or more
-		 * of them, all at 80 MHz, or all three writes on ch140/20.
+		 * meas being 0x0012's measurement field, the division
+		 * truncating and the divisor counting every pass. Exact on all
+		 * 52 sweep segments, every width, both cores (312 writes of
+		 * 0x0645 and 0x0845); dropping any of the three rules costs 11
+		 * or more, all at 80 MHz, or all three writes on ch140/20.
 		 *
 		 * The 0x200 is bit 11 of the readback surviving the shift: a
 		 * pass reading 0x0800 has a zero measurement field. Core 1
 		 * measures zero on every pass of every capture and writes 0x200
 		 * flat.
 		 *
-		 * The field is the low ten bits of 0x?645. The stock driver's
-		 * trace shows bits 10 to 15 set (0xfe02 under mask 0x03ff)
-		 * because it holds the index as a sign-extended s16 and
-		 * mod_phy_reg() writes only `val & mask`; b43_phy_maskset() ORs
-		 * the set in whole, so the ten bits are masked here.
+		 * The stock trace shows bits 10 to 15 of 0x?645 set (0xfe02
+		 * under mask 0x03ff): it holds the index as a sign-extended s16
+		 * and mod_phy_reg() writes `val & mask`, while
+		 * b43_phy_maskset() ORs the set in whole, hence the mask here.
 		 */
 		base_index = idle_tssi & 0x03ff;
 		b43_phy_maskset(dev, 0x0645 + p, (u16)~0x03ff, base_index);
@@ -5678,20 +5676,17 @@ static void b43_phy_ac_tempsense_chain(struct b43_wldev *dev, u8 core)
 
 /*
  * Temperature sense: a four-step measurement on every wired chain, with the
- * chain's RX gain block and radio put into a measurement configuration and
- * put back at the end.
+ * chain's RX gain block and radio in a measurement configuration and put
+ * back at the end; on all 100 blocks of the two cold sweeps every register a
+ * chain drives is restored to the value read at the head.
  *
- * Three sites run it, all with the MAC suspended: before the full
- * calibration (b43_phy_ac_op_channel_calibrate() when the channel is
- * available at once, b43_phy_ac_bss_up() after the availability check) and
- * from the watchdog every b43_phy_ac_temps_period() turns. The periodic copy follows the SROM's temps_period (10 s on the
- * d6220, 5 s on the tg789vac), the bss-up copy sits where brcmsmac's
- * PHY_PERICAL_UP_BSS takes the temperature, and the reading drifts with the
- * device's thermal state.
- *
- * The block is the same at every site. On all 100 blocks of the two cold
- * sweeps each register a chain drives is restored to the value read at the
- * head.
+ * Three sites run it, with the MAC suspended: before the full calibration
+ * (b43_phy_ac_op_channel_calibrate() when the channel is available at once,
+ * b43_phy_ac_bss_up() after the availability check, where brcmsmac's
+ * PHY_PERICAL_UP_BSS reads the temperature) and from the watchdog every
+ * b43_phy_ac_temps_period() turns, after the SROM's temps_period (10 s on
+ * the d6220, 5 s on the tg789vac). The reading drifts with the device's
+ * thermal state.
  *
  * The bss-up reading is not unconditional: the tg789vac skips it on one of
  * 40 cold segments, and nothing in the trace tells that cycle apart; see
@@ -6727,10 +6722,10 @@ void b43_phy_ac_rxiqcal_apply(struct b43_wldev *dev)
 
 /*
  * The ladders the calibrations load into table 0x000c before measuring a
- * chain: eighteen cells per chain, at 0x00-0x11 for chain 0 and 0x20-0x31
- * for chain 1, a gain in the high byte and an index in the low one. The
- * stock driver writes one of three, whole, six times per cold segment with
- * three wired chains and five with two:
+ * chain: eighteen cells per chain (0x00-0x11 chain 0, 0x20-0x31 chain 1), a
+ * gain in the high byte and an index in the low one. The stock driver
+ * writes one of three, whole, six times per cold segment with three wired
+ * chains and five with two:
  *
  *   after stage 2 of the RX IQ cal                    ladder A
  *   after chain 0 of the AFE cal                      ladder B
@@ -6739,14 +6734,11 @@ void b43_phy_ac_rxiqcal_apply(struct b43_wldev *dev)
  *   after chain 0 of the frequency-dependent pass     ladder B
  *   before chain 2 of that pass                       see below
  *
- * The "before chain 2" loads are the ramp where chain 2 is unwired (d6220),
- * and on the tg789vac ladder B up to ch144 and ladder A from ch149 at every
- * width (ABBABB on 37 segments, ABAABA on the 9 in UNII-3); see
+ * The "before chain 2" loads are the ramp where chain 2 is unwired (d6220);
+ * on the tg789vac, ladder B up to ch144 and ladder A from ch149 at every
+ * width (ABBABB on 37 segments, ABAABA on the 9 in UNII-3), see
  * b43_phy_ac_cal_like_chain0(). The agcombo, captured in U-NII-1 only,
- * writes ABBABB.
- *
- * Each load: peek and lock the gate, the eighteen pairs interleaved,
- * unlock.
+ * writes ABBABB. Each load is the eighteen pairs interleaved under a lock.
  * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   17999-18218, 18723-18942]
  */
@@ -8577,29 +8569,26 @@ static void b43_phy_ac_iq_solve(struct b43_phy_ac_iq_acc *acc,
 }
 
 /*
- * The eleven-tap bank the stock driver programs per chain at 80 MHz only,
- * right after the RX IQ coefficients: PHY.WR 0x?6a4 appears on every 80 MHz
- * segment that runs the calibration and on no 20 or 40 MHz one.
+ * The eleven-tap bank the stock driver programs per chain right after the RX
+ * IQ coefficients, at 80 MHz only: PHY.WR 0x?6a4 is on every 80 MHz segment
+ * that calibrates and on no 20 or 40 MHz one.
  *
- * Each row is an antisymmetric kernel around a centre tap of 0x0400 (unity
- * in Q10): the taps at distance k are c/(k + t) with alternating sign,
- * rounded, t about 0.01. It is the frequency-dependent IQ imbalance
- * correction: the term linear in frequency is a derivative, and the
- * derivative kernel is (-1)^k / k. Five rows are observed, c = 0, ~60.5,
- * ~121, ~182 and ~208, the same on three boards and every channel.
+ * Each row is an antisymmetric kernel around a 0x0400 centre tap (unity in
+ * Q10), taps at distance k equal to c/(k + t) with alternating sign, t about
+ * 0.01: the derivative kernel (-1)^k / k, so the frequency-dependent part of
+ * the IQ imbalance. Five rows are seen, c = 0, ~60.5, ~121, ~182 and ~208,
+ * the same on three boards and every channel.
  *
- * Which row a chain takes follows its measurement: the slope, over the
- * tones at +-1, +-3, +-4 of the period, of the per-tone a, the part
- * b43_phy_ac_iq_solve() averages away. On the 56 80 MHz points of the
- * captures (d6220, tg789vac and agcombo, cold and hot, bss-up included) the
- * least-squares slope, in units of a per step, separates the five rows:
+ * A chain's row follows the slope of its per-tone a over the tones at +-1,
+ * +-3, +-4, the part b43_phy_ac_iq_solve() averages away. On the 56 80 MHz
+ * points (d6220, tg789vac, agcombo, cold and hot, bss-up included) the
+ * least-squares slope, in units of a per step, separates the rows:
  *
  *   row          0          A           D           B           C
  *   slope     -1.1..1.2  1.7..3.9    4.2..6.0    6.3..8.5    8.9..9.7
  *
- * The edges between the bins are midpoints of the gaps, not a rule: the
- * bins are not evenly spaced in this slope, so the stock estimator is not
- * exactly this one.
+ * The bin edges are midpoints of the gaps, not a rule; the bins are not
+ * evenly spaced in this slope, so the stock estimator is not exactly this.
  */
 static const s16 b43_phy_ac_bw80_fir[][11] = {
 	{ 0, 0, 0, 0, 0, 0x0400, 0, 0, 0, 0, 0 },
@@ -9398,28 +9387,25 @@ static void b43_phy_ac_radar_thresh(struct b43_wldev *dev)
 }
 
 /*
- * The channel availability check.
+ * The channel availability check. On a channel with the radar duty a first
+ * bring-up may not transmit until it completes, so the transmitting
+ * calibrations do not run (b43_phy_ac_may_calibrate_tx()) and the check
+ * does: an arm and a detector poll.
  *
- * On a channel with the radar duty a first bring-up may not transmit until
- * the check completes. Hence the calibrations that transmit do not run
- * (b43_phy_ac_may_calibrate_tx()), and the check runs: an arm and a
- * detector poll.
+ * The arm is one maskset on PHY 0x02e4, right after the host-flag clear that
+ * opens the post-bring-up tail, with the BSS match row suspended and a first
+ * poll turn. A turn is mac_suspend, reads of PHY 0x0251 and 0x0252,
+ * mac_enable, on a 150 ms timer: on cold05 680 of 705 gaps are 151 ms, the
+ * rest 1.3-1.4 s where the tempsense holds the thread. The timer outlives
+ * the check (305 of 706 turns fall after it): its condition is the duty, not
+ * the calibration gate.
  *
- * The arm is one maskset on PHY 0x02e4, right after the host-flag clear
- * that opens the post-bring-up tail, with the BSS match row suspended and a
- * first poll turn. A poll turn is mac_suspend, reads of PHY 0x0251 and
- * 0x0252, mac_enable, the callback of a 150 ms timer: on cold05 680 of the
- * 705 gaps are 151 ms, the rest 1.3-1.4 s where the tempsense holds the
- * thread. The timer outlives the check (305 of 706 turns fall after it),
- * so its condition is the duty, not the calibration gate.
- *
- * 0x0251 and 0x0252 are the fill levels of the two radar pulse FIFOs, in
- * 16-bit words, and 0x0253 and 0x0254 their data ports: on the DSL-3580L,
- * with its lower threshold, the levels are multiples of four (four words a
- * pulse), saturate at 0x05fc, and the words drained match them. With this
- * driver's threshold the FIFOs stay empty on every capture, so a pulse is
- * an event, and the poll reports it. The pulse words are not decoded yet:
- * they are drained and ignored.
+ * 0x0251 and 0x0252 are the fill levels in 16-bit words of the two radar
+ * pulse FIFOs, 0x0253 and 0x0254 their data ports: with the DSL-3580L's
+ * lower threshold the levels are multiples of four (four words a pulse),
+ * saturate at 0x05fc and match the words drained. With this driver's
+ * threshold the FIFOs stay empty on every capture, so a pulse is an event,
+ * reported by the poll. The pulse words are drained, not decoded.
  */
 #define B43_PHY_AC_RADAR_FIFO_WORDS	0x0600
 
@@ -10326,29 +10312,25 @@ static const u16 b43_phy_ac_farrow_vals_432x_media_a1[98] = {
 };
 
 /*
- * Farrow resampler ratio and deltaphase, both functions of the centre
- * frequency and the bandwidth mode:
+ * Farrow resampler ratio and deltaphase, functions of the centre frequency
+ * and the bandwidth mode:
  *
  *   ratio  = round(f_MHz * 2^18 * M / D)
  *   dphase = round(K / (M * f_MHz))
  *
- * with (D, M, K) = (60, 1, 0x7_8000_0000) at 20 and 40 MHz and
- * (45, 1, 0xB_4000_0000) at 80. The ratio is 26 bits: 0x019a takes 15:0,
- * 0x019b 23:16, and 25:24 sit at 8:7 of 0x0199, above the mode's own field.
- * Bit 24 is set on every 5 GHz channel but the top one at 80 MHz, 5775 MHz,
- * where the ratio crosses 2^25 and 0x0199 goes from 0x0084 to 0x0104.
- *
- * The 80 MHz mode also swaps the low field of 0x0199/0x01a0 and
- * 0x019c/0x01a3, so it reads as a sample-rate mode rather than a
- * per-bandwidth scaling.
- *
- * On 2.4 GHz the block is the same with D/M = 80/3, K = D * 2^29, and
- * 0x1400 in 0x019c/0x01a3: exact on ch1-13 of the MacBookAir6,1 and ch1-11
- * of the archer-t5e. Both are 20 MHz scans; there is no 2.4 GHz 40 MHz
- * point.
+ * with (D, M, K) = (60, 1, 0x7_8000_0000) at 20 and 40 MHz and (45, 1,
+ * 0xB_4000_0000) at 80. The 26-bit ratio goes 15:0 to 0x019a, 23:16 to
+ * 0x019b and 25:24 to 8:7 of 0x0199, above the mode field. Bit 24 is set on
+ * every 5 GHz channel but 5775 MHz at 80, where the ratio crosses 2^25 and
+ * 0x0199 goes from 0x0084 to 0x0104. The 80 MHz mode also swaps the low
+ * field of 0x0199/0x01a0 and 0x019c/0x01a3: a sample-rate mode rather than
+ * a per-bandwidth scaling.
  *
  * Exact on every configuration of the d6220 and tg789vac cold sweeps (25
- * channels at 20 MHz, 12 at 40, 6 at 80), both registers and both cores.
+ * channels at 20 MHz, 12 at 40, 6 at 80), both registers and both cores. On
+ * 2.4 GHz it is the same block with D/M = 80/3, K = D * 2^29 and 0x1400 in
+ * 0x019c/0x01a3, exact on ch1-13 of the MacBookAir6,1 and ch1-11 of the
+ * archer-t5e, both 20 MHz scans.
  */
 
 struct b43_phy_ac_farrow_mode {
