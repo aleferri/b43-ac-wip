@@ -1395,7 +1395,7 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 		}
 	}
 	b43_phy_ac_radio_percore_setup_1(dev);
-	b43_phy_read(dev, 0x0401);
+	b43_phy_read_log(dev, 0x0401);
 	/* [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
 	 *   11522-12192, 15057-15727, 15833-16503]
 	 * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -1420,11 +1420,11 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 		 * adc_reset(), and is released and re-armed at the end of the
 		 * per-core body.
 		 */
-		b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-		b43_phy_read(dev, 0x040f);
+		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		b43_phy_read_log(dev, 0x040f);
 		b43_phy_maskset(dev, 0x040f, (u16)~0x0200, 0);
-		b43_phy_read(dev, 0x0394);
-		b43_phy_read(dev, 0x0393);
+		b43_phy_read_log(dev, 0x0394);
+		b43_phy_read_log(dev, 0x0393);
 		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
 
 		/* Save each chain's bbmult and gain state. */
@@ -1437,7 +1437,7 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 			st[c].r732 = b43_phy_read(dev, 0x0732 + s);
 			st[c].r733 = b43_phy_read(dev, 0x0733 + s);
 			st[c].r734 = b43_phy_read(dev, 0x0734 + s);
-			b43_phy_read(dev, 0x0722 + s);
+			b43_phy_read_log(dev, 0x0722 + s);
 			st[c].r727 = b43_phy_read(dev, 0x0727 + s);
 			st[c].r73c = b43_phy_read(dev, 0x073c + s);
 		}
@@ -1453,7 +1453,7 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 			b43_phy_maskset(dev, 0x0734 + s, (u16)~0x0038, 0);
 			b43_phy_maskset(dev, 0x0722 + s, (u16)~0x0001, 0x0001);
 			b43_phy_maskset(dev, 0x0722 + s, (u16)~0x0008, 0x0008);
-			b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+			b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
 			b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
 			b43_actab_write_bulk(dev, 0x000c, (u16)(0x0063 + 4 * c), 16, 1, &zero);
 			b43_actab_write_bulk(dev, 0x000c, (u16)(0x0073 + 4 * c), 16, 1, &zero);
@@ -1521,7 +1521,7 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 			u32 sum = 0;
 
 			for (i = 0; i < passes; i++) {
-				b43_phy_read(dev, 0x0393);
+				b43_phy_read_log(dev, 0x0393);
 				b43_phy_write(dev, 0x0394, 0x0110 | core);
 				b43_phy_write(dev, 0x0393, 0x8000);
 
@@ -1601,7 +1601,7 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 		base_index = idle_tssi & 0x03ff;
 		b43_phy_maskset(dev, 0x0645 + p, (u16)~0x03ff, base_index);
 
-		b43info(dev->wl,
+		b43dbg(dev->wl,
 		       "phy-ac: idle-tssi c%u meas: 0x013=0x%04x 0x012=0x%04x 0x464=0x%04x radio 0x4e=0x%04x 0x166=0x%04x prog=0x%04x\n",
 		       core, r013, r012, r464,
 		       st[core].r4e, st[core].r166, base_index);
