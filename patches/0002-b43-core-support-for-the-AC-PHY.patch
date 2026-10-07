@@ -19,18 +19,23 @@ and route the AC-PHY to it. The table is placed before #undef CHAN5G.
 Descriptor addresses in the AC-PHY DMA64 index registers
 --------------------------------------------------------
 
-The AC cores' DMA64 engine takes a ring at any address: the stock driver's
-probe of the ring address register reads back 0xfffffff0, and it posts each
-ring index as the low word of the descriptor's address (0xbcd58010 on a
-ring at 0xbcd58000). The older engines compare only the offset inside their
-8 KB-aligned ring, which is what b43 wrote. On the AC b43 now writes the
-address, as brcmsmac does for an engine without aligned descriptors, takes
-it off the receive status, and writes the ring address before the enable
-bit, as the stock driver does. The ring stays at its 8 KB allocation, with
-the size in one helper for alloc and free.
+The stock driver's probe of the AC cores' ring address register reads back
+0xfffffff0, and it posts each ring index as the low word of the
+descriptor's address (0xbcd58010 on a ring at 0xbcd58000). The older
+engines compare only the offset inside their 8 KB-aligned ring, which is
+what b43 wrote. On the AC b43 now writes the address, as brcmsmac does for
+an engine without aligned descriptors, takes it off the receive status, and
+writes the ring address before the enable bit, as the stock driver does.
 
-The engine parameters (outstanding reads, burst, prefetch) are those of the
-7.14 stock driver.
+The ring stays at its 8 KB allocation, with the size in one helper for
+alloc and free: the stock driver's AC rings are 32 KB apart.
+
+The engine parameters (outstanding reads, burst, prefetch) stay at their
+reset values. The 7.14 stock driver writes TX 0x0370004x and RX 0x0050xxxx,
+the 6.30 one other bursts and prefetches, both on x86 hosts; with 7.14's
+the DSL-3580L raises a descriptor protocol error (bit 12 of controller 0's
+DMA reason) half a second after the MAC comes up, and the controller
+restarts in a loop.
 
 Wire AC-PHY into the core TX/RX control path
 --------------------------------------------
@@ -579,8 +584,8 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
  drivers/net/wireless/broadcom/b43/Kconfig     |   20 +-
  drivers/net/wireless/broadcom/b43/b43.h       |  144 +-
  drivers/net/wireless/broadcom/b43/bus.c       |    4 +
- drivers/net/wireless/broadcom/b43/dma.c       |  121 +-
- drivers/net/wireless/broadcom/b43/dma.h       |   19 +
+ drivers/net/wireless/broadcom/b43/dma.c       |   99 +-
+ drivers/net/wireless/broadcom/b43/dma.h       |   11 +
  drivers/net/wireless/broadcom/b43/leds.c      |  225 ++-
  drivers/net/wireless/broadcom/b43/leds.h      |   24 +-
  drivers/net/wireless/broadcom/b43/main.c      | 1529 +++++++++++++++--
@@ -589,7 +594,7 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
  drivers/net/wireless/broadcom/b43/pio.c       |   11 +-
  drivers/net/wireless/broadcom/b43/xmit.c      |  109 +-
  drivers/net/wireless/broadcom/b43/xmit.h      |   23 +
- 13 files changed, 1989 insertions(+), 333 deletions(-)
+ 13 files changed, 1959 insertions(+), 333 deletions(-)
 
 diff --git a/drivers/net/wireless/broadcom/b43/Kconfig b/drivers/net/wireless/broadcom/b43/Kconfig
 index 4559549..8d0aca2 100644
@@ -913,7 +918,7 @@ index 3ed329a..f7b0de1 100644
  	dev->dev = &core->dev;
  	dev->dma_dev = core->dma_dev;
 diff --git a/drivers/net/wireless/broadcom/b43/dma.c b/drivers/net/wireless/broadcom/b43/dma.c
-index 05da698..1727b6e 100644
+index 05da698..4216bf1 100644
 --- a/drivers/net/wireless/broadcom/b43/dma.c
 +++ b/drivers/net/wireless/broadcom/b43/dma.c
 @@ -210,10 +210,20 @@ static void op64_fill_descriptor(struct b43_dmaring *ring,
@@ -1001,34 +1006,7 @@ index 05da698..1727b6e 100644
  	dma_free_coherent(ring->dev->dev->dma_dev, ring_mem_size,
  			  ring->descbase, ring->dmabase);
  }
-@@ -669,6 +680,26 @@ static int alloc_initial_descbuffers(struct b43_dmaring *ring)
-  * Reset the controller, write the ring busaddress
-  * and switch the "enable" bit on.
-  */
-+/*
-+ * The engine parameters of the AC cores' stock driver, 7.14 on the agcombo:
-+ * TX 0x0370004x (two outstanding reads, burst 256 bytes, prefetch control 3,
-+ * threshold 3) and RX 0x0050xxxx (burst 256 bytes, prefetch control 2).
-+ * The 6.30 hybrid writes other bursts and prefetches (TX 0x03780841, RX
-+ * 0x036c0851); the reference driver is 7.14.
-+ */
-+static u32 b43_dma64_ac_tuning(struct b43_dmaring *ring)
-+{
-+	if (ring->dev->phy.type != B43_PHYTYPE_AC)
-+		return 0;
-+	if (ring->tx)
-+		return (1 << B43_DMA64_TXMR_SHIFT) |
-+		       (4 << B43_DMA64_TXBURST_SHIFT) |
-+		       (3 << B43_DMA64_TXPFCTL_SHIFT) |
-+		       (3 << B43_DMA64_TXPFTHR_SHIFT);
-+	return (4 << B43_DMA64_RXBURST_SHIFT) |
-+	       (2 << B43_DMA64_RXPFCTL_SHIFT);
-+}
-+
- static int dmacontroller_setup(struct b43_dmaring *ring)
- {
- 	int err = 0;
-@@ -684,10 +715,13 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
+@@ -684,6 +695,8 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
  			addrext = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_EXT);
  			addrlo = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_LOW);
  			addrhi = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_HIGH);
@@ -1037,12 +1015,7 @@ index 05da698..1727b6e 100644
  
  			value = B43_DMA64_TXENABLE;
  			value |= (addrext << B43_DMA64_TXADDREXT_SHIFT)
- 			    & B43_DMA64_TXADDREXT_MASK;
-+			value |= b43_dma64_ac_tuning(ring);
- 			if (!parity)
- 				value |= B43_DMA64_TXPARITYDISABLE;
- 			b43_dma_write(ring, B43_DMA64_TXCTL, value);
-@@ -715,9 +749,12 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
+@@ -715,6 +728,8 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
  			addrext = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_EXT);
  			addrlo = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_LOW);
  			addrhi = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_HIGH);
@@ -1051,11 +1024,7 @@ index 05da698..1727b6e 100644
  
  			value = (ring->frameoffset << B43_DMA64_RXFROFF_SHIFT);
  			value |= B43_DMA64_RXENABLE;
-+			value |= b43_dma64_ac_tuning(ring);
- 			value |= (addrext << B43_DMA64_RXADDREXT_SHIFT)
- 			    & B43_DMA64_RXADDREXT_MASK;
- 			if (!parity)
-@@ -725,8 +762,8 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
+@@ -725,8 +740,8 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
  			b43_dma_write(ring, B43_DMA64_RXCTL, value);
  			b43_dma_write(ring, B43_DMA64_RXRINGLO, addrlo);
  			b43_dma_write(ring, B43_DMA64_RXRINGHI, addrhi);
@@ -1066,7 +1035,7 @@ index 05da698..1727b6e 100644
  		} else {
  			u32 ringbase = (u32) (ring->dmabase);
  			addrext = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_EXT);
-@@ -867,6 +904,12 @@ struct b43_dmaring *b43_setup_dmaring(struct b43_wldev *dev,
+@@ -867,6 +882,12 @@ struct b43_dmaring *b43_setup_dmaring(struct b43_wldev *dev,
  	} else {
  		if (ring->index == 0) {
  			switch (dev->fw.hdr_format) {
@@ -1079,7 +1048,7 @@ index 05da698..1727b6e 100644
  			case B43_FW_HDR_598:
  				ring->rx_buffersize = B43_DMA0_RX_FW598_BUFSIZE;
  				ring->frameoffset = B43_DMA0_RX_FW598_FO;
-@@ -1175,8 +1218,8 @@ struct b43_dmaring *parse_cookie(struct b43_wldev *dev, u16 cookie, int *slot)
+@@ -1175,8 +1196,8 @@ struct b43_dmaring *parse_cookie(struct b43_wldev *dev, u16 cookie, int *slot)
  	}
  	*slot = (cookie & 0x0FFF);
  	if (unlikely(!ring || *slot < 0 || *slot >= ring->nr_slots)) {
@@ -1090,7 +1059,7 @@ index 05da698..1727b6e 100644
  		return NULL;
  	}
  
-@@ -1446,9 +1489,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
+@@ -1446,9 +1467,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
  			skip = 2;
  			if (!err_out1) {
  				/* Report the error once. */
@@ -1103,7 +1072,7 @@ index 05da698..1727b6e 100644
  				err_out1 = 1;
  			}
  		} else {
-@@ -1457,9 +1500,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
+@@ -1457,9 +1478,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
  			 * firmware, then reset the controller to
  			 * revive operation.
  			 */
@@ -1116,7 +1085,7 @@ index 05da698..1727b6e 100644
  			if (dev->fw.opensource)
  				b43_controller_restart(dev, "Out of order TX");
  			return;
-@@ -1473,9 +1516,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
+@@ -1473,9 +1494,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
  		ops->idx2desc(ring, slot, &meta);
  
  		if (b43_dma_ptr_is_poisoned(meta->skb)) {
@@ -1129,7 +1098,7 @@ index 05da698..1727b6e 100644
  			break;
  		}
  
-@@ -1499,9 +1542,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
+@@ -1499,9 +1520,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
  				/* This is a scatter-gather fragment of a frame,
  				 * so the skb pointer must not be NULL.
  				 */
@@ -1142,7 +1111,7 @@ index 05da698..1727b6e 100644
  				break;
  			}
  
-@@ -1538,9 +1581,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
+@@ -1538,9 +1559,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
  			 * this is only the txhdr, which is not allocated.
  			 */
  			if (unlikely(meta->skb)) {
@@ -1155,7 +1124,7 @@ index 05da698..1727b6e 100644
  				break;
  			}
  		}
-@@ -1610,7 +1653,7 @@ static void dma_rx(struct b43_dmaring *ring, int *slot)
+@@ -1610,7 +1631,7 @@ static void dma_rx(struct b43_dmaring *ring, int *slot)
  	if (unlikely(b43_rx_buffer_is_poisoned(ring, skb))) {
  		/* Something went wrong with the DMA.
  		 * The device did not touch the buffer and did not overwrite the poison. */
@@ -1164,7 +1133,7 @@ index 05da698..1727b6e 100644
  		dmaaddr = meta->dmaaddr;
  		goto drop_recycle_buffer;
  	}
-@@ -1644,7 +1687,7 @@ static void dma_rx(struct b43_dmaring *ring, int *slot)
+@@ -1644,7 +1665,7 @@ static void dma_rx(struct b43_dmaring *ring, int *slot)
  	dmaaddr = meta->dmaaddr;
  	err = setup_rx_descbuffer(ring, desc, meta, GFP_ATOMIC);
  	if (unlikely(err)) {
@@ -1174,35 +1143,10 @@ index 05da698..1727b6e 100644
  	}
  
 diff --git a/drivers/net/wireless/broadcom/b43/dma.h b/drivers/net/wireless/broadcom/b43/dma.h
-index f9f65bb..ee0fff3 100644
+index f9f65bb..e36a099 100644
 --- a/drivers/net/wireless/broadcom/b43/dma.h
 +++ b/drivers/net/wireless/broadcom/b43/dma.h
-@@ -87,9 +87,14 @@ struct b43_dmadesc32 {
- #define		B43_DMA64_TXSUSPEND			0x00000002
- #define		B43_DMA64_TXLOOPBACK		0x00000004
- #define		B43_DMA64_TXFLUSH			0x00000010
-+#define		B43_DMA64_TXMR_MASK			0x000000C0	/* Multiple outstanding reads */
-+#define		B43_DMA64_TXMR_SHIFT			6
- #define		B43_DMA64_TXPARITYDISABLE		0x00000800
- #define		B43_DMA64_TXADDREXT_MASK		0x00030000
- #define		B43_DMA64_TXADDREXT_SHIFT		16
-+#define		B43_DMA64_TXBURST_SHIFT		18	/* Burst length, 16 << n bytes */
-+#define		B43_DMA64_TXPFCTL_SHIFT		21	/* Prefetch control */
-+#define		B43_DMA64_TXPFTHR_SHIFT		24	/* Prefetch threshold */
- #define B43_DMA64_TXINDEX				0x04
- #define B43_DMA64_TXRINGLO				0x08
- #define B43_DMA64_TXRINGHI				0x0C
-@@ -118,6 +123,9 @@ struct b43_dmadesc32 {
- #define		B43_DMA64_RXPARITYDISABLE		0x00000800
- #define		B43_DMA64_RXADDREXT_MASK		0x00030000
- #define		B43_DMA64_RXADDREXT_SHIFT		16
-+#define		B43_DMA64_RXBURST_SHIFT		18	/* Burst length, 16 << n bytes */
-+#define		B43_DMA64_RXPFCTL_SHIFT		21	/* Prefetch control */
-+#define		B43_DMA64_RXPFTHR_SHIFT		24	/* Prefetch threshold */
- #define B43_DMA64_RXINDEX				0x24
- #define B43_DMA64_RXRINGLO				0x28
- #define B43_DMA64_RXRINGHI				0x2C
-@@ -167,12 +175,20 @@ struct b43_dmadesc_generic {
+@@ -167,12 +167,20 @@ struct b43_dmadesc_generic {
  /* Offset of frame with actual data */
  #define B43_DMA0_RX_FW598_FO		38
  #define B43_DMA0_RX_FW351_FO		30
@@ -1223,7 +1167,7 @@ index f9f65bb..ee0fff3 100644
  
  /* Pointer poison */
  #define B43_DMA_PTR_POISON		((void *)ERR_PTR(-ENOMEM))
-@@ -235,6 +251,9 @@ struct b43_dmaring {
+@@ -235,6 +243,9 @@ struct b43_dmaring {
  	u8 *txhdr_cache;
  	/* (Unadjusted) DMA base bus-address of the ring memory. */
  	dma_addr_t dmabase;

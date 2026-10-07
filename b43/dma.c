@@ -681,26 +681,6 @@ static int alloc_initial_descbuffers(struct b43_dmaring *ring)
  * and switch the "enable" bit on.
  */
 /*
- * The engine parameters of the AC cores' stock driver, 7.14 on the agcombo:
- * TX 0x0370004x (two outstanding reads, burst 256 bytes, prefetch control 3,
- * threshold 3) and RX 0x0050xxxx (burst 256 bytes, prefetch control 2).
- * The 6.30 hybrid writes other bursts and prefetches (TX 0x03780841, RX
- * 0x036c0851); the reference driver is 7.14.
- */
-static u32 b43_dma64_ac_tuning(struct b43_dmaring *ring)
-{
-	if (ring->dev->phy.type != B43_PHYTYPE_AC)
-		return 0;
-	if (ring->tx)
-		return (1 << B43_DMA64_TXMR_SHIFT) |
-		       (4 << B43_DMA64_TXBURST_SHIFT) |
-		       (3 << B43_DMA64_TXPFCTL_SHIFT) |
-		       (3 << B43_DMA64_TXPFTHR_SHIFT);
-	return (4 << B43_DMA64_RXBURST_SHIFT) |
-	       (2 << B43_DMA64_RXPFCTL_SHIFT);
-}
-
-/*
  * Whether the DMA64 engine takes descriptor addresses rather than offsets in
  * an aligned ring: the AC cores, aligndesc_4k = 0 in the stock driver. Such
  * an engine needs its ring address before it is enabled; the older ones get
@@ -733,7 +713,6 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
 
 			value = (addrext << B43_DMA64_TXADDREXT_SHIFT)
 			    & B43_DMA64_TXADDREXT_MASK;
-			value |= b43_dma64_ac_tuning(ring);
 			enable = B43_DMA64_TXENABLE;
 			if (!parity)
 				enable |= B43_DMA64_TXPARITYDISABLE;
@@ -774,7 +753,6 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
 
 			value = (ring->frameoffset << B43_DMA64_RXFROFF_SHIFT);
 			value |= B43_DMA64_RXENABLE;
-			value |= b43_dma64_ac_tuning(ring);
 			value |= (addrext << B43_DMA64_RXADDREXT_SHIFT)
 			    & B43_DMA64_RXADDREXT_MASK;
 			if (!parity)
