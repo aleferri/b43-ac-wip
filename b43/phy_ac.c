@@ -1306,11 +1306,9 @@ static u16 b43_phy_ac_rfseq_mode_all(struct b43_wldev *dev)
 static void b43_phy_ac_bbmult_peek(struct b43_wldev *dev)
 {
 	unsigned int c;
-	u16 discard;
 
 	for_each_set_bit(c, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
-		b43_actab_read_bulk(dev, 0x000c, (u16)(0x0063 + 4 * c), 16, 1,
-				    &discard);
+		b43_actab_read_log(dev, 0x000c, 0x0063 + 4 * c, 1);
 		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
 	}
 }
@@ -1445,7 +1443,6 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 		/* Quiet every chain: gains, bbmult and the TSSI radio path. */
 		for_each_set_bit(c, &ac->coremask, ac->num_cores) {
 			u16 s = (u16)(c * 0x200);
-			u16 tblr_dummy;
 
 			b43_phy_write(dev, 0x0732 + s, 0x0000);
 			b43_phy_write(dev, 0x0733 + s, 0x0000);
@@ -1460,8 +1457,7 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 			b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
 			st[c].r4e = b43_radio_read(dev, 0x004e + s);
 			st[c].r166 = b43_radio_read(dev, 0x0166 + s);
-			b43_actab_read_bulk(dev, 0x0007, (u16)(0x017e + 0x10 * c),
-					    16, 1, &tblr_dummy);
+			b43_actab_read_log(dev, 0x0007, 0x017e + 0x10 * c, 1);
 			/*
 			 * pdet_range: no pdetrange5g in the NVRAM of these
 			 * boards (default 0), and the SPROM8 FEM offsets are
@@ -4243,9 +4239,8 @@ static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
 		for_each_set_bit(c, &ac->coremask, ac->num_cores) {
 			u16 off = (u16)(0x03cd + 0x10 * c);
 			u16 val = b43_phy_ac_avvmid_cell(dev, c, grp);
-			u16 tmp;
 
-			b43_actab_read_bulk(dev, 7, off, 16, 1, &tmp);
+			b43_actab_read_log(dev, 7, off, 1);
 			b43_actab_write_bulk(dev, 7, off, 16, 1, &val);
 		}
 	}
@@ -7576,7 +7571,6 @@ static void b43_phy_ac_tx_gain_bbmult_load(struct b43_wldev *dev)
 	struct b43_phy_ac *ac = dev->phy.ac;
 	unsigned int core, i;
 	bool first_core = true;
-	u16 discard;
 
 	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
@@ -7591,8 +7585,7 @@ static void b43_phy_ac_tx_gain_bbmult_load(struct b43_wldev *dev)
 		first_core = false;
 
 		for (i = 0; i < 3; i++)
-			b43_actab_read_bulk(dev, 7, (u16)(0x0100 + core + 3 * i),
-					    16, 1, &discard);
+			b43_actab_read_log(dev, 7, 0x0100 + core + 3 * i, 1);
 		for (i = 0; i < 3; i++)
 			b43_actab_write_bulk(dev, 7, (u16)(0x0100 + core + 3 * i),
 					     16, 1, &ac->gaincurve_coeff[core][i]);
@@ -7860,7 +7853,6 @@ void b43_phy_ac_rxiqcal_apply_second_stage(struct b43_wldev *dev)
 	 * b43_phy_ac_rxiqcal_run_meas_iters()), reapplied at 0x60 + 4 * core of
 	 * table 0x000c instead of 0x40 + 8 * core.
 	 */
-	u16 cell[2];
 	unsigned int c;
 
 	b43_phy_ac_force_rf_sequence(dev, B43_PHY_AC_RF_SEQ_RST2RX);
@@ -7881,7 +7873,7 @@ void b43_phy_ac_rxiqcal_apply_second_stage(struct b43_wldev *dev)
 	for_each_set_bit(c, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
 		u16 off = (u16)(0x0060 + 4 * c);
 
-		b43_actab_read_bulk(dev, 0x000c, off, 16, 2, cell);
+		b43_actab_read_log(dev, 0x000c, off, 2);
 		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
 		b43_actab_write_bulk_scoped(dev, 0x000c, off, 16, 2,
 					    dev->phy.ac->afe_res[2 * c].v);
@@ -7938,7 +7930,6 @@ void b43_phy_ac_rxgain_config_readback(struct b43_wldev *dev)
 	};
 	struct b43_phy_ac *ac = dev->phy.ac;
 	unsigned int core, i;
-	u16 discard;
 
 	/* Global preamble */
 	b43_phy_read_log(dev, 0x040f);
@@ -7953,7 +7944,7 @@ void b43_phy_ac_rxgain_config_readback(struct b43_wldev *dev)
 				b43_phy_read_log(dev, b43_phy_ac_rxgain_cfg_regs[i] + stride);
 
 		/* The bbmult cell, read and discarded. */
-		b43_actab_read_bulk(dev, 0x000c, bbmult_off[core], 16, 1, &discard);
+		b43_actab_read_log(dev, 0x000c, bbmult_off[core], 1);
 
 		/*
 		 * The three gain codes of table 7 at 0x0100 + core + 3 * i,
@@ -10061,9 +10052,8 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 		for (core = 0; core < dev->phy.ac->num_cores; core++) {
 			u16 ta = 0x44 + core * 0x20;	/* core 0=0x44, 1=0x64, 2=0x84 */
 			u16 tb = 0x45 + core * 0x20;
-			u16 rd6[6];
 
-			b43_actab_read_bulk(dev, 0x15, nvar_off[core], 16, 6, rd6);
+			b43_actab_read_log(dev, 0x15, nvar_off[core], 6);
 			b43_actab_write_bulk(dev, ta, 0x0008, 16, 6, a8);
 			b43_actab_write_bulk(dev, tb, 0x0008, 16, 6, nshp_b8);
 		}
@@ -10096,16 +10086,12 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 
 			b43_phy_ac_rxgain_init(dev, core);
 
-			{
-				u16 rb1, rb10[10], rb8[8];
-
-				b43_actab_read_bulk(dev, tb, 0x0000, 16, 1, &rb1);
-				b43_actab_read_bulk(dev, tb, 0x0020, 16, 10, rb10);
-				b43_actab_read_bulk(dev, ta, 0x0060, 16, 8, rb8);
-				b43_actab_read_bulk(dev, ta, 0x0070, 16, 8, rb8);
-				b43_actab_read_bulk(dev, tb, 0x0060, 16, 8, rb8);
-				b43_actab_read_bulk(dev, tb, 0x0070, 16, 8, rb8);
-			}
+			b43_actab_read_log(dev, tb, 0x0000, 1);
+			b43_actab_read_log(dev, tb, 0x0020, 10);
+			b43_actab_read_log(dev, ta, 0x0060, 8);
+			b43_actab_read_log(dev, ta, 0x0070, 8);
+			b43_actab_read_log(dev, tb, 0x0060, 8);
+			b43_actab_read_log(dev, tb, 0x0070, 8);
 		}
 	}
 

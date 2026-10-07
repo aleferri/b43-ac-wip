@@ -659,6 +659,20 @@ bool b43_phy_ac_force_rf_sequence(struct b43_wldev *dev, u16 rf_seq);
 		       __r, __v);					\
 	__v;								\
 })
+/* The same for @len 16-bit cells of a PHY table. */
+#define B43_ACTAB_READ_LOG_MAX	16
+#define b43_actab_read_log(dev, id, offset, len) do {			\
+	u16 __id = (id), __off = (offset);				\
+	u16 __buf[B43_ACTAB_READ_LOG_MAX];				\
+	size_t __n = (len), __i;					\
+									\
+	if (B43_WARN_ON(__n > ARRAY_SIZE(__buf)))			\
+		break;							\
+	b43_actab_read_bulk((dev), __id, __off, 16, __n, __buf);	\
+	for (__i = 0; B43_DEBUG && __i < __n; __i++)			\
+		b43info((dev)->wl, "table rd 0x%02x:0x%04x = 0x%04x\n",	\
+			__id, (u16)(__off + __i), __buf[__i]);		\
+} while (0)
 
 void b43_phy_ac_reset_cca(struct b43_wldev *dev);
 
