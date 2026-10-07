@@ -8112,7 +8112,7 @@ void b43_phy_ac_gainctrl_final_apply(struct b43_wldev *dev,
 	for (core = 0; core < dev->phy.ac->num_cores; core++) {
 		u16 stride = (u16)(core * 0x200);
 		struct b43_phy_ac_gaincurve gc;
-		u16 bbmult_val;
+		u16 bbmult_val, gate, inner;
 
 		if (!(core_mask & (1u << core)))
 			continue;
@@ -8127,9 +8127,7 @@ void b43_phy_ac_gainctrl_final_apply(struct b43_wldev *dev,
 		b43_phy_maskset(dev, 0x0722 + stride, (u16)~0x0004, 0x0004);
 		b43_phy_maskset(dev, 0x0722 + stride, (u16)~0x0008, 0x0008);
 
-		/* Peek and lock. */
-		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+		gate = b43_phy_ac_tbl_write_lock(dev);
 
 		/* Gain curve entry 0x0000. */
 		b43_phy_ac_read_gaincurve(dev, 0x0000, &gc);
@@ -8144,21 +8142,17 @@ void b43_phy_ac_gainctrl_final_apply(struct b43_wldev *dev,
 		b43_actab_write_bulk(dev, 0x0007, (u16)(0x0106 + core),
 				     16, 1, &gc.coeff[2]);
 
-		/* Sync: peek and idempotent lock. */
-		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
-
-		/* The bbmult into both cells. */
+		/* The bbmult into both cells, under a nested lock. */
+		inner = b43_phy_ac_tbl_write_lock(dev);
 		b43_actab_write_bulk(dev, 0x000c,
 				     (u16)(0x0063 + core * 4),
 				     16, 1, &bbmult_val);
 		b43_actab_write_bulk(dev, 0x000c,
 				     (u16)(0x0073 + core * 4),
 				     16, 1, &bbmult_val);
+		b43_phy_ac_tbl_write_unlock(dev, inner);
 
-		/* Bridge: idempotent lock, then unlock. */
-		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
-		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+		b43_phy_ac_tbl_write_unlock(dev, gate);
 	}
 }
 
