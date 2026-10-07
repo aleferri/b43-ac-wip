@@ -98,10 +98,11 @@ eight nibbles all differ, which fixes every row).
   under the top row. So the general ceiling moves the target and leaves the
   spacing. `txpwr_spacing` is the same PPR laid out from 0x7f so that no
   entry saturates; `b43_phy_ac_rate_po()` reads it.
-- **The legacy OFDM rates carry their own limit** (`b43_phy_ac_reg_ofdm_ceiling()`),
-  which shows in this field alone since the target takes the maximum over
-  MCS: 76 after the margin on ch52–144 at 20 MHz, 72 on ch100–128 at 80,
-  84 on ch108–140 at 40. On the D6220 and the TG789vac every legacy rate the
+- **The legacy OFDM rates carry their own limit** (`b43_phy_ac_legacy_cap()`:
+  a single-chain limit per channel and width less the CDD offset of the
+  chains in 0x05d6), which shows in this field alone since the target takes
+  the maximum over MCS: 76 after the margin on ch52–144 at 20 MHz, 72 on
+  ch100–128 at 80, 84 on ch108–140 at 40 in the stock driver. On the D6220 and the TG789vac every legacy rate the
   spacing would put higher sits at that value (ch104/20: `target − 76` on the
   eight legacy fields on both, targets 80 and 84). The field is
   `max(spacing, target − limit)`.

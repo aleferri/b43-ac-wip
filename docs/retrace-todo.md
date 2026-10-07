@@ -210,7 +210,11 @@ driver:
   with the default 8K ring. Whether the AC engine compares the whole word or
   only the offset bits is not known; the 64 KB rings b43 used to allocate
   made the two the same. 6.30 writes it twice in a whole capture,
-  `0xffffffff` and then an address.
+  `0xffffffff` and then an address. On its TX rings (archer-t5e) the probe
+  of the ring address reads back `0xfffffff0`, the index is posted as the
+  descriptor's address (`0xbcd58010` on a ring at `0xbcd58000`), and the
+  status reports the current descriptor as the low 16 bits of its address
+  (`0x200085c0`).
 - The stock driver reads the receive status twice per frame and the TSF
   once; b43 once and never. On 6.30 the TSF pair (`0x0180`/`0x0184`) also
   comes before every TX descriptor post.
@@ -278,7 +282,7 @@ same lever as `AC_FIRST_INIT`.
   headers are mapped.
 - **`MACHW_H` (`0x00c2`), bit 31.** The capability register reads
   `0xb0518c05`. Every stock driver clears bit 31 before writing the high
-  half (DSL-3580L 6.30.102.7 with ucode 802; D6220, TG789vac v2 and agcombo,
+  half (DSL-3580L 6.30.102.7 with ucode 784; D6220, TG789vac v2 and agcombo,
   7.14 with 928) except the x86 hybrid 6.30.223 with ucode 832, and
   `B43_FW_HDR_AC` does the same, 832 included. Whether that is the ucode or
   the hybrid build, and what the bit is, is open.
@@ -293,7 +297,8 @@ Deliberately off: b43 writes `PRMAXTIME=1`, and the cells are in `SOLO_VENDOR`
 of `test/unit/compare.py`. To implement it:
 
 1. keep only `b43_chip_init()`'s `PRMAXTIME=0`;
-2. write the template at template RAM `0x0700` (the TODO above `B43_SHM_SH_BT_BASE0_AC` in `b43/b43.h`),
+2. write the template at the layout's probe-response base, `0x04d8` on 784 and
+   `0x0700` on 832 and 928 (the TODO above `struct b43_tpl_layout` in `b43/b43.h`),
    rewritten after every beacon once its length and the MACCMD valid bits are
    written: one `RAM_CONTROL`, then 76 words on the agcombo;
 3. write `0x0180`–`0x0186` = `0x0527`/`0x01f4`/`0`/`0x0032`, twice, the first
@@ -539,9 +544,9 @@ gain the agcombo's driver reports (0) is not its SROM's (5.5), so on that
 board the SROM gain gives the wrong masks.
 
 **The TG789vac's legacy rates at 40 and 80 MHz** are flat across the eight
-OFDM rates on every bonded segment. Where a legacy limit binds on both
-boards the port now carries it (`b43_phy_ac_reg_ofdm_ceiling()`: 84 on
-ch108-140/40, 72 on ch100-128/80, after the margin). Where none binds the
+OFDM rates on every bonded segment. Where a legacy limit binds the port
+carries it in `b43_phy_ac_legacy_cap()` (see "Per-rate field `+0x0e`" for
+where it is still 1 dB off at 40 and 80 MHz). Where none binds the
 TG789vac writes the maximum of its **40 MHz row** on every rate, at 40 MHz
 and at 80 alike -- 84 on ch108-140/40 and on ch132/80 (`mcsbw405ghpo`
 nibble 1 under maxp 92), where its 80 MHz row would give 80/78 -- while the
@@ -591,7 +596,7 @@ The distance of each rate from the target, in sixteenths of a dB. At 20 MHz
 it is closed: the legacy OFDM rows sit under their own limit, 76 after the
 margin on ch52–144, on the d6220 (cold and hot) and the TG789vac alike, and
 ch100/20 (target 76, K 0 on both) fits it too
-(`b43_phy_ac_reg_ofdm_ceiling()`; the beacon cell `0x00ce` takes the same
+(`b43_phy_ac_legacy_cap()`; the beacon cell `0x00ce` takes the same
 cap). At 40 and 80 MHz the duplicate legacy rows are not under that limit
 (ch108–140/40: target 80, fields 0) and what they are under is not one
 number: d6220 ch60/40 writes K 0x10 and the TG789vac 0x20 at the same target
@@ -813,7 +818,57 @@ the symbols of the two blobs before assuming a board difference.
 - PLLCTL3 stays at the ROM value `0x00133333` (no fractional vcofreq);
 - radio `0x0033`: `0x60b1`, where 7.14 writes `0x4060 → 0x4161 → 0x4181`;
 - radio readbacks `0x040c`/`0x0416` differ between the two 4352s;
-- the shared-memory zeroing covers `0x10a4`–`0x1402`, 7.14 `0x10f4`–`0x14b2`.
+- the shared-memory zeroing covers `0x10a4`–`0x1402`, 7.14 `0x10f4`–`0x14b2`;
+- the beacon templates at template RAM `0x00d8`/`0x02d8` and the probe
+  response at `0x04d8`, where 7.14 has `0x0200`/`0x0480`/`0x0700`: the bases
+  are immediates in the ucode (784 at `0x045c`).
+
+The captures carry the N-PHY core (wl0) as well, and `strip_other_core.py`
+cuts nothing from them (one OTP read, no chip reset). Its ucode, `d11ucode22_mimo` 784.2, puts the
+beacons at `0x0068`, so the `0x00d8` writes are wl1's. `0x0322`/`0x00cc` at
+shared memory `0x0000`/`0x0002` (#9879) is a read in the BSS setup, not the
+ucode revision.
+
+## On hardware (DSL-3580L, OpenWrt)
+
+- **Template layout.** `struct b43_tpl_layout` puts the beacons where the
+  loaded ucode takes them and writes the 12 byte header; it has not run on
+  the board yet. Whether a beacon goes out is the first thing to check.
+- **Five core init cycles per `wifi up`.** Every `wifi up` brings the core up
+  five times, with the same b43 messages each time, and netifd reports a
+  configuration change five times. b43's own restarts are excluded but one:
+  a DMA error would print "PIO is not supported" from the next core init,
+  which is not rate-limited; a failed PHY cycle would print an `op_init`
+  block without a firmware load; out-of-order TX, firmware panic and
+  firmware watchdog need the open-source firmware; PHY TX errors are off on
+  the AC. The PSM watchdog (`B43_IRQ_TIMER0`) is left: no ucode raises bit 13
+  through `SPR_MAC_IRQLO`, and no stock capture shows it. The likely cause is
+  hostapd failing the AP start and netifd retrying; `htmode` is `NOHT`, so
+  not a capability mismatch. Next: `iw reg get` and `iw phy phy1 channels`
+  (channel 36 must not be "No IR"), then hostapd at `log_level 0`.
+- **Fatal DMA error on TX ring 3**, 2026-10-03: `dma_reason[3] = 0x1000`,
+  `AC_VO`, bit 12, descriptor protocol error (`I_DE` in brcmsmac). With no
+  station and no beacon, mac80211 sends no data, so this is probably the
+  first TX of the session, possibly hostapd's deauth at shutdown. The ring
+  programming matches the 6.30 capture (above); b43 posts two descriptors per
+  frame where the stock driver mostly posts one. Next:
+  `hostapd_cli deauthenticate ff:ff:ff:ff:ff:ff` with the AP up, and on the
+  error the ring's status words (`0x02d0`/`0x02d4`: error code and active
+  descriptor) and that descriptor.
+
+- **Values of the bring-up log against `cold01-ch36-bw20.txt`.** Same as the
+  board's own driver: radio `0x040b` reads `0x0169` after power-on, `0x0140`
+  goes `0x0df7 -> 0x0df4`. Same as 7.14 and not as 6.30, which the board
+  runs: the rccal comparators, `E/F = 0x0ac5..7/0x0ba8..a`, cap `0xaa`-`0xab`
+  (6.30 here: `0x0b38/0x0c2c`, cap `0xb7`; the 7.14 boards `0x0a7e`-`0x0adc`),
+  and the TX gain at index 64, `0x2f13`, bbmult `0x35` as on the D6220, where
+  6.30 here writes `0x0767` and `0x42`. Different from both: the idle-TSSI
+  readings, `0x0012 = 0x09a8/0x09c4` and base index `0x26a/0x271`, where
+  6.30 here reads `0x0930/0x0944` and writes `0x24c/0x251`, and the D6220's
+  core 1 reads zero. `PLLCTL3 = 0x100e` is bcma's own write, which 6.30 here
+  does not make (`0x00133333`). All stable over the five cycles, to one or
+  two counts. Which TX gain table fits this board's front end is open: the
+  two drivers program different gains at the same index.
 
 ## Working rules
 

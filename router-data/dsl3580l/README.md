@@ -19,7 +19,7 @@ because it describes wl0 only.
 | `wl1_otp_dump.txt` | `wl -i wl1 otpdump`. Almost all zero: the only non-zero words in the first `0x50` are `0x000c: 0x1b08`, `0x0020: 0x0500`, `0x003c: 0x4352 0x4001` |
 | `wl1_srom_raw.txt`, `wl1_nvram.txt` | raw SROM and NVRAM. On the fields that matter the NVRAM equals the D6220's, `boardtype 0x668` included; only `boardnum` differs |
 | `wl1_phytable_5gl.txt` | PHY tables, low 5 GHz band |
-| `router_info.txt` | **describes wl0**, the N-PHY core integrated in the 6362 (`chipnum 0x6362`, `corerev 0x16`, `phytype 0x4`); it holds no wl1 revinfo |
+| `router_info.txt` | **describes wl0**, the N-PHY core integrated in the 6362 (`chipnum 0x6362`, `corerev 0x16`, `phytype 0x4`); it holds no wl1 revinfo. Its `ucoderev 0x3100002` is wl0's `d11ucode22_mimo`; wl1's `d11ucode42` in the same `wl` is also 784.2 |
 | `dsl3580l_pmu-trace.txt` | ChipCommon PMU resource masks of the 4352, read with `pcicfg` + `mempeek` with `wl` down |
 | `bcm43b3_3580l_map.bin` | the 480-byte SROM map file the driver loads |
 | `wl1_curpower_ch52-bw80.txt` | `wl -i wl1 curpower` on ch52/80: regulatory, board and per-rate targets. The maximum, 15.00 dBm, is the `0x0646 = 0x3c` the stock driver writes in `full-sweep.zip!80/seg01-ch52.txt` |
@@ -46,9 +46,10 @@ reads, and they have nothing to do with the channel configuration. `0x251` and
 not per core, so the head of every capture belongs to wl0's N-PHY. On
 `cold01-ch36-bw20.txt` it is `#295`–`#404`, closed by a 2.27 s gap.
 
-Attribute with two criteria, not with the gap alone:
+Attribute with the named registers, not with the gap or the CPU: after the
+window the bring-up of our core runs on both CPUs (7408 of its ops on
+`cpu0`, 580 of them radio operations, the first at `#560`).
 
-- **the CPU**: wl0's operations are on `cpu0`, our core's bring-up on `cpu1`;
 - **named registers**: `0x0078`, `0x008f`, `0x00a5`, `0x00a6` and `0x00a7` are
   `RFCTL_CMD`, `AFECTL_OVER1`, `AFECTL_OVER`, `AFECTL_C1` and `AFECTL_C2` in
   `b43/phy_n.h`, and are not in `phy_common.h`, so they are N-PHY and nobody
@@ -56,7 +57,9 @@ Attribute with two criteria, not with the gap alone:
   radio down after attach. There are no RAD operations in that window.
 
 `OTP.RDR`, `OTP.INIT`, `SROMCTL.RD/WR` and the two `PHY.WARR` fall inside it.
-**They are not ours and are not to be ported.**
+**They are not ours and are not to be ported.** `reverse-tools/strip_other_core.py`
+does not cut this window: it cuts at the second `OTP.RDR`, and here there is
+one, so an oracle built from this capture still carries wl0's reads.
 
 In `full-sweep.zip` the complete bring-up appears only on U-NII-1:
 

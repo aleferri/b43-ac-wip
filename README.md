@@ -8,8 +8,9 @@ The traces come from four boards:
 
 - **Netgear D6220** (BCM4352, 2×2, `wl` 7.14.89.14): the reference. Every gate
   runs against its sweeps.
-- **D-Link DSL-3580L** (BCM4352, 2×2, 5 GHz only, `wl` 6.30.102.7): the board
-  the port is meant to run on. Its `wl` is older, so it is never an oracle.
+- **D-Link DSL-3580L** (BCM4352, 2×2, 5 GHz only, `wl` 6.30.102.7, ucode
+  784.2): the board the port is meant to run on. Its `wl` is older, so it is
+  never an oracle; its ucode is the one b43 loads (below).
 - **agcombo** (BCM4360, 3×3, `wl` 7.14.43.21): separates chip from driver
   version.
 - **Technicolor TG789vac v2** (BCM4360, 3×3, `wl` 7.14.89.14): the D6220's `wl`
@@ -83,7 +84,30 @@ however short the run around it between two wrong values. The six
 weather-radar segments (ch120/124/128 at 20 MHz, ch116/124 at 40, ch116 at
 80) end before their availability check completes and measure a partial attach.
 
-There is no recent run on hardware.
+## On hardware
+
+The DSL-3580L runs the port under OpenWrt with `ucode42.fw` 784.2 from
+`broadcom-wl-6.30.163.46`, byte for byte the `d11ucode42` of the board's own
+`wl`. [`bringup-log.txt`](bringup-log.txt) is an AP on channel 36: probe, core
+init, PHY init, channel switch and calibrations run, and the watchdog ticks;
+nothing crashes. What is wrong on air:
+
+- **No beacon.** b43 wrote the templates where the 928 ucode takes them;
+  784 takes them elsewhere, and both put a 12 byte header in front of the
+  frame where b43 put 6. Fixed by `struct b43_tpl_layout` (`b43/b43.h`), not
+  yet run on the board.
+- **Five core init cycles per `wifi up`.** netifd reports a configuration
+  change five times, and every b43 restart path but the PSM watchdog is
+  excluded, so they most likely come from userspace. Open, see
+  `docs/retrace-todo.md`.
+- **A fatal DMA error on TX ring 3** (`AC_VO`, reason `0x1000`, descriptor
+  protocol error), seen once, 2026-10-03. Open, see `docs/retrace-todo.md`.
+
+After `B43_STAT_STARTED` every `b43info`/`b43warn`/`b43err` goes through
+`net_ratelimit()`, ten per five seconds: a bring-up spends them, and what
+follows is dropped, `Controller RESET` included. The `AC-PHY:` block markers
+are `wiphy_info()` and always print. `sysctl -w net.core.message_cost=0` turns
+the limit off.
 
 ## What is ported
 
@@ -94,11 +118,12 @@ There is no recent run on hardware.
   2069 table (5170–5825 MHz) at 20, 40 and 80 MHz, the post-switch
   calibrations, TX power from the SROM, the watchdog on `pwork_1sec`, the CRS
   threshold on `pwork_60sec`, the radar poll and the bss-up.
-- **The core** (the rest of `b43/`, `patches/0002`): channel set, DMA alignment,
+- **The core** (the rest of `b43/`, `patches/0002`): channel set, DMA ring addressing,
   TX/RX path, address match table, shared memory, key layout, the
   `channel_calibrate` hook, LEDs above GPIO 3, the 1 s tick, the noise sample,
   the availability check and the radar work, the PHY bandwidth clock, the
-  rev 42 MAC init, register read-backs and the AC template layout.
+  rev 42 MAC init, register read-backs and the template layout of each AC
+  ucode.
 - **bcma/ssb** (`bcma/`, `patches/0001`): PMU init, the PCI ID,
   `ledbh4..15`, `boardflags3` and `AvVmid`.
 
@@ -119,9 +144,8 @@ How the pieces fit is in [`docs/driver-status.md`](docs/driver-status.md).
 
 ## Build and hardware test
 
-- a kernel with the `patches/` series applied (`git am`);
-- `BROKEN` removed from `B43_PHY_AC` in `drivers/net/wireless/broadcom/b43/Kconfig`
-  (no patch does this), and `CONFIG_B43_PHY_AC=y`;
+- a kernel with the `patches/` series applied (`git am`) and
+  `CONFIG_B43_PHY_AC=y`;
 - firmware in `/lib/firmware/b43/`, a 5 GHz AP on channel 36, a serial console
   or netconsole.
 
@@ -139,8 +163,10 @@ iw wlan1 scan freq 5180
 b43/                 the b43 files the port changes or adds, whole
 bcma/                the bcma, ssb and bcm47xx files it changes, at their kernel
                      paths, and the SROM rev 11 test harness
-patches/             the three kernel patches, generated from b43/ and bcma/
+patches/             the three kernel patches on v7.2, and the OpenWrt ones
+                     (816-*, 880-*) on backports 7.2; see docs/driver-status.md
 test/unit/           the PHY alone against the captures
+test/d11sim/         the ucode run on the b43-tools interpreter
 test/integration/    the whole of b43 with the port, against real kernel headers
 docs/                technical notes
 reverse-tools/       trace pipeline, analysis and extraction scripts
@@ -150,6 +176,7 @@ wl-cc-dump/          on-device ChipCommon PMU state dump
 wl-capture-scripts/  device-side capture sweeps
 router-data/         captures and static dumps per board
 scripts/             patch regeneration and helpers
+bringup-log.txt      a bring-up log from the DSL-3580L
 ```
 
 ## After the MVP

@@ -1822,12 +1822,63 @@ static void handle_irq_pmq(struct b43_wldev *dev)
 	b43_write16(dev, B43_MMIO_PS_STATUS, 0x0002);
 }
 
+static const struct b43_tpl_layout b43_tpl_layout_legacy = {
+	.bcn_base	= { B43_SHM_SH_BT_BASE0, B43_SHM_SH_BT_BASE1 },
+	.bcn_size	= 0x0200,
+	.hdr_len	= sizeof(struct b43_plcp_hdr6),
+	.plcp_off	= 0,
+};
+
+static const struct b43_tpl_layout b43_tpl_layout_ac_784 = {
+	.bcn_base	= { B43_SHM_SH_BT_BASE0_AC784,
+			    B43_SHM_SH_BT_BASE1_AC784 },
+	.bcn_size	= 0x0200,
+	.hdr_len	= 12,
+	.plcp_off	= 3,
+};
+
+static const struct b43_tpl_layout b43_tpl_layout_ac_832 = {
+	.bcn_base	= { B43_SHM_SH_BT_BASE0_AC832,
+			    B43_SHM_SH_BT_BASE1_AC832 },
+	.bcn_size	= 0x0280,
+	.hdr_len	= 12,
+	.plcp_off	= 3,
+};
+
+static const struct b43_tpl_layout *b43_tpl_layout_find(struct b43_wldev *dev)
+{
+	if (dev->fw.hdr_format != B43_FW_HDR_AC)
+		return &b43_tpl_layout_legacy;
+
+	switch (dev->fw.rev) {
+	case 784:
+		return &b43_tpl_layout_ac_784;
+	case 832:
+	case 928:
+		return &b43_tpl_layout_ac_832;
+	}
+	return NULL;
+}
+
+/* Byte @i of a template: the header the layout asks for, then the frame. */
+static u8 b43_tpl_byte(const struct b43_tpl_layout *tpl,
+		       const struct b43_plcp_hdr4 *plcp,
+		       const u8 *data, u16 size, unsigned int i)
+{
+	if (i >= tpl->hdr_len)
+		return i - tpl->hdr_len < size ? data[i - tpl->hdr_len] : 0;
+	if (i >= tpl->plcp_off && i - tpl->plcp_off < sizeof(plcp->raw))
+		return plcp->raw[i - tpl->plcp_off];
+	return 0;
+}
+
 static void b43_write_template_common(struct b43_wldev *dev,
 				      const u8 *data, u16 size,
 				      u16 ram_offset,
 				      u16 shm_size_offset, u8 rate)
 {
-	u32 i, tmp;
+	const struct b43_tpl_layout *tpl = dev->fw.tpl;
+	unsigned int i, total = tpl->hdr_len + size;
 	struct b43_plcp_hdr4 plcp;
 	struct b43_ram_seq seq = { .next = U16_MAX }, *s = NULL;
 
@@ -1838,27 +1889,17 @@ static void b43_write_template_common(struct b43_wldev *dev,
 
 	plcp.data = 0;
 	b43_generate_plcp_hdr(&plcp, size + FCS_LEN, rate);
-	b43_tpl_write(dev, s, ram_offset, le32_to_cpu(plcp.data));
-	ram_offset += sizeof(u32);
-	/* The PLCP is 6 bytes long, but we only wrote 4 bytes, yet.
-	 * So leave the first two bytes of the next write blank.
-	 */
-	tmp = (u32) (data[0]) << 16;
-	tmp |= (u32) (data[1]) << 24;
-	b43_tpl_write(dev, s, ram_offset, tmp);
-	ram_offset += sizeof(u32);
-	for (i = 2; i < size; i += sizeof(u32)) {
-		tmp = (u32) (data[i + 0]);
-		if (i + 1 < size)
-			tmp |= (u32) (data[i + 1]) << 8;
-		if (i + 2 < size)
-			tmp |= (u32) (data[i + 2]) << 16;
-		if (i + 3 < size)
-			tmp |= (u32) (data[i + 3]) << 24;
-		b43_tpl_write(dev, s, ram_offset + i - 2, tmp);
+
+	for (i = 0; i < total; i += sizeof(u32)) {
+		u32 tmp = 0;
+		unsigned int b;
+
+		for (b = 0; b < sizeof(u32); b++)
+			tmp |= (u32)b43_tpl_byte(tpl, &plcp, data, size,
+						 i + b) << (8 * b);
+		b43_tpl_write(dev, s, ram_offset + i, tmp);
 	}
-	b43_shm_write16(dev, B43_SHM_SHARED, shm_size_offset,
-			size + sizeof(struct b43_plcp_hdr6));
+	b43_shm_write16(dev, B43_SHM_SHARED, shm_size_offset, total);
 }
 
 /* Check if the use of the antenna that ieee80211 told us to
@@ -1939,6 +1980,7 @@ static void b43_write_beacon_template(struct b43_wldev *dev,
 				      u16 ram_offset,
 				      u16 shm_size_offset)
 {
+	const struct b43_tpl_layout *tpl = dev->fw.tpl;
 	unsigned int i, len, variable_len;
 	const struct ieee80211_mgmt *bcn;
 	const u8 *ie;
@@ -1963,7 +2005,7 @@ static void b43_write_beacon_template(struct b43_wldev *dev,
 
 	bcn = (const struct ieee80211_mgmt *)(beacon_skb->data);
 	len = min_t(size_t, beacon_skb->len,
-		    0x200 - sizeof(struct b43_plcp_hdr6));
+		    tpl->bcn_size - tpl->hdr_len);
 
 	b43_write_template_common(dev, (const u8 *)bcn,
 				  len, ram_offset, shm_size_offset, rate);
@@ -1993,7 +2035,7 @@ static void b43_write_beacon_template(struct b43_wldev *dev,
 				break;
 			tim_found = true;
 
-			tim_position = sizeof(struct b43_plcp_hdr6);
+			tim_position = tpl->hdr_len;
 			tim_position += offsetof(struct ieee80211_mgmt, u.beacon.variable);
 			tim_position += i;
 
@@ -2014,7 +2056,7 @@ static void b43_write_beacon_template(struct b43_wldev *dev,
 		 */
 		b43_shm_write16(dev, B43_SHM_SHARED,
 				B43_SHM_SH_TIMBPOS,
-				len + sizeof(struct b43_plcp_hdr6));
+				len + tpl->hdr_len);
 		b43_shm_write16(dev, B43_SHM_SHARED,
 				B43_SHM_SH_DTIMPER, 0);
 	}
@@ -2029,8 +2071,7 @@ static void b43_upload_beacon0(struct b43_wldev *dev)
 
 	if (wl->beacon0_uploaded)
 		return;
-	b43_write_beacon_template(dev, dev->phy.type == B43_PHYTYPE_AC ?
-				  B43_SHM_SH_BT_BASE0_AC : B43_SHM_SH_BT_BASE0,
+	b43_write_beacon_template(dev, dev->fw.tpl->bcn_base[0],
 				  B43_SHM_SH_BTL0);
 	wl->beacon0_uploaded = true;
 }
@@ -2041,8 +2082,7 @@ static void b43_upload_beacon1(struct b43_wldev *dev)
 
 	if (wl->beacon1_uploaded)
 		return;
-	b43_write_beacon_template(dev, dev->phy.type == B43_PHYTYPE_AC ?
-				  B43_SHM_SH_BT_BASE1_AC : B43_SHM_SH_BT_BASE1,
+	b43_write_beacon_template(dev, dev->fw.tpl->bcn_base[1],
 				  B43_SHM_SH_BTL1);
 	wl->beacon1_uploaded = true;
 }
@@ -3035,6 +3075,10 @@ static int b43_upload_microcode(struct b43_wldev *dev)
 		dev->fw.hdr_format = B43_FW_HDR_410;
 	else
 		dev->fw.hdr_format = B43_FW_HDR_351;
+	dev->fw.tpl = b43_tpl_layout_find(dev);
+	if (!dev->fw.tpl)
+		b43warn(dev->wl, "Template RAM layout of firmware %u unknown: "
+			"no AP, mesh or IBSS\n", dev->fw.rev);
 	WARN_ON(dev->fw.opensource != (fwdate == 0xFFFF));
 
 	dev->qos_enabled = dev->wl->hw->queues > 1;
@@ -5785,7 +5829,7 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
 
 		/*
 		 * The AC microcode gets bit 31 cleared from every stock driver
-		 * in the captures -- 6.30.102.7 with ucode 802, 7.14 with 928
+		 * in the captures -- 6.30.102.7 with ucode 784, 7.14 with 928
 		 * on three boards -- except the x86 hybrid 6.30.223, which
 		 * leaves it set for its ucode 832. That one is followed too:
 		 * the captures cannot tell the ucode from the build.
@@ -5989,6 +6033,9 @@ static int b43_op_add_interface(struct ieee80211_hw *hw,
 	b43dbg(wl, "Adding Interface type %d\n", vif->type);
 
 	dev = wl->current_dev;
+	if (vif->type != NL80211_IFTYPE_STATION && !dev->fw.tpl)
+		goto out_mutex_unlock;
+
 	wl->operating = true;
 	wl->vif = vif;
 	wl->if_type = vif->type;

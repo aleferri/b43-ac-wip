@@ -46,6 +46,14 @@ python3 ../unit/cmp_skip.py /tmp/m01 /tmp/int.trace 167:38445 --board d6220 --bu
 python3 ../unit/compare.py /tmp/m01 /tmp/int.trace --auto-align --bus
 ```
 
+On this run b43 reads firmware version 43605.21930, `0xaa55.0x55aa`, not the
+segment's 928. `b43_validate_chipaccess()` writes the two patterns in the
+opposite order to `wl`, and the shared-memory model consumes a queued vendor
+read only from the head of its queue, so one pattern read per cell stays
+queued and `b43_upload_microcode()` gets it. The template layout is chosen
+by that revision: with an unknown one the AP is refused and no beacon is
+written. Dropping `#156` and `#158` from the oracle gives the driver 928.
+
 `B43_CHANNEL`, `B43_BW` and `B43_BOARD` choose the configuration and the
 profile of `../board_profile.h`; the channel must be one b43 registered.
 `make run` also writes `TRACE_OUT.fn` with function markers, and the `b43: ...`

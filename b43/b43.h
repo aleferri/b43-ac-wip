@@ -304,15 +304,10 @@ enum {
 #define B43_SHM_SH_BTL0			0x0018	/* Beacon template length 0 */
 #define B43_SHM_SH_BT_BASE1		0x0468	/* Beacon template base 1 */
 #define B43_SHM_SH_BTL1			0x001A	/* Beacon template length 1 */
-/*
- * The AC cores' microcode takes the two beacon templates here.
- *
- * TODO: probe-response offload. The probe response template goes at 0x0700,
- * and the stock driver rewrites it after every beacon; b43 uploads none and
- * leaves the probe requests to mac80211. See docs/retrace-todo.md.
- */
-#define B43_SHM_SH_BT_BASE0_AC		0x0200
-#define B43_SHM_SH_BT_BASE1_AC		0x0480
+#define B43_SHM_SH_BT_BASE0_AC784	0x00D8	/* AC ucode 784, beacon 0 */
+#define B43_SHM_SH_BT_BASE1_AC784	0x02D8	/* AC ucode 784, beacon 1 */
+#define B43_SHM_SH_BT_BASE0_AC832	0x0200	/* AC ucode 832 on, beacon 0 */
+#define B43_SHM_SH_BT_BASE1_AC832	0x0480	/* AC ucode 832 on, beacon 1 */
 #define B43_SHM_SH_BTSFOFF		0x001C	/* Beacon TSF offset */
 #define B43_SHM_SH_TIMBPOS		0x001E	/* TIM B position in beacon */
 #define B43_SHM_SH_DTIMP		0x0012	/* DTIP period */
@@ -848,6 +843,32 @@ enum b43_firmware_hdr_format {
 	B43_FW_HDR_AC,
 };
 
+/*
+ * Where a microcode takes its beacon templates in template RAM, and what goes
+ * in front of the frame there.
+ *
+ * The bases are constants of the microcode, not of the core: the AC builds
+ * load them as immediates right before the template engine is started, those
+ * of 784 and those of 832, which 928 keeps. Each beacon has the room up to the
+ * next template, header included.
+ *
+ * In front of the frame the pre-AC microcode takes the 6 byte PLCP header. The
+ * AC one takes 12 bytes with the PLCP at byte 3, the rest zero (the beacon of
+ * the agcombo bus capture, 928), and counts them in the template length and
+ * in the TIM position (0x3c + SSID length on 784 and 928).
+ *
+ * TODO: probe-response offload. Its template follows the beacons, at 0x04d8
+ * in 784 and 0x0700 in 832 and 928, and the stock driver rewrites it after
+ * every beacon; b43 uploads none and leaves the probe requests to mac80211.
+ * See docs/retrace-todo.md.
+ */
+struct b43_tpl_layout {
+	u16 bcn_base[2];
+	u16 bcn_size;
+	u8 hdr_len;
+	u8 plcp_off;
+};
+
 /* Pointers to the firmware data and meta information about it. */
 struct b43_firmware {
 	/* Microcode */
@@ -866,6 +887,8 @@ struct b43_firmware {
 
 	/* Format of header used by firmware */
 	enum b43_firmware_hdr_format hdr_format;
+	/* Template RAM layout; NULL for an AC microcode not known here */
+	const struct b43_tpl_layout *tpl;
 
 	/* Set to true, if we are using an opensource firmware.
 	 * Use this to check for proprietary vs opensource. */

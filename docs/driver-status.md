@@ -101,3 +101,15 @@ them and re-emits the three patches. Message, author and date come from the
 current patch: to change a message, edit it in the patch and re-run. A new
 AC-PHY source file enters 0003 through its line in `b43/Makefile`; any other
 file in `b43/` goes into 0002.
+
+The two do not agree at present. 0001-0003 apply on v7.2 and keep its
+upstream changes; `b43/` and `bcma/` are whole files of an older tag (6.8 for
+`b43/`). At none of 6.8, 6.12, 6.18, 7.0, 7.1 and 7.2 does the script give
+back the committed patches: at 7.2 it reverts the upstream changes, and it also
+deletes every other patch in `patches/`. Until the trees are moved to 7.2, a
+change goes into a patch by applying its diff on v7.2 plus the patch and
+re-exporting the commit with its message, author and date.
+
+The OpenWrt patches (`816-02`, `816-03`, `880`) are on backports 7.2 with
+OpenWrt's b43 patches 810-815 applied, and are kept separately.
+`816-02` does not yet carry the template layout.
