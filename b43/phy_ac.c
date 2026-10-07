@@ -5580,8 +5580,8 @@ static void b43_phy_ac_post_switch_calibrations(struct b43_wldev *dev)
 	 * done, all of it runs everywhere.
 	 *
 	 * rxiqcal_finalize() being inside the gate also means the coefficients
-	 * it saves for b43_phy_ac_bss_up() keep a previous bring-up's values,
-	 * as in the stock driver.
+	 * it saves for b43_phy_ac_down() keep a previous bring-up's values, as
+	 * in the stock driver.
 	 */
 	if (!b43_phy_ac_may_calibrate_tx(dev)) {
 		b43_phy_ac_post_bringup_tail(dev);
@@ -8501,6 +8501,7 @@ static void b43_phy_ac_iq_acc_peek(struct b43_wldev *dev, unsigned int core,
 	if (measurement && !acc->measuring) {
 		acc->measuring = true;
 		acc->rounds = 0;
+		acc->solved = false;
 	} else if (!measurement) {
 		acc->measuring = false;
 	}
@@ -9394,7 +9395,7 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 	B43_AC_FN();
 	/*
 	 * Block D saves the LO DAC and the TX IQ/LO coefficients into @lo_dac
-	 * and @txiqlo_coef; b43_phy_ac_bss_up() writes them back.
+	 * and @txiqlo_coef; b43_phy_ac_down() writes them back.
 	 */
 	u16 (*lo_dac)[4] = dev->phy.ac->lo_dac;
 	u16 (*txiqlo_coef)[3] = dev->phy.ac->txiqlo_coef;

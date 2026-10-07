@@ -195,8 +195,9 @@ struct b43_phy_ac_iq_acc {
 	unsigned int rounds;
 	bool measuring;
 	/*
-	 * The solved coefficients, computed once and reapplied: the stock
-	 * driver writes the same values again on the second apply.
+	 * The solved coefficients, computed once per measurement and
+	 * reapplied: the stock driver writes the same values again on the
+	 * second apply. A new measurement window invalidates them.
 	 */
 	s16 a;
 	s16 b;
