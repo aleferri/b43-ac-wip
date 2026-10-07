@@ -103,31 +103,24 @@ u8 b43_ppr_ac_row_max(const struct b43_ppr_ac *ppr,
 }
 
 /*
- * Sub-band index into maxp5ga[].
+ * Sub-band index into maxp5ga[], keyed on the primary channel: at 80 MHz the
+ * captures follow it, and the centre puts ch36 one group too high.
  *
- * Keyed on the primary channel, not the centre: at 80 MHz the captures follow
- * the primary, and using the centre puts ch36 one group too high.
+ * The first boundary is 5210 at 20 and 80 MHz, 5250 at 40, settled by the
+ * sign of the residuals: a regulatory limit can only lower a target. At 40
+ * MHz 5210 leaves ch44 two units low, which nothing downstream raises; 5250
+ * leaves ch36 and ch52 two units high, which a limit explains, and the rest
+ * exact. The 20 MHz boundary rests on the d6220 alone, the only board with
+ * distinct first entries: ch40 gives 66 and ch44 64 with maxp5ga = {72, 70,
+ * ...}.
  *
- * The first boundary depends on the width, 5210 at 20 and 80 MHz and 5250 at
- * 40. The sign of the residuals settles it: a regulatory limit can only lower
- * a target, so a residual where the driver comes out *below* the vendor cannot
- * be explained by the regulatory stage. At 40 MHz the 5210 boundary leaves
- * ch44 two units low, which nothing downstream could raise; 5250 leaves ch36
- * and ch52 two units high, which a limit explains, and every other 40 MHz
- * configuration exact.
+ * Not b43_phy_ac_pa5g_group(), which splits at 5250 at every width
+ * (subband5gver=4) for the pa5ga coefficients: the two coincide at 40 MHz
+ * only.
  *
- * Deliberately not b43_phy_ac_pa5g_group(), which implements the
- * subband5gver=4 split at 5250 for every width and feeds the pa5ga
- * coefficients. The two partitions coincide at 40 MHz and differ at 20.
- *
- * The 20 MHz boundary rests on one board: it is pinned by ch40 giving 66 and
- * ch44 giving 64 with maxp5ga = {72, 70, ...}, and only the d6220 has those
- * two entries distinct.
- *
- * ch149-165 are the fourth entry. The tg789vac-v2 (maxp5ga 90/88/92/88)
- * writes 0x52 on all nine of its UNII-3 configurations, 88 less the margin,
- * where the third entry would give 0x56. The d6220 carries 0 there
- * (72/70/86/0) and writes 0x04 on all eight of its own.
+ * ch149-165 take the fourth entry: the tg789vac-v2 (maxp5ga 90/88/92/88)
+ * writes 0x52 on all nine UNII-3 configurations, 88 less the margin, where
+ * the third would give 0x56; the d6220 (72/70/86/0) writes 0x04 on its eight.
  */
 unsigned int b43_ppr_ac_subband(u16 chan, enum nl80211_chan_width width)
 {

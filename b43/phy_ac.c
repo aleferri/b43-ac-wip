@@ -736,43 +736,37 @@ void b43_phy_ac_rxiqcal_dds_seed_tone(struct b43_wldev *dev, int step)
 }
 
 /*
- * The chain masks of the 0x05d4-0x05dc block, which b43.h calls KEYIDXBLOCK
- * for the v4 firmware and which the AC core uses for something else.
+ * Chain masks of the 0x05d4-0x05dc block, which b43.h calls KEYIDXBLOCK for
+ * the v4 firmware and the AC core uses for something else.
  *
- * 0x05d4 and 0x05dc are coremask on every segment of every sweep (0x3 on the
- * d6220, 0x7 on the agcombo and the tg789vac).
+ * 0x05d4 and 0x05dc are coremask on every segment (0x3 on the d6220, 0x7 on
+ * the agcombo and the tg789vac). 0x05da follows 0x05d8 while that keeps more
+ * than one chain and is coremask where it drops to one (7.14.89; the
+ * agcombo's 7.14.43 writes coremask throughout). Tempsense reads mid-range
+ * on the deviating segments: temperature is not the cause.
  *
- * 0x05da follows 0x05d8 where that keeps more than one chain, and is
- * coremask where 0x05d8 drops to one. This is the 7.14.89 behaviour; the
- * agcombo's 7.14.43 writes coremask there throughout. It is not
- * temperature-driven: tempsense reads mid-range on the deviating segments.
- *
- * 0x05d6 and 0x05d8 are the chain choice of two rate classes and follow the
- * regulatory headroom, not the sub-band. Per class, the stock driver takes
- * the chain count with the highest total power
+ * 0x05d6 and 0x05d8 pick the chain count of two rate classes from the
+ * regulatory headroom: per class, the n with the highest
  *
  *   min(board, limit - class_offset[n]) + 10 log10(n)
  *
- * with the fewer chains on a tie. limit is the locale's Local Max for the
- * channel and width less the board's antenna gain; board is the top row of
- * the operating width; the offsets are those `wl curpower` prints
- * (router-data/agcombo/stats.txt, dsl3580l/wl1_curpower_ch52-bw80.txt):
- * CDD on 2 and 3 chains 3 and 5 dB under one chain, TXBF 6 and 9.75. 0x05d6
- * behaves as the TXBF rows and 0x05d8 as the CDD rows; that assignment is
- * the best fit of the four tried, not a known meaning.
+ * fewer chains on a tie. limit is the locale's Local Max for channel and
+ * width less the antenna gain, board the top row of the operating width,
+ * and the offsets those `wl curpower` prints (router-data/agcombo/stats.txt,
+ * dsl3580l/wl1_curpower_ch52-bw80.txt): CDD 3 and 5 dB under one chain on 2
+ * and 3, TXBF 6 and 9.75. 0x05d6 as TXBF and 0x05d8 as CDD is the best of
+ * the four fits tried, not a known meaning.
  *
- * The Local Max is not in cfg80211, and is not the cap that binds the target
- * (b43_phy_ac_locale_ceiling()): at ch64/20 the target caps at 20.5 dBm
- * while the masks need 30 or more. The table below is fitted to the masks of
- * the three boards, from OBJ.WR 0x05d6/0x05d8 in every cold segment of the
- * d6220, tg789vac-v2 and agcombo; the ranges intersect on 18 of the 19
- * channel/width pairs. A channel not in the table takes coremask. The
- * tg789vac's ch100 and ch116 at 80 MHz do not fit (0x05d8 is 0x5 where
- * ch132/80, same rows, has 0x7) and are left out.
+ * The Local Max is not in cfg80211 and is not the cap on the target
+ * (b43_phy_ac_locale_ceiling(): 20.5 dBm at ch64/20, where the masks need
+ * 30 or more). The table is fitted to OBJ.WR 0x05d6/0x05d8 in every cold
+ * segment of the d6220, tg789vac-v2 and agcombo; the ranges intersect on 18
+ * of the 19 channel/width pairs, and a channel outside the table takes
+ * coremask. The tg789vac's ch100 and ch116 at 80 MHz do not fit (0x05d8 is
+ * 0x5 where ch132/80, same rows, has 0x7) and are left out.
  *
- * Above 20 MHz the TX power site's second write of the block sees a level
- * 1 dB higher; at 20 MHz every site writes the same pair. Why is not known
- * (docs/retrace-todo.md).
+ * Above 20 MHz the TX power site's second write sees a level 1 dB higher,
+ * for a reason not known (docs/retrace-todo.md).
  */
 struct b43_phy_ac_local_max_row {
 	u8 first, last;		/* primary channel range, inclusive */
@@ -1050,31 +1044,25 @@ static u16 b43_phy_ac_legacy_cap(struct b43_wldev *dev,
 }
 
 /*
- * Field at +0x0e of the per-rate block: the rate's power offset, in
- * sixteenths of a dB. brcmsmac has nothing at this offset.
+ * Field at +0x0e of the per-rate block, absent in brcmsmac: the rate's power
+ * offset in sixteenths of a dB, its distance from the top of the per-rate
+ * table read on the spacing table, which never saturates (on the d6220's
+ * UNII-3, maxp5ga 0 and the power table flat at the floor, the stock driver
+ * still writes the SROM spacing).
  *
- * It is the rate's distance from the top of the per-rate table, read on the
- * spacing table, which never saturates: on the d6220's UNII-3, with maxp5ga 0
- * and the power table flat at the floor, the stock driver still writes the
- * SROM spacing.
- *
- * The legacy OFDM rates are read on the row of the operating width, not the
- * 20 MHz one: a legacy rate on a bonded channel goes out duplicated over the
- * whole block. Within the row each rate reads the group of its modulation
- * class (ppr_ac.h): 6 to 18 Mb/s the first, 24 to 54 the next four.
- *
- * The target is the maximum over every row the channel loads, which is what
- * the PHY closes its loop on. The regulatory ceiling applies to the power
- * table only (b43_ppr_ac_load_max_from_sprom()), not to the distances; the
- * legacy limit does, through b43_phy_ac_rate_po().
+ * Legacy OFDM rates read the row of the operating width, not the 20 MHz
+ * one, since on a bonded channel they go out duplicated over the block, and
+ * within it the group of their modulation class (ppr_ac.h): 6 to 18 Mb/s
+ * the first, 24 to 54 the next four. The target is the maximum over the rows
+ * the channel loads. The regulatory ceiling applies to the power table only
+ * (b43_ppr_ac_load_max_from_sprom()), the legacy limit through
+ * b43_phy_ac_rate_po().
  *
  * Not reproduced: at 40 and 80 MHz the stock driver writes max(distance, K)
- * for a K constant across a segment's rates (1 dB on ch60/40, 2 dB on
- * ch116/80, 3 dB on ch36/80), and nothing derives K yet; ch100 at 40 and 80
- * MHz do not even take that form (docs/retrace-todo.md).
- *
- * The CCK rates have no 5 GHz SROM field in rev 11; see
- * b43_phy_ac_cck_rate_po().
+ * with K constant over a segment's rates (1 dB on ch60/40, 2 dB on ch116/80,
+ * 3 dB on ch36/80) and not derived yet; ch100 at 40 and 80 MHz does not take
+ * even that form (docs/retrace-todo.md). CCK has no 5 GHz SROM field in rev
+ * 11, see b43_phy_ac_cck_rate_po().
  * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   13009-13068, 13683-13742, 36065-36124]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -1778,34 +1766,30 @@ static u16 b43_phy_ac_reg_ceiling(struct b43_wldev *dev)
 }
 
 /*
- * TX power target: the per-rate table and its maximum per core.
+ * TX power target: the per-rate table and its maximum per core, as in
+ * brcmsmac and b43_nphy_op_recalc_txpower() with the rev 11 table: per rate,
+ * min(SROM limit, regulatory limit) less the 6-unit margin, floored at
+ * 1 dBm. The maximum over the rates goes to 0x0646[7:0] per core, the power
+ * loop's target.
  *
- * As in brcmsmac and in b43_nphy_op_recalc_txpower(), with the rev 11 table: for every rate the
- * channel carries, min(SROM limit, regulatory limit) less the 6-unit margin,
- * floored at 1 dBm. The maximum over the rates is what the PHY closes its
- * power loop on, written to 0x0646[7:0] per core.
+ * The 6 + antenna gain phy_n.c keeps under "#if 0" is what the captures
+ * show, with the antenna gain on the regulatory side only: exact from the
+ * SROM on all 26 hot configurations.
  *
- * The 6 + antenna gain that phy_n.c keeps under "#if 0" is what the captures
- * reproduce, with the antenna gain on the regulatory side only: the hot
- * sweep is exact from the SROM alone on all 26 configurations.
+ * The 1 dBm floor, not brcmsmac's 8, binds only on the d6220's UNII-3
+ * (maxp5ga 0), where all eight configurations write 0x04 (cold21-ch149-bw20).
+ * Nor are the rates below the TSSI-visible power (17 quarters there)
+ * dropped: 4 is programmed anyway.
  *
- * The floor is not brcmsmac's 8 dBm. It binds only on the d6220's UNII-3,
- * where maxp5ga is 0: the stock driver writes 0x04 there on all eight
- * configurations (cold21-ch149-bw20). For the same reason there is no stage
- * switching off the rates below the TSSI-visible power: that threshold is
- * 17 quarters on that sub-band and 4 is programmed all the same.
- *
- * The SROM table is loaded from the minimum maxp5ga over the active cores,
- * as b43's loader does, and each core then adds back the difference to its
- * own maxp5ga. On the boards captured the cores are equal.
- *
- * Since the 40 and 80 MHz tables also carry their 20-in-40, 20-in-80 and
- * 40-in-80 rows, the maximum lands on the smallest mcsbw*po offset among the
- * widths the channel contains. Against the hot sweep this is exact at 20 and
- * 40 MHz and on ch36 and ch100 at 80. Missing is one term the stock driver
- * takes off at hot on ch36/40, ch52/40 and ch52/80 (two units): a per-rate
- * limit of the country in force, the user target or the TSSI-visible
- * threshold; the captures do not say which.
+ * The SROM table is loaded from the lowest maxp5ga of the active cores, as
+ * b43's loader does, and each core adds back its own difference (zero on
+ * the captured boards). The 40 and 80 MHz tables carry their 20-in-40,
+ * 20-in-80 and 40-in-80 rows, so the maximum lands on the smallest mcsbw*po
+ * offset of the widths the channel contains. Against the hot sweep this is
+ * exact at 20 and 40 MHz and on ch36 and ch100 at 80; at ch36/40, ch52/40
+ * and ch52/80 the stock driver takes two more units off, from a per-rate
+ * country limit, the user target or the TSSI threshold: the captures do not
+ * say which.
  *
  * Returns whether the target changed since the last computation.
  */
@@ -2054,31 +2038,23 @@ static void b43_phy_ac_txpwrctrl_setup(struct b43_wldev *dev, u16 freq)
 }
 
 /*
- * TX-gain table for 5 GHz, EPA path, radio 2069 rev 4.
- *
- * Byte-for-byte transcription of the vendor blob symbol
- * `acphy_txgain_epa_5g_2069rev4` (wlD6220.o .rodata @ 0x403af0, 768 bytes).
- * Each of the 128 entries is a triplet of big-endian u16 fields as stored
- * in the blob, re-expressed here as host-endian u16: one 48-bit entry per TX
- * power index. Bits 7:0 are the bbmult, the byte table 0x20 and the 0x0c
- * cells 0x63/0x73 + 4 * core take; bits 47:8 are the three gain code words
+ * TX-gain table for 5 GHz, EPA path, radio 2069 rev 4: the vendor symbol
+ * `acphy_txgain_epa_5g_2069rev4` (wlD6220.o .rodata @ 0x403af0, 768 bytes),
+ * 128 big-endian u16 triplets re-expressed in host order, one 48-bit entry
+ * per TX power index. Bits 7:0 are the bbmult, which table 0x20 and the 0x0c
+ * cells 0x63/0x73 + 4 * core take; bits 47:8 are the three gain codes
  * b43_phy_ac_txpwr_by_index() writes to table 0x07 at 0x100/0x103/0x106 +
  * core.
  *
- * Verified byte-for-byte across three independent blob branches carrying
- * the same symbol name: wlDSL-3580_EU.o_save (6.30), wlD6220.o_save
- * (7.14.89), and wl.ko extracted from AGSOT_1_0_8.img (Sercomm, unrelated
- * to Netgear/D-Link). D6220 and AGSOT match 128/128; the 6.30 DSL branch
- * diverges from index 31 onward (97/128 entries different). Two physically
- * independent boards carrying the same exact value rules out per-board
- * calibration -- this is the generic 7.x-branch table.
- *
- * The low byte of column [0] reproduces the vendor's table 0x20 load 128/128.
- * The 6.30 hybrid loads the whole entries there instead, and its 5 GHz
+ * The same symbol in wlD6220.o_save (7.14.89) and in the wl.ko of
+ * AGSOT_1_0_8.img (Sercomm) matches 128/128, so it is the generic 7.x table
+ * and not a board calibration; the 6.30 wlDSL-3580_EU.o_save differs from
+ * index 31 on (97/128). The low byte of column [0] reproduces the table 0x20
+ * load 128/128; the 6.30 hybrid loads whole entries there, and its 5 GHz
  * table differs from this one in 38 of 384 words.
  *
- * Which table, EPA or IPA, the blob picks on which board is not established;
- * every board captured uses the EPA ones.
+ * Which table, EPA or IPA, the blob picks on which board is not
+ * established; every board captured uses the EPA ones.
  */
 static const u16 b43_acphy_txgain_epa_5g_2069rev4[128][3] = {
 	{ 0x0044, 0x7f00, 0xf3ff },
@@ -4975,33 +4951,27 @@ static const u8 b43_phy_ac_crs_ladder[3][15] = {
 };
 
 /*
- * From the noise sample to the ladder index, per chain.
- *
- * The watchdog latches the SHM window 0x0308-0x0314, one 32-bit cell per
- * chain (0x0308 chain 0, 0x030c chain 1, 0x0310 chain 2, zero on the 4352).
- * Each sample becomes an index
+ * From the noise sample to the ladder index, per chain. The watchdog latches
+ * the SHM window 0x0308-0x0314, one 32-bit cell per chain (0x0308, 0x030c,
+ * 0x0310; zero on the 4352's third), and each sample becomes
  *
  *   n     = sample >> bandwidth step
  *   v     = how many thresholds of b43_phy_ac_crs_noise_th[] n reaches
  *   index = b43_phy_ac_crs_noise_idx[v] + the width's anchor
  *
- * and the chain's index in force is the mean of the last four, rounded up.
+ * The chain's index in force is the mean of its last four, rounded up.
  * Chain 0 gives the threshold common to the eight CRS registers, the others
- * the 0x0910 bank; see b43_phy_ac_prog_bank_0910().
+ * the 0x0910 bank (b43_phy_ac_prog_bank_0910()). Verified on every CRS block
+ * preceded by a sample in both sweeps of the D6220 and of the agcombo, 125
+ * common thresholds and 148 bank values; a window of three, five or six gets
+ * 3 to 10 of 126 wrong on the D6220 cold sweep.
  *
- * Verified on every CRS block preceded by a sample, on both sweeps of the
- * D6220 and of the agcombo: 125 common thresholds and 148 bank values. A
- * window of three, five or six samples gets 3 to 10 of 126 wrong on the
- * D6220 cold sweep.
- *
- * The sample is a power integrated over the channel and scales with the
- * width (median 1384 at 20 MHz, 2525 at 40, 3832 at 80); divided by it, the
- * thresholds are the same at every width, and the anchor is 0 at 20 MHz,
- * +2 on the bonded widths.
- *
- * The captures pin 1536 and 2048 to three units, 1024 between 1001 and
- * 1025, 3072 between 2914 and 3147; 4096 -> 7 rests on a single sample, and
- * what lies above is not known.
+ * The sample is a power integrated over the channel (median 1384 at 20 MHz,
+ * 2525 at 40, 3832 at 80); scaled by the width the thresholds are the same,
+ * and the anchor is 0 at 20 MHz and +2 when bonded. The captures pin 1536
+ * and 2048 to three units, 1024 between 1001 and 1025 and 3072 between 2914
+ * and 3147; 4096 -> 7 rests on a single sample, and above it nothing is
+ * known.
  */
 static const u16 b43_phy_ac_crs_noise_th[] = { 1024, 1536, 2048, 3072, 4096 };
 static const u8 b43_phy_ac_crs_noise_idx[] = { 0, 1, 3, 4, 6, 7 };
@@ -8512,39 +8482,30 @@ void b43_phy_ac_rxiqcal_meas_post_dds_apply_v2(struct b43_wldev *dev)
 }
 
 /*
- * Solve the RX-IQ coefficients (a, b) of one core from its measurement
- * rounds.
- *
- * Each round is one tone: two at +f and -f up to 40 MHz, six at +-f, +-3f,
- * +-4f at 80. What goes into 0x?a0/0x?a1 is the frequency-independent part,
- * the mean over the tones of the per-tone coefficients; summing the
- * accumulators instead would weight each tone by its power, which at 80 MHz
- * comes out one unit off.
- *
+ * Solve one core's RX-IQ coefficients (a, b) from its measurement rounds,
+ * one round per tone: +-f up to 40 MHz, +-f, +-3f, +-4f at 80. 0x?a0/0x?a1
+ * take the mean of the per-tone coefficients; summing the accumulators
+ * instead weights each tone by its power and is one unit off at 80 MHz.
  * Per tone, in Q10:
  *
  *   a_r     = -iq * 2^10 / ii
  *   b_r + 1 = 2^10 * sqrt(qq * ii - iq^2) / ii
  *
- * a is the mean of the a_r, kept in Q24 so that the per-tone rounding does
- * not decide the final unit, each a_r taken on ii and iq cut to a 16-bit
- * mantissa of ii (the same shift on both): that truncation is what moves
- * values just under a half, as the tg789vac's a_r = 20.49 on core 0 at ch36,
- * which the stock driver writes as 21. b is the mean of the b_r computed
- * with the exact a_r under the root, rounded half up.
+ * a is the mean of the a_r in Q24, each a_r on ii and iq cut to a 16-bit
+ * mantissa of ii: that cut is what rounds the tg789vac's a_r = 20.49 (core
+ * 0, ch36) to the stock driver's 21. b is the mean of the b_r with the
+ * exact a_r under the root, rounded half up.
  *
- * Measured with reverse-tools/rxiq_points.py on 309 writes of 0x?a1 (cold
- * segments of the d6220 and the agcombo, the tg789vac's outside the radar
- * channels, the up segments of the d6220 and agcombo hot sweeps):
+ * On 309 writes of 0x?a1 (reverse-tools/rxiq_points.py: cold d6220 and
+ * agcombo, tg789vac off the radar channels, d6220 and agcombo hot up):
  *
  *                       a exact   b exact
  *   accumulator sum      258       253
  *   mean, full width     290       259
  *   this                 296       259
  *
- * The misses on b are mostly the stock driver one high, mostly on core 1:
- * an input outside the six accumulators is missing, hence the
- * b43_phy_ac_todo() at the write site.
+ * The b misses are mostly the stock driver one high on core 1: an input
+ * beyond the six accumulators is missing (b43_phy_ac_todo() at the write).
  */
 static void b43_phy_ac_iq_solve(struct b43_phy_ac_iq_acc *acc,
 				s16 *a_out, s16 *b_out)
@@ -9176,26 +9137,23 @@ static void b43_phy_ac_wd_region_dump(struct b43_wldev *dev)
 }
 
 /*
- * One watchdog turn, in the stock driver's order: the sampling phase (peek
+ * One watchdog turn in the stock driver's order: the sampling phase (peek
  * group, window clear, mode change), then the body (statistics, tempsense
- * where due, latch).
- *
- * In steady state the stock driver polls TSSI and the SHM statistics about
- * once a second and runs a tempsense every temps_period turns; b43 calls
- * this from its pwork hook (b43_phy_ac_op_pwork_1sec()). The poll is also
- * the latch-and-clear of the ucode statistics: 0x0308 is the noise sample
- * the CRS thresholds follow, the rest is cleared so that it does not
- * saturate. Reference tick:
+ * where due, latch). In steady state the stock driver runs it about once a
+ * second and a tempsense every temps_period turns; b43 calls it from
+ * b43_phy_ac_op_pwork_1sec(). The poll latches and clears the ucode
+ * statistics: 0x0308 is the noise sample the CRS thresholds follow, the rest
+ * is cleared so that it does not saturate. Reference tick:
  * router-data/d6220/wl-diag-wl1-steady-tick-ch36-bw20.txt.
  *
- * @wd_turns counts from the bring-up and survives channel changes: the
- * tempsense falls every b43_phy_ac_temps_period() turns and the region
- * dump every thirty, and on hot cycles the phase starts anywhere in the
- * period, as for a free-running timer. @wd_switch_turns counts from the
- * channel change and gives the shape of the first turns:
+ * @wd_turns counts from the bring-up and survives channel changes, like a
+ * free-running timer: the tempsense falls every b43_phy_ac_temps_period()
+ * turns, the region dump every thirty, and on hot cycles the phase starts
+ * anywhere in the period. @wd_switch_turns counts from the channel change
+ * and shapes the first turns:
  *
- *   turn 0        statistics only, no latch: the window was cleared at
- *                 the end of the switch and has not counted
+ *   turn 0        statistics only, no latch: the window cleared at the end
+ *                 of the switch has not counted yet
  *   turn 1        peek, 0x0554/0x0555, clear, mode, statistics, latch,
  *                 then CRS block E where the availability check is
  *                 pending (otherwise at the end of the bring-up)
