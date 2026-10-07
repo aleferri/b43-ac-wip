@@ -4523,9 +4523,8 @@ b43_phy_ac_post_noise_shaping_core_transition(struct b43_wldev *dev,
 }
 
 /*
- * Post-noise-shaping block: write 0x016c = 0, unlock the outer gate, then
- * for every silicon core (num_cores, not the coremask) the body and the
- * transition. The registers are not identified; RX gain or RSSI
+ * Post-noise-shaping block: for every silicon core (num_cores, not the
+ * coremask) the body and the transition. The registers are not identified; RX gain or RSSI
  * programming is the likely purpose.
  * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   11058-11218]
@@ -4542,9 +4541,6 @@ static void b43_phy_ac_post_noise_shaping_rx_regprog(struct b43_wldev *dev)
 			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
 			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
 			   B43_PHY_AC_STATE_CCA_RESET);
-
-	b43_phy_write(dev, 0x016c, 0x0000);
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0000);
 
 	for (core = 0; core < num_cores; core++) {
 		b43_phy_ac_post_noise_shaping_rx_regprog_core(dev, core);
@@ -9985,7 +9981,7 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 		const u16 *a8 = band_2g ? nshp_a8_2g : nshp_a8;
 		const u16 *a10 = band_2g ? nshp_a10_2g : nshp_a10;
 		const u16 *b10 = band_2g ? nshp_b10_2g : nshp_b10;
-		u16 saved;
+		u16 saved, inner;
 		unsigned int core;
 
 		if (band_2g)
@@ -10015,11 +10011,8 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 		b43_actab_write_bulk(dev, 0x0b, 0x0008, 16, 6, glim_a);
 		b43_actab_write_bulk(dev, 0x0b, 0x0010, 16, 7, glim_b);
 
-		/*
-		 * Phase 1 to 2: the gate stays locked; the stock driver emits a
-		 * peek and relock, not an unlock and lock.
-		 */
-		saved = b43_phy_ac_tbl_write_lock(dev);
+		/* Phases 2 and 2b: each a lock nested in phase 1's. */
+		inner = b43_phy_ac_tbl_write_lock(dev);
 
 		for (core = 0; core < dev->phy.ac->num_cores; core++) {
 			u16 ta = 0x44 + core * 0x20;	/* core 0=0x44, 1=0x64, 2=0x84 */
@@ -10030,13 +10023,8 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 			b43_actab_write_bulk(dev, tb, 0x0008, 16, 6, nshp_b8);
 		}
 
-		/*
-		 * Phase 2 to 2b: here the stock driver emits unlock, peek and
-		 * relock, unlike the phase 1 to 2 transition. The reason is not
-		 * known.
-		 */
-		b43_phy_ac_tbl_write_unlock(dev, saved);
-		saved = b43_phy_ac_tbl_write_lock(dev);
+		b43_phy_ac_tbl_write_unlock(dev, inner);
+		inner = b43_phy_ac_tbl_write_lock(dev);
 
 		for (core = 0; core < dev->phy.ac->num_cores; core++) {
 			u16 ta = 0x44 + core * 0x20;
@@ -10046,7 +10034,7 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 			b43_actab_write_bulk(dev, tb, 0x0010, 16, 7, b10);
 		}
 
-		b43_phy_ac_tbl_write_unlock(dev, saved);
+		b43_phy_ac_tbl_write_unlock(dev, inner);
 
 		/*
 		 * Phase 3: per-core commit and read-back, gate still locked, on
@@ -10065,6 +10053,10 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 			b43_actab_read_log(dev, tb, 0x0060, 8);
 			b43_actab_read_log(dev, tb, 0x0070, 8);
 		}
+
+		/* Close phase 1: the 0x016c enable, then its lock. */
+		b43_phy_write(dev, 0x016c, 0x0000);
+		b43_phy_ac_tbl_write_unlock(dev, saved);
 	}
 
 	B43_AC_BLOCK(dev, "rx_regprog");
