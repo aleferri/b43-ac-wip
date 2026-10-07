@@ -1326,6 +1326,33 @@ static void b43_phy_ac_bbmult_write(struct b43_wldev *dev,
 	b43_phy_ac_tbl_write_unlock(dev, saved);
 }
 
+
+/*
+ * The measurement control the idle-TSSI and temperature readings borrow:
+ * 0x0394 selects what 0x0393 arms, and bit 9 of 0x040f is held clear while
+ * they run. Saved before, restored after.
+ */
+struct b43_phy_ac_meas_ctl {
+	u16 r040f, r0394, r0393;
+};
+
+static void b43_phy_ac_meas_ctl_save(struct b43_wldev *dev,
+				     struct b43_phy_ac_meas_ctl *ctl)
+{
+	ctl->r040f = b43_phy_read(dev, 0x040f);
+	b43_phy_maskset(dev, 0x040f, (u16)~0x0200, 0);
+	ctl->r0394 = b43_phy_read(dev, 0x0394);
+	ctl->r0393 = b43_phy_read(dev, 0x0393);
+}
+
+static void b43_phy_ac_meas_ctl_restore(struct b43_wldev *dev,
+					const struct b43_phy_ac_meas_ctl *ctl)
+{
+	b43_phy_write(dev, 0x0394, ctl->r0394);
+	b43_phy_write(dev, 0x0393, ctl->r0393);
+	b43_phy_maskset(dev, 0x040f, (u16)~0x0200, ctl->r040f & 0x0200);
+}
+
 /*
  * Idle-TSSI: measure and commit the per-core base index. The index is
  * measured, not constant, and the loop is gated on the coremask. Three
@@ -1409,6 +1436,7 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 
 	for_each_set_bit(core, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
 		u16 p = (u16)(core * 0x0200);
+		struct b43_phy_ac_meas_ctl ctl;
 		u16 base_index, gate;
 
 		/*
@@ -1422,10 +1450,7 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 		 * restores.
 		 */
 		gate = b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-		b43_phy_read_log(dev, 0x040f);
-		b43_phy_maskset(dev, 0x040f, (u16)~0x0200, 0);
-		b43_phy_read_log(dev, 0x0394);
-		b43_phy_read_log(dev, 0x0393);
+		b43_phy_ac_meas_ctl_save(dev, &ctl);
 		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
 
 		/* Save each chain's bbmult and gain state. */
@@ -1569,10 +1594,8 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 			b43_radio_write(dev, 0x004e + s, st[c].r4e);
 			b43_radio_write(dev, 0x0166 + s, st[c].r166);
 		}
-		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~(0x0002), (0x0002));
-		b43_phy_write(dev, 0x0394, 0x000b);
-		b43_phy_write(dev, 0x0393, 0x0000);
-		b43_phy_maskset(dev, 0x040f, (u16)~0x0200, 0);
+		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+		b43_phy_ac_meas_ctl_restore(dev, &ctl);
 		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
 		/*
 		 * The base index is
@@ -5719,6 +5742,8 @@ static void b43_phy_ac_tempsense(struct b43_wldev *dev)
 {
 	B43_AC_FN();
 	struct b43_phy_ac *ac = dev->phy.ac;
+	struct b43_phy_ac_meas_ctl ctl;
+	u16 gate, gate_meas;
 	unsigned int c, i;
 
 	B43_PHY_AC_REQUIRE(dev,
@@ -5726,7 +5751,7 @@ static void b43_phy_ac_tempsense(struct b43_wldev *dev)
 			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_CLIP_ALL_DIS |
 			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
 
-	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+	gate = b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0040, 0);
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0080, 0);
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0100, 0);
@@ -5736,17 +5761,14 @@ static void b43_phy_ac_tempsense(struct b43_wldev *dev)
 	for_each_set_bit(c, &ac->coremask, ac->num_cores)
 		b43_phy_ac_tempsense_radio_setup(dev, c);
 
-	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-	b43_phy_read_log(dev, 0x040f);
-	b43_phy_maskset(dev, 0x040f, (u16)~0x0200, 0);
-	b43_phy_read_log(dev, 0x0394);
-	b43_phy_read_log(dev, 0x0393);
+	gate_meas = b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+	b43_phy_ac_meas_ctl_save(dev, &ctl);
 	b43_phy_ac_rxgain_perchan_tail(dev);
 
 	for_each_set_bit(c, &ac->coremask, ac->num_cores)
 		b43_phy_ac_tempsense_chain(dev, c);
 
-	b43_phy_write(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, 0x03d0);
+	b43_phy_write(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, gate);
 	for_each_set_bit(c, &ac->coremask, ac->num_cores) {
 		u16 s = (u16)(c * 0x200);
 
@@ -5758,10 +5780,8 @@ static void b43_phy_ac_tempsense(struct b43_wldev *dev)
 		b43_phy_ac_tempsense_radio_restore(dev, c);
 
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
-	b43_phy_write(dev, 0x0394, 0x000b);
-	b43_phy_write(dev, 0x0393, 0x0000);
-	b43_phy_maskset(dev, 0x040f, (u16)~0x0200, 0);
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+	b43_phy_ac_meas_ctl_restore(dev, &ctl);
+	b43_phy_ac_tbl_write_unlock(dev, gate_meas);
 }
 
 /*
