@@ -4224,12 +4224,8 @@ static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
 
 	b43_phy_ac_farrow_setup(dev, new_channel);
 
-	/*
-	 * Peek + relock of the outer gate, for the RFSEQ 0x03cd/0x03dd accesses
-	 * that follow.
-	 */
-	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+	/* The gate for the RFSEQ 0x03cd/0x03dd accesses that follow. */
+	gate = b43_phy_ac_tbl_write_lock(dev);
 
 	/*
 	 * The AvVmid of each wired chain, into RFSEQ 0x03cd + 0x10 * core: read,
@@ -4250,10 +4246,7 @@ static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
 		}
 	}
 
-	/*
-	 * Final unlock of the outer gate, closing the channel setup segment.
-	 */
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0000);
+	b43_phy_ac_tbl_write_unlock(dev, gate);
 
 	/*
 	 * Per-channel PHY 0x371-0x376, the 2069 path of
@@ -5596,6 +5589,7 @@ static void b43_phy_ac_txpwr_adjust(struct b43_wldev *dev)
 {
 	B43_AC_FN();
 	struct b43_phy_ac *ac = dev->phy.ac;
+	u16 gate;
 
 	/* The chain mask into 0x00cc, see b43_phy_ac_bss_cc(). */
 	b43_phy_ac_bss_cc_update(dev, B43_PHY_AC_CHAIN_TXPWR);
@@ -5606,8 +5600,7 @@ static void b43_phy_ac_txpwr_adjust(struct b43_wldev *dev)
 	/* Second pass of the twelve-rate loop. */
 	b43_phy_ac_chainmask_block(dev, B43_PHY_AC_CHAIN_TXPWR);
 	b43_phy_ac_prb_rsp_rate_po(dev, B43_PHY_AC_CHAIN_TXPWR);
-	b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);                               /* peek */
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);      /* relock */
+	gate = b43_phy_ac_tbl_write_lock(dev);
 
 	/*
 	 * Second txpwrctrl_setup(), the same sequence op for op: the LUT comes
@@ -5616,10 +5609,10 @@ static void b43_phy_ac_txpwr_adjust(struct b43_wldev *dev)
 	b43_phy_ac_txpwrctrl_setup(dev, 5000 + 5 * ac->cal_channel);
 
 	/*
-	 * Transition after the second txpwrctrl_setup(): unlock, then the AFE
-	 * gain registers, whose gain word is absent on a first bring-up.
+	 * Then the AFE gain registers, whose gain word is absent on a first
+	 * bring-up.
 	 */
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);          /* unlock */
+	b43_phy_ac_tbl_write_unlock(dev, gate);
 	b43_phy_ac_afe_gain_regs(dev, !(dev->phy.ac->status_mask &
 				       B43_PHY_AC_STATE_FIRST_BRINGUP));
 }
