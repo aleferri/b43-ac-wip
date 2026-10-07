@@ -1686,24 +1686,19 @@ static u16 b43_phy_ac_locale_ceiling(struct b43_phy_ac *ac)
 }
 
 /*
- * Regulatory ceiling for the configuration, in quarter-dBm, or 0 when none
- * applies.
+ * Regulatory ceiling for the configuration in quarter-dBm, 0 when none
+ * applies: QDB(ch->max_power) - antgain clamped at zero, an upper bound on
+ * the SROM limit as in brcmsmac, over every 20 MHz channel a bonded
+ * configuration occupies. cfg80211's max_power is EIRP, so the antenna gain
+ * comes off.
  *
- * QDB(ch->max_power) - antgain, clamped at zero: an upper bound on the SROM
- * limit, as in brcmsmac. A bonded configuration is bounded by every
- * 20 MHz channel it occupies.
- *
- * The stock driver's ceilings do not bind on the hot sweeps; on a first
- * bring-up they do, under the locale it runs before userspace sets a
- * country, and they are board-independent: the d6220, the agcombo and the
+ * The stock driver's ceilings bind on a first bring-up, under the locale it
+ * runs before userspace sets a country, not on the hot sweeps. They are
+ * conducted limits, board-independent: the d6220, the agcombo and the
  * tg789vac (antenna gains 5.5, 5.5 and 4.25 dB) write the same 56 on
- * ch36-48/20, 60 on ch60/40, 68 on ch100/40 and 76 on ch100 at 20 and 80.
- * So they are conducted limits, with no antenna gain taken off.
- *
- * cfg80211's max_power is EIRP, and taking the antenna gain off it keeps b43
- * within the regulatory domain. It carries one value per 20 MHz channel,
- * while the stock limits are per bandwidth, so the measured table of
- * b43_phy_ac_locale_ceiling() is applied too, and the tighter one wins.
+ * ch36-48/20, 60 on ch60/40, 68 on ch100/40, 76 on ch100 at 20 and 80. Being
+ * per bandwidth while cfg80211 has one value per 20 MHz channel, they come
+ * from the measured table of b43_phy_ac_locale_ceiling(); the tighter wins.
  */
 static u16 b43_phy_ac_reg_ceiling(struct b43_wldev *dev)
 {
@@ -3022,8 +3017,8 @@ static void b43_phy_ac_set_regtbl_on_femctrl(struct b43_wldev *dev)
  * cap field (f9/f17), which comes from rccal and is a per-unit measurement.
  * Bases, formula and verification: docs/txlpf-formula.md.
  *
- * TODO: the second reset path that drives this helper (stages 0x100,
- * f0=f6=<bw value>, only the bw fields) is not implemented.
+ * Two passes per channel setup: every stage through set_analog_tx_lpf(),
+ * then stage 8 alone with the width's bandwidth fields in channel_setup().
  * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   5390-5857, 7270-7321]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -6627,9 +6622,7 @@ static void b43_phy_ac_rxcal_040f_save(struct b43_wldev *dev)
  *   B2h-B2j:     per core, 79 ops, coremask-guarded
  *   B2k,  3 ops: set bits 6, 7 and 8 of 0x019e
  *   B2l, 18 ops: tone generator configuration, forward then reversed
- *   B2m, 32 ops: read-back and write of coefficient table 0x0007
- *
- * TODO: the coefficients are not computed at runtime yet.
+ *   B2m, 32 ops: write back to table 0x0007 the gain codes B2b read
  * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   16504-16973]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
