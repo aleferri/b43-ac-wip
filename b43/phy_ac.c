@@ -5475,8 +5475,9 @@ static void b43_phy_ac_calibration_block(struct b43_wldev *dev)
 	/* Final RXIQ teardown. */
 	b43_phy_ac_rxiqcal_apply_coefficients(dev);
 	b43_phy_ac_radio_iqcal_teardown(dev);
+	gate = b43_phy_ac_tbl_write_lock(dev);
 	b43_phy_ac_rxiqcal_teardown_apply_defaults(dev);
-	b43_phy_ac_rxiqcal_finalize(dev);
+	b43_phy_ac_rxiqcal_finalize(dev, gate);
 }
 
 /*
@@ -8803,14 +8804,12 @@ void b43_phy_ac_rxiqcal_teardown_apply_defaults(struct b43_wldev *dev)
 	};
 	unsigned int c, i;
 
-	/* Global preamble */
-	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
-	b43_phy_write(dev,   0x0401, b43_phy_ac_rfseq_mode_all(dev));
+	b43_phy_write(dev, 0x0401, b43_phy_ac_rfseq_mode_all(dev));
 
 	for_each_set_bit(c, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
 		u16 stride = (u16)(c * 0x200);
 		struct b43_phy_ac_gaincurve gc;
+		u16 outer, inner;
 
 		/* The three saved gain codes */
 		for (i = 0; i < 3; i++)
@@ -8818,9 +8817,7 @@ void b43_phy_ac_rxiqcal_teardown_apply_defaults(struct b43_wldev *dev)
 					     (u16)(0x0100 + c + i * 3),
 					     16, 1, &dev->phy.ac->rfseq_gain_saved[c][i]);
 
-		/* Sync */
-		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+		outer = b43_phy_ac_tbl_write_lock(dev);
 
 		/* Gain curve entry 0x0040 */
 		b43_phy_ac_read_gaincurve(dev, 0x0040, &gc);
@@ -8832,33 +8829,22 @@ void b43_phy_ac_rxiqcal_teardown_apply_defaults(struct b43_wldev *dev)
 					     (u16)(0x0100 + c + i * 3),
 					     16, 1, &dev->phy.ac->rfseq_gain_saved[c][i]);
 
-		/* Sync */
-		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
-
-		/* The bbmult into both cells */
+		/* The bbmult into both cells, nested in the gain codes' lock */
+		inner = b43_phy_ac_tbl_write_lock(dev);
 		b43_actab_write_bulk(dev, 0x000c,
 				     (u16)(0x0063 + c * 4), 16, 1, &bbmult_val);
 		b43_actab_write_bulk(dev, 0x000c,
 				     (u16)(0x0073 + c * 4), 16, 1, &bbmult_val);
+		b43_phy_ac_tbl_write_unlock(dev, inner);
+		b43_phy_ac_tbl_write_unlock(dev, outer);
 
-		/*
-		 * Bridge: two idempotent lock MODs, a peek, a lock MOD. Purpose
-		 * not known.
-		 */
-		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
-		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
-		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
-
-		/* The bbmult cells again */
+		/* The bbmult cells again, under a lock of their own */
+		inner = b43_phy_ac_tbl_write_lock(dev);
 		b43_actab_write_bulk(dev, 0x000c,
 				     (u16)(0x0063 + c * 4), 16, 1, &bbmult_val);
 		b43_actab_write_bulk(dev, 0x000c,
 				     (u16)(0x0073 + c * 4), 16, 1, &bbmult_val);
-
-		/* Trailer */
-		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+		b43_phy_ac_tbl_write_unlock(dev, inner);
 
 		for (i = 0; i < ARRAY_SIZE(reset_regs); i++)
 			b43_phy_write(dev,
@@ -9312,13 +9298,15 @@ static void b43_phy_ac_op_pwork_1sec(struct b43_wldev *dev)
 }
 
 /*
- * RX-IQ cal finalize (about 2700 ops).
+ * RX-IQ cal finalize (about 2700 ops). @gate is the table gate value of the
+ * lock the caller took before rxiqcal_teardown_apply_defaults(); block A
+ * releases it.
  * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   30614-36041]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
  *   25896-28591]
  */
-void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
+void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev, u16 gate)
 {
 	B43_AC_FN();
 	/*
@@ -9340,11 +9328,11 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 	/*
 	 * Block A, 10 ops: 0x040f as rxgain_config_readback() found it, the
 	 * RST2RX kick through force_rf_sequence() with the override gate, then
-	 * the unlock closing the scope.
+	 * the unlock of @gate.
 	 */
 	b43_phy_write(dev, 0x040f, dev->phy.ac->rxcal_040f_saved);
 	b43_phy_ac_force_rf_sequence(dev, B43_PHY_AC_RF_SEQ_RST2RX);
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+	b43_phy_ac_tbl_write_unlock(dev, gate);
 
 	/*
 	 * Block B: one self-contained two-word write to table 0x000c per wired

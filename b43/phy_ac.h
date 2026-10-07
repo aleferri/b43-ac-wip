@@ -753,7 +753,7 @@ void b43_phy_ac_rxiqcal_meas_post_dds_apply_v2(struct b43_wldev *dev);
 void b43_phy_ac_rxiqcal_apply_coefficients(struct b43_wldev *dev);
 void b43_phy_ac_radio_iqcal_teardown(struct b43_wldev *dev);
 void b43_phy_ac_rxiqcal_teardown_apply_defaults(struct b43_wldev *dev);
-void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev);
+void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev, u16 gate);
 
 /*
  * One AFE cal iteration: arm a command on 0x0380, wait on the busy bit,
