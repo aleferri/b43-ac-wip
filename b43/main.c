@@ -446,6 +446,30 @@ void b43err(struct b43_wl *wl, const char *fmt, ...)
 	va_end(args);
 }
 
+/*
+ * An error that ends in a controller restart, and so happens at most once
+ * per restart: not rate-limited, or the messages of the bring-up the restart
+ * interrupted use up net_ratelimit()'s budget and the cause is never seen.
+ */
+void b43err_restart(struct b43_wl *wl, const char *fmt, ...)
+{
+	struct va_format vaf;
+	va_list args;
+
+	if (b43_modparam_verbose < B43_VERBOSITY_ERROR)
+		return;
+
+	va_start(args, fmt);
+
+	vaf.fmt = fmt;
+	vaf.va = &args;
+
+	printk(KERN_ERR "b43-%s ERROR: %pV",
+	       (wl && wl->hw) ? wiphy_name(wl->hw->wiphy) : "wlan", &vaf);
+
+	va_end(args);
+}
+
 void b43warn(struct b43_wl *wl, const char *fmt, ...)
 {
 	struct va_format vaf;
@@ -2232,11 +2256,12 @@ static void b43_handle_firmware_panic(struct b43_wldev *dev)
 
 	/* Read the register that contains the reason code for the panic. */
 	reason = b43_shm_read16(dev, B43_SHM_SCRATCH, B43_FWPANIC_REASON_REG);
-	b43err(dev->wl, "Whoopsy, firmware panic! Reason: %u\n", reason);
+	b43err_restart(dev->wl, "Whoopsy, firmware panic! Reason: %u\n",
+		       reason);
 
 	switch (reason) {
 	default:
-		b43err(dev->wl, "The panic reason is unknown.\n");
+		b43err_restart(dev->wl, "The panic reason is unknown.\n");
 		fallthrough;
 	case B43_FWPANIC_DIE:
 		/* Do not restart the controller or firmware.
@@ -2353,19 +2378,19 @@ static void b43_do_interrupt_thread(struct b43_wldev *dev)
 		if (unlikely(atomic_dec_and_test(&dev->phy.txerr_cnt))) {
 			atomic_set(&dev->phy.txerr_cnt,
 				   B43_PHY_TX_BADNESS_LIMIT);
-			b43err(dev->wl, "Too many PHY TX errors, "
+			b43err_restart(dev->wl, "Too many PHY TX errors, "
 					"restarting the controller\n");
 			b43_controller_restart(dev, "PHY TX errors");
 		}
 	}
 
 	if (unlikely(merged_dma_reason & (B43_DMAIRQ_FATALMASK))) {
-		b43err(dev->wl,
+		b43err_restart(dev->wl,
 			"Fatal DMA error: 0x%08X, 0x%08X, 0x%08X, 0x%08X, 0x%08X, 0x%08X\n",
 			dma_reason[0], dma_reason[1],
 			dma_reason[2], dma_reason[3],
 			dma_reason[4], dma_reason[5]);
-		b43err(dev->wl, "This device does not support DMA "
+		b43err_restart(dev->wl, "This device does not support DMA "
 			       "on your system. It will now be switched to PIO.\n");
 		/* Fall back to PIO transfers if we get fatal DMA errors! */
 		dev->use_pio = true;
@@ -2378,7 +2403,8 @@ static void b43_do_interrupt_thread(struct b43_wldev *dev)
 	if (dev->phy.type == B43_PHYTYPE_AC) {
 		/* As brcmsmac: the PSM watchdog resets, the timer is stopped. */
 		if (unlikely(reason & B43_IRQ_TIMER0)) {
-			b43err(dev->wl, "PSM microcode watchdog fired\n");
+			b43err_restart(dev->wl,
+				       "PSM microcode watchdog fired\n");
 			b43_controller_restart(dev, "PSM watchdog");
 			return;
 		}
@@ -4046,7 +4072,8 @@ static void b43_periodic_every15sec(struct b43_wldev *dev)
 		 * It will reset the watchdog counter to 0 in its idle loop. */
 		wdr = b43_shm_read16(dev, B43_SHM_SCRATCH, B43_WATCHDOG_REG);
 		if (unlikely(wdr)) {
-			b43err(dev->wl, "Firmware watchdog: The firmware died!\n");
+			b43err_restart(dev->wl,
+				       "Firmware watchdog: The firmware died!\n");
 			b43_controller_restart(dev, "Firmware watchdog");
 			return;
 		} else {
@@ -6295,7 +6322,7 @@ out:
 	mutex_unlock(&wl->mutex);
 
 	if (err) {
-		b43err(wl, "Controller restart FAILED\n");
+		b43err_restart(wl, "Controller restart FAILED\n");
 		return;
 	}
 
@@ -6938,7 +6965,7 @@ void b43_controller_restart(struct b43_wldev *dev, const char *reason)
 			reason);
 		return;
 	}
-	b43info(dev->wl, "Controller RESET (%s) ...\n", reason);
+	b43err_restart(dev->wl, "Controller RESET (%s) ...\n", reason);
 	ieee80211_queue_work(dev->wl->hw, &dev->restart_work);
 }
 

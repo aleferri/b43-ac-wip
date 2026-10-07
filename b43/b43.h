@@ -1218,6 +1218,7 @@ static inline bool b43_using_pio_transfers(struct b43_wldev *dev)
 /* Message printing */
 __printf(2, 3) void b43info(struct b43_wl *wl, const char *fmt, ...);
 __printf(2, 3) void b43err(struct b43_wl *wl, const char *fmt, ...);
+__printf(2, 3) void b43err_restart(struct b43_wl *wl, const char *fmt, ...);
 __printf(2, 3) void b43warn(struct b43_wl *wl, const char *fmt, ...);
 __printf(2, 3) void b43dbg(struct b43_wl *wl, const char *fmt, ...);
 

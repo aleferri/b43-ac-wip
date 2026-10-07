@@ -99,14 +99,15 @@ int b43_phy_init(struct b43_wldev *dev)
 
 	err = ops->init(dev);
 	if (err) {
-		b43err(dev->wl, "PHY init failed\n");
+		b43err_restart(dev->wl, "PHY init failed\n");
 		goto err_block_rf;
 	}
 	phy->do_full_init = false;
 
 	err = b43_switch_channel(dev, phy->channel);
 	if (err) {
-		b43err(dev->wl, "PHY init: Channel switch to default failed\n");
+		b43err_restart(dev->wl,
+			       "PHY init: Channel switch to default failed\n");
 		goto err_phy_exit;
 	}
 
