@@ -460,6 +460,14 @@ struct b43_phy_ac {
 	u16 chain_range_saved[B43_PHY_AC_MAX_CORES][7];
 	u16 iqcal_radio_saved[B43_PHY_AC_MAX_CORES][6];
 	/*
+	 * The table gate and 0x040f as the RX-IQ cal steps find them, saved
+	 * by rxiqcal_apply() and rxgain_perchan_config() and written back by
+	 * the rxgain_defaults_pulse() after each; 0x040f alone saved by
+	 * rxgain_config_readback() and written back by rxiqcal_finalize().
+	 */
+	u16 rxcal_gate_saved;
+	u16 rxcal_040f_saved;
+	/*
 	 * Results of the AFE cal's commit iterations, indexed by write offset.
 	 * The tail of rxcal_afe_calibrate() duplicates them per antenna.
 	 */

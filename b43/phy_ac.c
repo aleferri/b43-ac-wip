@@ -6633,6 +6633,13 @@ static void b43_phy_ac_chain_range_save(struct b43_wldev *dev,
 					  b43_phy_ac_chain_range_regs[i] + s);
 }
 
+/* Save 0x040f for a later write-back, then clear its bit 9. */
+static void b43_phy_ac_rxcal_040f_save(struct b43_wldev *dev)
+{
+	dev->phy.ac->rxcal_040f_saved = b43_phy_read(dev, 0x040f);
+	b43_phy_maskset(dev, 0x040f, (u16)~0x0200, 0);
+}
+
 /*
  * RX-IQ compensation apply, phase B2, the fourth iteration of the cal
  * cycle, called with the MAC suspended:
@@ -6715,9 +6722,9 @@ void b43_phy_ac_rxiqcal_apply(struct b43_wldev *dev)
 		u8 c;
 		u8 num_cores = dev->phy.ac->num_cores;
 
-		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-		b43_phy_read_log(dev, 0x040f);
-		b43_phy_maskset(dev, 0x040f, (u16)~0x0200, 0);
+		dev->phy.ac->rxcal_gate_saved =
+			b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		b43_phy_ac_rxcal_040f_save(dev);
 
 		for_each_set_bit(c, &dev->phy.ac->coremask, num_cores) {
 			u16 s = (u16)(c * 0x200);
@@ -7347,9 +7354,10 @@ void b43_phy_ac_rxgain_defaults_pulse(struct b43_wldev *dev)
 				      gain_cfg[k].val);
 	}
 
-	/* Gate feature bits, 0x040f, commit pulse */
-	b43_phy_write(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, 0x03d0);
-	b43_phy_write(dev, 0x040f, 0x09ff);
+	/* The gate and 0x040f the previous step saved, then the commit pulse */
+	b43_phy_write(dev, B43_PHY_AC_REG_TBL_WRITE_GATE,
+		      dev->phy.ac->rxcal_gate_saved);
+	b43_phy_write(dev, 0x040f, dev->phy.ac->rxcal_040f_saved);
 	b43_phy_ac_cca_pulse(dev);
 }
 
@@ -7510,9 +7518,9 @@ void b43_phy_ac_rxgain_perchan_config(struct b43_wldev *dev)
 	struct b43_phy_ac *ac = dev->phy.ac;
 	unsigned int core;
 
-	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-	b43_phy_read_log(dev, 0x040f);
-	b43_phy_maskset(dev, 0x040f, (u16)~0x0200, 0);
+	dev->phy.ac->rxcal_gate_saved =
+		b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+	b43_phy_ac_rxcal_040f_save(dev);
 
 	/*
 	 * Per active chain, the same body as the B2 of the RX-IQ apply (0x073e,
@@ -7906,9 +7914,7 @@ void b43_phy_ac_rxgain_config_readback(struct b43_wldev *dev)
 	struct b43_phy_ac *ac = dev->phy.ac;
 	unsigned int core, i;
 
-	/* Global preamble */
-	b43_phy_read_log(dev, 0x040f);
-	b43_phy_maskset(dev, 0x040f, (u16)~0x0200, 0);
+	b43_phy_ac_rxcal_040f_save(dev);
 
 	for_each_set_bit(core, &ac->coremask, ac->num_cores) {
 		u16 stride = (u16)(core * 0x200);
@@ -9378,11 +9384,11 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev)
 			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
 
 	/*
-	 * Block A, 10 ops: 0x040f = 0x09ff (arm RF control), the RST2RX kick
-	 * through force_rf_sequence() with the override gate, then the unlock
-	 * closing the scope.
+	 * Block A, 10 ops: 0x040f as rxgain_config_readback() found it, the
+	 * RST2RX kick through force_rf_sequence() with the override gate, then
+	 * the unlock closing the scope.
 	 */
-	b43_phy_write(dev, 0x040f, 0x09ff);
+	b43_phy_write(dev, 0x040f, dev->phy.ac->rxcal_040f_saved);
 	b43_phy_ac_force_rf_sequence(dev, B43_PHY_AC_RF_SEQ_RST2RX);
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
 
