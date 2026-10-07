@@ -211,10 +211,9 @@ static void op64_fill_descriptor(struct b43_dmaring *ring,
 }
 
 /*
- * The DMA64 index registers hold the address of a descriptor, its low word,
- * as brcmsmac writes them and as the AC cores' stock driver does at the bus.
- * The older cores compare only the offset bits inside their 8K-aligned ring,
- * so b43 has written the offset alone, which index_base keeps there.
+ * The DMA64 index registers hold the low word of a descriptor's address on an
+ * engine that takes unaligned rings, the offset inside the aligned ring on the
+ * others; index_base is the ring address or zero accordingly.
  */
 static u32 op64_slot_index(struct b43_dmaring *ring, int slot)
 {
@@ -680,17 +679,6 @@ static int alloc_initial_descbuffers(struct b43_dmaring *ring)
  * Reset the controller, write the ring busaddress
  * and switch the "enable" bit on.
  */
-/*
- * Whether the DMA64 engine takes descriptor addresses rather than offsets in
- * an aligned ring: the AC cores, aligndesc_4k = 0 in the stock driver. Such
- * an engine needs its ring address before it is enabled; the older ones get
- * it after, as b43 has always done.
- */
-static bool b43_dma64_ring_unaligned(struct b43_dmaring *ring)
-{
-	return ring->dev->phy.type == B43_PHYTYPE_AC;
-}
-
 static int dmacontroller_setup(struct b43_dmaring *ring)
 {
 	int err = 0;
@@ -708,7 +696,7 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
 			addrext = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_EXT);
 			addrlo = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_LOW);
 			addrhi = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_HIGH);
-			ring->index_base = b43_dma64_ring_unaligned(ring) ?
+			ring->index_base = ring->dev->dma.index_is_addr ?
 					   addrlo : 0;
 
 			value = (addrext << B43_DMA64_TXADDREXT_SHIFT)
@@ -716,7 +704,7 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
 			enable = B43_DMA64_TXENABLE;
 			if (!parity)
 				enable |= B43_DMA64_TXPARITYDISABLE;
-			if (b43_dma64_ring_unaligned(ring)) {
+			if (ring->dev->dma.index_is_addr) {
 				b43_dma_write(ring, B43_DMA64_TXCTL, value);
 				b43_dma_write(ring, B43_DMA64_TXRINGLO, addrlo);
 				b43_dma_write(ring, B43_DMA64_TXRINGHI, addrhi);
@@ -748,7 +736,7 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
 			addrext = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_EXT);
 			addrlo = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_LOW);
 			addrhi = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_HIGH);
-			ring->index_base = b43_dma64_ring_unaligned(ring) ?
+			ring->index_base = ring->dev->dma.index_is_addr ?
 					   addrlo : 0;
 
 			value = (ring->frameoffset << B43_DMA64_RXFROFF_SHIFT);
@@ -757,7 +745,7 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
 			    & B43_DMA64_RXADDREXT_MASK;
 			if (!parity)
 				value |= B43_DMA64_RXPARITYDISABLE;
-			if (b43_dma64_ring_unaligned(ring)) {
+			if (ring->dev->dma.index_is_addr) {
 				b43_dma_write(ring, B43_DMA64_RXRINGLO, addrlo);
 				b43_dma_write(ring, B43_DMA64_RXRINGHI, addrhi);
 				b43_dma_write(ring, B43_DMA64_RXCTL, value);
@@ -1096,6 +1084,28 @@ static bool b43_dma_translation_in_low_word(struct b43_wldev *dev,
 	return false;
 }
 
+/*
+ * Whether the DMA64 engine takes an unaligned ring, and so descriptor
+ * addresses in its index registers, asked of the engine as the stock driver
+ * does: write all ones to the ring address and see which low bits stay, the
+ * 0xff0 of brcmsmac's _dma_descriptor_align(). Such an engine also gets its
+ * ring address before it is enabled; the others after, as b43 has always
+ * done.
+ */
+static bool b43_dma64_index_is_addr(struct b43_wldev *dev)
+{
+	u16 ringlo = b43_dmacontroller_base(B43_DMA_64BIT, 0) +
+		     B43_DMA64_TXRINGLO;
+	u32 mask;
+
+	b43_write32(dev, ringlo, 0xffffffff);
+	mask = b43_read32(dev, ringlo);
+	b43_write32(dev, ringlo, 0);
+	b43info(dev->wl, "DMA64 ring address mask 0x%08x\n", mask);
+
+	return mask & 0xff0;
+}
+
 int b43_dma_init(struct b43_wldev *dev)
 {
 	struct b43_dma *dma = &dev->dma;
@@ -1129,6 +1139,9 @@ int b43_dma_init(struct b43_wldev *dev)
 	if (dev->dev->bus_type == B43_BUS_BCMA)
 		dma->parity = false;
 #endif
+
+	dma->index_is_addr = type == B43_DMA_64BIT &&
+			     b43_dma64_index_is_addr(dev);
 
 	err = -ENOMEM;
 	/* setup TX DMA channels. */

@@ -5,9 +5,9 @@ Subject: [PATCH 1/2] b43: core support for the AC-PHY
 
 ---
  drivers/net/wireless/broadcom/b43/Kconfig     |   20 +-
- drivers/net/wireless/broadcom/b43/b43.h       |  144 +-
+ drivers/net/wireless/broadcom/b43/b43.h       |  145 +-
  drivers/net/wireless/broadcom/b43/bus.c       |    4 +
- drivers/net/wireless/broadcom/b43/dma.c       |   99 +-
+ drivers/net/wireless/broadcom/b43/dma.c       |  156 +-
  drivers/net/wireless/broadcom/b43/dma.h       |   11 +
  drivers/net/wireless/broadcom/b43/leds.c      |  221 ++-
  drivers/net/wireless/broadcom/b43/leds.h      |   24 +-
@@ -17,7 +17,7 @@ Subject: [PATCH 1/2] b43: core support for the AC-PHY
  drivers/net/wireless/broadcom/b43/pio.c       |   11 +-
  drivers/net/wireless/broadcom/b43/xmit.c      |  109 +-
  drivers/net/wireless/broadcom/b43/xmit.h      |   23 +
- 13 files changed, 1958 insertions(+), 332 deletions(-)
+ 13 files changed, 2007 insertions(+), 341 deletions(-)
 
 diff --git a/drivers/net/wireless/broadcom/b43/Kconfig b/drivers/net/wireless/broadcom/b43/Kconfig
 index 5f008b4..ceee266 100644
@@ -55,7 +55,7 @@ index 5f008b4..ceee266 100644
  # This config option automatically enables b43 LEDS support,
  # if it's possible.
 diff --git a/drivers/net/wireless/broadcom/b43/b43.h b/drivers/net/wireless/broadcom/b43/b43.h
-index 946cfe5..d3ec022 100644
+index 946cfe5..7478fbc 100644
 --- a/drivers/net/wireless/broadcom/b43/b43.h
 +++ b/drivers/net/wireless/broadcom/b43/b43.h
 @@ -26,6 +26,7 @@
@@ -189,7 +189,15 @@ index 946cfe5..d3ec022 100644
  /* The firmware register to fetch the debug-IRQ reason from. */
  #define B43_DEBUGIRQ_REASON_REG		63
  /* Debug-IRQ reasons. */
-@@ -774,6 +833,40 @@ enum b43_firmware_hdr_format {
+@@ -668,6 +727,7 @@ struct b43_dma {
+ 	u32 translation; /* Routing bits */
+ 	bool translation_in_low; /* Should translation bit go into low addr? */
+ 	bool parity; /* Check for parity */
++	bool index_is_addr; /* DMA64 index registers hold descriptor addresses */
+ };
+ 
+ struct b43_pio_txqueue;
+@@ -774,6 +834,40 @@ enum b43_firmware_hdr_format {
  	B43_FW_HDR_598,
  	B43_FW_HDR_410,
  	B43_FW_HDR_351,
@@ -230,7 +238,7 @@ index 946cfe5..d3ec022 100644
  };
  
  /* Pointers to the firmware data and meta information about it. */
-@@ -794,6 +887,8 @@ struct b43_firmware {
+@@ -794,6 +888,8 @@ struct b43_firmware {
  
  	/* Format of header used by firmware */
  	enum b43_firmware_hdr_format hdr_format;
@@ -239,7 +247,7 @@ index 946cfe5..d3ec022 100644
  
  	/* Set to true, if we are using an opensource firmware.
  	 * Use this to check for proprietary vs opensource. */
-@@ -874,6 +969,14 @@ struct b43_wldev {
+@@ -874,6 +970,14 @@ struct b43_wldev {
  	/* Periodic tasks */
  	struct delayed_work periodic_work;
  	unsigned int periodic_state;
@@ -254,7 +262,7 @@ index 946cfe5..d3ec022 100644
  
  	struct work_struct restart_work;
  
-@@ -972,6 +1075,12 @@ struct b43_wl {
+@@ -972,6 +1076,12 @@ struct b43_wl {
  	/* The device LEDs. */
  	struct b43_leds leds;
  
@@ -267,7 +275,7 @@ index 946cfe5..d3ec022 100644
  	/* Kmalloc'ed scratch space for PIO TX/RX. Protected by wl->mutex. */
  	u8 pio_scratchspace[118] __attribute__((__aligned__(8)));
  	u8 pio_tailspace[4] __attribute__((__aligned__(8)));
-@@ -1036,14 +1145,26 @@ static inline void b43_write16(struct b43_wldev *dev, u16 offset, u16 value)
+@@ -1036,14 +1146,26 @@ static inline void b43_write16(struct b43_wldev *dev, u16 offset, u16 value)
  	dev->dev->write16(dev->dev, offset, value);
  }
  
@@ -298,7 +306,7 @@ index 946cfe5..d3ec022 100644
  }
  
  static inline void b43_maskset16(struct b43_wldev *dev, u16 offset, u16 mask,
-@@ -1062,6 +1183,18 @@ static inline void b43_write32(struct b43_wldev *dev, u16 offset, u32 value)
+@@ -1062,6 +1184,18 @@ static inline void b43_write32(struct b43_wldev *dev, u16 offset, u32 value)
  	dev->dev->write32(dev->dev, offset, value);
  }
  
@@ -317,7 +325,7 @@ index 946cfe5..d3ec022 100644
  static inline void b43_maskset32(struct b43_wldev *dev, u16 offset, u32 mask,
  				 u32 set)
  {
-@@ -1104,6 +1237,7 @@ static inline void b43_stop_queue(struct b43_wldev *dev, int queue_prio)
+@@ -1104,6 +1238,7 @@ static inline void b43_stop_queue(struct b43_wldev *dev, int queue_prio)
  /* Message printing */
  __printf(2, 3) void b43info(struct b43_wl *wl, const char *fmt, ...);
  __printf(2, 3) void b43err(struct b43_wl *wl, const char *fmt, ...);
@@ -341,18 +349,17 @@ index 0bc4f83..5ae8ba4 100644
  	dev->dev = &core->dev;
  	dev->dma_dev = core->dma_dev;
 diff --git a/drivers/net/wireless/broadcom/b43/dma.c b/drivers/net/wireless/broadcom/b43/dma.c
-index e0a74f4..537d9ad 100644
+index e0a74f4..37808a0 100644
 --- a/drivers/net/wireless/broadcom/b43/dma.c
 +++ b/drivers/net/wireless/broadcom/b43/dma.c
-@@ -210,10 +210,20 @@ static void op64_fill_descriptor(struct b43_dmaring *ring,
+@@ -210,10 +210,19 @@ static void op64_fill_descriptor(struct b43_dmaring *ring,
  	desc->dma64.address_high = cpu_to_le32(addrhi);
  }
  
 +/*
-+ * The DMA64 index registers hold the address of a descriptor, its low word,
-+ * as brcmsmac writes them and as the AC cores' stock driver does at the bus.
-+ * The older cores compare only the offset bits inside their 8K-aligned ring,
-+ * so b43 has written the offset alone, which index_base keeps there.
++ * The DMA64 index registers hold the low word of a descriptor's address on an
++ * engine that takes unaligned rings, the offset inside the aligned ring on the
++ * others; index_base is the ring address or zero accordingly.
 + */
 +static u32 op64_slot_index(struct b43_dmaring *ring, int slot)
 +{
@@ -367,7 +374,7 @@ index e0a74f4..537d9ad 100644
  }
  
  static void op64_tx_suspend(struct b43_dmaring *ring)
-@@ -233,15 +243,14 @@ static int op64_get_current_rxslot(struct b43_dmaring *ring)
+@@ -233,15 +242,14 @@ static int op64_get_current_rxslot(struct b43_dmaring *ring)
  	u32 val;
  
  	val = b43_dma_read(ring, B43_DMA64_RXSTATUS);
@@ -385,7 +392,7 @@ index e0a74f4..537d9ad 100644
  }
  
  static const struct b43_dma_ops dma64_ops = {
-@@ -404,19 +413,21 @@ static inline
+@@ -404,19 +412,21 @@ static inline
  	}
  }
  
@@ -418,7 +425,7 @@ index e0a74f4..537d9ad 100644
  
  	ring->descbase = dma_alloc_coherent(ring->dev->dev->dma_dev,
  					    ring_mem_size, &(ring->dmabase),
-@@ -429,8 +440,8 @@ static int alloc_ringmemory(struct b43_dmaring *ring)
+@@ -429,8 +439,8 @@ static int alloc_ringmemory(struct b43_dmaring *ring)
  
  static void free_ringmemory(struct b43_dmaring *ring)
  {
@@ -429,36 +436,75 @@ index e0a74f4..537d9ad 100644
  	dma_free_coherent(ring->dev->dev->dma_dev, ring_mem_size,
  			  ring->descbase, ring->dmabase);
  }
-@@ -684,6 +695,8 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
+@@ -681,18 +691,29 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
+ 	if (ring->tx) {
+ 		if (ring->type == B43_DMA_64BIT) {
+ 			u64 ringbase = (u64) (ring->dmabase);
++			u32 enable;
++
  			addrext = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_EXT);
  			addrlo = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_LOW);
  			addrhi = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_HIGH);
-+			ring->index_base = ring->dev->phy.type == B43_PHYTYPE_AC ?
++			ring->index_base = ring->dev->dma.index_is_addr ?
 +					   addrlo : 0;
  
- 			value = B43_DMA64_TXENABLE;
- 			value |= (addrext << B43_DMA64_TXADDREXT_SHIFT)
-@@ -715,6 +728,8 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
+-			value = B43_DMA64_TXENABLE;
+-			value |= (addrext << B43_DMA64_TXADDREXT_SHIFT)
++			value = (addrext << B43_DMA64_TXADDREXT_SHIFT)
+ 			    & B43_DMA64_TXADDREXT_MASK;
++			enable = B43_DMA64_TXENABLE;
+ 			if (!parity)
+-				value |= B43_DMA64_TXPARITYDISABLE;
+-			b43_dma_write(ring, B43_DMA64_TXCTL, value);
+-			b43_dma_write(ring, B43_DMA64_TXRINGLO, addrlo);
+-			b43_dma_write(ring, B43_DMA64_TXRINGHI, addrhi);
++				enable |= B43_DMA64_TXPARITYDISABLE;
++			if (ring->dev->dma.index_is_addr) {
++				b43_dma_write(ring, B43_DMA64_TXCTL, value);
++				b43_dma_write(ring, B43_DMA64_TXRINGLO, addrlo);
++				b43_dma_write(ring, B43_DMA64_TXRINGHI, addrhi);
++				b43_dma_write(ring, B43_DMA64_TXCTL, value | enable);
++			} else {
++				b43_dma_write(ring, B43_DMA64_TXCTL, value | enable);
++				b43_dma_write(ring, B43_DMA64_TXRINGLO, addrlo);
++				b43_dma_write(ring, B43_DMA64_TXRINGHI, addrhi);
++			}
+ 		} else {
+ 			u32 ringbase = (u32) (ring->dmabase);
+ 			addrext = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_EXT);
+@@ -715,6 +736,8 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
  			addrext = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_EXT);
  			addrlo = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_LOW);
  			addrhi = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_HIGH);
-+			ring->index_base = ring->dev->phy.type == B43_PHYTYPE_AC ?
++			ring->index_base = ring->dev->dma.index_is_addr ?
 +					   addrlo : 0;
  
  			value = (ring->frameoffset << B43_DMA64_RXFROFF_SHIFT);
  			value |= B43_DMA64_RXENABLE;
-@@ -725,8 +740,8 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
- 			b43_dma_write(ring, B43_DMA64_RXCTL, value);
- 			b43_dma_write(ring, B43_DMA64_RXRINGLO, addrlo);
- 			b43_dma_write(ring, B43_DMA64_RXRINGHI, addrhi);
+@@ -722,11 +745,17 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
+ 			    & B43_DMA64_RXADDREXT_MASK;
+ 			if (!parity)
+ 				value |= B43_DMA64_RXPARITYDISABLE;
+-			b43_dma_write(ring, B43_DMA64_RXCTL, value);
+-			b43_dma_write(ring, B43_DMA64_RXRINGLO, addrlo);
+-			b43_dma_write(ring, B43_DMA64_RXRINGHI, addrhi);
 -			b43_dma_write(ring, B43_DMA64_RXINDEX, ring->nr_slots *
 -				      sizeof(struct b43_dmadesc64));
++			if (ring->dev->dma.index_is_addr) {
++				b43_dma_write(ring, B43_DMA64_RXRINGLO, addrlo);
++				b43_dma_write(ring, B43_DMA64_RXRINGHI, addrhi);
++				b43_dma_write(ring, B43_DMA64_RXCTL, value);
++			} else {
++				b43_dma_write(ring, B43_DMA64_RXCTL, value);
++				b43_dma_write(ring, B43_DMA64_RXRINGLO, addrlo);
++				b43_dma_write(ring, B43_DMA64_RXRINGHI, addrhi);
++			}
 +			b43_dma_write(ring, B43_DMA64_RXINDEX,
 +				      op64_slot_index(ring, ring->nr_slots));
  		} else {
  			u32 ringbase = (u32) (ring->dmabase);
  			addrext = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_EXT);
-@@ -867,6 +882,12 @@ struct b43_dmaring *b43_setup_dmaring(struct b43_wldev *dev,
+@@ -867,6 +896,12 @@ struct b43_dmaring *b43_setup_dmaring(struct b43_wldev *dev,
  	} else {
  		if (ring->index == 0) {
  			switch (dev->fw.hdr_format) {
@@ -471,7 +517,46 @@ index e0a74f4..537d9ad 100644
  			case B43_FW_HDR_598:
  				ring->rx_buffersize = B43_DMA0_RX_FW598_BUFSIZE;
  				ring->frameoffset = B43_DMA0_RX_FW598_FO;
-@@ -1175,8 +1196,8 @@ struct b43_dmaring *parse_cookie(struct b43_wldev *dev, u16 cookie, int *slot)
+@@ -1046,6 +1081,28 @@ static bool b43_dma_translation_in_low_word(struct b43_wldev *dev,
+ 	return false;
+ }
+ 
++/*
++ * Whether the DMA64 engine takes an unaligned ring, and so descriptor
++ * addresses in its index registers, asked of the engine as the stock driver
++ * does: write all ones to the ring address and see which low bits stay, the
++ * 0xff0 of brcmsmac's _dma_descriptor_align(). Such an engine also gets its
++ * ring address before it is enabled; the others after, as b43 has always
++ * done.
++ */
++static bool b43_dma64_index_is_addr(struct b43_wldev *dev)
++{
++	u16 ringlo = b43_dmacontroller_base(B43_DMA_64BIT, 0) +
++		     B43_DMA64_TXRINGLO;
++	u32 mask;
++
++	b43_write32(dev, ringlo, 0xffffffff);
++	mask = b43_read32(dev, ringlo);
++	b43_write32(dev, ringlo, 0);
++	b43info(dev->wl, "DMA64 ring address mask 0x%08x\n", mask);
++
++	return mask & 0xff0;
++}
++
+ int b43_dma_init(struct b43_wldev *dev)
+ {
+ 	struct b43_dma *dma = &dev->dma;
+@@ -1080,6 +1137,9 @@ int b43_dma_init(struct b43_wldev *dev)
+ 		dma->parity = false;
+ #endif
+ 
++	dma->index_is_addr = type == B43_DMA_64BIT &&
++			     b43_dma64_index_is_addr(dev);
++
+ 	err = -ENOMEM;
+ 	/* setup TX DMA channels. */
+ 	dma->tx_ring_AC_BK = b43_setup_dmaring(dev, 0, 1, type);
+@@ -1175,8 +1235,8 @@ struct b43_dmaring *parse_cookie(struct b43_wldev *dev, u16 cookie, int *slot)
  	}
  	*slot = (cookie & 0x0FFF);
  	if (unlikely(!ring || *slot < 0 || *slot >= ring->nr_slots)) {
@@ -482,7 +567,7 @@ index e0a74f4..537d9ad 100644
  		return NULL;
  	}
  
-@@ -1446,9 +1467,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
+@@ -1446,9 +1506,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
  			skip = 2;
  			if (!err_out1) {
  				/* Report the error once. */
@@ -495,7 +580,7 @@ index e0a74f4..537d9ad 100644
  				err_out1 = 1;
  			}
  		} else {
-@@ -1457,9 +1478,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
+@@ -1457,9 +1517,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
  			 * firmware, then reset the controller to
  			 * revive operation.
  			 */
@@ -508,7 +593,7 @@ index e0a74f4..537d9ad 100644
  			if (dev->fw.opensource)
  				b43_controller_restart(dev, "Out of order TX");
  			return;
-@@ -1473,9 +1494,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
+@@ -1473,9 +1533,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
  		ops->idx2desc(ring, slot, &meta);
  
  		if (b43_dma_ptr_is_poisoned(meta->skb)) {
@@ -521,7 +606,7 @@ index e0a74f4..537d9ad 100644
  			break;
  		}
  
-@@ -1499,9 +1520,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
+@@ -1499,9 +1559,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
  				/* This is a scatter-gather fragment of a frame,
  				 * so the skb pointer must not be NULL.
  				 */
@@ -534,7 +619,7 @@ index e0a74f4..537d9ad 100644
  				break;
  			}
  
-@@ -1538,9 +1559,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
+@@ -1538,9 +1598,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
  			 * this is only the txhdr, which is not allocated.
  			 */
  			if (unlikely(meta->skb)) {
@@ -547,7 +632,7 @@ index e0a74f4..537d9ad 100644
  				break;
  			}
  		}
-@@ -1610,7 +1631,7 @@ static void dma_rx(struct b43_dmaring *ring, int *slot)
+@@ -1610,7 +1670,7 @@ static void dma_rx(struct b43_dmaring *ring, int *slot)
  	if (unlikely(b43_rx_buffer_is_poisoned(ring, skb))) {
  		/* Something went wrong with the DMA.
  		 * The device did not touch the buffer and did not overwrite the poison. */
@@ -556,7 +641,7 @@ index e0a74f4..537d9ad 100644
  		dmaaddr = meta->dmaaddr;
  		goto drop_recycle_buffer;
  	}
-@@ -1644,7 +1665,7 @@ static void dma_rx(struct b43_dmaring *ring, int *slot)
+@@ -1644,7 +1704,7 @@ static void dma_rx(struct b43_dmaring *ring, int *slot)
  	dmaaddr = meta->dmaaddr;
  	err = setup_rx_descbuffer(ring, desc, meta, GFP_ATOMIC);
  	if (unlikely(err)) {
