@@ -11,13 +11,20 @@
  *   AND: the stock driver emits PHY.MOD with an explicit mask, which
  *   phy_set() and phy_mask() would emit as mask=0x0000. A pulse is therefore
  *   a pair of masksets: val=<bit> mask=<bit>, then val=0 mask=<bit>.
- * - reads whose value is not needed go through b43_phy_read_log() or
- *   b43_radio_read_log(): they keep the bus order, and a read with no
- *   consumer may be a logic error, so it is logged rather than hidden. A few
- *   still use the plain accessor.
- * - "self-contained" is a table write that opens the gate, writes and closes
- *   it in its own scope (b43_actab_*_scoped), as opposed to the variants that
- *   work inside a gate the caller holds open.
+ * - a read whose value is not needed keeps its place in the bus order. If
+ *   its purpose is not understood it goes through a _log accessor
+ *   (b43_phy_read_log(), b43_radio_read_log(), b43_shm_read16_log(),
+ *   b43_actab_read_log()), because a read with no consumer may be a logic
+ *   error; if it is understood -- a statistics poll, a FIFO drain, a cell
+ *   read before its overwrite -- it uses the plain accessor.
+ * - a read the stock driver writes back later is kept and written back, not
+ *   replaced by the value the captures show.
+ * - the table write gate is taken with b43_phy_ac_tbl_write_lock() and
+ *   released with b43_phy_ac_tbl_write_unlock(), nested as the stock driver
+ *   nests them: the unlock of a lock that found the gate locked is a relock.
+ *   "self-contained" is a table write with its own pair
+ *   (b43_actab_*_scoped), as opposed to the variants that work inside a
+ *   gate the caller holds.
  * - "the observed order" means the order comes from a capture and must not
  *   be rearranged; the op-for-op comparison checks it.
  *

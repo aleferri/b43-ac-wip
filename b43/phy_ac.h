@@ -107,8 +107,8 @@ struct ieee80211_channel;
  * Bit 0 of the same register is not a second lock, and the two names below are
  * the same bit. The stock driver raises it around the 2069's PLL bank, then
  * reinitialises the register with 0x01c0, 0x0200 and 0x003c, and also around
- * each RF-sequencer command in b43_phy_ac_run_rfseq_cmd(). Whether those are
- * one function or two is not established; only the second name is used.
+ * each RF-sequencer command in b43_phy_ac_force_rf_sequence(). Whether those
+ * are one function or two is not established; only the second name is used.
  */
 #define  B43_PHY_AC_TBL_WRITE_GATE_RADIO_TUNE	0x0001
 #define  B43_PHY_AC_RF_SEQ_OVERRIDE_GATE	0x0001
