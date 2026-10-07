@@ -659,6 +659,14 @@ bool b43_phy_ac_force_rf_sequence(struct b43_wldev *dev, u16 rf_seq);
 		       __r, __v);					\
 	__v;								\
 })
+#define b43_shm_read16_log(dev, routing, offset) ({			\
+	u16 __o = (offset);						\
+	u16 __v = b43_shm_read16((dev), (routing), __o);		\
+	if (B43_DEBUG)							\
+		b43info((dev)->wl, "shm   rd 0x%04x = 0x%04x\n",		\
+		       __o, __v);					\
+	__v;								\
+})
 /* The same for @len 16-bit cells of a PHY table. */
 #define B43_ACTAB_READ_LOG_MAX	16
 #define b43_actab_read_log(dev, id, offset, len) do {			\
