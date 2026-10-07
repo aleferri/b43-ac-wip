@@ -148,6 +148,9 @@ struct b43_tx_legacy_rate_phy_ctl_entry {
 #define B43_TXH_PHY_ENC			0x0003 /* Data frame encoding */
 #define  B43_TXH_PHY_ENC_CCK		0x0000 /* CCK */
 #define  B43_TXH_PHY_ENC_OFDM		0x0001 /* OFDM */
+/* AC PHY TX control word 0: the encoding above, the TX cores from bit 6 */
+#define B43_TXH_AC_PHY_CORES		0x03C0
+#define B43_TXH_AC_PHY_CORES_SHIFT	6
 #define  B43_TXH_PHY_ENC_HT		0x0002 /* HT */
 #define  B43_TXH_PHY_ENC_VHT		0x0003 /* VHT */
 #define B43_TXH_PHY_SHORTPRMBL		0x0010 /* Use short preamble */

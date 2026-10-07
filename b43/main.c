@@ -38,6 +38,7 @@
 #include "phy_common.h"
 #include "phy_g.h"
 #include "phy_n.h"
+#include "phy_ac.h"
 #include "dma.h"
 #include "pio.h"
 #include "sysfs.h"
@@ -1859,6 +1860,7 @@ static const struct b43_tpl_layout b43_tpl_layout_ac_784 = {
 	.bcn_size	= 0x0200,
 	.hdr_len	= 12,
 	.plcp_off	= 3,
+	.bcn_phyctl1	= 0x0030,
 };
 
 static const struct b43_tpl_layout b43_tpl_layout_ac_832 = {
@@ -1867,6 +1869,7 @@ static const struct b43_tpl_layout b43_tpl_layout_ac_832 = {
 	.bcn_size	= 0x0280,
 	.hdr_len	= 12,
 	.plcp_off	= 3,
+	.bcn_phyctl1	= 0x0060,
 };
 
 static const struct b43_tpl_layout *b43_tpl_layout_find(struct b43_wldev *dev)
@@ -1975,8 +1978,8 @@ static u16 b43_antenna_to_phyctl(int antenna)
 
 /*
  * The PHY TX control words of the beacon, the ACK/CTS and the probe
- * response in shared memory have the pre-AC layout. The AC cores' stock
- * driver never writes them and leaves the initvals' values.
+ * response in shared memory have the pre-AC layout; the AC microcode keeps
+ * the beacon's elsewhere, see b43_write_beacon_phytxctl_ac().
  */
 static bool b43_phytxctl_in_shm(struct b43_wldev *dev)
 {
@@ -1998,6 +2001,28 @@ static void b43_write_beacon_phytxctl(struct b43_wldev *dev, u16 rate)
 	else
 		ctl |= B43_TXH_PHY_ENC_OFDM;
 	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_BEACPHYCTL, ctl);
+}
+
+/*
+ * The AC stock drivers read the first word, keep its other bits and set the
+ * encoding and the TX cores, the first and the last wired one: 0x0044 of the
+ * initvals becomes 0x00c5 on the DSL-3580L (cores 0x3), 0x0145 on the agcombo
+ * (0x7). Left as it is, the beacon goes out as CCK, which 5 GHz cannot carry.
+ */
+static void b43_write_beacon_phytxctl_ac(struct b43_wldev *dev, u16 rate)
+{
+	unsigned long wired = dev->phy.ac->coremask;
+	u16 cores = BIT(__ffs(wired)) | BIT(__fls(wired));
+	u16 ctl;
+
+	ctl = b43_shm_read16(dev, B43_SHM_SHARED, B43_SHM_SH_BEACPHYCTL_AC);
+	ctl &= ~(B43_TXH_PHY_ENC | B43_TXH_AC_PHY_CORES);
+	ctl |= cores << B43_TXH_AC_PHY_CORES_SHIFT;
+	ctl |= b43_is_cck_rate(rate) ? B43_TXH_PHY_ENC_CCK : B43_TXH_PHY_ENC_OFDM;
+	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_BEACPHYCTL_AC, ctl);
+	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_BEACPHYCTL_AC + 2,
+			dev->fw.tpl->bcn_phyctl1);
+	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_BEACPHYCTL_AC + 4, 0);
 }
 
 static void b43_write_beacon_template(struct b43_wldev *dev,
@@ -2036,6 +2061,8 @@ static void b43_write_beacon_template(struct b43_wldev *dev,
 
 	if (b43_phytxctl_in_shm(dev))
 		b43_write_beacon_phytxctl(dev, rate);
+	else
+		b43_write_beacon_phytxctl_ac(dev, rate);
 
 	/* Find the position of the TIM and the DTIM_period value
 	 * and write them to SHM. */
