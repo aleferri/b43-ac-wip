@@ -418,9 +418,17 @@ static inline
  * alignment, its alignment): 4K for 30/32-bit DMA, 8K for 64-bit DMA. The 8K
  * alignment matters because of a hardware bug where bit 0x00001000 of the DMA
  * address leaks into B43_DMA64_RXSTATUS.
+ *
+ * The AC cores take 64K: with the ring 8K-aligned the DSL-3580L raises a
+ * descriptor protocol error (bit 12 of controller 0's DMA reason) within
+ * half a second of the MAC coming up, though the index registers hold the
+ * descriptor's whole address. 64K-aligned, that address and the offset b43
+ * used to write agree in the low 16 bits.
  */
 static unsigned int b43_dma_ringmemsize(struct b43_dmaring *ring)
 {
+	if (ring->dev->phy.type == B43_PHYTYPE_AC)
+		return 64 * 1024;
 	return (ring->type == B43_DMA_64BIT) ?
 		B43_DMA64_RINGMEMSIZE : B43_DMA32_RINGMEMSIZE;
 }
