@@ -381,7 +381,7 @@ static void b43_phy_ac_wd_head_words(struct b43_wldev *dev, bool entry)
 	unsigned int i;
 
 	for (i = 0; i < 4; i++)
-		b43_shm_read16_log(dev, B43_SHM_SHARED, head[i]);
+		b43_shm_read16(dev, B43_SHM_SHARED, head[i]);
 }
 
 static void b43_phy_ac_wd_flat_sweep(struct b43_wldev *dev)
@@ -389,7 +389,7 @@ static void b43_phy_ac_wd_flat_sweep(struct b43_wldev *dev)
 	u16 off;
 
 	for (off = 0x0768; off <= 0x078a; off += 2)
-		b43_shm_read16_log(dev, B43_SHM_SHARED, off);
+		b43_shm_read16(dev, B43_SHM_SHARED, off);
 }
 
 static void b43_phy_ac_wd_stats_poll_opt(struct b43_wldev *dev,
@@ -1105,7 +1105,7 @@ static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev,
 								 r->ofdm),
 						 cap);
 
-		b43_shm_read16_log(dev, B43_SHM_SHARED, cell);
+		b43_shm_read16(dev, B43_SHM_SHARED, cell);
 		b43_shm_write16(dev, B43_SHM_SHARED, cell, val);
 	}
 }
@@ -8984,9 +8984,9 @@ static u16 probe_mode_next(struct b43_phy_ac *ac)
  */
 static void b43_phy_ac_wd_shm_peek32(struct b43_wldev *dev, u16 lo_off)
 {
-	b43_shm_read16_log(dev, B43_SHM_SHARED, (u16)(lo_off + 2));
-	b43_shm_read16_log(dev, B43_SHM_SHARED, lo_off);
-	b43_shm_read16_log(dev, B43_SHM_SHARED, (u16)(lo_off + 2));
+	b43_shm_read16(dev, B43_SHM_SHARED, (u16)(lo_off + 2));
+	b43_shm_read16(dev, B43_SHM_SHARED, lo_off);
+	b43_shm_read16(dev, B43_SHM_SHARED, (u16)(lo_off + 2));
 }
 
 /*
@@ -9095,7 +9095,8 @@ static void b43_phy_ac_wd_sample_phase_opt(struct b43_wldev *dev, bool peek,
  * SHM statistics poll, with the MAC active, in the reference tick's order:
  * four scattered words, the 0x0768-0x078a sweep, two hi/lo/hi passes over
  * the six 32-bit counters, the counters at 0x07e0, 0x07e4 and 0x07dc, the
- * 0x07d6-0x07da group and two trailing words.
+ * 0x07d6-0x07da group and two trailing words. b43 has no use for the
+ * counters: they are read for the stock driver's bus order.
  *
  * The three shapes the captures show:
  *
@@ -9158,9 +9159,9 @@ static void b43_phy_ac_wd_stats_poll_opt(struct b43_wldev *dev,
 	b43_phy_ac_wd_shm_peek32(dev, 0x07dc);
 
 	for (off = 0x07d6; off <= 0x07da; off += 2)
-		b43_shm_read16_log(dev, B43_SHM_SHARED, off);
-	b43_shm_read16_log(dev, B43_SHM_SHARED, 0x015a);
-	b43_shm_read16_log(dev, B43_SHM_SHARED, 0x014e);
+		b43_shm_read16(dev, B43_SHM_SHARED, off);
+	b43_shm_read16(dev, B43_SHM_SHARED, 0x015a);
+	b43_shm_read16(dev, B43_SHM_SHARED, 0x014e);
 }
 
 /* Closing re-read of the window zeroed at the head, plus 0x008c. */
@@ -9169,7 +9170,7 @@ static void b43_phy_ac_wd_stats_tail(struct b43_wldev *dev)
 	u16 noise[B43_PHY_AC_MAX_CORES] = { 0 };
 	u16 off;
 
-	b43_shm_read16_log(dev, B43_SHM_SHARED, 0x008c);
+	b43_shm_read16(dev, B43_SHM_SHARED, 0x008c);
 	for (off = 0x0308; off <= 0x0314; off += 2) {
 		u16 v = b43_shm_read16(dev, B43_SHM_SHARED, off);
 		unsigned int core = (off - 0x0308) / 4;
@@ -9240,7 +9241,7 @@ static void b43_phy_ac_wd_region_dump(struct b43_wldev *dev)
 
 	B43_AC_FN();
 	for (off = 0x00e0; off <= 0x015e; off += 2)
-		b43_shm_read16_log(dev, B43_SHM_SHARED, off);
+		b43_shm_read16(dev, B43_SHM_SHARED, off);
 }
 
 /*
@@ -10215,8 +10216,8 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 				dev->phy.ac->rate_ptr[k] = v;
 	}
 	for (off = B43_AC_RT_DIRMAP_B; off <= B43_AC_RT_DIRMAP_B + 0x1e; off += 2)
-		b43_shm_read16_log(dev, B43_SHM_SHARED, off);
-	b43_shm_read16_log(dev, B43_SHM_SHARED, 0x0056);
+		b43_shm_read16(dev, B43_SHM_SHARED, off);
+	b43_shm_read16(dev, B43_SHM_SHARED, 0x0056);
 	/*
 	 * 0x0056 is the key table pointer, B43_SHM_SH_KTP: 0x087a, the key
 	 * material at 0x10f4. Here the stock driver zeroes it (480 words up to
@@ -10297,7 +10298,7 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	 * them.
 	 */
 	for (off = 0x0300; off <= 0x0306; off += 2)
-		b43_shm_read16_log(dev, B43_SHM_SHARED, off);
+		b43_shm_read16(dev, B43_SHM_SHARED, off);
 	b43_phy_ac_wd_stats_poll_opt(dev, true, 0, true);
 	/* MHF4 bit 15: set on a first bring-up, cleared on a later one. */
 	b43_phy_ac_mhf_maskset(dev, 4, (u16)~0x8000,
