@@ -6814,15 +6814,15 @@ static void b43_phy_ac_gain_ladder_write(struct b43_wldev *dev,
 				const struct b43_phy_ac_gain_ladder *l)
 {
 	unsigned int i;
+	u16 gate;
 
 	B43_AC_FN();
-	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+	gate = b43_phy_ac_tbl_write_lock(dev);
 	for (i = 0; i < ARRAY_SIZE(l->c0); i++) {
 		b43_actab_write_bulk(dev, 0x000c, 0x00 + i, 16, 1, &l->c0[i]);
 		b43_actab_write_bulk(dev, 0x000c, 0x20 + i, 16, 1, &l->c1[i]);
 	}
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+	b43_phy_ac_tbl_write_unlock(dev, gate);
 }
 
 /*
@@ -6851,9 +6851,6 @@ void b43_phy_ac_post_rxiqcal_stage2(struct b43_wldev *dev)
 	static const u16 zero1[1] = { 0x0000 };
 	u8 c;
 
-	/* B4 preamble */
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
 	/*
 	 * The clock force stays up across the whole B4b configuration window,
 	 * not only the CCA pulse: the capture has PHY.FGC 1 right before this
@@ -7553,19 +7550,14 @@ static void b43_phy_ac_tx_gain_bbmult_load(struct b43_wldev *dev)
 {
 	struct b43_phy_ac *ac = dev->phy.ac;
 	unsigned int core, i;
-	bool first_core = true;
+	u16 gate;
 
-	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+	gate = b43_phy_ac_tbl_write_lock(dev);
 
 	for_each_set_bit(core, &ac->coremask, ac->num_cores) {
 		u16 lo = (u16)(0x0063 + 4 * core);
 		u16 hi = (u16)(0x0073 + 4 * core);
-
-		/* Bridge between cores: an idempotent lock MOD only. */
-		if (!first_core)
-			b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
-		first_core = false;
+		u16 inner;
 
 		for (i = 0; i < 3; i++)
 			b43_actab_read_log(dev, 7, 0x0100 + core + 3 * i, 1);
@@ -7574,11 +7566,13 @@ static void b43_phy_ac_tx_gain_bbmult_load(struct b43_wldev *dev)
 					     16, 1, &ac->gaincurve_coeff[core][i]);
 
 		b43_actab_read_bulk(dev, 0xc, lo, 16, 1, &ac->bbmult_saved[core]);
-		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+		inner = b43_phy_ac_tbl_write_lock(dev);
 		b43_actab_write_bulk(dev, 0xc, lo, 16, 1, &ac->bbmult_cal[core]);
 		b43_actab_write_bulk(dev, 0xc, hi, 16, 1, &ac->bbmult_cal[core]);
+		b43_phy_ac_tbl_write_unlock(dev, inner);
 	}
+
+	b43_phy_ac_tbl_write_unlock(dev, gate);
 }
 
 /*
@@ -7598,10 +7592,6 @@ void b43_phy_ac_rxiqcal_apply_tx_gain_bbmult(struct b43_wldev *dev)
 			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
 
 	b43_phy_ac_tx_gain_bbmult_load(dev);
-
-	/* Postamble */
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
 }
 
 /*
