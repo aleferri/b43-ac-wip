@@ -8981,17 +8981,15 @@ static u16 probe_mode_next(struct b43_phy_ac *ac)
 }
 
 /*
- * Rollover-safe read of a 32-bit SHM counter: hi, lo, hi, always three
- * reads as the stock driver does; the second high half counts.
+ * The stock driver's read of a 32-bit SHM counter: high half, low half, high
+ * half again. Nothing here consumes the counters; a consumer would have to
+ * re-read the low half when the two high halves differ.
  */
-static u32 b43_phy_ac_wd_shm_read32x3(struct b43_wldev *dev, u16 lo_off)
+static void b43_phy_ac_wd_shm_peek32(struct b43_wldev *dev, u16 lo_off)
 {
-	u16 hi, lo;
-
-	hi = b43_shm_read16(dev, B43_SHM_SHARED, (u16)(lo_off + 2));
-	lo = b43_shm_read16(dev, B43_SHM_SHARED, lo_off);
-	hi = b43_shm_read16(dev, B43_SHM_SHARED, (u16)(lo_off + 2));
-	return ((u32)hi << 16) | lo;
+	b43_shm_read16_log(dev, B43_SHM_SHARED, (u16)(lo_off + 2));
+	b43_shm_read16_log(dev, B43_SHM_SHARED, lo_off);
+	b43_shm_read16_log(dev, B43_SHM_SHARED, (u16)(lo_off + 2));
 }
 
 /*
@@ -9147,7 +9145,7 @@ static void b43_phy_ac_wd_stats_poll_opt(struct b43_wldev *dev,
 		if (pass == 1)
 			B43_AC_CORE_SITE(dev, BEACON_WD);
 		for (i = 0; i < ARRAY_SIZE(ctr32); i++)
-			b43_phy_ac_wd_shm_read32x3(dev, ctr32[i]);
+			b43_phy_ac_wd_shm_peek32(dev, ctr32[i]);
 	}
 
 	/*
@@ -9158,9 +9156,9 @@ static void b43_phy_ac_wd_stats_poll_opt(struct b43_wldev *dev,
 	if (!ctr32_tail)
 		return;
 
-	b43_phy_ac_wd_shm_read32x3(dev, 0x07e0);
-	b43_phy_ac_wd_shm_read32x3(dev, 0x07e4);
-	b43_phy_ac_wd_shm_read32x3(dev, 0x07dc);
+	b43_phy_ac_wd_shm_peek32(dev, 0x07e0);
+	b43_phy_ac_wd_shm_peek32(dev, 0x07e4);
+	b43_phy_ac_wd_shm_peek32(dev, 0x07dc);
 
 	for (off = 0x07d6; off <= 0x07da; off += 2)
 		b43_shm_read16_log(dev, B43_SHM_SHARED, off);
