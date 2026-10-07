@@ -512,7 +512,7 @@ int b43_pio_tx(struct b43_wldev *dev, struct sk_buff *skb)
 
 	if (unlikely(total_len > q->buffer_size)) {
 		err = -ENOBUFS;
-		b43dbg(dev->wl, "PIO: TX packet longer than queue.\n");
+		b43warn(dev->wl, "PIO: TX packet longer than queue.\n");
 		goto out;
 	}
 	if (unlikely(q->free_packet_slots == 0)) {
@@ -652,7 +652,7 @@ static bool pio_rx_frame(struct b43_pio_rxqueue *q)
 			udelay(10);
 		}
 	}
-	b43dbg(q->dev->wl, "PIO RX timed out\n");
+	b43warn(q->dev->wl, "PIO RX timed out\n");
 	return true;
 data_ready:
 
@@ -755,7 +755,7 @@ data_ready:
 
 rx_error:
 	if (err_msg)
-		b43dbg(q->dev->wl, "PIO RX error: %s\n", err_msg);
+		b43warn(q->dev->wl, "PIO RX error: %s\n", err_msg);
 	if (q->rev >= 8)
 		b43_piorx_write32(q, B43_PIO8_RXCTL, B43_PIO8_RXCTL_DATARDY);
 	else

@@ -1247,8 +1247,8 @@ struct b43_dmaring *parse_cookie(struct b43_wldev *dev, u16 cookie, int *slot)
 	}
 	*slot = (cookie & 0x0FFF);
 	if (unlikely(!ring || *slot < 0 || *slot >= ring->nr_slots)) {
-		b43dbg(dev->wl, "TX-status contains "
-		       "invalid cookie: 0x%04X\n", cookie);
+		b43warn(dev->wl, "TX-status contains "
+		        "invalid cookie: 0x%04X\n", cookie);
 		return NULL;
 	}
 
@@ -1518,9 +1518,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
 			skip = 2;
 			if (!err_out1) {
 				/* Report the error once. */
-				b43dbg(dev->wl,
-				       "Skip on DMA ring %d slot %d.\n",
-				       ring->index, slot);
+				b43warn(dev->wl,
+				        "Skip on DMA ring %d slot %d.\n",
+				        ring->index, slot);
 				err_out1 = 1;
 			}
 		} else {
@@ -1529,9 +1529,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
 			 * firmware, then reset the controller to
 			 * revive operation.
 			 */
-			b43dbg(dev->wl,
-			       "Out of order TX status report on DMA ring %d. Expected %d, but got %d\n",
-			       ring->index, firstused, slot);
+			b43warn(dev->wl,
+			        "Out of order TX status report on DMA ring %d. Expected %d, but got %d\n",
+			        ring->index, firstused, slot);
 			if (dev->fw.opensource)
 				b43_controller_restart(dev, "Out of order TX");
 			return;
@@ -1545,9 +1545,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
 		ops->idx2desc(ring, slot, &meta);
 
 		if (b43_dma_ptr_is_poisoned(meta->skb)) {
-			b43dbg(dev->wl, "Poisoned TX slot %d (first=%d) "
-			       "on ring %d\n",
-			       slot, firstused, ring->index);
+			b43warn(dev->wl, "Poisoned TX slot %d (first=%d) "
+			        "on ring %d\n",
+			        slot, firstused, ring->index);
 			break;
 		}
 
@@ -1571,9 +1571,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
 				/* This is a scatter-gather fragment of a frame,
 				 * so the skb pointer must not be NULL.
 				 */
-				b43dbg(dev->wl, "TX status unexpected NULL skb "
-				       "at slot %d (first=%d) on ring %d\n",
-				       slot, firstused, ring->index);
+				b43warn(dev->wl, "TX status unexpected NULL skb "
+				        "at slot %d (first=%d) on ring %d\n",
+				        slot, firstused, ring->index);
 				break;
 			}
 
@@ -1610,9 +1610,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
 			 * this is only the txhdr, which is not allocated.
 			 */
 			if (unlikely(meta->skb)) {
-				b43dbg(dev->wl, "TX status unexpected non-NULL skb "
-				       "at slot %d (first=%d) on ring %d\n",
-				       slot, firstused, ring->index);
+				b43warn(dev->wl, "TX status unexpected non-NULL skb "
+				        "at slot %d (first=%d) on ring %d\n",
+				        slot, firstused, ring->index);
 				break;
 			}
 		}
@@ -1682,7 +1682,7 @@ static void dma_rx(struct b43_dmaring *ring, int *slot)
 	if (unlikely(b43_rx_buffer_is_poisoned(ring, skb))) {
 		/* Something went wrong with the DMA.
 		 * The device did not touch the buffer and did not overwrite the poison. */
-		b43dbg(ring->dev->wl, "DMA RX: Dropping poisoned buffer.\n");
+		b43warn(ring->dev->wl, "DMA RX: Dropping poisoned buffer.\n");
 		dmaaddr = meta->dmaaddr;
 		goto drop_recycle_buffer;
 	}
@@ -1716,7 +1716,7 @@ static void dma_rx(struct b43_dmaring *ring, int *slot)
 	dmaaddr = meta->dmaaddr;
 	err = setup_rx_descbuffer(ring, desc, meta, GFP_ATOMIC);
 	if (unlikely(err)) {
-		b43dbg(ring->dev->wl, "DMA RX: setup_rx_descbuffer() failed\n");
+		b43warn(ring->dev->wl, "DMA RX: setup_rx_descbuffer() failed\n");
 		goto drop_recycle_buffer;
 	}
 

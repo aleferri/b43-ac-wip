@@ -2236,7 +2236,7 @@ static void b43_handle_firmware_panic(struct b43_wldev *dev)
 
 	switch (reason) {
 	default:
-		b43dbg(dev->wl, "The panic reason is unknown.\n");
+		b43err(dev->wl, "The panic reason is unknown.\n");
 		fallthrough;
 	case B43_FWPANIC_DIE:
 		/* Do not restart the controller or firmware.
@@ -2401,8 +2401,7 @@ static void b43_do_interrupt_thread(struct b43_wldev *dev)
 
 	/* Check the DMA reason registers for received data. */
 	if (dma_reason[0] & B43_DMAIRQ_RDESC_UFLOW) {
-		if (B43_DEBUG)
-			b43warn(dev->wl, "RX descriptor underrun\n");
+		b43warn(dev->wl, "RX descriptor underrun\n");
 		b43_dma_handle_rx_overflow(dev->dma.rx_ring);
 	}
 	if (dma_reason[0] & B43_DMAIRQ_RX_DONE) {
@@ -6934,8 +6933,11 @@ static struct ssb_driver b43_ssb_driver = {
 void b43_controller_restart(struct b43_wldev *dev, const char *reason)
 {
 	/* Must avoid requeueing, if we are in shutdown. */
-	if (b43_status(dev) < B43_STAT_INITIALIZED)
+	if (b43_status(dev) < B43_STAT_INITIALIZED) {
+		b43info(dev->wl, "Controller RESET (%s) ignored, device down\n",
+			reason);
 		return;
+	}
 	b43info(dev->wl, "Controller RESET (%s) ...\n", reason);
 	ieee80211_queue_work(dev->wl->hw, &dev->restart_work);
 }
