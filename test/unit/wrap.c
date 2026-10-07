@@ -630,7 +630,7 @@ static void perturb_init(void)
 		return;
 	done = 1;
 	a = getenv("AC_READ_PERTURB");
-	if (!a)
+	if (!a || !*a)
 		return;
 	perturb_addr = (unsigned)strtoul(a, NULL, 0);
 	m = getenv("AC_READ_PERTURB_MASK");
