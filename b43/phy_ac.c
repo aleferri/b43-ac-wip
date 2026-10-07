@@ -1319,11 +1319,11 @@ static void b43_phy_ac_bbmult_peek(struct b43_wldev *dev)
 static void b43_phy_ac_bbmult_write(struct b43_wldev *dev,
 					unsigned int core, const u16 *val)
 {
-	b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+	u16 saved = b43_phy_ac_tbl_write_lock(dev);
+
 	b43_actab_write_bulk(dev, 0x000c, (u16)(0x0063 + 4 * core), 16, 1, val);
 	b43_actab_write_bulk(dev, 0x000c, (u16)(0x0073 + 4 * core), 16, 1, val);
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+	b43_phy_ac_tbl_write_unlock(dev, saved);
 }
 
 /*
@@ -2344,7 +2344,7 @@ void b43_phy_ac_txpwr_by_index(struct b43_wldev *dev, u8 idx)
 	static const u16 bbmult_lo[3] = { 0x0063, 0x0067, 0x006b };
 	static const u16 bbmult_hi[3] = { 0x0073, 0x0077, 0x007b };
 	unsigned int core;
-	bool first_core = true;
+	u16 saved;
 
 	B43_PHY_AC_REQUIRE(dev,
 			   B43_PHY_AC_STATE_RX_WAITED | B43_PHY_AC_STATE_CLIP_ALL_DIS,
@@ -2352,23 +2352,14 @@ void b43_phy_ac_txpwr_by_index(struct b43_wldev *dev, u8 idx)
 			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
 
 	/*
-	 * Preamble: peek gate + lock. The side effects some stock call sites
-	 * wrap around this sequence (restoring 0x0070 bits 15:13, writing
-	 * 0x1641) are the caller's.
+	 * The side effects some stock call sites wrap around this sequence
+	 * (restoring 0x0070 bits 15:13, writing 0x1641) are the caller's.
 	 */
-	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+	saved = b43_phy_ac_tbl_write_lock(dev);
 
 	for_each_set_bit(core, &ac->coremask, ac->num_cores) {
 		const u16 *e = b43_phy_ac_txgain_table(dev)[idx];
-		u16 g0, g1, g2, bbmult;
-
-
-		if (!first_core) {
-			/* Bridge between cores: an idempotent lock MOD only. */
-			b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
-		}
-		first_core = false;
+		u16 g0, g1, g2, bbmult, inner;
 
 		bbmult =  e[0]       & 0x00ff;
 		g0     = (e[0] >> 8) | ((e[1] & 0x00ff) << 8);
@@ -2380,22 +2371,18 @@ void b43_phy_ac_txpwr_by_index(struct b43_wldev *dev, u8 idx)
 		b43_actab_write_bulk(dev, 7, (u16)(core + 0x0103), 16, 1, &g1);
 		b43_actab_write_bulk(dev, 7, (u16)(core + 0x0106), 16, 1, &g2);
 
-		/* Sync between batch A and B: peek + idempotent lock MOD */
-		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
-
-		/* Batch B: 2 fast WR TBL 0x000c (bbmult per-antenna) */
+		/* Batch B: 2 fast WR TBL 0x000c (bbmult per-antenna), nested */
+		inner = b43_phy_ac_tbl_write_lock(dev);
 		b43_actab_write_bulk(dev, 0xc, bbmult_lo[core], 16, 1, &bbmult);
 		b43_actab_write_bulk(dev, 0xc, bbmult_hi[core], 16, 1, &bbmult);
+		b43_phy_ac_tbl_write_unlock(dev, inner);
 
 		b43info(dev->wl,
 		       "phy-ac: txpwr_by_index core %u idx %u gain %04x/%04x/%04x bbmult %02x\n",
 		       core, idx, g0, g1, g2, bbmult);
 	}
 
-	/* Postamble: idempotent lock MOD + unlock MOD */
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+	b43_phy_ac_tbl_write_unlock(dev, saved);
 }
 
 /**************************************************
