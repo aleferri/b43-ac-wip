@@ -9668,6 +9668,7 @@ static void b43_phy_ac_down(struct b43_wldev *dev)
 	B43_AC_FN();
 	u16 (*lo_dac)[4] = dev->phy.ac->lo_dac;
 	u16 (*txiqlo_coef)[3] = dev->phy.ac->txiqlo_coef;
+	u16 gate;
 
 	/*
 	 * Entered with the MAC suspended by b43_wireless_core_stop(). The stock
@@ -9700,8 +9701,7 @@ static void b43_phy_ac_down(struct b43_wldev *dev)
 	 * core-2 LUT 0x80 (tg789vac-v2 cold01 #42170-#42579). The bits on
 	 * 0x0070/0x0072 (0x8000, 0x4000, 0x0100, 0x0700) are not documented.
 	 */
-	b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+	gate = b43_phy_ac_tbl_write_lock(dev);
 	b43_phy_ac_txpwrctrl_program(dev, dev->phy.ac->pa5g_grp);
 
 	/*
@@ -9712,7 +9712,7 @@ static void b43_phy_ac_down(struct b43_wldev *dev)
 	 */
 
 	/* Unlock the gate, then the AFE gain registers as in block E. */
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+	b43_phy_ac_tbl_write_unlock(dev, gate);
 	b43_phy_ac_afe_gain_regs_reemit(dev);
 
 	/*
@@ -9789,7 +9789,7 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	enum nl80211_chan_width width = chandef->width;
 	const struct b43_phy_ac_channeltab_e_radio2069 *e2069;
 	struct b43_phy *phy = &dev->phy;
-	u16 off, ifs;
+	u16 off, ifs, gate;
 
 	if (!ALLOW_24 && b43_current_band(dev->wl) == NL80211_BAND_2GHZ) {
 		b43info(dev->wl,
@@ -10174,8 +10174,7 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	/* After the sweep and the four CCK blocks not understood yet. */
 	b43_phy_ac_chainmask_block(dev, B43_PHY_AC_CHAIN_SETUP);
 	b43_phy_ac_prb_rsp_rate_po(dev, B43_PHY_AC_CHAIN_SETUP);
-	b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+	gate = b43_phy_ac_tbl_write_lock(dev);
 
 	B43_AC_BLOCK(dev, "txpwrctrl_setup");
 	b43_phy_ac_txpwrctrl_setup(dev, channel->center_freq);
@@ -10186,7 +10185,7 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	 * index, wake the MAC so that the firmware picks up the new
 	 * configuration, then suspend it again.
 	 */
-	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);           /* unlock */
+	b43_phy_ac_tbl_write_unlock(dev, gate);
 	/*
 	 * TX power control enable. The gain word is absent on a first bring-up,
 	 * here and in adc_reset(), but always present in the tail of
