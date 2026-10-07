@@ -1409,15 +1409,19 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 
 	for_each_set_bit(core, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
 		u16 p = (u16)(core * 0x0200);
-		u16 base_index;
+		u16 base_index, gate;
 
 		/*
 		 * Prologue, once per measured core. The 0x0140 gate is already
 		 * armed by the rx_gate_with_adc_hold(true) at the end of
 		 * adc_reset(), and is released and re-armed at the end of the
 		 * per-core body.
+		 *
+		 * The table gate is peeked here and locked four reads later;
+		 * the peek is what the unlock before the bbmult read-back
+		 * restores.
 		 */
-		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
+		gate = b43_phy_read(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
 		b43_phy_read_log(dev, 0x040f);
 		b43_phy_maskset(dev, 0x040f, (u16)~0x0200, 0);
 		b43_phy_read_log(dev, 0x0394);
@@ -1442,6 +1446,7 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 		/* Quiet every chain: gains, bbmult and the TSSI radio path. */
 		for_each_set_bit(c, &ac->coremask, ac->num_cores) {
 			u16 s = (u16)(c * 0x200);
+			u16 inner;
 
 			b43_phy_write(dev, 0x0732 + s, 0x0000);
 			b43_phy_write(dev, 0x0733 + s, 0x0000);
@@ -1449,11 +1454,10 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 			b43_phy_maskset(dev, 0x0734 + s, (u16)~0x0038, 0);
 			b43_phy_maskset(dev, 0x0722 + s, (u16)~0x0001, 0x0001);
 			b43_phy_maskset(dev, 0x0722 + s, (u16)~0x0008, 0x0008);
-			b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
-			b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+			inner = b43_phy_ac_tbl_write_lock(dev);
 			b43_actab_write_bulk(dev, 0x000c, (u16)(0x0063 + 4 * c), 16, 1, &zero);
 			b43_actab_write_bulk(dev, 0x000c, (u16)(0x0073 + 4 * c), 16, 1, &zero);
-			b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
+			b43_phy_ac_tbl_write_unlock(dev, inner);
 			st[c].r4e = b43_radio_read(dev, 0x004e + s);
 			st[c].r166 = b43_radio_read(dev, 0x0166 + s);
 			b43_actab_read_log(dev, 0x0007, 0x017e + 0x10 * c, 1);
@@ -1467,7 +1471,7 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
 		}
 
 		/* The bbmult cells as they stand mid-sequence, written back. */
-		b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0);
+		b43_phy_ac_tbl_write_unlock(dev, gate);
 		udelay(100);
 		for_each_set_bit(c, &ac->coremask, ac->num_cores) {
 			b43_actab_read_bulk(dev, 0x000c, (u16)(0x0063 + 4 * c),
