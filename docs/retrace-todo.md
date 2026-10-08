@@ -363,6 +363,12 @@ adaptation, and HT and VHT rates in transmission. What is open:
   `0x680`, `0x682`, `0x700`, `0x684`) the bsinitvals. b43 takes them from
   `b0g0initvals42.fw`/`b0g0bsinitvals42.fw` of 6.30.163; the 6.30.223 values
   (decoded ops #1140–#1480) have not been diffed against them.
+- **`MACCMD` bit 2** (`B43_MACCMD_DFQ_VALID`): both stock drivers write
+  `0x4` right after `WLCOREREV` and keep it in every later command (archer-t5e
+  6.30 line 12323, agcombo 7.14 `#12697`); b43 now does the same on
+  `B43_FW_HDR_AC`. What it gates in the AC ucode is open. `compare_state.py`
+  files `MACCMD` among the volatile registers, so the state comparison does
+  not flag it.
 - **Missing:** the null-data template at template RAM `0x2c` (power save).
   The AC writes the station address at template RAM `0x48`, eight bytes,
   right after the address-match row of the station (index 63), and b43 does

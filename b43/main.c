@@ -5843,6 +5843,15 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
 		goto err_busdown;
 	b43_shm_write16(dev, B43_SHM_SHARED,
 			B43_SHM_SH_WLCOREREV, dev->dev->core_rev);
+	/*
+	 * Both stock drivers write this right after the core revision, in AP
+	 * and station mode, and keep it in every later MAC command (6.30 on
+	 * the archer-t5e, 7.14 on the agcombo). What it gates in the AC
+	 * microcode is not known; brcmsmac's older ucode takes it only at the
+	 * end of an IBSS ATIM window.
+	 */
+	if (dev->fw.hdr_format == B43_FW_HDR_AC)
+		b43_write32(dev, B43_MMIO_MACCMD, B43_MACCMD_DFQ_VALID);
 	hf = b43_hf_read(dev);
 	if (phy->type == B43_PHYTYPE_G) {
 		hf |= B43_HF_SYMW;
