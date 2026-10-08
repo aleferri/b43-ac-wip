@@ -53,8 +53,9 @@ core itself, seen on the agcombo bus capture:
   promiscuity off in the calibration flush and at the tail of the channel
   switch, INFRA off / DISCPMQ on / AP off on the down -- have no core site in
   b43: `b43_adjust_opmode()` sets the mode once and the exit does not rewrite
-  it. `test/unit` emits them at the stock points (`B43_AC_SITE_CAL_BCNPROMISC_OFF`,
-  `_OPMODE_FILTERS`, `_DOWN_OPMODE`, `_DOWN_OPMODE_END`);
+  it. `test/unit` emits those of the switch tail and of the down at the
+  stock points (`B43_AC_SITE_OPMODE_FILTERS`, `_DOWN_OPMODE`,
+  `_DOWN_OPMODE_END`); the one of the calibration flush has no site;
   the BSS mode block before the TX power adjust -- TBTT hold, AP, INFRA,
   PRETBTT 2, beacon promiscuity -- is emitted by the flow before
   `adjust_txpower`, which now suspends the MAC around its own body.
@@ -133,9 +134,9 @@ pieces in order. On the D6220 `cold01` (folded, op numbers of
   - `_KEYS_CLEAR` (the rows; the key material and the index block are now
     with them in the harness):
     `b43_security_init()` at the core init, before mac80211 installs a key.
-  - `_OPMODE_FILTERS`, `_CAL_BCNPROMISC_OFF`, `_DOWN_OPMODE`,
-    `_DOWN_OPMODE_END`: MACCONTROL mode bits. b43 sets them in
-    `b43_adjust_opmode()` and keeps beacon promiscuity on for an AC AP; the
+  - `_OPMODE_FILTERS`, `_DOWN_OPMODE`, `_DOWN_OPMODE_END`: MACCONTROL mode
+    bits. b43 sets them in `b43_adjust_opmode()` and keeps beacon
+    promiscuity on for an AC AP; the
     stock driver drops it around the calibration flush and the switch tail,
     which receives no beacon that matters there.
   - `_CAC_CLOSE`: `b43_ac_cac_match_gate()`, from `b43_op_config()` right
@@ -200,21 +201,26 @@ driver:
   none of `0x0028`-`0x0048`, whose reasons it reads 43 times in all. b43's
   reads of the other channels are what catches a fatal DMA error on the TX
   rings.
-- Ring control: b43 writes the 7.14 engine parameters on the AC
-  (`b43_dma64_ac_tuning()`): TX `0x03700841`, RX `0x00500851`. The 6.30
-  hybrid writes TX `0x03780841` and RX `0x036c0851`; whether the D6220's
-  7.14.89 matches the agcombo's 7.14.43 is not in any capture, since the
-  wl-diag ones have no MAC registers.
-- The receive index: the stock driver writes the low 32 bits of the
-  descriptor's address, and so does b43 on the AC (`op64_slot_index()`),
-  with the default 8K ring. Whether the AC engine compares the whole word or
-  only the offset bits is not known; the 64 KB rings b43 used to allocate
-  made the two the same. 6.30 writes it twice in a whole capture,
-  `0xffffffff` and then an address. On its TX rings (archer-t5e) the probe
-  of the ring address reads back `0xfffffff0`, the index is posted as the
-  descriptor's address (`0xbcd58010` on a ring at `0xbcd58000`), and the
-  status reports the current descriptor as the low 16 bits of its address
-  (`0x200085c0`).
+- Ring control: b43 leaves burst and prefetch at the engine's reset values,
+  0 on the agcombo before the stock setup. The stock drivers write their
+  own: 7.14.43 on the agcombo TX `0x03700841`, RX `0x00500851`, the 6.30
+  hybrid TX `0x03780841` and RX `0x036c0851`, so the values follow the
+  driver and the host, not the chip. With the agcombo's the DSL-3580L raised
+  a descriptor protocol error after every MAC enable. Whether the D6220's
+  7.14.89 writes the agcombo's is not in any capture, since the wl-diag ones
+  have no MAC registers.
+- The ring and receive index: b43 asks the engine at DMA init, as the stock
+  driver does, by writing all ones to controller 0's TX ring address and
+  reading back which low bits stay (`b43_dma64_index_is_addr()`). An engine
+  that keeps bits 4-11 gets its ring address before the enable bit and the
+  low 32 bits of a descriptor's address in its index registers
+  (`op64_slot_index()`), with the default 8K ring. The DSL-3580L reads
+  `0xfffffff0` (`bringup-log-2026-10-07.txt`), as the archer-t5e's TX rings
+  do under 6.30, which posts the index as the descriptor's address
+  (`0xbcd58010` on a ring at `0xbcd58000`) and reports the current
+  descriptor as the low 16 bits of its address (`0x200085c0`). 6.30 writes
+  the receive index twice in a whole capture, `0xffffffff` and then an
+  address.
 - The stock driver reads the receive status twice per frame and the TSF
   once; b43 once and never. On 6.30 the TSF pair (`0x0180`/`0x0184`) also
   comes before every TX descriptor post.
@@ -813,44 +819,37 @@ ucode revision.
 
 ## On hardware (DSL-3580L, OpenWrt)
 
-- **Template layout.** `struct b43_tpl_layout` puts the beacons where the
-  loaded ucode takes them and writes the 12 byte header; it has not run on
-  the board yet. Whether a beacon goes out is the first thing to check.
-- **Five core init cycles per `wifi up`.** Every `wifi up` brings the core up
-  five times, with the same b43 messages each time, and netifd reports a
-  configuration change five times. b43's own restarts are excluded but one:
-  a DMA error would print "PIO is not supported" from the next core init,
-  which is not rate-limited; a failed PHY cycle would print an `op_init`
-  block without a firmware load; out-of-order TX, firmware panic and
-  firmware watchdog need the open-source firmware; PHY TX errors are off on
-  the AC. The PSM watchdog (`B43_IRQ_TIMER0`) is left: no ucode raises bit 13
-  through `SPR_MAC_IRQLO`, and no stock capture shows it. The likely cause is
-  hostapd failing the AP start and netifd retrying; `htmode` is `NOHT`, so
-  not a capability mismatch. Next: `iw reg get` and `iw phy phy1 channels`
-  (channel 36 must not be "No IR"), then hostapd at `log_level 0`.
-- **Fatal DMA error on TX ring 3**, 2026-10-03: `dma_reason[3] = 0x1000`,
-  `AC_VO`, bit 12, descriptor protocol error (`I_DE` in brcmsmac). With no
-  station and no beacon, mac80211 sends no data, so this is probably the
-  first TX of the session, possibly hostapd's deauth at shutdown. The ring
-  programming matches the 6.30 capture (above); b43 posts two descriptors per
-  frame where the stock driver mostly posts one. Next:
-  `hostapd_cli deauthenticate ff:ff:ff:ff:ff:ff` with the AP up, and on the
-  error the ring's status words (`0x02d0`/`0x02d4`: error code and active
-  descriptor) and that descriptor.
-
-- **Values of the bring-up log against `cold01-ch36-bw20.txt`.** Same as the
+- **Beacon.** On `bringup-log-2026-10-07.txt`, with the template layout of
+  `struct b43_tpl_layout` and the DMA engine at its reset values, hostapd
+  reaches `AP-ENABLED` after a single core init and no beacon goes out: the
+  beacon PHY TX control word at `0x00cc` held the initvals' CCK encoding. The
+  core now sets the OFDM encoding before each template
+  (`b43_write_beacon_phytxctl_ac()`); that has not run on the board yet.
+  Whether a beacon goes out is the first thing to check.
+- **TX ring under traffic.** `bringup-log-2026-10-06.txt`, five core init
+  cycles per `wifi up`, and the fatal DMA error of 2026-10-03 on TX ring 3
+  (`dma_reason[3] = 0x1000`, `AC_VO`, descriptor protocol error, `I_DE` in
+  brcmsmac) were taken with the 7.14 engine parameters (see "Ring control");
+  with them at reset the 2026-10-07 log has one core init, no DMA error and
+  no restart, and ends a second after `AP-ENABLED`, with no station. b43 posts two descriptors per frame where the stock driver mostly
+  posts one. Next, once a beacon is out: a station association and
+  `hostapd_cli deauthenticate ff:ff:ff:ff:ff:ff`, and on a DMA error the
+  ring's status words (`0x02d0`/`0x02d4`: error code and active descriptor)
+  and that descriptor.
+- **Values of the bring-up logs against `cold01-ch36-bw20.txt`.** Same as the
   board's own driver: radio `0x040b` reads `0x0169` after power-on, `0x0140`
   goes `0x0df7 -> 0x0df4`. Same as 7.14 and not as 6.30, which the board
-  runs: the rccal comparators, `E/F = 0x0ac5..7/0x0ba8..a`, cap `0xaa`-`0xab`
+  runs: the rccal comparators, `E/F = 0x0ac5..9/0x0ba8..b`, cap `0xaa`-`0xab`
   (6.30 here: `0x0b38/0x0c2c`, cap `0xb7`; the 7.14 boards `0x0a7e`-`0x0adc`),
   and the TX gain at index 64, `0x2f13`, bbmult `0x35` as on the D6220, where
   6.30 here writes `0x0767` and `0x42`. Different from both: the idle-TSSI
-  readings, `0x0012 = 0x09a8/0x09c4` and base index `0x26a/0x271`, where
-  6.30 here reads `0x0930/0x0944` and writes `0x24c/0x251`, and the D6220's
-  core 1 reads zero. `PLLCTL3 = 0x100e` is bcma's own write, which 6.30 here
-  does not make (`0x00133333`). All stable over the five cycles, to one or
-  two counts. Which TX gain table fits this board's front end is open: the
-  two drivers program different gains at the same index.
+  readings, `0x0012 = 0x09a4..0x09ac/0x09bc..0x09d0` and base index
+  `0x269..0x26b/0x26f..0x274`, where 6.30 here reads `0x0930/0x0944` and
+  writes `0x24c/0x251`, and the D6220's core 1 reads zero. `PLLCTL3 =
+  0x100e` is bcma's own write, which 6.30 here does not make
+  (`0x00133333`). The ranges cover the six cycles of the two logs. Which TX
+  gain table fits this board's front end is open: the two drivers program
+  different gains at the same index.
 
 ## Working rules
 

@@ -112,4 +112,6 @@ re-exporting the commit with its message, author and date.
 
 The OpenWrt patches (`816-02`, `816-03`, `880`) are on backports 7.2 with
 OpenWrt's b43 patches 810-815 applied, and are kept separately.
-`816-02` does not yet carry the template layout.
+`816-03` is 0003 with `CPTCFG_B43` for `CONFIG_B43` and `b43info()` for
+`b43dbg()`, under its own header, with the Makefile hunk on the backports
+base.

@@ -87,25 +87,25 @@ weather-radar segments (ch120/124/128 at 20 MHz, ch116/124 at 40, ch116 at
 
 The DSL-3580L runs the port under OpenWrt with `ucode42.fw` 784.2 from
 `broadcom-wl-6.30.163.46`, byte for byte the `d11ucode42` of the board's own
-`wl`. [`bringup-log.txt`](bringup-log.txt) is an AP on channel 36: probe, core
-init, PHY init, channel switch and calibrations run, and the watchdog ticks;
-nothing crashes. What is wrong on air:
+`wl`. [`bringup-log-2026-10-07.txt`](bringup-log-2026-10-07.txt) is an AP on
+channel 36: probe, one core init, PHY init, channel switch and calibrations
+run, hostapd reaches `AP-ENABLED` and the watchdog ticks; nothing crashes and
+the controller does not restart. What is wrong on air:
 
-- **No beacon.** b43 wrote the templates where the 928 ucode takes them;
-  784 takes them elsewhere, and both put a 12 byte header in front of the
-  frame where b43 put 6. Fixed by `struct b43_tpl_layout` (`b43/b43.h`), not
-  yet run on the board.
-- **Five core init cycles per `wifi up`.** netifd reports a configuration
-  change five times, and every b43 restart path but the PSM watchdog is
-  excluded, so they most likely come from userspace. Open, see
-  `docs/retrace-todo.md`.
-- **A fatal DMA error on TX ring 3** (`AC_VO`, reason `0x1000`, descriptor
-  protocol error), seen once, 2026-10-03. Open, see `docs/retrace-todo.md`.
+- **No beacon** in that log: the beacon PHY TX control word kept the
+  initvals' CCK encoding. The core now sets it before each template, not yet
+  run on the board.
+- **TX under traffic** has not run since the DMA engine was left at its
+  reset values; with the 7.14 parameters it raised a descriptor protocol
+  error and the core came up five times per `wifi up`
+  ([`bringup-log-2026-10-06.txt`](bringup-log-2026-10-06.txt)). See
+  `docs/retrace-todo.md`, "On hardware".
 
 After `B43_STAT_STARTED` every `b43info`/`b43warn`/`b43err` goes through
 `net_ratelimit()`, ten per five seconds: a bring-up spends them, and what
-follows is dropped, `Controller RESET` included. The `AC-PHY:` block markers
-are `wiphy_info()` and always print. `sysctl -w net.core.message_cost=0` turns
+follows is dropped. The cause of a controller restart and its `Controller
+RESET` line go through `b43err_restart()`, which is not rate-limited, and the
+`AC-PHY:` block markers are `wiphy_info()`: both print whatever the limit. `sysctl -w net.core.message_cost=0` turns
 the limit off.
 
 ## What is ported
@@ -175,7 +175,7 @@ wl-cc-dump/          on-device ChipCommon PMU state dump
 wl-capture-scripts/  device-side capture sweeps
 router-data/         captures and static dumps per board
 scripts/             patch regeneration and helpers
-bringup-log.txt      a bring-up log from the DSL-3580L
+bringup-log-*.txt    bring-up logs from the DSL-3580L, by date
 ```
 
 ## After the MVP
