@@ -1,0 +1,169 @@
+Sat Oct  3 17:06:23 2026 daemon.notice wpa_supplicant[1548]: Set new config for phy phy3
+Sat Oct  3 17:06:23 2026 daemon.notice hostapd: Set new config for phy phy3: /var/run/hostapd-phy3.conf
+Sat Oct  3 17:06:23 2026 daemon.notice hostapd: Restart interface for phy phy3
+Sat Oct  3 17:06:24 2026 daemon.notice netifd: radio1 (2704): wifi-scripts: Setting country code to IT
+Sat Oct  3 17:06:24 2026 daemon.notice netifd: radio1 (2704): wifi-scripts: Configuring 'phy3' distance: 0
+Sat Oct  3 17:06:24 2026 daemon.notice netifd: radio1 (2704): wifi-scripts: Setting antenna for 'phy3' txantenna: 4294967295, rxantenna: 4294967295
+Sat Oct  3 17:06:24 2026 daemon.notice netifd: radio1 (2704): wifi-scripts: Preparing interface: phy3-ap0 with MAC: 00:90:4c:0d:db:00
+Sat Oct  3 17:06:24 2026 daemon.notice wpa_supplicant[1548]: Start pending MLD interfaces
+Sat Oct  3 17:06:24 2026 daemon.notice hostapd: Configuration file: <inline> (phy phy3) --> new PHY
+Sat Oct  3 17:06:24 2026 daemon.notice hostapd: Configuration file: Reading configuration file '<inline>'
+Sat Oct  3 17:06:25 2026 daemon.notice hostapd: Configuration file: Reading configuration file '<inline>'
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.290000] b43-phy3: Loading firmware version 784.2 (2012-08-15 21:43:22)
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.290000] b43-phy3: init: GPIO
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.300000] b43-phy3: init: initvals
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.300000] b43-phy3: init: band initvals
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.300000] b43-phy3: init: TX FIFOs
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.320000] b43-phy3: init: MAC
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.320000] b43-phy3: init: DMA
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.320000] b43-phy3: DMA64 ring address mask 0xfffffff0
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.330000] b43-phy3: init: address match and keys
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.340000] b43-phy3: init: PHY
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.340000] b43-phy3: phy-ac: num_cores=3 coremask=0x3
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.350000] b43-phy3: phy-ac: radio pwron 0x040b readback: 0169 after 2 polls
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.360000] b43-phy3: radio 2069: rccal lpf cap 0xaa (E=0x0aca F=0x0bac)
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.370000] b43-phy3: AC-PHY: PLLCTL3 = 0x0000100e on op_init entry
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.370000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_init: probe_cores
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.380000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_init: pre_init_frontend
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.390000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_init: pmu_regctl_gpio
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.400000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_init: mode_init
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.400000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_init: tables_init
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.410000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_init: init_regs
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.420000] b43-phy3: phy-ac: set_channel ch36 (5180 MHz) start
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.430000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: channel_state
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.430000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: switch_prep
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.440000] b43-phy3: phy-ac: channel_switch_prep 0x0140 cur=0x0df7 -> 0x0df4
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.450000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: radio_channel_setup
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.460000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: phy_channel_setup
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.480000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: chan_tables
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.480000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: noise_shaping
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.490000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: rx_regprog
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.500000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: crs_thresholds
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.510000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: reset_cca
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.510000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: afecal
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.520000] b43-phy3: radio 2069: afecal core 0 ctrl=0x5830 stat=0x0003/0x0003
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.530000] b43-phy3: radio 2069: afecal core 1 ctrl=0x5830 stat=0x0003/0x0003
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.540000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: adc_reset_txpwrctrl
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.550000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: idle_tssi
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.550000] ieee80211 phy3: AC-PHY: b43_phy_ac_idle_tssi_meas: tssi_path_enable
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.560000] ieee80211 phy3: AC-PHY: b43_phy_ac_idle_tssi_meas: rf_seq_mode_percore
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.570000] b43-phy3: phy-ac: idle-tssi c0 meas: 0x013=0x000c 0x012=0x09ac 0x464=0x0001 radio 0x4e=0x8000 0x166=0x0000 prog=0x026b
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.580000] b43-phy3: phy-ac: idle-tssi c1 meas: 0x013=0x0010 0x012=0x09c0 0x464=0x0001 radio 0x4e=0x8000 0x166=0x0000 prog=0x0270
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.600000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: shm_readback
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.600000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: shm_mac_config
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.610000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: txpwrctrl_setup
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.620000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: afe_gain
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.630000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: shm_tail
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.630000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: mac_toggles
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.640000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: done
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.670000] b43-phy3: start: enabling the MAC
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.670000] b43-phy3: phy-ac: set_channel ch36 (5180 MHz) start
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.700000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_channel_calibrate: tempsense
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.700000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_channel_calibrate: post_switch_calibrations
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.710000] ieee80211 phy3: AC-PHY: b43_phy_ac_idle_tssi_meas: tssi_path_enable
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.720000] ieee80211 phy3: AC-PHY: b43_phy_ac_idle_tssi_meas: rf_seq_mode_percore
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.730000] b43-phy3: phy-ac: idle-tssi c0 meas: 0x013=0x0004 0x012=0x09a8 0x464=0x0001 radio 0x4e=0x8000 0x166=0x0000 prog=0x026a
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.740000] b43-phy3: phy-ac: idle-tssi c1 meas: 0x013=0x0010 0x012=0x09c0 0x464=0x0001 radio 0x4e=0x8000 0x166=0x0000 prog=0x0270
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.760000] ieee80211 phy3: AC-PHY: b43_phy_ac_idle_tssi_meas: tssi_path_enable
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.760000] ieee80211 phy3: AC-PHY: b43_phy_ac_idle_tssi_meas: rf_seq_mode_percore
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.770000] b43-phy3: phy-ac: idle-tssi c0 meas: 0x013=0x0004 0x012=0x09ac 0x464=0x0001 radio 0x4e=0x8000 0x166=0x0000 prog=0x026b
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.790000] b43-phy3: phy-ac: idle-tssi c1 meas: 0x013=0x0014 0x012=0x09c0 0x464=0x0001 radio 0x4e=0x8000 0x166=0x0000 prog=0x0270
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.820000] b43-phy3: phy-ac: txpwr_by_index core 0 idx 64 gain 0000/2f13/00f3 bbmult 35
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.830000] b43-phy3: phy-ac: txpwr_by_index core 1 idx 64 gain 0000/2f13/00f3 bbmult 35
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.850000] b43-phy3: phy-ac: txpwr_by_index core 0 idx 64 gain 0000/2f13/00f3 bbmult 35
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.860000] b43-phy3: phy-ac: txpwr_by_index core 1 idx 64 gain 0000/2f13/00f3 bbmult 35
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.880000] br-lan: port 5(phy3-ap0) entered blocking state
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.890000] br-lan: port 5(phy3-ap0) entered disabled state
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.900000] b43 bcma1:1 phy3-ap0: entered allmulticast mode
+Sat Oct  3 17:06:26 2026 kern.info kernel: [  230.900000] b43 bcma1:1 phy3-ap0: entered promiscuous mode
+Sat Oct  3 17:06:27 2026 daemon.notice hostapd: phy3-ap0: interface state UNINITIALIZED->COUNTRY_UPDATE
+Sat Oct  3 17:06:27 2026 kern.info kernel: [  231.670000] br-lan: port 5(phy3-ap0) entered blocking state
+Sat Oct  3 17:06:27 2026 kern.info kernel: [  231.680000] br-lan: port 5(phy3-ap0) entered forwarding state
+Sat Oct  3 17:06:27 2026 daemon.notice netifd: Network device 'phy3-ap0' link is up
+Sat Oct  3 17:06:27 2026 kern.info kernel: [  231.690000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:27 2026 kern.info kernel: [  231.690000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_60sec: pwork_60sec
+Sat Oct  3 17:06:27 2026 kern.warn kernel: [  231.710000] b43-phy3 warning: TX-status contains invalid cookie: 0x0000
+Sat Oct  3 17:06:28 2026 daemon.notice hostapd: phy3-ap0: interface state COUNTRY_UPDATE->ENABLED
+Sat Oct  3 17:06:28 2026 daemon.notice hostapd: phy3-ap0: AP-ENABLED
+Sat Oct  3 17:06:28 2026 kern.info kernel: [  232.730000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:29 2026 kern.info kernel: [  233.760000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:30 2026 kern.info kernel: [  234.800000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:31 2026 kern.info kernel: [  235.840000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:32 2026 kern.info kernel: [  236.880000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:33 2026 kern.info kernel: [  237.920000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:34 2026 kern.info kernel: [  238.960000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:35 2026 kern.info kernel: [  240.000000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:36 2026 kern.info kernel: [  241.040000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:37 2026 kern.info kernel: [  242.080000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:39 2026 kern.info kernel: [  243.120000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:40 2026 kern.info kernel: [  244.160000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:41 2026 kern.info kernel: [  245.200000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:42 2026 kern.info kernel: [  246.240000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:43 2026 kern.info kernel: [  247.280000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:44 2026 kern.info kernel: [  248.320000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:45 2026 kern.info kernel: [  249.360000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:46 2026 kern.info kernel: [  250.400000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:47 2026 kern.info kernel: [  251.440000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:48 2026 kern.info kernel: [  252.480000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:49 2026 kern.info kernel: [  253.520000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:50 2026 kern.info kernel: [  254.560000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:51 2026 kern.info kernel: [  255.600000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:52 2026 kern.info kernel: [  256.640000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:53 2026 kern.info kernel: [  257.680000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:54 2026 kern.info kernel: [  258.720000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:55 2026 kern.info kernel: [  259.760000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:56 2026 kern.info kernel: [  260.800000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:57 2026 kern.info kernel: [  261.840000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:58 2026 kern.info kernel: [  262.880000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:06:59 2026 kern.info kernel: [  263.920000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:00 2026 kern.info kernel: [  264.960000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:01 2026 kern.info kernel: [  266.000000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:02 2026 kern.info kernel: [  267.040000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:03 2026 kern.info kernel: [  268.080000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:05 2026 kern.info kernel: [  269.120000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:06 2026 kern.info kernel: [  270.160000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:07 2026 kern.info kernel: [  271.200000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:08 2026 kern.info kernel: [  272.240000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:09 2026 kern.info kernel: [  273.280000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:10 2026 kern.info kernel: [  274.320000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:11 2026 kern.info kernel: [  275.360000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:12 2026 kern.info kernel: [  276.400000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:13 2026 kern.info kernel: [  277.440000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:14 2026 kern.info kernel: [  278.480000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:15 2026 kern.info kernel: [  279.520000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:16 2026 kern.info kernel: [  280.560000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:17 2026 kern.info kernel: [  281.600000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:18 2026 kern.info kernel: [  282.640000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:19 2026 kern.info kernel: [  283.680000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:20 2026 kern.info kernel: [  284.720000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:21 2026 kern.info kernel: [  285.760000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:22 2026 kern.info kernel: [  286.800000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:23 2026 kern.info kernel: [  287.840000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:24 2026 kern.info kernel: [  288.880000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:25 2026 kern.info kernel: [  289.920000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:26 2026 kern.info kernel: [  290.960000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:27 2026 kern.info kernel: [  292.000000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:28 2026 kern.info kernel: [  293.040000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:29 2026 kern.info kernel: [  294.080000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:29 2026 kern.info kernel: [  294.080000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_60sec: pwork_60sec
+Sat Oct  3 17:07:31 2026 kern.info kernel: [  295.120000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:32 2026 kern.info kernel: [  296.160000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:33 2026 kern.info kernel: [  297.200000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:34 2026 kern.info kernel: [  298.240000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:35 2026 kern.info kernel: [  299.280000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:36 2026 kern.info kernel: [  300.320000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:37 2026 kern.info kernel: [  301.360000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:38 2026 kern.info kernel: [  302.400000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:39 2026 kern.info kernel: [  303.440000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:40 2026 kern.info kernel: [  304.480000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:41 2026 kern.info kernel: [  305.520000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:42 2026 kern.info kernel: [  306.560000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:43 2026 kern.info kernel: [  307.600000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:44 2026 kern.info kernel: [  308.640000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:45 2026 kern.info kernel: [  309.680000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:46 2026 kern.info kernel: [  310.720000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:47 2026 kern.info kernel: [  311.760000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:48 2026 kern.info kernel: [  312.800000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:49 2026 kern.info kernel: [  313.840000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:07:50 2026 kern.info kernel: [  314.880000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+
