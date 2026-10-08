@@ -579,6 +579,7 @@ void b43_pio_handle_txstatus(struct b43_wldev *dev,
 	info = IEEE80211_SKB_CB(pack->skb);
 
 	b43_fill_txstatus_report(dev, info, status);
+	b43_bcn_diag_txstatus(dev, pack->skb, status);
 
 	total_len = pack->skb->len + b43_txhdr_size(dev);
 	total_len = roundup(total_len, 4);

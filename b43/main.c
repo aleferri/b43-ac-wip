@@ -1894,10 +1894,12 @@ static u8 b43_tpl_byte(const struct b43_tpl_layout *tpl,
 	return 0;
 }
 
+/* @shadow, if given, receives the words as written, template RAM order. */
 static void b43_write_template_common(struct b43_wldev *dev,
 				      const u8 *data, u16 size,
 				      u16 ram_offset,
-				      u16 shm_size_offset, u8 rate)
+				      u16 shm_size_offset, u8 rate,
+				      struct b43_bcn_shadow *shadow)
 {
 	const struct b43_tpl_layout *tpl = dev->fw.tpl;
 	unsigned int i, total = tpl->hdr_len + size;
@@ -1920,8 +1922,16 @@ static void b43_write_template_common(struct b43_wldev *dev,
 			tmp |= (u32)b43_tpl_byte(tpl, &plcp, data, size,
 						 i + b) << (8 * b);
 		b43_tpl_write(dev, s, ram_offset + i, tmp);
+		if (shadow && i / 4 < ARRAY_SIZE(shadow->words))
+			shadow->words[i / 4] = tmp;
 	}
 	b43_shm_write16(dev, B43_SHM_SHARED, shm_size_offset, total);
+
+	if (shadow) {
+		shadow->base = ram_offset;
+		shadow->total = total;
+		shadow->valid = true;
+	}
 }
 
 /* Check if the use of the antenna that ieee80211 told us to
@@ -2016,11 +2026,13 @@ static void b43_write_beacon_phytxctl_ac(struct b43_wldev *dev, u16 rate)
 }
 
 static void b43_write_beacon_template(struct b43_wldev *dev,
+				      unsigned int idx,
 				      u16 ram_offset,
 				      u16 shm_size_offset)
 {
 	const struct b43_tpl_layout *tpl = dev->fw.tpl;
 	unsigned int i, len, variable_len;
+	u16 tim_position = 0, dtim_period = 0;
 	const struct ieee80211_mgmt *bcn;
 	const u8 *ie;
 	bool tim_found = false;
@@ -2047,7 +2059,8 @@ static void b43_write_beacon_template(struct b43_wldev *dev,
 		    tpl->bcn_size - tpl->hdr_len);
 
 	b43_write_template_common(dev, (const u8 *)bcn,
-				  len, ram_offset, shm_size_offset, rate);
+				  len, ram_offset, shm_size_offset, rate,
+				  &dev->wl->diag.tpl[idx]);
 
 	if (b43_phytxctl_in_shm(dev))
 		b43_write_beacon_phytxctl(dev, rate);
@@ -2064,8 +2077,6 @@ static void b43_write_beacon_template(struct b43_wldev *dev,
 		ie_id = ie[i];
 		ie_len = ie[i + 1];
 		if (ie_id == 5) {
-			u16 tim_position;
-			u16 dtim_period;
 			/* This is the TIM Information Element */
 
 			/* Check whether the ie_len is in the beacon data range. */
@@ -2095,13 +2106,15 @@ static void b43_write_beacon_template(struct b43_wldev *dev,
 		 * If ucode wants to modify TIM do it behind the beacon, this
 		 * will happen, for example, when doing mesh networking.
 		 */
+		tim_position = len + tpl->hdr_len;
 		b43_shm_write16(dev, B43_SHM_SHARED,
-				B43_SHM_SH_TIMBPOS,
-				len + tpl->hdr_len);
+				B43_SHM_SH_TIMBPOS, tim_position);
 		b43_shm_write16(dev, B43_SHM_SHARED,
 				B43_SHM_SH_DTIMPER, 0);
 	}
 	b43dbg(dev->wl, "Updated beacon template at 0x%x\n", ram_offset);
+	b43_bcn_diag_uploaded(dev, idx, (const u8 *)bcn, len, rate,
+			      tim_position, dtim_period);
 
 	dev_kfree_skb_any(beacon_skb);
 }
@@ -2112,7 +2125,7 @@ static void b43_upload_beacon0(struct b43_wldev *dev)
 
 	if (wl->beacon0_uploaded)
 		return;
-	b43_write_beacon_template(dev, dev->fw.tpl->bcn_base[0],
+	b43_write_beacon_template(dev, 0, dev->fw.tpl->bcn_base[0],
 				  B43_SHM_SH_BTL0);
 	wl->beacon0_uploaded = true;
 }
@@ -2123,7 +2136,7 @@ static void b43_upload_beacon1(struct b43_wldev *dev)
 
 	if (wl->beacon1_uploaded)
 		return;
-	b43_write_beacon_template(dev, dev->fw.tpl->bcn_base[1],
+	b43_write_beacon_template(dev, 1, dev->fw.tpl->bcn_base[1],
 				  B43_SHM_SH_BTL1);
 	wl->beacon1_uploaded = true;
 }
@@ -2144,6 +2157,7 @@ static void handle_irq_beacon(struct b43_wldev *dev)
 	dev->irq_mask &= ~B43_IRQ_BEACON;
 
 	cmd = b43_read32(dev, B43_MMIO_MACCMD);
+	b43_bcn_diag_irq(dev, cmd);
 	beacon0_valid = (cmd & B43_MACCMD_BEACON0_VALID);
 	beacon1_valid = (cmd & B43_MACCMD_BEACON1_VALID);
 
@@ -4145,6 +4159,8 @@ static void do_periodic_work(struct b43_wldev *dev)
 
 	if (dev->phy.type == B43_PHYTYPE_AC && dev->phy.ops->pwork_1sec)
 		dev->phy.ops->pwork_1sec(dev);
+	if (dev->phy.type == B43_PHYTYPE_AC)
+		b43_bcn_diag_tick(dev);
 
 	if (dev->periodic_state % ticks)
 		return;
@@ -4373,6 +4389,7 @@ static void b43_tx_work(struct work_struct *work)
 	for (queue_num = 0; queue_num < B43_QOS_QUEUE_NUM; queue_num++) {
 		while (skb_queue_len(&wl->tx_queue[queue_num])) {
 			skb = skb_dequeue(&wl->tx_queue[queue_num]);
+			b43_bcn_diag_tx(dev, skb);
 			if (b43_using_pio_transfers(dev))
 				err = b43_pio_tx(dev, skb);
 			else

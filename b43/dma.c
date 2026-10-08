@@ -1594,6 +1594,7 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
 
 			frame_succeed = b43_fill_txstatus_report(dev, info,
 								 txstat);
+			b43_bcn_diag_txstatus(dev, meta->skb, txstat);
 #ifdef CONFIG_B43_DEBUG
 			if (frame_succeed)
 				ring->nr_succeed_tx_packets++;
