@@ -1,11 +1,13 @@
 #!/bin/sh
-# Rigenera patches/ dagli alberi bcma/ e b43/.
+# Rigenera le patch del kernel, patches/0001-0003, dagli alberi bcma/ e b43/.
 #
 # bcma/ e b43/ sono la fonte di verita': file del kernel interi, modificati o
-# nuovi, sopra il tag vanilla. Le patch sono un prodotto e non si editano a
-# mano, tranne il messaggio: messaggio, autore e data vengono dalla patch
-# corrente (git mailinfo), quindi per cambiarli si edita la patch e si
-# rilancia.
+# nuovi, sulla versione dei test (test/integration). Le patch sono un prodotto
+# e stanno sul tag di patches/regen-base, che e' un altro: le loro differenze
+# dall'albero, oltre al port, sono l'adattamento a quel tag, e si conservano.
+# Lo script porta sulle patch correnti quello che e' cambiato in bcma/ e b43/
+# da quando sono state generate (scripts/carry.sh), e registra in
+# patches/regen-base gli alberi di HEAD da cui ha generato.
 #
 #   0001  bcma/drivers/**, bcma/include/**  ai loro percorsi nel kernel
 #   0002  b43/ tranne i file della PHY AC    drivers/net/wireless/broadcom/b43/
@@ -13,92 +15,85 @@
 #
 # I file della PHY AC sono il Makefile e quelli che il Makefile compila sotto
 # CONFIG_B43_PHY_AC, con i loro .h: un file nuovo entra nella 0003 dalla sua
-# riga nel Makefile, e tutto il resto di b43/ va nella 0002.
+# riga nel Makefile, e tutto il resto di b43/ va nella 0002. Messaggio,
+# autore e data vengono dalla patch corrente: per cambiarli si edita la
+# patch e si rilancia.
 #
-# La base e' il tag degli header installati, come per test/integration: un
+# bcma/ e b43/ devono essere committati. I file del tag vengono da GitHub; un
 # file che al tag non esiste (404) e' nuovo, ogni altro errore di rete ferma
-# lo script, o un fetch andato male diventerebbe un file nuovo in silenzio.
+# lo script.
 #
 # Uso:    scripts/regen-patches.sh
-# Env:    KVER    versione degli header (default: la prima in /usr/src)
+# Env:    CARRY_RESUME  la directory lasciata da un merge in conflitto, dopo
+#                       averlo risolto
 set -eu
 
 REPO=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-PATCHES=$REPO/patches
-B43DIR=drivers/net/wireless/broadcom/b43
-KVER=${KVER:-$(ls /usr/src/ | grep -oE '^linux-headers-[0-9.]+-[0-9]+$' |
-                head -1 | sed 's/linux-headers-//')}
-[ -n "$KVER" ] || { echo "nessun header kernel in /usr/src" >&2; exit 1; }
-TAG=v$(echo "$KVER" | cut -d. -f1,2)
-ROOT=https://raw.githubusercontent.com/torvalds/linux/$TAG
+. "$REPO/scripts/carry.sh"
 
+B43DIR=drivers/net/wireless/broadcom/b43
+CARRY_BASEFILE=$REPO/patches/regen-base
+CARRY_TOPS="bcma/drivers bcma/include b43"
+TAG=$(carry_base_get tag)
+[ -n "$TAG" ] || carry_die "$CARRY_BASEFILE: manca tag"
+
+CARRY_PATCHES=
 for n in 0001 0002 0003; do
-	ls "$PATCHES/$n"-*.patch >/dev/null 2>&1 ||
-		{ echo "patches/$n-*.patch assente: serve per il messaggio" >&2; exit 1; }
+	p=$(ls "$REPO/patches/$n"-*.patch 2>/dev/null) ||
+		carry_die "patches/$n-*.patch assente: serve per il messaggio"
+	CARRY_PATCHES="$CARRY_PATCHES $p"
 done
 
-WORK=$(mktemp -d)
-trap 'rm -rf "$WORK"' EXIT
-
-ac_files=$(sed -n 's/^b43-$(CONFIG_B43_PHY_AC)[[:space:]]*+=//p' \
-		"$REPO/b43/Makefile" | tr ' \t' '\n\n' | sed -n 's/\.o$//p' |
-	while read -r base; do
-		for ext in c h; do
-			[ -f "$REPO/b43/$base.$ext" ] && echo "$base.$ext"
-		done
-	done)
-ac_files="Makefile $ac_files"
-
-is_ac() {
-	for a in $ac_files; do
-		[ "$a" = "$1" ] && return 0
+carry_map() {
+	for top in drivers include; do
+		git -C "$REPO" ls-tree -r --name-only \
+			"$(echo "$1" | sed -n "s|^bcma/$top ||p")" |
+			sed "s|.*|bcma/$top/& $top/& 1|"
 	done
-	return 1
+	b43=$(echo "$1" | sed -n 's/^b43 //p')
+	ac=$(git -C "$REPO" show "$b43:Makefile" |
+		sed -n 's/^b43-$(CONFIG_B43_PHY_AC)[[:space:]]*+=//p' |
+		tr ' \t' '\n\n' | sed -n 's/\.o$//p')
+	git -C "$REPO" ls-tree --name-only "$b43" | while read -r f; do
+		n=2
+		case $f in
+		Makefile) n=3 ;;
+		*.c|*.h) for base in $ac; do
+				[ "$f" = "$base.c" ] || [ "$f" = "$base.h" ] && n=3
+			done ;;
+		esac
+		echo "b43/$f $B43DIR/$f $n"
+	done
 }
 
-# Elenco "sorgente percorso-nel-kernel" per ciascuna patch.
-(cd "$REPO/bcma" && find drivers include -type f | sort) |
-	sed 's|.*|bcma/& &|' > "$WORK/list.0001"
-: > "$WORK/list.0002"
-: > "$WORK/list.0003"
-for f in $(cd "$REPO/b43" && ls); do
-	if is_ac "$f"; then n=0003; else n=0002; fi
-	echo "b43/$f $B43DIR/$f" >> "$WORK/list.$n"
+carry_filter() {
+	cat
+}
+
+carry_base_files() {
+	root=https://raw.githubusercontent.com/torvalds/linux/$TAG
+	while read -r dst; do
+		mkdir -p "$WORK/tree/$(dirname "$dst")"
+		code=$(curl -sL -o "$WORK/tree/$dst" -w '%{http_code}' "$root/$dst") ||
+			code=000
+		case $code in
+		200) ;;
+		404) rm -f "$WORK/tree/$dst" ;;
+		*) carry_die "fetch di $dst a $TAG fallito ($code)" ;;
+		esac
+	done
+}
+
+if [ -n "${CARRY_RESUME:-}" ]; then
+	carry_resume
+else
+	carry_run
+fi
+
+for p in $CARRY_PATCHES; do
+	rm -f "$p"
 done
-
-mkdir "$WORK/tree"
-cd "$WORK/tree"
-git init -q .
-git config user.name  "b43-ac regen"
-git config user.email "regen@localhost"
-
-cat "$WORK"/list.* | while read -r src dst; do
-	mkdir -p "$(dirname "$dst")"
-	code=$(curl -sL -o "$dst" -w '%{http_code}' "$ROOT/$dst") || code=000
-	case $code in
-	200) ;;
-	404) rm -f "$dst" ;;
-	*) echo "fetch di $dst a $TAG fallito ($code)" >&2; exit 1 ;;
-	esac
-done
-git add -A
-git commit -qm "vanilla $TAG"
-
-for n in 0001 0002 0003; do
-	old=$(ls "$PATCHES/$n"-*.patch)
-	git mailinfo "$WORK/msg" /dev/null < "$old" > "$WORK/info"
-	field() { sed -n "s/^$1: //p" "$WORK/info"; }
-	while read -r src dst; do
-		mkdir -p "$(dirname "$dst")"
-		cp "$REPO/$src" "$dst"
-	done < "$WORK/list.$n"
-	git add -A
-	{ field Subject; echo; cat "$WORK/msg"; } > "$WORK/commitmsg"
-	GIT_AUTHOR_NAME=$(field Author) GIT_AUTHOR_EMAIL=$(field Email) \
-	GIT_AUTHOR_DATE=$(field Date) GIT_COMMITTER_DATE=$(field Date) \
-		git commit -q -F "$WORK/commitmsg"
-done
-
-rm -f "$PATCHES"/*.patch
-git format-patch -q --zero-commit --no-signature -o "$PATCHES" HEAD~3
-echo "rigenerate: $(cd "$PATCHES" && ls | tr '\n' ' ')"
+mv "$WORK"/out/*.patch "$REPO/patches/"
+carry_record "tag $TAG"
+carry_done
+echo "rigenerate: $(cd "$REPO/patches" && ls 000[1-3]-*.patch | tr '\n' ' ')"

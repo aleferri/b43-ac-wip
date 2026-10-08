@@ -162,8 +162,9 @@ iw wlan1 scan freq 5180
 b43/                 the b43 files the port changes or adds, whole
 bcma/                the bcma, ssb and bcm47xx files it changes, at their kernel
                      paths, and the SROM rev 11 test harness
-patches/             the three kernel patches on v7.2, and the OpenWrt ones
-                     (816-*, 880-*) on backports 7.2; see docs/driver-status.md
+patches/             the three kernel patches on v7.2, the OpenWrt ones (816-*
+                     on backports 7.2, 880-* on OpenWrt's kernel) and the trees
+                     they were generated from; see docs/driver-status.md
 test/unit/           the PHY alone against the captures
 test/d11sim/         the ucode run on the b43-tools interpreter
 test/integration/    the whole of b43 with the port, against real kernel headers

@@ -1,85 +1,136 @@
-#!/usr/bin/env bash
+#!/bin/sh
+# Rigenera le patch b43 per OpenWrt, patches/816-02 e 816-03, e le installa in
+# un albero OpenWrt.
 #
-# phase1-to-openwrt.sh - convert the b43 AC-PHY patch series into the form
-# OpenWrt's mac80211 package expects and drop them into a target tree.
+# Stanno sul b43 di backports con le patch di OpenWrt che lo precedono nel
+# pacchetto mac80211 (le brcm/ prima di 816 e le altre directory in ordine di
+# Build/Patch): la base si ricostruisce dal tarball di backports e dalle patch
+# dell'albero OpenWrt dato, e ogni file della 816 deve combaciare con essa.
+# Come regen-patches.sh, lo script porta sulle 816 correnti quello che e'
+# cambiato in b43/ da quando sono state generate (scripts/carry.sh) e registra
+# in patches/regen-base-openwrt l'albero di HEAD e la versione di backports.
+# Le 816 seguono la 0002 e la 0003: b43/ con CPTCFG_B43 al posto di CONFIG_B43
+# e b43info() al posto di b43dbg() nelle righe del port.
 #
-# What it does:
-#   - selects only the b43 patches (patches/*-b43-*.patch);
-#     the ssb/bcma patches are left out
-#   - skips debug-only patches (NNNN-b43-DEBUG-*.patch); those are local
-#     bring-up aids and must not be shipped to OpenWrt
-#   - renames  NNNN-b43-<desc>.patch  ->  816-NN-<short>.patch
-#     (NN = the two-digit source number, so apply order is preserved)
-#   - CONFIG_B43*  ->  CPTCFG_B43*   (backports config namespace)
-#   - b43dbg(...)  ->  b43info(...)  (promote debug logging to info)
-#   - writes everything into
-#       $TARGET_DIR/package/kernel/mac80211/patches/brcm
+# Le patch bcma/ssb (880) non stanno su backports ma sul kernel di OpenWrt, e
+# non passano di qui.
 #
-# Usage:
-#   TARGET_DIR=/path/to/openwrt ./scripts/phase1-to-openwrt.sh
-#   ./scripts/phase1-to-openwrt.sh /path/to/openwrt
-#
+# Uso:    scripts/phase1-to-openwrt.sh /percorso/openwrt
+#         TARGET_DIR=/percorso/openwrt scripts/phase1-to-openwrt.sh
+# Env:    CARRY_RESUME  la directory lasciata da un merge in conflitto, dopo
+#                       averlo risolto
 set -eu
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-SRC_DIR="$SCRIPT_DIR/../patches"
+REPO=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+. "$REPO/scripts/carry.sh"
 
-TARGET_DIR="${1:-${TARGET_DIR:-}}"
-if [ -z "$TARGET_DIR" ]; then
-	echo "error: target tree not given (set \$TARGET_DIR or pass it as arg 1)" >&2
-	exit 1
-fi
-if [ ! -d "$SRC_DIR" ]; then
-	echo "error: patch source not found: $SRC_DIR" >&2
-	exit 1
-fi
+TARGET_DIR=${1:-${TARGET_DIR:-}}
+[ -n "$TARGET_DIR" ] ||
+	carry_die "albero OpenWrt non dato (\$TARGET_DIR o primo argomento)"
+MAC80211=$TARGET_DIR/package/kernel/mac80211
+[ -f "$MAC80211/Makefile" ] || carry_die "$MAC80211/Makefile assente"
+OUT_DIR=$MAC80211/patches/brcm
+SERIES=816
 
-OUT_DIR="$TARGET_DIR/package/kernel/mac80211/patches/brcm"
+B43DIR=drivers/net/wireless/broadcom/b43
+CARRY_BASEFILE=$REPO/patches/regen-base-openwrt
+CARRY_TOPS=b43
 
-# Short name per patch, matched on the descriptive part of the filename so it
-# survives renumbering. format-patch truncates long subjects, so the match is
-# on a distinctive middle segment, not on the tail. Unknown patches fall back
-# to a slug of that same part.
-short_name() {
-	case "$1" in
-	*AC-PHY-bring-up*)            echo "acphy-bringup" ;;
-	*)                            echo "" ;;
-	esac
-}
+mk() { sed -n "s/^$1:=//p" "$MAC80211/Makefile" | head -1; }
+VERSION=$(mk PKG_SOURCE_VERSION)
+expand() { echo "$1" | sed "s/\$(PKG_SOURCE_VERSION)/$VERSION/g"; }
+SOURCE=$(expand "$(mk PKG_SOURCE)")
+SOURCE_URL=$(expand "$(mk PKG_SOURCE_URL)")
+HASH=$(mk PKG_HASH)
+[ -n "$VERSION" ] && [ -n "$SOURCE" ] && [ -n "$SOURCE_URL" ] ||
+	carry_die "$MAC80211/Makefile: PKG_SOURCE_VERSION/PKG_SOURCE/PKG_SOURCE_URL non trovati"
 
-mkdir -p "$OUT_DIR"
-
-count=0
-for src in "$SRC_DIR"/*-b43-*.patch; do
-	[ -e "$src" ] || { echo "error: no b43 patches in $SRC_DIR" >&2; exit 1; }
-
-	base=$(basename "$src")
-
-	# debug-only bring-up patches are not shipped to OpenWrt
-	case "$base" in
-	*-b43-DEBUG-*) printf '  skip (debug)  %s\n' "$base"; continue ;;
-	esac
-
-	num=${base%%-*}			# NNNN
-	xx=${num: -2}			# two-digit suffix, e.g. 0011 -> 11
-
-	name=$(short_name "$base")
-	if [ -z "$name" ]; then
-		# fallback: slug from the descriptive part of the filename
-		name=$(printf '%s' "${base#*-b43-}" \
-			| sed -e 's/\.patch$//' -e 's/^add-//' -e 's/-for-AC-PHY//' \
-			      -e 's/[^A-Za-z0-9]\{1,\}/-/g' \
-			| tr 'A-Z' 'a-z')
-		name=${name%-}
-	fi
-
-	dst="$OUT_DIR/816-$xx-$name.patch"
-	sed -e 's/CONFIG_B43/CPTCFG_B43/g' \
-	    -e 's/b43dbg(/b43info(/g' \
-	    "$src" > "$dst"
-
-	printf '  %s  ->  %s\n' "$base" "816-$xx-$name.patch"
-	count=$((count + 1))
+CARRY_PATCHES=
+for n in 02 03; do
+	p=$(ls "$REPO/patches/$SERIES-$n"-*.patch 2>/dev/null) ||
+		carry_die "patches/$SERIES-$n-*.patch assente: serve per il messaggio"
+	CARRY_PATCHES="$CARRY_PATCHES $p"
 done
 
-printf 'converted %d b43 patch(es) into %s\n' "$count" "$OUT_DIR"
+carry_map() {
+	b43=$(echo "$1" | sed -n 's/^b43 //p')
+	ac=$(git -C "$REPO" show "$b43:Makefile" |
+		sed -n 's/^b43-$(CONFIG_B43_PHY_AC)[[:space:]]*+=//p' |
+		tr ' \t' '\n\n' | sed -n 's/\.o$//p')
+	git -C "$REPO" ls-tree --name-only "$b43" | while read -r f; do
+		n=1
+		case $f in
+		Makefile) n=2 ;;
+		*.c|*.h) for base in $ac; do
+				[ "$f" = "$base.c" ] || [ "$f" = "$base.h" ] && n=2
+			done ;;
+		esac
+		echo "b43/$f $B43DIR/$f $n"
+	done
+}
+
+carry_filter() {
+	sed -e 's/CONFIG_B43/CPTCFG_B43/g' -e 's/b43dbg(/b43info(/g'
+}
+
+# Le patch del pacchetto nell'ordine di Build/Patch, fino a brcm/$SERIES
+# escluso; quelle dopo che toccano b43 si segnalano.
+openwrt_patches() {
+	before=1
+	for d in $(sed -n 's/.*PatchDir,$(PKG_BUILD_DIR),$(PATCH_DIR)\/\([^,]*\),.*/\1/p' \
+			"$MAC80211/Makefile"); do
+		for p in "$MAC80211/patches/$d"/*.patch; do
+			[ -e "$p" ] || continue
+			case $d/$(basename "$p") in
+			brcm/$SERIES-*) before= ; continue ;;
+			esac
+			grep -q "^+++ b/$B43DIR/" "$p" || continue
+			if [ -n "$before" ]; then
+				echo "$p"
+			else
+				echo "attenzione: $d/$(basename "$p") tocca b43 dopo le $SERIES" >&2
+			fi
+		done
+	done
+}
+
+carry_base_files() {
+	cat > /dev/null
+	tarball=$TARGET_DIR/dl/$SOURCE
+	if [ ! -f "$tarball" ]; then
+		tarball=$WORK/$SOURCE
+		curl -sfL -o "$tarball" "$SOURCE_URL/$SOURCE" ||
+			carry_die "download di $SOURCE_URL/$SOURCE fallito"
+	fi
+	if [ -n "$HASH" ] && [ "$HASH" != skip ]; then
+		echo "$HASH  $tarball" | sha256sum -c --status ||
+			carry_die "$tarball: sha256 diverso da PKG_HASH"
+	fi
+	PATH=$PATH:$TARGET_DIR/staging_dir/host/bin \
+		tar -xf "$tarball" -C "$WORK/tree" --strip-components=1 \
+			--wildcards "*/$B43DIR/*"
+	for p in $(openwrt_patches); do
+		git -C "$WORK/tree" apply --include="$B43DIR/*" "$p" ||
+			carry_die "$p non si applica a backports $VERSION"
+	done
+}
+
+if [ -n "${CARRY_RESUME:-}" ]; then
+	carry_resume
+else
+	carry_run
+fi
+
+set -- "$WORK"/out/*.patch
+for p in $CARRY_PATCHES; do
+	mv "$1" "$p"
+	shift
+done
+carry_record "backports $VERSION"
+carry_done
+
+mkdir -p "$OUT_DIR"
+for p in $CARRY_PATCHES; do
+	cp "$p" "$OUT_DIR/"
+	echo "  $(basename "$p")  ->  $OUT_DIR/"
+done

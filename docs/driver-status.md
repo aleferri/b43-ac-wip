@@ -86,8 +86,8 @@ the unknown stays open.
 ## Source → patch map
 
 `b43/` and `bcma/` are the source of truth: whole kernel files, changed or
-new, over the vanilla tag. The patches are generated from them and are not
-edited by hand, except for their message.
+new, over v6.8, the kernel `test/integration` builds against. The patches are
+generated from them and are not edited by hand, except for their message.
 
 | patch | content | files |
 |---|---|---|
@@ -95,23 +95,23 @@ edited by hand, except for their message.
 | 0002 | b43: core support for the AC-PHY, one section per change | everything in `b43/` but the AC-PHY files |
 | 0003 | b43: AC-PHY bring-up | `b43/Makefile` and the files it builds under `CONFIG_B43_PHY_AC`, with their headers |
 
-`scripts/regen-patches.sh` (`KVER=6.8.0-142` selects the headers, and so the
-tag) fetches the vanilla files at the headers' tag, copies the two trees over
-them and re-emits the three patches. Message, author and date come from the
-current patch: to change a message, edit it in the patch and re-run. A new
-AC-PHY source file enters 0003 through its line in `b43/Makefile`; any other
-file in `b43/` goes into 0002.
+The patches sit on other bases: 0001-0003 on v7.2, the OpenWrt `816-02` and
+`816-03` on backports 7.2 with the b43 patches of OpenWrt's mac80211 package
+that precede them (400, 810-815). Beyond the port they carry the adaptation to
+that base, which the trees do not have, so a patch is not a diff of the tree
+against the base. `scripts/regen-patches.sh` (0001-0003) and
+`scripts/phase1-to-openwrt.sh` (816, given an OpenWrt tree, where it also
+installs them) apply the current patches to their base and carry onto them,
+by a three-way merge, what changed in the trees since they were generated;
+the trees they were generated from are recorded in `patches/regen-base` and
+`patches/regen-base-openwrt`, and the trees must be committed. Where the port
+changed next to an adaptation the merge stops in a work directory, and after
+resolving it the script resumes with `CARRY_RESUME` set to that directory.
+Message, author and date come from the current patch: to change a message,
+edit it in the patch and re-run. A new AC-PHY source file enters 0003 and
+816-03 through its line in `b43/Makefile`; any other file in `b43/` goes into
+0002 and 816-02. The 816 have `CPTCFG_B43` for `CONFIG_B43` and `b43info()`
+for `b43dbg()` in the port's lines.
 
-The two do not agree at present. 0001-0003 apply on v7.2 and keep its
-upstream changes; `b43/` and `bcma/` are whole files of an older tag (6.8 for
-`b43/`). At none of 6.8, 6.12, 6.18, 7.0, 7.1 and 7.2 does the script give
-back the committed patches: at 7.2 it reverts the upstream changes, and it also
-deletes every other patch in `patches/`. Until the trees are moved to 7.2, a
-change goes into a patch by applying its diff on v7.2 plus the patch and
-re-exporting the commit with its message, author and date.
-
-The OpenWrt patches (`816-02`, `816-03`, `880`) are on backports 7.2 with
-OpenWrt's b43 patches 810-815 applied, and are kept separately.
-`816-03` is 0003 with `CPTCFG_B43` for `CONFIG_B43` and `b43info()` for
-`b43dbg()`, under its own header, with the Makefile hunk on the backports
-base.
+`880` is 0001 for OpenWrt's kernel, which carries bcma and ssb (backports does
+not), and has no script.

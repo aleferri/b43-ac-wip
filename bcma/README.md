@@ -2,8 +2,9 @@
 
 The files of `drivers/bcma/`, `drivers/firmware/broadcom/` and `include/linux/`
 that the BCM4352/BCM4360 family needs changed, whole and at their kernel paths,
-over the tag `scripts/regen-patches.sh` fetches. They become
-`patches/0001`; `harness/` and these notes are not part of it.
+over v6.8, the kernel `test/integration` builds against. `scripts/regen-patches.sh`
+carries them into `patches/0001`; `harness/` and these notes are not part of
+it.
 
 | file | change |
 |---|---|
