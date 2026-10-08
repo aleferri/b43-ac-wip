@@ -50,7 +50,7 @@ KFLAGS := -nostdinc -I$(CURDIR)/$(UP) $(KINC) -D__KERNEL__ -DMODULE -DKBUILD_MOD
           -O2 -fno-strict-aliasing -fno-common -std=gnu11 \
           -Wno-address-of-packed-member \
           -mno-red-zone \
-          -Werror=implicit-function-declaration \
+          -Werror=implicit-function-declaration -Werror=switch \
           -include $(CURDIR)/compat.h \
           -include $(CURDIR)/../ac_trace.h
 
