@@ -12,7 +12,7 @@ hand, so it cannot drift out of sync with the tree the unit suite measures.
 
 Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
 ---
- drivers/net/wireless/broadcom/b43/Makefile    |     4 +
+ drivers/net/wireless/broadcom/b43/Makefile    |     5 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |    92 +
  drivers/net/wireless/broadcom/b43/phy_ac.c    | 10526 +++++++++++++++-
  drivers/net/wireless/broadcom/b43/phy_ac.h    |   788 +-
@@ -22,7 +22,7 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
  .../net/wireless/broadcom/b43/radio_2069.h    |    48 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1079 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    51 +
- 10 files changed, 14575 insertions(+), 22 deletions(-)
+ 10 files changed, 14576 insertions(+), 22 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -32,10 +32,10 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
  create mode 100644 drivers/net/wireless/broadcom/b43/tables_phy_ac.h
 
 diff --git a/drivers/net/wireless/broadcom/b43/Makefile b/drivers/net/wireless/broadcom/b43/Makefile
-index 54f92ce..62386e2 100644
+index 54f92ce..a6fc123 100644
 --- a/drivers/net/wireless/broadcom/b43/Makefile
 +++ b/drivers/net/wireless/broadcom/b43/Makefile
-@@ -15,6 +15,10 @@ b43-$(CONFIG_B43_PHY_HT)	+= tables_phy_ht.o
+@@ -15,6 +15,11 @@ b43-$(CONFIG_B43_PHY_HT)	+= tables_phy_ht.o
  b43-$(CONFIG_B43_PHY_HT)	+= radio_2059.o
  b43-$(CONFIG_B43_PHY_LCN)	+= phy_lcn.o tables_phy_lcn.o
  b43-$(CONFIG_B43_PHY_AC)	+= phy_ac.o
@@ -43,6 +43,7 @@ index 54f92ce..62386e2 100644
 +b43-$(CONFIG_B43_PHY_AC)	+= radio_2069.o
 +b43-$(CONFIG_B43_PHY_AC)	+= helpers_phy_ac.o
 +b43-$(CONFIG_B43_PHY_AC)	+= ppr_ac.o
++b43-y				+= bcn_diag.o
  b43-y				+= sysfs.o
  b43-y				+= xmit.o
  b43-y				+= dma.o

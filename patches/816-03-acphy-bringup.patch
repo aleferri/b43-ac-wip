@@ -4,7 +4,7 @@ Date: Fri, 2 Oct 2026 17:12:17 +0000
 Subject: [PATCH 2/2] b43: AC-PHY bring-up from the reverse-engineered port
 
 ---
- drivers/net/wireless/broadcom/b43/Makefile    |     4 +
+ drivers/net/wireless/broadcom/b43/Makefile    |     5 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |    92 +
  drivers/net/wireless/broadcom/b43/phy_ac.c    | 10526 +++++++++++++++-
  drivers/net/wireless/broadcom/b43/phy_ac.h    |   788 +-
@@ -14,7 +14,7 @@ Subject: [PATCH 2/2] b43: AC-PHY bring-up from the reverse-engineered port
  .../net/wireless/broadcom/b43/radio_2069.h    |    48 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1079 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    51 +
- 10 files changed, 14575 insertions(+), 22 deletions(-)
+ 10 files changed, 14576 insertions(+), 22 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -24,10 +24,10 @@ Subject: [PATCH 2/2] b43: AC-PHY bring-up from the reverse-engineered port
  create mode 100644 drivers/net/wireless/broadcom/b43/tables_phy_ac.h
 
 diff --git a/drivers/net/wireless/broadcom/b43/Makefile b/drivers/net/wireless/broadcom/b43/Makefile
-index 48589b5..3085225 100644
+index 48589b5..f1e8438 100644
 --- a/drivers/net/wireless/broadcom/b43/Makefile
 +++ b/drivers/net/wireless/broadcom/b43/Makefile
-@@ -15,6 +15,10 @@ b43-$(CPTCFG_B43_PHY_HT)	+= tables_phy_ht.o
+@@ -15,6 +15,11 @@ b43-$(CPTCFG_B43_PHY_HT)	+= tables_phy_ht.o
  b43-$(CPTCFG_B43_PHY_HT)	+= radio_2059.o
  b43-$(CPTCFG_B43_PHY_LCN)	+= phy_lcn.o tables_phy_lcn.o
  b43-$(CPTCFG_B43_PHY_AC)	+= phy_ac.o
@@ -35,6 +35,7 @@ index 48589b5..3085225 100644
 +b43-$(CPTCFG_B43_PHY_AC)	+= radio_2069.o
 +b43-$(CPTCFG_B43_PHY_AC)	+= helpers_phy_ac.o
 +b43-$(CPTCFG_B43_PHY_AC)	+= ppr_ac.o
++b43-y				+= bcn_diag.o
  b43-y				+= sysfs.o
  b43-y				+= xmit.o
  b43-y				+= dma.o
