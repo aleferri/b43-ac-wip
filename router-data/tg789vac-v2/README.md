@@ -52,8 +52,10 @@ statistics window are contracts with the ucode, not with the driver.
 - **`pdgain5g`** selects the AvVmid set in the port (set 19 is this board's).
 - **The four temperature fields** have thermal recalibration configured here,
   where the reference boards have placeholders.
-- **`watchdog=70000`**: measure the turn cadence (two `PHY.MOD 0x0520 mask=0xc`)
-  before reusing any rule counted in watchdog turns.
+- **`watchdog=70000`** does not change the watchdog cadence: over the 43 cold
+  segments 5954 of the 5987 intervals between two `PHY.MOD 0x0520 mask=0xc`
+  are 1.004 s (the rest are segment boundaries), the D6220's beat, without
+  the D6220's 1.3 s late wake-ups. Rules counted in watchdog turns carry over.
 
 ## Files
 

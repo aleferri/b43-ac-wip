@@ -255,6 +255,17 @@ PY
 	fi
 	[ -n "$tdelta" ] && sched="$sched AC_TEMPDELTA=$tdelta"
 
+	# The SSID length drives the probe-response length, the PLCP of the
+	# eight rates and 0x001e. It is the capture's, not the driver's, and
+	# the capture states it: the first PRSSIDLEN write (OBJ.WR 0x0048).
+	# A segment that does not write it keeps the harness default; a
+	# caller's AC_SSID_LEN wins over both.
+	if [ -z "$AC_SSID_LEN" ]; then
+		ssidlen=$(grep -m1 -oE "OBJ\.WR +addr=0x0048 val=0x[0-9a-f]+" \
+			"$TMP/merged" | grep -oE "0x[0-9a-f]+$" || true)
+		[ -n "$ssidlen" ] && sched="$sched AC_SSID_LEN=$ssidlen"
+	fi
+
 	# MAC.BW is written only by the first segment of each bandwidth: the
 	# others inherit it. The segment knows by itself whether it has it.
 	if grep -q ' MAC\.BW' "$TMP/merged"; then
