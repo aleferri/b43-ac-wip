@@ -263,6 +263,66 @@ static u16 b43_txhdr_ac_rate_idx(u8 rate)
 }
 
 /*
+ * What the TX header formats share, decided once from mac80211's TX info:
+ * the rates, the MAC flags and the protection frame. b43_generate_txhdr()
+ * writes it in the pre-AC header, b43_generate_txhdr_ac() in the AC one.
+ */
+struct b43_txhdr_ctl {
+	struct ieee80211_rate *fbrate;
+	u8 rate;		/* hw_value of the rate */
+	u8 rate_fb;		/* hw_value of the fallback rate */
+	u8 rts_rate;		/* hw_value of the RTS or CTS rate */
+	bool ack;		/* expect an ACK */
+	bool hwseq;		/* hardware sequence number */
+	bool first_frag;	/* first fragment of an MSDU */
+	bool long_frame;	/* long retry limit */
+	bool short_preamble;
+	bool rts;		/* RTS before the frame */
+	bool cts;		/* CTS-to-self before the frame */
+};
+
+static void b43_txhdr_ctl_get(struct b43_wldev *dev,
+			      struct ieee80211_tx_info *info,
+			      struct b43_txhdr_ctl *c)
+{
+	struct ieee80211_tx_rate *rates = info->control.rates;
+	struct ieee80211_rate *txrate, *rts_cts_rate;
+
+	txrate = ieee80211_get_tx_rate(dev->wl->hw, info);
+	c->rate = txrate ? txrate->hw_value : B43_CCK_RATE_1MB;
+	c->fbrate = ieee80211_get_alt_retry_rate(dev->wl->hw, info, 0) ? :
+		    txrate;
+	c->rate_fb = c->fbrate->hw_value;
+
+	c->ack = !(info->flags & IEEE80211_TX_CTL_NO_ACK);
+	/* use hardware sequence counter as the non-TID counter */
+	c->hwseq = info->flags & IEEE80211_TX_CTL_ASSIGN_SEQ;
+	c->first_frag = info->flags & IEEE80211_TX_CTL_FIRST_FRAGMENT;
+	c->short_preamble = rates[0].flags & IEEE80211_TX_RC_USE_SHORT_PREAMBLE;
+
+	/* Overwrite rates[0].count to make the retry calculation
+	 * in the tx status easier. need the actual retry limit to
+	 * detect whether the fallback rate was used.
+	 */
+	c->long_frame = (rates[0].flags & IEEE80211_TX_RC_USE_RTS_CTS) ||
+			(rates[0].count <=
+			 dev->wl->hw->conf.long_frame_max_tx_count);
+	if (c->long_frame)
+		rates[0].count = dev->wl->hw->conf.long_frame_max_tx_count;
+	else
+		rates[0].count = dev->wl->hw->conf.short_frame_max_tx_count;
+
+	c->cts = rates[0].flags & IEEE80211_TX_RC_USE_CTS_PROTECT;
+	c->rts = !c->cts && (rates[0].flags & IEEE80211_TX_RC_USE_RTS_CTS);
+	c->rts_rate = B43_CCK_RATE_1MB;
+	if (c->rts || c->cts) {
+		rts_cts_rate = ieee80211_get_rts_cts_rate(dev->wl->hw, info);
+		if (rts_cts_rate)
+			c->rts_rate = rts_cts_rate->hw_value;
+	}
+}
+
+/*
  * The AC microcode's descriptor, one legacy rate: b43_op_tx() drops a frame
  * that asks for an MCS, and hardware encryption is off on B43_FW_HDR_AC. The
  * frame goes out on the TX cores the PHY keeps for the beacon, on the
@@ -271,44 +331,34 @@ static u16 b43_txhdr_ac_rate_idx(u8 rate)
  */
 static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 				 struct sk_buff *skb,
-				 struct ieee80211_tx_info *info, u16 cookie)
+				 struct ieee80211_tx_info *info,
+				 const struct b43_txhdr_ctl *c, u16 cookie)
 {
 	struct b43_txhdr_ac *txhdr = (struct b43_txhdr_ac *)_txhdr;
 	struct b43_txhdr_ac_rate *r = &txhdr->rate[0];
 	const struct ieee80211_hdr *wlhdr =
 	    (const struct ieee80211_hdr *)skb->data;
 	const struct b43_phy_ac *ac = dev->phy.ac;
-	struct ieee80211_tx_rate *rates = info->control.rates;
-	struct ieee80211_rate *txrate;
 	unsigned int len = skb->len + FCS_LEN;
 	u16 cores = ac->tx_cores ? : 0x0001;
 	u16 mac_lo = 0, phy0, po, rts = B43_TXH_AC_RTS_LAST_RATE;
-	u8 rate;
+	u8 rate = c->rate;
 
 	BUILD_BUG_ON(sizeof(struct b43_txhdr_ac) != 124);
 
 	if (WARN_ON_ONCE(info->control.hw_key))
 		return -EOPNOTSUPP;
 
-	txrate = ieee80211_get_tx_rate(dev->wl->hw, info);
-	rate = txrate ? txrate->hw_value : B43_OFDM_RATE_6MB;
-
 	memset(txhdr, 0, sizeof(*txhdr));
 
-	if (!(info->flags & IEEE80211_TX_CTL_NO_ACK))
+	if (c->ack)
 		mac_lo |= B43_TXH_AC_MAC_IACK;
-	if (info->flags & IEEE80211_TX_CTL_ASSIGN_SEQ)
+	if (c->hwseq)
 		mac_lo |= B43_TXH_AC_MAC_ASEQ;
-	if (info->flags & IEEE80211_TX_CTL_FIRST_FRAGMENT)
+	if (c->first_frag)
 		mac_lo |= B43_TXH_AC_MAC_STMSDU;
-	/* rates[0].count as the TX status report expects it, as for pre-AC */
-	if ((rates[0].flags & IEEE80211_TX_RC_USE_RTS_CTS) ||
-	    (rates[0].count <= dev->wl->hw->conf.long_frame_max_tx_count)) {
-		rates[0].count = dev->wl->hw->conf.long_frame_max_tx_count;
+	if (c->long_frame)
 		mac_lo |= B43_TXH_AC_MAC_LFRM;
-	} else {
-		rates[0].count = dev->wl->hw->conf.short_frame_max_tx_count;
-	}
 
 	txhdr->mac_ctl_lo = cpu_to_le16(mac_lo);
 	txhdr->mac_ctl_hi = cpu_to_le16(B43_TXH_AC_MAC_FIX_RATE);
@@ -321,7 +371,7 @@ static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 					B43_TXH_PHY_ENC_CCK;
 	phy0 |= B43_TXH_AC_PHY0_NON_SOUNDING;
 	phy0 |= cores << B43_TXH_AC_PHY0_CORES_SHIFT;
-	if (rates[0].flags & IEEE80211_TX_RC_USE_SHORT_PREAMBLE)
+	if (c->short_preamble)
 		phy0 |= B43_TXH_AC_PHY0_SHORT_PREAMBLE;
 	r->phy_ctl[0] = cpu_to_le16(phy0);
 	po = b43_is_ofdm_rate(rate) ?
@@ -334,22 +384,15 @@ static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 	b43_generate_plcp_hdr((struct b43_plcp_hdr4 *)&r->plcp, len, rate);
 	r->tx_rate = cpu_to_le16(rate);
 
-	if (rates[0].flags & (IEEE80211_TX_RC_USE_RTS_CTS |
-			      IEEE80211_TX_RC_USE_CTS_PROTECT)) {
-		struct ieee80211_rate *rr =
-			ieee80211_get_rts_cts_rate(dev->wl->hw, info);
-		u8 rts_rate = rr ? rr->hw_value : rate;
+	if (c->rts || c->cts) {
 		u8 code;
 
-		if (rates[0].flags & IEEE80211_TX_RC_USE_CTS_PROTECT)
-			rts |= B43_TXH_AC_RTS_USE_CTS;
-		else
-			rts |= B43_TXH_AC_RTS_USE_RTS;
-		if (b43_is_ofdm_rate(rts_rate)) {
+		rts |= c->cts ? B43_TXH_AC_RTS_USE_CTS : B43_TXH_AC_RTS_USE_RTS;
+		if (b43_is_ofdm_rate(c->rts_rate)) {
 			rts |= B43_TXH_AC_RTS_FT_OFDM;
-			code = b43_plcp_get_ratecode_ofdm(rts_rate);
+			code = b43_plcp_get_ratecode_ofdm(c->rts_rate);
 		} else {
-			code = b43_plcp_get_ratecode_cck(rts_rate);
+			code = b43_plcp_get_ratecode_cck(c->rts_rate);
 		}
 		rts |= (code & 0x0f) << B43_TXH_AC_RTS_RATE_SHIFT;
 	}
@@ -382,20 +425,19 @@ int b43_generate_txhdr(struct b43_wldev *dev,
 			      phy->type == B43_PHYTYPE_N ||
 			      phy->type == B43_PHYTYPE_HT);
 	u8 extra_ft = 0;
-	struct ieee80211_rate *txrate;
-	struct ieee80211_tx_rate *rates;
+	struct b43_txhdr_ctl c;
 
+	b43_txhdr_ctl_get(dev, info, &c);
 	if (dev->fw.hdr_format == B43_FW_HDR_AC)
 		return b43_generate_txhdr_ac(dev, _txhdr, skb_frag, info,
-					     cookie);
+					     &c, cookie);
 
 	memset(txhdr, 0, sizeof(*txhdr));
 
-	txrate = ieee80211_get_tx_rate(dev->wl->hw, info);
-	rate = txrate ? txrate->hw_value : B43_CCK_RATE_1MB;
+	rate = c.rate;
 	rate_ofdm = b43_is_ofdm_rate(rate);
-	fbrate = ieee80211_get_alt_retry_rate(dev->wl->hw, info, 0) ? : txrate;
-	rate_fb = fbrate->hw_value;
+	fbrate = c.fbrate;
+	rate_fb = c.rate_fb;
 	rate_fb_ofdm = b43_is_ofdm_rate(rate_fb);
 
 	if (rate_ofdm)
@@ -502,7 +544,7 @@ int b43_generate_txhdr(struct b43_wldev *dev,
 		phy_ctl |= B43_TXH_PHY_ENC_OFDM;
 	else
 		phy_ctl |= B43_TXH_PHY_ENC_CCK;
-	if (info->control.rates[0].flags & IEEE80211_TX_RC_USE_SHORT_PREAMBLE)
+	if (c.short_preamble)
 		phy_ctl |= B43_TXH_PHY_SHORTPRMBL;
 
 	switch (b43_ieee80211_antenna_sanitize(dev, 0)) {
@@ -525,48 +567,32 @@ int b43_generate_txhdr(struct b43_wldev *dev,
 		B43_WARN_ON(1);
 	}
 
-	rates = info->control.rates;
 	/* MAC control */
-	if (!(info->flags & IEEE80211_TX_CTL_NO_ACK))
+	if (c.ack)
 		mac_ctl |= B43_TXH_MAC_ACK;
-	/* use hardware sequence counter as the non-TID counter */
-	if (info->flags & IEEE80211_TX_CTL_ASSIGN_SEQ)
+	if (c.hwseq)
 		mac_ctl |= B43_TXH_MAC_HWSEQ;
-	if (info->flags & IEEE80211_TX_CTL_FIRST_FRAGMENT)
+	if (c.first_frag)
 		mac_ctl |= B43_TXH_MAC_STMSDU;
 	if (!phy->gmode)
 		mac_ctl |= B43_TXH_MAC_5GHZ;
-
-	/* Overwrite rates[0].count to make the retry calculation
-	 * in the tx status easier. need the actual retry limit to
-	 * detect whether the fallback rate was used.
-	 */
-	if ((rates[0].flags & IEEE80211_TX_RC_USE_RTS_CTS) ||
-	    (rates[0].count <= dev->wl->hw->conf.long_frame_max_tx_count)) {
-		rates[0].count = dev->wl->hw->conf.long_frame_max_tx_count;
+	if (c.long_frame)
 		mac_ctl |= B43_TXH_MAC_LONGFRAME;
-	} else {
-		rates[0].count = dev->wl->hw->conf.short_frame_max_tx_count;
-	}
 
 	/* Generate the RTS or CTS-to-self frame */
-	if ((rates[0].flags & IEEE80211_TX_RC_USE_RTS_CTS) ||
-	    (rates[0].flags & IEEE80211_TX_RC_USE_CTS_PROTECT)) {
+	if (c.rts || c.cts) {
 		unsigned int len;
 		struct ieee80211_hdr *hdr;
 		int rts_rate, rts_rate_fb;
 		int rts_rate_ofdm, rts_rate_fb_ofdm;
 		struct b43_plcp_hdr6 *plcp;
-		struct ieee80211_rate *rts_cts_rate;
 
-		rts_cts_rate = ieee80211_get_rts_cts_rate(dev->wl->hw, info);
-
-		rts_rate = rts_cts_rate ? rts_cts_rate->hw_value : B43_CCK_RATE_1MB;
+		rts_rate = c.rts_rate;
 		rts_rate_ofdm = b43_is_ofdm_rate(rts_rate);
 		rts_rate_fb = b43_calc_fallback_rate(rts_rate, phy->gmode);
 		rts_rate_fb_ofdm = b43_is_ofdm_rate(rts_rate_fb);
 
-		if (rates[0].flags & IEEE80211_TX_RC_USE_CTS_PROTECT) {
+		if (c.cts) {
 			struct ieee80211_cts *cts;
 
 			switch (dev->fw.hdr_format) {
@@ -665,8 +691,8 @@ int b43_generate_txhdr(struct b43_wldev *dev,
 		else
 			extra_ft |= B43_TXH_EFT_RTSFB_CCK;
 
-		if (rates[0].flags & IEEE80211_TX_RC_USE_RTS_CTS &&
-		    fill_phy_ctl1) {
+		if ((info->control.rates[0].flags &
+		     IEEE80211_TX_RC_USE_RTS_CTS) && fill_phy_ctl1) {
 			txhdr->phy_ctl1_rts = cpu_to_le16(
 				b43_generate_tx_phy_ctl1(dev, rts_rate));
 			txhdr->phy_ctl1_rts_fb = cpu_to_le16(
