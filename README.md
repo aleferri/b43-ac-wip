@@ -89,8 +89,9 @@ The DSL-3580L runs the port under OpenWrt with `ucode42.fw` 784.2 from
 `broadcom-wl-6.30.163.46`, byte for byte the `d11ucode42` of the board's own
 `wl`. [`bringup-log-2026-10-08-bis..txt`](bringup-log-2026-10-08-bis..txt)
 is an AP on channel 36 with a station: it associates, completes the WPA2
-4-way handshake and carries traffic, with no controller restart. The log does
-not record the channel width.
+4-way handshake and carries traffic, with no controller restart. The run is
+at 20 MHz without HT (`NOHT`): the station downloads at 11 Mbit/s and uploads
+at 4 Mbit/s.
 
 - **TX** works, at legacy OFDM rates only: the TX descriptor carries no MCS
   (see "What is missing").

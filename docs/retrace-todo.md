@@ -876,7 +876,8 @@ ucode revision.
   `bringup-log-2026-10-06.txt` and the descriptor protocol error on TX ring 3
   came with the 7.14 engine parameters (see "Ring control"). b43 posts two
   descriptors per frame where the stock driver mostly posts one.
-- **RX under traffic.** It works and is slow. In the same log the RX ring
+- **RX under traffic.** It works and is slow: at 20 MHz `NOHT` the station
+  uploads at 4 Mbit/s and downloads at 11. In the same log the RX ring
   underruns once at the association (229.5 s), then 36 `RX descriptor
   underrun` are printed, and `net_ratelimit()` drops 78 messages, between
   268.9 s and 301.4 s. The underrun interrupt now drains the ring
