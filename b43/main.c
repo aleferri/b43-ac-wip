@@ -1857,7 +1857,6 @@ static const struct b43_tpl_layout b43_tpl_layout_ac_784 = {
 	.bcn_size	= 0x0200,
 	.hdr_len	= 12,
 	.plcp_off	= 3,
-	.tim_mirrored	= true,
 };
 
 static const struct b43_tpl_layout b43_tpl_layout_ac_832 = {
@@ -1893,20 +1892,6 @@ static u8 b43_tpl_byte(const struct b43_tpl_layout *tpl,
 	if (i >= tpl->plcp_off && i - tpl->plcp_off < sizeof(plcp->raw))
 		return plcp->raw[i - tpl->plcp_off];
 	return 0;
-}
-
-/*
- * TIMBPOS for a TIM at byte @pos of the template. The microcode writes the
- * DTIM count at TIMBPOS + 2 and the bitmap control two bytes after it; with
- * tim_mirrored it takes the byte at offset 3 - n of the word where the
- * address has offset n, so it is given the address whose mirror is the TIM's.
- * The beacon bases are word aligned.
- */
-static u16 b43_tpl_timbpos(const struct b43_tpl_layout *tpl, u16 pos)
-{
-	if (!tpl->tim_mirrored)
-		return pos;
-	return ((pos + 2) ^ 3) - 2;
 }
 
 static void b43_write_template_common(struct b43_wldev *dev,
@@ -2097,8 +2082,8 @@ static void b43_write_beacon_template(struct b43_wldev *dev,
 
 			dtim_period = ie[i + 3];
 
-			b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_TIMBPOS,
-					b43_tpl_timbpos(tpl, tim_position));
+			b43_shm_write16(dev, B43_SHM_SHARED,
+					B43_SHM_SH_TIMBPOS, tim_position);
 			b43_shm_write16(dev, B43_SHM_SHARED,
 					B43_SHM_SH_DTIMPER, dtim_period);
 			break;
