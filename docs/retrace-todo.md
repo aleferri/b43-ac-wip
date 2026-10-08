@@ -364,6 +364,17 @@ adaptation, and HT and VHT rates in transmission. What is open:
   is not set; `ASEQ` and `LFRM`, which his port does not set; the multicast
   frame ID still goes to shm `0x00a8`, `B43_SHM_SH_MCASTCOOKIE` of the older
   microcode, which no AC capture writes (none sends a multicast frame).
+  The only PHY TX control words in the captures are the beacon's, shm
+  `0x00cc`/`0x00ce`/`0x00d0`, on every segment at 20, 40 and 80 MHz (D6220
+  cold sweep): word 0 is `0x0045` or `0x00c5` (OFDM, bit 2, chain mask),
+  word 1 the power offset alone (`0x0000`-`0x0060`), word 2 zero. A legacy
+  frame on a 40 or 80 MHz channel thus has the 20 MHz words, with no width
+  field set, as b43's descriptor has. The subband field is never non-zero:
+  every chanspec of every capture (agcombo, D6220, TG789vac v2) has the
+  primary at the bottom of its block. No HT or VHT word is in any capture:
+  data frames carry theirs in the DMA descriptor, and the stock driver
+  sends the beacon, the probe response and the response frames at legacy
+  rates.
 - **RX rates.** `b43_rx_rate_ac()` takes the frame type from PHY RX status
   0 with HT at 2 and VHT at 3, Broadcom's FT_HT and FT_VHT for these PHYs,
   and reads HT-SIG and VHT-SIG-A from the six bytes in front of the frame.
