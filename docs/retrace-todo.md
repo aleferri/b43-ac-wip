@@ -857,23 +857,37 @@ ucode revision.
 
 ## On hardware (DSL-3580L, OpenWrt)
 
-- **Beacon.** On `bringup-log-2026-10-07.txt`, with the template layout of
-  `struct b43_tpl_layout` and the DMA engine at its reset values, hostapd
-  reaches `AP-ENABLED` after a single core init and no beacon goes out: the
-  beacon PHY TX control word at `0x00cc` held the initvals' CCK encoding. The
-  core now sets the OFDM encoding before each template
-  (`b43_write_beacon_phytxctl_ac()`); that has not run on the board yet.
-  Whether a beacon goes out is the first thing to check.
-- **TX ring under traffic.** `bringup-log-2026-10-06.txt`, five core init
-  cycles per `wifi up`, and the fatal DMA error of 2026-10-03 on TX ring 3
-  (`dma_reason[3] = 0x1000`, `AC_VO`, descriptor protocol error, `I_DE` in
-  brcmsmac) were taken with the 7.14 engine parameters (see "Ring control");
-  with them at reset the 2026-10-07 log has one core init, no DMA error and
-  no restart, and ends a second after `AP-ENABLED`, with no station. b43 posts two descriptors per frame where the stock driver mostly
-  posts one. Next, once a beacon is out: a station association and
-  `hostapd_cli deauthenticate ff:ff:ff:ff:ff:ff`, and on a DMA error the
-  ring's status words (`0x02d0`/`0x02d4`: error code and active descriptor)
-  and that descriptor.
+- **Beacon.** On `bringup-log-2026-10-07.txt` no beacon went out: the
+  beacon PHY TX control word at `0x00cc` held the initvals' CCK encoding,
+  which the core now sets to OFDM before each template
+  (`b43_write_beacon_phytxctl_ac()`). On `bringup-log-2026-10-08-bis..txt` a
+  station associates, which a probe response is enough for, so whether a
+  beacon goes out is still open. `b43/bcn_diag.c` logs the uploaded template,
+  what the microcode changes in template RAM, the MACCMD valid bits and the
+  management frames with their TX status; it prints through `b43info()`
+  every second, so it spends the rate limit (see the README).
+- **TX under traffic.** With the DMA engine at its reset values and the AC TX
+  descriptor behind the TX offload header, `bringup-log-2026-10-08-bis..txt`
+  has a station through the WPA2 4-way handshake and traffic both ways, with
+  no DMA error and no restart. The first attempts end in
+  `AP-STA-POSSIBLE-PSK-MISMATCH`; one completes 22 s later. Not explained.
+  `bringup-log-2026-10-08.txt` has one `TX-status contains invalid cookie:
+  0x0000` before `AP-ENABLED`. The five core init cycles of
+  `bringup-log-2026-10-06.txt` and the descriptor protocol error on TX ring 3
+  came with the 7.14 engine parameters (see "Ring control"). b43 posts two
+  descriptors per frame where the stock driver mostly posts one.
+- **RX under traffic.** It works and is slow. In the same log the RX ring
+  underruns once at the association (229.5 s), then 36 `RX descriptor
+  underrun` are printed, and `net_ratelimit()` drops 78 messages, between
+  268.9 s and 301.4 s. The underrun interrupt now drains the ring
+  (`b43_dma_rx_give()`) instead of handing back one slot; whether the log was
+  taken before or after that change is not recorded. On OpenWrt the ring has
+  32 slots (`813-b43-reduce-number-of-RX-slots.patch`, before the 816 in the
+  package), where the stock drivers keep the receive index 256 (6.30) and
+  500 (7.14) descriptors ahead of the engine. Every frame is decrypted by
+  mac80211 (no hardware crypto on the AC) and none is aggregated. Next: the
+  same traffic with a counter of underruns instead of the warning, with the
+  32 slots and with 256, and the CPU load of the softirq.
 - **Values of the bring-up logs against `cold01-ch36-bw20.txt`.** Same as the
   board's own driver: radio `0x040b` reads `0x0169` after power-on, `0x0140`
   goes `0x0df7 -> 0x0df4`. Same as 7.14 and not as 6.30, which the board

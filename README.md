@@ -87,19 +87,18 @@ weather-radar segments (ch120/124/128 at 20 MHz, ch116/124 at 40, ch116 at
 
 The DSL-3580L runs the port under OpenWrt with `ucode42.fw` 784.2 from
 `broadcom-wl-6.30.163.46`, byte for byte the `d11ucode42` of the board's own
-`wl`. [`bringup-log-2026-10-07.txt`](bringup-log-2026-10-07.txt) is an AP on
-channel 36: probe, one core init, PHY init, channel switch and calibrations
-run, hostapd reaches `AP-ENABLED` and the watchdog ticks; nothing crashes and
-the controller does not restart. What is wrong on air:
+`wl`. [`bringup-log-2026-10-08-bis..txt`](bringup-log-2026-10-08-bis..txt)
+is an AP on channel 36 with a station: it associates, completes the WPA2
+4-way handshake and carries traffic, with no controller restart. The log does
+not record the channel width.
 
-- **No beacon** in that log: the beacon PHY TX control word kept the
-  initvals' CCK encoding. The core now sets it before each template, not yet
-  run on the board.
-- **TX under traffic** has not run since the DMA engine was left at its
-  reset values; with the 7.14 parameters it raised a descriptor protocol
-  error and the core came up five times per `wifi up`
-  ([`bringup-log-2026-10-06.txt`](bringup-log-2026-10-06.txt)). See
-  `docs/retrace-todo.md`, "On hardware".
+- **TX** works, at legacy OFDM rates only: the TX descriptor carries no MCS
+  (see "What is missing").
+- **RX** works and is slow. Under traffic the RX ring underruns: 36
+  `RX descriptor underrun` printed, and `net_ratelimit()` drops 78 messages,
+  between 268.9 s and 301.4 s. See `docs/retrace-todo.md`, "On hardware".
+- **Beacon**: the log does not tell whether the station found the AP from a
+  beacon or from a probe response.
 
 After `B43_STAT_STARTED` every `b43info`/`b43warn`/`b43err` goes through
 `net_ratelimit()`, ten per five seconds: a bring-up spends them, and what
@@ -138,6 +137,11 @@ How the pieces fit is in [`docs/driver-status.md`](docs/driver-status.md).
   pulse as a radar.
 - Probe-response offload and the power management queue: deliberately off, see
   `docs/retrace-todo.md`.
+- HT and VHT in transmission and aggregation: the AC sends legacy OFDM
+  rates and opens no block ack session (`docs/retrace-todo.md`, "HT and
+  VHT").
+- Hardware encryption: mac80211 does the crypto, since the AC microcode's
+  cipher numbers and key fields are not b43's (`b43_upload_microcode()`).
 - Temperature: raw tempsense samples are collected and not converted
   ([`docs/tempsense-wiring-evidence.md`](docs/tempsense-wiring-evidence.md)).
 
