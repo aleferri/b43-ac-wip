@@ -283,6 +283,17 @@ static inline int prev_slot(struct b43_dmaring *ring, int slot)
 	return slot - 1;
 }
 
+/*
+ * The RX engine fills descriptors from its current one up to the one in
+ * RXINDEX, which it does not use, and stops when the two meet. It gets every
+ * buffer but the one before @slot, the next one the driver reads: a full
+ * ring then stops one short of the driver instead of looking empty.
+ */
+static void b43_dma_rx_give(struct b43_dmaring *ring, int slot)
+{
+	ring->ops->set_current_rxslot(ring, prev_slot(ring, slot));
+}
+
 #ifdef CONFIG_B43_DEBUG
 static void update_max_used_slots(struct b43_dmaring *ring,
 				  int current_used_slots)
@@ -754,8 +765,6 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
 				b43_dma_write(ring, B43_DMA64_RXRINGLO, addrlo);
 				b43_dma_write(ring, B43_DMA64_RXRINGHI, addrhi);
 			}
-			b43_dma_write(ring, B43_DMA64_RXINDEX,
-				      op64_slot_index(ring, ring->nr_slots));
 		} else {
 			u32 ringbase = (u32) (ring->dmabase);
 			addrext = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_EXT);
@@ -769,9 +778,8 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
 				value |= B43_DMA32_RXPARITYDISABLE;
 			b43_dma_write(ring, B43_DMA32_RXCTL, value);
 			b43_dma_write(ring, B43_DMA32_RXRING, addrlo);
-			b43_dma_write(ring, B43_DMA32_RXINDEX, ring->nr_slots *
-				      sizeof(struct b43_dmadesc32));
 		}
+		b43_dma_rx_give(ring, ring->current_slot);
 	}
 
 out:
@@ -1727,25 +1735,6 @@ drop_recycle_buffer:
 	sync_descbuffer_for_device(ring, dmaaddr, ring->rx_buffersize);
 }
 
-void b43_dma_handle_rx_overflow(struct b43_dmaring *ring)
-{
-	int current_slot, previous_slot;
-
-	B43_WARN_ON(ring->tx);
-
-	/* Device has filled all buffers, drop all packets and let TCP
-	 * decrease speed.
-	 * Decrement RX index by one will let the device to see all slots
-	 * as free again
-	 */
-	/*
-	*TODO: How to increase rx_drop in mac80211?
-	*/
-	current_slot = ring->ops->get_current_rxslot(ring);
-	previous_slot = prev_slot(ring, current_slot);
-	ring->ops->set_current_rxslot(ring, previous_slot);
-}
-
 void b43_dma_rx(struct b43_dmaring *ring)
 {
 	const struct b43_dma_ops *ops = ring->ops;
@@ -1762,7 +1751,7 @@ void b43_dma_rx(struct b43_dmaring *ring)
 		update_max_used_slots(ring, ++used_slots);
 	}
 	wmb();
-	ops->set_current_rxslot(ring, slot);
+	b43_dma_rx_give(ring, slot);
 	ring->current_slot = slot;
 }
 

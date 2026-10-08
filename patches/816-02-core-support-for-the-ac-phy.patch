@@ -7,17 +7,17 @@ Subject: [PATCH 1/2] b43: core support for the AC-PHY
  drivers/net/wireless/broadcom/b43/Kconfig     |   20 +-
  drivers/net/wireless/broadcom/b43/b43.h       |  148 +-
  drivers/net/wireless/broadcom/b43/bus.c       |    4 +
- drivers/net/wireless/broadcom/b43/dma.c       |  160 +-
- drivers/net/wireless/broadcom/b43/dma.h       |   11 +
+ drivers/net/wireless/broadcom/b43/dma.c       |  193 +-
+ drivers/net/wireless/broadcom/b43/dma.h       |   13 +-
  drivers/net/wireless/broadcom/b43/leds.c      |  225 ++-
  drivers/net/wireless/broadcom/b43/leds.h      |   24 +-
- drivers/net/wireless/broadcom/b43/main.c      | 1555 +++++++++++++++--
+ drivers/net/wireless/broadcom/b43/main.c      | 1572 +++++++++++++++--
  .../net/wireless/broadcom/b43/phy_common.c    |   61 +-
  .../net/wireless/broadcom/b43/phy_common.h    |   32 +-
  drivers/net/wireless/broadcom/b43/pio.c       |   16 +-
  drivers/net/wireless/broadcom/b43/xmit.c      |  359 +++-
  drivers/net/wireless/broadcom/b43/xmit.h      |   82 +
- 13 files changed, 2321 insertions(+), 376 deletions(-)
+ 13 files changed, 2341 insertions(+), 408 deletions(-)
 
 diff --git a/drivers/net/wireless/broadcom/b43/Kconfig b/drivers/net/wireless/broadcom/b43/Kconfig
 index 5f008b4..ceee266 100644
@@ -360,7 +360,7 @@ index 0bc4f83..5ae8ba4 100644
  	dev->dev = &core->dev;
  	dev->dma_dev = core->dma_dev;
 diff --git a/drivers/net/wireless/broadcom/b43/dma.c b/drivers/net/wireless/broadcom/b43/dma.c
-index e0a74f4..2dea991 100644
+index e0a74f4..169b4c4 100644
 --- a/drivers/net/wireless/broadcom/b43/dma.c
 +++ b/drivers/net/wireless/broadcom/b43/dma.c
 @@ -210,10 +210,19 @@ static void op64_fill_descriptor(struct b43_dmaring *ring,
@@ -403,7 +403,25 @@ index e0a74f4..2dea991 100644
  }
  
  static const struct b43_dma_ops dma64_ops = {
-@@ -404,19 +412,21 @@ static inline
+@@ -275,6 +283,17 @@ static inline int prev_slot(struct b43_dmaring *ring, int slot)
+ 	return slot - 1;
+ }
+ 
++/*
++ * The RX engine fills descriptors from its current one up to the one in
++ * RXINDEX, which it does not use, and stops when the two meet. It gets every
++ * buffer but the one before @slot, the next one the driver reads: a full
++ * ring then stops one short of the driver instead of looking empty.
++ */
++static void b43_dma_rx_give(struct b43_dmaring *ring, int slot)
++{
++	ring->ops->set_current_rxslot(ring, prev_slot(ring, slot));
++}
++
+ #ifdef CPTCFG_B43_DEBUG
+ static void update_max_used_slots(struct b43_dmaring *ring,
+ 				  int current_used_slots)
+@@ -404,19 +423,21 @@ static inline
  	}
  }
  
@@ -436,7 +454,7 @@ index e0a74f4..2dea991 100644
  
  	ring->descbase = dma_alloc_coherent(ring->dev->dev->dma_dev,
  					    ring_mem_size, &(ring->dmabase),
-@@ -429,8 +439,8 @@ static int alloc_ringmemory(struct b43_dmaring *ring)
+@@ -429,8 +450,8 @@ static int alloc_ringmemory(struct b43_dmaring *ring)
  
  static void free_ringmemory(struct b43_dmaring *ring)
  {
@@ -447,7 +465,7 @@ index e0a74f4..2dea991 100644
  	dma_free_coherent(ring->dev->dev->dma_dev, ring_mem_size,
  			  ring->descbase, ring->dmabase);
  }
-@@ -681,18 +691,29 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
+@@ -681,18 +702,29 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
  	if (ring->tx) {
  		if (ring->type == B43_DMA_64BIT) {
  			u64 ringbase = (u64) (ring->dmabase);
@@ -483,7 +501,7 @@ index e0a74f4..2dea991 100644
  		} else {
  			u32 ringbase = (u32) (ring->dmabase);
  			addrext = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_EXT);
-@@ -715,6 +736,8 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
+@@ -715,6 +747,8 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
  			addrext = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_EXT);
  			addrlo = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_LOW);
  			addrhi = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_HIGH);
@@ -492,7 +510,7 @@ index e0a74f4..2dea991 100644
  
  			value = (ring->frameoffset << B43_DMA64_RXFROFF_SHIFT);
  			value |= B43_DMA64_RXENABLE;
-@@ -722,11 +745,17 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
+@@ -722,11 +756,15 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
  			    & B43_DMA64_RXADDREXT_MASK;
  			if (!parity)
  				value |= B43_DMA64_RXPARITYDISABLE;
@@ -510,12 +528,21 @@ index e0a74f4..2dea991 100644
 +				b43_dma_write(ring, B43_DMA64_RXRINGLO, addrlo);
 +				b43_dma_write(ring, B43_DMA64_RXRINGHI, addrhi);
 +			}
-+			b43_dma_write(ring, B43_DMA64_RXINDEX,
-+				      op64_slot_index(ring, ring->nr_slots));
  		} else {
  			u32 ringbase = (u32) (ring->dmabase);
  			addrext = b43_dma_address(&ring->dev->dma, ringbase, B43_DMA_ADDR_EXT);
-@@ -867,6 +896,12 @@ struct b43_dmaring *b43_setup_dmaring(struct b43_wldev *dev,
+@@ -740,9 +778,8 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
+ 				value |= B43_DMA32_RXPARITYDISABLE;
+ 			b43_dma_write(ring, B43_DMA32_RXCTL, value);
+ 			b43_dma_write(ring, B43_DMA32_RXRING, addrlo);
+-			b43_dma_write(ring, B43_DMA32_RXINDEX, ring->nr_slots *
+-				      sizeof(struct b43_dmadesc32));
+ 		}
++		b43_dma_rx_give(ring, ring->current_slot);
+ 	}
+ 
+ out:
+@@ -867,6 +904,12 @@ struct b43_dmaring *b43_setup_dmaring(struct b43_wldev *dev,
  	} else {
  		if (ring->index == 0) {
  			switch (dev->fw.hdr_format) {
@@ -528,7 +555,7 @@ index e0a74f4..2dea991 100644
  			case B43_FW_HDR_598:
  				ring->rx_buffersize = B43_DMA0_RX_FW598_BUFSIZE;
  				ring->frameoffset = B43_DMA0_RX_FW598_FO;
-@@ -1046,6 +1081,28 @@ static bool b43_dma_translation_in_low_word(struct b43_wldev *dev,
+@@ -1046,6 +1089,28 @@ static bool b43_dma_translation_in_low_word(struct b43_wldev *dev,
  	return false;
  }
  
@@ -557,7 +584,7 @@ index e0a74f4..2dea991 100644
  int b43_dma_init(struct b43_wldev *dev)
  {
  	struct b43_dma *dma = &dev->dma;
-@@ -1080,6 +1137,9 @@ int b43_dma_init(struct b43_wldev *dev)
+@@ -1080,6 +1145,9 @@ int b43_dma_init(struct b43_wldev *dev)
  		dma->parity = false;
  #endif
  
@@ -567,7 +594,7 @@ index e0a74f4..2dea991 100644
  	err = -ENOMEM;
  	/* setup TX DMA channels. */
  	dma->tx_ring_AC_BK = b43_setup_dmaring(dev, 0, 1, type);
-@@ -1175,8 +1235,8 @@ struct b43_dmaring *parse_cookie(struct b43_wldev *dev, u16 cookie, int *slot)
+@@ -1175,8 +1243,8 @@ struct b43_dmaring *parse_cookie(struct b43_wldev *dev, u16 cookie, int *slot)
  	}
  	*slot = (cookie & 0x0FFF);
  	if (unlikely(!ring || *slot < 0 || *slot >= ring->nr_slots)) {
@@ -578,7 +605,7 @@ index e0a74f4..2dea991 100644
  		return NULL;
  	}
  
-@@ -1422,8 +1482,10 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
+@@ -1422,8 +1490,10 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
  	static u8 err_out1;
  
  	ring = parse_cookie(dev, status->cookie, &slot);
@@ -590,7 +617,7 @@ index e0a74f4..2dea991 100644
  	B43_WARN_ON(!ring->tx);
  
  	/* Sanity check: TX packets are processed in-order on one ring.
-@@ -1446,9 +1508,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
+@@ -1446,9 +1516,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
  			skip = 2;
  			if (!err_out1) {
  				/* Report the error once. */
@@ -603,7 +630,7 @@ index e0a74f4..2dea991 100644
  				err_out1 = 1;
  			}
  		} else {
-@@ -1457,9 +1519,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
+@@ -1457,9 +1527,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
  			 * firmware, then reset the controller to
  			 * revive operation.
  			 */
@@ -616,7 +643,7 @@ index e0a74f4..2dea991 100644
  			if (dev->fw.opensource)
  				b43_controller_restart(dev, "Out of order TX");
  			return;
-@@ -1473,9 +1535,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
+@@ -1473,9 +1543,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
  		ops->idx2desc(ring, slot, &meta);
  
  		if (b43_dma_ptr_is_poisoned(meta->skb)) {
@@ -629,7 +656,7 @@ index e0a74f4..2dea991 100644
  			break;
  		}
  
-@@ -1499,9 +1561,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
+@@ -1499,9 +1569,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
  				/* This is a scatter-gather fragment of a frame,
  				 * so the skb pointer must not be NULL.
  				 */
@@ -642,7 +669,7 @@ index e0a74f4..2dea991 100644
  				break;
  			}
  
-@@ -1538,9 +1600,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
+@@ -1538,9 +1608,9 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
  			 * this is only the txhdr, which is not allocated.
  			 */
  			if (unlikely(meta->skb)) {
@@ -655,7 +682,7 @@ index e0a74f4..2dea991 100644
  				break;
  			}
  		}
-@@ -1610,7 +1672,7 @@ static void dma_rx(struct b43_dmaring *ring, int *slot)
+@@ -1610,7 +1680,7 @@ static void dma_rx(struct b43_dmaring *ring, int *slot)
  	if (unlikely(b43_rx_buffer_is_poisoned(ring, skb))) {
  		/* Something went wrong with the DMA.
  		 * The device did not touch the buffer and did not overwrite the poison. */
@@ -664,7 +691,7 @@ index e0a74f4..2dea991 100644
  		dmaaddr = meta->dmaaddr;
  		goto drop_recycle_buffer;
  	}
-@@ -1644,7 +1706,7 @@ static void dma_rx(struct b43_dmaring *ring, int *slot)
+@@ -1644,7 +1714,7 @@ static void dma_rx(struct b43_dmaring *ring, int *slot)
  	dmaaddr = meta->dmaaddr;
  	err = setup_rx_descbuffer(ring, desc, meta, GFP_ATOMIC);
  	if (unlikely(err)) {
@@ -673,8 +700,43 @@ index e0a74f4..2dea991 100644
  		goto drop_recycle_buffer;
  	}
  
+@@ -1662,25 +1732,6 @@ drop_recycle_buffer:
+ 	sync_descbuffer_for_device(ring, dmaaddr, ring->rx_buffersize);
+ }
+ 
+-void b43_dma_handle_rx_overflow(struct b43_dmaring *ring)
+-{
+-	int current_slot, previous_slot;
+-
+-	B43_WARN_ON(ring->tx);
+-
+-	/* Device has filled all buffers, drop all packets and let TCP
+-	 * decrease speed.
+-	 * Decrement RX index by one will let the device to see all slots
+-	 * as free again
+-	 */
+-	/*
+-	*TODO: How to increase rx_drop in mac80211?
+-	*/
+-	current_slot = ring->ops->get_current_rxslot(ring);
+-	previous_slot = prev_slot(ring, current_slot);
+-	ring->ops->set_current_rxslot(ring, previous_slot);
+-}
+-
+ void b43_dma_rx(struct b43_dmaring *ring)
+ {
+ 	const struct b43_dma_ops *ops = ring->ops;
+@@ -1697,7 +1748,7 @@ void b43_dma_rx(struct b43_dmaring *ring)
+ 		update_max_used_slots(ring, ++used_slots);
+ 	}
+ 	wmb();
+-	ops->set_current_rxslot(ring, slot);
++	b43_dma_rx_give(ring, slot);
+ 	ring->current_slot = slot;
+ }
+ 
 diff --git a/drivers/net/wireless/broadcom/b43/dma.h b/drivers/net/wireless/broadcom/b43/dma.h
-index e86212b..5773f24 100644
+index e86212b..d01f238 100644
 --- a/drivers/net/wireless/broadcom/b43/dma.h
 +++ b/drivers/net/wireless/broadcom/b43/dma.h
 @@ -167,12 +167,20 @@ struct b43_dmadesc_generic {
@@ -708,6 +770,15 @@ index e86212b..5773f24 100644
  	/* Number of descriptor slots in the ring. */
  	int nr_slots;
  	/* Number of used descriptor slots. */
+@@ -296,8 +307,6 @@ int b43_dma_tx(struct b43_wldev *dev,
+ void b43_dma_handle_txstatus(struct b43_wldev *dev,
+ 			     const struct b43_txstatus *status);
+ 
+-void b43_dma_handle_rx_overflow(struct b43_dmaring *ring);
+-
+ void b43_dma_rx(struct b43_dmaring *ring);
+ 
+ void b43_dma_direct_fifo_rx(struct b43_wldev *dev,
 diff --git a/drivers/net/wireless/broadcom/b43/leds.c b/drivers/net/wireless/broadcom/b43/leds.c
 index bfe1be3..2e2da16 100644
 --- a/drivers/net/wireless/broadcom/b43/leds.c
@@ -1129,7 +1200,7 @@ index 9e9634c..4ce00d3 100644
  
  #endif /* B43_LEDS_H_ */
 diff --git a/drivers/net/wireless/broadcom/b43/main.c b/drivers/net/wireless/broadcom/b43/main.c
-index 95a5d0b..d467134 100644
+index 95a5d0b..f5a062f 100644
 --- a/drivers/net/wireless/broadcom/b43/main.c
 +++ b/drivers/net/wireless/broadcom/b43/main.c
 @@ -322,6 +322,23 @@ static struct ieee80211_channel b43_5ghz_aphy_chantable[] = {
@@ -2012,17 +2083,28 @@ index 95a5d0b..d467134 100644
  	if (reason & B43_IRQ_TBTT_INDI)
  		handle_irq_tbtt_indication(dev);
  	if (reason & B43_IRQ_ATIM_END)
-@@ -2030,8 +2452,7 @@ static void b43_do_interrupt_thread(struct b43_wldev *dev)
+@@ -2028,13 +2450,13 @@ static void b43_do_interrupt_thread(struct b43_wldev *dev)
+ 	if (reason & B43_IRQ_NOISESAMPLE_OK)
+ 		handle_irq_noise(dev);
  
- 	/* Check the DMA reason registers for received data. */
- 	if (dma_reason[0] & B43_DMAIRQ_RDESC_UFLOW) {
+-	/* Check the DMA reason registers for received data. */
+-	if (dma_reason[0] & B43_DMAIRQ_RDESC_UFLOW) {
 -		if (B43_DEBUG)
 -			b43warn(dev->wl, "RX descriptor underrun\n");
+-		b43_dma_handle_rx_overflow(dev->dma.rx_ring);
+-	}
+-	if (dma_reason[0] & B43_DMAIRQ_RX_DONE) {
++	/*
++	 * Check the DMA reason registers for received data. An underrun is a
++	 * full ring, and reading it gives the buffers back.
++	 */
++	if (dma_reason[0] & B43_DMAIRQ_RDESC_UFLOW)
 +		b43warn(dev->wl, "RX descriptor underrun\n");
- 		b43_dma_handle_rx_overflow(dev->dma.rx_ring);
- 	}
- 	if (dma_reason[0] & B43_DMAIRQ_RX_DONE) {
-@@ -2703,17 +3124,30 @@ static int b43_upload_microcode(struct b43_wldev *dev)
++	if (dma_reason[0] & (B43_DMAIRQ_RX_DONE | B43_DMAIRQ_RDESC_UFLOW)) {
+ 		if (b43_using_pio_transfers(dev))
+ 			b43_pio_rx(dev->pio.rx_queue);
+ 		else
+@@ -2703,17 +3125,30 @@ static int b43_upload_microcode(struct b43_wldev *dev)
  	}
  	dev->fw.rev = fwrev;
  	dev->fw.patch = fwpatch;
@@ -2056,7 +2138,7 @@ index 95a5d0b..d467134 100644
  
  	if (dev->fw.opensource) {
  		u16 fwcapa;
-@@ -2878,18 +3312,48 @@ static struct ssb_device *b43_ssb_gpio_dev(struct b43_wldev *dev)
+@@ -2878,18 +3313,48 @@ static struct ssb_device *b43_ssb_gpio_dev(struct b43_wldev *dev)
  }
  #endif
  
@@ -2108,7 +2190,7 @@ index 95a5d0b..d467134 100644
  	if (dev->dev->chip_id == 0x4301) {
  		mask |= 0x0060;
  		set |= 0x0060;
-@@ -3065,7 +3529,18 @@ void b43_mac_switch_freq(struct b43_wldev *dev, u8 spurmode)
+@@ -3065,7 +3530,18 @@ void b43_mac_switch_freq(struct b43_wldev *dev, u8 spurmode)
  {
  	u16 chip_id = dev->dev->chip_id;
  
@@ -2128,7 +2210,7 @@ index 95a5d0b..d467134 100644
  		switch (spurmode) {
  		case 2: /* 168 Mhz: 2^26/168 = 0x61862 */
  			b43_write16(dev, B43_MMIO_TSF_CLK_FRAC_LOW, 0x1862);
-@@ -3131,8 +3606,8 @@ static void b43_adjust_opmode(struct b43_wldev *dev)
+@@ -3131,8 +3607,8 @@ static void b43_adjust_opmode(struct b43_wldev *dev)
  	ctl &= ~B43_MACCTL_BEACPROMISC;
  	ctl |= B43_MACCTL_INFRA;
  
@@ -2139,7 +2221,7 @@ index 95a5d0b..d467134 100644
  		ctl |= B43_MACCTL_AP;
  	else if (b43_is_mode(wl, NL80211_IFTYPE_ADHOC))
  		ctl &= ~B43_MACCTL_INFRA;
-@@ -3145,6 +3620,13 @@ static void b43_adjust_opmode(struct b43_wldev *dev)
+@@ -3145,6 +3621,13 @@ static void b43_adjust_opmode(struct b43_wldev *dev)
  		ctl |= B43_MACCTL_KEEP_BADPLCP;
  	if (wl->filter_flags & FIF_BCN_PRBRESP_PROMISC)
  		ctl |= B43_MACCTL_BEACPROMISC;
@@ -2153,16 +2235,20 @@ index 95a5d0b..d467134 100644
  
  	/* Workaround: On old hardware the HW-MAC-address-filter
  	 * doesn't work properly, so always run promisc in filter
-@@ -3164,6 +3646,23 @@ static void b43_adjust_opmode(struct b43_wldev *dev)
+@@ -3164,11 +3647,28 @@ static void b43_adjust_opmode(struct b43_wldev *dev)
  	}
  	b43_write16(dev, 0x612, cfp_pretbtt);
  
+-	/* FIXME: We don't currently implement the PMQ mechanism,
+-	 *        so always disable it. If we want to implement PMQ,
+-	 *        we need to enable it here (clear DISCPMQ) in AP mode.
 +	/*
 +	 * Beacon TSF offset. Both the 6.30 and the 7.14 AC microcode start from
 +	 * 0x183, the band initvals' value; 7.14 moves it to 0x3a in the BSS
 +	 * setup of an AP, and the 6.30 station keeps 0x183. IBSS, which also
 +	 * beacons, has no capture and takes the AP value.
-+	 */
+ 	 */
+-	if (0  /* ctl & B43_MACCTL_AP */)
 +	if (dev->dev->core_rev >= 42) {
 +		bool sta = (ctl & B43_MACCTL_INFRA) && !(ctl & B43_MACCTL_AP);
 +
@@ -2174,10 +2260,15 @@ index 95a5d0b..d467134 100644
 +				sta ? 0x0183 : 0x003a);
 +	}
 +
- 	/* FIXME: We don't currently implement the PMQ mechanism,
- 	 *        so always disable it. If we want to implement PMQ,
- 	 *        we need to enable it here (clear DISCPMQ) in AP mode.
-@@ -3197,6 +3696,7 @@ static void b43_rate_memory_init(struct b43_wldev *dev)
++	/* FIXME: We don't currently implement the PMQ mechanism,
++	 *        so always disable it. If we want to implement PMQ,
++	 *        we need to enable it here (clear DISCPMQ) in AP mode.
++	 */
++	if (0  /* ctl & B43_MACCTL_AP */)
+ 		b43_maskset32(dev, B43_MMIO_MACCTL, ~B43_MACCTL_DISCPMQ, 0);
+ 	else
+ 		b43_maskset32(dev, B43_MMIO_MACCTL, ~0, B43_MACCTL_DISCPMQ);
+@@ -3197,6 +3697,7 @@ static void b43_rate_memory_init(struct b43_wldev *dev)
  	case B43_PHYTYPE_LP:
  	case B43_PHYTYPE_HT:
  	case B43_PHYTYPE_LCN:
@@ -2185,19 +2276,17 @@ index 95a5d0b..d467134 100644
  		b43_rate_memory_write(dev, B43_OFDM_RATE_6MB, 1);
  		b43_rate_memory_write(dev, B43_OFDM_RATE_9MB, 1);
  		b43_rate_memory_write(dev, B43_OFDM_RATE_12MB, 1);
-@@ -3222,7 +3722,10 @@ static void b43_set_phytxctl_defaults(struct b43_wldev *dev)
+@@ -3222,6 +3723,9 @@ static void b43_set_phytxctl_defaults(struct b43_wldev *dev)
  {
  	u16 ctl = 0;
  
--	ctl |= B43_TXH_PHY_ENC_CCK;
 +	if (!b43_phytxctl_in_shm(dev))
 +		return;
 +
-+	ctl |= B43_TXH_PHY_ENC_CCK;
+ 	ctl |= B43_TXH_PHY_ENC_CCK;
  	ctl |= B43_TXH_PHY_ANT01AUTO;
  	ctl |= B43_TXH_PHY_TXPWR;
- 
-@@ -3237,6 +3740,8 @@ static void b43_mgmtframe_txantenna(struct b43_wldev *dev, int antenna)
+@@ -3237,6 +3741,8 @@ static void b43_mgmtframe_txantenna(struct b43_wldev *dev, int antenna)
  	u16 ant;
  	u16 tmp;
  
@@ -2206,7 +2295,7 @@ index 95a5d0b..d467134 100644
  	ant = b43_antenna_to_phyctl(antenna);
  
  	/* For ACK/CTS */
-@@ -3249,67 +3754,177 @@ static void b43_mgmtframe_txantenna(struct b43_wldev *dev, int antenna)
+@@ -3249,67 +3755,177 @@ static void b43_mgmtframe_txantenna(struct b43_wldev *dev, int antenna)
  	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_PRPHYCTL, tmp);
  }
  
@@ -2432,7 +2521,7 @@ index 95a5d0b..d467134 100644
  	b43_write32(dev, 0x0100, 0x01000000);
  	if (dev->dev->core_rev < 5)
  		b43_write32(dev, 0x010C, 0x01000000);
-@@ -3346,8 +3961,13 @@ static int b43_chip_init(struct b43_wldev *dev)
+@@ -3346,8 +3962,13 @@ static int b43_chip_init(struct b43_wldev *dev)
  	switch (dev->dev->bus_type) {
  #ifdef CPTCFG_B43_BCMA
  	case B43_BUS_BCMA:
@@ -2448,7 +2537,7 @@ index 95a5d0b..d467134 100644
  		break;
  #endif
  #ifdef CPTCFG_B43_SSB
-@@ -3357,6 +3977,105 @@ static int b43_chip_init(struct b43_wldev *dev)
+@@ -3357,6 +3978,105 @@ static int b43_chip_init(struct b43_wldev *dev)
  		break;
  #endif
  	}
@@ -2554,7 +2643,7 @@ index 95a5d0b..d467134 100644
  
  	err = 0;
  	b43dbg(dev->wl, "Chip initialized\n");
-@@ -3395,7 +4114,8 @@ static void b43_periodic_every15sec(struct b43_wldev *dev)
+@@ -3395,7 +4115,8 @@ static void b43_periodic_every15sec(struct b43_wldev *dev)
  		 * It will reset the watchdog counter to 0 in its idle loop. */
  		wdr = b43_shm_read16(dev, B43_SHM_SCRATCH, B43_WATCHDOG_REG);
  		if (unlikely(wdr)) {
@@ -2564,7 +2653,7 @@ index 95a5d0b..d467134 100644
  			b43_controller_restart(dev, "Firmware watchdog");
  			return;
  		} else {
-@@ -3432,11 +4152,27 @@ static void b43_periodic_every15sec(struct b43_wldev *dev)
+@@ -3432,11 +4153,27 @@ static void b43_periodic_every15sec(struct b43_wldev *dev)
  #endif
  }
  
@@ -2593,7 +2682,7 @@ index 95a5d0b..d467134 100644
  	if (state % 4 == 0)
  		b43_periodic_every60sec(dev);
  	if (state % 2 == 0)
-@@ -3469,6 +4205,8 @@ static void b43_periodic_work_handler(struct work_struct *work)
+@@ -3469,6 +4206,8 @@ static void b43_periodic_work_handler(struct work_struct *work)
  out_requeue:
  	if (b43_debug(dev, B43_DBG_PWORK_FAST))
  		delay = msecs_to_jiffies(50);
@@ -2602,7 +2691,7 @@ index 95a5d0b..d467134 100644
  	else
  		delay = round_jiffies_relative(HZ * 15);
  	ieee80211_queue_delayed_work(wl->hw, &dev->periodic_work, delay);
-@@ -3476,19 +4214,52 @@ out:
+@@ -3476,19 +4215,52 @@ out:
  	mutex_unlock(&wl->mutex);
  }
  
@@ -2657,7 +2746,7 @@ index 95a5d0b..d467134 100644
  
  	backup0 = b43_shm_read32(dev, B43_SHM_SHARED, 0);
  	backup4 = b43_shm_read32(dev, B43_SHM_SHARED, 4);
-@@ -3533,7 +4304,10 @@ static int b43_validate_chipaccess(struct b43_wldev *dev)
+@@ -3533,7 +4305,10 @@ static int b43_validate_chipaccess(struct b43_wldev *dev)
  
  	v = b43_read32(dev, B43_MMIO_MACCTL);
  	v |= B43_MACCTL_GMODE;
@@ -2669,7 +2758,7 @@ index 95a5d0b..d467134 100644
  		goto error;
  
  	return 0;
-@@ -3549,8 +4323,9 @@ static void b43_security_init(struct b43_wldev *dev)
+@@ -3549,8 +4324,9 @@ static void b43_security_init(struct b43_wldev *dev)
  	 * So multiply by two.
  	 */
  	dev->ktp *= 2;
@@ -2681,7 +2770,7 @@ index 95a5d0b..d467134 100644
  	/* Clear the key memory. */
  	b43_clear_keys(dev);
  }
-@@ -3647,6 +4422,12 @@ static void b43_tx_work(struct work_struct *work)
+@@ -3647,6 +4423,12 @@ static void b43_tx_work(struct work_struct *work)
  	mutex_unlock(&wl->mutex);
  }
  
@@ -2694,7 +2783,7 @@ index 95a5d0b..d467134 100644
  static void b43_op_tx(struct ieee80211_hw *hw,
  		      struct ieee80211_tx_control *control,
  		      struct sk_buff *skb)
-@@ -3660,6 +4441,17 @@ static void b43_op_tx(struct ieee80211_hw *hw,
+@@ -3660,6 +4442,17 @@ static void b43_op_tx(struct ieee80211_hw *hw,
  		return;
  	}
  	B43_WARN_ON(skb_shinfo(skb)->nr_frags);
@@ -2712,7 +2801,7 @@ index 95a5d0b..d467134 100644
  
  	skb_queue_mapping = skb_get_queue_mapping(skb);
  	skb_queue_tail(&wl->tx_queue[skb_queue_mapping], skb);
-@@ -3970,7 +4762,7 @@ static int b43_switch_band(struct b43_wldev *dev,
+@@ -3970,7 +4763,7 @@ static int b43_switch_band(struct b43_wldev *dev,
  	}
  	b43_phy_take_out_of_reset(dev);
  
@@ -2721,7 +2810,7 @@ index 95a5d0b..d467134 100644
  
  	b43_phy_init(dev);
  
-@@ -3999,12 +4791,137 @@ static void b43_set_retry_limits(struct b43_wldev *dev,
+@@ -3999,12 +4792,137 @@ static void b43_set_retry_limits(struct b43_wldev *dev,
  			long_retry);
  }
  
@@ -2859,7 +2948,7 @@ index 95a5d0b..d467134 100644
  	int err = 0;
  
  	mutex_lock(&wl->mutex);
-@@ -4022,10 +4939,42 @@ static int b43_op_config(struct ieee80211_hw *hw, int radio_idx, u32 changed)
+@@ -4022,10 +4940,42 @@ static int b43_op_config(struct ieee80211_hw *hw, int radio_idx, u32 changed)
  		if (err)
  			goto out_mac_enable;
  
@@ -2905,7 +2994,7 @@ index 95a5d0b..d467134 100644
  	}
  
  	if (changed & IEEE80211_CONF_CHANGE_RETRY_LIMITS)
-@@ -4067,7 +5016,10 @@ static int b43_op_config(struct ieee80211_hw *hw, int radio_idx, u32 changed)
+@@ -4067,7 +5017,10 @@ static int b43_op_config(struct ieee80211_hw *hw, int radio_idx, u32 changed)
  	}
  
  out_mac_enable:
@@ -2917,7 +3006,7 @@ index 95a5d0b..d467134 100644
  	mutex_unlock(&wl->mutex);
  
  	return err;
-@@ -4150,6 +5102,14 @@ static void b43_op_bss_info_changed(struct ieee80211_hw *hw,
+@@ -4150,6 +5103,14 @@ static void b43_op_bss_info_changed(struct ieee80211_hw *hw,
  
  		if (changed & BSS_CHANGED_BSSID)
  			b43_write_mac_bssid_templates(dev);
@@ -2932,7 +3021,7 @@ index 95a5d0b..d467134 100644
  	}
  
  	b43_mac_suspend(dev);
-@@ -4359,6 +5319,7 @@ redo:
+@@ -4359,6 +5320,7 @@ redo:
  	/* Cancel work. Unlock to avoid deadlocks. */
  	mutex_unlock(&wl->mutex);
  	cancel_delayed_work_sync(&dev->periodic_work);
@@ -2940,7 +3029,7 @@ index 95a5d0b..d467134 100644
  	cancel_work_sync(&wl->tx_work);
  	b43_leds_stop(dev);
  	mutex_lock(&wl->mutex);
-@@ -4441,6 +5402,8 @@ static int b43_wireless_core_start(struct b43_wldev *dev)
+@@ -4441,6 +5403,8 @@ static int b43_wireless_core_start(struct b43_wldev *dev)
  		}
  	}
  
@@ -2949,7 +3038,7 @@ index 95a5d0b..d467134 100644
  	/* We are ready to run. */
  	ieee80211_wake_queues(dev->wl->hw);
  	b43_set_status(dev, B43_STAT_STARTED);
-@@ -4565,7 +5528,7 @@ static int b43_phy_versioning(struct b43_wldev *dev)
+@@ -4565,7 +5529,7 @@ static int b43_phy_versioning(struct b43_wldev *dev)
  		analog_type, phy_type, b43_phy_name(dev, phy_type), phy_rev);
  
  	/* Get RADIO versioning */
@@ -2958,7 +3047,7 @@ index 95a5d0b..d467134 100644
  		radio_manuf = 0x17F;
  
  		b43_write16f(dev, B43_MMIO_RADIO24_CONTROL, 0);
-@@ -4704,14 +5667,21 @@ static void setup_struct_wldev_for_init(struct b43_wldev *dev)
+@@ -4704,14 +5668,21 @@ static void setup_struct_wldev_for_init(struct b43_wldev *dev)
  	/* IRQ related flags */
  	dev->irq_reason = 0;
  	memset(dev->dma_reason, 0, sizeof(dev->dma_reason));
@@ -2983,7 +3072,7 @@ index 95a5d0b..d467134 100644
  }
  
  static void b43_bluetooth_coext_enable(struct b43_wldev *dev)
-@@ -4770,8 +5740,9 @@ static void b43_set_synth_pu_delay(struct b43_wldev *dev, bool idle)
+@@ -4770,8 +5741,9 @@ static void b43_set_synth_pu_delay(struct b43_wldev *dev, bool idle)
  {
  	u16 pu_delay;
  
@@ -2995,7 +3084,7 @@ index 95a5d0b..d467134 100644
  	if (b43_is_mode(dev->wl, NL80211_IFTYPE_ADHOC) || idle)
  		pu_delay = 500;
  	if ((dev->phy.radio_ver == 0x2050) && (dev->phy.radio_rev == 8))
-@@ -4785,8 +5756,13 @@ static void b43_set_pretbtt(struct b43_wldev *dev)
+@@ -4785,8 +5757,13 @@ static void b43_set_pretbtt(struct b43_wldev *dev)
  {
  	u16 pretbtt;
  
@@ -3011,7 +3100,7 @@ index 95a5d0b..d467134 100644
  		pretbtt = 2;
  	else
  		pretbtt = 250;
-@@ -4804,6 +5780,15 @@ static void b43_wireless_core_exit(struct b43_wldev *dev)
+@@ -4804,6 +5781,15 @@ static void b43_wireless_core_exit(struct b43_wldev *dev)
  
  	b43_set_status(dev, B43_STAT_UNINIT);
  
@@ -3027,7 +3116,7 @@ index 95a5d0b..d467134 100644
  	/* Stop the microcode PSM. */
  	b43_maskset32(dev, B43_MMIO_MACCTL, ~B43_MACCTL_PSM_RUN,
  		      B43_MACCTL_PSM_JMP0);
-@@ -4823,7 +5808,8 @@ static void b43_wireless_core_exit(struct b43_wldev *dev)
+@@ -4823,7 +5809,8 @@ static void b43_wireless_core_exit(struct b43_wldev *dev)
  
  	b43_dma_free(dev);
  	b43_pio_free(dev);
@@ -3037,7 +3126,7 @@ index 95a5d0b..d467134 100644
  	dev->phy.ops->switch_analog(dev, 0);
  	if (dev->wl->current_beacon) {
  		dev_kfree_skb_any(dev->wl->current_beacon);
-@@ -4883,6 +5869,15 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
+@@ -4883,6 +5870,15 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
  		goto err_busdown;
  	b43_shm_write16(dev, B43_SHM_SHARED,
  			B43_SHM_SH_WLCOREREV, dev->dev->core_rev);
@@ -3053,7 +3142,7 @@ index 95a5d0b..d467134 100644
  	hf = b43_hf_read(dev);
  	if (phy->type == B43_PHYTYPE_G) {
  		hf |= B43_HF_SYMW;
-@@ -4912,6 +5907,16 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
+@@ -4912,6 +5908,16 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
  	if (dev->dev->core_rev >= 13) {
  		u32 mac_hw_cap = b43_read32(dev, B43_MMIO_MAC_HW_CAP);
  
@@ -3070,7 +3159,7 @@ index 95a5d0b..d467134 100644
  		b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_MACHW_L,
  				mac_hw_cap & 0xffff);
  		b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_MACHW_H,
-@@ -4923,6 +5928,64 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
+@@ -4923,6 +5929,64 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
  	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_SFFBLIM, 3);
  	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_LFFBLIM, 2);
  
@@ -3135,7 +3224,7 @@ index 95a5d0b..d467134 100644
  	/* Disable sending probe responses from firmware.
  	 * Setting the MaxTime to one usec will always trigger
  	 * a timeout, so we never send any probe resp.
-@@ -4944,10 +6007,22 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
+@@ -4944,10 +6008,22 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
  	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_PHYTYPE, phy->type);
  	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_PHYVER, phy->rev);
  
@@ -3158,7 +3247,7 @@ index 95a5d0b..d467134 100644
  	} else if (dev->use_pio) {
  		b43warn(dev->wl, "Forced PIO by use_pio module parameter. "
  			"This should not be needed and will result in lower "
-@@ -4961,13 +6036,38 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
+@@ -4961,13 +6037,38 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
  	if (err)
  		goto err_chip_exit;
  	b43_qos_init(dev);
@@ -3197,7 +3286,7 @@ index 95a5d0b..d467134 100644
  	ieee80211_wake_queues(dev->wl->hw);
  
  	b43_set_status(dev, B43_STAT_INITIALIZED);
-@@ -4975,8 +6075,16 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
+@@ -4975,8 +6076,16 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
  out:
  	return err;
  
@@ -3215,7 +3304,7 @@ index 95a5d0b..d467134 100644
  err_busdown:
  	b43_bus_may_powerdown(dev);
  	B43_WARN_ON(b43_status(dev) != B43_STAT_UNINIT);
-@@ -5005,6 +6113,9 @@ static int b43_op_add_interface(struct ieee80211_hw *hw,
+@@ -5005,6 +6114,9 @@ static int b43_op_add_interface(struct ieee80211_hw *hw,
  	b43dbg(wl, "Adding Interface type %d\n", vif->type);
  
  	dev = wl->current_dev;
@@ -3225,7 +3314,7 @@ index 95a5d0b..d467134 100644
  	wl->operating = true;
  	wl->vif = vif;
  	wl->if_type = vif->type;
-@@ -5314,7 +6425,7 @@ out:
+@@ -5314,7 +6426,7 @@ out:
  	mutex_unlock(&wl->mutex);
  
  	if (err) {
@@ -3234,7 +3323,7 @@ index 95a5d0b..d467134 100644
  		return;
  	}
  
-@@ -5326,6 +6437,75 @@ out:
+@@ -5326,6 +6438,75 @@ out:
  	b43info(wl, "Controller restarted\n");
  }
  
@@ -3310,7 +3399,7 @@ index 95a5d0b..d467134 100644
  static int b43_setup_bands(struct b43_wldev *dev,
  			   bool have_2ghz_phy, bool have_5ghz_phy)
  {
-@@ -5343,6 +6523,16 @@ static int b43_setup_bands(struct b43_wldev *dev,
+@@ -5343,6 +6524,16 @@ static int b43_setup_bands(struct b43_wldev *dev,
  	if (have_2ghz_phy)
  		hw->wiphy->bands[NL80211_BAND_2GHZ] = limited_2g ?
  			&b43_band_2ghz_limited : &b43_band_2GHz;
@@ -3327,7 +3416,7 @@ index 95a5d0b..d467134 100644
  	if (dev->phy.type == B43_PHYTYPE_N) {
  		if (have_5ghz_phy)
  			hw->wiphy->bands[NL80211_BAND_5GHZ] = limited_5g ?
-@@ -5356,6 +6546,19 @@ static int b43_setup_bands(struct b43_wldev *dev,
+@@ -5356,6 +6547,19 @@ static int b43_setup_bands(struct b43_wldev *dev,
  	dev->phy.supports_2ghz = have_2ghz_phy;
  	dev->phy.supports_5ghz = have_5ghz_phy;
  
@@ -3347,7 +3436,7 @@ index 95a5d0b..d467134 100644
  	return 0;
  }
  
-@@ -5427,6 +6630,12 @@ static void b43_supported_bands(struct b43_wldev *dev, bool *have_2ghz_phy,
+@@ -5427,6 +6631,12 @@ static void b43_supported_bands(struct b43_wldev *dev, bool *have_2ghz_phy,
  
  	/* As a fallback, try to guess using PHY type */
  	switch (dev->phy.type) {
@@ -3360,7 +3449,7 @@ index 95a5d0b..d467134 100644
  	case B43_PHYTYPE_G:
  	case B43_PHYTYPE_N:
  	case B43_PHYTYPE_LP:
-@@ -5738,6 +6947,7 @@ bcma_out:
+@@ -5738,6 +6948,7 @@ bcma_out:
  static void b43_bcma_remove(struct bcma_device *core)
  {
  	struct b43_wldev *wldev = bcma_get_drvdata(core);
@@ -3368,7 +3457,7 @@ index 95a5d0b..d467134 100644
  	struct b43_wl *wl = wldev->wl;
  
  	/* We must cancel any work here before unregistering from ieee80211,
-@@ -5753,14 +6963,14 @@ static void b43_bcma_remove(struct bcma_device *core)
+@@ -5753,14 +6964,14 @@ static void b43_bcma_remove(struct bcma_device *core)
  		ieee80211_unregister_hw(wl->hw);
  	}
  
@@ -3385,7 +3474,7 @@ index 95a5d0b..d467134 100644
  }
  
  static struct bcma_driver b43_bcma_driver = {
-@@ -5858,9 +7068,12 @@ static struct ssb_driver b43_ssb_driver = {
+@@ -5858,9 +7069,12 @@ static struct ssb_driver b43_ssb_driver = {
  void b43_controller_restart(struct b43_wldev *dev, const char *reason)
  {
  	/* Must avoid requeueing, if we are in shutdown. */

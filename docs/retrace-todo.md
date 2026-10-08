@@ -217,9 +217,14 @@ driver:
   `0xfffffff0` (`bringup-log-2026-10-07.txt`), as the archer-t5e's TX rings
   do under 6.30, which posts the index as the descriptor's address
   (`0xbcd58010` on a ring at `0xbcd58000`) and reports the current
-  descriptor as the low 16 bits of its address (`0x200085c0`). 6.30 writes
-  the receive index twice in a whole capture, `0xffffffff` and then an
-  address.
+  descriptor as the low 16 bits of its address (`0x200085c0`).
+- The receive index: both stock drivers keep it ahead of the engine, which
+  fills up to the descriptor before it and stops there. The archer-t5e's
+  6.30 puts it 256 descriptors past the current one, ring at `0xbcd54000`,
+  `0x224 = 0xbcd55010` after `0x230` reads `0x10004010`; the agcombo's 7.14
+  500, `0x00c19f50` after `0x10008010`. Both advance it by one per frame.
+  b43 gives the engine every buffer but the one before the next it reads
+  (`b43_dma_rx_give()`), so a full ring never looks empty.
 - The stock driver reads the receive status twice per frame and the TSF
   once; b43 once and never. On 6.30 the TSF pair (`0x0180`/`0x0184`) also
   comes before every TX descriptor post.

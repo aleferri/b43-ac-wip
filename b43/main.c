@@ -2442,12 +2442,13 @@ static void b43_do_interrupt_thread(struct b43_wldev *dev)
 	if (reason & B43_IRQ_NOISESAMPLE_OK)
 		handle_irq_noise(dev);
 
-	/* Check the DMA reason registers for received data. */
-	if (dma_reason[0] & B43_DMAIRQ_RDESC_UFLOW) {
+	/*
+	 * Check the DMA reason registers for received data. An underrun is a
+	 * full ring, and reading it gives the buffers back.
+	 */
+	if (dma_reason[0] & B43_DMAIRQ_RDESC_UFLOW)
 		b43warn(dev->wl, "RX descriptor underrun\n");
-		b43_dma_handle_rx_overflow(dev->dma.rx_ring);
-	}
-	if (dma_reason[0] & B43_DMAIRQ_RX_DONE) {
+	if (dma_reason[0] & (B43_DMAIRQ_RX_DONE | B43_DMAIRQ_RDESC_UFLOW)) {
 		if (b43_using_pio_transfers(dev))
 			b43_pio_rx(dev->pio.rx_queue);
 		else
