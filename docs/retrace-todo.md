@@ -444,33 +444,31 @@ not. `0x14` is not derivable from the SROM; the port writes it under
 
 ### TX target: the second of three passes at 40/80 MHz
 
-On cold ch36 and ch44 at 40 and 80 MHz the three `txpwrctrl_setup` passes write
-`base`, `62`, `base` (66/62/66 on the D6220, 68/62/68 on the agcombo). The
-middle pass is the TX power site (`b43_phy_ac_txpwr_adjust()`), and what it
-writes is **width-independent**: on each board the second pass of ch36/40 and
-of ch36/80 carries the same target, the same legacy power and the same
-beacon cell -- D6220 target 62, legacy 56; agcombo 62 and 44 -- and the
-legacy power is exactly the board's own ch36/20 legacy power (D6220 56,
-agcombo 44, from `+0x0e` of the 20 MHz segments). So the second pass is the
-20 MHz computation of the primary channel, with one difference from the
-20 MHz segments themselves: the target caps at 68 (target 62) where ch36/20
-caps at 62 (target 56) on every board. A 20-in-40/80 limit 1.5 dB above the
-20 MHz channel's own, with the legacy limit (62) unchanged, fits both boards;
-the tg789vac's second pass leaves the target alone (68 on ch36/40 with a
-first-pass cap of 74 and rows at 88, so a 68 cap would have dropped it to
-62) and only moves the chain masks (ch108-140/40: 5 to 7), which is the
-same pattern as its legacy rates: its driver does not recompute the power
-table at that site. Not modelled; the port writes the first pass three
-times. The port's masks on that pass take the Local Max 1 dB higher, which
-reproduces every board but is a fit, not the mechanism above.
+The pass is in the port (`txpwr-target-derivation.md`, "The second pass"):
+the operating row under a 20-in-40/80 cap of 68 on ch36–48, the legacy
+rates on the primary's 20 MHz configuration. It closes ch36/40 and ch44/40
+on the d6220 and the target, CCK and beacon cells of ch36/80 (the legacy
+K there stays, see "Per-rate field `+0x0e`"), and the targets of the agcombo's
+three UNII-1 segments. Open:
+
+- **The TG789vac does not take the cap**: 68 on all three passes of
+  ch36/40, ch44/40 and ch36/80, where the port now writes 62, 16 ops per
+  segment. Same `wl` 7.14.89 as the d6220, same empty `ccode` and `regrev`
+  0 on all three boards; its 40 MHz row (88) and 20 MHz row (80) give 68
+  only through the 40 MHz cap of 74. A board gate would be a fit; the port
+  follows the d6220.
+- **The agcombo's legacy field on that pass** (72) follows its chain masks,
+  which are already wrong on its first pass at ch36/40 (the one exception
+  under "TX power: regulatory limits and chain masks").
+- The chain masks of the pass take the Local Max 1 dB higher above 20 MHz
+  (`b43_phy_ac_chain_pair()`), a fit that reproduces every board.
 
 ### TX power: regulatory limits and chain masks
 
 One problem, seen in three places: the target on `0x?46`, the per-rate field
 `+0x0e`, and the chain masks `0x05d6`/`0x05d8`. The target is closed on both
 boards through the locale table of `b43_phy_ac_locale_ceiling()` (the caps
-listed under "band edges" below, per channel and width, conducted), except
-the d6220's second pass at 40/80 MHz. The chain masks `0x05d6`/`0x05d8` are
+listed under "band edges" below, per channel and width, conducted). The chain masks `0x05d6`/`0x05d8` are
 closed on the first pass of every segment of the three boards but one
 (agcombo ch36/40) through the chain choice below with a Local Max table
 (`b43_phy_ac_local_max()`), and on the second pass with that level 1 dB

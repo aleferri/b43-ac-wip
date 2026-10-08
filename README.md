@@ -51,11 +51,11 @@ Measured on 2026-10-08 (unit rows) and 2026-10-01 (integration rows), see below.
 | gate | result |
 |---|---|
 | unit, cold `cold01` ch36/20 | **99.91%** (29820/29846): 0 wrong values, 26 missing (core cells outside the PHY), 0 extra |
-| unit, cold, all 43 segments | min 99.77% (ch36/80), median 99.91%, max 99.95%; 0 wrong values on 36 of 43 |
+| unit, cold, all 43 segments | min 99.80% (ch60/40), median 99.91%, max 99.95%; 0 wrong values on 38 of 43 |
 | unit, hot `up` ch36 / ch52 / ch104 | 98.49% / 99.00% / 98.93% |
 | unit, cold agcombo `cold01` ch36/20 | 90.47% |
 | unit, cold TG789vac v2 `cold01` ch36/20 | 99.93% |
-| unit, cold TG789vac v2, all 43 segments | min 99.77% (ch149/40), median 99.91%, max 99.98% |
+| unit, cold TG789vac v2, all 43 segments | min 99.77% (ch149/40), median 99.91%, max 99.98%; 0 wrong values on 27 of 43 |
 | unit, periodic watchdog tick | **`MATCH`** |
 | integration, cold `cold01` | `probe: 0`, `start: 0`; 82.61% (28765/34819) |
 | integration, agcombo ch36/80 at the bus | 67.53% (89699/132825), with the 561 interrupts and 283 received frames of the capture replayed |

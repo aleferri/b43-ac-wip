@@ -788,12 +788,13 @@ static const struct b43_phy_ac_local_max_row b43_phy_ac_local_max_80[] = {
 	{ 100, 132, 132 },
 };
 
-static u16 b43_phy_ac_local_max(struct b43_phy_ac *ac)
+static u16 b43_phy_ac_local_max(struct b43_phy_ac *ac,
+				enum nl80211_chan_width width)
 {
 	const struct b43_phy_ac_local_max_row *rows;
 	unsigned int n, i;
 
-	switch (ac->cal_width) {
+	switch (width) {
 	case NL80211_CHAN_WIDTH_80:
 		rows = b43_phy_ac_local_max_80;
 		n = ARRAY_SIZE(b43_phy_ac_local_max_80);
@@ -854,14 +855,15 @@ static u16 b43_phy_ac_chain_mask(u16 coremask, unsigned int n)
 
 /* The pair @site writes on 0x05d6/0x05d8, into @out. */
 static void b43_phy_ac_chain_pair(struct b43_wldev *dev,
-				  enum b43_phy_ac_chain_site site, u16 *out)
+				  enum b43_phy_ac_chain_site site,
+				  enum nl80211_chan_width width, u16 *out)
 {
 	static const u8 off_cdd[] = { 0, 0, 12, 20 };
 	static const u8 off_txbf[] = { 0, 0, 24, 39 };
 	struct b43_phy_ac *ac = dev->phy.ac;
 	const struct ssb_sprom *sprom = dev->dev->bus_sprom;
 	unsigned int chains = hweight8(ac->coremask);
-	u16 level = b43_phy_ac_local_max(ac);
+	u16 level = b43_phy_ac_local_max(ac, width);
 	int board, limit, antgain;
 
 	out[0] = out[1] = ac->coremask;
@@ -872,11 +874,10 @@ static void b43_phy_ac_chain_pair(struct b43_wldev *dev,
 	if (antgain < 0)
 		antgain = 0;
 	limit = (int)level - antgain;
-	if (site == B43_PHY_AC_CHAIN_TXPWR &&
-	    ac->cal_width != NL80211_CHAN_WIDTH_20)
+	if (site == B43_PHY_AC_CHAIN_TXPWR && width != NL80211_CHAN_WIDTH_20)
 		limit += 4;
 	board = (int)ac->txpwr_maxp -
-		(0x7f - b43_ppr_ac_row_max(&ac->txpwr_spacing, ac->cal_width));
+		(0x7f - b43_ppr_ac_row_max(&ac->txpwr_spacing, width));
 
 	out[0] = b43_phy_ac_chain_mask(ac->coremask,
 				       b43_phy_ac_chain_count(board, limit,
@@ -892,7 +893,7 @@ static void b43_phy_ac_chainmask_block(struct b43_wldev *dev,
 	u16 mask = dev->phy.ac->coremask;
 	u16 pair[2];
 
-	b43_phy_ac_chain_pair(dev, site, pair);
+	b43_phy_ac_chain_pair(dev, site, dev->phy.ac->cal_width, pair);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x05d4, mask);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x05d6, pair[0]);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x05d8, pair[1]);
@@ -915,7 +916,7 @@ static void b43_phy_ac_bss_cc_update(struct b43_wldev *dev,
 	u16 pair[2];
 	u16 cc = b43_shm_read16(dev, B43_SHM_SHARED, 0x00cc);
 
-	b43_phy_ac_chain_pair(dev, site, pair);
+	b43_phy_ac_chain_pair(dev, site, dev->phy.ac->cal_width, pair);
 	cc = (u16)((cc & ~0x01c0) | (pair[0] << 6));
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
@@ -1007,11 +1008,18 @@ static const struct b43_phy_ac_locale_row b43_phy_ac_legacy_80[] = {
 };
 
 static void b43_phy_ac_chain_pair(struct b43_wldev *dev,
-				  enum b43_phy_ac_chain_site site, u16 *out);
+				  enum b43_phy_ac_chain_site site,
+				  enum nl80211_chan_width width, u16 *out);
 
+/*
+ * @width selects the limit's row; @pair_width the configuration whose
+ * chain pair gives the CDD offset. They differ for the beacon cell at
+ * 80 MHz, which takes the 20 MHz limit with the operating chains.
+ */
 static u16 b43_phy_ac_legacy_cap(struct b43_wldev *dev,
 				      enum b43_phy_ac_chain_site site,
-				      enum nl80211_chan_width width)
+				      enum nl80211_chan_width width,
+				      enum nl80211_chan_width pair_width)
 {
 	static const u8 off_cdd[] = { 0, 0, 12, 20 };
 	struct b43_phy_ac *ac = dev->phy.ac;
@@ -1033,7 +1041,7 @@ static u16 b43_phy_ac_legacy_cap(struct b43_wldev *dev,
 		n = ARRAY_SIZE(b43_phy_ac_legacy_20);
 		break;
 	}
-	b43_phy_ac_chain_pair(dev, site, pair);
+	b43_phy_ac_chain_pair(dev, site, pair_width, pair);
 	chains = min_t(unsigned int, hweight8((u8)pair[0]), 3);
 	for (i = 0; i < n; i++)
 		if (ac->cal_channel >= rows[i].first &&
@@ -1074,7 +1082,9 @@ static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev,
 	struct b43_phy_ac *ac = dev->phy.ac;
 	const struct b43_ppr_ac *sp = &ac->txpwr_spacing;
 	bool capped = b43_phy_ac_legacy_capped(dev);
-	u16 cap = b43_phy_ac_legacy_cap(dev, site, ac->cal_width);
+	enum nl80211_chan_width w = ac->txpwr_pass2 ? NL80211_CHAN_WIDTH_20
+						    : ac->cal_width;
+	u16 cap = b43_phy_ac_legacy_cap(dev, site, w, w);
 	unsigned int i;
 
 	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_prb_rsp_rates); i++) {
@@ -1135,9 +1145,10 @@ static u16 b43_phy_ac_beacon_pwr_offset_at(struct b43_wldev *dev,
 	 * gives the beacon power of the three boards (ch100 is 2 to 3 dB above
 	 * it on all of them).
 	 */
-	if (w == NL80211_CHAN_WIDTH_80)
+	if (w == NL80211_CHAN_WIDTH_80 || ac->txpwr_pass2)
 		w = NL80211_CHAN_WIDTH_20;
-	cap = b43_phy_ac_legacy_cap(dev, site, w);
+	cap = b43_phy_ac_legacy_cap(dev, site, w,
+				    ac->txpwr_pass2 ? w : ac->cal_width);
 	if (b43_phy_ac_legacy_capped(dev))
 		return b43_phy_ac_rate_po_capped(ac,
 				b43_ppr_ac_ofdm(&ac->txpwr_ppr, w, 0), cap);
@@ -1636,9 +1647,7 @@ static void b43_phy_ac_idle_tssi_meas(struct b43_wldev *dev)
  * mask=0x00ff in every cold segment of the d6220 and the tg789vac-v2. It is
  * combined with cfg80211's limit in b43_phy_ac_reg_ceiling().
  *
- * Only the rows that bind on at least one board. The d6220's second
- * txpwrctrl pass on ch36/ch44 at 40 and 80 MHz (68) is not here; see
- * docs/retrace-todo.md.
+ * Only the rows that bind on at least one board.
  */
 static const struct b43_phy_ac_locale_row b43_phy_ac_locale_20[] = {
 	{  36,  48, 62 },
@@ -1657,6 +1666,19 @@ static const struct b43_phy_ac_locale_row b43_phy_ac_locale_40[] = {
 static const struct b43_phy_ac_locale_row b43_phy_ac_locale_80[] = {
 	{  36,  36, 74 },
 	{ 100, 100, 82 },
+};
+
+/*
+ * The same locale's limit for a 20 MHz channel inside a bonded one, which
+ * the TX power adjust after the channel switch applies to the operating
+ * row (b43_phy_ac_txpwr_adjust()): the d6220 and the agcombo write 62 on
+ * that pass on ch36 and ch44 at 40 and 80 MHz, between two passes at their
+ * own 66 and 68, with the legacy rates at their 20 MHz power. The tg789vac
+ * leaves its 68 on that pass; what differs on that board is not known, and
+ * the port follows the d6220.
+ */
+static const struct b43_phy_ac_locale_row b43_phy_ac_locale_20in[] = {
+	{  36,  48, 68 },
 };
 
 static u16 b43_phy_ac_locale_ceiling(struct b43_phy_ac *ac)
@@ -1682,6 +1704,19 @@ static u16 b43_phy_ac_locale_ceiling(struct b43_phy_ac *ac)
 		if (ac->cal_channel >= rows[i].first &&
 		    ac->cal_channel <= rows[i].last)
 			return rows[i].limit;
+	return 0;
+}
+
+static u16 b43_phy_ac_locale_20in_ceiling(struct b43_phy_ac *ac)
+{
+	unsigned int i;
+
+	if (ac->cal_width == NL80211_CHAN_WIDTH_20)
+		return 0;
+	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_locale_20in); i++)
+		if (ac->cal_channel >= b43_phy_ac_locale_20in[i].first &&
+		    ac->cal_channel <= b43_phy_ac_locale_20in[i].last)
+			return b43_phy_ac_locale_20in[i].limit;
 	return 0;
 }
 
@@ -1753,6 +1788,11 @@ static u16 b43_phy_ac_reg_ceiling(struct b43_wldev *dev)
 
 		if (locale && locale < best)
 			best = locale;
+		if (ac->txpwr_pass2) {
+			locale = b43_phy_ac_locale_20in_ceiling(ac);
+			if (locale && locale < best)
+				best = locale;
+		}
 	}
 	return best == INT_MAX ? 0 : (u16)best;
 }
@@ -5561,6 +5601,16 @@ static void b43_phy_ac_txpwr_adjust(struct b43_wldev *dev)
 	struct b43_phy_ac *ac = dev->phy.ac;
 	u16 gate;
 
+	/*
+	 * This pass takes the 20-in-40/80 cap of the primary channel on the
+	 * operating row, and the legacy rates their 20 MHz limit; the pass
+	 * after it goes back to the channel's own numbers.
+	 */
+	if (b43_phy_ac_locale_20in_ceiling(ac)) {
+		ac->txpwr_pass2 = true;
+		b43_phy_ac_txpwr_recalc(dev);
+	}
+
 	/* The chain mask into 0x00cc, see b43_phy_ac_bss_cc(). */
 	b43_phy_ac_bss_cc_update(dev, B43_PHY_AC_CHAIN_TXPWR);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00ce,
@@ -5585,6 +5635,11 @@ static void b43_phy_ac_txpwr_adjust(struct b43_wldev *dev)
 	b43_phy_ac_tbl_write_unlock(dev, gate);
 	b43_phy_ac_afe_gain_regs(dev, !(dev->phy.ac->status_mask &
 				       B43_PHY_AC_STATE_FIRST_BRINGUP));
+
+	if (ac->txpwr_pass2) {
+		ac->txpwr_pass2 = false;
+		b43_phy_ac_txpwr_recalc(dev);
+	}
 }
 
 /*

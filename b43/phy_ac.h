@@ -541,6 +541,12 @@ struct b43_phy_ac {
 	enum nl80211_chan_width txpwr_calc_width;
 	u16 txpwr_calc_ceiling;
 	/*
+	 * The TX power adjust that follows the channel switch computes its
+	 * pass under the 20-in-40/80 cap of the primary channel and the
+	 * 20 MHz legacy limit; set around that pass only.
+	 */
+	bool txpwr_pass2;
+	/*
 	 * A channel switch leaves the hardware power control behind even when
 	 * the target did not move: the stock driver runs the whole txpwrctrl
 	 * setup again after the core's BSS configuration. Set by

@@ -170,12 +170,31 @@ TG789vac (90/88/92/88) wrong on every channel above.
 ## The second pass
 
 The TX power site (`b43_phy_ac_txpwr_adjust()`) writes the block a second
-time. On the D6220 and the agcombo that pass is the 20 MHz computation of the
-primary channel: on ch36 at 40 and at 80 it carries the same target (62),
-the same legacy power (56 on the D6220, 44 on the agcombo — each board's own
-ch36/20 legacy power) and the same beacon cell, and differs from the 20 MHz
-segment only in the target's cap, 68 against 62. The TG789vac's second pass
-leaves the power table alone and moves the masks only (ch108–140/40: 5 to
-7). The port writes the first pass three times and takes the Local Max 1 dB
-higher on that site above 20 MHz, which reproduces the masks on every board
-but is a fit, not the mechanism.
+time, between two passes with the channel's own numbers. On every 40 and
+80 MHz segment of the three boards that pass is the first one except where
+a 20-in-40/80 cap of the primary channel binds, ch36–48 at 68 quarter-dBm,
+and it is not the 20 MHz computation of the primary: on ch100/40 that would
+give 76 where every pass writes 68. Where the cap binds (ch36 and ch44 at
+40 MHz, ch36 at 80, the D6220 and the agcombo) the pass differs from the
+first in two things:
+
+- the target takes the operating row under that cap: D6220 `min(72, 68) − 6
+  = 62`, agcombo `min(74, 68) − 6 = 62`, against 66 and 68 on the passes
+  around it;
+- the legacy OFDM rates take the limit of the primary's **20 MHz
+  configuration**, its cap and its chain pair: 62 − 6 = 56 on the D6220 (one
+  chain) and 56 − 12 = 44 on the agcombo (two chains, the CDD offset), each
+  board's own ch36/20 legacy power. The CCK field and the beacon cell follow
+  the target (0xe8, 0x18).
+
+In the port the cap is `b43_phy_ac_locale_20in[]`, applied to the ceiling
+under `ac->txpwr_pass2` around that pass, and `b43_phy_ac_legacy_cap()`
+takes the width of the limit and of the chain pair separately, so the pass
+can evaluate the 20 MHz configuration while the chain masks of the block
+itself stay the operating width's. The TG789vac leaves its 68 on that pass
+(its own 40 MHz row 88 under the cap 74) and moves the masks only
+(ch108–140/40: 5 to 7); it has the same `wl` as the D6220 and the same
+empty `ccode`, so what distinguishes it is not known and the port follows
+the D6220 (`retrace-todo.md`). The masks on that site take the Local Max
+1 dB higher above 20 MHz, which reproduces every board but is a fit, not the
+mechanism.

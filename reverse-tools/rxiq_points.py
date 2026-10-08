@@ -8,10 +8,13 @@ the loopback gain search; among the others, the short estimate (0x0272 =
 0x400 samples, a sixteenth of the power) is dropped too. What remains are the
 measurement tones: two up to 40 MHz, six at 80.
 
-The two models scored are the one the driver had, summing the accumulators
-over the tones, and the one it has now, the mean over the tones of the
-per-tone coefficients -- see b43_phy_ac_iq_solve() in b43/phy_ac.c for the
-arithmetic and the numbers.
+Three models are scored: the one the driver first had, summing the
+accumulators over the tones; the mean over the tones of the per-tone (a, b);
+and the one it has now, polar, the stock driver's: per tone an angle and a
+magnitude 2^10 sqrt(qq/ii) in its fixed point, both averaged, then the
+CORDIC back to (a, b) -- see b43_phy_ac_iq_mismatch() and
+b43_phy_ac_iq_solve() in b43/phy_ac.c. The CORDIC table is the one of
+lib/math/cordic.c.
 
 Usage:
     python3 rxiq_points.py extract SEG.txt... > points.json
@@ -134,8 +137,84 @@ def solve_mean(rs):
     return a, (b_sum + n // 2) // n - 1024
 
 
+ATAN_Q16 = [2949120, 1740967, 919879, 466945, 234379, 117304, 58666, 29335,
+            14668, 7334, 3667, 1833, 917, 458, 229, 115, 57, 29]
+CORDIC_GAIN = 39797
+
+
+def cordic(theta):
+    """Degrees Q16 -> (cos, sin) in Q16, |theta| < 90."""
+    i, q, angle = CORDIC_GAIN, 0, 0
+    for k, at in enumerate(ATAN_Q16):
+        if theta > angle:
+            i, q = i - (q >> k), q + (i >> k)
+            angle += at
+        else:
+            i, q = i + (q >> k), q - (i >> k)
+            angle -= at
+    return i, q
+
+
+def inv_cordic(y, x):
+    """Vector (x > 0, y), both under 2^27 -> its angle in degrees Q16."""
+    y <<= 4
+    x <<= 4
+    angle = 0
+    for k, at in enumerate(ATAN_Q16):
+        ty, tx = y >> k, x >> k
+        if y >= 0:
+            angle += at
+            y, x = y - tx, x + ty
+        else:
+            angle -= at
+            y, x = y + tx, x - ty
+    return angle
+
+
+def div_near(n, d):
+    """Numerator biased by half the denominator, then truncated."""
+    return cdiv(n + (d >> 1 if n > 0 else -(d >> 1)), d)
+
+
+def iq_mismatch(iq, ii, qq):
+    """One tone's mismatch: angle in degrees Q16 and 2^10 sqrt(qq/ii), in
+    the stock driver's fixed point (see b43_phy_ac_iq_mismatch())."""
+    nb_iq, nb_max = abs(iq).bit_length(), (ii | qq).bit_length()
+    if nb_max < 31:
+        prod = isqrt_near(qq << (30 - nb_max)) * isqrt_near(ii << (30 - nb_max))
+    else:
+        prod = isqrt_near(qq >> (nb_max - 30)) * isqrt_near(ii >> (nb_max - 30))
+    num = (-iq) << (30 - nb_iq)
+    den = prod << (nb_max - nb_iq - 16) if nb_iq + 16 < nb_max \
+        else prod >> (nb_iq + 16 - nb_max)
+    sin_q16 = div_near(num, den) if den else 0
+    half = sin_q16 >> 1
+    cos_q16 = isqrt_near((1 << 30) - half * half) << 1
+    angle = inv_cordic(sin_q16, cos_q16)
+    d = qq - ii
+    nb = abs(d).bit_length()
+    nb += nb & 1
+    num = d << (30 - nb)
+    den = ii >> (nb - 10) if nb >= 11 else ii << (10 - nb)
+    mag = isqrt_near(div_near(num, den) + (1 << 20)) if den else 1 << 10
+    return angle, mag
+
+
+def solve_polar(rs):
+    n = len(rs)
+    ang_sum = mag_sum = 0
+    for r in rs:
+        angle, mag = iq_mismatch(r['iq'], r['ii'], r['qq'])
+        ang_sum += angle
+        mag_sum += mag
+    mag, angle = div_near(mag_sum, n), div_near(ang_sum, n)
+    c, s = cordic(angle)
+    return (mag * s + (1 << 15)) >> 16, ((mag * c + (1 << 15)) >> 16) - 1024
+
+
 def score(pts, verbose):
-    for name, fn in (('accumulator sum', solve_sum), ('per-tone mean', solve_mean)):
+    for name, fn in (('accumulator sum', solve_sum), ('per-tone mean', solve_mean),
+                     ('polar (cordic)', solve_polar)):
         da, db, both = Counter(), {c: Counter() for c in range(3)}, 0
         for pt in pts:
             a, b = fn(meas_rounds(pt))

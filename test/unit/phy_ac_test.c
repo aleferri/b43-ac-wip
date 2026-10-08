@@ -23,7 +23,8 @@ u16 b43_phy_ac_bss_cc(struct b43_wldev *dev)
 {
 	u16 pair[2];
 
-	b43_phy_ac_chain_pair(dev, B43_PHY_AC_CHAIN_SETUP, pair);
+	b43_phy_ac_chain_pair(dev, B43_PHY_AC_CHAIN_SETUP, dev->phy.ac->cal_width,
+			      pair);
 	return (u16)(pair[0] << 6 | 0x0004);
 }
 
