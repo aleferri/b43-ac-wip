@@ -8466,38 +8466,151 @@ void b43_phy_ac_rxiqcal_meas_post_dds_apply_v2(struct b43_wldev *dev)
 }
 
 /*
+ * CORDIC in the stock driver's fixed point: the angle in degrees Q16, the
+ * vector of 2^16 after 18 rotations (the start value 39797 is 2^16 over the
+ * CORDIC gain), truncating shifts. It is lib/math/cordic.c, which takes
+ * whole degrees only; the angles here are a few degrees with a fraction, so
+ * the rotation is done here on the Q16 angle. The inverse is the same
+ * rotation in vectoring mode on the same table: the vector, scaled by 16
+ * first, is turned onto the axis and the angle it took is the result.
+ */
+#define B43_PHY_AC_CORDIC_GAIN	39797
+#define B43_PHY_AC_CORDIC_ITER	18
+
+static const s32 b43_phy_ac_cordic_atan[B43_PHY_AC_CORDIC_ITER] = {
+	2949120, 1740967, 919879, 466945, 234379, 117304, 58666, 29335,
+	14668, 7334, 3667, 1833, 917, 458, 229, 115, 57, 29,
+};
+
+/* Angle in degrees Q16 -> (cos, sin) in Q16. |theta| stays well under 90. */
+static void b43_phy_ac_cordic(s32 theta, s32 *cos_out, s32 *sin_out)
+{
+	s32 i = B43_PHY_AC_CORDIC_GAIN, q = 0, angle = 0, t;
+	unsigned int k;
+
+	for (k = 0; k < B43_PHY_AC_CORDIC_ITER; k++) {
+		if (theta > angle) {
+			t = i - (q >> k);
+			q += i >> k;
+			angle += b43_phy_ac_cordic_atan[k];
+		} else {
+			t = i + (q >> k);
+			q -= i >> k;
+			angle -= b43_phy_ac_cordic_atan[k];
+		}
+		i = t;
+	}
+	*cos_out = i;
+	*sin_out = q;
+}
+
+/* Vector (x, y), x > 0, both under 2^27 -> its angle in degrees Q16. */
+static s32 b43_phy_ac_inv_cordic(s32 y, s32 x)
+{
+	s32 angle = 0, ty, tx;
+	unsigned int k;
+
+	y <<= 4;
+	x <<= 4;
+	for (k = 0; k < B43_PHY_AC_CORDIC_ITER; k++) {
+		ty = y >> k;
+		tx = x >> k;
+		if (y >= 0) {
+			angle += b43_phy_ac_cordic_atan[k];
+			y -= tx;
+			x += ty;
+		} else {
+			angle -= b43_phy_ac_cordic_atan[k];
+			y += tx;
+			x -= ty;
+		}
+	}
+	return angle;
+}
+
+/* Square root rounded to nearest. */
+static u32 b43_phy_ac_sqrt_near(u64 v)
+{
+	u32 r = int_sqrt64(v);
+
+	return v - (u64)r * r > r ? r + 1 : r;
+}
+
+/* Division rounded half away from zero, as a numerator biased by half the
+ * denominator and then truncated. */
+static s32 b43_phy_ac_div_near(s64 num, s64 den)
+{
+	return (s32)div64_s64(num + (num > 0 ? den >> 1 : -(den >> 1)), den);
+}
+
+/*
+ * One tone's IQ mismatch in the stock driver's form: the angle in degrees
+ * Q16 and the gain ratio 2^10 * sqrt(qq / ii), both from the three
+ * estimator accumulators and in its fixed point.
+ *
+ * sin(angle) = -iq / sqrt(ii * qq) in Q16, the root as the product of the
+ * two roots taken on the accumulators brought to 30 bits; cos from
+ * 1 - sin^2 in Q30; the angle is the inverse CORDIC of (sin, cos). The
+ * gain ratio is sqrt(2^20 + 2^20 * (qq - ii) / ii), the quotient taken on
+ * qq - ii brought to 30 bits over ii cut by the same even shift: that cut
+ * of the denominator is what the per-tone ratio carries into the rounding
+ * of the magnitude, a few hundredths at most, which decided the last
+ * handful of coefficients.
+ */
+static void b43_phy_ac_iq_mismatch(s32 iq, u32 ii, u32 qq,
+				   s32 *angle_out, u32 *mag_out)
+{
+	unsigned int nb_iq = fls(iq < 0 ? -iq : iq), nb_max = fls(ii | qq);
+	unsigned int nb;
+	s64 num, den, prod;
+	s32 sin_q16, half, cos_q16, d;
+
+	if (nb_max < 31)
+		prod = (s64)b43_phy_ac_sqrt_near((u64)qq << (30 - nb_max)) *
+		       b43_phy_ac_sqrt_near((u64)ii << (30 - nb_max));
+	else
+		prod = (s64)b43_phy_ac_sqrt_near(qq >> (nb_max - 30)) *
+		       b43_phy_ac_sqrt_near(ii >> (nb_max - 30));
+	num = (s64)-iq << (30 - nb_iq);
+	if (nb_iq + 16 < nb_max)
+		den = prod << (nb_max - nb_iq - 16);
+	else
+		den = prod >> (nb_iq + 16 - nb_max);
+	sin_q16 = den ? b43_phy_ac_div_near(num, den) : 0;
+	half = sin_q16 >> 1;
+	cos_q16 = b43_phy_ac_sqrt_near((1 << 30) - (s64)half * half) << 1;
+	*angle_out = b43_phy_ac_inv_cordic(sin_q16, cos_q16);
+
+	d = (s32)(qq - ii);
+	nb = fls(d < 0 ? -d : d);
+	nb += nb & 1;
+	num = (s64)d << (30 - nb);
+	den = nb >= 11 ? ii >> (nb - 10) : (u64)ii << (10 - nb);
+	*mag_out = den ? b43_phy_ac_sqrt_near(b43_phy_ac_div_near(num, den) +
+					      (1 << 20))
+		       : 1 << 10;
+}
+
+/*
  * Solve one core's RX-IQ coefficients (a, b) from its measurement rounds,
- * one round per tone: +-f up to 40 MHz, +-f, +-3f, +-4f at 80. 0x?a0/0x?a1
- * take the mean of the per-tone coefficients; summing the accumulators
- * instead weights each tone by its power and is one unit off at 80 MHz.
- * Per tone, in Q10:
+ * one round per tone: +-f up to 40 MHz, +-f, +-3f, +-4f at 80.
  *
- *   a_r     = -iq * 2^10 / ii
- *   b_r + 1 = 2^10 * sqrt(qq * ii - iq^2) / ii
- *
- * a is the mean of the a_r in Q24, each a_r on ii and iq cut to a 16-bit
- * mantissa of ii: that cut is what rounds the tg789vac's a_r = 20.49 (core
- * 0, ch36) to the stock driver's 21. b is the mean of the b_r with the
- * exact a_r under the root, rounded half up.
- *
- * On 309 writes of 0x?a1 (reverse-tools/rxiq_points.py: cold d6220 and
- * agcombo, tg789vac off the radar channels, d6220 and agcombo hot up):
- *
- *                       a exact   b exact
- *   accumulator sum      258       253
- *   mean, full width     290       259
- *   this                 296       259
- *
- * The b misses are mostly the stock driver one high on core 1: an input
- * beyond the six accumulators is missing (b43_phy_ac_todo() at the write).
+ * The stock driver's RX IQ calibration on the AC-PHY is the
+ * frequency-dependent one (wlc_phy_cal_rx_fdiqi_acphy): per tone the
+ * mismatch above, the angle and the magnitude averaged over the tones half
+ * away from zero, and the mean angle through the CORDIC: a is the magnitude
+ * times the sine, b + 2^10 the magnitude times the cosine, each rounded to
+ * nearest. On the 316 writes of 0x?a1 of reverse-tools/rxiq_points.py
+ * (cold d6220, agcombo and tg789vac, d6220 and agcombo hot up) this gives
+ * a and b exact on all 316; the plain mean of per-tone (a, b) gave 299
+ * and 257.
  */
 static void b43_phy_ac_iq_solve(struct b43_phy_ac_iq_acc *acc,
 				s16 *a_out, s16 *b_out)
 {
 	unsigned int r, nr;
-	s64 a_sum = 0, a_den;
-	u64 b_sum = 0;
-	s32 a, b;
+	s64 mag_sum = 0, ang_sum = 0;
+	s32 mag, angle, cos_q16, sin_q16;
 
 	if (acc->solved) {
 		*a_out = acc->a;
@@ -8513,48 +8626,26 @@ static void b43_phy_ac_iq_solve(struct b43_phy_ac_iq_acc *acc,
 	nr = acc->rounds < B43_PHY_AC_IQ_ROUNDS ? acc->rounds
 						: B43_PHY_AC_IQ_ROUNDS;
 	for (r = 0; r < nr; r++) {
-		u64 ii = acc->ii[r], qq = acc->qq[r];
-		s64 iq = acc->iq[r];
-		unsigned int k;
-		s64 num, den;
-		u64 root;
+		s32 tone_angle;
+		u32 tone_mag;
 
-		if (!ii) {
+		if (!acc->ii[r]) {
 			*a_out = 0;
 			*b_out = 0;
 			return;
 		}
-
-		/*
-		 * a_r in Q24, rounded half away from zero, on the two
-		 * accumulators cut to a 16-bit mantissa of ii: the same shift
-		 * on both, iq arithmetically.
-		 */
-		k = fls64(ii);
-		k = k > 16 ? k - 16 : 0;
-		den = (s64)(ii >> k);
-		num = -((iq >> k) << 24);
-		a_sum += div64_s64(num + (num < 0 ? -(den >> 1) : (den >> 1)),
-				   den);
-
-		/*
-		 * b_r + 1 in Q10: 2^10 * sqrt(qq*ii - iq^2) / ii, rounded to
-		 * nearest. qq*ii - iq^2 >= 0 by Cauchy-Schwarz, and fits in
-		 * 64 bits for the 32-bit accumulators the estimator has.
-		 */
-		root = int_sqrt64(qq * ii - (u64)(iq * iq));
-		b_sum += div64_u64((root << 11) + ii, ii << 1);
+		b43_phy_ac_iq_mismatch(acc->iq[r], acc->ii[r], acc->qq[r],
+				       &tone_angle, &tone_mag);
+		ang_sum += tone_angle;
+		mag_sum += tone_mag;
 	}
 
-	/* Mean of the Q24 a_r back to Q10, rounded half away from zero. */
-	a_den = (s64)nr << 14;
-	a = (s32)div64_s64(a_sum + (a_sum < 0 ? -(a_den >> 1) : (a_den >> 1)),
-			   a_den);
-	/* Mean of the b_r, rounded half up. */
-	b = (s32)div64_u64(b_sum + (nr >> 1), nr) - (1 << 10);
+	mag = b43_phy_ac_div_near(mag_sum, nr);
+	angle = b43_phy_ac_div_near(ang_sum, nr);
+	b43_phy_ac_cordic(angle, &cos_q16, &sin_q16);
 
-	acc->a = (s16)a;
-	acc->b = (s16)b;
+	acc->a = (s16)(((s64)mag * sin_q16 + (1 << 15)) >> 16);
+	acc->b = (s16)((((s64)mag * cos_q16 + (1 << 15)) >> 16) - (1 << 10));
 	acc->solved = true;
 	*a_out = acc->a;
 	*b_out = acc->b;
@@ -8669,11 +8760,6 @@ void b43_phy_ac_rxiqcal_apply_coefficients(struct b43_wldev *dev)
 			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
 
 	unsigned int c;
-
-	b43_phy_ac_todo(dev,
-		"RX IQ coefficient b may be one LSB off the stock "
-		"driver (about 1 point in 6, mostly core 1): image "
-		"rejection may be slightly worse\n");
 
 	/* Per core: 0x?a0 (coefficient a) and 0x?a1 (coefficient b) */
 	for_each_set_bit(c, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {

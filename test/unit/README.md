@@ -59,14 +59,13 @@ values (`reverse-tools/trace_filter.py --retvals`), or every read looks absent.
 ## Reading the score
 
 ```
-grezzo          : 29817/29849 = 99.89%   [blocco>=8 tol=2]   4 blocchi
-                  2 col valore sbagliato, 27 op di wl mancanti, 1 op del port di troppo
-                  0 coppie uguali in blocchi troppo corti, 14 op non corrispondenti tollerate nei blocchi
+grezzo          : 29820/29846 = 99.91%   [blocco>=8 tol=2]   3 blocchi
+                  0 col valore sbagliato, 26 op di wl mancanti, 0 op del port di troppo
+                  0 coppie uguali in blocchi troppo corti, 15 op non corrispondenti tollerate nei blocchi
 ```
 
-(cold01 of the d6220 on 2026-10-01; 26 of the 27 missing ops are core cells
-outside the PHY's perimeter, and the one extra op is the block alignment's
-artefact around a wrong value.)
+(cold01 of the d6220 on 2026-10-08; the 26 missing ops are core cells
+outside the PHY's perimeter.)
 
 The line to quote is `grezzo` (raw). Its denominator is the union of the two
 streams, so it reaches 100% only when they coincide.

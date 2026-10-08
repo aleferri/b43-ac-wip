@@ -46,23 +46,23 @@ The TX power model -- locale caps, legacy and CCK rules, chain choice -- is in
 
 ## Current state
 
-Measured on 2026-09-30 and 2026-10-01, see below.
+Measured on 2026-10-08 (unit rows) and 2026-10-01 (integration rows), see below.
 
 | gate | result |
 |---|---|
-| unit, cold `cold01` ch36/20 | **99.89%** (29817/29849): 2 wrong values, 27 missing (26 of them core cells outside the PHY), 1 extra |
-| unit, cold, all 43 segments | min 99.77% (ch36/80), median 99.91%, max 99.95% |
-| unit, hot `up` ch36 / ch52 / ch104 | 98.45% / 99.00% / 98.93% |
-| unit, cold agcombo `cold01` ch36/20 | 91.05% |
-| unit, cold TG789vac v2 `cold01` ch36/20 | 99.91% |
+| unit, cold `cold01` ch36/20 | **99.91%** (29820/29846): 0 wrong values, 26 missing (core cells outside the PHY), 0 extra |
+| unit, cold, all 43 segments | min 99.77% (ch36/80), median 99.91%, max 99.95%; 0 wrong values on 36 of 43 |
+| unit, hot `up` ch36 / ch52 / ch104 | 98.49% / 99.00% / 98.93% |
+| unit, cold agcombo `cold01` ch36/20 | 90.47% |
+| unit, cold TG789vac v2 `cold01` ch36/20 | 99.93% |
 | unit, cold TG789vac v2, all 43 segments | min 99.77% (ch149/40), median 99.91%, max 99.98% |
 | unit, periodic watchdog tick | **`MATCH`** |
 | integration, cold `cold01` | `probe: 0`, `start: 0`; 82.61% (28765/34819) |
 | integration, agcombo ch36/80 at the bus | 67.53% (89699/132825), with the 561 interrupts and 283 received frames of the capture replayed |
 | SROM rev 11 extractor | 77/82/83 PASS, 0 FAIL (DSL-3580L, D6220, agcombo) |
 
-The agcombo unit row was not re-measured on this date; the integration rows
-were, on 2026-10-01. The agcombo bus row measured 70.07% before the
+The agcombo unit row runs with the capture's SSID length (7, read off
+`PRSSIDLEN` by `gates.sh`); the integration rows are from 2026-10-01. The agcombo bus row measured 70.07% before the
 interrupts were replayed: the union grew by the five DMA channels b43 reads
 and acknowledges on every interrupt where the stock driver touches one. The
 cold01 integration row measured 90.90% (29003/31905) while the whole cold
@@ -74,12 +74,11 @@ table init left the PHY its 548 words per `up` are missing on both rows.
 
 The number to quote is the `grezzo` line of `cmp_skip.py`, with its two
 parameters; how to reproduce and read it is in
-[`test/unit/README.md`](test/unit/README.md). The integration rows and the
-cold `cold01` unit row are measured with `--min-block 8 --gap-tol 2` on
-2026-10-01; the other unit rows were measured on 2026-09-30, before the two
+[`test/unit/README.md`](test/unit/README.md). Every row is measured with `--min-block 8 --gap-tol 2`, the unit rows on
+2026-10-08 (the TG789vac 43-segment row on 2026-09-30, before the two
 parameters, with blocks of at least two and no tolerance, which on `cold01`
-gives the same count. The integration rows measured 82.30% and 64.86% under
-that rule, which counted every equal op of an aligned block at the bus,
+gives the same count) and the integration rows on 2026-10-01. The
+integration rows measured 82.30% and 64.86% under the older rule, which counted every equal op of an aligned block at the bus,
 however short the run around it between two wrong values. The six
 weather-radar segments (ch120/124/128 at 20 MHz, ch116/124 at 40, ch116 at
 80) end before their availability check completes and measure a partial attach.

@@ -288,10 +288,6 @@ same lever as `AC_FIRST_INIT`.
   7.14 with 928) except the x86 hybrid 6.30.223 with ucode 832, and
   `B43_FW_HDR_AC` does the same, 832 included. Whether that is the ucode or
   the hybrid build, and what the bit is, is open.
-- **SSID length.** `AC_SSID_LEN` (default 8) drives the probe-response length,
-  the PLCP of the eight rates and `0x001e`. `gates.sh` does not read it off the
-  capture (`PRSSIDLEN` at `0x0048`), so a segment with another SSID fails
-  silently.
 
 ### Probe-response offload
 
@@ -634,17 +630,6 @@ which rate is in no open source. They are zero on the d6220, the agcombo and
 the DSL-3580L; the TG789vac v2 carries `dot11agduphrpo=0x4444`. The recalc
 warns if a board carries them.
 
-### RX IQ coefficient `b`, core 1
-
-Solving per tone and averaging (`b43_phy_ac_iq_solve()`), on 309 points (every
-cold segment of the d6220 and the agcombo, the TG789vac's outside the radar
-channels, the d6220 and agcombo hot ups), `a` matches on 296 and `b`
-on 259. The 16-bit mantissa on `ii` that gains `a` six points loses one, core 1
-of the d6220's bss-up on ch52 (two tones averaging to −38.5005, the stock driver
-writes −39), which is the first divergence of that segment. The `b` misses are one LSB, mostly the stock driver high and mostly on
-core 1; `rxgainerr5ga*` is flat. An input outside the six accumulators is
-missing. `VAL_TOLLERANZA` holds `0x?a1` at ±1 for the positional gate only.
-
 ### Loopback gain search at the floor
 
 The halving criterion (`round(ii/1024) + round(qq/1024)` above `0x169e`)
@@ -803,9 +788,6 @@ Table `0x21` is written as zeros on 2.4 GHz, as on both boards.
   `0x1ff` twice in its attach, and leaves `0x1fb` up. Whether the mask is the
   chip revision's or the driver's is open: the `wl-diag` captures trace the
   PLL and regulator accessors (`PMU.PLL`, `PMU.RC`), not the resource masks.
-- **TG789vac `watchdog=70000`.** Every rule counted in watchdog turns was built
-  on the D6220's 1.004 s beat; measure the distance between two
-  `PHY.MOD 0x0520 mask=0xc` on that board before reusing them.
 
 ## DSL-3580L (6.30): version differences, not debt
 
