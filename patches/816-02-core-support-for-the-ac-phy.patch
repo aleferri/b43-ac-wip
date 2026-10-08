@@ -9,15 +9,15 @@ Subject: [PATCH 1/2] b43: core support for the AC-PHY
  drivers/net/wireless/broadcom/b43/bus.c       |    4 +
  drivers/net/wireless/broadcom/b43/dma.c       |  156 +-
  drivers/net/wireless/broadcom/b43/dma.h       |   11 +
- drivers/net/wireless/broadcom/b43/leds.c      |  221 ++-
+ drivers/net/wireless/broadcom/b43/leds.c      |  225 ++-
  drivers/net/wireless/broadcom/b43/leds.h      |   24 +-
- drivers/net/wireless/broadcom/b43/main.c      | 1557 +++++++++++++++--
+ drivers/net/wireless/broadcom/b43/main.c      | 1555 +++++++++++++++--
  .../net/wireless/broadcom/b43/phy_common.c    |   61 +-
  .../net/wireless/broadcom/b43/phy_common.h    |   32 +-
  drivers/net/wireless/broadcom/b43/pio.c       |   12 +-
  drivers/net/wireless/broadcom/b43/xmit.c      |  326 +++-
  drivers/net/wireless/broadcom/b43/xmit.h      |   76 +
- 13 files changed, 2276 insertions(+), 372 deletions(-)
+ 13 files changed, 2277 insertions(+), 373 deletions(-)
 
 diff --git a/drivers/net/wireless/broadcom/b43/Kconfig b/drivers/net/wireless/broadcom/b43/Kconfig
 index 5f008b4..ceee266 100644
@@ -858,21 +858,21 @@ index bfe1be3..2e2da16 100644
  				  bool *activelow)
  {
 -	u8 sprom[4];
-+	const struct ssb_sprom *bus_sprom = dev->dev->bus_sprom;
-+	u8 sprom[B43_MAX_NR_LEDS];
- 
+-
 -	sprom[0] = dev->dev->bus_sprom->gpio0;
 -	sprom[1] = dev->dev->bus_sprom->gpio1;
 -	sprom[2] = dev->dev->bus_sprom->gpio2;
 -	sprom[3] = dev->dev->bus_sprom->gpio3;
++	const struct ssb_sprom *bus_sprom = dev->dev->bus_sprom;
++	u8 sprom[B43_MAX_NR_LEDS];
++
 +	sprom[0] = bus_sprom->gpio0;
 +	sprom[1] = bus_sprom->gpio1;
 +	sprom[2] = bus_sprom->gpio2;
 +	sprom[3] = bus_sprom->gpio3;
 +	BUILD_BUG_ON(sizeof(sprom) != 4 + sizeof(bus_sprom->gpio_ext));
 +	memcpy(&sprom[4], bus_sprom->gpio_ext, sizeof(bus_sprom->gpio_ext));
- 
--	if ((sprom[0] & sprom[1] & sprom[2] & sprom[3]) == 0xff) {
++
 +	/* Pins 4 and up come from NVRAM only and have no default; the
 +	 * fallback SPROM leaves an unset ledbh at 0, so 0 and 0xff both
 +	 * mean there is no LED here. Pins 0-3 keep their behaviour:
@@ -883,7 +883,8 @@ index bfe1be3..2e2da16 100644
 +		*activelow = false;
 +		return false;
 +	}
-+
+ 
+-	if ((sprom[0] & sprom[1] & sprom[2] & sprom[3]) == 0xff) {
 +	if (led_index >= 4 ||
 +	    (sprom[0] & sprom[1] & sprom[2] & sprom[3]) != 0xff) {
 +		/* keep LED disabled if no mapping is defined */
@@ -956,12 +957,13 @@ index bfe1be3..2e2da16 100644
  	unsigned int i;
  	enum b43_led_behaviour behaviour;
 -	bool activelow;
-+	bool activelow, on;
- 
+-
 -	/* Sync the RF-kill LED state (if we have one) with radio and switch states. */
 -	led = &dev->wl->leds.led_radio;
 -	if (led->wl) {
 -		if (dev->phy.radio_on && b43_is_hw_radio_enabled(dev)) {
++	bool activelow, on;
++
 +	/* The radio LEDs follow the radio and switch state, the others
 +	 * start off. */
 +	for (i = 0; i < ARRAY_SIZE(dev->wl->leds.led); i++) {
@@ -1478,8 +1480,7 @@ index 95a5d0b..7161f45 100644
  	 */
  	index -= pairwise_keys_start;
 -	B43_WARN_ON(index >= B43_NR_PAIRWISE_KEYS);
-+	B43_WARN_ON(index >= b43_amt_entries(dev));
- 
+-
 -	if (addr) {
 -		addrtmp[0] = addr[0];
 -		addrtmp[0] |= ((u32) (addr[1]) << 8);
@@ -1488,7 +1489,8 @@ index 95a5d0b..7161f45 100644
 -		addrtmp[1] = addr[4];
 -		addrtmp[1] |= ((u32) (addr[5]) << 8);
 -	}
--
++	B43_WARN_ON(index >= b43_amt_entries(dev));
+ 
 -	/* Receive match transmitter address (RCMTA) mechanism */
 -	b43_shm_write32(dev, B43_SHM_RCMTA,
 -			(index * 2) + 0, addrtmp[0]);
@@ -1782,6 +1784,9 @@ index 95a5d0b..7161f45 100644
 -		if (i + 3 < size)
 -			tmp |= (u32) (data[i + 3]) << 24;
 -		b43_ram_write(dev, ram_offset + i - 2, tmp);
+-	}
+-	b43_shm_write16(dev, B43_SHM_SHARED, shm_size_offset,
+-			size + sizeof(struct b43_plcp_hdr6));
 +
 +	for (i = 0; i < total; i += sizeof(u32)) {
 +		u32 tmp = 0;
@@ -1791,9 +1796,7 @@ index 95a5d0b..7161f45 100644
 +			tmp |= (u32)b43_tpl_byte(tpl, &plcp, data, size,
 +						 i + b) << (8 * b);
 +		b43_tpl_write(dev, s, ram_offset + i, tmp);
- 	}
--	b43_shm_write16(dev, B43_SHM_SHARED, shm_size_offset,
--			size + sizeof(struct b43_plcp_hdr6));
++	}
 +	b43_shm_write16(dev, B43_SHM_SHARED, shm_size_offset, total);
  }
  
@@ -2077,20 +2080,19 @@ index 95a5d0b..7161f45 100644
 +	u32 leds = b43_leds_gpio_mask(dev->wl);
  	u32 mask, set;
  
--	b43_maskset32(dev, B43_MMIO_MACCTL, ~B43_MACCTL_GPOUTSMSK, 0);
--	b43_maskset16(dev, B43_MMIO_GPIO_MASK, ~0, modparam_gpiomask);
 +#ifdef CPTCFG_B43_BCMA
 +	if (b43_is_ac_core(dev)) {
 +		b43_gpio_init_ac(dev);
 +		return 0;
 +	}
 +#endif
++
+ 	b43_maskset32(dev, B43_MMIO_MACCTL, ~B43_MACCTL_GPOUTSMSK, 0);
+-	b43_maskset16(dev, B43_MMIO_GPIO_MASK, ~0, modparam_gpiomask);
++	b43_maskset16(dev, B43_MMIO_GPIO_MASK, ~0, modparam_gpiomask | leds);
  
 -	mask = 0x0000001F;
 -	set = modparam_gpiomask;
-+	b43_maskset32(dev, B43_MMIO_MACCTL, ~B43_MACCTL_GPOUTSMSK, 0);
-+	b43_maskset16(dev, B43_MMIO_GPIO_MASK, ~0, modparam_gpiomask | leds);
-+
 +	mask = 0x0000001F | leds;
 +	set = modparam_gpiomask | leds;
  	if (dev->dev->chip_id == 0x4301) {
@@ -2192,10 +2194,12 @@ index 95a5d0b..7161f45 100644
  	ant = b43_antenna_to_phyctl(antenna);
  
  	/* For ACK/CTS */
-@@ -3249,6 +3756,160 @@ static void b43_mgmtframe_txantenna(struct b43_wldev *dev, int antenna)
+@@ -3249,67 +3756,177 @@ static void b43_mgmtframe_txantenna(struct b43_wldev *dev, int antenna)
  	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_PRPHYCTL, tmp);
  }
  
+-/* This is the opposite of b43_chip_init() */
+-static void b43_chip_exit(struct b43_wldev *dev)
 +
 +/*
 + * TX FIFO geometry of the 802.11 core revision 42.
@@ -2225,20 +2229,37 @@ index 95a5d0b..7161f45 100644
 +
 +static void b43_txfifo_alloc(struct b43_wldev *dev, u16 rqpri, u16 txptr,
 +			     u16 def, u16 aux, u16 sel)
-+{
+ {
+-	b43_phy_exit(dev);
+-	b43_gpio_cleanup(dev);
+-	/* firmware is released later */
 +	b43_write16(dev, B43_MMIO_XMTFIFORQPRI, rqpri);
 +	b43_write16(dev, B43_MMIO_XMTTPLATETXPTR, txptr);
 +	b43_write16(dev, B43_MMIO_XMTFIFODEF, def);
 +	b43_write16(dev, B43_MMIO_XMTFIFO_54E, aux);
 +	b43_write16(dev, B43_MMIO_XMTTPLATEPTR, 0x740c);
 +	b43_write16(dev, B43_MMIO_XMTFIFOPRIRDY, sel);
-+}
-+
+ }
+ 
+-/* Initialize the chip
+- * https://bcm-specs.sipsolutions.net/ChipInit
+- */
+-static int b43_chip_init(struct b43_wldev *dev)
 +static int b43_txfifo_init_rev42(struct b43_wldev *dev)
-+{
+ {
+-	struct b43_phy *phy = &dev->phy;
+-	int err;
+-	u32 macctl;
+-	u16 value16;
 +	const unsigned int n = B43_TXFIFO_BLOCKS_REV42;
 +	unsigned int i, fifo, tries;
-+
+ 
+-	/* Initialize the MAC control */
+-	macctl = B43_MACCTL_IHR_ENABLED | B43_MACCTL_SHM_ENABLED;
+-	if (dev->phy.gmode)
+-		macctl |= B43_MACCTL_GMODE;
+-	macctl |= B43_MACCTL_INFRA;
+-	b43_write32(dev, B43_MMIO_MACCTL, macctl);
 +	b43_write16(dev, B43_MMIO_XMTFIFOFLUSH, 0x0600);
 +	b43_write16(dev, B43_MMIO_XMTFIFOCMD, 0x0005);
 +	for (tries = 0; b43_read16(dev, B43_MMIO_XMTFIFOCMD) & 0x0001; tries++) {
@@ -2248,11 +2269,17 @@ index 95a5d0b..7161f45 100644
 +	}
 +	if (b43_read16(dev, B43_MMIO_XMTFIFOCMD) & 0x0001)
 +		return -ETIMEDOUT;
-+
+ 
+-	err = b43_upload_microcode(dev);
+-	if (err)
+-		goto out;	/* firmware is released later */
 +	b43_txfifo_alloc(dev, 0x002a, 0x002a, 0x002a, 0x262a, 0x17);
 +	for (fifo = 0; fifo < 6; fifo++)
 +		b43_txfifo_alloc(dev, 0x05d6, 0x0020, 0x000b, 0x1216, 0x10 | fifo);
-+
+ 
+-	err = b43_gpio_init(dev);
+-	if (err)
+-		goto out;	/* firmware is released later */
 +	for (i = 0; i < n; i++) {
 +		b43_write16(dev, B43_MMIO_AGGFIFODATA2, i);
 +		b43_write16(dev, B43_MMIO_AGGFIFODATA3, min(i + 2, n - 1));
@@ -2261,7 +2288,10 @@ index 95a5d0b..7161f45 100644
 +			    B43_TXFIFO_CHAIN_GO | (i << 4) | B43_TXFIFO_CHAIN_CMD);
 +		for (tries = 0; ; tries++) {
 +			u16 v = b43_read16(dev, B43_MMIO_AGGFIFODATA0);
-+
+ 
+-	err = b43_upload_initvals(dev);
+-	if (err)
+-		goto err_gpio_clean;
 +			if (!(v & B43_TXFIFO_CHAIN_CMD))
 +				break;
 +			if (tries == B43_TXFIFO_CHAIN_RETRIES) {
@@ -2274,7 +2304,10 @@ index 95a5d0b..7161f45 100644
 +	}
 +	return 0;
 +}
-+
+ 
+-	err = b43_upload_initvals_band(dev);
+-	if (err)
+-		goto err_gpio_clean;
 +/*
 + * Airtime of an OFDM frame of @len bytes at 5 GHz, preamble and SIGNAL
 + * included, from the bits per symbol of its rate.
@@ -2283,7 +2316,12 @@ index 95a5d0b..7161f45 100644
 +{
 +	return 20 + 4 * DIV_ROUND_UP(16 + 8 * len + 6, ndbps);
 +}
-+
+ 
+-	/* Turn the Analog on and initialize the PHY. */
+-	phy->ops->switch_analog(dev, 1);
+-	err = b43_phy_init(dev);
+-	if (err)
+-		goto err_gpio_clean;
 +/*
 + * What the AC cores' stock driver writes after the band initvals, the same
 + * on the agcombo (7.14) and on the MacBookAir6,1 (6.30), where it repeats
@@ -2312,7 +2350,10 @@ index 95a5d0b..7161f45 100644
 +		{ 0x9, 96 }, { 0xd, 144 }, { 0x8, 192 }, { 0xc, 216 },
 +	};
 +	unsigned int i;
-+
+ 
+-	/* Disable Interference Mitigation. */
+-	if (phy->ops->interf_mitigation)
+-		phy->ops->interf_mitigation(dev, B43_INTERFMODE_NONE);
 +	b43_shm_write16(dev, B43_SHM_SHARED, 0x000c, 0x00c0);
 +	b43_shm_write16(dev, B43_SHM_SHARED, 0x000e, 0x000a);
 +	b43_shm_write16(dev, B43_SHM_SHARED, 0x17d2, 0x042b);
@@ -2340,78 +2381,42 @@ index 95a5d0b..7161f45 100644
 +				b43_ofdm_airtime(20, rates[i].ndbps));
 +	}
 +}
-+
-+static int b43_bsinit(struct b43_wldev *dev)
-+{
-+	int err = b43_upload_initvals_band(dev);
-+
-+	if (!err && dev->phy.type == B43_PHYTYPE_AC)
-+		b43_bsinit_ac(dev);
-+	return err;
-+}
-+
- /* This is the opposite of b43_chip_init() */
- static void b43_chip_exit(struct b43_wldev *dev)
- {
-@@ -3260,56 +3921,12 @@ static void b43_chip_exit(struct b43_wldev *dev)
- /* Initialize the chip
-  * https://bcm-specs.sipsolutions.net/ChipInit
-  */
--static int b43_chip_init(struct b43_wldev *dev)
-+/*
-+ * The MAC half of the chip init: the operating mode, the TSF CFP timings, the
-+ * interrupt masks, the MAC-PHY clock and the power-up delay.
-+ */
-+static void b43_chip_init_mac(struct b43_wldev *dev)
- {
--	struct b43_phy *phy = &dev->phy;
--	int err;
--	u32 macctl;
--	u16 value16;
--
--	/* Initialize the MAC control */
--	macctl = B43_MACCTL_IHR_ENABLED | B43_MACCTL_SHM_ENABLED;
--	if (dev->phy.gmode)
--		macctl |= B43_MACCTL_GMODE;
--	macctl |= B43_MACCTL_INFRA;
--	b43_write32(dev, B43_MMIO_MACCTL, macctl);
--
--	err = b43_upload_microcode(dev);
--	if (err)
--		goto out;	/* firmware is released later */
--
--	err = b43_gpio_init(dev);
--	if (err)
--		goto out;	/* firmware is released later */
--
--	err = b43_upload_initvals(dev);
--	if (err)
--		goto err_gpio_clean;
--
--	err = b43_upload_initvals_band(dev);
--	if (err)
--		goto err_gpio_clean;
--
--	/* Turn the Analog on and initialize the PHY. */
--	phy->ops->switch_analog(dev, 1);
--	err = b43_phy_init(dev);
--	if (err)
--		goto err_gpio_clean;
--
--	/* Disable Interference Mitigation. */
--	if (phy->ops->interf_mitigation)
--		phy->ops->interf_mitigation(dev, B43_INTERFMODE_NONE);
--
+ 
 -	/* Select the antennae */
 -	if (phy->ops->set_rx_antenna)
 -		phy->ops->set_rx_antenna(dev, dev->rx_antenna);
 -	b43_mgmtframe_txantenna(dev, dev->tx_antenna);
--
++static int b43_bsinit(struct b43_wldev *dev)
++{
++	int err = b43_upload_initvals_band(dev);
+ 
 -	if (phy->type == B43_PHYTYPE_B) {
 -		value16 = b43_read16(dev, 0x005E);
 -		value16 |= 0x0004;
 -		b43_write16(dev, 0x005E, value16);
 -	}
++	if (!err && dev->phy.type == B43_PHYTYPE_AC)
++		b43_bsinit_ac(dev);
++	return err;
++}
++
++/* This is the opposite of b43_chip_init() */
++static void b43_chip_exit(struct b43_wldev *dev)
++{
++	b43_phy_exit(dev);
++	b43_gpio_cleanup(dev);
++	/* firmware is released later */
++}
++
++/* Initialize the chip
++ * https://bcm-specs.sipsolutions.net/ChipInit
++ */
++/*
++ * The MAC half of the chip init: the operating mode, the TSF CFP timings, the
++ * interrupt masks, the MAC-PHY clock and the power-up delay.
++ */
++static void b43_chip_init_mac(struct b43_wldev *dev)
++{
  	b43_write32(dev, 0x0100, 0x01000000);
  	if (dev->dev->core_rev < 5)
  		b43_write32(dev, 0x010C, 0x01000000);
@@ -3918,9 +3923,9 @@ index f0b0825..07fa6d9 100644
  		int rts_rate_ofdm, rts_rate_fb_ofdm;
  		struct b43_plcp_hdr6 *plcp;
 -		struct ieee80211_rate *rts_cts_rate;
- 
--		rts_cts_rate = ieee80211_get_rts_cts_rate(dev->wl->hw, info);
 -
+-		rts_cts_rate = ieee80211_get_rts_cts_rate(dev->wl->hw, info);
+ 
 -		rts_rate = rts_cts_rate ? rts_cts_rate->hw_value : B43_CCK_RATE_1MB;
 +		rts_rate = c.rts_rate;
  		rts_rate_ofdm = b43_is_ofdm_rate(rts_rate);
