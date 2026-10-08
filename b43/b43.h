@@ -869,6 +869,9 @@ struct b43_tpl_layout {
 	u16 bcn_size;
 	u8 hdr_len;
 	u8 plcp_off;
+	/* The microcode's TIM update mirrors the byte offset inside the
+	 * 32-bit template word it writes the DTIM count to. */
+	bool tim_mirrored;
 };
 
 /* Pointers to the firmware data and meta information about it. */
