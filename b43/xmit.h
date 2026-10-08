@@ -275,6 +275,7 @@ struct b43_txstatus {
 	u8 intermediate;	/* Intermediate status notification (not final) */
 	u8 for_ampdu;		/* Status is for an AMPDU (afterburner) */
 	u8 acked;		/* Wireless ACK received */
+	u32 raw[8];		/* AC: the two packages, as read */
 };
 
 /* txstatus supp_reason values */
@@ -412,6 +413,8 @@ void b43_generate_plcp_hdr(struct b43_plcp_hdr4 *plcp,
 
 void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr);
 
+void b43_txstatus_dump(struct b43_wldev *dev,
+		       const struct b43_txstatus *status);
 void b43_handle_txstatus(struct b43_wldev *dev,
 			 const struct b43_txstatus *status);
 bool b43_fill_txstatus_report(struct b43_wldev *dev,

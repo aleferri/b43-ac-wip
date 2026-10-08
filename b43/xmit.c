@@ -1064,6 +1064,23 @@ drop:
 	dev_kfree_skb_any(skb);
 }
 
+/*
+ * A TX status whose cookie matches no queue: on the AC microcode, the words
+ * it came in, for what the status says when it is not about one of b43's
+ * frames.
+ */
+void b43_txstatus_dump(struct b43_wldev *dev,
+		       const struct b43_txstatus *status)
+{
+	const u32 *w = status->raw;
+
+	if (dev->fw.hdr_format != B43_FW_HDR_AC)
+		return;
+	b43warn(dev->wl, "TX status %08x %08x %08x %08x / "
+		"%08x %08x %08x %08x\n",
+		w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]);
+}
+
 void b43_handle_txstatus(struct b43_wldev *dev,
 			 const struct b43_txstatus *status)
 {

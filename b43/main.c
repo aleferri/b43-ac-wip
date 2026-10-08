@@ -1615,10 +1615,12 @@ static bool b43_txstatus_read_ac(struct b43_wldev *dev,
 		return false;
 	for (i = 1; i < ARRAY_SIZE(reg); i++)
 		w[i] = b43_read32(dev, reg[i]);
-	for (i = 0; i < ARRAY_SIZE(reg); i++)
-		b43_read32(dev, reg[i]);
 
 	memset(stat, 0, sizeof(*stat));
+	for (i = 0; i < ARRAY_SIZE(reg); i++) {
+		stat->raw[i] = w[i];
+		stat->raw[i + 4] = b43_read32(dev, reg[i]);
+	}
 	stat->cookie = w[0] >> 16;
 	stat->acked = !!(w[0] & B43_TXST_AC_ACKED);
 	stat->intermediate = !!(w[0] & B43_TXST_AC_INTERMEDIATE);

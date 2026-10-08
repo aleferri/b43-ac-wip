@@ -1485,8 +1485,10 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
 	static u8 err_out1;
 
 	ring = parse_cookie(dev, status->cookie, &slot);
-	if (unlikely(!ring))
+	if (unlikely(!ring)) {
+		b43_txstatus_dump(dev, status);
 		return;
+	}
 	B43_WARN_ON(!ring->tx);
 
 	/* Sanity check: TX packets are processed in-order on one ring.

@@ -570,8 +570,10 @@ void b43_pio_handle_txstatus(struct b43_wldev *dev,
 	struct ieee80211_tx_info *info;
 
 	q = parse_cookie(dev, status->cookie, &pack);
-	if (unlikely(!q))
+	if (unlikely(!q)) {
+		b43_txstatus_dump(dev, status);
 		return;
+	}
 	B43_WARN_ON(!pack);
 
 	info = IEEE80211_SKB_CB(pack->skb);
