@@ -65,6 +65,7 @@
 #include "win_redirect.h"
 #include "mips_mmio_emulate.h"
 #include "wl_ring.h"
+#include "dma_dd.h"
 
 #define PROC_NAME "wl_mmio_trap"
 
@@ -142,6 +143,21 @@ static int stop_on_full = 1;
 module_param(stop_on_full, int, 0644);
 MODULE_PARM_DESC(stop_on_full, "1=stop trapping the first time the queue overflows (default), so the capture is a contiguous run and the driver goes back to full speed instead of crawling while its accesses are discarded. 0=keep trapping and count the losses");
 
+/* The TX descriptors and the start of their buffers, read out of memory at
+ * each TX index write (dma_dd.h). Off until dd_len is set; both can be
+ * changed while the trap runs, through /sys/module/wl_mmio_trap/parameters. */
+static uint dd_len;
+module_param(dd_len, uint, 0644);
+MODULE_PARM_DESC(dd_len, "bytes of each TX buffer to record at an index write, up to 256; 0 = off (default). 168 covers the 4-byte TX offload header, the 124-byte d11 TX header and an 802.11 header");
+
+static uint dd_budget = 256;
+module_param(dd_budget, uint, 0644);
+MODULE_PARM_DESC(dd_budget, "TX descriptors left to record; counts down to 0, write it again for more (default 256)");
+
+static ulong dd_bus_off;
+module_param(dd_bus_off, ulong, 0444);
+MODULE_PARM_DESC(dd_bus_off, "subtracted from a DMA bus address to get the physical one (default 0, the identity the BCM63xx PCIe inbound window gives)");
+
 /* ---- records ------------------------------------------------------------
  * Separate stream from wl_diag's. The op numbers are free in wl_diag.c's
  * enum wldiag_op, which runs to OP_IOVAR_SET=54 plus OP_DROP=255, so the
@@ -152,6 +168,15 @@ MODULE_PARM_DESC(stop_on_full, "1=stop trapping the first time the queue overflo
 #define OP_MMIO_R 60
 #define OP_MMIO_W 61
 #define OP_MMIO_MARK 62
+/* A TX descriptor: addr its bus address, val the buffer's, aux the channel
+ * in bits 31:24, the DD_F_* flags in 23:16 and the buffer bytes that follow
+ * in 15:0. Then OP_MMIO_DATA records, twelve bytes each in addr/val/aux as
+ * MARK carries its label: the 16 bytes of the descriptor as they are in
+ * memory, then the buffer bytes, the last record padded with zeros. The
+ * whole group is queued under one lock hold, so its sequence numbers are
+ * consecutive. */
+#define OP_MMIO_DD 63
+#define OP_MMIO_DATA 64
 
 /* aux bits alongside the access width */
 #define MMIO_AUX_WIDTH_MASK 0x000000ff
@@ -175,10 +200,36 @@ static atomic_t n_unaligned = ATOMIC_INIT(0);
 static atomic_t n_mismatch = ATOMIC_INIT(0);
 static atomic_t n_not_ls = ATOMIC_INIT(0);
 static atomic_t n_foreign = ATOMIC_INIT(0);	/* faults that were not ours */
+static atomic_t n_dd = ATOMIC_INIT(0);		/* TX descriptors recorded */
 
 static bool overflow_seen;
 static void overflow_work_fn(struct work_struct *w);
 static DECLARE_WORK(overflow_work, overflow_work_fn);
+
+/* Called with fifo_lock held. Returns false when the queue was full. */
+static bool push_rec_locked(struct wl_mmio_rec *r)
+{
+	r->ts_ns = mmio_now_ns();
+	r->seq = (u32)atomic_inc_return(&rec_seq);
+	r->cpu = (u8)raw_smp_processor_id();
+	r->_pad = 0;
+
+	if (wl_ring_put(&ring, r))
+		return true;
+	atomic_inc(&drops);
+	return false;
+}
+
+/* Disengaging means invalidating ptes and flushing the tlb, an IPI this
+ * context cannot issue. Hand it to a worker and let the few records that
+ * arrive in the meantime be counted as losses. */
+static void note_full(void)
+{
+	if (stop_on_full && !overflow_seen) {
+		overflow_seen = true;
+		schedule_work(&overflow_work);
+	}
+}
 
 /* No wake_up from here on purpose: this runs inside the exception that
  * trapped wl's access, once per register access, and the reader can afford
@@ -186,26 +237,13 @@ static DECLARE_WORK(overflow_work, overflow_work_fn);
 static void push_rec(struct wl_mmio_rec *r)
 {
 	unsigned long flags;
-	bool full;
-
-	r->ts_ns = mmio_now_ns();
-	r->seq = (u32)atomic_inc_return(&rec_seq);
-	r->cpu = (u8)raw_smp_processor_id();
-	r->_pad = 0;
+	bool ok;
 
 	raw_spin_lock_irqsave(&fifo_lock, flags);
-	full = !wl_ring_put(&ring, r);
-	if (full)
-		atomic_inc(&drops);
+	ok = push_rec_locked(r);
 	raw_spin_unlock_irqrestore(&fifo_lock, flags);
-
-	/* Disengaging means invalidating ptes and flushing the tlb, an IPI
-	 * this context cannot issue. Hand it to a worker and let the few
-	 * records that arrive in the meantime be counted as losses. */
-	if (full && stop_on_full && !overflow_seen) {
-		overflow_seen = true;
-		schedule_work(&overflow_work);
-	}
+	if (!ok)
+		note_full();
 }
 
 static void log_rec(u8 op, u32 addr, u32 val, u32 aux)
@@ -239,6 +277,105 @@ struct trap_region {
 	struct mmio_window *win;
 	bool owns_alias;	/* false for the self-test's lowmem alias */
 };
+
+/* ---- TX descriptors ------------------------------------------------------
+ * The memory the DMA engine reads, read the way it does: uncached, through
+ * CKSEG1, after wl has written its caches back to post the frame. Only RAM
+ * below 512 MB is read; anything else, a bus address that is not memory
+ * included, is refused, and the walk records the descriptor without its
+ * buffer or stops. */
+static struct dd_state dd;
+static DEFINE_RAW_SPINLOCK(dd_lock);
+
+/* pfn_valid() reads min_low_pfn, which MIPS does not export to modules.
+ * The memory of these boards is one bank from PHYS_OFFSET up, and
+ * max_mapnr, which is exported, ends it. */
+static bool dd_ram_pfn(unsigned long pfn)
+{
+	return pfn >= ARCH_PFN_OFFSET && pfn < max_mapnr;
+}
+
+static bool dd_mem_read(void *ctx, u32 bus, void *dst, u32 len)
+{
+	const volatile u8 *p;
+	unsigned long phys = (unsigned long)bus - dd_bus_off;
+	u8 *out = dst;
+	u32 i;
+
+	(void)ctx;
+	if (!len)
+		return true;
+	if (phys + len < phys || phys + len > WIN_KSEG1_LIMIT ||
+	    !dd_ram_pfn(phys >> PAGE_SHIFT) ||
+	    !dd_ram_pfn((phys + len - 1) >> PAGE_SHIFT))
+		return false;
+
+	p = (const volatile u8 *)CKSEG1ADDR(phys);
+	for (i = 0; i < len; i++)
+		out[i] = p[i];
+	return true;
+}
+
+/* A ring set up before the trap was engaged: its address register, read
+ * through the alias right after wl wrote the same channel's index, so the
+ * window is on the core wl was talking to. */
+static u32 dd_ring_addr(void *ctx, unsigned int chan)
+{
+	struct trap_region *r = ctx;
+
+	return __raw_readl((char __iomem *)r->alias + 0x208 + 0x40 * chan);
+}
+
+static void dd_emit(void *ctx, unsigned int chan, u32 slot, const u8 *raw,
+		    const struct dd_desc *d, const u8 *buf, u32 n)
+{
+	struct wl_mmio_rec rec;
+	unsigned long flags;
+	u32 total = DD_SIZE + n, i, k;
+	bool ok = true;
+
+	(void)ctx;
+	raw_spin_lock_irqsave(&fifo_lock, flags);
+	memset(&rec, 0, sizeof(rec));
+	rec.op = OP_MMIO_DD;
+	rec.addr = slot;
+	rec.val = d->addrlo;
+	rec.aux = (chan << 24) | ((u32)d->flags << 16) | n;
+	ok = push_rec_locked(&rec);
+	for (i = 0; ok && i < total; i += 12) {
+		u8 *p = (u8 *)&rec.addr;
+
+		memset(&rec, 0, sizeof(rec));
+		rec.op = OP_MMIO_DATA;
+		for (k = 0; k < 12 && i + k < total; k++)
+			p[k] = i + k < DD_SIZE ? raw[i + k] : buf[i + k - DD_SIZE];
+		ok = push_rec_locked(&rec);
+	}
+	raw_spin_unlock_irqrestore(&fifo_lock, flags);
+
+	if (ok)
+		atomic_inc(&n_dd);
+	else
+		note_full();
+}
+
+static const struct dd_ops dd_ops = {
+	.read = dd_mem_read,
+	.ring_addr = dd_ring_addr,
+	.emit = dd_emit,
+};
+
+static void dd_on_mmio_write(struct trap_region *r, u32 off, u32 val)
+{
+	unsigned long flags;
+	u32 budget;
+
+	raw_spin_lock_irqsave(&dd_lock, flags);
+	budget = ACCESS_ONCE(dd_budget);
+	dd_on_write(&dd, &dd_ops, r, off, val, ACCESS_ONCE(dd_len), &budget);
+	dd_budget = budget;
+	raw_spin_unlock_irqrestore(&dd_lock, flags);
+}
 
 static struct trap_region live;
 static struct trap_region *cur;		/* NULL: nothing is being trapped */
@@ -285,6 +422,8 @@ static enum bp_action fixup_bp(struct pt_regs *regs, void *ctx)
 	log_rec(res.is_write ? OP_MMIO_W : OP_MMIO_R,
 		(u32)(va - r->base), res.value,
 		(u32)res.width | (res.delay_slot ? MMIO_AUX_DELAY_SLOT : 0));
+	if (res.is_write && res.width == 4 && r == &live)
+		dd_on_mmio_write(r, (u32)(va - r->base), res.value);
 
 	/* Make fixup_exception() return 1 to its caller without running:
 	 * at its first word $ra is still the caller's and no frame has been
@@ -501,11 +640,16 @@ static void release_window_locked(void)
 
 static int engage_locked(void)
 {
+	unsigned long flags;
+
 	if (engaged)
 		return 0;
 	if (!live.win || !live.alias)
 		return -ENODEV;
 	overflow_seen = false;
+	raw_spin_lock_irqsave(&dd_lock, flags);
+	dd_init(&dd);
+	raw_spin_unlock_irqrestore(&dd_lock, flags);
 	cur = &live;
 	smp_wmb();
 	mmio_pte_close(live.win);
@@ -753,10 +897,10 @@ static struct notifier_block mod_nb = {
 /* ---- /proc --------------------------------------------------------------- */
 static void print_status(void)
 {
-	pr_info("wl_mmio_trap: %s, window %p +%zu; emulated=%d drops=%d foreign=%d unhandled: delay_slot=%d unaligned=%d mismatch=%d not_loadstore=%d\n",
+	pr_info("wl_mmio_trap: %s, window %p +%zu; emulated=%d tx_descriptors=%d drops=%d foreign=%d unhandled: delay_slot=%d unaligned=%d mismatch=%d not_loadstore=%d\n",
 		engaged ? "engaged" : (live.win ? "armed, not engaged" : "no window"),
 		(void *)live.base, live.len,
-		atomic_read(&n_emulated), atomic_read(&drops),
+		atomic_read(&n_emulated), atomic_read(&n_dd), atomic_read(&drops),
 		atomic_read(&n_foreign), atomic_read(&n_delay_slot),
 		atomic_read(&n_unaligned), atomic_read(&n_mismatch),
 		atomic_read(&n_not_ls));

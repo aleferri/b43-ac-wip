@@ -55,8 +55,9 @@ make -C tools check
 
 Same `KDIR` requirements as `wl-diag`; needs `CONFIG_KALLSYMS=y` and
 `CONFIG_PCI=y`, not `CONFIG_KPROBES`. The same sources build for 3.4 and for
-2.6.30, see below. `tools/` compiles the real encoders and emulator against
-`tools/shim/` and tests them natively; it says nothing about a real exception.
+2.6.30, see below. `tools/` compiles the real encoders, emulator, record ring
+and TX descriptor walker against `tools/shim/` and tests them natively; it
+says nothing about a real exception.
 
 ## Kernel 2.6.30
 
@@ -125,6 +126,42 @@ echo status      > /proc/wl_mmio_trap; dmesg | tail -1
 It can run alongside `wl_diag`: each `DIE_BREAK` handler ignores addresses that
 are not its own, and both stamp records with `sched_clock()`.
 
+### TX descriptors
+
+The d11 TX header of a frame and the DMA descriptor that points at it never
+cross the window: the engine reads them from memory. The write of a TX
+channel's index does cross it, and at that write the module reads, out of
+memory, the descriptors posted since the previous index and the start of
+each buffer (`dma_dd.c`). Off by default:
+
+```sh
+echo 168 > /sys/module/wl_mmio_trap/parameters/dd_len     # bytes per buffer
+echo 256 > /sys/module/wl_mmio_trap/parameters/dd_budget  # descriptors to record
+```
+
+168 bytes cover the 4-byte TX offload header, the 124-byte header and an
+802.11 header. `dd_budget` counts down per descriptor and is written again
+for more; with the rings tracked all along, switching on mid-traffic records
+only what is posted from then on. A ring set up before the trap was engaged
+has its address register read back at the first index write, and that
+first write records only the slot before it (`guess`).
+
+- Channel `n` is at window offset `0x200 + 0x40 * n`: index `+0x04`, ring
+  address `+0x08`. Those offsets are the d11 core's only while the window
+  points at it; a write there to another core is taken for a post and reads
+  nothing unless it points at RAM and at something shaped like a descriptor.
+- The index is the bus address of the descriptor after the last posted
+  (an offset into the ring below `0x2000`), and the walk wraps at the
+  descriptor with `EOT`. The descriptor words are taken in whichever byte
+  order gives a valid byte count (`be` when big-endian).
+- A bus address is taken as the physical one minus `dd_bus_off` (0, the
+  BCM63xx PCIe inbound window's identity), and read uncached through CKSEG1
+  only inside RAM below 512 MB. **SALAME**: that the identity holds on the
+  DSL-3580L's BCM63168 is not checked; a wrong offset reads RAM that is not
+  the frame, which the decoder shows as a layout it does not recognise.
+- Reading happens inside the trapped write, after `wl` has written its
+  caches back to post the frame, so it is what the engine reads.
+
 ### A window in KSEG1
 
 `__ioremap()` returns a bare `CKSEG1ADDR`, with no pte to trap, for an uncached
@@ -140,15 +177,22 @@ module holds its ptes. Off by default.
 ## Reading the capture
 
 `decode-wl-mmio.py` is a stdin filter (`--since LABEL`, `--until LABEL`,
-`--base`). For register-level decoding give the binary to
+`--base`, `--hex` for the raw bytes of the TX buffers). It recognises the
+d11 AC TX header, with or without the TX offload header in front, from the
+`frame_len` that matches the descriptor's byte count, and prints its fields,
+the rate blocks with their PHY TX control words, the PLCP read as L-SIG,
+HT-SIG or VHT-SIG-A by the frame type, and the 802.11 header. For register-level decoding give the binary to
 `../reverse-tools/mmio2ops.py`, which reads it directly. The offsets are the
 CPU side; on this big-endian host a 16-bit register is at `offset ^ 2`, which
 mmio2ops applies.
 
 Record: `struct wl_mmio_rec`, packed, `u64 ts_ns; u32 seq; u32 addr; u32 val;
 u32 aux; u8 op; u8 cpu; u16 pad`. `op` is 60 read, 61 write, 62 mark (label in
-`addr`/`val`/`aux`), 255 drop count (in `aux`); these numbers are free in
-`wl_diag`'s enum, so the streams can be merged. `addr` is the offset into the
+`addr`/`val`/`aux`), 63 TX descriptor (`addr` its bus address, `val` the
+buffer's, `aux` channel in 31:24, flags in 23:16, buffer bytes in 15:0), 64
+data (twelve bytes in `addr`/`val`/`aux`: the descriptor's 16 as in memory,
+then the buffer's, queued right after their 63), 255 drop count (in `aux`);
+these numbers are free in `wl_diag`'s enum, so the streams can be merged. `addr` is the offset into the
 window; `aux` carries the width in its low byte and bit 8 for a delay-slot
 access.
 

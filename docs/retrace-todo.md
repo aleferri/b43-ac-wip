@@ -374,7 +374,11 @@ adaptation, and HT and VHT rates in transmission. What is open:
   primary at the bottom of its block. No HT or VHT word is in any capture:
   data frames carry theirs in the DMA descriptor, and the stock driver
   sends the beacon, the probe response and the response frames at legacy
-  rates.
+  rates. Next: `wl-mmio-trap` with `dd_len` on the DSL-3580L's own `wl`
+  (784.2, the microcode b43 loads), a station passing traffic at HT20,
+  HT40 and VHT80, with a primary off the bottom of its block at 40 and 80
+  MHz: the descriptors give the whole header of each frame, prefix,
+  control words and PLCP included.
 - **RX rates.** `b43_rx_rate_ac()` takes the frame type from PHY RX status
   0 with HT at 2 and VHT at 3, Broadcom's FT_HT and FT_VHT for these PHYs,
   and reads HT-SIG and VHT-SIG-A from the six bytes in front of the frame.

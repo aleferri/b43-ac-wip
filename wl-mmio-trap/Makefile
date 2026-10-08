@@ -41,7 +41,7 @@
 obj-m := wl_mmio_trap.o
 wl_mmio_trap-objs := wl_mmio_trap_main.o mips_mmio_emulate.o mmio_pte.o \
                      win_find.o win_redirect.o bp_hook.o mips_opcode.o \
-                     kern_syms.o wl_ring.o
+                     kern_syms.o wl_ring.o dma_dd.o
 
 KDIR ?= /lib/modules/$(shell uname -r)/build
 
