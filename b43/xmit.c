@@ -16,6 +16,7 @@
 
 #include "xmit.h"
 #include "phy_common.h"
+#include "phy_ac.h"
 #include "dma.h"
 #include "pio.h"
 
@@ -232,6 +233,131 @@ static u8 b43_calc_fallback_rate(u8 bitrate, int gmode)
 }
 
 /* Generate a TX data header. */
+/* Index of a legacy rate in PHY TX control word 2 of the AC microcode. */
+static u16 b43_txhdr_ac_rate_idx(u8 rate)
+{
+	switch (rate) {
+	case B43_CCK_RATE_1MB:
+	case B43_OFDM_RATE_6MB:
+		return 0;
+	case B43_CCK_RATE_2MB:
+	case B43_OFDM_RATE_9MB:
+		return 1;
+	case B43_CCK_RATE_5MB:
+	case B43_OFDM_RATE_12MB:
+		return 2;
+	case B43_CCK_RATE_11MB:
+	case B43_OFDM_RATE_18MB:
+		return 3;
+	case B43_OFDM_RATE_24MB:
+		return 4;
+	case B43_OFDM_RATE_36MB:
+		return 5;
+	case B43_OFDM_RATE_48MB:
+		return 6;
+	case B43_OFDM_RATE_54MB:
+		return 7;
+	}
+	B43_WARN_ON(1);
+	return 0;
+}
+
+/*
+ * The AC microcode's descriptor, one legacy rate: b43_op_tx() drops a frame
+ * that asks for an MCS, and hardware encryption is off on B43_FW_HDR_AC. The
+ * frame goes out on the TX cores the PHY keeps for the beacon, on the
+ * primary 20 MHz of the channel, at the rate's power offset the PHY writes
+ * into the rate blocks for the microcode's own frames.
+ */
+static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
+				 struct sk_buff *skb,
+				 struct ieee80211_tx_info *info, u16 cookie)
+{
+	struct b43_txhdr_ac *txhdr = (struct b43_txhdr_ac *)_txhdr;
+	struct b43_txhdr_ac_rate *r = &txhdr->rate[0];
+	const struct ieee80211_hdr *wlhdr =
+	    (const struct ieee80211_hdr *)skb->data;
+	const struct b43_phy_ac *ac = dev->phy.ac;
+	struct ieee80211_tx_rate *rates = info->control.rates;
+	struct ieee80211_rate *txrate;
+	unsigned int len = skb->len + FCS_LEN;
+	u16 cores = ac->tx_cores ? : 0x0001;
+	u16 mac_lo = 0, phy0, po, rts = B43_TXH_AC_RTS_LAST_RATE;
+	u8 rate;
+
+	BUILD_BUG_ON(sizeof(struct b43_txhdr_ac) != 124);
+
+	if (WARN_ON_ONCE(info->control.hw_key))
+		return -EOPNOTSUPP;
+
+	txrate = ieee80211_get_tx_rate(dev->wl->hw, info);
+	rate = txrate ? txrate->hw_value : B43_OFDM_RATE_6MB;
+
+	memset(txhdr, 0, sizeof(*txhdr));
+
+	if (!(info->flags & IEEE80211_TX_CTL_NO_ACK))
+		mac_lo |= B43_TXH_AC_MAC_IACK;
+	if (info->flags & IEEE80211_TX_CTL_ASSIGN_SEQ)
+		mac_lo |= B43_TXH_AC_MAC_ASEQ;
+	if (info->flags & IEEE80211_TX_CTL_FIRST_FRAGMENT)
+		mac_lo |= B43_TXH_AC_MAC_STMSDU;
+	/* rates[0].count as the TX status report expects it, as for pre-AC */
+	if ((rates[0].flags & IEEE80211_TX_RC_USE_RTS_CTS) ||
+	    (rates[0].count <= dev->wl->hw->conf.long_frame_max_tx_count)) {
+		rates[0].count = dev->wl->hw->conf.long_frame_max_tx_count;
+		mac_lo |= B43_TXH_AC_MAC_LFRM;
+	} else {
+		rates[0].count = dev->wl->hw->conf.short_frame_max_tx_count;
+	}
+
+	txhdr->mac_ctl_lo = cpu_to_le16(mac_lo);
+	txhdr->mac_ctl_hi = cpu_to_le16(B43_TXH_AC_MAC_FIX_RATE);
+	txhdr->chanspec = cpu_to_le16(ac->chanspec);
+	txhdr->frame_len = cpu_to_le16(len);
+	txhdr->cookie = cpu_to_le16(cookie);
+	txhdr->seq = wlhdr->seq_ctrl;
+
+	phy0 = b43_is_ofdm_rate(rate) ? B43_TXH_PHY_ENC_OFDM :
+					B43_TXH_PHY_ENC_CCK;
+	phy0 |= B43_TXH_AC_PHY0_NON_SOUNDING;
+	phy0 |= cores << B43_TXH_AC_PHY0_CORES_SHIFT;
+	if (rates[0].flags & IEEE80211_TX_RC_USE_SHORT_PREAMBLE)
+		phy0 |= B43_TXH_AC_PHY0_SHORT_PREAMBLE;
+	r->phy_ctl[0] = cpu_to_le16(phy0);
+	po = b43_is_ofdm_rate(rate) ?
+	     ac->rate_po_ofdm[b43_txhdr_ac_rate_idx(rate)] : ac->rate_po_cck;
+	r->phy_ctl[1] = cpu_to_le16((po & B43_TXH_AC_PHY1_TXPWR_OFFSET) |
+				    ((ac->chanspec &
+				      B43_PHY_AC_CHANSPEC_SB_MASK) >>
+				     B43_PHY_AC_CHANSPEC_SB_SHIFT));
+	r->phy_ctl[2] = cpu_to_le16(b43_txhdr_ac_rate_idx(rate));
+	b43_generate_plcp_hdr((struct b43_plcp_hdr4 *)&r->plcp, len, rate);
+	r->tx_rate = cpu_to_le16(rate);
+
+	if (rates[0].flags & (IEEE80211_TX_RC_USE_RTS_CTS |
+			      IEEE80211_TX_RC_USE_CTS_PROTECT)) {
+		struct ieee80211_rate *rr =
+			ieee80211_get_rts_cts_rate(dev->wl->hw, info);
+		u8 rts_rate = rr ? rr->hw_value : rate;
+		u8 code;
+
+		if (rates[0].flags & IEEE80211_TX_RC_USE_CTS_PROTECT)
+			rts |= B43_TXH_AC_RTS_USE_CTS;
+		else
+			rts |= B43_TXH_AC_RTS_USE_RTS;
+		if (b43_is_ofdm_rate(rts_rate)) {
+			rts |= B43_TXH_AC_RTS_FT_OFDM;
+			code = b43_plcp_get_ratecode_ofdm(rts_rate);
+		} else {
+			code = b43_plcp_get_ratecode_cck(rts_rate);
+		}
+		rts |= (code & 0x0f) << B43_TXH_AC_RTS_RATE_SHIFT;
+	}
+	r->rts_cts_ctl = cpu_to_le16(rts);
+
+	return 0;
+}
+
 int b43_generate_txhdr(struct b43_wldev *dev,
 		       u8 *_txhdr,
 		       struct sk_buff *skb_frag,
@@ -254,11 +380,14 @@ int b43_generate_txhdr(struct b43_wldev *dev,
 	u16 phy_ctl = 0;
 	bool fill_phy_ctl1 = (phy->type == B43_PHYTYPE_LP ||
 			      phy->type == B43_PHYTYPE_N ||
-			      phy->type == B43_PHYTYPE_HT ||
-			      phy->type == B43_PHYTYPE_AC);
+			      phy->type == B43_PHYTYPE_HT);
 	u8 extra_ft = 0;
 	struct ieee80211_rate *txrate;
 	struct ieee80211_tx_rate *rates;
+
+	if (dev->fw.hdr_format == B43_FW_HDR_AC)
+		return b43_generate_txhdr_ac(dev, _txhdr, skb_frag, info,
+					     cookie);
 
 	memset(txhdr, 0, sizeof(*txhdr));
 
@@ -339,7 +468,6 @@ int b43_generate_txhdr(struct b43_wldev *dev,
 		}
 	}
 	switch (dev->fw.hdr_format) {
-	case B43_FW_HDR_AC:
 	case B43_FW_HDR_598:
 		b43_generate_plcp_hdr((struct b43_plcp_hdr4 *)(&txhdr->format_598.plcp),
 				      plcp_fragment_len, rate);
@@ -441,7 +569,6 @@ int b43_generate_txhdr(struct b43_wldev *dev,
 			struct ieee80211_cts *cts;
 
 			switch (dev->fw.hdr_format) {
-			case B43_FW_HDR_AC:
 			case B43_FW_HDR_598:
 				cts = (struct ieee80211_cts *)
 					(txhdr->format_598.rts_frame);
@@ -464,7 +591,6 @@ int b43_generate_txhdr(struct b43_wldev *dev,
 			struct ieee80211_rts *rts;
 
 			switch (dev->fw.hdr_format) {
-			case B43_FW_HDR_AC:
 			case B43_FW_HDR_598:
 				rts = (struct ieee80211_rts *)
 					(txhdr->format_598.rts_frame);
@@ -488,7 +614,6 @@ int b43_generate_txhdr(struct b43_wldev *dev,
 
 		/* Generate the PLCP headers for the RTS/CTS frame */
 		switch (dev->fw.hdr_format) {
-		case B43_FW_HDR_AC:
 		case B43_FW_HDR_598:
 			plcp = &txhdr->format_598.rts_plcp;
 			break;
@@ -506,7 +631,6 @@ int b43_generate_txhdr(struct b43_wldev *dev,
 				      len, rts_rate_fb);
 
 		switch (dev->fw.hdr_format) {
-		case B43_FW_HDR_AC:
 		case B43_FW_HDR_598:
 			hdr = (struct ieee80211_hdr *)
 				(&txhdr->format_598.rts_frame);
@@ -547,7 +671,6 @@ int b43_generate_txhdr(struct b43_wldev *dev,
 
 	/* Magic cookie */
 	switch (dev->fw.hdr_format) {
-	case B43_FW_HDR_AC:
 	case B43_FW_HDR_598:
 		txhdr->format_598.cookie = cpu_to_le16(cookie);
 		break;

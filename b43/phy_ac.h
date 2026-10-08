@@ -282,6 +282,7 @@ struct b43_phy_ac_txpwr_limits {
  * The width field is also the argument the stock driver passes to
  * b43_mac_bw_set().
  */
+#define B43_PHY_AC_CHANSPEC_SB_MASK		0x0700
 #define B43_PHY_AC_CHANSPEC_SB_SHIFT		8
 #define B43_PHY_AC_CHANSPEC_BW_MASK		0x3800
 #define B43_PHY_AC_CHANSPEC_BW20		0x1000
@@ -521,6 +522,15 @@ struct b43_phy_ac {
 	enum nl80211_chan_width mac_width;
 	/* Chanspec last written to B43_SHM_SH_CHAN, 0 when never. */
 	u16 chanspec;
+	/* TX cores last written into shm 0x00cc, the mask frames go out on. */
+	u16 tx_cores;
+	/*
+	 * Power offset field of each legacy rate, PHY TX control word 1, as
+	 * last written into the rate blocks: OFDM by rate index, 6 to 54 Mbit/s,
+	 * and the one CCK value.
+	 */
+	u16 rate_po_ofdm[8];
+	u16 rate_po_cck;
 	u8 crs_subband;
 	/* Operating width of the same configuration. */
 	enum nl80211_chan_width cal_width;

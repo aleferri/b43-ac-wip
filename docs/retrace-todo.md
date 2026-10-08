@@ -339,11 +339,22 @@ takes the streams from the SROM `rxchain` and leaves out what b43 does not
 do: A-MPDU and A-MSDU, MPDUs over 3895 bytes, LDPC, beamforming, link
 adaptation, and HT and VHT rates in transmission. What is open:
 
-- **TX.** The TX header is the pre-AC layout, `format_598`, with legacy
-  rates only: with no TX MCS set and an empty VHT TX map mac80211 picks
-  OFDM rates, and `b43_op_tx()` drops a frame that asks for an MCS. The AC
-  ucode's header for HT and VHT, and whether it is the 598 one at all, is in
-  DMA memory, which no capture records.
+- **TX.** The TX descriptor is the AC microcode's long format,
+  `d11actxh_t` of Broadcom's `d11.h` (see `PROVENANCE.md`), 124 bytes:
+  per-frame fields, four rate blocks of which b43 fills the first, and the
+  link fields left zero. It replaced `format_598`, which put b43's cookie,
+  the frame length and the chanspec where the AC ucode does not read them:
+  on the DSL-3580L the first frame sent over DMA came back with frame ID 0
+  and the beacon, out until then, stopped. Legacy rates only: with no TX MCS
+  set and an empty VHT TX map mac80211 picks OFDM rates, and `b43_op_tx()`
+  drops a frame that asks for an MCS. PHY TX control word 1 carries
+  the rate's power offset, the field the PHY writes into the rate blocks
+  for the ucode's own frames at that rate; that the stock driver puts the
+  same value in a data frame's descriptor is not checked, since no capture
+  records one. Open: `D11AC_TXC_UPD_CACHE` is not set; the 6-byte PLCP of
+  the rate block is filled as the pre-AC one, at offset 0; the multicast
+  frame ID still goes to shm `0x00a8`, `B43_SHM_SH_MCASTCOOKIE` of the older
+  microcode, which no AC capture writes (none sends a multicast frame).
 - **RX rates.** `b43_rx_rate_ac()` takes the frame type from PHY RX status
   0 with HT at 2 and VHT at 3, Broadcom's FT_HT and FT_VHT for these PHYs,
   and reads HT-SIG and VHT-SIG-A from the six bytes in front of the frame.

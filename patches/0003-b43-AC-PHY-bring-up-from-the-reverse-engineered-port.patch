@@ -14,15 +14,15 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     4 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |    92 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 10523 +++++++++++++++-
- drivers/net/wireless/broadcom/b43/phy_ac.h    |   778 +-
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 10526 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.h    |   788 +-
  drivers/net/wireless/broadcom/b43/ppr_ac.c    |   258 +
  drivers/net/wireless/broadcom/b43/ppr_ac.h    |    80 +
  .../net/wireless/broadcom/b43/radio_2069.c    |  1671 +++
  .../net/wireless/broadcom/b43/radio_2069.h    |    48 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1079 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    51 +
- 10 files changed, 14562 insertions(+), 22 deletions(-)
+ 10 files changed, 14575 insertions(+), 22 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -145,7 +145,7 @@ index 0000000..2e3420a
 +	b43_read32(dev, B43_MMIO_MACCTL);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index fe102ea..981c7a3 100644
+index fe102ea..528ca35 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -1,17 +1,53 @@
@@ -208,7 +208,7 @@ index fe102ea..981c7a3 100644
  
  static int b43_phy_ac_op_allocate(struct b43_wldev *dev)
  {
-@@ -62,27 +98,10476 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -62,27 +98,10479 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -1044,6 +1044,7 @@ index fe102ea..981c7a3 100644
 +	u16 cc = b43_shm_read16(dev, B43_SHM_SHARED, 0x00cc);
 +
 +	b43_phy_ac_chain_pair(dev, site, dev->phy.ac->cal_width, pair);
++	dev->phy.ac->tx_cores = pair[0];
 +	cc = (u16)((cc & ~0x01c0) | (pair[0] << 6));
 +	b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
 +	b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
@@ -1224,7 +1225,7 @@ index fe102ea..981c7a3 100644
 +		u16 val;
 +
 +		if (r->cck)
-+			val = b43_phy_ac_cck_rate_po(ac);
++			val = ac->rate_po_cck = b43_phy_ac_cck_rate_po(ac);
 +		else if (capped)
 +			val = b43_phy_ac_rate_po_capped(ac,
 +					b43_ppr_ac_ofdm(&ac->txpwr_ppr,
@@ -1236,6 +1237,8 @@ index fe102ea..981c7a3 100644
 +								 r->ofdm),
 +						 cap);
 +
++		if (!r->cck)
++			ac->rate_po_ofdm[r->ofdm] = val;
 +		b43_shm_read16(dev, B43_SHM_SHARED, cell);
 +		b43_shm_write16(dev, B43_SHM_SHARED, cell, val);
 +	}
@@ -10699,7 +10702,7 @@ index fe102ea..981c7a3 100644
 +	(void)b43_phy_ac_farrow_vals_432x_media_a1;
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.h b/drivers/net/wireless/broadcom/b43/phy_ac.h
-index 02eb6c0..f7b2407 100644
+index 02eb6c0..84d460a 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.h
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.h
 @@ -3,6 +3,12 @@
@@ -10802,7 +10805,7 @@ index 02eb6c0..f7b2407 100644
  #define B43_PHY_AC_C1_CLIP			0x6d4
  #define  B43_PHY_AC_C1_CLIP_DIS			0x4000
  #define B43_PHY_AC_C2_CLIP			0x8d4
-@@ -31,9 +100,712 @@
+@@ -31,9 +100,722 @@
  #define B43_PHY_AC_C3_CLIP			0xad4
  #define  B43_PHY_AC_C3_CLIP_DIS			0x4000
  
@@ -10988,6 +10991,7 @@ index 02eb6c0..f7b2407 100644
 + * The width field is also the argument the stock driver passes to
 + * b43_mac_bw_set().
 + */
++#define B43_PHY_AC_CHANSPEC_SB_MASK		0x0700
 +#define B43_PHY_AC_CHANSPEC_SB_SHIFT		8
 +#define B43_PHY_AC_CHANSPEC_BW_MASK		0x3800
 +#define B43_PHY_AC_CHANSPEC_BW20		0x1000
@@ -11227,6 +11231,15 @@ index 02eb6c0..f7b2407 100644
 +	enum nl80211_chan_width mac_width;
 +	/* Chanspec last written to B43_SHM_SH_CHAN, 0 when never. */
 +	u16 chanspec;
++	/* TX cores last written into shm 0x00cc, the mask frames go out on. */
++	u16 tx_cores;
++	/*
++	 * Power offset field of each legacy rate, PHY TX control word 1, as
++	 * last written into the rate blocks: OFDM by rate index, 6 to 54 Mbit/s,
++	 * and the one CCK value.
++	 */
++	u16 rate_po_ofdm[8];
++	u16 rate_po_cck;
 +	u8 crs_subband;
 +	/* Operating width of the same configuration. */
 +	enum nl80211_chan_width cal_width;

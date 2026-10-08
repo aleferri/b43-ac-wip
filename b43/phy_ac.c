@@ -917,6 +917,7 @@ static void b43_phy_ac_bss_cc_update(struct b43_wldev *dev,
 	u16 cc = b43_shm_read16(dev, B43_SHM_SHARED, 0x00cc);
 
 	b43_phy_ac_chain_pair(dev, site, dev->phy.ac->cal_width, pair);
+	dev->phy.ac->tx_cores = pair[0];
 	cc = (u16)((cc & ~0x01c0) | (pair[0] << 6));
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
@@ -1097,7 +1098,7 @@ static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev,
 		u16 val;
 
 		if (r->cck)
-			val = b43_phy_ac_cck_rate_po(ac);
+			val = ac->rate_po_cck = b43_phy_ac_cck_rate_po(ac);
 		else if (capped)
 			val = b43_phy_ac_rate_po_capped(ac,
 					b43_ppr_ac_ofdm(&ac->txpwr_ppr,
@@ -1109,6 +1110,8 @@ static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev,
 								 r->ofdm),
 						 cap);
 
+		if (!r->cck)
+			ac->rate_po_ofdm[r->ofdm] = val;
 		b43_shm_read16(dev, B43_SHM_SHARED, cell);
 		b43_shm_write16(dev, B43_SHM_SHARED, cell, val);
 	}

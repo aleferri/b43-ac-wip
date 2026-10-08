@@ -55,8 +55,10 @@ capture is pending.
 `include/d11.h` of the `bcmdhd.101.10.361.x` tree in Google's Nest open-source
 manifest:
 https://nest-open-source.googlesource.com/manifest_repos/dhd-driver/+/refs/heads/main/bcmdhd.101.10.361.x/include/d11.h
-Read for the `TX_STATUS40_*` definitions of the corerev 40-79 TX status; no
-code or text of it is in this tree, and every field `b43_txstatus_read_ac()`
-decodes is checked against the archer-t5e and MacBookAir6,1 captures
-(`docs/retrace-todo.md`, "TX status"). The file is published in that public
+Read for the `TX_STATUS40_*` definitions of the corerev 40-79 TX status
+and for the layout and field names of `d11actxh_t`, the corerev 40-63 TX
+descriptor `struct b43_txhdr_ac` follows; no code or text of it is in this
+tree. Every field `b43_txstatus_read_ac()` decodes is checked against the
+archer-t5e and MacBookAir6,1 captures (`docs/retrace-todo.md`, "TX status");
+the descriptor is in DMA memory, which no capture records. The file is published in that public
 repository but its header carries Broadcom's proprietary notice.

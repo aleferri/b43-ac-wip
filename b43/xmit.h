@@ -187,12 +187,65 @@ struct b43_tx_legacy_rate_phy_ctl_entry {
 #define  B43_TXH_PHY1_MODUL_QAM64	0x1800 /* QAM64 */
 #define  B43_TXH_PHY1_MODUL_QAM256	0x2000 /* QAM256 */
 
+/*
+ * TX descriptor of the AC microcode, d11 core revisions 40-63, long format:
+ * per-frame fields, four rate blocks, the link ("cache") fields. Layout and
+ * names from Broadcom's d11actxh_t (see PROVENANCE.md). The frame follows it
+ * directly; the TX status echoes @cookie as the frame ID.
+ */
+struct b43_txhdr_ac_rate {
+	__le16 phy_ctl[3];		/* PHY TX control words 0-2 */
+	struct b43_plcp_hdr6 plcp;
+	__le16 fbw_info;		/* Fallback bandwidth */
+	__le16 tx_rate;			/* In 500 kb/s units */
+	__le16 rts_cts_ctl;
+	__le16 bfm0;
+} __packed;
+
+struct b43_txhdr_ac {
+	__le16 tso_info;
+	__le16 mac_ctl_lo;		/* MAC TX control, low */
+	__le16 mac_ctl_hi;		/* MAC TX control, high */
+	__le16 chanspec;
+	__u8 iv_offset;
+	__u8 pkt_cache_len;
+	__le16 frame_len;		/* With the FCS */
+	__le16 cookie;			/* Frame ID */
+	__le16 seq;
+	__le16 tstamp;
+	__le16 tx_status;
+	struct b43_txhdr_ac_rate rate[4];
+	__u8 cache[24];
+} __packed;
+
+/* MAC TX control, low */
+#define B43_TXH_AC_MAC_IACK		0x0080	/* Expect an immediate ACK */
+#define B43_TXH_AC_MAC_LFRM		0x0100	/* Long frame retry limit */
+#define B43_TXH_AC_MAC_ASEQ		0x0800	/* ucode assigns the sequence number */
+#define B43_TXH_AC_MAC_STMSDU		0x4000	/* First MSDU */
+/* MAC TX control, high */
+#define B43_TXH_AC_MAC_FIX_RATE		0x0002	/* Primary rate only */
+/* PHY TX control word 0: B43_TXH_PHY_ENC in 1:0, then */
+#define B43_TXH_AC_PHY0_NON_SOUNDING	0x0004
+#define B43_TXH_AC_PHY0_SHORT_PREAMBLE	0x0010
+#define B43_TXH_AC_PHY0_CORES_SHIFT	6
+/* PHY TX control word 1: primary 20 MHz subband, power offset */
+#define B43_TXH_AC_PHY1_SUBBAND		0x0007
+#define B43_TXH_AC_PHY1_TXPWR_OFFSET	0x01F8
+/* RTS/CTS control */
+#define B43_TXH_AC_RTS_FT_OFDM		0x0001
+#define B43_TXH_AC_RTS_USE_RTS		0x0004
+#define B43_TXH_AC_RTS_USE_CTS		0x0008
+#define B43_TXH_AC_RTS_SHORT_PREAMBLE	0x0010
+#define B43_TXH_AC_RTS_LAST_RATE	0x0020
+#define B43_TXH_AC_RTS_RATE_SHIFT	8
 
 static inline
 size_t b43_txhdr_size(struct b43_wldev *dev)
 {
 	switch (dev->fw.hdr_format) {
 	case B43_FW_HDR_AC:
+		return sizeof(struct b43_txhdr_ac);
 	case B43_FW_HDR_598:
 		return 112 + sizeof(struct b43_plcp_hdr6);
 	case B43_FW_HDR_410:
