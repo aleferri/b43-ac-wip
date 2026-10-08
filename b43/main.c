@@ -1584,12 +1584,6 @@ void b43_wireless_core_reset(struct b43_wldev *dev, bool gmode)
 #define B43_TXST_AC_SUPP_SHIFT		4
 #define B43_TXST_AC_ACKED		0x00008000
 
-/* Transmit attempts at two rates, the low byte of each half of a word. */
-static u8 b43_txstatus_ac_tries(u32 word)
-{
-	return (word & 0xff) + ((word >> 16) & 0xff);
-}
-
 /*
  * One TX status of the AC microcode: two packages of four words, read as two
  * passes over XMITSTAT_0..3. Bit 0 of the first word says an entry is there,
@@ -1598,7 +1592,10 @@ static u8 b43_txstatus_ac_tries(u32 word)
  *
  * In the first package word 0 holds the frame ID in its high half and the
  * status bits in its low half, words 2 and 3 the transmit attempts at rates
- * 0-1 and 2-3. The second package is not decoded.
+ * 0-1 and 2-3, in bits 7:0 and 23:16. b43's descriptor asks for its first
+ * rate only, so the attempts are those of rate 0: on such a frame bits 23:16
+ * read 1 once it is acknowledged, which is not an attempt. The second
+ * package is not decoded.
  */
 static bool b43_txstatus_read_ac(struct b43_wldev *dev,
 				 struct b43_txstatus *stat)
@@ -1626,8 +1623,7 @@ static bool b43_txstatus_read_ac(struct b43_wldev *dev,
 	stat->intermediate = !!(w[0] & B43_TXST_AC_INTERMEDIATE);
 	stat->pm_indicated = !!(w[0] & B43_TXST_AC_PM_INDICATED);
 	stat->supp_reason = (w[0] & B43_TXST_AC_SUPP) >> B43_TXST_AC_SUPP_SHIFT;
-	stat->frame_count = b43_txstatus_ac_tries(w[2]) +
-			    b43_txstatus_ac_tries(w[3]);
+	stat->frame_count = w[2] & 0xff;
 	return true;
 }
 

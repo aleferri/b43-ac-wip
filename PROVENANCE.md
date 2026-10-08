@@ -44,8 +44,16 @@ again, so the 128/128 check cannot be reproduced from this tree today.
 Taken by gonsolo, https://github.com/gonsolo/bcm4360-acphy, file
 `traces/wl-init-20260926-132021.trace` at commit `2a24fb2`, with his
 `wl_full_trace.bt`. The other captures, the register dumps, the SROM and the
-two scripts were sent by him to this project on 2026-10-01. Only the capture is used; that repository also holds
-material derived from decompiling `wl.ko`, which this project does not use.
+two scripts were sent by him to this project on 2026-10-01.
+
+That repository also holds material derived from decompiling `wl.ko`, which
+this project does not read. What it does take from there is what his port's
+driver code and notes state, at commit `c27dcd8`, as measured on his card
+under the 832.127 microcode: the 4-byte TX offload header in front of the
+AC TX descriptor and the IV offset in it (`b43-src/xmit.{c,h}`), that bits
+23:16 of the third TX status word are not attempts on a first-rate-only
+descriptor (`notes/110`), and the per-core receive power in bytes 9 and 10
+of the RX header (`b43-src/xmit.c`); see `docs/retrace-todo.md`.
 
 **TODO:** the repository has no licence file; permission to redistribute the
 capture is pending.

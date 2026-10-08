@@ -1081,7 +1081,7 @@ struct b43_wl {
 	struct ieee80211_supported_band band_5ghz_ac;
 
 	/* Kmalloc'ed scratch space for PIO TX/RX. Protected by wl->mutex. */
-	u8 pio_scratchspace[124] __attribute__((__aligned__(8)));
+	u8 pio_scratchspace[128] __attribute__((__aligned__(8)));
 	u8 pio_tailspace[4] __attribute__((__aligned__(8)));
 };
 

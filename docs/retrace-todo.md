@@ -341,7 +341,12 @@ adaptation, and HT and VHT rates in transmission. What is open:
 - **TX.** The TX descriptor is the AC microcode's long format,
   `d11actxh_t` of Broadcom's `d11.h` (see `PROVENANCE.md`), 124 bytes:
   per-frame fields, four rate blocks of which b43 fills the first, and the
-  link fields left zero. It replaced `format_598`, which put b43's cookie,
+  link fields left zero. In front of it go 4 bytes of TX offload header,
+  `02 00 02 00`, and the IV offset carries the length of the 802.11 header,
+  as gonsolo's port sends them under the 832.127 microcode, where they
+  associate and carry traffic; under 784.2, the DSL-3580L's, the prefix is
+  not checked against anything, and the PLCP of the rate block at offset 0
+  is his as well. It replaced `format_598`, which put b43's cookie,
   the frame length and the chanspec where the AC ucode does not read them:
   on the DSL-3580L the first frame sent over DMA came back with frame ID 0
   and the beacon, out until then, stopped. Legacy rates only: with no TX MCS
@@ -350,8 +355,8 @@ adaptation, and HT and VHT rates in transmission. What is open:
   the rate's power offset, the field the PHY writes into the rate blocks
   for the ucode's own frames at that rate; that the stock driver puts the
   same value in a data frame's descriptor is not checked, since no capture
-  records one. Open: `D11AC_TXC_UPD_CACHE` is not set; the 6-byte PLCP of
-  the rate block is filled as the pre-AC one, at offset 0; the multicast
+  records one; gonsolo's port leaves it zero. Open: `D11AC_TXC_UPD_CACHE`
+  is not set; `ASEQ` and `LFRM`, which his port does not set; the multicast
   frame ID still goes to shm `0x00a8`, `B43_SHM_SH_MCASTCOOKIE` of the older
   microcode, which no AC capture writes (none sends a multicast frame).
 - **RX rates.** `b43_rx_rate_ac()` takes the frame type from PHY RX status
@@ -359,9 +364,14 @@ adaptation, and HT and VHT rates in transmission. What is open:
   and reads HT-SIG and VHT-SIG-A from the six bytes in front of the frame.
   That the AC ucode puts the SIG fields there, as it puts the legacy PLCP,
   is not checked against a capture: the receive header is in DMA memory,
-  which none records. The signal strength is not reported.
+  which none records. The signal is the larger of the two cores' powers in
+  bytes 9 and 10 of the header, -128 for a core that did not receive, as
+  gonsolo's port reads them under 832.127.
 - **Receive buffer.** `B43_DMA0_RX_AC_BUFSIZE` holds a 3895-byte MPDU, the
   VHT minimum; the stock driver's own buffer size is not in any capture.
+  The frame offset, 40, is the one both stock drivers write into the RX
+  control register: `0x036c0851` on the MacBookAir6,1 (6.30.223),
+  `0x00500851` on the agcombo (7.14).
 
 ### MAC and DMA, from the bus captures
 
@@ -398,20 +408,25 @@ adaptation, and HT and VHT rates in transmission. What is open:
   MPDUs the status covers and bit 15 the acknowledgement. The third and
   fourth words hold the transmit attempts at four rates, rates 0 and 1 in
   bits 7:0 and 23:16 of the third, rates 2 and 3 in the same bits of the
-  fourth; `frame_count` is their sum. Bits 15:8 and 31:24 next to each count
-  are zero or add up to bits 14:8 on all 472 statuses of the two captures,
-  the MacBookAir6,1 `wl-tx` (368) and the archer-t5e (104). On those
-  statuses: two unacknowledged frames end after 3 + 1 + 1 + 2 = 7 attempts,
-  the short retry limit; the three probe requests of the archer-t5e scan
-  have suppression reason 4 and no attempt; the acknowledged statuses whose
-  count sits in bits 23:16 only are aggregates of 2 and 4 MPDUs sent at
-  rate 1; `0x810b`, bit 3 on an acknowledged frame, is the MacBook in power
-  save. The field names are those of `TX_STATUS40_*` in Broadcom's `d11.h`
-  (see `PROVENANCE.md`). Open: `b43_fill_txstatus_report()` splits the sum
-  between the rate and its fallback by the retry limit instead of taking
-  the per-rate counts, because which rates the AC microcode tries follows
-  from the TX header, which is not mapped; the second package is read and
-  dropped, the low half of its first word is `0x0001` on every entry.
+  fourth. Bits 15:8 and 31:24 next to each count are zero or add up to
+  bits 14:8 on all 472 statuses of the two captures, the MacBookAir6,1
+  `wl-tx` (368) and the archer-t5e (104). On those statuses: two
+  unacknowledged frames end after 3 + 1 + 1 + 2 = 7 attempts, the short
+  retry limit; the three probe requests of the archer-t5e scan have
+  suppression reason 4 and no attempt; the acknowledged statuses whose count
+  sits in bits 23:16 only are aggregates of 2 and 4 MPDUs sent at rate 1;
+  `0x810b`, bit 3 on an acknowledged frame, is the MacBook in power save. On
+  b43's frames, which ask for the first rate only, bits 23:16 read 1 on
+  every acknowledged frame (gonsolo's port, his note 110: counted as
+  attempts they made every frame look retried, and minstrel kept the lowest
+  rates), so `frame_count` is bits 7:0 alone. The field names are those of
+  `TX_STATUS40_*` in Broadcom's `d11.h` (see `PROVENANCE.md`). Open:
+  `b43_fill_txstatus_report()` splits the count between the rate and its
+  fallback by the retry limit, though the descriptor asks for no fallback;
+  the second package is read and dropped, the low half of its first word is
+  `0x0001` on every entry. That 784.2 reports the same is not in any
+  capture: both above run the hybrid 6.30.223, the driver gonsolo's 832.127
+  comes from.
 - **Scratch and shared memory look alike to the comparison.**
   `tracelib.normalize()` drops `sel=`, and wl-diag prints a scratch word at
   four times its index, so scratch word 3 and shared `0x000c` are the same op

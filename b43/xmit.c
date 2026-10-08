@@ -344,12 +344,14 @@ static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 	u16 mac_lo = 0, phy0, po, rts = B43_TXH_AC_RTS_LAST_RATE;
 	u8 rate = c->rate;
 
-	BUILD_BUG_ON(sizeof(struct b43_txhdr_ac) != 124);
+	BUILD_BUG_ON(sizeof(struct b43_txhdr_ac) != 128);
 
 	if (WARN_ON_ONCE(info->control.hw_key))
 		return -EOPNOTSUPP;
 
 	memset(txhdr, 0, sizeof(*txhdr));
+	txhdr->toe[0] = 0x02;
+	txhdr->toe[2] = 0x02;
 
 	if (c->ack)
 		mac_lo |= B43_TXH_AC_MAC_IACK;
@@ -363,6 +365,7 @@ static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 	txhdr->mac_ctl_lo = cpu_to_le16(mac_lo);
 	txhdr->mac_ctl_hi = cpu_to_le16(B43_TXH_AC_MAC_FIX_RATE);
 	txhdr->chanspec = cpu_to_le16(ac->chanspec);
+	txhdr->iv_offset = ieee80211_hdrlen(wlhdr->frame_control);
 	txhdr->frame_len = cpu_to_le16(len);
 	txhdr->cookie = cpu_to_le16(cookie);
 	txhdr->seq = wlhdr->seq_ctrl;
@@ -958,10 +961,23 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
 
 	/* Link quality statistics */
 	switch (phytype) {
-	case B43_PHYTYPE_AC:
-		/* Where the AC microcode reports the power is not known. */
-		status.flag |= RX_FLAG_NO_SIGNAL_VAL;
+	case B43_PHYTYPE_AC: {
+		/*
+		 * The power of each core in dBm, bytes 9 and 10 of the header,
+		 * -128 on a core that did not receive (gonsolo's port).
+		 */
+		const s8 *pwr = (const s8 *)_rxhdr + 9;
+
+		if (pwr[0] == -128 && pwr[1] == -128)
+			status.flag |= RX_FLAG_NO_SIGNAL_VAL;
+		else if (pwr[0] == -128)
+			status.signal = pwr[1];
+		else if (pwr[1] == -128)
+			status.signal = pwr[0];
+		else
+			status.signal = max(pwr[0], pwr[1]);
 		break;
+	}
 	case B43_PHYTYPE_HT:
 		/* TODO: is max the right choice? */
 		status.signal = max_t(__s8,

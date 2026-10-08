@@ -190,8 +190,10 @@ struct b43_tx_legacy_rate_phy_ctl_entry {
 /*
  * TX descriptor of the AC microcode, d11 core revisions 40-63, long format:
  * per-frame fields, four rate blocks, the link ("cache") fields. Layout and
- * names from Broadcom's d11actxh_t (see PROVENANCE.md). The frame follows it
- * directly; the TX status echoes @cookie as the frame ID.
+ * names from Broadcom's d11actxh_t; in front of it a 4-byte TX offload
+ * header that lets the frame through as it is, 0x02 in its bytes 0 and 2,
+ * as gonsolo's port sends it (see PROVENANCE.md). The frame follows the
+ * descriptor directly; the TX status echoes @cookie as the frame ID.
  */
 struct b43_txhdr_ac_rate {
 	__le16 phy_ctl[3];		/* PHY TX control words 0-2 */
@@ -203,11 +205,12 @@ struct b43_txhdr_ac_rate {
 } __packed;
 
 struct b43_txhdr_ac {
+	__u8 toe[4];			/* TX offload header */
 	__le16 tso_info;
 	__le16 mac_ctl_lo;		/* MAC TX control, low */
 	__le16 mac_ctl_hi;		/* MAC TX control, high */
 	__le16 chanspec;
-	__u8 iv_offset;
+	__u8 iv_offset;			/* Length of the 802.11 header */
 	__u8 pkt_cache_len;
 	__le16 frame_len;		/* With the FCS */
 	__le16 cookie;			/* Frame ID */
