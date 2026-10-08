@@ -315,7 +315,7 @@ enum {
 #define B43_SHM_SH_SFFBLIM		0x0044	/* Short frame fallback retry limit */
 #define B43_SHM_SH_LFFBLIM		0x0046	/* Long frame fallback retry limit */
 #define B43_SHM_SH_BEACPHYCTL		0x0054	/* Beacon PHY TX control word (see PHY TX control) */
-#define B43_SHM_SH_BEACPHYCTL_AC	0x00CC	/* Beacon PHY TX control words 0-2, AC microcode */
+#define B43_SHM_SH_BEACPHYCTL_AC	0x00CC	/* Beacon PHY TX control word, AC microcode */
 #define B43_SHM_SH_EXTNPHYCTL		0x00B0	/* Extended bytes for beacon PHY control (N) */
 #define B43_SHM_SH_BCN_LI		0x00B6	/* beacon listen interval */
 /* SHM_SHARED ACK/CTS control */
@@ -859,10 +859,6 @@ enum b43_firmware_hdr_format {
  * the agcombo bus capture, 928), and counts them in the template length and
  * in the TIM position (0x3c + SSID length on 784 and 928).
  *
- * The beacon's PHY TX control words sit at B43_SHM_SH_BEACPHYCTL_AC; the
- * second is a constant of the microcode's capture, 0x0030 on the DSL-3580L
- * (784) and 0x0060 on the agcombo (928).
- *
  * TODO: probe-response offload. Its template follows the beacons, at 0x04d8
  * in 784 and 0x0700 in 832 and 928, and the stock driver rewrites it after
  * every beacon; b43 uploads none and leaves the probe requests to mac80211.
@@ -873,7 +869,6 @@ struct b43_tpl_layout {
 	u16 bcn_size;
 	u8 hdr_len;
 	u8 plcp_off;
-	u16 bcn_phyctl1;
 };
 
 /* Pointers to the firmware data and meta information about it. */

@@ -263,12 +263,14 @@ same lever as `AC_FIRST_INIT`.
 
 - **`0x00cc`.** Bits 8:6 are the `0x05d6` mask of the site that writes it,
   composed by `b43_phy_ac_bss_cc()`; bit 2 is always set and bit 0 is the
-  core's, and what either means is open. The PHY rewrites it at its two
-  chain-mask sites; the first write, at the BSS configuration, b43's core does
-  not do, and `test/unit` mirrors it. Wrong wherever the mask is (see
+  core's: the encoding, 1 for OFDM, which `b43_write_beacon_phytxctl_ac()`
+  sets before each beacon template as the stock drivers do. The PHY rewrites
+  the mask at its two chain-mask sites; the first write, at the BSS
+  configuration, b43's core does not do, and `test/unit` mirrors it. Wrong wherever the mask is (see
   "TX power"). `0x00d0` is written zero everywhere; nothing
   sets it.
-- **`0x078c`–`0x0790`** (station MAC): whether the ucode needs it is open.
+- **`0x078c`–`0x0790`**: the device's MAC, which every stock driver writes
+  and b43 writes through `B43_SHM_SH_AC_MACADDR`.
 - **`SLOTT`**: the bsinitvals give `0x14`, the stock driver writes `9` in the
   readback block and the core writes `9` at core init. The `0x3ff` before it
   in the wl-diag captures is CWmax in the scratch space, not the slot time.
