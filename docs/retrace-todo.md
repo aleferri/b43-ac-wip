@@ -450,11 +450,13 @@ sides write agree; what is open:
   leaves them, so the simulator reports them as written by `wl` alone.
 - The ChipCommon GPIO cells are the LEDs, which b43 drives from the MAC.
 
-### `do_full_init` does not tell cold from hot
+### `do_full_init` after a down
 
-`b43_phy_exit()` sets it back to `true` on every `ifconfig down`, so on b43 it
-is true on every bring-up and the comments in `b43/phy_ac.c` that read it as
-"cold attach only" are wrong on the real path. It waits for the hot work.
+`b43_phy_exit()` sets it back to `true` on every `ifconfig down`, so a down/up
+takes the first bring-up branches (`B43_PHY_AC_STATE_FIRST_BRINGUP`), where
+the stock driver's later `up` takes the others. Only a channel change on a
+running interface (`b43_ac_phy_recycle()`), which does not go through
+`b43_phy_exit()`, runs with it false. The hot `up` waits for the hot work.
 
 ## PHY: values
 
