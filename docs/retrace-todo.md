@@ -50,12 +50,11 @@ core itself, seen on the agcombo bus capture:
   set for an AP by `b43_adjust_opmode()`, as the stock driver does on the
   AC.
 - The mode bits the stock driver toggles inside the PHY's phases -- beacon
-  promiscuity off in the calibration flush and at the tail of the channel
-  switch, INFRA off / DISCPMQ on / AP off on the down -- have no core site in
+  promiscuity off at the tail of the channel switch and at the head of the
+  down, INFRA off / DISCPMQ on / AP off on the down -- have no core site in
   b43: `b43_adjust_opmode()` sets the mode once and the exit does not rewrite
-  it. `test/unit` emits those of the switch tail and of the down at the
-  stock points (`B43_AC_SITE_OPMODE_FILTERS`, `_DOWN_OPMODE`,
-  `_DOWN_OPMODE_END`); the one of the calibration flush has no site;
+  it. `test/unit` emits them at the stock points (`B43_AC_SITE_OPMODE_FILTERS`,
+  `_DOWN_OPMODE`, `_DOWN_OPMODE_END`, and the head of the down from the flow);
   the BSS mode block before the TX power adjust -- TBTT hold, AP, INFRA,
   PRETBTT 2, beacon promiscuity -- is emitted by the flow before
   `adjust_txpower`, which now suspends the MAC around its own body.
@@ -137,8 +136,8 @@ pieces in order. On the D6220 `cold01` (folded, op numbers of
   - `_OPMODE_FILTERS`, `_DOWN_OPMODE`, `_DOWN_OPMODE_END`: MACCONTROL mode
     bits. b43 sets them in `b43_adjust_opmode()` and keeps beacon
     promiscuity on for an AC AP; the
-    stock driver drops it around the calibration flush and the switch tail,
-    which receives no beacon that matters there.
+    stock driver drops it at the switch tail, which receives no beacon that
+    matters there, and at the head of the down.
   - `_CAC_CLOSE`: `b43_ac_cac_match_gate()`, from `b43_op_config()` right
     after the switch that armed the check.
   - `_BEACON_START`, `_BEACON_WD`: beacon template reloads, which b43 does
