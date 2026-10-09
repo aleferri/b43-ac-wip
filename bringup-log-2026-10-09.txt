@@ -1,0 +1,564 @@
+Sat Oct  3 20:56:11 2026 kern.info kernel: [ 3448.950000] b43-phy3: init: address match and keys
+Sat Oct  3 20:56:11 2026 kern.info kernel: [ 3448.960000] b43-phy3: init: PHY
+Sat Oct  3 20:56:11 2026 kern.info kernel: [ 3448.960000] b43-phy3: phy-ac: num_cores=3 coremask=0x3
+Sat Oct  3 20:56:11 2026 kern.info kernel: [ 3448.970000] b43-phy3: phy-ac: radio pwron 0x040b readback: 0169 after 2 polls
+Sat Oct  3 20:56:11 2026 kern.info kernel: [ 3448.980000] b43-phy3: radio 2069: rccal lpf cap 0xab (E=0x0acb F=0x0baf)
+Sat Oct  3 20:56:11 2026 kern.info kernel: [ 3448.990000] b43-phy3: AC-PHY: PLLCTL3 = 0x0000100e on op_init entry
+Sat Oct  3 20:56:11 2026 kern.info kernel: [ 3449.000000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_init: probe_cores
+Sat Oct  3 20:56:11 2026 kern.info kernel: [ 3449.000000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_init: pre_init_frontend
+Sat Oct  3 20:56:11 2026 kern.info kernel: [ 3449.010000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_init: pmu_regctl_gpio
+Sat Oct  3 20:56:11 2026 kern.info kernel: [ 3449.020000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_init: mode_init
+Sat Oct  3 20:56:11 2026 kern.info kernel: [ 3449.020000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_init: tables_init
+Sat Oct  3 20:56:11 2026 kern.info kernel: [ 3449.030000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_init: init_regs
+Sat Oct  3 20:56:11 2026 kern.info kernel: [ 3449.040000] b43-phy3: phy-ac: set_channel ch36 (5180 MHz) start
+Sat Oct  3 20:56:11 2026 kern.info kernel: [ 3449.050000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: channel_state
+Sat Oct  3 20:56:11 2026 kern.info kernel: [ 3449.060000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: switch_prep
+Sat Oct  3 20:56:11 2026 kern.info kernel: [ 3449.060000] b43-phy3: phy-ac: channel_switch_prep 0x0140 cur=0x0df7 -> 0x0df4
+Sat Oct  3 20:56:11 2026 kern.info kernel: [ 3449.070000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: radio_channel_setup
+Sat Oct  3 20:56:11 2026 kern.info kernel: [ 3449.080000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: phy_channel_setup
+Sat Oct  3 20:56:11 2026 kern.info kernel: [ 3449.100000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: chan_tables
+Sat Oct  3 20:56:11 2026 kern.info kernel: [ 3449.100000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: noise_shaping
+Sat Oct  3 20:56:11 2026 kern.info kernel: [ 3449.110000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: rx_regprog
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.120000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: crs_thresholds
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.130000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: reset_cca
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.140000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: afecal
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.140000] b43-phy3: radio 2069: afecal core 0 ctrl=0x5830 stat=0x0003/0x0003
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.150000] b43-phy3: radio 2069: afecal core 1 ctrl=0x5830 stat=0x0003/0x0003
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.160000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: adc_reset_txpwrctrl
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.170000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: idle_tssi
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.170000] ieee80211 phy3: AC-PHY: b43_phy_ac_idle_tssi_meas: tssi_path_enable
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.180000] ieee80211 phy3: AC-PHY: b43_phy_ac_idle_tssi_meas: rf_seq_mode_percore
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.190000] b43-phy3: phy-ac: idle-tssi c0 meas: 0x013=0x0004 0x012=0x09ac 0x464=0x0001 radio 0x4e=0x8000 0x166=0x0000 prog=0x026b
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.200000] b43-phy3: phy-ac: idle-tssi c1 meas: 0x013=0x0010 0x012=0x09bc 0x464=0x0001 radio 0x4e=0x8000 0x166=0x0000 prog=0x026f
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.220000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: shm_readback
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.220000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: shm_mac_config
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.230000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: txpwrctrl_setup
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.240000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: afe_gain
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.250000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: shm_tail
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.260000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: mac_toggles
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.260000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: done
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.290000] b43-phy3: start: enabling the MAC
+Sat Oct  3 20:56:12 2026 kern.warn kernel: [ 3449.290000] net_ratelimit: 13 callbacks suppressed
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.290000] b43-phy3: phy-ac: set_channel ch36 (5180 MHz) start
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.320000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_channel_calibrate: tempsense
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.320000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_channel_calibrate: post_switch_calibrations
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.330000] ieee80211 phy3: AC-PHY: b43_phy_ac_idle_tssi_meas: tssi_path_enable
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.340000] ieee80211 phy3: AC-PHY: b43_phy_ac_idle_tssi_meas: rf_seq_mode_percore
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.350000] b43-phy3: phy-ac: idle-tssi c0 meas: 0x013=0x0004 0x012=0x09ac 0x464=0x0001 radio 0x4e=0x8000 0x166=0x0000 prog=0x026b
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.360000] b43-phy3: phy-ac: idle-tssi c1 meas: 0x013=0x0010 0x012=0x09c0 0x464=0x0001 radio 0x4e=0x8000 0x166=0x0000 prog=0x0270
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.380000] ieee80211 phy3: AC-PHY: b43_phy_ac_idle_tssi_meas: tssi_path_enable
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.380000] ieee80211 phy3: AC-PHY: b43_phy_ac_idle_tssi_meas: rf_seq_mode_percore
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.390000] b43-phy3: phy-ac: idle-tssi c0 meas: 0x013=0x0004 0x012=0x09a8 0x464=0x0001 radio 0x4e=0x8000 0x166=0x0000 prog=0x026a
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.410000] b43-phy3: phy-ac: idle-tssi c1 meas: 0x013=0x0010 0x012=0x09bc 0x464=0x0001 radio 0x4e=0x8000 0x166=0x0000 prog=0x026f
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.440000] b43-phy3: phy-ac: txpwr_by_index core 0 idx 64 gain 0000/2f13/00f3 bbmult 35
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.450000] b43-phy3: phy-ac: txpwr_by_index core 1 idx 64 gain 0000/2f13/00f3 bbmult 35
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.470000] b43-phy3: phy-ac: txpwr_by_index core 0 idx 64 gain 0000/2f13/00f3 bbmult 35
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.480000] b43-phy3: phy-ac: txpwr_by_index core 1 idx 64 gain 0000/2f13/00f3 bbmult 35
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.500000] br-lan: port 5(phy3-ap0) entered blocking state
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.500000] br-lan: port 5(phy3-ap0) entered disabled state
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.510000] b43 bcma1:1 phy3-ap0: entered allmulticast mode
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.520000] b43 bcma1:1 phy3-ap0: entered promiscuous mode
+Sat Oct  3 20:56:12 2026 daemon.notice hostapd: phy3-ap0: interface state UNINITIALIZED->COUNTRY_UPDATE
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.740000] b43-phy3: phy-ac: radio pwron 0x040b readback: 0169 after 2 polls
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.780000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_init: probe_cores
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.780000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_init: pre_init_frontend
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.790000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_init: pmu_regctl_gpio
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.800000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_init: mode_init
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.800000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_init: init_regs
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.810000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: channel_state
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.820000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: switch_prep
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.820000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: radio_channel_setup
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.830000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: phy_channel_setup
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.850000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: chan_tables
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.860000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: noise_shaping
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.860000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: rx_regprog
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.870000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: crs_thresholds
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.880000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: reset_cca
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.890000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: afecal
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.890000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: adc_reset_txpwrctrl
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.900000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: idle_tssi
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.910000] ieee80211 phy3: AC-PHY: b43_phy_ac_idle_tssi_meas: tssi_path_enable
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.920000] ieee80211 phy3: AC-PHY: b43_phy_ac_idle_tssi_meas: rf_seq_mode_percore
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.930000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: shm_readback
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.930000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: shm_mac_config
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.940000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: txpwrctrl_setup
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.950000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: afe_gain
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.960000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: shm_tail
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.960000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: mac_toggles
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3449.970000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_switch_channel: done
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3450.010000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_channel_calibrate: tempsense
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3450.010000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_channel_calibrate: post_switch_calibrations
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3450.020000] ieee80211 phy3: AC-PHY: b43_phy_ac_idle_tssi_meas: tssi_path_enable
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3450.030000] ieee80211 phy3: AC-PHY: b43_phy_ac_idle_tssi_meas: rf_seq_mode_percore
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3450.040000] ieee80211 phy3: AC-PHY: b43_phy_ac_idle_tssi_meas: tssi_path_enable
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3450.050000] ieee80211 phy3: AC-PHY: b43_phy_ac_idle_tssi_meas: rf_seq_mode_percore
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3450.100000] br-lan: port 5(phy3-ap0) entered blocking state
+Sat Oct  3 20:56:12 2026 kern.info kernel: [ 3450.100000] br-lan: port 5(phy3-ap0) entered forwarding state
+Sat Oct  3 20:56:13 2026 daemon.notice netifd: Network device 'phy3-ap0' link is up
+Sat Oct  3 20:56:13 2026 daemon.notice hostapd: phy3-ap0: interface state COUNTRY_UPDATE->ENABLED
+Sat Oct  3 20:56:13 2026 daemon.notice hostapd: phy3-ap0: AP-ENABLED
+Sat Oct  3 20:56:13 2026 kern.info kernel: [ 3450.320000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:13 2026 kern.info kernel: [ 3450.320000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_60sec: pwork_60sec
+Sat Oct  3 20:56:14 2026 kern.info kernel: [ 3451.360000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:15 2026 kern.info kernel: [ 3452.400000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:16 2026 kern.info kernel: [ 3453.440000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:17 2026 kern.info kernel: [ 3454.480000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:17 2026 kern.warn kernel: [ 3454.480000] net_ratelimit: 56 callbacks suppressed
+Sat Oct  3 20:56:17 2026 kern.info kernel: [ 3454.480000] b43-phy3: bcn tick: maccmd 0x00000005 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 43
+Sat Oct  3 20:56:17 2026 kern.info kernel: [ 3454.500000] b43-phy3: bcn0 tick: tpl+0x048 02000405 -> 02010405
+Sat Oct  3 20:56:18 2026 kern.info kernel: [ 3455.520000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:18 2026 kern.info kernel: [ 3455.520000] b43-phy3: bcn tick: maccmd 0x00000005 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 53
+Sat Oct  3 20:56:18 2026 kern.info kernel: [ 3455.530000] b43-phy3: bcn0 tick: tpl+0x048 02000405 -> 02010405
+Sat Oct  3 20:56:18 2026 kern.info kernel: [ 3455.540000] b43-phy3: tx mgmt: stype 0x5 len 189 to 76:d4:7c:f5:78:3b
+Sat Oct  3 20:56:18 2026 kern.info kernel: [ 3455.550000] b43-phy3: tx mgmt: stype 0x5 len 189 to 76:d4:7c:f5:78:3b
+Sat Oct  3 20:56:18 2026 kern.info kernel: [ 3455.560000] b43-phy3: tx mgmt: stype 0x5 len 189 to 76:d4:7c:f5:78:3b
+Sat Oct  3 20:56:18 2026 kern.info kernel: [ 3455.560000] b43-phy3: tx mgmt: stype 0x5 len 189 to 76:d4:7c:f5:78:3b
+Sat Oct  3 20:56:18 2026 kern.info kernel: [ 3455.570000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 0 frames 1 rts 0 supp 0 raw 40040103 00000038
+Sat Oct  3 20:56:18 2026 kern.info kernel: [ 3455.580000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 0 frames 4 rts 0 supp 0 raw 40060103 00000039
+Sat Oct  3 20:56:19 2026 kern.info kernel: [ 3456.560000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:20 2026 kern.info kernel: [ 3457.600000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:21 2026 kern.info kernel: [ 3458.640000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:22 2026 kern.info kernel: [ 3459.680000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:22 2026 kern.warn kernel: [ 3459.680000] net_ratelimit: 26 callbacks suppressed
+Sat Oct  3 20:56:22 2026 kern.info kernel: [ 3459.680000] b43-phy3: bcn tick: maccmd 0x00000006 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 94
+Sat Oct  3 20:56:22 2026 kern.info kernel: [ 3459.700000] b43-phy3: bcn0 tick: tpl+0x048 02000405 -> 02010405
+Sat Oct  3 20:56:22 2026 kern.info kernel: [ 3459.710000] b43-phy3: bcn1 tick: tpl+0x048 02010405 -> 02000405
+Sat Oct  3 20:56:23 2026 kern.info kernel: [ 3460.720000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:23 2026 kern.info kernel: [ 3460.720000] b43-phy3: bcn tick: maccmd 0x00000006 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 104
+Sat Oct  3 20:56:23 2026 kern.info kernel: [ 3460.730000] b43-phy3: bcn0 tick: tpl+0x048 02000405 -> 02010405
+Sat Oct  3 20:56:23 2026 kern.info kernel: [ 3460.740000] b43-phy3: bcn1 tick: tpl+0x048 02010405 -> 02000405
+Sat Oct  3 20:56:24 2026 kern.info kernel: [ 3461.120000] b43-phy3: tx mgmt: stype 0x5 len 189 to 94:44:44:8c:ac:48
+Sat Oct  3 20:56:24 2026 kern.info kernel: [ 3461.120000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 0 frames 1 rts 0 supp 0 raw 400e0103 00000074
+Sat Oct  3 20:56:24 2026 kern.info kernel: [ 3461.740000] b43-phy3: bcn irq: maccmd 0x00000006 valid0 0 valid1 1 virgin 0 uploaded 0/0
+Sat Oct  3 20:56:24 2026 kern.info kernel: [ 3461.740000] b43-phy3: bcn0 up: base 0x0d8 total 207 len 195 rate 0x0c timbpos 0x048 dtimper 2 phyctl 0x0045
+Sat Oct  3 20:56:24 2026 kern.info kernel: [ 3461.760000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:25 2026 kern.info kernel: [ 3462.800000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:26 2026 kern.info kernel: [ 3463.840000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:27 2026 kern.info kernel: [ 3464.880000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:27 2026 kern.warn kernel: [ 3464.880000] net_ratelimit: 20 callbacks suppressed
+Sat Oct  3 20:56:27 2026 kern.info kernel: [ 3464.880000] b43-phy3: bcn tick: maccmd 0x00000005 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 144
+Sat Oct  3 20:56:27 2026 kern.info kernel: [ 3464.900000] b43-phy3: bcn0 tick: tpl+0x048 02000405 -> 02010405
+Sat Oct  3 20:56:27 2026 kern.info kernel: [ 3464.900000] b43-phy3: bcn1 tick: tpl+0x048 02010405 -> 02000405
+Sat Oct  3 20:56:28 2026 kern.info kernel: [ 3465.620000] b43-phy3: tx mgmt: stype 0x5 len 189 to 94:44:44:8c:ac:48
+Sat Oct  3 20:56:28 2026 kern.info kernel: [ 3465.620000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 0 frames 1 rts 0 supp 0 raw 40100103 000000a1
+Sat Oct  3 20:56:28 2026 kern.info kernel: [ 3465.920000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:28 2026 kern.info kernel: [ 3465.920000] b43-phy3: bcn tick: maccmd 0x00000005 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 155
+Sat Oct  3 20:56:28 2026 kern.info kernel: [ 3465.930000] b43-phy3: bcn0 tick: tpl+0x048 02000405 -> 02010405
+Sat Oct  3 20:56:28 2026 kern.info kernel: [ 3465.940000] b43-phy3: bcn1 tick: tpl+0x048 02010405 -> 02000405
+Sat Oct  3 20:56:29 2026 kern.info kernel: [ 3466.960000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:29 2026 kern.info kernel: [ 3466.960000] b43-phy3: bcn tick: maccmd 0x00000005 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 165
+Sat Oct  3 20:56:29 2026 kern.info kernel: [ 3466.970000] b43-phy3: bcn0 tick: tpl+0x048 02000405 -> 02010405
+Sat Oct  3 20:56:30 2026 kern.info kernel: [ 3468.000000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:31 2026 kern.info kernel: [ 3469.040000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:32 2026 kern.info kernel: [ 3470.080000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:32 2026 kern.warn kernel: [ 3470.080000] net_ratelimit: 33 callbacks suppressed
+Sat Oct  3 20:56:32 2026 kern.info kernel: [ 3470.080000] b43-phy3: bcn tick: maccmd 0x00000006 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 195
+Sat Oct  3 20:56:32 2026 kern.info kernel: [ 3470.100000] b43-phy3: bcn0 tick: tpl+0x048 02000405 -> 02010405
+Sat Oct  3 20:56:33 2026 kern.info kernel: [ 3470.150000] b43-phy3: tx mgmt: stype 0x5 len 189 to 94:44:44:8c:ac:48
+Sat Oct  3 20:56:33 2026 kern.info kernel: [ 3470.160000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 0 frames 1 rts 0 supp 0 raw 401e0103 000000d4
+Sat Oct  3 20:56:34 2026 kern.info kernel: [ 3471.120000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:34 2026 kern.info kernel: [ 3471.120000] b43-phy3: bcn tick: maccmd 0x00000006 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 205
+Sat Oct  3 20:56:34 2026 kern.info kernel: [ 3471.130000] b43-phy3: bcn0 tick: tpl+0x048 02000405 -> 02010405
+Sat Oct  3 20:56:35 2026 kern.info kernel: [ 3472.160000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:35 2026 kern.info kernel: [ 3472.160000] b43-phy3: bcn tick: maccmd 0x00000006 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 215
+Sat Oct  3 20:56:35 2026 kern.info kernel: [ 3472.170000] b43-phy3: bcn0 tick: tpl+0x048 02000405 -> 02010405
+Sat Oct  3 20:56:35 2026 kern.info kernel: [ 3472.180000] b43-phy3: bcn1 tick: tpl+0x048 02010405 -> 02000405
+Sat Oct  3 20:56:36 2026 kern.info kernel: [ 3473.200000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:36 2026 kern.info kernel: [ 3473.200000] b43-phy3: bcn tick: maccmd 0x00000006 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 226
+Sat Oct  3 20:56:37 2026 kern.info kernel: [ 3474.240000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:38 2026 daemon.notice hostapd: nl80211: wpa_driver_nl80211_event_receive->nl_recvmsgs failed: -5
+Sat Oct  3 20:56:38 2026 kern.warn kernel: [ 3475.200000] net_ratelimit: 39 callbacks suppressed
+Sat Oct  3 20:56:38 2026 kern.info kernel: [ 3475.200000] b43-phy3: tx mgmt: stype 0xb len 30 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:56:38 2026 kern.info kernel: [ 3475.210000] b43-phy3: txstatus mgmt: stype 0xb len 30 acked 1 frames 1 rts 0 supp 0 raw 40348103 00000110
+Sat Oct  3 20:56:38 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b IEEE 802.11: authenticated
+Sat Oct  3 20:56:38 2026 kern.info kernel: [ 3475.220000] b43-phy3: tx mgmt: stype 0xb len 30 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:56:38 2026 kern.info kernel: [ 3475.230000] b43-phy3: txstatus mgmt: stype 0xb len 30 acked 1 frames 1 rts 0 supp 0 raw 40368103 00000111
+Sat Oct  3 20:56:38 2026 kern.info kernel: [ 3475.240000] b43-phy3: tx mgmt: stype 0xb len 30 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:56:38 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b IEEE 802.11: authenticated
+Sat Oct  3 20:56:38 2026 kern.info kernel: [ 3475.250000] b43-phy3: txstatus mgmt: stype 0xb len 30 acked 1 frames 1 rts 0 supp 0 raw 40388103 00000113
+Sat Oct  3 20:56:38 2026 kern.info kernel: [ 3475.260000] b43-phy3: tx mgmt: stype 0xb len 30 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:56:38 2026 kern.info kernel: [ 3475.260000] b43-phy3: txstatus mgmt: stype 0xb len 30 acked 1 frames 1 rts 0 supp 0 raw 403a8103 00000114
+Sat Oct  3 20:56:38 2026 kern.info kernel: [ 3475.280000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:38 2026 kern.info kernel: [ 3475.280000] b43-phy3: bcn tick: maccmd 0x00000005 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 246
+Sat Oct  3 20:56:38 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b IEEE 802.11: authenticated
+Sat Oct  3 20:56:38 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b IEEE 802.11: authenticated
+Sat Oct  3 20:56:38 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b IEEE 802.11: authenticated
+Sat Oct  3 20:56:38 2026 kern.info kernel: [ 3475.320000] b43-phy3: tx mgmt: stype 0xb len 30 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:56:38 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b IEEE 802.11: authenticated
+Sat Oct  3 20:56:38 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b IEEE 802.11: authenticated
+Sat Oct  3 20:56:38 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b IEEE 802.11: authenticated
+Sat Oct  3 20:56:38 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b IEEE 802.11: authenticated
+Sat Oct  3 20:56:38 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b IEEE 802.11: authenticated
+Sat Oct  3 20:56:38 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b IEEE 802.11: authenticated
+Sat Oct  3 20:56:38 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b IEEE 802.11: associated (aid 1)
+Sat Oct  3 20:56:38 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b IEEE 802.11: associated (aid 1)
+Sat Oct  3 20:56:38 2026 daemon.notice hostapd: phy3-ap0: AP-STA-POSSIBLE-PSK-MISMATCH ba:73:1c:45:1d:5b
+Sat Oct  3 20:56:38 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b IEEE 802.11: associated (aid 1)
+Sat Oct  3 20:56:38 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b IEEE 802.11: associated (aid 1)
+Sat Oct  3 20:56:38 2026 daemon.notice hostapd: phy3-ap0: AP-STA-POSSIBLE-PSK-MISMATCH ba:73:1c:45:1d:5b
+Sat Oct  3 20:56:39 2026 kern.info kernel: [ 3476.320000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:40 2026 daemon.notice hostapd: phy3-ap0: AP-STA-CONNECTED ba:73:1c:45:1d:5b auth_alg=open
+Sat Oct  3 20:56:40 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b WPA: pairwise key handshake completed (RSN)
+Sat Oct  3 20:56:40 2026 daemon.notice hostapd: phy3-ap0: EAPOL-4WAY-HS-COMPLETED ba:73:1c:45:1d:5b
+Sat Oct  3 20:56:40 2026 kern.info kernel: [ 3477.360000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:41 2026 kern.info kernel: [ 3478.400000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:41 2026 daemon.warn odhcpd[1728]: No default route present, setting ra_lifetime to 0!
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.680000] ------------[ cut here ]------------
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.690000] WARNING: CPU: 1 PID: 1728 at backports-7.2/net/mac80211/agg-tx.c:626 ieee80211_start_tx_ba_session+0x31c/0x6f8 [mac80211]
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.700000] Modules linked in: b43(O) pppoe ppp_async nft_fib_inet nf_flow_table_inet pppox ppp_generic nft_reject_ipv6 nft_reject_ipv4 nft_reject_inet nft_reject nft_redir nft_quota nft_numgen nft_nat nft_masq nft_log nft_limit nft_hash nft_flow_offload nft_fib_ipv6 nft_fib_ipv4 nft_fib nft_ct nft_chain_nat nf_tables nf_nat nf_flow_table nf_conntrack mac80211(O) cfg80211(O) slhc nfnetlink nf_reject_ipv6 nf_reject_ipv4 nf_log_syslog nf_defrag_ipv6 nf_defrag_ipv4 libcrc32c crc_ccitt cordic compat(O) ledtrig_usbport bcma sha512_generic seqiv sha3_generic jitterentropy_rng drbg hmac geniv rng cmac leds_gpio leds_bcm6328 ohci_platform ohci_hcd fsl_mph_dr_of ehci_platform ehci_fsl ehci_hcd gpio_button_hotplug(O) usbcore nls_base usb_common crc32c_generic [last unloaded: b43(O)]
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.770000] CPU: 1 UID: 0 PID: 1728 Comm: odhcpd Tainted: G           O       6.12.107 #0
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.770000] Tainted: [O]=OOT_MODULE
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.770000] Hardware name: D-Link DSL-3580L
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.770000] Stack : 00000000 00000004 0000000c 8095bc14 82d236a4 80039c9c 00000001 00000001
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.770000]         00000000 00000000 00000000 00000000 00000000 10008b00 82d23650 81890d00
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.770000]         00000000 00000000 8090d964 82d234d8 00000000 0000182b c000082b 80a1ecb8
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.770000]         00002829 82d23524 0000082b 80a1ece8 10008b01 00000000 8090d964 00000000
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.770000]         00000000 82e18194 80a17598 00000000 00006204 00000003 00000004 80be0004
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.770000]         ...
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.770000] Call Trace:
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.770000] [<80016c28>] show_stack+0x28/0xf0
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.770000] [<808088e4>] dump_stack_lvl+0x6c/0xac
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.770000] [<8003a528>] __warn+0x9c/0x114
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.770000] [<8003a6c8>] warn_slowpath_fmt+0x128/0x188
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.770000] [<82e18194>] ieee80211_start_tx_ba_session+0x31c/0x6f8 [mac80211]
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.770000] [<82e4c798>] __ieee80211_subif_start_xmit+0xf0/0x500 [mac80211]
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.770000] [<82e4cc08>] ieee80211_subif_start_xmit+0x60/0x8d0 [mac80211]
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.780000] [<805d9058>] dev_hard_start_xmit+0xb4/0x190
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.780000] [<805d9b48>] __dev_queue_xmit+0x8f8/0xeb0
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.780000] [<8078bf38>] br_dev_queue_push_xmit+0x78/0x1e0
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.780000] [<8078c0f4>] br_forward_finish+0x54/0xd8
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.780000] [<80788084>] br_dev_xmit+0x390/0x578
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.780000] [<805d9058>] dev_hard_start_xmit+0xb4/0x190
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.780000] [<805d9b48>] __dev_queue_xmit+0x8f8/0xeb0
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.780000] [<80718c7c>] ip6_finish_output2+0x32c/0xac8
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.780000] [<8071b8bc>] ip6_finish_output+0xb0/0x3ec
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.780000] [<8071c5b0>] ip6_send_skb+0x30/0x188
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.780000] [<8074e4bc>] rawv6_sendmsg+0x1050/0x12f4
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.780000] [<805a58e4>] ____sys_sendmsg+0xd0/0x2b4
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.780000] [<805a5de4>] ___sys_sendmsg+0xb4/0xd0
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.780000] [<805a783c>] __sys_sendmsg+0x70/0xd4
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.780000] [<8001fff8>] syscall_common+0x34/0x58
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.780000]
+Sat Oct  3 20:56:41 2026 kern.warn kernel: [ 3478.960000] ---[ end trace 0000000000000000 ]---
+Sat Oct  3 20:56:42 2026 kern.info kernel: [ 3479.440000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:43 2026 kern.info kernel: [ 3480.480000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:43 2026 kern.warn kernel: [ 3480.480000] net_ratelimit: 102 callbacks suppressed
+Sat Oct  3 20:56:43 2026 kern.info kernel: [ 3480.480000] b43-phy3: bcn tick: maccmd 0x00000005 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 297
+Sat Oct  3 20:56:43 2026 kern.info kernel: [ 3480.500000] b43-phy3: bcn0 tick: tpl+0x048 02000405 -> 02010405
+Sat Oct  3 20:56:44 2026 kern.info kernel: [ 3481.520000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:44 2026 kern.info kernel: [ 3481.520000] b43-phy3: bcn tick: maccmd 0x00000005 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 307
+Sat Oct  3 20:56:44 2026 kern.info kernel: [ 3481.530000] b43-phy3: bcn0 tick: tpl+0x048 02000405 -> 02010405
+Sat Oct  3 20:56:44 2026 kern.info kernel: [ 3481.560000] b43-phy3: tx mgmt: stype 0x5 len 189 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:56:44 2026 kern.info kernel: [ 3481.560000] b43-phy3: tx mgmt: stype 0x5 len 189 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:56:44 2026 kern.info kernel: [ 3481.570000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 0 frames 1 rts 0 supp 0 raw 40680103 000001a4
+Sat Oct  3 20:56:44 2026 kern.info kernel: [ 3481.580000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 1 frames 1 rts 0 supp 0 raw 406a8103 000001a5
+Sat Oct  3 20:56:44 2026 kern.info kernel: [ 3481.590000] b43-phy3: tx mgmt: stype 0x5 len 189 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:56:44 2026 kern.info kernel: [ 3481.600000] b43-phy3: tx mgmt: stype 0x5 len 189 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:56:45 2026 kern.info kernel: [ 3482.560000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:45 2026 daemon.warn odhcpd[1728]: No default route present, setting ra_lifetime to 0!
+Sat Oct  3 20:56:46 2026 kern.info kernel: [ 3483.600000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:47 2026 kern.info kernel: [ 3484.640000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:48 2026 kern.info kernel: [ 3485.680000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:48 2026 kern.warn kernel: [ 3485.680000] net_ratelimit: 44 callbacks suppressed
+Sat Oct  3 20:56:48 2026 kern.info kernel: [ 3485.680000] b43-phy3: bcn tick: maccmd 0x00000005 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 348
+Sat Oct  3 20:56:48 2026 kern.info kernel: [ 3485.700000] b43-phy3: bcn0 tick: tpl+0x04c 0a070000 -> 0a070001
+Sat Oct  3 20:56:48 2026 kern.info kernel: [ 3485.700000] b43-phy3: bcn irq: maccmd 0x00000005 valid0 1 valid1 0 virgin 0 uploaded 0/0
+Sat Oct  3 20:56:48 2026 kern.info kernel: [ 3485.700000] b43-phy3: bcn1 up: base 0x2d8 total 207 len 195 rate 0x0c timbpos 0x048 dtimper 2 phyctl 0x0045
+Sat Oct  3 20:56:48 2026 kern.info kernel: [ 3485.700000] b43-phy3: bcn1 000: 80 00 00 00 ff ff ff ff ff ff 00 90 4c 0d db 00
+Sat Oct  3 20:56:48 2026 kern.info kernel: [ 3485.700000] b43-phy3: bcn1 010: 00 90 4c 0d db 00 00 00 00 00 00 00 00 00 00 00
+Sat Oct  3 20:56:48 2026 kern.info kernel: [ 3485.700000] b43-phy3: bcn1 020: 64 00 31 00 00 0c 44 53 4c 2d 33 35 38 30 4c 2d
+Sat Oct  3 20:56:48 2026 kern.info kernel: [ 3485.700000] b43-phy3: bcn1 030: 35 47 01 08 8c 12 98 24 b0 48 60 6c 05 04 01 02
+Sat Oct  3 20:56:48 2026 kern.info kernel: [ 3485.700000] b43-phy3: bcn1 040: 00 02 07 0a 49 54 20 24 04 17 95 05 0d 00 30 14
+Sat Oct  3 20:56:48 2026 kern.info kernel: [ 3485.760000] b43-phy3: bcn1 050: 01 00 00 0f ac 04 01 00 00 0f ac 04 01 00 00 0f
+Sat Oct  3 20:56:49 2026 kern.info kernel: [ 3486.720000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:50 2026 kern.info kernel: [ 3487.760000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:51 2026 kern.info kernel: [ 3488.800000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:52 2026 kern.info kernel: [ 3489.840000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:53 2026 kern.info kernel: [ 3490.880000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:53 2026 kern.warn kernel: [ 3490.880000] net_ratelimit: 92 callbacks suppressed
+Sat Oct  3 20:56:53 2026 kern.info kernel: [ 3490.880000] b43-phy3: bcn tick: maccmd 0x00000006 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 398
+Sat Oct  3 20:56:53 2026 kern.info kernel: [ 3490.900000] b43-phy3: bcn0 tick: tpl+0x04c 0a070200 -> 0a070201
+Sat Oct  3 20:56:54 2026 kern.info kernel: [ 3491.170000] b43-phy3: tx mgmt: stype 0xd len 33 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:56:54 2026 kern.info kernel: [ 3491.180000] b43-phy3: txstatus mgmt: stype 0xd len 33 acked 1 frames 1 rts 0 supp 0 raw 407c8103 00000284
+Sat Oct  3 20:56:54 2026 daemon.warn odhcpd[1728]: No default route present, setting ra_lifetime to 0!
+Sat Oct  3 20:56:54 2026 kern.info kernel: [ 3491.780000] b43-phy3: bcn irq: maccmd 0x00000006 valid0 0 valid1 1 virgin 0 uploaded 0/0
+Sat Oct  3 20:56:54 2026 kern.info kernel: [ 3491.780000] b43-phy3: bcn0 up: base 0x0d8 total 207 len 195 rate 0x0c timbpos 0x048 dtimper 2 phyctl 0x0045
+Sat Oct  3 20:56:54 2026 kern.info kernel: [ 3491.780000] b43-phy3: bcn0 000: 80 00 00 00 ff ff ff ff ff ff 00 90 4c 0d db 00
+Sat Oct  3 20:56:54 2026 kern.info kernel: [ 3491.780000] b43-phy3: bcn0 010: 00 90 4c 0d db 00 00 00 00 00 00 00 00 00 00 00
+Sat Oct  3 20:56:54 2026 kern.info kernel: [ 3491.780000] b43-phy3: bcn0 020: 64 00 31 00 00 0c 44 53 4c 2d 33 35 38 30 4c 2d
+Sat Oct  3 20:56:54 2026 kern.info kernel: [ 3491.780000] b43-phy3: bcn0 030: 35 47 01 08 8c 12 98 24 b0 48 60 6c 05 04 00 02
+Sat Oct  3 20:56:54 2026 kern.info kernel: [ 3491.920000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:55 2026 kern.info kernel: [ 3492.960000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:56 2026 kern.info kernel: [ 3494.000000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:57 2026 kern.info kernel: [ 3495.040000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:58 2026 daemon.notice hostapd: phy3-ap0: AP-STA-DISCONNECTED ba:73:1c:45:1d:5b
+Sat Oct  3 20:56:58 2026 kern.info kernel: [ 3496.080000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:56:58 2026 kern.warn kernel: [ 3496.080000] net_ratelimit: 47 callbacks suppressed
+Sat Oct  3 20:56:58 2026 kern.info kernel: [ 3496.080000] b43-phy3: bcn tick: maccmd 0x00000006 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 449
+Sat Oct  3 20:56:58 2026 kern.info kernel: [ 3496.100000] b43-phy3: bcn0 tick: tpl+0x04c 0a070000 -> 0a070001
+Sat Oct  3 20:56:59 2026 kern.info kernel: [ 3496.290000] b43-phy3: tx mgmt: stype 0x5 len 189 to 52:92:98:27:db:3f
+Sat Oct  3 20:56:59 2026 kern.info kernel: [ 3496.300000] b43-phy3: tx mgmt: stype 0x5 len 189 to 52:92:98:27:db:3f
+Sat Oct  3 20:56:59 2026 kern.info kernel: [ 3496.310000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 0 frames 1 rts 0 supp 0 raw 40880103 000002db
+Sat Oct  3 20:56:59 2026 kern.info kernel: [ 3496.320000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 1 frames 1 rts 0 supp 0 raw 408a8103 000002dc
+Sat Oct  3 20:56:59 2026 kern.info kernel: [ 3496.330000] b43-phy3: tx mgmt: stype 0x5 len 189 to 52:92:98:27:db:3f
+Sat Oct  3 20:56:59 2026 kern.info kernel: [ 3496.340000] b43-phy3: tx mgmt: stype 0x5 len 189 to 52:92:98:27:db:3f
+Sat Oct  3 20:56:59 2026 kern.info kernel: [ 3496.340000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 0 frames 1 rts 0 supp 0 raw 408c0103 000002de
+Sat Oct  3 20:56:59 2026 kern.info kernel: [ 3496.360000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 0 frames 4 rts 0 supp 0 raw 408e0103 000002df
+Sat Oct  3 20:57:00 2026 kern.info kernel: [ 3497.120000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:01 2026 kern.info kernel: [ 3498.170000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:01 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b IEEE 802.11: authenticated
+Sat Oct  3 20:57:01 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b IEEE 802.11: associated (aid 1)
+Sat Oct  3 20:57:01 2026 daemon.notice hostapd: phy3-ap0: AP-STA-CONNECTED ba:73:1c:45:1d:5b auth_alg=open
+Sat Oct  3 20:57:01 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b WPA: pairwise key handshake completed (RSN)
+Sat Oct  3 20:57:01 2026 daemon.notice hostapd: phy3-ap0: EAPOL-4WAY-HS-COMPLETED ba:73:1c:45:1d:5b
+Sat Oct  3 20:57:02 2026 kern.info kernel: [ 3499.200000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:02 2026 daemon.warn odhcpd[1728]: No default route present, setting ra_lifetime to 0!
+Sat Oct  3 20:57:03 2026 kern.info kernel: [ 3500.240000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:04 2026 kern.info kernel: [ 3501.280000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:04 2026 kern.warn kernel: [ 3501.280000] net_ratelimit: 75 callbacks suppressed
+Sat Oct  3 20:57:04 2026 kern.info kernel: [ 3501.280000] b43-phy3: bcn tick: maccmd 0x00000006 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 500
+Sat Oct  3 20:57:04 2026 kern.info kernel: [ 3501.300000] b43-phy3: bcn0 tick: tpl+0x048 02000405 -> 02010405
+Sat Oct  3 20:57:04 2026 kern.info kernel: [ 3501.310000] b43-phy3: bcn1 tick: tpl+0x048 02010405 -> 02000405
+Sat Oct  3 20:57:04 2026 kern.info kernel: [ 3501.860000] b43-phy3: tx mgmt: stype 0x5 len 189 to 94:44:44:8c:ac:48
+Sat Oct  3 20:57:04 2026 kern.info kernel: [ 3501.870000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 0 frames 1 rts 0 supp 0 raw 40b40103 0000035a
+Sat Oct  3 20:57:04 2026 kern.info kernel: [ 3501.930000] b43-phy3: tx mgmt: stype 0x5 len 189 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:57:04 2026 kern.info kernel: [ 3501.940000] b43-phy3: tx mgmt: stype 0x5 len 189 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:57:04 2026 kern.info kernel: [ 3501.950000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 0 frames 1 rts 0 supp 0 raw 40b60103 0000035b
+Sat Oct  3 20:57:04 2026 kern.info kernel: [ 3501.960000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 1 frames 1 rts 0 supp 0 raw 40b88103 0000035c
+Sat Oct  3 20:57:04 2026 kern.info kernel: [ 3501.970000] b43-phy3: tx mgmt: stype 0x5 len 189 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:57:05 2026 kern.info kernel: [ 3502.320000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:06 2026 kern.info kernel: [ 3503.360000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:06 2026 daemon.warn odhcpd[1728]: No default route present, setting ra_lifetime to 0!
+Sat Oct  3 20:57:07 2026 kern.info kernel: [ 3504.400000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:08 2026 kern.info kernel: [ 3505.440000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:09 2026 kern.warn kernel: [ 3506.370000] net_ratelimit: 63 callbacks suppressed
+Sat Oct  3 20:57:09 2026 kern.info kernel: [ 3506.370000] b43-phy3: tx mgmt: stype 0x5 len 189 to 94:44:44:8c:ac:48
+Sat Oct  3 20:57:09 2026 kern.info kernel: [ 3506.380000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 0 frames 1 rts 0 supp 0 raw 40c00103 000003ab
+Sat Oct  3 20:57:09 2026 kern.info kernel: [ 3506.480000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:09 2026 kern.info kernel: [ 3506.480000] b43-phy3: bcn tick: maccmd 0x00000005 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 551
+Sat Oct  3 20:57:09 2026 kern.info kernel: [ 3506.490000] b43-phy3: bcn0 tick: tpl+0x048 02000405 -> 02010405
+Sat Oct  3 20:57:10 2026 kern.info kernel: [ 3507.520000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:10 2026 kern.info kernel: [ 3507.520000] b43-phy3: bcn tick: maccmd 0x00000005 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 561
+Sat Oct  3 20:57:10 2026 kern.info kernel: [ 3507.530000] b43-phy3: bcn0 tick: tpl+0x048 02000405 -> 02010405
+Sat Oct  3 20:57:11 2026 kern.info kernel: [ 3508.490000] b43-phy3: tx mgmt: stype 0x5 len 189 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:57:11 2026 kern.info kernel: [ 3508.490000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 1 frames 1 rts 0 supp 0 raw 40c28103 000003d8
+Sat Oct  3 20:57:11 2026 kern.info kernel: [ 3508.500000] b43-phy3: tx mgmt: stype 0x5 len 189 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:57:11 2026 kern.info kernel: [ 3508.510000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 1 frames 1 rts 0 supp 0 raw 40c48103 000003d9
+Sat Oct  3 20:57:11 2026 kern.info kernel: [ 3508.560000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:12 2026 kern.info kernel: [ 3509.600000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:13 2026 kern.info kernel: [ 3510.640000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:14 2026 kern.info kernel: [ 3511.680000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:14 2026 kern.warn kernel: [ 3511.680000] net_ratelimit: 24 callbacks suppressed
+Sat Oct  3 20:57:14 2026 kern.info kernel: [ 3511.680000] b43-phy3: bcn tick: maccmd 0x00000006 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 601
+Sat Oct  3 20:57:14 2026 kern.info kernel: [ 3511.700000] b43-phy3: bcn0 tick: tpl+0x048 02000405 -> 02010405
+Sat Oct  3 20:57:14 2026 kern.info kernel: [ 3511.710000] b43-phy3: bcn1 tick: tpl+0x048 02010405 -> 02000405
+Sat Oct  3 20:57:15 2026 daemon.warn odhcpd[1728]: No default route present, setting ra_lifetime to 0!
+Sat Oct  3 20:57:15 2026 kern.info kernel: [ 3512.510000] b43-phy3: tx mgmt: stype 0xd len 33 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:57:15 2026 kern.info kernel: [ 3512.520000] b43-phy3: txstatus mgmt: stype 0xd len 33 acked 1 frames 1 rts 0 supp 0 raw 40c88103 00000418
+Sat Oct  3 20:57:15 2026 kern.info kernel: [ 3512.720000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:15 2026 kern.info kernel: [ 3512.720000] b43-phy3: bcn tick: maccmd 0x00000006 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 612
+Sat Oct  3 20:57:15 2026 kern.info kernel: [ 3512.730000] b43-phy3: bcn0 tick: tpl+0x048 02000405 -> 02010405
+Sat Oct  3 20:57:15 2026 kern.info kernel: [ 3512.740000] b43-phy3: bcn1 tick: tpl+0x048 02010405 -> 02000405
+Sat Oct  3 20:57:15 2026 kern.info kernel: [ 3512.750000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_60sec: pwork_60sec
+Sat Oct  3 20:57:16 2026 kern.info kernel: [ 3513.760000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:16 2026 kern.info kernel: [ 3513.760000] b43-phy3: bcn tick: maccmd 0x00000006 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 622
+Sat Oct  3 20:57:16 2026 kern.info kernel: [ 3513.770000] b43-phy3: bcn0 tick: tpl+0x048 02000405 -> 02010405
+Sat Oct  3 20:57:16 2026 daemon.warn odhcpd[1728]: No default route present, setting ra_lifetime to 0!
+Sat Oct  3 20:57:17 2026 kern.info kernel: [ 3514.800000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:18 2026 kern.info kernel: [ 3515.840000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:19 2026 daemon.notice hostapd: phy3-ap0: AP-STA-DISCONNECTED ba:73:1c:45:1d:5b
+Sat Oct  3 20:57:19 2026 kern.info kernel: [ 3516.880000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:19 2026 kern.warn kernel: [ 3516.880000] net_ratelimit: 40 callbacks suppressed
+Sat Oct  3 20:57:19 2026 kern.info kernel: [ 3516.880000] b43-phy3: bcn tick: maccmd 0x00000006 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 652
+Sat Oct  3 20:57:19 2026 kern.info kernel: [ 3516.900000] b43-phy3: bcn1 tick: tpl+0x048 02010405 -> 02000405
+Sat Oct  3 20:57:20 2026 kern.info kernel: [ 3517.510000] b43-phy3: tx mgmt: stype 0x5 len 189 to ea:32:8e:95:1f:ec
+Sat Oct  3 20:57:20 2026 kern.info kernel: [ 3517.520000] b43-phy3: tx mgmt: stype 0x5 len 189 to ea:32:8e:95:1f:ec
+Sat Oct  3 20:57:20 2026 kern.info kernel: [ 3517.530000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 0 frames 1 rts 0 supp 0 raw 40cc0103 00000487
+Sat Oct  3 20:57:20 2026 kern.info kernel: [ 3517.540000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 1 frames 1 rts 0 supp 0 raw 40ce8103 00000488
+Sat Oct  3 20:57:20 2026 kern.info kernel: [ 3517.550000] b43-phy3: tx mgmt: stype 0x5 len 189 to ea:32:8e:95:1f:ec
+Sat Oct  3 20:57:20 2026 kern.info kernel: [ 3517.560000] b43-phy3: tx mgmt: stype 0x5 len 189 to ea:32:8e:95:1f:ec
+Sat Oct  3 20:57:20 2026 kern.info kernel: [ 3517.560000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 0 frames 1 rts 0 supp 0 raw 40d00103 0000048a
+Sat Oct  3 20:57:20 2026 kern.info kernel: [ 3517.570000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 0 frames 4 rts 0 supp 0 raw 40d20103 0000048b
+Sat Oct  3 20:57:20 2026 daemon.warn odhcpd[1728]: No default route present, setting ra_lifetime to 0!
+Sat Oct  3 20:57:20 2026 kern.info kernel: [ 3517.920000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:21 2026 kern.info kernel: [ 3518.960000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:22 2026 kern.info kernel: [ 3520.000000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:22 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b IEEE 802.11: authenticated
+Sat Oct  3 20:57:22 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b IEEE 802.11: associated (aid 1)
+Sat Oct  3 20:57:22 2026 daemon.notice hostapd: phy3-ap0: AP-STA-CONNECTED ba:73:1c:45:1d:5b auth_alg=open
+Sat Oct  3 20:57:22 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b WPA: pairwise key handshake completed (RSN)
+Sat Oct  3 20:57:22 2026 daemon.notice hostapd: phy3-ap0: EAPOL-4WAY-HS-COMPLETED ba:73:1c:45:1d:5b
+Sat Oct  3 20:57:23 2026 kern.info kernel: [ 3521.040000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:24 2026 daemon.warn odhcpd[1728]: No default route present, setting ra_lifetime to 0!
+Sat Oct  3 20:57:24 2026 daemon.warn odhcpd[1728]: No default route present, setting ra_lifetime to 0!
+Sat Oct  3 20:57:24 2026 kern.info kernel: [ 3522.080000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:24 2026 kern.warn kernel: [ 3522.080000] net_ratelimit: 66 callbacks suppressed
+Sat Oct  3 20:57:24 2026 kern.info kernel: [ 3522.080000] b43-phy3: bcn tick: maccmd 0x00000006 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 703
+Sat Oct  3 20:57:24 2026 kern.info kernel: [ 3522.100000] b43-phy3: tx mgmt: stype 0xd len 33 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:57:25 2026 kern.info kernel: [ 3522.110000] b43-phy3: txstatus mgmt: stype 0xd len 33 acked 1 frames 1 rts 0 supp 0 raw 40f48103 000004f1
+Sat Oct  3 20:57:26 2026 kern.info kernel: [ 3523.120000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:26 2026 kern.info kernel: [ 3523.120000] b43-phy3: bcn tick: maccmd 0x00000016 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 713
+Sat Oct  3 20:57:27 2026 kern.info kernel: [ 3524.160000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:27 2026 kern.info kernel: [ 3524.160000] b43-phy3: bcn tick: maccmd 0x00000006 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 723
+Sat Oct  3 20:57:27 2026 kern.info kernel: [ 3524.480000] b43-phy3: tx mgmt: stype 0x5 len 189 to 94:44:44:8c:ac:48
+Sat Oct  3 20:57:27 2026 kern.info kernel: [ 3524.490000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 0 frames 1 rts 0 supp 0 raw 40f60103 0000051f
+Sat Oct  3 20:57:28 2026 kern.info kernel: [ 3525.210000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:28 2026 kern.info kernel: [ 3525.210000] b43-phy3: bcn tick: maccmd 0x00000006 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 734
+Sat Oct  3 20:57:28 2026 kern.info kernel: [ 3525.220000] b43-phy3: bcn1 tick: tpl+0x048 02010405 -> 02000405
+Sat Oct  3 20:57:29 2026 daemon.warn odhcpd[1728]: No default route present, setting ra_lifetime to 0!
+Sat Oct  3 20:57:29 2026 kern.info kernel: [ 3526.110000] b43-phy3: tx mgmt: stype 0xd len 33 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:57:29 2026 kern.info kernel: [ 3526.250000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:30 2026 kern.info kernel: [ 3527.280000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:30 2026 kern.warn kernel: [ 3527.280000] net_ratelimit: 3 callbacks suppressed
+Sat Oct  3 20:57:30 2026 kern.info kernel: [ 3527.280000] b43-phy3: bcn tick: maccmd 0x00000006 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 754
+Sat Oct  3 20:57:30 2026 kern.info kernel: [ 3527.300000] b43-phy3: bcn1 tick: tpl+0x048 02010405 -> 02000405
+Sat Oct  3 20:57:30 2026 kern.info kernel: [ 3527.790000] b43-phy3: bcn irq: maccmd 0x00000006 valid0 0 valid1 1 virgin 0 uploaded 0/0
+Sat Oct  3 20:57:30 2026 kern.info kernel: [ 3527.800000] b43-phy3: bcn0 up: base 0x0d8 total 207 len 195 rate 0x0c timbpos 0x048 dtimper 2 phyctl 0x0045
+Sat Oct  3 20:57:30 2026 kern.info kernel: [ 3527.810000] b43-phy3: bcn0 000: 80 00 00 00 ff ff ff ff ff ff 00 90 4c 0d db 00
+Sat Oct  3 20:57:30 2026 kern.info kernel: [ 3527.820000] b43-phy3: bcn0 010: 00 90 4c 0d db 00 00 00 00 00 00 00 00 00 00 00
+Sat Oct  3 20:57:30 2026 kern.info kernel: [ 3527.820000] b43-phy3: bcn0 020: 64 00 31 00 00 0c 44 53 4c 2d 33 35 38 30 4c 2d
+Sat Oct  3 20:57:30 2026 kern.info kernel: [ 3527.830000] b43-phy3: bcn0 030: 35 47 01 08 8c 12 98 24 b0 48 60 6c 05 04 00 02
+Sat Oct  3 20:57:30 2026 kern.info kernel: [ 3527.840000] b43-phy3: bcn0 040: 00 00 07 0a 49 54 20 24 04 17 95 05 0d 00 30 14
+Sat Oct  3 20:57:30 2026 kern.info kernel: [ 3527.850000] b43-phy3: bcn0 050: 01 00 00 0f ac 04 01 00 00 0f ac 04 01 00 00 0f
+Sat Oct  3 20:57:31 2026 kern.info kernel: [ 3528.320000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:32 2026 kern.info kernel: [ 3529.360000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:33 2026 kern.info kernel: [ 3530.400000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:34 2026 kern.info kernel: [ 3531.440000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:35 2026 kern.info kernel: [ 3532.480000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:35 2026 kern.warn kernel: [ 3532.480000] net_ratelimit: 18 callbacks suppressed
+Sat Oct  3 20:57:35 2026 kern.info kernel: [ 3532.480000] b43-phy3: bcn tick: maccmd 0x00000005 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 805
+Sat Oct  3 20:57:35 2026 kern.info kernel: [ 3532.500000] b43-phy3: bcn0 tick: tpl+0x048 02000405 -> 02010405
+Sat Oct  3 20:57:36 2026 kern.info kernel: [ 3533.520000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:36 2026 kern.info kernel: [ 3533.520000] b43-phy3: bcn tick: maccmd 0x00000005 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 815
+Sat Oct  3 20:57:36 2026 kern.info kernel: [ 3533.530000] b43-phy3: bcn0 tick: tpl+0x048 02000405 -> 02010405
+Sat Oct  3 20:57:36 2026 kern.info kernel: [ 3533.540000] b43-phy3: tx mgmt: stype 0x5 len 189 to 94:44:44:8c:ac:48
+Sat Oct  3 20:57:36 2026 kern.info kernel: [ 3533.550000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 0 frames 1 rts 0 supp 0 raw 40000103 000005cf
+Sat Oct  3 20:57:36 2026 kern.info kernel: [ 3533.630000] b43-phy3: tx mgmt: stype 0x5 len 189 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:57:36 2026 kern.info kernel: [ 3533.640000] b43-phy3: tx mgmt: stype 0x5 len 189 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:57:36 2026 kern.info kernel: [ 3533.640000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 0 frames 1 rts 0 supp 0 raw 40020103 000005d1
+Sat Oct  3 20:57:36 2026 kern.info kernel: [ 3533.650000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 1 frames 1 rts 0 supp 0 raw 40048103 000005d2
+Sat Oct  3 20:57:36 2026 daemon.warn odhcpd[1728]: No default route present, setting ra_lifetime to 0!
+Sat Oct  3 20:57:37 2026 kern.info kernel: [ 3534.560000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:38 2026 kern.info kernel: [ 3535.600000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:39 2026 kern.info kernel: [ 3536.640000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:40 2026 kern.info kernel: [ 3537.690000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:40 2026 kern.warn kernel: [ 3537.690000] net_ratelimit: 28 callbacks suppressed
+Sat Oct  3 20:57:40 2026 kern.info kernel: [ 3537.690000] b43-phy3: bcn tick: maccmd 0x00000006 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 855
+Sat Oct  3 20:57:40 2026 kern.info kernel: [ 3537.710000] b43-phy3: bcn0 tick: tpl+0x04c 0a070000 -> 0a070001
+Sat Oct  3 20:57:40 2026 kern.info kernel: [ 3537.710000] b43-phy3: bcn1 tick: tpl+0x048 02010405 -> 02000405
+Sat Oct  3 20:57:40 2026 kern.info kernel: [ 3538.070000] b43-phy3: tx mgmt: stype 0x5 len 189 to 94:44:44:8c:ac:48
+Sat Oct  3 20:57:40 2026 kern.info kernel: [ 3538.080000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 0 frames 1 rts 0 supp 0 raw 400c0103 00000629
+Sat Oct  3 20:57:41 2026 daemon.notice hostapd: phy3-ap0: AP-STA-DISCONNECTED ba:73:1c:45:1d:5b
+Sat Oct  3 20:57:41 2026 kern.info kernel: [ 3538.300000] b43-phy3: bcn irq: maccmd 0x00000006 valid0 0 valid1 1 virgin 0 uploaded 0/0
+Sat Oct  3 20:57:41 2026 kern.info kernel: [ 3538.300000] b43-phy3: bcn0 up: base 0x0d8 total 207 len 195 rate 0x0c timbpos 0x048 dtimper 2 phyctl 0x0045
+Sat Oct  3 20:57:41 2026 kern.info kernel: [ 3538.300000] b43-phy3: bcn0 000: 80 00 00 00 ff ff ff ff ff ff 00 90 4c 0d db 00
+Sat Oct  3 20:57:41 2026 kern.info kernel: [ 3538.300000] b43-phy3: bcn0 010: 00 90 4c 0d db 00 00 00 00 00 00 00 00 00 00 00
+Sat Oct  3 20:57:41 2026 kern.info kernel: [ 3538.300000] b43-phy3: bcn0 020: 64 00 31 00 00 0c 44 53 4c 2d 33 35 38 30 4c 2d
+Sat Oct  3 20:57:41 2026 kern.info kernel: [ 3538.800000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:42 2026 kern.info kernel: [ 3539.840000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:43 2026 kern.info kernel: [ 3540.890000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:44 2026 kern.info kernel: [ 3541.930000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:45 2026 daemon.warn odhcpd[1728]: No default route present, setting ra_lifetime to 0!
+Sat Oct  3 20:57:45 2026 kern.info kernel: [ 3542.970000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:45 2026 kern.warn kernel: [ 3542.970000] net_ratelimit: 53 callbacks suppressed
+Sat Oct  3 20:57:45 2026 kern.info kernel: [ 3542.970000] b43-phy3: bcn tick: maccmd 0x00000006 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 907
+Sat Oct  3 20:57:45 2026 kern.info kernel: [ 3542.990000] b43-phy3: bcn0 tick: tpl+0x048 02000405 -> 02010405
+Sat Oct  3 20:57:46 2026 kern.info kernel: [ 3544.010000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:46 2026 kern.info kernel: [ 3544.010000] b43-phy3: bcn tick: maccmd 0x00000006 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 917
+Sat Oct  3 20:57:46 2026 kern.info kernel: [ 3544.020000] b43-phy3: bcn0 tick: tpl+0x048 02000405 -> 02010405
+Sat Oct  3 20:57:47 2026 kern.info kernel: [ 3545.050000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:47 2026 kern.info kernel: [ 3545.050000] b43-phy3: bcn tick: maccmd 0x00000006 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 927
+Sat Oct  3 20:57:47 2026 kern.info kernel: [ 3545.060000] b43-phy3: bcn0 tick: tpl+0x048 02000405 -> 02010405
+Sat Oct  3 20:57:48 2026 kern.info kernel: [ 3545.860000] b43-phy3: bcn irq: maccmd 0x00000006 valid0 0 valid1 1 virgin 0 uploaded 0/0
+Sat Oct  3 20:57:48 2026 kern.info kernel: [ 3545.870000] b43-phy3: bcn0 up: base 0x0d8 total 207 len 195 rate 0x0c timbpos 0x048 dtimper 2 phyctl 0x0045
+Sat Oct  3 20:57:48 2026 kern.info kernel: [ 3545.880000] b43-phy3: bcn0 000: 80 00 00 00 ff ff ff ff ff ff 00 90 4c 0d db 00
+Sat Oct  3 20:57:48 2026 kern.info kernel: [ 3545.890000] b43-phy3: bcn0 010: 00 90 4c 0d db 00 00 00 00 00 00 00 00 00 00 00
+Sat Oct  3 20:57:48 2026 kern.info kernel: [ 3546.090000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:50 2026 kern.info kernel: [ 3547.130000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:51 2026 kern.info kernel: [ 3548.170000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:51 2026 kern.warn kernel: [ 3548.170000] net_ratelimit: 27 callbacks suppressed
+Sat Oct  3 20:57:51 2026 kern.info kernel: [ 3548.170000] b43-phy3: bcn tick: maccmd 0x00000005 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 958
+Sat Oct  3 20:57:51 2026 kern.info kernel: [ 3548.190000] b43-phy3: bcn1 tick: tpl+0x048 02010405 -> 02000405
+Sat Oct  3 20:57:52 2026 kern.info kernel: [ 3549.200000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:52 2026 kern.info kernel: [ 3549.200000] b43-phy3: bcn tick: maccmd 0x00000005 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 968
+Sat Oct  3 20:57:52 2026 kern.info kernel: [ 3549.210000] b43-phy3: bcn1 tick: tpl+0x048 02010405 -> 02000405
+Sat Oct  3 20:57:53 2026 kern.info kernel: [ 3550.250000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:53 2026 kern.info kernel: [ 3550.250000] b43-phy3: bcn tick: maccmd 0x00000005 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 978
+Sat Oct  3 20:57:53 2026 kern.info kernel: [ 3550.260000] b43-phy3: bcn1 tick: tpl+0x048 02010405 -> 02000405
+Sat Oct  3 20:57:54 2026 kern.info kernel: [ 3551.280000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:54 2026 kern.info kernel: [ 3551.280000] b43-phy3: bcn tick: maccmd 0x00000005 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 988
+Sat Oct  3 20:57:54 2026 kern.info kernel: [ 3551.290000] b43-phy3: bcn1 tick: tpl+0x048 02010405 -> 02000405
+Sat Oct  3 20:57:54 2026 kern.info kernel: [ 3551.660000] b43-phy3: tx mgmt: stype 0x5 len 189 to 94:44:44:8c:ac:48
+Sat Oct  3 20:57:54 2026 kern.info kernel: [ 3551.670000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 0 frames 1 rts 0 supp 0 raw 402a0103 000006c1
+Sat Oct  3 20:57:55 2026 kern.info kernel: [ 3552.320000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:56 2026 kern.info kernel: [ 3553.360000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:56 2026 kern.warn kernel: [ 3553.360000] net_ratelimit: 18 callbacks suppressed
+Sat Oct  3 20:57:56 2026 kern.info kernel: [ 3553.360000] b43-phy3: bcn tick: maccmd 0x00000006 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 1008
+Sat Oct  3 20:57:57 2026 kern.info kernel: [ 3554.400000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:57 2026 kern.info kernel: [ 3554.400000] b43-phy3: bcn tick: maccmd 0x00000006 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 1019
+Sat Oct  3 20:57:57 2026 kern.info kernel: [ 3554.730000] b43-phy3: tx mgmt: stype 0x5 len 189 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:57:57 2026 kern.info kernel: [ 3554.740000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 1 frames 1 rts 0 supp 0 raw 402c8103 000006e0
+Sat Oct  3 20:57:57 2026 kern.info kernel: [ 3554.760000] b43-phy3: tx mgmt: stype 0x5 len 189 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:57:57 2026 kern.info kernel: [ 3554.760000] b43-phy3: tx mgmt: stype 0x5 len 189 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:57:57 2026 kern.info kernel: [ 3554.770000] b43-phy3: tx mgmt: stype 0x5 len 189 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:57:57 2026 kern.info kernel: [ 3554.780000] b43-phy3: tx mgmt: stype 0x5 len 189 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:57:57 2026 kern.info kernel: [ 3554.790000] b43-phy3: tx mgmt: stype 0x5 len 189 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:57:57 2026 kern.info kernel: [ 3554.790000] b43-phy3: tx mgmt: stype 0x5 len 189 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:57:57 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b IEEE 802.11: authenticated
+Sat Oct  3 20:57:57 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b IEEE 802.11: authenticated
+Sat Oct  3 20:57:57 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b IEEE 802.11: associated (aid 1)
+Sat Oct  3 20:57:57 2026 daemon.notice hostapd: phy3-ap0: AP-STA-CONNECTED ba:73:1c:45:1d:5b auth_alg=open
+Sat Oct  3 20:57:57 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b WPA: pairwise key handshake completed (RSN)
+Sat Oct  3 20:57:57 2026 daemon.notice hostapd: phy3-ap0: EAPOL-4WAY-HS-COMPLETED ba:73:1c:45:1d:5b
+Sat Oct  3 20:57:58 2026 kern.info kernel: [ 3555.440000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:57:58 2026 daemon.warn odhcpd[1728]: No default route present, setting ra_lifetime to 0!
+Sat Oct  3 20:57:59 2026 kern.info kernel: [ 3556.480000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:58:00 2026 kern.info kernel: [ 3557.520000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:58:01 2026 kern.info kernel: [ 3558.560000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:58:01 2026 kern.warn kernel: [ 3558.560000] net_ratelimit: 106 callbacks suppressed
+Sat Oct  3 20:58:01 2026 kern.info kernel: [ 3558.560000] b43-phy3: bcn tick: maccmd 0x00000006 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 1059
+Sat Oct  3 20:58:01 2026 kern.info kernel: [ 3558.580000] b43-phy3: bcn0 tick: tpl+0x048 02000405 -> 02010405
+Sat Oct  3 20:58:02 2026 kern.info kernel: [ 3559.600000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:58:02 2026 kern.info kernel: [ 3559.600000] b43-phy3: bcn tick: maccmd 0x00000006 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 1069
+Sat Oct  3 20:58:02 2026 kern.info kernel: [ 3559.610000] b43-phy3: bcn0 tick: tpl+0x048 02000405 -> 02010405
+Sat Oct  3 20:58:02 2026 kern.info kernel: [ 3559.620000] b43-phy3: bcn1 tick: tpl+0x048 02010405 -> 02000405
+Sat Oct  3 20:58:02 2026 kern.info kernel: [ 3559.630000] b43-phy3: bcn1 tick: tpl+0x04c 0a070000 -> 0a070001
+Sat Oct  3 20:58:02 2026 kern.info kernel: [ 3559.690000] b43-phy3: tx mgmt: stype 0x5 len 189 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:58:02 2026 kern.info kernel: [ 3559.690000] b43-phy3: tx mgmt: stype 0x5 len 189 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:58:02 2026 kern.info kernel: [ 3559.700000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 0 frames 1 rts 0 supp 0 raw 407c0103 0000076b
+Sat Oct  3 20:58:02 2026 kern.info kernel: [ 3559.710000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 1 frames 1 rts 0 supp 0 raw 407e8103 0000076c
+Sat Oct  3 20:58:02 2026 daemon.warn odhcpd[1728]: No default route present, setting ra_lifetime to 0!
+Sat Oct  3 20:58:03 2026 kern.info kernel: [ 3560.640000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:58:04 2026 kern.info kernel: [ 3561.680000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:58:05 2026 kern.info kernel: [ 3562.720000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:58:06 2026 kern.info kernel: [ 3563.760000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:58:06 2026 kern.warn kernel: [ 3563.760000] net_ratelimit: 50 callbacks suppressed
+Sat Oct  3 20:58:06 2026 kern.info kernel: [ 3563.760000] b43-phy3: bcn tick: maccmd 0x00000006 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 1110
+Sat Oct  3 20:58:06 2026 kern.info kernel: [ 3563.780000] b43-phy3: bcn0 tick: tpl+0x048 02000405 -> 02010405
+Sat Oct  3 20:58:06 2026 kern.info kernel: [ 3563.790000] b43-phy3: bcn1 tick: tpl+0x048 02010405 -> 02000405
+Sat Oct  3 20:58:06 2026 kern.info kernel: [ 3563.900000] b43-phy3: bcn irq: maccmd 0x00000006 valid0 0 valid1 1 virgin 0 uploaded 0/0
+Sat Oct  3 20:58:06 2026 kern.info kernel: [ 3563.900000] b43-phy3: bcn0 up: base 0x0d8 total 207 len 195 rate 0x0c timbpos 0x048 dtimper 2 phyctl 0x0045
+Sat Oct  3 20:58:06 2026 kern.info kernel: [ 3563.900000] b43-phy3: bcn0 000: 80 00 00 00 ff ff ff ff ff ff 00 90 4c 0d db 00
+Sat Oct  3 20:58:06 2026 kern.info kernel: [ 3563.900000] b43-phy3: bcn0 010: 00 90 4c 0d db 00 00 00 00 00 00 00 00 00 00 00
+Sat Oct  3 20:58:06 2026 kern.info kernel: [ 3563.900000] b43-phy3: bcn0 020: 64 00 31 00 00 0c 44 53 4c 2d 33 35 38 30 4c 2d
+Sat Oct  3 20:58:06 2026 kern.info kernel: [ 3563.900000] b43-phy3: bcn0 030: 35 47 01 08 8c 12 98 24 b0 48 60 6c 05 04 00 02
+Sat Oct  3 20:58:06 2026 kern.info kernel: [ 3563.900000] b43-phy3: bcn0 040: 00 00 07 0a 49 54 20 24 04 17 95 05 0d 00 30 14
+Sat Oct  3 20:58:07 2026 kern.info kernel: [ 3564.800000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:58:08 2026 kern.info kernel: [ 3565.840000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:58:09 2026 kern.info kernel: [ 3566.880000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:58:10 2026 daemon.warn odhcpd[1728]: No default route present, setting ra_lifetime to 0!
+Sat Oct  3 20:58:10 2026 kern.info kernel: [ 3567.920000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:58:11 2026 kern.warn kernel: [ 3568.910000] net_ratelimit: 22 callbacks suppressed
+Sat Oct  3 20:58:11 2026 kern.info kernel: [ 3568.910000] b43-phy3: tx mgmt: stype 0xd len 33 to ba:73:1c:45:1d:5b
+Sat Oct  3 20:58:11 2026 kern.info kernel: [ 3568.920000] b43-phy3: txstatus mgmt: stype 0xd len 33 acked 1 frames 1 rts 0 supp 0 raw 408c8103 00000826
+Sat Oct  3 20:58:11 2026 kern.info kernel: [ 3568.960000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 20:58:11 2026 kern.info kernel: [ 3568.960000] b43-phy3: bcn tick: maccmd 0x00000005 btl0 207 btl1 207 timbpos 0x048 dtimper 2 phyctl 0x0045 tbtt 1161
+Sat Oct  3 20:58:11 2026 kern.info kernel: [ 3568.970000] b43-phy3: bcn0 tick: tpl+0x048 02000405 -> 02010405
+Sat Oct  3 20:58:11 2026 kern.info kernel: [ 3568.980000] b43-phy3: bcn1 tick: tpl+0x048 02010405 -> 02000405
+Sat Oct  3 20:58:12 2026 kern.info kernel: [ 3569.810000] b43-phy3: tx mgmt: stype 0x5 len 189 to 94:44:44:8c:ac:48
+Sat Oct  3 20:58:12 2026 kern.info kernel: [ 3569.820000] b43-phy3: txstatus mgmt: stype 0x5 len 189 acked 0 frames 1 rts 0 supp 0 raw 408e0103 00000833
+Sat Oct  3 20:58:12 2026 kern.info kernel: [ 3569.960000] b43-phy3: bcn irq: maccmd 0x00000005 valid0 1 valid1 0 virgin 0 uploaded 0/0
+Sat Oct  3 20:58:12 2026 kern.info kernel: [ 3569.960000] b43-phy3: bcn1 up: base 0x2d8 total 207 len 195 rate 0x0c timbpos 0x048 dtimper 2 phyctl 0x0045
+Sat Oct  3 20:58:12 2026 kern.info kernel: [ 3569.960000] b43-phy3: bcn1 000: 80 00 00 00 ff ff ff ff ff ff 00 90 4c 0d db 00
+Sat Oct  3 20:58:12 2026 kern.info kernel: [ 3570.000000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+

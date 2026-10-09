@@ -1,0 +1,177 @@
+Sat Oct  3 17:58:54 2026 kern.info kernel: [  200.400000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:58:55 2026 kern.info kernel: [  201.450000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:58:56 2026 kern.info kernel: [  202.490000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:58:57 2026 kern.info kernel: [  203.530000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:58:58 2026 kern.info kernel: [  204.570000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:58:59 2026 kern.info kernel: [  205.610000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:00 2026 kern.info kernel: [  206.650000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:01 2026 kern.info kernel: [  207.690000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:02 2026 kern.info kernel: [  208.720000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:03 2026 kern.info kernel: [  209.760000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:04 2026 kern.info kernel: [  210.810000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:05 2026 kern.info kernel: [  211.850000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:06 2026 kern.info kernel: [  212.890000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:07 2026 kern.info kernel: [  213.930000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:08 2026 kern.info kernel: [  214.970000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:09 2026 kern.info kernel: [  216.010000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:10 2026 kern.info kernel: [  217.050000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:12 2026 kern.info kernel: [  218.090000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:13 2026 kern.info kernel: [  219.120000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:14 2026 kern.info kernel: [  220.160000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:15 2026 kern.info kernel: [  221.200000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:16 2026 kern.info kernel: [  222.240000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:17 2026 kern.info kernel: [  223.280000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:18 2026 kern.info kernel: [  224.320000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:19 2026 kern.info kernel: [  225.360000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:20 2026 kern.info kernel: [  226.400000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:21 2026 kern.info kernel: [  227.440000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:22 2026 kern.info kernel: [  228.480000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:22 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: authenticated
+Sat Oct  3 17:59:22 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: authenticated
+Sat Oct  3 17:59:22 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: authenticated
+Sat Oct  3 17:59:22 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: authenticated
+Sat Oct  3 17:59:22 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: authenticated
+Sat Oct  3 17:59:22 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: authenticated
+Sat Oct  3 17:59:22 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: authenticated
+Sat Oct  3 17:59:22 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: authenticated
+Sat Oct  3 17:59:22 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: authenticated
+Sat Oct  3 17:59:22 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: authenticated
+Sat Oct  3 17:59:22 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: authenticated
+Sat Oct  3 17:59:23 2026 kern.warn kernel: [  229.480000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 17:59:23 2026 kern.info kernel: [  229.520000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:23 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: authenticated
+Sat Oct  3 17:59:23 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: associated (aid 1)
+Sat Oct  3 17:59:23 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: associated (aid 1)
+Sat Oct  3 17:59:23 2026 daemon.notice hostapd: phy3-ap0: AP-STA-POSSIBLE-PSK-MISMATCH 42:da:ea:b2:15:a8
+Sat Oct  3 17:59:23 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: associated (aid 1)
+Sat Oct  3 17:59:23 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: associated (aid 1)
+Sat Oct  3 17:59:23 2026 daemon.notice hostapd: phy3-ap0: AP-STA-POSSIBLE-PSK-MISMATCH 42:da:ea:b2:15:a8
+Sat Oct  3 17:59:23 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: associated (aid 1)
+Sat Oct  3 17:59:23 2026 daemon.notice hostapd: WPA: Multiple EAP reauth attempts without 4-way handshake completion, disconnect 42:da:ea:b2:15:a8
+Sat Oct  3 17:59:23 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: Station tried to associate before authentication (aid=1 flags=0x40008280)
+Sat Oct  3 17:59:23 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: Station tried to associate before authentication (aid=1 flags=0x40008280)
+Sat Oct  3 17:59:23 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: Station tried to associate before authentication (aid=1 flags=0x40008280)
+Sat Oct  3 17:59:23 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: associated (aid 1)
+Sat Oct  3 17:59:23 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: Station tried to associate before authentication (aid=1 flags=0x40008282)
+Sat Oct  3 17:59:23 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: Station tried to associate before authentication (aid=1 flags=0x40008282)
+Sat Oct  3 17:59:23 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: Station tried to associate before authentication (aid=1 flags=0x40008282)
+Sat Oct  3 17:59:23 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: associated (aid 1)
+Sat Oct  3 17:59:23 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: Station tried to associate before authentication (aid=1 flags=0x40008282)
+Sat Oct  3 17:59:23 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: associated (aid 1)
+Sat Oct  3 17:59:24 2026 kern.info kernel: [  230.570000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:25 2026 kern.info kernel: [  231.600000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:26 2026 kern.info kernel: [  232.640000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:27 2026 kern.info kernel: [  233.680000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:28 2026 daemon.warn odhcpd[1725]: No default route present, setting ra_lifetime to 0!
+Sat Oct  3 17:59:28 2026 kern.info kernel: [  234.720000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:29 2026 kern.info kernel: [  235.760000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:30 2026 kern.info kernel: [  236.800000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:31 2026 kern.info kernel: [  237.840000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:32 2026 kern.info kernel: [  238.880000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:33 2026 kern.info kernel: [  239.920000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:34 2026 kern.info kernel: [  240.960000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:35 2026 kern.info kernel: [  242.000000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:36 2026 kern.info kernel: [  243.040000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:38 2026 kern.info kernel: [  244.080000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:39 2026 kern.info kernel: [  245.120000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:40 2026 kern.info kernel: [  246.160000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:41 2026 kern.info kernel: [  247.200000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:42 2026 kern.info kernel: [  248.240000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:43 2026 kern.info kernel: [  249.280000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:44 2026 kern.info kernel: [  250.320000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:44 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: authenticated
+Sat Oct  3 17:59:45 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 IEEE 802.11: associated (aid 1)
+Sat Oct  3 17:59:45 2026 daemon.notice hostapd: phy3-ap0: AP-STA-CONNECTED 42:da:ea:b2:15:a8 auth_alg=open
+Sat Oct  3 17:59:45 2026 daemon.info hostapd: phy3-ap0: STA 42:da:ea:b2:15:a8 WPA: pairwise key handshake completed (RSN)
+Sat Oct  3 17:59:45 2026 daemon.notice hostapd: phy3-ap0: EAPOL-4WAY-HS-COMPLETED 42:da:ea:b2:15:a8
+Sat Oct  3 17:59:45 2026 kern.info kernel: [  251.360000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:46 2026 kern.info kernel: [  252.400000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:46 2026 daemon.warn odhcpd[1725]: No default route present, setting ra_lifetime to 0!
+Sat Oct  3 17:59:47 2026 kern.info kernel: [  253.440000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:48 2026 kern.info kernel: [  254.480000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:49 2026 kern.info kernel: [  255.520000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:50 2026 kern.info kernel: [  256.560000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:51 2026 kern.info kernel: [  257.600000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:52 2026 kern.info kernel: [  258.640000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:53 2026 kern.info kernel: [  259.680000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:54 2026 kern.info kernel: [  260.720000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:54 2026 kern.info kernel: [  260.720000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_60sec: pwork_60sec
+Sat Oct  3 17:59:55 2026 kern.info kernel: [  261.760000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:56 2026 kern.info kernel: [  262.800000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:57 2026 kern.info kernel: [  263.840000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:58 2026 kern.info kernel: [  264.880000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 17:59:59 2026 kern.info kernel: [  265.920000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:00 2026 kern.info kernel: [  266.960000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:01 2026 kern.info kernel: [  268.000000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:02 2026 kern.warn kernel: [  268.910000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:02 2026 kern.warn kernel: [  268.930000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:02 2026 kern.info kernel: [  269.040000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:03 2026 kern.warn kernel: [  269.120000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:03 2026 kern.warn kernel: [  269.150000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:03 2026 kern.warn kernel: [  269.210000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:03 2026 kern.warn kernel: [  269.410000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:03 2026 kern.warn kernel: [  269.620000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:03 2026 kern.warn kernel: [  269.640000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:03 2026 kern.warn kernel: [  269.940000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:03 2026 kern.warn kernel: [  270.030000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:04 2026 kern.info kernel: [  270.090000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:05 2026 kern.info kernel: [  271.130000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:06 2026 kern.info kernel: [  272.170000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:07 2026 kern.info kernel: [  273.220000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:08 2026 kern.warn kernel: [  274.130000] net_ratelimit: 44 callbacks suppressed
+Sat Oct  3 18:00:08 2026 kern.warn kernel: [  274.130000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:08 2026 kern.warn kernel: [  274.180000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:08 2026 kern.warn kernel: [  274.230000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:08 2026 kern.info kernel: [  274.260000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:08 2026 kern.warn kernel: [  274.450000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:08 2026 kern.warn kernel: [  274.540000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:08 2026 kern.warn kernel: [  274.540000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:08 2026 kern.warn kernel: [  274.640000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:08 2026 kern.warn kernel: [  274.750000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:08 2026 kern.warn kernel: [  274.970000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:09 2026 kern.warn kernel: [  275.060000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:09 2026 kern.info kernel: [  275.310000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:10 2026 kern.info kernel: [  276.340000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:11 2026 kern.info kernel: [  277.410000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:12 2026 kern.info kernel: [  278.480000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:13 2026 kern.warn kernel: [  279.190000] net_ratelimit: 30 callbacks suppressed
+Sat Oct  3 18:00:13 2026 kern.warn kernel: [  279.190000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:13 2026 kern.warn kernel: [  279.260000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:13 2026 kern.warn kernel: [  279.360000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:13 2026 kern.warn kernel: [  279.480000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:13 2026 kern.info kernel: [  279.530000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:13 2026 kern.warn kernel: [  279.610000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:13 2026 kern.warn kernel: [  279.870000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:13 2026 kern.warn kernel: [  279.980000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:14 2026 kern.warn kernel: [  280.090000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:14 2026 kern.warn kernel: [  280.090000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:14 2026 kern.warn kernel: [  280.280000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:14 2026 kern.info kernel: [  280.570000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:15 2026 kern.info kernel: [  281.600000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:16 2026 kern.info kernel: [  282.640000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:17 2026 kern.info kernel: [  283.680000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:18 2026 kern.info kernel: [  284.720000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:19 2026 kern.info kernel: [  285.780000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:19 2026 kern.warn kernel: [  285.810000] net_ratelimit: 4 callbacks suppressed
+Sat Oct  3 18:00:19 2026 kern.warn kernel: [  285.810000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:20 2026 kern.info kernel: [  286.810000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:21 2026 kern.info kernel: [  287.850000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:22 2026 kern.info kernel: [  288.890000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:23 2026 kern.info kernel: [  289.920000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:24 2026 kern.info kernel: [  290.970000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:25 2026 kern.info kernel: [  292.010000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:26 2026 kern.info kernel: [  293.050000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:28 2026 kern.info kernel: [  294.090000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:28 2026 kern.warn kernel: [  294.810000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:28 2026 kern.warn kernel: [  294.830000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:28 2026 kern.warn kernel: [  294.920000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:28 2026 kern.warn kernel: [  294.940000] b43-phy3 warning: RX descriptor underrun
+Sat Oct  3 18:00:29 2026 kern.info kernel: [  295.130000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:30 2026 kern.info kernel: [  296.170000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:31 2026 kern.info kernel: [  297.200000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:32 2026 kern.info kernel: [  298.240000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:33 2026 kern.info kernel: [  299.280000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:34 2026 kern.info kernel: [  300.320000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:35 2026 kern.info kernel: [  301.360000] ieee80211 phy3: AC-PHY: b43_phy_ac_op_pwork_1sec: watchdog
+Sat Oct  3 18:00:35 2026 kern.warn kernel: [  301.360000] b43-phy3 warning: RX descriptor underrun
+
