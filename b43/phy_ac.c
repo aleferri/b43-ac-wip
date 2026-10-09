@@ -1055,8 +1055,9 @@ static u16 b43_phy_ac_legacy_cap(struct b43_wldev *dev,
  * The same field for VHT MCS 0-9, which only the data frames' descriptors
  * carry, by width: the group of the MCS's modulation class on the row of the
  * frame's width, under no legacy limit. The stock driver's values for these
- * are in router-data/vd625/rxtx-ch36.zip, on a board whose SROM is not in the
- * collection, so this form is not checked against them.
+ * are in router-data/agcombo/rxtx-ch36.zip, under the firmware's own
+ * configuration, whose power targets are not in the collection; the form is
+ * not checked against them.
  */
 static void b43_phy_ac_vht_rate_po(struct b43_phy_ac *ac, bool capped)
 {

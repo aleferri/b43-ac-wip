@@ -33,7 +33,7 @@
 #define DD_CTL1_BYTECNT		0x00007fff
 /* Address bit 63, which the engine behind PCIe carries on every address it
  * is given (the ring's and the buffers', 0x80000000 in the high words on the
- * vd625); not part of the memory address. */
+ * agcombo); not part of the memory address. */
 #define DD_ADDRHI_PCI64		0x80000000
 
 /* Flags of a dumped descriptor */

@@ -9,6 +9,11 @@ chains   3x3 (txchain=rxchain=7), dual-band (aa2g=7, aa5g=7), full PA chain on b
 driver   0x70e2b15 ~ 7.14.43.21   ucode 0x3a004b1 ~ 3.160.4.177
 ```
 
+The `wl` module of this firmware is `wl_vd625.ko`. It keeps no local
+function symbols: `wlc_bmac_read/write_objmem16` and hnddma's
+`dma64_txfast`/`dma64_txunframed` do not resolve, and wl-diag takes the TX
+frames at `wlc_txfifo` and the RX frames at `wlc_recv`.
+
 ## Files
 
 | file | content |
@@ -27,6 +32,9 @@ driver   0x70e2b15 ~ 7.14.43.21   ucode 0x3a004b1 ~ 3.160.4.177
 | `ch36.bin`, `ch100.bin`, `ch149-wep.bin` | `wl-mmio-trap` captures at the bus, each an `up` ending with a down, with the attach done before the capture started (no EROM, no SROM, no attach AFE unit): on ch36 the first `up` after the module load, whose slot 0 host flag still reaches shared memory before the ucode load; on ch100 and on ch149 with WEP later ones. The channel changes only through a down, so none holds a channel switch on a running interface. Decode with `reverse-tools/mmio2ops.py` |
 | `mmio-decoded.zip` | the three `.bin` decoded (`.txt` raw, `.ops` through mmio2ops) and the MAC table of ch36 |
 | `cold-sweep-partial.tar.gz` | an older partial cold split, `split-agcombo/`; does not trace `OBJ` |
+| `rxtx-ch36.zip` | decoded wl-diag trace of `wl-capture-scripts/capture_txrx.sh` on 5g36/20, 5g40/40 and 5g44/80 under the firmware's own configuration (SSID `TIM-95961183`, country DE): template RAM writes with content through each bring-up (`tpl <chanspec>`), then TX and RX frames with their d11 headers while a one-stream VHT phone passes traffic (`txrx <chanspec>`) |
+| `rxtx-ch36-mimo2.zip` | the same run with a two-stream VHT station: 1089 TX and 1242 RX frames, VHT on two streams in both directions, BCC received at MCS 0 |
+| `rxtx-ch36-mmio.zip` | `wl-mmio-trap` through an association and downlink traffic to the phone on 5g36/20: every register access of `wl`, the TX status of single frames and A-MPDUs, the shared-memory writes, and a stretch (369-634 s, `TIM-Test` on 149) outside MBSS mode; its 1024 descriptor reads are `nobuf` (address bit 63 in the high word, accepted since) |
 
 The sweeps lack the classes listed in `../CLASS-COVERAGE.md`.
 

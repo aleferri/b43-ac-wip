@@ -383,7 +383,7 @@ static unsigned int b43_txhdr_ac_vht_bw(const struct ieee80211_tx_rate *t)
 
 /*
  * One VHT rate, laid out as the stock driver lays out its own
- * (router-data/vd625, 7.14.43 and its microcode, to one and two-stream
+ * (router-data/agcombo, 7.14.43 and its microcode, to one and two-stream
  * stations): word 0 with the frame type, the width in 15:14, and 0x0008,
  * which the stock blocks carry from MCS 4 up and not on MCS 0 (1-3 are in no
  * capture and follow MCS 4); word 1 the power offset, the same for one and

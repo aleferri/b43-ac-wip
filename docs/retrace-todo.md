@@ -360,9 +360,11 @@ not yet run on the board. What is open:
   and the beacon, out until then, stopped. With no TX MCS set and a VHT TX map
   of MCS 0-9 on every TX chain, mac80211 picks legacy rates for an HT
   station and VHT on up to as many streams as both sides have for a VHT
-  one, and `b43_op_tx()` drops anything else. The VHT power offsets take the MCS's class on the frame's width
-  (`b43_phy_ac_vht_rate_po()`), not checked against the stock values below,
-  whose board's SROM is not in the collection. PHY TX control word 1 carries
+  one, and `b43_op_tx()` drops anything else. The VHT power offsets take
+  the MCS's class on the frame's width (`b43_phy_ac_vht_rate_po()`), not
+  checked against the stock values below, taken under the firmware's own
+  configuration, whose power targets (`wl curpower`) are not in the
+  collection. PHY TX control word 1 carries
   the rate's power offset, the field the PHY writes into the rate blocks
   for the ucode's own frames at that rate; that the stock driver puts the
   same value in a data frame's descriptor is not checked, since no capture
@@ -379,8 +381,8 @@ not yet run on the board. What is open:
   every chanspec of every capture (agcombo, D6220, TG789vac v2) has the
   primary at the bottom of its block.
 
-  The stock driver's own TX headers are in `router-data/vd625/`:
-  `wl_vd625.ko` (7.14.43.21) and its microcode, not 784.2, at 5g36/20,
+  The stock driver's own TX headers are in `router-data/agcombo/`:
+  the agcombo's `wl_vd625.ko` (7.14.43.21) and its microcode, not 784.2, at 5g36/20,
   5g40/40 and 5g44/80, primaries 36, 40 and 44, so off the bottom of the
   block at 40 and 80 MHz. `rxtx-ch36.zip` has 1385 frames to a one-stream
   VHT station, `rxtx-ch36-mimo2.zip` 1089 to a two-stream one. Taken by
@@ -430,7 +432,7 @@ not yet run on the board. What is open:
   and reads HT-SIG and VHT-SIG-A from the six bytes in front of the frame.
   The signal is the larger of the two cores' powers in bytes 9 and 10 of
   the header, -128 for a core that did not receive, as gonsolo's port reads
-  them under 832.127. In `router-data/vd625/rxtx-ch36.zip` (7.14.43.21 and
+  them under 832.127. In `router-data/agcombo/rxtx-ch36.zip` (7.14.43.21 and
   its microcode, taken by `wl-diag` at `wlc_recv`) all 1228 frames read
   with b43's offsets (`reverse-tools/d11ac_rxh.py`): `frame_len` is the
   packet less the 40-byte header; PHY status 0 says OFDM (1) or VHT (3) and
@@ -478,7 +480,7 @@ not yet run on the board. What is open:
   every address upload, three times there, two of them with the address
   still zero.
 - **A-MPDU.** b43 announces no aggregation and opens no block ack session.
-  What the stock driver does, from `router-data/vd625/` (7.14.43.21 and its
+  What the stock driver does, from `router-data/agcombo/` (7.14.43.21 and its
   microcode): every MPDU is posted on its own, one descriptor each on TX
   ring 1, and the microcode builds the aggregate; the status that comes back
   covers the MPDUs it sent (see "TX status"). The descriptors of the MPDUs
@@ -524,7 +526,7 @@ not yet run on the board. What is open:
   capture: both above run the hybrid 6.30.223, the driver gonsolo's 832.127
   comes from.
 
-  `router-data/vd625/rxtx-ch36-mmio.zip` (7.14.43.21 and its microcode,
+  `router-data/agcombo/rxtx-ch36-mmio.zip` (7.14.43.21 and its microcode,
   `wl-mmio-trap` through an association and downlink traffic to a phone)
   has 2762 statuses, most of them for A-MPDUs of up to 32 MPDUs. The first
   package reads as above: bits 14:8 the MPDUs covered, their transmit
@@ -975,7 +977,7 @@ ucode revision.
   side: `wl-diag` with `tpldump` on the DSL-3580L's own `wl` records each
   template RAM write with its content, so the stock beacon template, the
   bytes in front of the frame included, can be set beside what
-  `bcn_diag` logs for b43's. On `router-data/vd625/rxtx-ch36.zip`
+  `bcn_diag` logs for b43's. On `router-data/agcombo/rxtx-ch36.zip`
   (7.14.43.21 and its microcode) it is two writes per update: 12 bytes at
   template RAM `0x0e80`, zero but for the L-SIG at bytes 3-5 (6 Mbps, the
   length of the frame with FCS), then the frame at `0x0e8c`, padded to a
