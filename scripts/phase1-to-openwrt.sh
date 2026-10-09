@@ -9,8 +9,8 @@
 # Come regen-patches.sh, lo script porta sulle 816 correnti quello che e'
 # cambiato in b43/ da quando sono state generate (scripts/carry.sh) e registra
 # in patches/regen-base-openwrt l'albero di HEAD e la versione di backports.
-# Le 816 seguono la 0002 e la 0003: b43/ con CPTCFG_B43 al posto di CONFIG_B43
-# e b43info() al posto di b43dbg() nelle righe del port.
+# Le 816 seguono la 0002 e la 0003: b43/ con CPTCFG_B43 al posto di
+# CONFIG_B43.
 #
 # Le patch bcma/ssb (880) non stanno su backports ma sul kernel di OpenWrt, e
 # non passano di qui.
@@ -70,7 +70,7 @@ carry_map() {
 }
 
 carry_filter() {
-	sed -e 's/CONFIG_B43/CPTCFG_B43/g' -e 's/b43dbg(/b43info(/g'
+	sed -e 's/CONFIG_B43/CPTCFG_B43/g'
 }
 
 # Le patch del pacchetto nell'ordine di Build/Patch, fino a brcm/$SERIES
