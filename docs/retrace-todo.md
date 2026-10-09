@@ -410,13 +410,20 @@ test (see "On hardware"). What is open:
     flag argument of `txctl0_calc()` is zero at both calls). Where it is
     set the function takes every TX chain instead of the rate's cores.
     **SALAME**: it is transmit beamforming, which is why 7.14.43 sets it
-    from MCS 4 up together with the `bfm` byte. b43 leaves it clear.
+    from MCS 4 up together with the `bfm` byte. b43 leaves it clear. Under
+    832.127 gonsolo's HT20 frames carry it clear and are acknowledged on MCS
+    0-15 (his `notes/123`), with the cores at `0x3` from MCS 8 up.
   - The cores: by rate class, `wlc_stf_txcore_get()`: CCK, OFDM, then one,
     two and three space-time streams, the five cells
     `wlc_stf_txcore_shmem_write()` writes in that order. They are shm
     `0x05d4`-`0x05dc` (`3 3 3 3 0` in the DSL-3580L's cold sweep, every
     channel), so b43 takes the cell of the frame's class
-    (`b43_txhdr_ac_cores()`) from the values it writes there.
+    (`b43_txhdr_ac_cores()`) from the values it writes there. The table is
+    at the same address under every AC microcode: 784 (the DSL-3580L), 832
+    (the MacBookAir6,1's `wl-firstload-5g`, which also writes a sixth cell,
+    `0x05de`, zero; the two-stream cell is `0x3` on all 305 writes while
+    OFDM and one stream are `0x1` on most) and 928 (D6220, agcombo,
+    TG789vac).
   - Word 1's subband: the chanspec's sideband shifted by the frame's width
     (`sb >> bw`) on every frame, which is the primary at 20 MHz and 0 on a
     frame that fills the channel.
