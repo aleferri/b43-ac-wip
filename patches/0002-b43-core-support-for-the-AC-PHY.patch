@@ -613,20 +613,20 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
 ---
  drivers/net/wireless/broadcom/b43/Kconfig     |   20 +-
  drivers/net/wireless/broadcom/b43/b43.h       |  150 +-
- drivers/net/wireless/broadcom/b43/bcn_diag.c  |  142 ++
+ drivers/net/wireless/broadcom/b43/bcn_diag.c  |  152 ++
  drivers/net/wireless/broadcom/b43/bcn_diag.h  |   38 +
  drivers/net/wireless/broadcom/b43/bus.c       |    4 +
  drivers/net/wireless/broadcom/b43/dma.c       |  194 +-
  drivers/net/wireless/broadcom/b43/dma.h       |   13 +-
  drivers/net/wireless/broadcom/b43/leds.c      |  225 ++-
  drivers/net/wireless/broadcom/b43/leds.h      |   24 +-
- drivers/net/wireless/broadcom/b43/main.c      | 1628 +++++++++++++++--
+ drivers/net/wireless/broadcom/b43/main.c      | 1646 +++++++++++++++--
  .../net/wireless/broadcom/b43/phy_common.c    |   61 +-
  .../net/wireless/broadcom/b43/phy_common.h    |   32 +-
  drivers/net/wireless/broadcom/b43/pio.c       |   17 +-
  drivers/net/wireless/broadcom/b43/xmit.c      |  468 ++++-
  drivers/net/wireless/broadcom/b43/xmit.h      |   88 +
- 15 files changed, 2694 insertions(+), 410 deletions(-)
+ 15 files changed, 2722 insertions(+), 410 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/bcn_diag.c
  create mode 100644 drivers/net/wireless/broadcom/b43/bcn_diag.h
 
@@ -973,10 +973,10 @@ index c0d8fc0..c8b3ba7 100644
  
 diff --git a/drivers/net/wireless/broadcom/b43/bcn_diag.c b/drivers/net/wireless/broadcom/b43/bcn_diag.c
 new file mode 100644
-index 0000000..b366bae
+index 0000000..34c0aec
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/bcn_diag.c
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,152 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Beacon diagnostic for the AC bring-up.
@@ -1000,6 +1000,14 @@ index 0000000..b366bae
 + * serves (784 at 0x0414, 928 at 0x04f7), right before the template goes out.
 + */
 +#define B43_BCN_DIAG_TBTT_COUNT		0x00EA
++
++/*
++ * Shared-memory word 0xA6: the AC microcode adds one to it for every probe
++ * response it gave up on because the request was older than PRMAXTIME (784 at
++ * 0x0277). With HOSTF5 bit 15 set it is also the count of probe requests the
++ * host never saw.
++ */
++#define B43_BCN_DIAG_PRS_TIMEOUTS	0x014C
 +
 +#define B43_BCN_DIAG_MAX_DIFFS		8
 +
@@ -1077,14 +1085,16 @@ index 0000000..b366bae
 +	unsigned int i;
 +
 +	b43info(dev->wl,
-+		"bcn tick: maccmd 0x%08x btl0 %u btl1 %u timbpos 0x%03x dtimper %u phyctl 0x%04x tbtt %u\n",
++		"bcn tick: maccmd 0x%08x btl0 %u btl1 %u timbpos 0x%03x dtimper %u phyctl 0x%04x tbtt %u hostf5 0x%04x prs-timeouts %u\n",
 +		b43_read32(dev, B43_MMIO_MACCMD),
 +		b43_shm_read16(dev, B43_SHM_SHARED, B43_SHM_SH_BTL0),
 +		b43_shm_read16(dev, B43_SHM_SHARED, B43_SHM_SH_BTL1),
 +		b43_shm_read16(dev, B43_SHM_SHARED, B43_SHM_SH_TIMBPOS),
 +		b43_shm_read16(dev, B43_SHM_SHARED, B43_SHM_SH_DTIMPER),
 +		b43_shm_read16(dev, B43_SHM_SHARED, B43_SHM_SH_BEACPHYCTL_AC),
-+		b43_shm_read16(dev, B43_SHM_SHARED, B43_BCN_DIAG_TBTT_COUNT));
++		b43_shm_read16(dev, B43_SHM_SHARED, B43_BCN_DIAG_TBTT_COUNT),
++		b43_shm_read16(dev, B43_SHM_SHARED, B43_SHM_SH_HOSTF5),
++		b43_shm_read16(dev, B43_SHM_SHARED, B43_BCN_DIAG_PRS_TIMEOUTS));
 +
 +	for (i = 0; i < ARRAY_SIZE(dev->wl->diag.tpl); i++) {
 +		const struct b43_bcn_shadow *s = &dev->wl->diag.tpl[i];
@@ -2027,7 +2037,7 @@ index 5ebd1b2..ec38dea 100644
  
  #endif /* B43_LEDS_H_ */
 diff --git a/drivers/net/wireless/broadcom/b43/main.c b/drivers/net/wireless/broadcom/b43/main.c
-index 817448e..5018eb0 100644
+index 817448e..c95cfcf 100644
 --- a/drivers/net/wireless/broadcom/b43/main.c
 +++ b/drivers/net/wireless/broadcom/b43/main.c
 @@ -317,6 +317,23 @@ static struct ieee80211_channel b43_5ghz_aphy_chantable[] = {
@@ -4053,7 +4063,7 @@ index 817448e..5018eb0 100644
  		b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_MACHW_L,
  				mac_hw_cap & 0xffff);
  		b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_MACHW_H,
-@@ -4911,6 +5958,64 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
+@@ -4911,6 +5958,67 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
  	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_SFFBLIM, 3);
  	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_LFFBLIM, 2);
  
@@ -4089,7 +4099,10 @@ index 817448e..5018eb0 100644
 +	 *
 +	 * Not written: the probe response offload cells, PRSSID, PRSSIDLEN and
 +	 * PRTLEN. b43 turns that offload off with PRMAXTIME just below, so
-+	 * they are meant to be untouched.
++	 * they are meant to be untouched. HOSTF5 bit 15 belongs to the same
++	 * offload and is the one bit the stock driver ends with that b43 does
++	 * not take: with it set the microcode keeps the probe requests for
++	 * itself (b43_phy_ac_op_switch_channel()).
 +	 */
 +	if (dev->dev->core_rev >= 42) {
 +		b43_shm_write16(dev, B43_SHM_SHARED,
@@ -4103,7 +4116,7 @@ index 817448e..5018eb0 100644
 +		b43_shm_write16(dev, B43_SHM_SHARED,
 +				B43_SHM_SH_HOSTF4, 0x0060);
 +		b43_shm_write16(dev, B43_SHM_SHARED,
-+				B43_SHM_SH_HOSTF5, 0x8088);
++				B43_SHM_SH_HOSTF5, 0x0088);
 +	}
 +
 +	/*
@@ -4118,7 +4131,7 @@ index 817448e..5018eb0 100644
  	/* Disable sending probe responses from firmware.
  	 * Setting the MaxTime to one usec will always trigger
  	 * a timeout, so we never send any probe resp.
-@@ -4932,10 +6037,22 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
+@@ -4932,10 +6040,22 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
  	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_PHYTYPE, phy->type);
  	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_PHYVER, phy->rev);
  
@@ -4141,7 +4154,7 @@ index 817448e..5018eb0 100644
  	} else if (dev->use_pio) {
  		b43warn(dev->wl, "Forced PIO by use_pio module parameter. "
  			"This should not be needed and will result in lower "
-@@ -4949,13 +6066,38 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
+@@ -4949,13 +6069,38 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
  	if (err)
  		goto err_chip_exit;
  	b43_qos_init(dev);
@@ -4180,7 +4193,7 @@ index 817448e..5018eb0 100644
  	ieee80211_wake_queues(dev->wl->hw);
  
  	b43_set_status(dev, B43_STAT_INITIALIZED);
-@@ -4963,8 +6105,16 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
+@@ -4963,8 +6108,16 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
  out:
  	return err;
  
@@ -4198,7 +4211,7 @@ index 817448e..5018eb0 100644
  err_busdown:
  	b43_bus_may_powerdown(dev);
  	B43_WARN_ON(b43_status(dev) != B43_STAT_UNINIT);
-@@ -4993,6 +6143,9 @@ static int b43_op_add_interface(struct ieee80211_hw *hw,
+@@ -4993,6 +6146,9 @@ static int b43_op_add_interface(struct ieee80211_hw *hw,
  	b43dbg(wl, "Adding Interface type %d\n", vif->type);
  
  	dev = wl->current_dev;
@@ -4208,7 +4221,36 @@ index 817448e..5018eb0 100644
  	wl->operating = true;
  	wl->vif = vif;
  	wl->if_type = vif->type;
-@@ -5257,7 +6410,7 @@ out:
+@@ -5185,6 +6341,20 @@ static int b43_op_get_survey(struct ieee80211_hw *hw, int idx,
+ 	return 0;
+ }
+ 
++/*
++ * b43 does no aggregation, and AMPDU_AGGREGATION is not set. On a band with
++ * HT the TX path still calls ieee80211_start_tx_ba_session() for every QoS
++ * data frame to an HT station, which warns when the op is missing before it
++ * looks at the flag; with the op it returns there. A station's ADDBA request
++ * is declined, as without the op.
++ */
++static int b43_op_ampdu_action(struct ieee80211_hw *hw,
++			       struct ieee80211_vif *vif,
++			       struct ieee80211_ampdu_params *params)
++{
++	return -EOPNOTSUPP;
++}
++
+ static const struct ieee80211_ops b43_hw_ops = {
+ 	.add_chanctx = ieee80211_emulate_add_chanctx,
+ 	.remove_chanctx = ieee80211_emulate_remove_chanctx,
+@@ -5210,6 +6380,7 @@ static const struct ieee80211_ops b43_hw_ops = {
+ 	.sw_scan_start		= b43_op_sw_scan_start_notifier,
+ 	.sw_scan_complete	= b43_op_sw_scan_complete_notifier,
+ 	.get_survey		= b43_op_get_survey,
++	.ampdu_action		= b43_op_ampdu_action,
+ 	.rfkill_poll		= b43_rfkill_poll,
+ };
+ 
+@@ -5257,7 +6428,7 @@ out:
  	mutex_unlock(&wl->mutex);
  
  	if (err) {
@@ -4217,7 +4259,7 @@ index 817448e..5018eb0 100644
  		return;
  	}
  
-@@ -5269,6 +6422,86 @@ out:
+@@ -5269,6 +6440,86 @@ out:
  	b43info(wl, "Controller restarted\n");
  }
  
@@ -4243,8 +4285,8 @@ index 817448e..5018eb0 100644
 + * power save disabled; VHT at 80 MHz with the short guard interval; MCS 0-7
 + * and 0-9 on every receive chain. Left out, because b43 does not do them:
 + *
-+ *  - aggregation: the A-MPDU parameters stay at their minimum, and with no
-+ *    ampdu_action mac80211 opens no block ack session either way;
++ *  - aggregation: the A-MPDU parameters stay at their minimum, and
++ *    b43_op_ampdu_action() refuses every block ack session;
 + *  - transmitting HT rates: the TX MCS set is not defined, so mac80211
 + *    picks legacy rates for an HT station, see b43_op_tx(). VHT goes out
 + *    in the layout of the stock driver's descriptors (b43_txhdr_ac_vht()),
@@ -4304,7 +4346,7 @@ index 817448e..5018eb0 100644
  static int b43_setup_bands(struct b43_wldev *dev,
  			   bool have_2ghz_phy, bool have_5ghz_phy)
  {
-@@ -5286,6 +6519,16 @@ static int b43_setup_bands(struct b43_wldev *dev,
+@@ -5286,6 +6537,16 @@ static int b43_setup_bands(struct b43_wldev *dev,
  	if (have_2ghz_phy)
  		hw->wiphy->bands[NL80211_BAND_2GHZ] = limited_2g ?
  			&b43_band_2ghz_limited : &b43_band_2GHz;
@@ -4321,7 +4363,7 @@ index 817448e..5018eb0 100644
  	if (dev->phy.type == B43_PHYTYPE_N) {
  		if (have_5ghz_phy)
  			hw->wiphy->bands[NL80211_BAND_5GHZ] = limited_5g ?
-@@ -5299,6 +6542,19 @@ static int b43_setup_bands(struct b43_wldev *dev,
+@@ -5299,6 +6560,19 @@ static int b43_setup_bands(struct b43_wldev *dev,
  	dev->phy.supports_2ghz = have_2ghz_phy;
  	dev->phy.supports_5ghz = have_5ghz_phy;
  
@@ -4341,7 +4383,7 @@ index 817448e..5018eb0 100644
  	return 0;
  }
  
-@@ -5370,6 +6626,12 @@ static void b43_supported_bands(struct b43_wldev *dev, bool *have_2ghz_phy,
+@@ -5370,6 +6644,12 @@ static void b43_supported_bands(struct b43_wldev *dev, bool *have_2ghz_phy,
  
  	/* As a fallback, try to guess using PHY type */
  	switch (dev->phy.type) {
@@ -4354,7 +4396,7 @@ index 817448e..5018eb0 100644
  	case B43_PHYTYPE_G:
  	case B43_PHYTYPE_N:
  	case B43_PHYTYPE_LP:
-@@ -5676,6 +6938,7 @@ bcma_out:
+@@ -5676,6 +6956,7 @@ bcma_out:
  static void b43_bcma_remove(struct bcma_device *core)
  {
  	struct b43_wldev *wldev = bcma_get_drvdata(core);
@@ -4362,7 +4404,7 @@ index 817448e..5018eb0 100644
  	struct b43_wl *wl = wldev->wl;
  
  	/* We must cancel any work here before unregistering from ieee80211,
-@@ -5691,14 +6954,14 @@ static void b43_bcma_remove(struct bcma_device *core)
+@@ -5691,14 +6972,14 @@ static void b43_bcma_remove(struct bcma_device *core)
  		ieee80211_unregister_hw(wl->hw);
  	}
  
@@ -4379,7 +4421,7 @@ index 817448e..5018eb0 100644
  }
  
  static struct bcma_driver b43_bcma_driver = {
-@@ -5796,9 +7059,12 @@ static struct ssb_driver b43_ssb_driver = {
+@@ -5796,9 +7077,12 @@ static struct ssb_driver b43_ssb_driver = {
  void b43_controller_restart(struct b43_wldev *dev, const char *reason)
  {
  	/* Must avoid requeueing, if we are in shutdown. */

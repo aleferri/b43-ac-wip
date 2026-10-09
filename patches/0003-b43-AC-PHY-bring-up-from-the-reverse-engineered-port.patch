@@ -13,16 +13,16 @@ hand, so it cannot drift out of sync with the tree the unit suite measures.
 Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     5 +
- .../wireless/broadcom/b43/helpers_phy_ac.c    |    92 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 10556 +++++++++++++++-
- drivers/net/wireless/broadcom/b43/phy_ac.h    |   790 +-
+ .../wireless/broadcom/b43/helpers_phy_ac.c    |   102 +
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 10564 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.h    |   791 +-
  drivers/net/wireless/broadcom/b43/ppr_ac.c    |   270 +
  drivers/net/wireless/broadcom/b43/ppr_ac.h    |    84 +
  .../net/wireless/broadcom/b43/radio_2069.c    |  1671 +++
  .../net/wireless/broadcom/b43/radio_2069.h    |    48 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1079 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    51 +
- 10 files changed, 14624 insertions(+), 22 deletions(-)
+ 10 files changed, 14643 insertions(+), 22 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -49,10 +49,10 @@ index 54f92ce..a6fc123 100644
  b43-y				+= dma.o
 diff --git a/drivers/net/wireless/broadcom/b43/helpers_phy_ac.c b/drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
 new file mode 100644
-index 0000000..2e3420a
+index 0000000..56a4d2c
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,102 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +/*
 + * Broadcom B43 wireless driver AC-PHY low-level helpers.
@@ -110,6 +110,16 @@ index 0000000..2e3420a
 +				b43_phy_ac_hostf_regs[slot], ac->mhfs[slot]);
 +}
 +
++/* Write one HOSTFn slot as it stands, changed or not. */
++void b43_phy_ac_mhf_write(struct b43_wldev *dev, u16 slot)
++{
++	if (WARN_ON(slot > 4))
++		return;
++
++	b43_shm_write16(dev, B43_SHM_SHARED, b43_phy_ac_hostf_regs[slot],
++			dev->phy.ac->mhfs[slot]);
++}
++
 +/*
 + * Force the PHY clock on or release it. The stock driver pairs the core's
 + * forced gated clock with the MAC's side of it in PSM_PHY_HDR: set after the
@@ -146,7 +156,7 @@ index 0000000..2e3420a
 +	b43_read32(dev, B43_MMIO_MACCTL);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index fe102ea..55bfba6 100644
+index fe102ea..cfc1c7b 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -1,17 +1,53 @@
@@ -209,7 +219,7 @@ index fe102ea..55bfba6 100644
  
  static int b43_phy_ac_op_allocate(struct b43_wldev *dev)
  {
-@@ -62,27 +98,10509 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -62,27 +98,10517 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -10466,11 +10476,19 @@ index fe102ea..55bfba6 100644
 +	for (off = 0x0300; off <= 0x0306; off += 2)
 +		b43_shm_read16(dev, B43_SHM_SHARED, off);
 +	b43_phy_ac_wd_stats_poll_opt(dev, true, 0, true);
-+	/* MHF4 bit 15: set on a first bring-up, cleared on a later one. */
-+	b43_phy_ac_mhf_maskset(dev, 4, (u16)~0x8000,
-+			       (dev->phy.ac->status_mask &
-+				B43_PHY_AC_STATE_FIRST_BRINGUP) ? 0x8000 : 0);
-+	/* MHF1 bit 0: the opposite polarity. */
++	/*
++	 * HOSTF5 bit 15 hands the probe requests to the microcode: 784 reads
++	 * it at 0x0AF2 and 0x0CAC on the RX path of a probe request, and with
++	 * it set answers from the probe-response template and flushes the
++	 * frame (r20 bit 0, 0x0A27), with it clear passes the frame to the
++	 * host. The stock driver sets it here and runs the offload, which on a
++	 * first bring-up is the change that writes the cell; b43 leaves the
++	 * probe responses to hostapd, keeps the bit clear and writes the word
++	 * as it stands at the same point.
++	 */
++	if (dev->phy.ac->status_mask & B43_PHY_AC_STATE_FIRST_BRINGUP)
++		b43_phy_ac_mhf_write(dev, 4);
++	/* MHF1 bit 0: set on a later bring-up, clear on the first. */
 +	b43_phy_ac_mhf_maskset(dev, 1, (u16)~0x0001,
 +			       (dev->phy.ac->status_mask &
 +				B43_PHY_AC_STATE_FIRST_BRINGUP) ? 0 : 0x0001);
@@ -10733,7 +10751,7 @@ index fe102ea..55bfba6 100644
 +	(void)b43_phy_ac_farrow_vals_432x_media_a1;
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.h b/drivers/net/wireless/broadcom/b43/phy_ac.h
-index 02eb6c0..8ce3db3 100644
+index 02eb6c0..7242f29 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.h
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.h
 @@ -3,6 +3,12 @@
@@ -10836,7 +10854,7 @@ index 02eb6c0..8ce3db3 100644
  #define B43_PHY_AC_C1_CLIP			0x6d4
  #define  B43_PHY_AC_C1_CLIP_DIS			0x4000
  #define B43_PHY_AC_C2_CLIP			0x8d4
-@@ -31,9 +100,724 @@
+@@ -31,9 +100,725 @@
  #define B43_PHY_AC_C3_CLIP			0xad4
  #define  B43_PHY_AC_C3_CLIP_DIS			0x4000
  
@@ -11539,6 +11557,7 @@ index 02eb6c0..8ce3db3 100644
 +
 +/* Helpers across the MAC/PHY boundary; rationale in helpers_phy_ac.c. */
 +void b43_phy_ac_mhf_maskset(struct b43_wldev *dev, u16 slot, u16 mask, u16 val);
++void b43_phy_ac_mhf_write(struct b43_wldev *dev, u16 slot);
 +void b43_mac_bw_set(struct b43_wldev *dev, u32 bw);
 +void b43_phy_ac_force_clock(struct b43_wldev *dev, bool force);
 +
