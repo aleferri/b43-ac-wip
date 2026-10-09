@@ -1,28 +1,28 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * wl_diag, variante per kernel 2.6.30 (DSL-3580L, SoC BCM6362, MIPS32 BE,
+ * wl_diag, variant for kernel 2.6.30 (DSL-3580L, BCM6362 SoC, MIPS32 BE,
  * gcc 4.4.2 buildroot).
  *
- * Meccanismo e formato dei record sono quelli della variante 3.4: vedi la
- * testata di ../3-4-11/wl_diag.c. Gli op-code sono un prefisso di quelli della
- * 3.4, con gli stessi valori, cosi' ../decode-wl-diag.py decodifica le tracce di
- * tutti i router e si possono cross-correlare (fra versioni di wl diverse
- * cambia il contenuto della trace, non il formato).
+ * The mechanism and the record format are those of the 3.4 variant: see the
+ * head of ../3-4-11/wl_diag.c. The op codes are a subset of the 3.4 ones, with
+ * the same values, so ../decode-wl-diag.py decodes the traces of every router
+ * and they can be cross-correlated (between versions of wl the content of the
+ * trace changes, not its format).
  *
- * Rispetto alla 3.4 mancano il percorso a break, la deviazione della tail call,
- * lo stop_machine attorno alle patch d'ingresso, la regola di un solo hook per
- * op, il filtro sui simboli fuori dal bersaglio, il controllo sui lui condivisi
- * fra epiloghi e quello di collisione fra hook. Lo short-j lascia o[1] al suo
- * posto come delay slot della `j` invece di annullarlo.
+ * Compared with 3.4 this lacks the break path, the diversion of the tail
+ * call, the stop_machine around the entry patches, the one-hook-per-op rule,
+ * the filter on symbols outside the target, the check on lui words shared
+ * between epilogues and the collision check between hooks. The short-j leaves
+ * o[1] in place as the delay slot of the `j` instead of nulling it.
  *
- * Qui e' adattato solo il collante kernel pre-2.6.33: coda a ring manuale al
- * posto del kfifo tipizzato, spinlock_t al posto di raw_spinlock, e i tre
- * #ifdef qui sotto (pr_warn, kallsyms_lookup_name, sched_clock), ognuno col
- * suo motivo accanto.
+ * Only the pre-2.6.33 kernel glue is adapted here: a hand-made ring instead
+ * of the typed kfifo, spinlock_t instead of raw_spinlock, and the three
+ * #ifdefs below (pr_warn, kallsyms_lookup_name, sched_clock), each with its
+ * reason next to it.
  *
- * Se kallsyms_lookup_name non e' esportata ai moduli, la via comoda e'
- * 'klookup=<addr da /proc/kallsyms>': il modulo la chiama per indirizzo e
- * risolve il resto da se'.
+ * If kallsyms_lookup_name is not exported to modules, the easy way is
+ * 'klookup=<addr from /proc/kallsyms>': the module calls it by address and
+ * resolves the rest by itself.
  */
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -41,28 +41,28 @@
 #include <linux/notifier.h>
 
 /*
- * pr_warn è un alias di pr_warning aggiunto in 2.6.35; il kernel 2.6.30
- * della DSL-3580L ha solo pr_warning. #ifndef così un eventuale backport
- * che lo definisce già vince.
+ * pr_warn is an alias of pr_warning added in 2.6.35; the DSL-3580L's 2.6.30
+ * kernel only has pr_warning. #ifndef, so a backport that already defines it
+ * wins.
  */
 #ifndef pr_warn
 #define pr_warn pr_warning
 #endif
 
 /*
- * kallsyms_lookup_name esiste da sempre ma l'EXPORT_SYMBOL ai moduli e'
- * arrivato in 2.6.33: sotto quella soglia il link fallisce con "Unknown
- * symbol kallsyms_lookup_name", quindi disabiliamo quel ramo e restiamo
- * su 'klookup='. Forzabile a mano con -DWLDIAG_NO_KALLSYMS.
+ * kallsyms_lookup_name has always existed, but its EXPORT_SYMBOL to modules
+ * came in 2.6.33: below that the link fails with "Unknown symbol
+ * kallsyms_lookup_name", so that branch is disabled and 'klookup=' is used.
+ * It can be forced by hand with -DWLDIAG_NO_KALLSYMS.
  */
 #if !defined(WLDIAG_NO_KALLSYMS) && LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 33)
 #define WLDIAG_NO_KALLSYMS
 #endif
 
 /*
- * sched_clock() non e' esportata ai moduli prima del 3.4; cpu_clock(cpu) e'
- * il wrapper per-cpu con lo stesso valore in ns ed e' EXPORT_SYMBOL_GPL sia
- * su 2.6.30 sia su 3.4, quindi lo usiamo su entrambi.
+ * sched_clock() is not exported to modules before 3.4; cpu_clock(cpu) is the
+ * per-cpu wrapper with the same value in ns and is EXPORT_SYMBOL_GPL on both
+ * 2.6.30 and 3.4, so it is used on both.
  */
 static inline u64 wldiag_now_ns(void)
 {
@@ -73,33 +73,33 @@ static int arm;
 module_param(arm, int, 0444);
 MODULE_PARM_DESC(arm, "0=dry-run (solo log del piano), 1=applica le patch");
 
-/* osl_delay e' rumoroso (una entry per ogni udelay) e il valore usec catturato
- * da a1 non e' affidabile su tutti i percorsi -- a volte e' spazzatura (arg in
- * registro diverso / percorso inline). Lo lasciamo staccato di default; delay=1
- * per ri-agganciarlo quando serve davvero la temporizzazione. */
+/* osl_delay is noisy (one entry per udelay) and the usec value captured from
+ * a1 is not reliable on every path -- sometimes it is garbage (argument in a
+ * different register, or an inlined path). It stays detached by default;
+ * delay=1 re-attaches it when the timing is really needed. */
 static int delay;
 module_param(delay, int, 0444);
 MODULE_PARM_DESC(delay, "0=non agganciare osl_delay (default), 1=aggancia");
 
-/* Nome del modulo bersaglio, per il match su mod->name nel notifier. Non e' un
- * dettaglio cosmetico: gli hook si risolvono per nome di simbolo, e senza il
- * confronto sul modulo un COMING qualsiasi farebbe ripartire il piano. */
+/* Name of the target module, for the match on mod->name in the notifier. Not
+ * cosmetic: hooks are resolved by symbol name, and without the module check
+ * any COMING at all would restart the plan. */
 static char *target = "wl";
 module_param(target, charp, 0444);
 MODULE_PARM_DESC(target, "nome del modulo da agganciare (default wl)");
 
-/* Indirizzo di kallsyms_lookup_name (da /proc/kallsyms). Quando la funzione
- * esiste ma non e' esportata ai moduli (2.6.30..2.6.32), non e' linkabile per
- * nome ma e' comunque chiamabile per indirizzo: passando solo questo, il
- * modulo risolve da se' tutti gli altri simboli.
+/* Address of kallsyms_lookup_name (from /proc/kallsyms). Where the function
+ * exists but is not exported to modules (2.6.30..2.6.32) it cannot be linked
+ * by name but can still be called by address: given only this, the module
+ * resolves every other symbol by itself.
  *
- * E' l'unica strada, e non ce n'e' una seconda per scelta. Passare gli
- * indirizzi a mano fisserebbe la risoluzione all'insmod di wl_diag, e dopo un
- * ricaricamento del bersaglio sarebbero indirizzi di memoria che non gli
- * appartiene piu': incompatibile col riarmo, e quindi con la cattura a freddo,
- * che e' il motivo per cui questo tracer esiste. CONFIG_KALLSYMS serve
- * comunque per risolvere i simboli di `wl`, quindi kallsyms_lookup_name c'e'
- * sempre in /proc/kallsyms e un secondo meccanismo non aggiunge nulla. */
+ * It is the only way, and there is no second one on purpose. Passing the
+ * addresses by hand would fix the resolution at wl_diag's insmod, and after a
+ * reload of the target they would be addresses of memory that is no longer
+ * its own: incompatible with re-arming, and so with the cold capture, which is
+ * why this tracer exists. CONFIG_KALLSYMS is needed anyway to resolve the
+ * symbols of `wl`, so kallsyms_lookup_name is always in /proc/kallsyms and a
+ * second mechanism adds nothing. */
 static ulong klookup;
 module_param(klookup, ulong, 0444);
 MODULE_PARM_DESC(klookup,
@@ -107,9 +107,9 @@ MODULE_PARM_DESC(klookup,
 
 typedef unsigned long (*kln_fn_t)(const char *name);
 
-/* Risoluzione simbolo via kallsyms_lookup_name: chiamata per indirizzo se e'
- * stato passato 'klookup', altrimenti per nome dove il simbolo e' linkabile
- * (kernel con l'export, cioe' da 2.6.33). */
+/* Symbol resolution through kallsyms_lookup_name: called by address if
+ * 'klookup' was given, otherwise by name where the symbol can be linked
+ * (kernels with the export, that is from 2.6.33). */
 static unsigned long resolve_sym(const char *name)
 {
 	unsigned long a = 0;
@@ -122,10 +122,10 @@ static unsigned long resolve_sym(const char *name)
 	return a;
 }
 
-/* flush_icache_range non e' esportato ai moduli, e su questo kernel (KALLSYMS
- * senza KALLSYMS_ALL) la variabile-puntatore non e' nemmeno visibile a
- * kallsyms perche' sta in BSS. Risolviamo quindi la funzione di testo del
- * cache-layer R4K (vedi wd_init) e la chiamiamo via questo puntatore. */
+/* flush_icache_range is not exported to modules, and on this kernel
+ * (KALLSYMS without KALLSYMS_ALL) the pointer variable is not even visible to
+ * kallsyms, because it lives in BSS. So the text function of the R4K cache
+ * layer is resolved instead (see wd_init) and called through this pointer. */
 typedef void (*flush_fn_t)(unsigned long, unsigned long);
 static flush_fn_t p_flush_icache;
 static void flush_i(unsigned long s, unsigned long e)
@@ -134,7 +134,7 @@ static void flush_i(unsigned long s, unsigned long e)
 		p_flush_icache(s, e);
 }
 
-/* ---- record + coda --------------------------------------------------- */
+/* ---- record + queue -------------------------------------------------- */
 #define WLDIAG_MAGIC 0x57444731u
 enum wldiag_op {
 	OP_PHY_R = 1, OP_PHY_W, OP_PHY_MOD,
@@ -159,8 +159,8 @@ enum wldiag_op {
 	OP_AMT_W, OP_RCMTA_W, OP_ADDRMATCH,		/* 43,44,45 (append) */
 	OP_PHY_WARR, OP_PHY_RDW, OP_PHY_WRW,		/* 46,47,48 (append) */
 	OP_IHR_W, OP_OBJ_SET,				/* 49,50 (append) */
-	/* 51-54 sono della 3.4 (PHY.FGC, IOCTL, IOVAR.*): qui non ci sono, ma i
-	 * numeri restano quelli, cosi' il decoder resta uno. */
+	/* 51-54 belong to 3.4 (PHY.FGC, IOCTL, IOVAR.*): they are not here, but
+	 * the numbers stay the same, so there is one decoder. */
 	OP_TX_PKT = 55, OP_TX_DATA,			/* 55,56 (append) */
 	OP_DROP = 255,
 };
@@ -170,23 +170,22 @@ struct wldiag_rec {
 } __packed;
 
 /*
- * Coda dei record, allocata a runtime e dimensionabile.
+ * The record queue, allocated at run time and sized by a parameter.
  *
- * Era un array statico da 32768 record, cioe' 896 KB nel BSS del modulo. Su
- * una DSL-3580L, 63 MB di RAM, il free totale di DMA+Normal e' dell'ordine di
- * 550 KB: la coda da sola vale una volta e mezza tutta la memoria libera, e
- * l'insmod di `wl` fallisce in osl_ctfpool_init() con una page allocation
- * failure. Quell'allocazione e' GFP_ATOMIC, quindi non puo' reclamare i ~15 MB
- * di page cache: la memoria deve essere libera PRIMA.
+ * It was a static array of 32768 records, 896 KB in the module's BSS. On a
+ * DSL-3580L, 63 MB of RAM, the total free memory of DMA+Normal is around
+ * 550 KB: the queue alone is one and a half times all the free memory, and
+ * the insmod of `wl` fails in osl_ctfpool_init() with a page allocation
+ * failure. That allocation is GFP_ATOMIC, so it cannot reclaim the ~15 MB of
+ * page cache: the memory has to be free BEFORE.
  *
- * Percio': allocata con vmalloc all'init e liberata all'uscita, cosi' un
- * dry-run non costa niente, e la dimensione e' un parametro. Il default e'
- * 8192 record, 224 KB.
+ * Hence: allocated with vmalloc at init and freed at exit, so a dry run costs
+ * nothing, and the size is a parameter. The default is 8192 records, 224 KB.
  *
- * Alzarla non e' la leva per i record persi: le catture precedenti mostrano che
- * il collo di bottiglia e' il DRENAGGIO, non la capienza -- il ritmo sale se si
- * accorcia l'attesa, perche' le raffiche del bring-up diventano una frazione
- * maggiore del tempo. Spezzare uno sweep in piu' corse costa zero byte.
+ * Raising it is not the lever for lost records: earlier captures show that
+ * the bottleneck is the DRAIN, not the capacity -- the rate rises if the wait
+ * is shortened, because the bring-up bursts become a larger share of the
+ * time. Splitting a sweep into several runs costs zero bytes.
  */
 #define FIFO_RECS_MIN 1024
 #define FIFO_RECS_MAX 32768
@@ -195,14 +194,14 @@ module_param(fifo_recs, uint, 0444);
 MODULE_PARM_DESC(fifo_recs,
 	"record nella coda, potenza di 2 (default 8192 = 224 KB)");
 static struct wldiag_rec *ring;
-static u32 ring_head, ring_tail;	/* count = (u32)(head - tail); vuoto se uguali */
-static DEFINE_SPINLOCK(fifo_lock);	/* non-RT: spin_* equivale a raw_spin_* */
+static u32 ring_head, ring_tail;	/* count = (u32)(head - tail); empty when equal */
+static DEFINE_SPINLOCK(fifo_lock);	/* non-RT: spin_* is raw_spin_* */
 static DECLARE_WAIT_QUEUE_HEAD(rq);
 static atomic_t seq = ATOMIC_INIT(0);
 static atomic_t drops = ATOMIC_INIT(0);
 
-/* fifo_recs portato in [MIN, MAX] e arrotondato per difetto a una potenza di
- * 2: emit() e wd_read() indicizzano con fifo_recs - 1 come maschera. */
+/* fifo_recs brought into [MIN, MAX] and rounded down to a power of 2:
+ * emit() and wd_read() index with fifo_recs - 1 as the mask. */
 static int ring_alloc(void)
 {
 	if (fifo_recs < FIFO_RECS_MIN || fifo_recs > FIFO_RECS_MAX) {
@@ -226,31 +225,32 @@ static int ring_alloc(void)
 	return 0;
 }
 
-/* Letture di REGISTRO PHY da non registrare, per conservare la fifo. Nasce dal
- * polling del rivelatore radar: sui canali DFS il driver interroga 0x0253 e
- * 0x0254 in continuo -- 192000 e 194000 letture nelle quattro fasi -- e con i
- * RETVAL attivi il doppio, senza c'entrare niente con la configurazione del
- * canale. Filtrando QUI, prima della fifo, si conserva il margine; nel decoder
- * non servirebbe, il collo di bottiglia e' la coda.
+/* PHY REGISTER reads not to record, to spare the fifo. It comes from the
+ * radar detector polling: on DFS channels the driver reads 0x0253 and 0x0254
+ * continuously -- 192000 and 194000 reads across the four phases -- and twice
+ * that with RETVALs on, with no bearing whatsoever on the channel setup.
+ * Filtering HERE, before the fifo, preserves the margin; in the decoder it
+ * would not help, the bottleneck is the queue.
  *
  *   skipphyrd="0x253,0x254"
  *
- * VALE SOLO PER OP_PHY_R, e non e' pignoleria: gli spazi di indirizzamento sono
- * separati per classe. Nelle stesse catture ci sono 32 OBJ.WR a 0x252 e 32 a
- * 0x254, che sono offset di object memory e non hanno nulla a che vedere coi
- * registri PHY omonimi: un filtro sul solo indirizzo li avrebbe buttati in
- * silenzio.
+ * THIS APPLIES TO OP_PHY_R ONLY, and that is not pedantry: address spaces are
+ * separate per class. The same captures hold 32 OBJ.WR at 0x252 and 32 at
+ * 0x254, which are object-memory offsets and have nothing to do with the
+ * same-numbered PHY registers: a filter on the address alone would have
+ * thrown them away in silence.
  *
- * E si filtrano SOLO 0x253/0x254. La testa del blocco -- 0x251 e 0x252, lette
- * 1558 volte in tutto, una per blocco -- e' plausibilmente lo stato e i dati
- * dell'impulso, cioe' la parte che serve: costa poco e si tiene.
+ * And ONLY 0x253/0x254 are filtered. The head of the block -- 0x251 and
+ * 0x252, read 1558 times in total, once per block -- is plausibly the pulse
+ * state and data, which is the part that matters: it costs little and it is
+ * kept.
  *
- * I record filtrati NON contano come persi: contatore separato, cosi' gli
- * OP_DROP restano un indicatore di perdita vera.
+ * Filtered records do NOT count as lost: separate counter, so OP_DROP stays
+ * an indicator of real loss.
  *
- * Per il DFS servono catture dedicate senza filtro. Il classificatore ETSI/FCC
- * Linux lo ha gia' (dfs_pattern_detector, 377 righe), quindi serve solo il
- * formato di quei registri, non la classificazione.
+ * DFS needs dedicated captures with no filter. Linux already has the ETSI/FCC
+ * classifier (dfs_pattern_detector, 377 lines), so all that is needed is the
+ * format of those registers, not the classification.
  */
 #define SKIP_MAX 16
 static char *skipphyrd;
@@ -276,8 +276,8 @@ static void parse_skipphyrd(void)
 			tok++;
 		if (!*tok)
 			continue;
-		/* kstrtoul e' arrivata in 2.6.38: simple_strtoul c'e' su entrambi
-		 * i kernel e la validita' si controlla sul puntatore di fine. */
+		/* kstrtoul arrived in 2.6.38: simple_strtoul is on both
+		 * kernels and validity is checked on the end pointer. */
 		v = simple_strtoul(tok, &end, 0);
 		if (end == tok) {
 			pr_warn("wl_diag: skipphyrd: '%s' non e' un numero\n", tok);
@@ -322,11 +322,10 @@ static u32 emit(u8 op, u32 addr, u32 val, u32 aux)
 }
 
 /*
- * Un record seguito da n byte in record di dati, dodici per record
- * impacchettati big-endian come MARK, accodati sotto un'unica presa del lock:
- * i numeri di sequenza del gruppo sono consecutivi e nessun record di un'altra
- * cpu ci cade in mezzo. Tutto o niente: un gruppo che non entra conta perso
- * per intero.
+ * A record followed by n bytes in data records, twelve per record packed
+ * big-endian like MARK, queued under one lock hold so that the sequence
+ * numbers of the group are consecutive and no other cpu's record falls
+ * inside it. All or nothing: a group that does not fit counts as lost whole.
  */
 static u32 emit_group(u8 op, u32 addr, u32 val, u32 aux, u8 dop,
 		      const u8 *b, u32 n)
@@ -366,13 +365,13 @@ static u32 emit_group(u8 op, u32 addr, u32 val, u32 aux, u8 dop,
 	return first;
 }
 
-/* ---- marcatori -------------------------------------------------------- *
- * Identici a quelli del tracer per il 3.4, e devono restarlo: il decoder disfa
- * l'impacchettamento a mano e non distingue le due versioni. Dodici caratteri
- * per record, big-endian esplicito, eccedenza tagliata.
+/* ---- markers ---------------------------------------------------------- *
+ * The same as the 3.4 tracer's, and they must stay so: the decoder undoes the
+ * packing by hand and does not tell the two versions apart. Twelve characters
+ * per record, explicitly big-endian, the excess cut.
  *
- * Sono il confine su cui taglia `split_trace.py --on mark`: senza, uno sweep non ha
- * segmenti e il caldo/freddo non si divide. */
+ * They are the boundary `split_trace.py --on mark` cuts on: without them a
+ * sweep has no segments and hot and cold cannot be told apart. */
 static u32 pack4(const char *p)
 {
 	return ((u32)(u8)p[0] << 24) | ((u32)(u8)p[1] << 16) |
@@ -395,49 +394,51 @@ static void mark(const char *s)
 	emit_mark(b);
 }
 
-/* ---- tabella hook ----------------------------------------------------- *
- * Ogni campo prende un arg d'ingresso: 0=assente(->0), 1=a1, 2=a2, 3=a3.   *
- * Reg-style: addr=a1(reg), val/mask da a2/a3. GPIO ChipCommon              *
- * (sih,mask,val,prio) non ha reg: addr=0, val=a2, mask(aux)=a1.            */
+/* ---- hook table ------------------------------------------------------- *
+ * Each field takes an entry argument: 0=absent(->0), 1=a1, 2=a2, 3=a3.     *
+ * Reg-style: addr=a1(reg), val/mask from a2/a3. ChipCommon GPIO            *
+ * (sih,mask,val,prio) has no reg: addr=0, val=a2, mask(aux)=a1.            */
 struct hook {
 	const char *name;
 	u8 op, addr_src, val_src, aux_src;
-	bool shortj;		/* true: detour a 1 parola 'j' (branch nella finestra a 4) */
-	bool retcap;		/* true: cattura il valore di ritorno via trampolino ra */
-	u8 nargx;		/* # arg extra su stack da catturare: arg5@16(sp), arg6@20(sp) */
+	bool shortj;		/* true: 1-word 'j' detour (branch inside the 4-word window) */
+	bool retcap;		/* true: capture the return value through the ra trampoline */
+	u8 nargx;		/* # of stack arguments to capture: arg5@16(sp), arg6@20(sp) */
 	unsigned long addr;
 	u32 saved[4];
 	bool armed;
-	/* Campi di stato: DEVONO stare in coda, perche' la tabella inizializza i
-	 * primi cinque campi in forma posizionale e un campo inserito in mezzo
-	 * sposta tutti i valori che seguono. Cosi' un `true` destinato a retcap
-	 * finiva nel campo precedente, retcap restava falso per ogni hook e non
-	 * usciva NESSUN RETVAL. I campi dopo @aux_src si impostano per nome. */
-	bool use_sites;		/* patch delle coppie lui/addiu ai siti di chiamata */
-	/* Nome di un hook di livello piu' basso: se QUELLO si aggancia, questo
-	 * si salta. Serve per i thunk. `wlc_bmac_read/write_shm` sono thunk di
-	 * 16 e 20 byte che tail-callano l'accessor di object memory, quindi
-	 * agganciare entrambi darebbe DUE record per ogni accesso alla shared
-	 * memory: uno dal thunk, con aux=0 per costruzione, e uno dall'ingresso
-	 * dell'accessor, col selettore vero. Ogni op OBJ comparirebbe doppia e
-	 * il confronto con il port sarebbe inutilizzabile.
+	/* State fields: they MUST stay at the tail, because the table
+	 * initialises the first five fields positionally and a field inserted
+	 * in the middle shifts every value after it. That is how a `true`
+	 * meant for retcap ended up in the field before, retcap stayed false
+	 * for every hook and NO RETVAL was ever emitted. The fields after
+	 * @aux_src are set by name. */
+	bool use_sites;		/* patch the lui/addiu pairs at the call sites */
+	/* Name of a lower-level hook: if THAT one hooks, this one is
+	 * skipped. It is for the thunks. `wlc_bmac_read/write_shm` are 16 and
+	 * 20 byte thunks that tail-call the object-memory accessor, so hooking
+	 * both would give TWO records for every shared-memory access: one from
+	 * the thunk, with aux=0 by construction, and one from the accessor's
+	 * entry, with the real selector. Every OBJ op would show up twice and
+	 * the comparison with the port would be useless.
 	 *
-	 * L'accessor di sotto e' anche strettamente piu' informativo -- porta il
-	 * selettore, quindi la regione -- e vede tutto, compreso cio' che passa
-	 * dalla coppia bulk senza toccare i thunk. I thunk restano come ripiego
-	 * per un firmware dove l'accessor non si risolve. */
+	 * The accessor underneath is also strictly more informative -- it
+	 * carries the selector, and so the region -- and sees everything,
+	 * including what goes through the bulk pair without touching the
+	 * thunks. The thunks stay as the fallback for a firmware where the
+	 * accessor does not resolve. */
 	const char *ripiego_di;
-	/* Per OP_TX_PKT: a1 e' un buffer e a2 la sua lunghezza, non un
-	 * pacchetto osl. Per nome. */
+	/* For OP_TX_PKT: a1 is a buffer and a2 its length, not an osl
+	 * packet. Set by name. */
 	bool txraw;
 };
 static struct hook hooks[] = {
 	{ "phy_reg_read",       OP_PHY_R,     1, 0, 0, .retcap = true },
 	{ "phy_reg_write",      OP_PHY_W,     1, 2, 0 },
 	{ "phy_reg_mod",        OP_PHY_MOD,   1, 3, 2 },
-	/* and/or: reg unico op (addr,val). Op-code distinti cosi' il decoder sa
-	 * l'operazione; val=a2 e' la maschera-AND (bit tenuti) risp. il valore-OR
-	 * (bit settati). Niente aux: la funzione non ha un 3o argomento. */
+	/* and/or: single-register op (addr,val). Distinct op codes so the
+	 * decoder knows the operation; val=a2 is the AND mask (bits kept) or
+	 * the OR value (bits set). No aux: the function has no 3rd argument. */
 	{ "phy_reg_and",        OP_PHY_AND,   1, 2, 0 },
 	{ "phy_reg_or",         OP_PHY_OR,    1, 2, 0 },
 	{ "write_radio_reg",    OP_RADIO_W,   1, 2, 0 },
@@ -445,201 +446,209 @@ static struct hook hooks[] = {
 	{ "si_pmu_chipcontrol", OP_PMU_CC,    1, 3, 2, .retcap = true },
 	{ "si_pmu_regcontrol",  OP_PMU_RC,    1, 3, 2, .retcap = true },
 	{ "si_pmu_pllcontrol",  OP_PMU_PLL,   1, 3, 2, .retcap = true },
-	/* si_corereg(sih, coreidx, regoff, mask, val): accesso generico a un
-	 * registro di un core del backplane. addr=regoff(a2), aux=coreidx(a1).
-	 * val (a4, 5o arg) e' sullo stack in o32 -> catturato via nargx (record
-	 * ARGX di continuazione). retcap: il ritorno (read/rmw) va nel RETVAL. */
+	/* si_corereg(sih, coreidx, regoff, mask, val): generic access to a
+	 * register of a backplane core. addr=regoff(a2), aux=coreidx(a1).
+	 * val (a4, the 5th argument) is on the stack in o32 -> captured
+	 * through nargx (a follow-on ARGX record). retcap: the return value
+	 * (read/rmw) goes in the RETVAL. */
 	{ "si_corereg",         OP_SI_COREREG,2, 0, 1, .retcap = true, .nargx = 1 },
 	/* ChipCommon GPIO (sih, mask, val, prio): mask=a1, val=a2 */
 	{ "si_gpiocontrol",     OP_CC_GPIOCTL,0, 2, 1 },
 	{ "si_gpioout",         OP_CC_GPIOOUT,0, 2, 1 },
 	{ "si_gpioouten",       OP_CC_GPIOOE, 0, 2, 1 },
-	/* accesso tabella acphy (pi, id, len, off, width, data): id=a1, len=a2,
-	 * off=a3. width/data sono args di stack, non catturati. Verifica l'ordine
-	 * len/off sui tuoi header: il disasm fissa id=a1 ma non len-vs-off. */
+	/* acphy table access (pi, id, len, off, width, data): id=a1, len=a2,
+	 * off=a3. width/data are stack arguments and are not captured. Check
+	 * the len/off order against your headers: the disasm pins id=a1 but
+	 * not len-vs-off. */
 	{ "wlc_phy_table_read_acphy",  OP_TBL_R, 1, 2, 3 },
 	{ "wlc_phy_table_write_acphy", OP_TBL_W, 1, 2, 3 },
 	{ "osl_delay",          OP_DELAY,     0, 1, 0 }, /* usec=a1 */
-	/* Controllo verso il MAC (core d11). MACCONTROL RMW + MAC host-flags.
-	 * Firme dedotte dal ramo brcmsmac (mirror del wl proprietario) --
-	 * da riverificare sul disasm come per gli altri hook (cfr. il caveat
-	 * len/off di wlc_phy_table_*). Se un prologo ha un branch nelle prime
-	 * 4 parole, pianifica() ripiega sui siti di chiamata o salta l'hook con un
-	 * pr_warn: nessun rischio.
-	 *   wlc_bmac_mctrl(hw, u32 mask, u32 val)   reg fisso: mask=a1, val=a2
+	/* Control towards the MAC (the d11 core). MACCONTROL RMW plus MAC host
+	 * flags. Signatures taken from the brcmsmac branch (a mirror of the
+	 * proprietary wl) -- to be re-checked against the disasm like the other
+	 * hooks (cf. the len/off caveat on wlc_phy_table_*). If a prologue has
+	 * a branch in the first 4 words, pianifica() falls back on the call
+	 * sites or skips the hook with a pr_warn: no risk.
+	 *   wlc_bmac_mctrl(hw, u32 mask, u32 val)   fixed reg: mask=a1, val=a2
 	 *   wlc_bmac_mhf(hw, u8 idx, u16 mask, u16 val, int bands)
 	 *                                           idx=a1, mask=a2, val=a3
 	 *   wlc_bmac_mhf_get(hw, u8 idx, int bands) idx=a1 (val UNDEFINED) */
 	{ "wlc_bmac_mctrl",     OP_MAC_MCTRL, 0, 2, 1 },
-	/* `bands` e' il 5o argomento e in o32 sta a 16(sp): si cattura con
-	 * nargx, e serve. Nelle catture la scrittura della cella HOSTF a
-	 * volte segue la chiamata e a volte no -- su cold01 #469 slot 3 e
-	 * #620 slot 4 non hanno la scrittura adiacente, che ricompare al
-	 * flush di #689-#690, mentre #623, #12242, #13525, #13530 e #13535
-	 * la hanno subito. L'ipotesi e' che la cella si scriva solo quando
-	 * `bands` combacia con la banda corrente e che altrimenti il valore
-	 * resti in cache; senza quell'argomento non si distingue, e i valori
-	 * accumulati (0x80 -> 0x88 -> 0x8088 su slot 4) restano senza
-	 * spiegazione. */
+	/* `bands` is the 5th argument and in o32 sits at 16(sp): it is
+	 * captured with nargx, and it is needed. In the captures the write of
+	 * the HOSTF cell sometimes follows the call and sometimes does not --
+	 * on cold01 #469 slot 3 and #620 slot 4 have no adjacent write, which
+	 * reappears at the #689-#690 flush, while #623, #12242, #13525, #13530
+	 * and #13535 have it straight away. The guess is that the cell is
+	 * written only when `bands` matches the current band and that
+	 * otherwise the value stays cached; without that argument the two
+	 * cannot be told apart, and the accumulated values (0x80 -> 0x88 ->
+	 * 0x8088 on slot 4) stay unexplained. */
 	{ "wlc_bmac_mhf",       OP_MAC_MHF_W, 1, 3, 2, .nargx = 1 },
 	{ "wlc_bmac_mhf_get",   OP_MAC_MHF_R, 1, 0, 0, .retcap = true },
-	/* Template RAM: solo il bulk, su 6.30 gli accessor ptr/data non esistono. */
+	/* Template RAM: the bulk only; 6.30 has no ptr/data accessors. */
 	{ "wlc_bmac_write_template_ram", OP_TPL_RAMW, 1, 2, 3 },
-	/* OTP: il livello generico ha gli stessi nomi su 6.30 e 7.14 e prologo
-	 * pulito, mentre gli hndotp_ e ipxotp_ cambiano. Il contenuto e' l'immagine
-	 * SROM, statica e gia' nota dai dump: serve per sapere QUANDO viene letta
-	 * e QUALI word, cioe' dove i valori vengono consumati.
+	/* OTP: the generic layer has the same names on 6.30 and 7.14 and a
+	 * clean prologue, while the hndotp_ and ipxotp_ ones change. The
+	 * content is the SROM image, static and already known from the dumps:
+	 * what this is for is knowing WHEN it is read and WHICH words, that is,
+	 * where the values are consumed.
 	 *   otp_read_word(oh, wn, *data)              wn=a1
 	 *   otp_read_region(sih, region, *data, *len) region=a1
-	 *   otp_init(sih)                             solo il momento */
+	 *   otp_init(sih)                             the moment only */
 	{ "otp_init",        OP_OTP_INIT, 0, 0, 0, .retcap = true },
 	{ "otp_read_word",   OP_OTP_RDW,  1, 0, 2, .retcap = true },
 	{ "otp_read_region", OP_OTP_RDR,  1, 0, 3, .retcap = true },
-	/* Due accessor che il codice acphy chiama. Il grafo delle chiamate dice
-	 * DOVE vanno:
+	/* Two accessors the acphy code calls. The call graph says WHERE they
+	 * go:
 	 *
 	 *   wlc_bmac_bw_set     <- wlapi_bmac_bw_set <- wlc_phy_chanspec_set_acphy
 	 *                                            <- wlc_phy_init
-	 *     larghezza al livello MAC. Serve per 40 e 80 MHz: con solo BW20 il
-	 *     default passa inosservato. Va in set_channel e in op_init.
+	 *     bandwidth at the MAC level. Needed for 40 and 80 MHz: with BW20
+	 *     only the default goes unnoticed. It belongs in set_channel and
+	 *     op_init.
 	 *   si_get/set_sromctl  <- wlc_phy_attach_acphy
-	 *     registro di controllo SROM. Va nel punto di op_init che corrisponde
-	 *     ad attach_acphy.
+	 *     the SROM control register. It belongs at the point of op_init
+	 *     that corresponds to attach_acphy.
 	 *
-	 * Firme dedotte dal prologo (argomenti intatti in a0-a3):
-	 *   wlc_bmac_bw_set(hw, bw)        bw=a1, non e' un indirizzo -> val
-	 *   si_get_sromctl(sih)            valore nel RETVAL
+	 * Signatures read off the prologue (arguments intact in a0-a3):
+	 *   wlc_bmac_bw_set(hw, bw)        bw=a1, not an address -> val
+	 *   si_get_sromctl(sih)            value in the RETVAL
 	 *   si_set_sromctl(sih, val)       val=a1
 	 *
-	 * NON si aggancia wlc_bmac_macphyclk_set: i suoi chiamanti sono
-	 * init_htphy, init_nphy e wlc_bmac_init, quindi per l'AC-PHY non e' nel
-	 * percorso. Ha anche un bne alla parola 1, ma e' irrilevante. */
-	/* Il momento in cui si invoca cal_init: una volta per ciclo di bring-up,
-	 * quindi anche l'ancora per segmentare uno sweep.
+	 * wlc_bmac_macphyclk_set is NOT hooked: its callers are init_htphy,
+	 * init_nphy and wlc_bmac_init, so for the AC-PHY it is not on the path.
+	 * It also has a bne in word 1, but that is beside the point. */
+	/* The moment cal_init is invoked: once per bring-up cycle, which also
+	 * makes it the anchor for segmenting a sweep.
 	 *
-	 * Un ciclo A FREDDO si ottiene ricaricando il modulo bersaglio, come fa
-	 * wl-capture-scripts/capture_cold_init.sh, non manomettendo la struct del
-	 * PHY dallo stub. Il byte "gia' calibrato" (227 su 6.30, 251 su 7.14.89)
-	 * resta una nota: a freddo e' quel byte a zero che rende completa la
-	 * cal_init. */
+	 * A COLD cycle comes from reloading the target module, which is what
+	 * wl-capture-scripts/capture_cold_init.sh does, not from tampering
+	 * with the PHY struct from the stub. The "already calibrated" byte (227
+	 * on 6.30, 251 on 7.14.89) stays a note: when cold it is that byte at
+	 * zero that makes cal_init complete. */
 	{ "wlc_phy_cal_init", OP_CAL_INIT,   0, 0, 0 },
 	{ "wlc_bmac_bw_set",  OP_MAC_BW,     0, 1, 0 },
 	{ "si_get_sromctl",   OP_SROMCTL_R,  0, 0, 0, .retcap = true },
 	{ "si_set_sromctl",   OP_SROMCTL_W,  0, 1, 0 },
-	/* Cambio canale: chanspec in a1. Si aggancia la generica, che scatta per
-	 * ogni PHY e permette una run unica su piu' canali da splittare dopo. */
+	/* Channel change: chanspec in a1. The generic one is hooked, which
+	 * fires for every PHY and allows a single run over several channels to
+	 * be split afterwards. */
 	{ "wlc_phy_chanspec_set", OP_CHANSPEC, 1, 0, 0 },
-	/* Object memory del MAC (SHM, SCR, IHR): addr=offset, aux=selettore.
-	 * Cattura anche il campione di rumore della crs_min_pwr cal, che passa da
-	 * wlc_phy_noise_read_shmem -> wlapi_bmac_read_shm -> wlc_bmac_read_shm ->
-	 * qui, non da un registro PHY.
-	 * NOME PER VERSIONE: read_objmem su 6.30, read_objmem16 su 7.14. */
+	/* MAC object memory (SHM, SCR, IHR): addr=offset, aux=selector.
+	 * This also catches the noise sample of the crs_min_pwr cal, which
+	 * comes through wlc_phy_noise_read_shmem -> wlapi_bmac_read_shm ->
+	 * wlc_bmac_read_shm -> here, not from a PHY register.
+	 * NAME PER VERSION: read_objmem on 6.30, read_objmem16 on 7.14. */
 	{ "wlc_bmac_read_objmem",  OP_MAC_OBJ_R, 1, 0, 2, .retcap = true },
 	{ "wlc_bmac_write_objmem", OP_MAC_OBJ_W, 1, 2, 3 },
-	/* Thunk a 16 bit sopra read/write_objmem. Quei due sono LOCAL, il che
-	 * non li nasconde a kallsyms: su 2.6.30 add_kallsyms() tiene l'intera
-	 * symtab del modulo, e CONFIG_KALLSYMS_ALL riguarda solo quella del
-	 * kernel. Possono pero' mancare del tutto dalla symtab di un blob, e allora
-	 * questi, GLOBAL, restano l'unica via sulla shared memory. Coprono il solo
-	 * selettore SHM, quindi aux resta 0.
-	 *   wlc_bmac_read_shm(hw, offset)        offset=a1, valore nel RETVAL
+	/* 16-bit thunks above read/write_objmem. Those two are LOCAL, which
+	 * does not hide them from kallsyms: on 2.6.30 add_kallsyms() keeps the
+	 * module's whole symtab, and CONFIG_KALLSYMS_ALL is about the kernel's
+	 * only. They can however be missing from a blob's symtab altogether,
+	 * and then these, GLOBAL, are the only way to the shared memory. They
+	 * cover the SHM selector only, so aux stays 0.
+	 *   wlc_bmac_read_shm(hw, offset)        offset=a1, value in the RETVAL
 	 *   wlc_bmac_write_shm(hw, offset, val)  offset=a1, val=a2 */
 	{ "wlc_bmac_read_shm",  OP_MAC_OBJ_R, 1, 0, 0, .retcap = true,
 	  .ripiego_di = "wlc_bmac_read_objmem" },
 	{ "wlc_bmac_write_shm", OP_MAC_OBJ_W, 1, 2, 0,
 	  .ripiego_di = "wlc_bmac_write_objmem" },
-	/* Coppia BULK di object memory, GLOBAL su entrambe le versioni. Porta il
-	 * SELETTORE, e con esso la regione: e' la sola via per vedere cio' che
-	 * non e' shared memory. `buf` (a2) e' un puntatore e non si registra; il
-	 * contenuto lo danno le op a 16 bit sottostanti quando quelle si
-	 * risolvono.
+	/* The BULK object-memory pair, GLOBAL on both versions. It carries the
+	 * SELECTOR, and with it the region: it is the only way to see what is
+	 * not shared memory. `buf` (a2) is a pointer and is not recorded; its
+	 * content comes from the 16-bit ops underneath when those resolve.
 	 *   wlc_bmac_copyfrom_objmem(hw, offset, buf, len, sel)
 	 *   wlc_bmac_copyto_objmem(hw, offset, buf, len, sel)
-	 * offset=a1, len=a3; sel e' il 5o argomento e in o32 sta a 16(sp), quindi
-	 * si cattura con nargx come per si_corereg.
-	 * DA CONFERMARE alla prima cattura: che il selettore arrivi in a5. */
+	 * offset=a1, len=a3; sel is the 5th argument and in o32 sits at
+	 * 16(sp), so it is captured with nargx as for si_corereg.
+	 * TO BE CONFIRMED on the first capture: that the selector arrives in
+	 * a5. */
 	{ "wlc_bmac_copyfrom_objmem", OP_MAC_OBJ_BULK_R, 1, 0, 3, .nargx = 1 },
 	{ "wlc_bmac_copyto_objmem",   OP_MAC_OBJ_BULK_W, 1, 0, 3, .nargx = 1 },
-	/* Chanspec in shared memory. Il simbolo c'e' anche su 6.30. */
+	/* Chanspec in shared memory. The symbol exists on 6.30 too. */
 	{ "wlc_phy_chanspec_shm_set", OP_CHANSPEC_SHM, 1, 0, 0 },
-	/* Address match: le tre funzioni che programmano MAC e BSSID. Servono a
-	 * rispondere a una domanda precisa -- se sull'AC b43 stia scrivendo la
-	 * porta MACFILTER (0x0420/0x0422) quando l'hardware guarda altrove --
-	 * cosa che dal solo insieme delle op catturate finora non si vede,
-	 * perche' quella porta e' una write diretta sulla finestra del core d11 e
-	 * non passa da nessun accessor nominato.
+	/* Address match: the three functions that program MAC and BSSID. They
+	 * answer one precise question -- whether on the AC b43 is writing the
+	 * MACFILTER port (0x0420/0x0422) while the hardware looks elsewhere --
+	 * which the set of ops captured so far does not show, because that
+	 * port is a direct write on the d11 core's window and goes through no
+	 * named accessor.
 	 *
-	 * I nomi cambiano fra le versioni: su 6.30 l'entry point e'
-	 * wlc_bmac_set_addrmatch, su 7.14 wlc_set_addrmatch. Sono elencati
-	 * entrambi: quello che non c'e' non si risolve e pianifica() lo dice.
+	 * The names change between versions: on 6.30 the entry point is
+	 * wlc_bmac_set_addrmatch, on 7.14 wlc_set_addrmatch. Both are listed:
+	 * the one that is missing does not resolve and pianifica() says so.
 	 *
-	 * Indice in a1 e puntatore all'indirizzo in a2, letto dai prologhi
-	 * dell'oggetto 6.30 e coerente con brcms_b_set_addrmatch() di brcmsmac.
-	 * L'indirizzo sta dietro il puntatore e non viene registrato. */
-	/* set_addrmatch ha un branch alla parola 2 del prologo (il test su
-	 * hw+72), quindi il detour a 4 parole non ci sta: short-j. Le parole
-	 * 0 e 1 sono `lw` e `sltiu`, non PC-relative e senza effetti
-	 * collaterali, quindi la riesecuzione nello stub e' innocua.
-	 * a1 = indice, a2 = puntatore all'indirizzo (si legge `lbu 1($a2)`). */
+	 * Index in a1 and pointer to the address in a2, read off the prologues
+	 * of the 6.30 object and consistent with brcmsmac's
+	 * brcms_b_set_addrmatch(). The address is behind the pointer and is
+	 * not recorded. */
+	/* set_addrmatch has a branch in word 2 of the prologue (the test on
+	 * hw+72), so the 4-word detour does not fit: short-j. Words 0 and 1
+	 * are `lw` and `sltiu`, not PC-relative and with no side effects, so
+	 * re-running them in the stub is harmless.
+	 * a1 = index, a2 = pointer to the address (`lbu 1($a2)` reads it). */
 	{ "wlc_bmac_set_addrmatch", OP_ADDRMATCH, 1, 0, 0, .shortj = true },
 	{ "wlc_set_addrmatch",      OP_ADDRMATCH, 1, 0, 0 },
-	/* write_amt: a1 = indice (`sll a1,1`), a3 = valore a 16 bit con segno
-	 * su cui la funzione fa `bltz`. Prologo libero. */
+	/* write_amt: a1 = index (`sll a1,1`), a3 = a signed 16-bit value the
+	 * function does `bltz` on. Prologue clear. */
 	{ "wlc_bmac_write_amt",     OP_AMT_W,     1, 0, 3 },
 	{ "wlc_bmac_set_rcmta",     OP_RCMTA_W,   1, 0, 0 },
-	/* Accessor trovati nei blob di entrambe le versioni e non coperti dagli
-	 * hook sopra:
+	/* Accessors found in the blobs of both versions and not covered by the
+	 * hooks above:
 	 *
-	 *   phy_reg_write_array   scrittura PHY in blocco, l'accessor che in altri
-	 *                         alberi si chiama phy_reg_write_list.
-	 *   phy_reg_read/write_wide   accesso PHY a 32 bit. Gli hook a 16 bit non
-	 *                         lo intercettano.
-	 *   wlc_bmac_write_ihr    gli Indirect Hardware Registers del core d11.
-	 *                         objmem li raggiunge per selettore, ma un writer
-	 *                         dedicato li scrive senza passarci.
-	 *   wlc_bmac_set_shm      scrittura mascherata in shared memory.
+	 *   phy_reg_write_array   bulk PHY write, the accessor that goes by the
+	 *                         name phy_reg_write_list in other trees.
+	 *   phy_reg_read/write_wide   32-bit PHY access. The 16-bit hooks do
+	 *                         not intercept it.
+	 *   wlc_bmac_write_ihr    the d11 core's Indirect Hardware Registers.
+	 *                         objmem reaches them by selector, but a
+	 *                         dedicated writer writes them without going
+	 *                         through it.
+	 *   wlc_bmac_set_shm      masked write to shared memory.
 	 *
-	 * Firme lette dai prologhi dell'oggetto 6.30, non assunte -- e la
-	 * maggior parte non era cio' che sembrava dal nome:
+	 * Signatures read off the prologues of the 6.30 object, not assumed --
+	 * and most were not what the name suggested:
 	 *
-	 *   phy_reg_write_array(pi, array, n)   NON ha un indirizzo: a1 e' un
-	 *       puntatore all'array e a2 il conteggio (un `blez a2` ci esce). Si
-	 *       registra il solo n. Dentro chiama phy_reg_and & co., quindi le
-	 *       singole scritture si vedono gia' dagli hook a 16 bit e questa e'
-	 *       un marcatore -- come TBL.WR per le tabelle.
-	 *   phy_reg_write_wide(pi, val)   NON ha un indirizzo: registro fisso,
-	 *       valore in a1 mascherato a 16 bit. Come wlc_bmac_mctrl.
-	 *   phy_reg_read_wide(pi)   nessun argomento utile, valore nel RETVAL.
-	 *   wlc_bmac_write_ihr(hw, off, val)   off=a1, val=a2; a3 non esiste.
-	 *   wlc_bmac_set_shm(hw, off, val, len)   off=a1, val=a2, len=a3: e' un
-	 *       memset sulla shared memory, e nel loop chiama l'accessor a 16 bit.
+	 *   phy_reg_write_array(pi, array, n)   has NO address: a1 is a pointer
+	 *       to the array and a2 the count (a `blez a2` gives it away). Only
+	 *       n is recorded. Inside it calls phy_reg_and & co., so the
+	 *       individual writes are already visible from the 16-bit hooks and
+	 *       this is a marker -- like TBL.WR for tables.
+	 *   phy_reg_write_wide(pi, val)   has NO address: fixed register, value
+	 *       in a1 masked to 16 bits. Like wlc_bmac_mctrl.
+	 *   phy_reg_read_wide(pi)   no useful argument, value in the RETVAL.
+	 *   wlc_bmac_write_ihr(hw, off, val)   off=a1, val=a2; there is no a3.
+	 *   wlc_bmac_set_shm(hw, off, val, len)   off=a1, val=a2, len=a3: it is
+	 *       a memset over shared memory, and in the loop it calls the
+	 *       16-bit accessor.
 	 *
-	 * Un candidato che non si aggancia non fa danno: pianifica() se ne accorge
-	 * dal prologo e lo salta con un pr_warn. */
+	 * A candidate that does not get hooked does no harm: pianifica()
+	 * notices from the prologue and skips it with a pr_warn. */
 	{ "phy_reg_write_array", OP_PHY_WARR, 0, 2, 0 },
 	{ "phy_reg_read_wide",   OP_PHY_RDW,  0, 0, 0, .retcap = true },
 	{ "phy_reg_write_wide",  OP_PHY_WRW,  0, 1, 0 },
 	{ "wlc_bmac_write_ihr",  OP_IHR_W,    1, 2, 0 },
 	{ "wlc_bmac_set_shm",    OP_OBJ_SET,  1, 2, 3 },
-	/* branch a slot 3 (beq): detour classico a 4 parole impossibile. short-j:
-	 * o[0]=j stub; o[1] (addiu $v0,1) resta come delay slot; lo stub
-	 * riesegue o[0..1] e rientra a +8 (v0 ri-settato DOPO la hook). addr=a1
-	 * grezzo (l'andi 0xffff e' o[0], rieseguito nello stub). */
+	/* branch in slot 3 (beq): the classic 4-word detour is impossible.
+	 * short-j: o[0]=j stub; o[1] (addiu $v0,1) stays as the delay slot; the
+	 * stub re-runs o[0..1] and returns to +8 ($v0 set again AFTER the
+	 * hook). addr=a1 raw (the andi 0xffff is o[0], re-run in the stub). */
 	{ "read_radio_reg",     OP_RADIO_R,   1, 0, 0, .shortj = true, .retcap = true },
-	/* I frame che wl posta su un ring TX, con l'header TX d11 davanti:
-	 * quello che riceve l'engine DMA, comprese le PHY TX control word dei
-	 * frame dati, che nessun accesso ai registri porta. Li legge tx_rec();
-	 * finche' txdump e' 0 non si registra niente. Firme dai sorgenti GPL di
-	 * hnddma:
+	/* The frames wl posts to a TX ring, d11 TX header in front: what the
+	 * DMA engine is handed, the PHY TX control words of data frames
+	 * included, which no register access carries. tx_rec() reads them;
+	 * nothing is recorded until txdump is set. Signatures of hnddma's GPL
+	 * sources:
 	 *
-	 *   dma64_txfast(di, p0, commit)            p0 = il pacchetto osl
+	 *   dma64_txfast(di, p0, commit)            p0 = the osl packet
 	 *   dma64_txunframed(di, buf, len, commit)  buf, len
 	 *
-	 * Si raggiungono dalla tabella di funzioni di hnddma, quindi non dai
-	 * siti di chiamata: serve il detour d'ingresso. DA CONFERMARE alla prima
-	 * cattura che p0 sia uno sk_buff, come lo fa linux_osl.h: il decoder
-	 * confronta il frame_len dell'header con la lunghezza, quindi un'ipotesi
-	 * sbagliata esce come layout non riconosciuto, non come campi plausibili. */
+	 * Both are reached through hnddma's function table, so call sites
+	 * cannot take them: the entry detour is needed. TO BE CONFIRMED on the
+	 * first capture: that p0 is an sk_buff, as linux_osl.h makes it. The
+	 * decoder checks the header's frame_len against the length, so a wrong
+	 * guess shows as an unrecognised layout and not as plausible fields. */
 	{ "dma64_txfast",       OP_TX_PKT,    0, 0, 0 },
 	{ "dma64_txunframed",   OP_TX_PKT,    0, 0, 0, .txraw = true },
 };
@@ -650,14 +659,13 @@ static inline u32 pick(u8 src, u32 a1, u32 a2, u32 a3)
 	return src == 1 ? a1 : src == 2 ? a2 : src == 3 ? a3 : 0;
 }
 /*
- * Un frame postato su un ring TX: un record TX.PKT (addr = la lunghezza
- * postata, val = i byte che seguono, aux = 1 per un buffer grezzo) e fino a
- * txdump byte del frame in record TX.DATA, un solo gruppo (emit_group). Spento
- * con txdump 0; txbudget conta i frame rimasti e si riscrive per averne
- * altri. Entrambi si cambiano durante la cattura. Di uno sk_buff si legge
- * solo la parte lineare, dove il driver ha messo l'header; ogni lettura passa
- * da probe_kernel_read(), quindi un puntatore che non e' quello della firma
- * costa il record e basta.
+ * One frame posted to a TX ring: a TX.PKT record (addr = the length posted,
+ * val = the bytes that follow, aux = 1 for a raw buffer) and up to txdump
+ * bytes of it in TX.DATA records, one group (emit_group). Off with txdump 0;
+ * txbudget counts the frames left and is written again for more. Both can be
+ * changed while tracing. Only the linear part of an sk_buff is read, where
+ * the driver pushed the header; every read goes through probe_kernel_read(),
+ * so a pointer that is not what the signature says costs the record.
  */
 #define TXDUMP_MAX 256
 
@@ -705,14 +713,14 @@ static u32 tx_rec(const struct hook *h, u32 a1, u32 a2)
 	return emit_group(OP_TX_PKT, len, n, h->txraw, OP_TX_DATA, b, n);
 }
 
-/* Punto d'atterraggio del detour: chiamato dallo stub con (id, a1, a2, a3). */
+/* Landing point of the detour: called from the stub with (id, a1, a2, a3). */
 u32 __used noinline
 wl_diag_hook(u32 id, u32 a1, u32 a2, u32 a3)
 {
 	struct hook *h = &hooks[id];
 
-	/* CAL.INIT non porta payload: dice QUANDO cal_init e' stata invocata, ed e'
-	 * anche l'ancora per segmentare uno sweep, una per ciclo. */
+	/* CAL.INIT carries no payload: it says WHEN cal_init was invoked, and
+	 * it is also the anchor for segmenting a sweep, one per cycle. */
 	if (h->op == OP_CAL_INIT)
 		return emit(h->op, 0, 0, 0);
 	if (h->op == OP_TX_PKT)
@@ -723,20 +731,19 @@ wl_diag_hook(u32 id, u32 a1, u32 a2, u32 a3)
 			   pick(h->aux_src,  a1, a2, a3));
 }
 
-/* Record di continuazione per gli arg su stack (o32): un secondo record ARGX
- * legato al principale via parent_seq. addr=arg5, val=arg6. */
+/* Follow-on record for stack arguments (o32): a second ARGX record tied to
+ * the main one through parent_seq. addr=arg5, val=arg6. */
 void __used noinline
 wl_diag_hook_argx(u32 parent_seq, u32 x1, u32 x2)
 {
 	emit(OP_ARGX, x1, x2, parent_seq);
 }
 
-/* ---- cattura valore di ritorno (retcap): trampolino su 'ra' ------------ *
- * L'origine di 'ra' e' salvata PER-INVOCAZIONE in un pool indicizzato da     *
- * 'current' (task): sopravvive a preemption/migrazione (SMP+PREEMPT) al       *
- * contrario di uno slot per-CPU. LIFO per gestire il nesting (una read        *
- * agganciata che ne chiama un'altra). Pool pieno -> NON dirotta (nessun       *
- * crash, si perde solo quel valore). */
+/* ---- return value capture (retcap): trampoline on 'ra' ---------------- *
+ * The origin of 'ra' is saved PER INVOCATION in a pool indexed by 'current'  *
+ * (the task): it survives preemption and migration (SMP+PREEMPT), unlike a   *
+ * per-CPU slot. LIFO, to handle nesting (a hooked read that calls another).  *
+ * Pool full -> NO diversion (no crash, only that value is lost). */
 struct ret_inst {
 	struct task_struct *task;
 	unsigned long orig_ra;
@@ -747,10 +754,10 @@ struct ret_inst {
 static struct ret_inst ret_pool[RET_POOL];
 static DEFINE_SPINLOCK(ret_lock);
 static u32 ret_order;
-static unsigned long ret_trampoline;	/* indirizzo dello stub di ritorno condiviso */
+static unsigned long ret_trampoline;	/* address of the shared return stub */
 
-/* ingresso di un retcap: registra (current, orig_ra, seq); ritorna l'indirizzo
- * di 'ra' da installare (trampolino se c'e' posto, altrimenti orig_ra). */
+/* entry of a retcap: records (current, orig_ra, seq); returns the 'ra'
+ * address to install (the trampoline if there is room, otherwise orig_ra). */
 unsigned long __used noinline
 wl_diag_enter_ret(unsigned long orig_ra, u32 seq)
 {
@@ -774,9 +781,9 @@ wl_diag_enter_ret(unsigned long orig_ra, u32 seq)
 	return orig_ra;
 }
 
-/* ritorno di un retcap: preleva LIFO l'istanza di current, emette RETVAL(seq,
- * retval) e ritorna orig_ra. Chiamata solo se enter aveva dirottato -> per
- * costruzione l'istanza esiste; guardia difensiva se best<0. */
+/* return of a retcap: takes current's instance LIFO, emits RETVAL(seq,
+ * retval) and returns orig_ra. Called only if enter diverted -> by
+ * construction the instance exists; defensive guard if best<0. */
 unsigned long __used noinline
 wl_diag_exit_ret(u32 retval)
 {
@@ -801,7 +808,7 @@ wl_diag_exit_ret(u32 retval)
 	return ra;
 }
 
-/* ---- mini-assembler MIPS o32 (codifiche verificate) ------------------- */
+/* ---- MIPS o32 mini-assembler (encodings checked) ---------------------- */
 #define R_ZERO 0
 #define R_V0 2
 #define R_V1 3
@@ -823,7 +830,7 @@ static inline u32 i_jr(u8 rs){ return (rs<<21)|0x08u; }
 static inline u32 i_j(unsigned long tgt){ return (0x02u<<26)|(u32)((tgt>>2)&0x03ffffffu); }
 #define I_NOP 0u
 
-/* true se l'opcode e' un branch/jump (non rilocabile verbatim nello stub) */
+/* true if the opcode is a branch/jump (not relocatable as is into the stub) */
 static bool is_branch(u32 insn)
 {
 	u32 op = insn >> 26;
@@ -839,26 +846,27 @@ static bool is_branch(u32 insn)
 	return false;
 }
 
-/* ---- pool stub eseguibile (statico: vive nel modulo, mai liberato) ----- */
+/* ---- executable stub pool (static: lives in the module, never freed) --- */
 #define STUB_WORDS 48
 static u32 stub_pool[NHOOK][STUB_WORDS] __attribute__((aligned(8)));
-static u32 ret_tramp[16] __attribute__((aligned(8)));	/* trampolino di ritorno condiviso */
+static u32 ret_tramp[16] __attribute__((aligned(8)));	/* shared return trampoline */
 
-/* Nessun percorso a 'break' su questo kernel: do_bp() va diretto a
- * do_trap_or_bp() -- panic in kernel mode -- e set_except_vector non e'
- * esportata. Il discriminante sarebbe BRK_KPROBE_BP, che break.h definisce solo
- * dove esiste anche lo switch con notify_die. Per i prologhi non detourabili si
- * usa la patch dei siti di chiamata, che qui funziona ed e' preferibile. */
+/* No break path on this kernel: do_bp() goes straight to do_trap_or_bp() --
+ * a panic in kernel mode -- and set_except_vector is not exported. The tell
+ * would be BRK_KPROBE_BP, which break.h defines only where the switch with
+ * notify_die exists too. For prologues that cannot be detoured the call-site
+ * patch is used, which works here and is preferable. */
 
-/* Patch dei siti di chiamata. Il modulo e' -mabicalls: zero jal in .text, le
- * chiamate sono lui/addiu + jalr (o jr $t9 per le tail call), quindi si
- * riscrive la coppia perche' carichi lo stub. La funzione resta intatta:
- * nessun vincolo sul prologo, e funziona su 2.6.30 dove il break non c'e'.
- * Un solo stub serve jalr e jr: preserva ra e salta alla funzione vera.
- * Tre condizioni, verificate a runtime: la coppia deve dare l'indirizzo
- * esatto; deve seguirla un salto sullo STESSO registro; l'addiu non deve
- * essere condiviso (il compilatore riusa la parte bassa fra siti diversi:
- * nel blob D6220 quello a +0x1f5a24 serve due funzioni). */
+/* Call-site patching. The module is -mabicalls: no jal in .text, calls are
+ * lui/addiu + jalr (or jr $t9 for tail calls), so the pair is rewritten to
+ * load the stub. The function stays intact: no constraint on the prologue,
+ * and it works on 2.6.30 where there is no break.
+ * One stub serves both jalr and jr: it preserves ra and jumps to the real
+ * function.
+ * Three conditions, checked at run time: the pair must give the exact
+ * address; a jump on the SAME register must follow it; the addiu must not be
+ * shared (the compiler reuses the low half between different sites: in the
+ * D6220 blob the one at +0x1f5a24 serves two functions). */
 #define MAX_SITES 8
 
 struct site {
@@ -868,8 +876,8 @@ struct site {
 static struct site sites[NHOOK][MAX_SITES];
 static int n_sites[NHOOK];
 
-/* immediati di una coppia lui/addiu per caricare `v`: l'addiu estende il segno
- * della parte bassa, quindi la parte alta va compensata. */
+/* immediates of a lui/addiu pair loading `v`: the addiu sign-extends the
+ * low half, so the high half has to compensate. */
 static inline u16 hi16_of(unsigned long v) { return (u16)((v + 0x8000UL) >> 16); }
 static inline u16 lo16_of(unsigned long v) { return (u16)(v & 0xffff); }
 
@@ -909,7 +917,7 @@ static int find_sites(int idx, unsigned long target)
 			    (long)(s16)(wl & 0xffff);
 			if (a != target)
 				break;
-			/* salto sullo stesso registro entro 8 istruzioni */
+			/* a jump on the same register within 8 instructions */
 			for (j = 1; j <= 8 && i + k + j < (int)words; j++) {
 				u32 wj = base[i + k + j];
 
@@ -934,7 +942,7 @@ static int find_sites(int idx, unsigned long target)
 		}
 	}
 
-	/* scarta i siti che condividono l'addiu con un altro */
+	/* drop the sites that share the addiu with another */
 	for (i = 0; i < n; i++) {
 		int shared = 0;
 
@@ -984,19 +992,19 @@ static void restore_sites(int idx)
 	n_sites[idx] = 0;
 }
 
-/* Se il modulo bersaglio se ne va mentre siamo armati, i nostri puntatori
- * restano su memoria liberata e il ripristino allo scarico scriverebbe li'.
- * Su 2.6.30 il rescan PCI scarica wl, quindi succede davvero.
- * Il notifier disarma al GOING, quando il testo e' ancora mappato. */
+/* If the target module goes away while armed, our pointers stay on freed
+ * memory and the restore at unload would write there. On 2.6.30 the PCI
+ * rescan unloads wl, so it really happens. The notifier disarms at GOING,
+ * while the text is still mapped. */
 static struct module *target_mod;
 static bool mod_nb_registered;
 
-/* NESSUN riferimento sul bersaglio, deliberatamente. Tenerlo farebbe fallire
- * `rmmod wl` con -EBUSY, e su 2.6.30 e' lo spazio utente del vendor a fare
- * rmmod al rescan -- oltre a essere il passo centrale di una cattura a freddo.
- * La sicurezza viene dal notifier, che disarma al GOING mentre il testo e'
- * ancora mappato: in delete_module() la notifica arriva dopo mod->exit() e
- * prima di free_module(). */
+/* NO reference on the target, on purpose. Holding one would make `rmmod wl`
+ * fail with -EBUSY, and on 2.6.30 it is the vendor's userspace that does the
+ * rmmod at the rescan -- besides being the core step of a cold capture.
+ * Safety comes from the notifier, which disarms at GOING while the text is
+ * still mapped: in delete_module() the notification arrives after
+ * mod->exit() and before free_module(). */
 
 static void build_stub(int idx)
 {
@@ -1005,7 +1013,7 @@ static void build_stub(int idx)
 	unsigned long hookfn = (unsigned long)&wl_diag_hook;
 	unsigned long argxfn = (unsigned long)&wl_diag_hook_argx;
 	unsigned long enterfn = (unsigned long)&wl_diag_enter_ret;
-	/* sui siti la funzione e' intatta: niente da rieseguire, si rientra da 0 */
+	/* on the sites the function is intact: nothing to re-run, enter at 0 */
 	int rep = hooks[idx].use_sites ? 0 : (hooks[idx].shortj ? 2 : 4);
 	unsigned long ret = hooks[idx].use_sites ? hooks[idx].addr :
 		hooks[idx].addr + (hooks[idx].shortj ? 8 : 16);
@@ -1025,8 +1033,8 @@ static void build_stub(int idx)
 	s[n++] = I_NOP;
 	s[n++] = i_sw(R_V0, R_SP, 20);		/* seq */
 
-	/* Arg extra su stack (o32): arg5@16(entry)=48(sp), arg6@20=52(sp).
-	 * wl_diag_hook_argx(seq, arg5, arg6) -> record ARGX di continuazione. */
+	/* Stack arguments (o32): arg5@16(entry)=48(sp), arg6@20=52(sp).
+	 * wl_diag_hook_argx(seq, arg5, arg6) -> follow-on ARGX record. */
 	if (hooks[idx].nargx) {
 		s[n++] = i_lw(R_A0, R_SP, 20);			/* seq */
 		s[n++] = i_lw(R_A1, R_SP, 48);			/* arg5 */
@@ -1040,8 +1048,8 @@ static void build_stub(int idx)
 		s[n++] = I_NOP;
 	}
 
-	/* retcap: wl_diag_enter_ret(orig_ra, seq) -> v0 = ra da installare
-	 * (trampolino se c'e' posto, altrimenti orig_ra = nessun dirottamento). */
+	/* retcap: wl_diag_enter_ret(orig_ra, seq) -> v0 = ra to install
+	 * (the trampoline if there is room, else orig_ra = no diversion). */
 	if (hooks[idx].retcap) {
 		s[n++] = i_lw(R_A0, R_SP, 16);			/* orig_ra */
 		s[n++] = i_lw(R_A1, R_SP, 20);			/* seq */
@@ -1049,7 +1057,7 @@ static void build_stub(int idx)
 		s[n++] = i_ori(R_T9, R_T9, enterfn & 0xffff);
 		s[n++] = i_jalr(R_T9);
 		s[n++] = I_NOP;
-		s[n++] = i_sw(R_V0, R_SP, 24);			/* ra da installare */
+		s[n++] = i_sw(R_V0, R_SP, 24);			/* ra to install */
 	}
 
 	s[n++] = i_lw(R_A0, R_SP, 0);
@@ -1059,7 +1067,7 @@ static void build_stub(int idx)
 	s[n++] = i_lw(R_RA, R_SP, hooks[idx].retcap ? 24 : 16);
 	s[n++] = i_addiu(R_SP, R_SP, 32);
 	for (k = 0; k < rep; k++)
-		s[n++] = o[k];	/* riesegue le parole spiazzate (o[1] short-j ri-setta v0) */
+		s[n++] = o[k];	/* re-run the displaced words (short-j: o[1] sets v0 again) */
 	s[n++] = i_lui(R_T9, ret >> 16);
 	s[n++] = i_ori(R_T9, R_T9, ret & 0xffff);
 	s[n++] = i_jr(R_T9);
@@ -1067,9 +1075,10 @@ static void build_stub(int idx)
 	/* max (classic+retcap+nargx) == 40 <= STUB_WORDS */
 }
 
-/* Trampolino di ritorno condiviso: la funzione agganciata retcap fa jr ra con
- * ra == qui. Legge $v0 (valore restituito), lo consegna a wl_diag_exit_ret che
- * emette RETVAL e ritorna orig_ra, quindi salta a orig_ra con $v0 preservato. */
+/* Shared return trampoline: a retcap-hooked function does jr ra with
+ * ra == here. It reads $v0 (the return value), hands it to wl_diag_exit_ret,
+ * which emits RETVAL and returns orig_ra, then jumps to orig_ra with $v0
+ * preserved. */
 static void build_ret_trampoline(void)
 {
 	unsigned long exitfn = (unsigned long)&wl_diag_exit_ret;
@@ -1092,16 +1101,16 @@ static void build_ret_trampoline(void)
 	s[n++] = I_NOP;
 }
 
-/* scrive l'ingresso, parola di testa PER ULTIMA (classic) o singola 'j' (short-j) */
+/* writes the entry, head word LAST (classic) or a single 'j' (short-j) */
 static void patch_entry(int idx)
 {
 	u32 *o = (u32 *)hooks[idx].addr;
 	unsigned long stub = (unsigned long)stub_pool[idx];
 
 	if (hooks[idx].shortj) {
-		/* patch a 1 parola atomica: o[0]=j stub. o[1] resta (delay slot,
-		 * rieseguito anche dallo stub). Richiede stub in regione j 256MB
-		 * (verificato in pianifica()). */
+		/* atomic 1-word patch: o[0]=j stub. o[1] stays (delay slot,
+		 * re-run by the stub too). Needs the stub in the j's 256MB
+		 * region (checked in pianifica()). */
 		o[0] = i_j(stub);
 		flush_i(hooks[idx].addr, hooks[idx].addr + 8);
 		return;
@@ -1185,9 +1194,9 @@ static unsigned int wd_poll(struct file *f, poll_table *wait)
 	return 0;
 }
 
-/* Etichetta di ciclo da spazio utente: `echo "ch36 bw20" > /proc/wl_diag`. Il
- * record entra nella coda come tutti gli altri, quindi e' ordinato con le op e
- * non con l'orologio di chi scrive. */
+/* Cycle label from userspace: `echo "ch36 bw20" > /proc/wl_diag`. The record
+ * goes into the queue like every other, so it is ordered with the ops and
+ * not with the clock of whoever writes it. */
 static ssize_t wd_write(struct file *f, const char __user *ubuf, size_t len,
 			loff_t *off)
 {
@@ -1212,27 +1221,27 @@ static const struct file_operations wd_fops = {
 	.poll = wd_poll,
 	.llseek = no_llseek,
 };
-/* Il buffer sta in /proc/wl_diag: appare da se' e non serve mknod, mentre un
- * misc device a minor dinamico vorrebbe leggere il minor da /proc/misc e
- * crearlo a mano a ogni caricamento.
- * proc_create ha la stessa firma su 2.6.30 e 3.4 e prende file_operations,
- * quindi la stessa chiamata vale per entrambi. */
+/* The buffer is in /proc/wl_diag: it appears by itself and needs no mknod,
+ * while a misc device with a dynamic minor would need the minor read from
+ * /proc/misc and created by hand at every load.
+ * proc_create has the same signature on 2.6.30 and 3.4 and takes
+ * file_operations, so the same call works on both. */
 #define WD_PROC "wl_diag"
 
-/* ---- piano, armamento, disarmo --------------------------------------- */
-static int eligible[NHOOK];   /* indici agganciabili */
+/* ---- plan, arming, disarming ----------------------------------------- */
+static int eligible[NHOOK];   /* hookable indices */
 static int n_elig;
 
-/* Ripristina i prologhi e i siti patchati. Idempotente: si chiama sia dallo
- * scaricamento di wl_diag sia dal GOING del bersaglio. */
+/* Restores the patched prologues and sites. Idempotent: called both at
+ * wl_diag's unload and at the target's GOING. */
 static void disarma(void)
 {
 	int i;
 	bool qualcuno = false;
 
-	/* Stop nuovi dirottamenti di ra prima di ripristinare i prologhi; gli
-	 * stub in volo che hanno gia' dirottato tornano comunque via ret_tramp
-	 * (statico, valido), e synchronize_sched aspetta che completino. */
+	/* Stop new diversions of ra before restoring the prologues; stubs in
+	 * flight that have already diverted return through ret_tramp anyway
+	 * (static, valid), and synchronize_sched waits for them to finish. */
 	ret_trampoline = 0;
 
 	for (i = 0; i < NHOOK; i++)
@@ -1250,10 +1259,10 @@ static void disarma(void)
 		synchronize_sched();
 }
 
-/* Azzera il piano. Al ricaricamento del bersaglio gli indirizzi cambiano, e
- * ripatchare su quelli vecchi sarebbe silenzioso e fatale: il piano si rifa'
- * da zero a ogni COMING. Il buffer di traccia NON si azzera, cosi' i segmenti
- * di uno sweep restano nella stessa corsa. */
+/* Clears the plan. When the target is reloaded the addresses change, and
+ * re-patching the old ones would be silent and fatal: the plan is rebuilt
+ * from scratch at every COMING. The trace buffer is NOT cleared, so the
+ * segments of a sweep stay in the same run. */
 static void azzera_piano(void)
 {
 	int i, j;
@@ -1273,21 +1282,21 @@ static int pianifica(void);
 static int arma(void);
 
 /*
- * Il notifier e' il perno dell'armamento dinamico, non una difesa di riserva:
- * COMING arma, GOING disarma, senza eccezioni. E' quello che serve per una
- * cattura a freddo, dove ogni ciclo e' un rmmod piu' un insmod del bersaglio.
+ * The notifier is the pivot of dynamic arming, not a backup defence: COMING
+ * arms, GOING disarms, no exceptions. That is what a cold capture needs,
+ * where every cycle is an rmmod plus an insmod of the target.
  *
- * L'ordine delle notifiche in 2.6.30 lo permette, ed e' lo stesso del 3.4:
- * in init_module() load_module() finisce del tutto -- rilocazioni applicate,
- * modulo in lista -- poi arriva COMING, poi mod->init, quindi si arma prima
- * che il driver parta; in delete_module() gira mod->exit(), poi arriva GOING,
- * poi free_module(), quindi al disarmo il testo e' ancora mappato. Il 2.6.30
- * non ha nemmeno set_section_ro_nx, che nel 3.4 gira subito DOPO COMING: la'
- * la finestra scrivibile e' strettissima, qui il testo dei moduli e' sempre
- * scrivibile.
+ * The order of the notifications in 2.6.30 allows it, and it is the same as
+ * in 3.4: in init_module() load_module() completes -- relocations applied,
+ * module in the list -- then COMING arrives, then mod->init, so the hooks are
+ * armed before the driver starts; in delete_module() mod->exit() runs, then
+ * GOING arrives, then free_module(), so the text is still mapped at disarm.
+ * 2.6.30 does not even have set_section_ro_nx, which in 3.4 runs right AFTER
+ * COMING: there the writable window is very narrow, here module text is
+ * always writable.
  *
- * Niente riferimento sul bersaglio: `rmmod wl` deve poter riuscire, ed e' il
- * passo centrale di una cattura a freddo.
+ * No reference on the target: `rmmod wl` has to be able to succeed, and it is
+ * the core step of a cold capture.
  */
 static int wd_mod_notify(struct notifier_block *nb, unsigned long ev, void *data)
 {
@@ -1298,8 +1307,8 @@ static int wd_mod_notify(struct notifier_block *nb, unsigned long ev, void *data
 
 	switch (ev) {
 	case MODULE_STATE_COMING:
-		/* Un COMING senza il GOING precedente non dovrebbe accadere, ma
-		 * ripatchare su indirizzi vecchi sarebbe silenzioso e fatale. */
+		/* A COMING without the GOING before it should not happen, but
+		 * re-patching old addresses would be silent and fatal. */
 		disarma();
 		azzera_piano();
 		target_mod = m;
@@ -1320,9 +1329,9 @@ static int wd_mod_notify(struct notifier_block *nb, unsigned long ev, void *data
 
 static struct notifier_block wd_mod_nb = { .notifier_call = wd_mod_notify };
 
-/* Costruisce il piano: risolve i simboli e decide per ciascuno la strategia di
- * detour. Ritorna il numero di hook agganciabili. Rifatto a ogni COMING del
- * bersaglio, perche' al ricaricamento gli indirizzi cambiano. */
+/* Builds the plan: resolves the symbols and picks the detour strategy for
+ * each. Returns the number of hookable hooks. Rebuilt at every COMING of the
+ * target, because the addresses change at a reload. */
 static int pianifica(void)
 {
 	int i;
@@ -1347,16 +1356,17 @@ static int pianifica(void)
 		}
 		hooks[i].addr = a;
 		o = (u32 *)a;
-		win = hooks[i].shortj ? 2 : 4;	/* parole toccate/riesguite */
+		win = hooks[i].shortj ? 2 : 4;	/* words touched/re-run */
 		for (j = 0; j < 4; j++)
 			hooks[i].saved[j] = o[j];
 		for (j = 0; j < win; j++)
 			if (branch < 0 && is_branch(o[j]))
 				branch = j;
 		if (branch >= 0 && find_sites(i, hooks[i].addr) > 0) {
-			/* Non detourabile nel prologo, ma i siti di chiamata sono
-			 * patchabili: la funzione resta intatta. Preferito al break,
-			 * che richiede il die notifier e non c'e' su ogni kernel. */
+			/* Cannot be detoured in the prologue, but the call
+			 * sites can be patched: the function stays intact.
+			 * Preferred to the break, which needs the die notifier
+			 * and is not on every kernel. */
 			hooks[i].use_sites = true;
 			eligible[n_elig++] = i;
 			pr_info("wl_diag: piano hook '%s' @%px [siti: %d] (branch a istr %d)\n",
@@ -1379,8 +1389,8 @@ static int pianifica(void)
 			hooks[i].shortj ? " [short-j]" : "");
 	}
 
-	/* Scarta i ripieghi il cui accessor di sotto si e' agganciato: vedi
-	 * `ripiego_di` in struct hook per il perche'. */
+	/* Drop the fallbacks whose accessor underneath hooked: see
+	 * `ripiego_di` in struct hook for why. */
 	{
 		int k, j, w = 0;
 
@@ -1412,7 +1422,7 @@ static int pianifica(void)
 	return n_elig;
 }
 
-/* Applica il piano. Presuppone pianifica() gia' fatta. */
+/* Applies the plan. Assumes pianifica() has run. */
 static int arma(void)
 {
 	int i;
@@ -1423,18 +1433,18 @@ static int arma(void)
 		return 0;
 	}
 
-	/* risolvi il flush della i-cache. NB: questo kernel ha KALLSYMS ma non
-	 * KALLSYMS_ALL, quindi kallsyms espone solo simboli di TESTO (funzioni):
-	 * la variabile-puntatore 'flush_icache_range' (in BSS) e' invisibile.
-	 * Risolviamo direttamente la funzione del cache-layer R4K, con ripieghi.
+	/* resolve the i-cache flush. NB: this kernel has KALLSYMS but not
+	 * KALLSYMS_ALL, so kallsyms exposes TEXT symbols (functions) only: the
+	 * pointer variable 'flush_icache_range' (in BSS) is invisible. The R4K
+	 * cache layer function is resolved directly, with fallbacks.
 	 *
-	 * Una volta sola: e' un simbolo del kernel, non si sposta fra un
-	 * ricaricamento del bersaglio e il successivo. */
+	 * Only once: it is a kernel symbol, it does not move between one
+	 * reload of the target and the next. */
 	if (!p_flush_icache) {
 		static const char * const cand[] = {
 			"r4k_flush_icache_range",
 			"local_r4k_flush_icache_range",
-			"local_flush_icache_range",  /* anch'esso var: probabile miss */
+			"local_flush_icache_range",  /* a variable too: probably a miss */
 		};
 		int k;
 
@@ -1503,10 +1513,9 @@ static int __init wd_init(void)
 		return -ENOMEM;
 	}
 
-	/* Registrato PRIMA di pianificare: se il bersaglio non e' ancora
-	 * caricato, il piano non c'e' e lo fara' il COMING. Non e' un errore,
-	 * ed e' il caso normale di una cattura a freddo, dove wl_diag si carica
-	 * per primo. */
+	/* Registered BEFORE planning: if the target is not loaded yet, there
+	 * is no plan and the COMING will make it. Not an error, and it is the
+	 * normal case of a cold capture, where wl_diag is loaded first. */
 	if (register_module_notifier(&wd_mod_nb))
 		pr_warn("wl_diag: register_module_notifier fallita: senza di essa "
 			"non si arma sui ricaricamenti del bersaglio, e la "

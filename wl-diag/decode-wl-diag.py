@@ -1,60 +1,63 @@
 #!/usr/bin/env python3
-# Decoder dei record wl_diag (MIPS big-endian, 28 byte/record).
+# Decoder of the wl_diag records (MIPS big-endian, 28 bytes per record).
 #
-# Uso tipico (il device fa: cat /proc/wl_diag | nc <HOST> 5555, su TCP):
+# Typical use (the device does: cat /proc/wl_diag | nc <HOST> 5555, over TCP):
 #     ncat -l 5555 | python3 decode-wl-diag.py
-# oppure da file:
+# or from a file:
 #     python3 decode-wl-diag.py < dump.bin
 #
-# Framing: e' uno stream di byte, si legge a blocchi di 28 e un record spezzato
-# fra due read resta nel buffer fino al successivo.
+# Framing: it is a byte stream, read in blocks of 28; a record split between
+# two reads stays in the buffer until the next one.
 #
-# DEVE restare allineato agli op-code di 3-4-11/wl_diag.c e 2-6-30/wl_diag.c
-# (enum OP_*). Per gli hook GPIO ChipCommon (op 10/11/12) 'addr' NON e' usato
-# (addr_src=0), i campi significativi sono val=a2 e mask=aux=a1. Idem per il
-# controllo verso il MAC: MAC.MCTRL (op 16) e' un RMW su reg fisso (addr
-# assente, val=a2/mask=a1, 32 bit); MAC.MHF (17) porta idx=addr, val, mask;
-# MAC.MHF.RD (18) e' una read (val UNDEFINED). PHY.AND (19) / PHY.OR (20):
-# reg-op a un operando (addr,val); val e' la maschera-AND risp. il valore-OR,
-# resi con la maschera effettiva derivata (clr ~val / set val).
-# MAC.BW (35): larghezza al livello MAC, val = il parametro.
-# SROMCTL.RD/WR (36,37): registro di controllo SROM, dal percorso di attach.
-# OTP.* (32-34): letture OTP dal livello generico. addr = numero di word o
-# regione; il valore va in un puntatore, non nel ritorno, quindi qui interessa
-# QUANDO e QUALE, non il contenuto (che sta nei dump SROM).
-# TPL.* (27-31): template RAM, dove il PHY carica le forme d'onda dei toni.
-# Le PTRR/DATR hanno il valore nel RETVAL. Su 6.30 esiste solo TPL.RAMW.
-# CS.SHM (40): il chanspec scritto in shared memory, addr = chanspec. E' il
-# confine di ciclo affidabile: CHANSPEC (26) viene dalla generica
-# wlc_phy_chanspec_set, che sull'AC-PHY non e' sul percorso e quando scatta porta
-# il chanspec CORRENTE, cioe' in ritardo di un ciclo.
-# CHANSPEC (26): cambio canale, addr = chanspec. Il decoder lo espande, come
-# CS.SHM, in canale/banda/larghezza col formato 802.11ac (chan=bit 0-7,
-# bw=0x3800, band=0xc000); il canale e' quello CENTRALE, non il primario (vedi
-# B43_PHY_AC_CHANSPEC_* in b43/phy_ac.h). Serve a tagliare a posteriori una run
-# che copre piu' canali.
-# MARK (39): etichetta iniettata dallo spazio utente con
+# It MUST stay aligned with the op codes of 3-4-11/wl_diag.c and
+# 2-6-30/wl_diag.c (enum OP_*). For the ChipCommon GPIO hooks (ops 10/11/12)
+# 'addr' is NOT used (addr_src=0): the meaningful fields are val=a2 and
+# mask=aux=a1. Likewise for the control towards the MAC: MAC.MCTRL (op 16) is
+# an RMW on a fixed register (no addr, val=a2/mask=a1, 32 bits); MAC.MHF (17)
+# carries idx=addr, val, mask; MAC.MHF.RD (18) is a read (val UNDEFINED).
+# PHY.AND (19) / PHY.OR (20): single-operand register ops (addr,val); val is
+# the AND mask or the OR value, printed with the effective mask derived from
+# it (clr ~val / set val).
+# MAC.BW (35): bandwidth at the MAC level, val = the argument.
+# SROMCTL.RD/WR (36,37): the SROM control register, from the attach path.
+# OTP.* (32-34): OTP reads from the generic layer. addr = word number or
+# region; the value goes into a pointer, not the return, so what matters here
+# is WHEN and WHICH, not the content (which is in the SROM dumps).
+# TPL.* (27-31): template RAM, where the PHY loads the tone waveforms. PTRR and
+# DATR have the value in the RETVAL. On 6.30 only TPL.RAMW exists.
+# CS.SHM (40): the chanspec written to shared memory, addr = chanspec. It is
+# the reliable cycle boundary: CHANSPEC (26) comes from the generic
+# wlc_phy_chanspec_set, which on the AC-PHY is off the path and, when it
+# fires, carries the CURRENT chanspec, that is one cycle late.
+# CHANSPEC (26): channel change, addr = chanspec. The decoder expands it, like
+# CS.SHM, into channel/band/width with the 802.11ac layout (chan=bits 0-7,
+# bw=0x3800, band=0xc000); the channel is the CENTRE one, not the primary (see
+# B43_PHY_AC_CHANSPEC_* in b43/phy_ac.h). It is for cutting a run that covers
+# several channels afterwards.
+# MARK (39): a label injected from userspace with
 #     echo "ch36 bw20" > /proc/wl_diag
-# 12 caratteri impacchettati big-endian nei tre campi u32 (addr, val, aux). Non
-# viene dal driver: e' un confine messo nella traccia da chi cattura, e sostituisce
-# il taglio a posteriori sui salti temporali. wl_diag ne emette due da se',
-# "mod COMING" e "mod GOING", ai bordi di ogni caricamento del bersaglio.
-# OBJ.RD (24) / OBJ.WR (25): object memory del MAC. addr=offset in byte,
-# sel=selettore dello spazio (SHM, SCR, IHR...) e va STAMPATO: senza di lui la
-# traccia non distingue i tre spazi, e il record binario lo porta comunque. La RD ha il valore nel RETVAL
-# come PHY.RD. Serve per il campione di potenza di rumore che la crs_min_pwr cal
-# legge: non passa da un registro PHY, quindi senza questo hook non compare in
-# nessuna cattura.
-# ATTENZIONE all'origine, che cambia con la build: su 7.14.89 sono
-# read/write_objmem16 e aux porta il selettore vero; su 7.14.43 quegli accessor
-# non esistono e i record vengono da wlc_bmac_read/write_shm, che coprono il
-# SOLO spazio SHM -- la' aux e' sempre 0 e gli accessi a SCR e IHR non compaiono.
-# TX.PKT (55) + TX.DATA (56): un frame postato su un ring TX, all'ingresso di
-# dma64_txfast/txunframed. TX.PKT porta la lunghezza postata (addr), i byte
-# che seguono (val) e aux=1 per un buffer grezzo; i TX.DATA, consecutivi,
-# portano i byte, dodici per record impacchettati come MARK. L'header TX d11
-# AC lo legge ../reverse-tools/d11ac_txh.py, lo stesso che usa
-# decode-wl-mmio.py; un layout che non torna esce in esadecimale.
+# 12 characters packed big-endian into the three u32 fields (addr, val, aux).
+# It does not come from the driver: it is a boundary put into the trace by
+# whoever captures, and it replaces cutting on time gaps afterwards. wl_diag
+# emits two by itself, "mod COMING" and "mod GOING", at the edges of every
+# load of the target.
+# OBJ.RD (24) / OBJ.WR (25): the MAC's object memory. addr=offset in bytes,
+# sel=the space selector (SHM, SCR, IHR...), which has to be PRINTED: without
+# it the trace does not tell the three spaces apart, and the binary record
+# carries it anyway. The RD has the value in the RETVAL like PHY.RD. It is
+# for the noise power sample the crs_min_pwr cal reads: it does not come from
+# a PHY register, so without this hook it is in no capture.
+# MIND the origin, which changes with the build: on 7.14.89 they are
+# read/write_objmem16 and aux carries the real selector; on 7.14.43 those
+# accessors do not exist and the records come from wlc_bmac_read/write_shm,
+# which cover the SHM space ONLY -- there aux is always 0 and the accesses to
+# SCR and IHR do not appear.
+# TX.PKT (55) + TX.DATA (56): a frame posted to a TX ring, at the entry of
+# dma64_txfast/txunframed. TX.PKT carries the length posted (addr), the bytes
+# that follow (val) and aux=1 for a raw buffer; the TX.DATA records, right
+# after it, carry the bytes, twelve per record packed like MARK. The d11 AC TX
+# header is read by ../reverse-tools/d11ac_txh.py, the same one
+# decode-wl-mmio.py uses; a layout that does not add up is printed in hex.
 import os, sys, struct
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -93,45 +96,45 @@ OPS = {
     255: "DROP",
 }
 
-# Il record di una read porta solo occorrenza e indirizzo: l'hook sta
-# all'ingresso, e il valore, quando l'hook ha retcap, arriva nel RETVAL che
-# segue. Nella riga della read va emesso UNDEFINED, MAI 0x0000 inventato --
-# altrimenti si riparte col problema di distinguere zeri veri da zeri finti.
+# The record of a read carries only the occurrence and the address: the hook
+# is at the entry, and the value, when the hook has retcap, arrives in the
+# RETVAL that follows. The read's line says UNDEFINED, NEVER an invented
+# 0x0000 -- otherwise real zeros and fake ones cannot be told apart again.
 CHANSPEC = 26
 CS_SHM   = 40
 OBJ      = {24, 25}
-# Object memory in blocco: il record porta offset (a1) e lunghezza (a3). Il
-# valore NON c'e' -- sta in un buffer del chiamante -- e non e' una read con
-# RETVAL: non va in READS, o compare.py lo vedrebbe come val=UNDEFINED, cioe'
-# un wildcard che combacia con tutto. Il SELETTORE e' il 5o argomento e arriva
-# in un record ARGX come a5: dopo `trace_filter.py --retvals` la riga lo
-# porta in coda.
+# Bulk object memory: the record carries offset (a1) and length (a3). The
+# value is NOT there -- it is in a buffer of the caller -- and it is not a
+# read with a RETVAL: it does not go in READS, or compare.py would see it as
+# val=UNDEFINED, a wildcard that matches anything. The SELECTOR is the 5th
+# argument and arrives in an ARGX record as a5: after
+# `trace_filter.py --retvals` the line carries it at the end.
 OBJ_BULK = {41, 42}
-# Address match: il record porta il solo indice (a1). AMT.WR porta anche a3.
+# Address match: the record carries the index (a1) only. AMT.WR also a3.
 ADDRMATCH = {43, 44, 45}
-# PHY.WARR: scrittura PHY in blocco. NON porta un indirizzo -- l'argomento e'
-# un puntatore all'array -- ma il conteggio delle voci. E' un marcatore: le
-# singole scritture arrivano dagli hook a 16 bit che la funzione chiama.
+# PHY.WARR: bulk PHY write. It carries NO address -- the argument is a
+# pointer to the array -- but the count of entries. It is a marker: the
+# individual writes come from the 16-bit hooks the function calls.
 PHY_WARR = 46
-# Registro fisso, nessun argomento indirizzo: stamparne uno sarebbe uno zero
-# inventato. PHY.RDW e' anche una read, quindi il valore arriva dal RETVAL.
-NO_ADDR  = {47, 48, 51}		# registro fisso o nessun indirizzo: PHY.RDW/WRW, PHY.FGC
-# OBJ.SET: memset su shared memory, offset + valore + lunghezza.
+# Fixed register, no address argument: printing one would be an invented
+# zero. PHY.RDW is also a read, so the value comes from the RETVAL.
+NO_ADDR  = {47, 48, 51}		# fixed register or no address: PHY.RDW/WRW, PHY.FGC
+# OBJ.SET: memset over shared memory, offset + value + length.
 OBJ_SET  = 50
 MARK     = 39
-READS    = {1, 4, 18, 24, 29, 30, 32, 33, 34, 36, 47}                 # read: la riga non porta il valore
-HAS_MASK = {3, 6, 7, 8, 9, 10, 11, 12, 17} # aux e' una mask (RMW, GPIO, MHF)
-GPIO     = {10, 11, 12}                   # niente addr; val=a2, mask=aux=a1
-MCTRL    = {16}                            # MACCONTROL RMW: reg fisso, niente addr; val=a2, mask=aux=a1
-WIDE     = {7, 8, 9, 10, 11, 12, 16}      # PMU/GPIO/MACCONTROL: val/mask a 32 bit
+READS    = {1, 4, 18, 24, 29, 30, 32, 33, 34, 36, 47}                 # read: the line carries no value
+HAS_MASK = {3, 6, 7, 8, 9, 10, 11, 12, 17} # aux is a mask (RMW, GPIO, MHF)
+GPIO     = {10, 11, 12}                   # no addr; val=a2, mask=aux=a1
+MCTRL    = {16}                            # MACCONTROL RMW: fixed reg, no addr; val=a2, mask=aux=a1
+WIDE     = {7, 8, 9, 10, 11, 12, 16}      # PMU/GPIO/MACCONTROL: 32-bit val/mask
 TABLE    = {13, 14}                       # id=addr(a1), len=val(a2), off=aux(a3)
-DELAY    = 15                             # niente addr; usec=val(a1)
-PHY_AND  = 19                             # addr + val=maschera-AND (bit tenuti)
-PHY_OR   = 20                             # addr + val=valore-OR (bit settati)
-COREREG  = 21                             # core reg: off=addr(a2), core=aux(a1); val nell'ARGX
-# Record di continuazione (correlati al principale via 'for=#<parent_seq>'):
-#   ARGX  (22): arg su stack extra -> a5=addr, a6=val, parent=aux
-#   RETVAL(23): valore restituito da una read/rmw -> parent=addr, val=val
+DELAY    = 15                             # no addr; usec=val(a1)
+PHY_AND  = 19                             # addr + val=AND mask (bits kept)
+PHY_OR   = 20                             # addr + val=OR value (bits set)
+COREREG  = 21                             # core reg: off=addr(a2), core=aux(a1); val in the ARGX
+# Follow-on records (tied to the main one through 'for=#<parent_seq>'):
+#   ARGX  (22): extra stack arguments -> a5=addr, a6=val, parent=aux
+#   RETVAL(23): value returned by a read/rmw -> parent=addr, val=val
 ARGX     = 22
 RETVAL   = 23
 
@@ -144,30 +147,31 @@ _BW = {0x1000: "20", 0x1800: "40", 0x2000: "80", 0x2800: "160", 0x3000: "80+80"}
 
 
 def chanspec(cs):
-    """formato 802.11ac: chan bit 0-7, bw 0x3800, band 0xc000"""
+    """802.11ac layout: chan bits 0-7, bw 0x3800, band 0xc000"""
     return (f"ch={cs & 0xff} bw={_BW.get(cs & 0x3800, '?')} "
             f"band={'5g' if (cs & 0xc000) == 0xc000 else '2g'} raw=0x{cs:04x}")
 
 
 def unmark(addr, val, aux):
-    """i 12 byte impacchettati in tre u32, fino al primo NUL"""
+    """the 12 bytes packed into three u32, up to the first NUL"""
     b = b"".join(w.to_bytes(4, "big") for w in (addr, val, aux))
     return b.split(b"\x00")[0].decode("ascii", "replace")
 
 
-# Il comando dello userspace, dall'hook su wlc_ioctl. IOVAR.NAME porta il nome
-# di una WLC_SET_VAR a pezzi da dodici byte, impacchettati come MARK, e precede
-# la sua IOVAR.SET: i pezzi si accumulano per CPU, perche' fra due record della
-# stessa chiamata puo' cadere un record di un'altra CPU, e la riga esce con la
-# SET. Il valore e' il primo u32 dopo il NUL, nell'ordine di byte del driver.
+# The userspace command, from the hook on wlc_ioctl. IOVAR.NAME carries the
+# name of a WLC_SET_VAR in twelve-byte pieces, packed like MARK, and comes
+# before its IOVAR.SET: the pieces are gathered per CPU, because a record of
+# another CPU can fall between two records of the same call, and the line goes
+# out with the SET. The value is the first u32 after the NUL, in the driver's
+# byte order.
 IOCTL, IOVAR_NAME, IOVAR_SET = 52, 53, 54
 IOCTL_NAMES = {2: "UP", 3: "DOWN", 26: "SET_SSID"}
 TX_PKT, TX_DATA = 55, 56
 
 
 def print_pkt(pkt):
-    """Un TX.PKT con i suoi byte; troncato se un altro record e' arrivato
-    prima della fine del gruppo, cioe' se ne sono andati persi."""
+    """A TX.PKT with its bytes; cut short if another record arrived before
+    the end of the group, that is if some were lost."""
     data = pkt["data"][:pkt["need"]]
     src = "buf" if pkt["raw"] else "pkt"
     lines = [f"{src} len={pkt['len']} bytes={pkt['need']}"]
@@ -190,7 +194,7 @@ def main():
     f = sys.stdin.buffer
     buf = b""
     iovar_name = {}
-    pkt = None          # TX.PKT in attesa dei suoi TX.DATA
+    pkt = None          # a TX.PKT waiting for its TX.DATA
     while True:
         chunk = f.read(4096)
         if not chunk:
@@ -242,54 +246,54 @@ def main():
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} {chanspec(addr)}")
             elif op == 255:
                 print(f"{t:14.6f}  cpu{cpu}  ** DROP **  persi={aux}")
-            elif op == DELAY:                      # niente addr; durata in usec
+            elif op == DELAY:                      # no addr; duration in usec
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} usec={val}")
-            elif op in TABLE:                      # accesso tabella: id/off/len
+            elif op in TABLE:                      # table access: id/off/len
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} "
                       f"id={h(addr, False)} off={h(aux, False)} len={val}")
-            elif op in GPIO or op in MCTRL:        # addr assente (reg fisso)
+            elif op in GPIO or op in MCTRL:        # no addr (fixed reg)
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} "
                       f"val={h(val, wide)} mask={h(aux, wide)}")
             elif op in HAS_MASK:                   # addr + val + mask
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} "
                       f"addr={h(addr, False)} val={h(val, wide)} mask={h(aux, wide)}")
-            elif op == ARGX:                       # arg su stack, continuazione
+            elif op == ARGX:                       # stack argument, follow-on
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} "
                       f"for=#{aux} a5={h(addr, True)} a6={h(val, True)}")
-            elif op == RETVAL:                     # valore restituito, continuazione
+            elif op == RETVAL:                     # return value, follow-on
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} "
                       f"for=#{addr} val={h(val, True)}")
-            elif op == COREREG:                    # core reg: core+off; val nell'ARGX, ritorno nel RETVAL
+            elif op == COREREG:                    # core reg: core+off; val in the ARGX, return in the RETVAL
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} "
                       f"core={h(aux, False)} off={h(addr, False)} val=UNDEFINED")
-            elif op == PHY_WARR:                   # conteggio voci, non un addr
+            elif op == PHY_WARR:                   # entry count, not an addr
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<9} n={val}")
-            elif op in NO_ADDR:                    # registro fisso, niente addr
+            elif op in NO_ADDR:                    # fixed register, no addr
                 valstr = "UNDEFINED" if op in READS else h(val, False)
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<9} val={valstr}")
             elif op == OBJ_SET:                    # off + val + len
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<9} "
                       f"addr={h(addr, False)} val={h(val, False)} len={aux}")
-            elif op in OBJ_BULK:                   # offset + lunghezza; sel via ARGX
+            elif op in OBJ_BULK:                   # offset + length; sel through ARGX
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<9} "
                       f"addr={h(addr, False)} len={aux}")
-            elif op in ADDRMATCH:                  # indice; nessun valore nel record
+            elif op in ADDRMATCH:                  # index; no value in the record
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<9} "
                       f"idx={h(addr, False)}"
                       + (f" a3={h(aux, True)}" if aux else ""))
-            elif op in OBJ:                        # object memory: serve il selettore
+            elif op in OBJ:                        # object memory: the selector is needed
                 valstr = "UNDEFINED" if op in READS else h(val, wide)
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} "
                       f"addr={h(addr, False)} val={valstr} sel={h(aux, False)}")
-            elif op == PHY_AND:                    # read & val ; bit azzerati = ~val
+            elif op == PHY_AND:                    # read & val ; bits cleared = ~val
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} "
                       f"addr={h(addr, False)} val={h(val, False)} "
                       f"(clr {h((~val) & 0xffff, False)})")
-            elif op == PHY_OR:                     # read | val ; bit settati = val
+            elif op == PHY_OR:                     # read | val ; bits set = val
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} "
                       f"addr={h(addr, False)} val={h(val, False)} "
                       f"(set {h(val, False)})")
-            else:                                  # read/write semplice
+            else:                                  # plain read/write
                 valstr = "UNDEFINED" if op in READS else h(val, wide)
                 print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} "
                       f"addr={h(addr, False)} val={valstr}")

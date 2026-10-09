@@ -1,41 +1,39 @@
 #!/usr/bin/env python3
-# Decoder dei record wl_mmio_trap (MIPS big-endian, 28 byte/record).
+# Decoder of the wl_mmio_trap records (MIPS big-endian, 28 bytes per record).
 #
-# Uso tipico, in pipe come il decoder di wl-diag (il device fa:
+# Typical use, in a pipe like the wl-diag decoder (the device does:
 # cat /proc/wl_mmio_trap | nc -u host 5555):
 #     nc -u -l -p 5555 | ./decode-wl-mmio.py
-# oppure da file:
+# or from a file:
 #     ./decode-wl-mmio.py < capture.bin
 #     ./decode-wl-mmio.py capture.bin
 #
-# Framing: e' uno stream di byte, si legge a blocchi e si consuma 28 byte
-# alla volta. Stesso layout di record di wl_diag -- ts_ns, seq, addr, val,
-# aux, op, cpu, pad -- e op-code presi dalla parte libera del suo enum, in
-# modo che i due flussi si possano fondere sul timestamp: entrambi timbrano
-# con sched_clock().
+# Framing: it is a byte stream, read in blocks and consumed 28 bytes at a
+# time. The same record layout as wl_diag's -- ts_ns, seq, addr, val, aux,
+# op, cpu, pad -- and op codes taken from the free part of its enum, so the
+# two streams can be merged on the timestamp: both stamp with sched_clock().
 #
-# MMIO.RD (60) / MMIO.WR (61): accesso grezzo alla finestra dei registri,
-# quello che gli hook sulle funzioni di wl_diag non vedono perche' non c'e'
-# nessuna chiamata da agganciare. addr e' l'OFFSET nella finestra, non un VA:
-# l'indirizzo virtuale cambia da un avvio all'altro e non dice niente a un
-# decoder. aux porta la larghezza dell'accesso nel byte basso e il bit 8
-# quando l'istruzione stava in un delay slot.
-# MARK (62): etichetta iniettata dallo spazio utente con
+# MMIO.RD (60) / MMIO.WR (61): raw access to the register window, which the
+# hooks on wl_diag's functions do not see because there is no call to hook.
+# addr is the OFFSET into the window, not a VA: the virtual address changes
+# from one boot to the next and tells a decoder nothing. aux carries the width
+# of the access in the low byte and bit 8 when the instruction sat in a delay
+# slot.
+# MARK (62): a label injected from userspace with
 #     echo "mark ch36 bw20" > /proc/wl_mmio_trap
-# 12 caratteri impacchettati big-endian nei tre campi u32, come il MARK di
-# wl_diag. Va in coda come ogni altro record, quindi e' ordinato rispetto
-# agli accessi che lo circondano e non rispetto all'orologio di chi lo
-# scrive.
-# DROP (255): la coda ha tracimato; aux porta quanti record sono andati
-# persi. Il numero corrisponde al buco nei numeri di sequenza, quindi le due
-# contabilita' si controllano a vicenda.
-# DMA.DD (63) + DMA.DATA (64): un descrittore TX letto dalla memoria alla
-# scrittura dell'indice del suo canale (dma_dd.h). DD porta in addr
-# l'indirizzo di bus del descrittore, in val quello del buffer, in aux il
-# canale (31:24), i flag DD_F_* (23:16) e i byte di buffer (15:0); i DATA
-# che seguono, 12 byte ciascuno, portano i 16 byte del descrittore come
-# stanno in memoria e poi quelli del buffer. L'header TX d11 AC lo legge
-# ../reverse-tools/d11ac_txh.py, lo stesso che usa decode-wl-diag.py.
+# 12 characters packed big-endian into the three u32 fields, like wl_diag's
+# MARK. It is queued like every other record, so it is ordered against the
+# accesses around it and not against the clock of whoever writes it.
+# DROP (255): the queue overflowed; aux carries how many records were lost.
+# The number matches the gap in the sequence numbers, so the two counts check
+# each other.
+# DMA.DD (63) + DMA.DATA (64): a TX descriptor read from memory at the write
+# of its channel's index (dma_dd.h). DD carries the descriptor's bus address
+# in addr, the buffer's in val, and in aux the channel (31:24), the DD_F_*
+# flags (23:16) and the buffer bytes (15:0); the DATA records that follow,
+# 12 bytes each, carry the 16 bytes of the descriptor as they are in memory
+# and then those of the buffer. The d11 AC TX header is read by
+# ../reverse-tools/d11ac_txh.py, the same one decode-wl-diag.py uses.
 import os, sys, struct, argparse
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -82,7 +80,7 @@ def dd_lines(chan, slot, bufaddr, flags, raw, buf, hexdump):
 
 
 def unmark(addr, val, aux):
-    """i 12 byte impacchettati in tre u32, fino al primo NUL"""
+    """the 12 bytes packed into three u32, up to the first NUL"""
     b = b"".join(w.to_bytes(4, "big") for w in (addr, val, aux))
     return b.split(b"\x00")[0].decode("ascii", "replace")
 
@@ -105,7 +103,7 @@ def main():
     f = open(args.capture, "rb") if args.capture else sys.stdin.buffer
     buf = b""
     emit = args.since is None
-    dd = None       # descrittore in attesa dei suoi DMA.DATA
+    dd = None       # a descriptor waiting for its DMA.DATA
 
     while True:
         chunk = f.read(4096)
