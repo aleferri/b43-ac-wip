@@ -146,8 +146,9 @@ decoder reads the header with `../reverse-tools/d11ac_rxh.py` at the offsets
 `b43_rx()` uses: frame length (checked against the packet's), PHY and MAC
 RX status, the two power bytes, the padding flag, the PLCP read by the frame
 type in PHY status 0, the 802.11 header, and the 16 bytes b43 does not read
-in raw. `p` in a1 comes from brcmsmac's `brcms_c_recv`, to be confirmed on
-the first capture as for the TX post.
+in raw. `p` in a1 comes from brcmsmac's `brcms_c_recv`; on the agcombo's
+`rxtx-1s-ht20-40-80.zip` and `rxtx-2s-ht20-40-80.zip` every frame's length
+checks against the packet's.
 
 ## One capture for templates, TX and RX
 

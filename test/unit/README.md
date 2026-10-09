@@ -161,8 +161,8 @@ goal:
   serves reads from the oracle, then any read plan, then the mirror. Table
   cells have their own oracle and mirror keyed by `(id, offset)`.
 - **`main.c`** builds a fake `struct b43_wldev` from a board profile
-  (`../board_profile.h`: `d6220`, `dsl`, `agcombo`, `tg789`, and `archer`, the
-  one dual-band SROM) and runs a flow:
+  (`../board_profile.h`: `d6220`, `dsl`, `agcombo`, `tg789`, and `archer` and
+  `macbook`, the two dual-band SROMs) and runs a flow:
   `full` (cold attach, bring-up and the timeline, against a cold segment),
   `up` (with `AC_FIRST_INIT=0`, against a hot segment), `periodic`,
   `switch_channel`, and pieces (`down`, `op_init`, `rfkill`, `crsmin`,

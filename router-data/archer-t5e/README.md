@@ -41,7 +41,8 @@ full channel set and calibration, then 6 s associated: a beacon interrupt every
   0x630/0x65c/0x662`, PHY `0x371-0x376`) exactly: another board, another
   `wl`, another host.
 - The MAC init the OEM driver does and b43 does not: see `docs/retrace-todo.md`,
-  "Core: MAC and DMA, from the bus capture", and `patches/0019`.
+  "MAC and DMA, from the bus captures"; the TX FIFO geometry and MAC clock
+  fraction of core revision 42 it led to are in `patches/0002`.
 - The table 0x20 is written three words per entry on port 0x11 here, one on
   the 7.14 boards: a version difference to keep in mind when comparing table
   bodies.

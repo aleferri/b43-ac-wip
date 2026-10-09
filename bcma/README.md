@@ -49,17 +49,16 @@ any consumer — the b43 AC-PHY among them — sees an empty board calibration.
 The complementary NVRAM path (`bcm47xx_sprom.c`) maps part of rev 11 and has no
 path for the per-chain rev 11 arrays.
 
-## What the draft covers
+## What the tree covers
 
 1. **`struct ssb_sprom` extension.** Fields appended for rev 11: per-band rxgains
-   triplets, the FEM/PA control block, `mcsbw80*`/`mcsbw160*`/`mcslr*po` (the
-   160 MHz words from the NVRAM only), the five `rpcal` words, the
-   `sb20in*`/`sb40and80` hr/lr offsets, `dot11agdup{hr,lr}po`, per-chain
-   `pdoffset*ma`. `struct ssb_sprom_core_pwr_info` gains rev-11-shaped
-   `maxp2ga`, `maxp5ga[4]`, `pa2ga[3]` and `pa5ga[12]`. Existing fields do not
-   move.
-2. **`bcm47xx_sprom.c` NVRAM mapping.** Rev-11-only `ENTRY()` lines, plus
-   `bcm47xx_fill_sprom_path_r11` for the per-chain comma-separated arrays.
+   triplets, the FEM/PA control block, `mcsbw80*`/`mcslr*po`, the five `rpcal`
+   words, the `sb20in*`/`sb40and80` hr/lr offsets, `dot11agdup{hr,lr}po`,
+   per-chain `pdoffset*ma`. `struct ssb_sprom_core_pwr_info` gains
+   rev-11-shaped `maxp2ga`, `maxp5ga[4]`, `pa2ga[3]` and `pa5ga[12]`. Existing
+   fields do not move.
+2. **`bcm47xx_sprom.c` NVRAM mapping**: `ledbh4..15`, `boardflags3` and
+   `AvVmid_c0..2` only; the rev 11 per-chain arrays have no NVRAM path.
 3. **`bcma_sprom_extract_r11`**, selected from `bcma_sprom_get` when the revision
    word reads 11. It decodes:
    - the shared header;
@@ -99,9 +98,9 @@ and agcombo dumps and a BCM4360 USB NVRAM template; results in
    the old draft with the three header offsets corrected, not
    `drivers/bcma/sprom.c`. The tree's extractor has the same three
    corrections; that the two agree on every other field is not checked.
-2. **Hardware.** Bring-up must reach probe and the RX path on real hardware.
-   This is the in-tree consumer that exercises the extractor end to end; the
-   offline harness validates only the decode side.
+2. **Hardware.** On the DSL-3580L the port probes, transmits and receives
+   (`../README.md`, "On hardware"); the bring-up logs do not say whether its
+   board calibration came through the extractor.
 3. **A second board with non-zero values** in the regions that are zero on every
    dump in the repository (`mcslr*po`, `sb20in*`, `sb40and80*`,
    `dot11agdup*po`).

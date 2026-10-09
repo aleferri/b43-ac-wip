@@ -34,7 +34,7 @@ From `bcmsrom.h` (word indices):
 
 `SSB_SPROM11_IL0MAC = 0x0090` is the start of the three-word MAC. The country
 code sits at `SSB_SPROM11_CCODE = 0x0096`, not at the rev 8 offset `0x92`, which
-is the MAC's middle word. Both patch files and the harness use `0x0096`.
+is the MAC's middle word. The tree and the harness use `0x0096`.
 
 ### Rxgains bit packing
 
@@ -98,5 +98,6 @@ Checked on the bcm4360usb synth run with non-degenerate inputs:
    rev 11 only, `0xfffff800` rev 11+).
 3. Resolve each entry's `off` macro through `bcmsrom_fmt.h` into a word offset,
    multiply by 2, and compare with the constant.
-4. On a mismatch, fix `harness/ssb_regs.h`, the extractor and the patch hunk,
-   and rerun the harness on every vector.
+4. On a mismatch, fix `include/linux/ssb/ssb_regs.h`, `harness/ssb_regs.h` and
+   the two extractors, rerun the harness on every vector and regenerate
+   `patches/0001`.

@@ -48,6 +48,13 @@ gate. The comparison itself is `test/unit/compare.py` (positional) and
 - **ops_fold.py** `fold` rebuilds accessor-level ops from their bus footprint
   (the MOD mask as `rd ^ wr` is a lower bound); `report` lists window moves,
   polls, interrupt reasons, DMA activity and pauses.
+- **fw_from_capture.py** rebuilds the ucode, initvals and bsinitvals b43
+  loads from a bus capture of the stock `up`, as a firmware directory for
+  `B43_FW_DIR` and as the raw ucode for `test/d11sim` and b43-tools.
+- **access_conditions.py** lists, for a stock bus capture and a b43 trace,
+  the core state (reset, clocks, PHY clock and reset, MAC enable, PSM run,
+  FORCEHT) each PHY and radio access happens in, and the polls each side
+  makes.
 
 ## Analysis
 
@@ -108,6 +115,8 @@ gate. The comparison itself is `test/unit/compare.py` (positional) and
   signatures from prologues (`--prologo`).
 - **cmp_funcs.py** compares same-name function bodies across `wl` builds.
 - **gen_syms.py** builds the `klookup=` insmod line of `wl-diag/2-6-30`.
+- **extract_ucode.py** extracts a `d11ucodeNN` blob from a `wl` object by
+  symbol (`--rev`, `--symbol`, `--list`).
 - **extract_acphy_tables_from_descriptor.py** (it generated
   `tables_phy_ac.c`), **extract_acphy_txgain.py**,
   **extract_chan_tuning_2069rev4.py**: one-shot table extractors.

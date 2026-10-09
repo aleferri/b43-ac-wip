@@ -88,8 +88,9 @@ grep ' kallsyms_lookup_name$' /proc/kallsyms
 insmod wl_mmio_trap.ko autoarm=0 klookup=0x<address>
 ```
 
-The build was checked against the vanilla 2.6.30 headers; it has not been run
-on the router's own kernel. Before loading, look in `/proc/kallsyms` for
+`build-dsl3580l.sh` builds it against the router's own GPL kernel tree
+(`DSL-3580_EU_1.00`, `PROVENANCE.md`); no capture from the DSL-3580L is in
+`router-data/`. Before loading, look in `/proc/kallsyms` for
 `fixup_exception`, `r4k_flush_icache_range`, `flush_tlb_kernel_range` and
 `__compute_return_epc`.
 
