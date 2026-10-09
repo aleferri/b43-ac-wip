@@ -126,21 +126,6 @@ void fortify_panic(const char *name)
 	abort();
 }
 
-/* The bytes as hex pairs, space-separated: bcn_diag's groupsize 1, no ASCII. */
-int hex_dump_to_buffer(const void *buf, size_t len, int rowsize, int groupsize,
-		       char *linebuf, size_t linebuflen, int ascii)
-{
-	const unsigned char *b = buf;
-	size_t i, n = 0;
-
-	if (!linebuflen)
-		return 0;
-	linebuf[0] = 0;
-	for (i = 0; i < len && n + 3 < linebuflen; i++)
-		n += snprintf(linebuf + n, linebuflen - n, i ? " %02x" : "%02x", b[i]);
-	return n;
-}
-
 /*
  * The PHY rate of a data frame's TX descriptor. No timeline sends one, so
  * a run that gets here has outgrown the shim and needs the real function.

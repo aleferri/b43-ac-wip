@@ -17,7 +17,6 @@
 #include "bus.h"
 #include "lo.h"
 #include "phy_common.h"
-#include "bcn_diag.h"
 
 
 #ifdef CONFIG_B43_DEBUG
@@ -1051,7 +1050,6 @@ struct b43_wl {
 	bool beacon_templates_virgin; /* Never wrote the templates? */
 	struct work_struct beacon_update_trigger;
 	spinlock_t beacon_lock;
-	struct b43_bcn_diag diag;
 
 	/* The current QOS parameters for the 4 queues. */
 	struct b43_qos_params qos_params[B43_QOS_QUEUE_NUM];

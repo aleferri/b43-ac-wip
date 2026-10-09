@@ -807,14 +807,10 @@ ucode revision.
   being kept by the microcode, HOSTF5 bit 15 (see "Probe-response offload"),
   and the bit's state depended on whether a hot PHY cycle had rewritten the
   word after `b43_wireless_core_init()`'s `0x8088`, not on the SSID. Fixed by
-  keeping the bit clear. `b43/bcn_diag.c` logs the uploaded template,
-  what the microcode changes in template RAM, the MACCMD valid bits and the
-  management frames with their TX status; it prints through `b43info()`
-  every second, so it spends the rate limit (see the README). The stock
-  side: `wl-diag` with `tpldump` on the DSL-3580L's own `wl` records each
-  template RAM write with its content, so the stock beacon template, the
-  bytes in front of the frame included, can be set beside what
-  `bcn_diag` logs for b43's. On
+  keeping the bit clear. The stock side: `wl-diag` with `tpldump` on the
+  DSL-3580L's own `wl` records each template RAM write with its content,
+  so the stock beacon template, the bytes in front of the frame included,
+  can be set beside b43's. On
   `router-data/vd625-agcombo/rxtx-1s-ht20-40-80.zip` (7.14.43.21 and its
   microcode) it is two writes per update: 12 bytes at template RAM `0x0e80`,
   zero but for the L-SIG at bytes 3-5 (6 Mbps, the length of the frame with
