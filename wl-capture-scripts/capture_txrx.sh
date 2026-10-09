@@ -14,9 +14,22 @@
 #   - wl_diag.ko armed (arm=1), with wlc_txfifo, wlc_recv and
 #     wlc_bmac_write_template_ram in its plan, and the stream drained to the
 #     host (cat /proc/wl_diag | nc <host> 5555) for the whole run;
-#   - a station that rejoins the BSS by itself after each down/up, and
+#   - a station that rejoins the BSS by itself after each change, and
 #     traffic in both directions (iperf3 -c ... and -R) while the script
 #     waits in each `txrx` window.
+#
+# Two ways to change channel:
+#
+#   default    the script does `wl down; wl chanspec; wl up` (and `ssid`,
+#              `bss up` when given an SSID). That BSS has whatever security
+#              wl was left with, and whether the vendor's authenticator
+#              still runs the WPA handshake after a down/up done behind its
+#              back depends on the firmware.
+#   MANUAL=1   the script touches nothing: for each chanspec it arms the
+#              template capture and waits for Enter while you apply that
+#              channel and width from the vendor's UI or CLI, which restarts
+#              the network the way the firmware expects, keys included.
+#              The chanspecs are then only the labels of the MARK records.
 #
 # Usage:
 #   sh capture_txrx.sh                                 wl1, defaults below
@@ -33,6 +46,7 @@
 #   TRAFFIC     seconds of the txrx window                       (default 30)
 #   TPL_BUDGET  template RAM writes per chanspec                 (default 512)
 #   PKT_BUDGET  TX frames, and RX frames, per chanspec           (default 512)
+#   MANUAL      1 = channel changes done by hand, see above
 #
 # Only shell builtins plus `wl` and `sleep`: these busybox builds lack head,
 # awk and others. No `set -u` either, which they do not handle.
@@ -83,23 +97,38 @@ wait_assoc() {
     return 1
 }
 
-dumps_off
-for cs in $LIST; do
-    wl -i "$IF" down
-    sleep 1
-    if ! wl -i "$IF" chanspec "$cs" > /dev/null 2>&1; then
-        msg=`wl -i "$IF" chanspec "$cs" 2>&1`
-        echo "skipping $cs: $msg"
-        continue
+# Bring the BSS up on chanspec $1 with the template capture armed; 1 if the
+# driver refuses the chanspec.
+bring_up() {
+    if [ "$MANUAL" = 1 ]; then
+        mark "tpl $1"
+        echo "$TPL_BUDGET" > "$P/tplbudget"
+        echo 512 > "$P/tpldump"
+        echo ">>> apply $1 from the UI/CLI now; Enter when it is up"
+        read dummy
+        return 0
     fi
 
-    mark "tpl $cs"
+    wl -i "$IF" down
+    sleep 1
+    if ! wl -i "$IF" chanspec "$1" > /dev/null 2>&1; then
+        msg=`wl -i "$IF" chanspec "$1" 2>&1`
+        echo "skipping $1: $msg"
+        return 1
+    fi
+    mark "tpl $1"
     echo "$TPL_BUDGET" > "$P/tplbudget"
     echo 512 > "$P/tpldump"
     [ -n "$SSID" ] && wl -i "$IF" ssid "$SSID" > /dev/null 2>&1
     wl -i "$IF" up
     sleep "$SETTLE"
     [ -n "$SSID" ] && wl -i "$IF" bss up > /dev/null 2>&1
+    return 0
+}
+
+dumps_off
+for cs in $LIST; do
+    bring_up "$cs" || continue
 
     echo "--- $cs: waiting for a station"
     if ! wait_assoc; then
