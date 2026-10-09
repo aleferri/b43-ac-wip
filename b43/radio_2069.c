@@ -1351,7 +1351,7 @@ void b43_radio_2069_rccal(struct b43_wldev *dev)
 	u16 chipnum = dev->dev->chip_id;
 
 	if (chipnum != 0x4352 && chipnum != 0x4360) {
-		b43info(dev->wl, "radio 2069: rccal skipped, chipnum 0x%04x not supported\n",
+		b43warn(dev->wl, "radio 2069: rccal skipped, chipnum 0x%04x not supported\n",
 		       chipnum);
 		return;
 	}
@@ -1372,7 +1372,7 @@ void b43_radio_2069_rccal(struct b43_wldev *dev)
 
 				dev->phy.ac->lpf_cap0 = cap;
 				dev->phy.ac->lpf_cap1 = cap;
-				b43info(dev->wl,
+				b43dbg(dev->wl,
 				       "radio 2069: rccal lpf cap 0x%02x (E=0x%04x F=0x%04x)\n",
 				       cap, (u16)e, (u16)f);
 			} else {
@@ -1476,7 +1476,7 @@ void b43_radio_2069_afecal(struct b43_wldev *dev)
 		post[0] = b43_radio_read_log(dev, R2069_AFE_CAL_STAT | rbase);
 		post[1] = b43_radio_read_log(dev, R2069_AFE_CAL_STAT | rbase);
 
-		b43info(dev->wl,
+		b43dbg(dev->wl,
 		       "radio 2069: afecal core %u ctrl=0x%04x stat=0x%04x/0x%04x\n",
 		       core, ctrl, post[0], post[1]);
 
@@ -1666,6 +1666,6 @@ void b43_radio_2069_pwron(struct b43_wldev *dev)
 	b43_radio_set(dev,     0x08ea, 0x0080);
 	b43_radio_maskset(dev, 0x08ed, (u16)~0x0600, 0x0400);
 
-	b43info(dev->wl, "phy-ac: radio pwron 0x040b readback: %04x after %u polls\n",
+	b43dbg(dev->wl, "phy-ac: radio pwron 0x040b readback: %04x after %u polls\n",
 	       pon, polls);
 }

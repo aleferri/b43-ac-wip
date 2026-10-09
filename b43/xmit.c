@@ -1267,6 +1267,13 @@ void b43_handle_txstatus(struct b43_wldev *dev,
 		return;
 	if (status->for_ampdu)
 		return;
+	/* A frame held for a station in power save or flushed is not an error. */
+	if (dev->fw.hdr_format == B43_FW_HDR_AC &&
+	    status->supp_reason != B43_TXST_SUPP_NONE &&
+	    status->supp_reason != B43_TXST_SUPP_PMQ &&
+	    status->supp_reason != B43_TXST_SUPP_FLUSH)
+		b43warn(dev->wl, "TX suppressed: reason %u, cookie 0x%04x, status %08x\n",
+			status->supp_reason, status->cookie, status->raw[0]);
 	if (!status->acked)
 		dev->wl->ieee_stats.dot11ACKFailureCount++;
 	if (status->rts_count) {

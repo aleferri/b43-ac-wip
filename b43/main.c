@@ -2385,9 +2385,12 @@ static void b43_do_interrupt_thread(struct b43_wldev *dev)
 
 	/*
 	 * The AC runs with PHY_TXERR unmasked, as the stock driver does, and
-	 * like brcmsmac only acknowledges it; the other PHYs mask it outside
+	 * like brcmsmac does not restart on it; the other PHYs mask it outside
 	 * debug, where this handler counts towards a restart.
 	 */
+	if (unlikely(reason & B43_IRQ_PHY_TXERR) &&
+	    dev->phy.type == B43_PHYTYPE_AC)
+		b43warn(dev->wl, "PHY transmission error\n");
 	if (unlikely(reason & B43_IRQ_PHY_TXERR) &&
 	    dev->phy.type != B43_PHYTYPE_AC) {
 		b43err(dev->wl, "PHY transmission error\n");
@@ -4005,23 +4008,23 @@ static int b43_chip_init(struct b43_wldev *dev)
 	if (err)
 		goto out;	/* firmware is released later */
 
-	b43info(dev->wl, "init: GPIO\n");
+	b43dbg(dev->wl, "init: GPIO\n");
 	err = b43_gpio_init(dev);
 	if (err)
 		goto out;	/* firmware is released later */
 
-	b43info(dev->wl, "init: initvals\n");
+	b43dbg(dev->wl, "init: initvals\n");
 	err = b43_upload_initvals(dev);
 	if (err)
 		goto err_gpio_clean;
 
-	b43info(dev->wl, "init: band initvals\n");
+	b43dbg(dev->wl, "init: band initvals\n");
 	err = b43_bsinit(dev);
 	if (err)
 		goto err_gpio_clean;
 
 	if (dev->dev->core_rev == 42) {
-		b43info(dev->wl, "init: TX FIFOs\n");
+		b43dbg(dev->wl, "init: TX FIFOs\n");
 		err = b43_txfifo_init_rev42(dev);
 		if (err)
 			goto err_gpio_clean;
@@ -4037,7 +4040,7 @@ static int b43_chip_init(struct b43_wldev *dev)
 	 * b43_wireless_core_init() on the AC, and here on the other PHYs.
 	 */
 	if (phy->type == B43_PHYTYPE_AC) {
-		b43info(dev->wl, "init: MAC\n");
+		b43dbg(dev->wl, "init: MAC\n");
 		b43_chip_init_mac(dev);
 	} else {
 		err = b43_phy_bringup(dev);
@@ -4467,6 +4470,11 @@ static void b43_op_tx(struct ieee80211_hw *hw,
 	}
 	B43_WARN_ON(skb_shinfo(skb)->nr_frags);
 	if (unlikely(!b43_tx_rates_ok(hw, IEEE80211_SKB_CB(skb)))) {
+		const struct ieee80211_tx_rate *r =
+			IEEE80211_SKB_CB(skb)->control.rates;
+
+		b43warn(wl, "TX dropped: rate %d flags 0x%x not in the header\n",
+			r[0].idx, r[0].flags);
 		ieee80211_free_txskb(hw, skb);
 		return;
 	}
@@ -5423,7 +5431,7 @@ static int b43_wireless_core_start(struct b43_wldev *dev)
 		}
 	}
 
-	b43info(dev->wl, "start: enabling the MAC\n");
+	b43dbg(dev->wl, "start: enabling the MAC\n");
 
 	/* We are ready to run. */
 	ieee80211_wake_queues(dev->wl->hw);
@@ -6026,7 +6034,7 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
 	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_PHYTYPE, phy->type);
 	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_PHYVER, phy->rev);
 
-	b43info(dev->wl, "init: DMA\n");
+	b43dbg(dev->wl, "init: DMA\n");
 
 	if (b43_bus_host_is_pcmcia(dev->dev) ||
 	    b43_bus_host_is_sdio(dev->dev)) {
@@ -6075,13 +6083,13 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
 			b43_amt_write(dev, i, NULL, 0);
 	}
 
-	b43info(dev->wl, "init: address match and keys\n");
+	b43dbg(dev->wl, "init: address match and keys\n");
 	b43_upload_card_macaddress(dev);
 	b43_security_init(dev);
 
 	/* The AC PHY comes up after the MAC is set up, see b43_chip_init(). */
 	if (phy->type == B43_PHYTYPE_AC) {
-		b43info(dev->wl, "init: PHY\n");
+		b43dbg(dev->wl, "init: PHY\n");
 		err = b43_phy_bringup(dev);
 		if (err)
 			goto err_dma_free;

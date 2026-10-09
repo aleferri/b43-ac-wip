@@ -2464,7 +2464,7 @@ void b43_phy_ac_txpwr_by_index(struct b43_wldev *dev, u8 idx)
 		b43_actab_write_bulk(dev, 0xc, bbmult_hi[core], 16, 1, &bbmult);
 		b43_phy_ac_tbl_write_unlock(dev, inner);
 
-		b43info(dev->wl,
+		b43dbg(dev->wl,
 		       "phy-ac: txpwr_by_index core %u idx %u gain %04x/%04x/%04x bbmult %02x\n",
 		       core, idx, g0, g1, g2, bbmult);
 	}
@@ -2693,7 +2693,7 @@ static void b43_phy_ac_channel_switch_prep(struct b43_wldev *dev)
 		u16 cur = b43_phy_read_log(dev, 0x0140);
 		u16 next = (u16)((cur & 0x0800) | 0x05f4);
 
-		b43info(dev->wl,
+		b43dbg(dev->wl,
 		       "phy-ac: channel_switch_prep 0x0140 cur=0x%04x -> 0x%04x\n",
 		       cur, next);
 		b43_phy_write(dev, 0x0140, next);
@@ -5908,7 +5908,7 @@ static void b43_phy_ac_probe_cores(struct b43_wldev *dev)
 	if (!ac->coremask)
 		ac->coremask = 3;
 
-	b43info(dev->wl, "phy-ac: num_cores=%u coremask=0x%lx\n",
+	b43dbg(dev->wl, "phy-ac: num_cores=%u coremask=0x%lx\n",
 	       ac->num_cores, ac->coremask);
 }
 
@@ -5997,7 +5997,7 @@ static int b43_phy_ac_op_init(struct b43_wldev *dev)
 	{
 		u32 pllctl3 = bcma_chipco_pll_read(&dev->dev->bdev->bus->drv_cc,
 						   BCMA_CC_PMU_PLL_CTL3);
-		b43info(dev->wl, "AC-PHY: PLLCTL3 = 0x%08x on op_init entry\n",
+		b43dbg(dev->wl, "AC-PHY: PLLCTL3 = 0x%08x on op_init entry\n",
 		       pllctl3);
 	}
 

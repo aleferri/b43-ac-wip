@@ -1109,7 +1109,7 @@ static bool b43_dma64_index_is_addr(struct b43_wldev *dev)
 	b43_write32(dev, ringlo, 0xffffffff);
 	mask = b43_read32(dev, ringlo);
 	b43_write32(dev, ringlo, 0);
-	b43info(dev->wl, "DMA64 ring address mask 0x%08x\n", mask);
+	b43dbg(dev->wl, "DMA64 ring address mask 0x%08x\n", mask);
 
 	return mask & 0xff0;
 }
