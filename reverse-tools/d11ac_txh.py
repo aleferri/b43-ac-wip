@@ -75,6 +75,12 @@ def offset(buf, total):
     return None
 
 
+def frame_id(buf, total):
+    """The header's frame ID, or None if buf does not hold a header."""
+    off = offset(buf, total)
+    return None if off is None else u16(buf, off + 12)
+
+
 def describe(buf, total):
     """Lines describing the header in buf, or None if it is not one."""
     off = offset(buf, total)

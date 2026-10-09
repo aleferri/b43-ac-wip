@@ -176,7 +176,8 @@ enum wldiag_op {
 	OP_TPL_DATA,					/* 57 (append) */
 	OP_RX_PKT, OP_RX_DATA,				/* 58,59 (append) */
 	/* 60-64 are wl-mmio-trap's (MMIO.*, DMA.*), merged into the same
-	 * streams: the next op here is 65. */
+	 * streams. */
+	OP_TXS = 65, OP_TXS_DATA,			/* 65,66 (append) */
 	OP_DROP = 255,
 };
 struct wldiag_rec {
@@ -801,6 +802,20 @@ static struct hook hooks[] = {
 	 * front of the frame at the entry. The decoder checks the header's
 	 * frame length against the packet's. */
 	{ "wlc_recv",           OP_RX_PKT,    1, 0, 0 },
+	/* The TX status wlc gets for each frame: txs_rec() reads the start of
+	 * the tx_status structure; nothing is recorded until txsdump is set.
+	 * Signature from the 6.30 prologue (wlDSL-3580_EU.o_save): txs in a1,
+	 * whose byte 3 the function masks with 7 for the fifo, the low byte of
+	 * the frame ID:
+	 *
+	 *   wlc_dotxstatus(wlc, txs, ...)
+	 *
+	 * a2 is recorded as it comes. TO BE CONFIRMED on the first capture:
+	 * whether it is an argument, and txs in a1 on 7.14. GLOBAL, so it
+	 * resolves where the module keeps no local symbols. The structure's
+	 * layout differs between versions and is recorded raw: the decoder
+	 * finds the frame ID in it among those recorded at the TX post. */
+	{ "wlc_dotxstatus",     OP_TXS,       1, 2, 0 },
 };
 #define NHOOK ARRAY_SIZE(hooks)
 
@@ -958,6 +973,42 @@ static uint tplbudget = 256;
 module_param(tplbudget, uint, 0644);
 MODULE_PARM_DESC(tplbudget, "template RAM writes left to record; counts down to 0 (default 256)");
 
+/*
+ * One TX status with the start of its structure: a TXS record (addr = a2
+ * at the entry, val = the bytes that follow) and up to txsdump bytes
+ * of the tx_status in TXS.DATA records, one group (emit_group). Off with
+ * txsdump 0; txsbudget counts the statuses left. Both can be changed while
+ * tracing.
+ */
+#define TXSDUMP_MAX 128
+
+static uint txsdump;
+module_param(txsdump, uint, 0644);
+MODULE_PARM_DESC(txsdump, "bytes of each TX status structure to record, up to 128; 0=off (default). Its size differs between versions: 64 to start with");
+
+static uint txsbudget = 256;
+module_param(txsbudget, uint, 0644);
+MODULE_PARM_DESC(txsbudget, "TX statuses left to record; counts down to 0 (default 256)");
+
+static u32 txs_rec(u32 txs, u32 a2)
+{
+	const u8 *src = (const u8 *)(unsigned long)txs;
+	u32 n = min_t(u32, ACCESS_ONCE(txsdump), TXSDUMP_MAX);
+	uint left;
+
+	if (!n || !txs)
+		return 0;
+	do {
+		left = ACCESS_ONCE(txsbudget);
+		if (!left)
+			return 0;
+	} while (cmpxchg(&txsbudget, left, left - 1) != left);
+
+	if (!readable(src, n))
+		n = 0;
+	return emit_group(OP_TXS, a2, n, 0, OP_TXS_DATA, src, n);
+}
+
 static u32 tpl_rec(u32 off, u32 len, u32 buf)
 {
 	const u8 *src = (const u8 *)(unsigned long)buf;
@@ -998,6 +1049,9 @@ wl_diag_hook(u32 id, u32 a1, u32 a2, u32 a3)
 	if (h->op == OP_RX_PKT)
 		return pkt_rec(h, a1, a2, a3, OP_RX_PKT, OP_RX_DATA,
 			       ACCESS_ONCE(rxdump), &rxbudget);
+	if (h->op == OP_TXS)
+		return txs_rec(pick(h->addr_src, a1, a2, a3),
+			       pick(h->val_src, a1, a2, a3));
 	if (h->op == OP_TPL_RAMW)
 		return tpl_rec(a1, a2, a3);
 

@@ -67,6 +67,11 @@
 # RX.PKT (58) + RX.DATA (59): a received frame at the entry of wlc_recv, the
 # same shape as TX.PKT. The RX header is read by
 # ../reverse-tools/d11ac_rxh.py as b43_rx() reads it.
+# TXS (65) + TXS.DATA (66): a TX status at the entry of wlc_dotxstatus, a2
+# in addr, the bytes of the tx_status structure that follow in val, packed
+# like TX.DATA. The structure is printed raw, in the driver's byte order,
+# with the offset of the frame ID of a frame recorded at the TX post when
+# one of its 16-bit words matches one: that is what places the fields.
 import os, sys, struct
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -97,6 +102,7 @@ OPS = {
     52: "IOCTL",      53: "IOVAR.NAME", 54: "IOVAR.SET",
     55: "TX.PKT",     56: "TX.DATA",    57: "TPL.DATA",
     58: "RX.PKT",     59: "RX.DATA",
+    65: "TXS",        66: "TXS.DATA",
     26: "CHANSPEC",
     27: "TPL.PTRW",  28: "TPL.DATW",
     29: "TPL.PTRR",  30: "TPL.DATR",  31: "TPL.RAMW",
@@ -181,13 +187,47 @@ IOCTL_NAMES = {2: "UP", 3: "DOWN", 26: "SET_SSID"}
 TX_PKT, TX_DATA = 55, 56
 TPL_RAMW, TPL_DATA = 31, 57
 RX_PKT, RX_DATA = 58, 59
-DATA_OF = {TX_DATA: TX_PKT, TPL_DATA: TPL_RAMW, RX_DATA: RX_PKT}
+TXS, TXS_DATA = 65, 66
+DATA_OF = {TX_DATA: TX_PKT, TPL_DATA: TPL_RAMW, RX_DATA: RX_PKT,
+           TXS_DATA: TXS}
+POSTED_MAX = 1024   # frame IDs of the TX posts a status is matched against
+posted = {}         # frame ID -> sequence number of its TX.PKT
+
+
+def txs_lines(data):
+    """The tx_status in hex and where a posted frame's ID sits in it."""
+    lines = d11ac_txh.hexdump(data)
+    for o in range(0, len(data) - 1, 2):
+        fid = int.from_bytes(data[o:o + 2], "big")
+        if fid in posted:
+            lines.append(f"frameid={fid:#06x} at +{o}: TX.PKT #{posted[fid]}")
+            break
+    else:
+        lines.append("no frame ID of a recorded TX post")
+    return lines
 
 
 def print_group(g):
     """A TX.PKT, RX.PKT or TPL.RAMW with its bytes; cut short if another
     record arrived before the end of the group, that is if some were lost."""
     data = g["data"][:g["need"]]
+    if g["op"] == TXS:
+        lines = [f"{'TXS':<8} a2={h(g['addr'], True)} bytes={g['need']}"]
+        if len(data) < g["need"]:
+            lines[0] += f" troncato a {len(data)}"
+        elif data:
+            lines += txs_lines(data)
+        print(f"{g['t']:14.6f} #{g['seq']:<8} cpu{g['cpu']} {lines[0]}")
+        for line in lines[1:]:
+            print(" " * 17 + line)
+        return
+    if g["op"] == TX_PKT and len(data) == g["need"]:
+        fid = d11ac_txh.frame_id(data, g["addr"])
+        if fid is not None:
+            posted.pop(fid, None)
+            posted[fid] = g["seq"]
+            if len(posted) > POSTED_MAX:
+                del posted[next(iter(posted))]
     if g["op"] in (TX_PKT, RX_PKT):
         src = ("buf" if g["aux"] & 1 else
                "nbuff-tagged, not read" if g["aux"] & 2 else "pkt")
@@ -249,7 +289,7 @@ def main():
             if group is not None:
                 print_group(group)
                 group = None
-            if op in (TX_PKT, RX_PKT) or (op == TPL_RAMW and aux):
+            if op in (TX_PKT, RX_PKT, TXS) or (op == TPL_RAMW and aux):
                 group = {"op": op, "t": t, "seq": seq, "cpu": cpu,
                          "addr": addr, "val": val, "aux": aux,
                          "need": aux if op == TPL_RAMW else val, "data": b""}

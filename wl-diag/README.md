@@ -23,6 +23,7 @@ variant leaves out.
 | userspace commands | `IOVAR.SET`, `IOCTL` (hook on `wlc_ioctl`) |
 | frames posted to a TX ring | `TX.PKT` + `TX.DATA` (hooks on `dma64_txfast`, `dma64_txunframed`, or `wlc_txfifo` where those do not resolve), off until `txdump` is set |
 | frames received | `RX.PKT` + `RX.DATA` (hook on `wlc_recv`), off until `rxdump` is set |
+| TX statuses | `TXS` + `TXS.DATA` (hook on `wlc_dotxstatus`), off until `txsdump` is set |
 
 Reads carry their value through a return trampoline (`retcap` hooks), emitted
 as a `RETVAL` record after the read. Inline I/O through the `R_REG`/`W_REG`
@@ -56,10 +57,10 @@ through object memory
   `../reverse-tools/mipsdis.py <object> --prologo <symbol>`
   (`phy_reg_write_array(pi, array, n)` takes a pointer and is only a marker;
   `wlc_bmac_write_ihr(hw, off, val)`, `wlc_bmac_set_shm(hw, off, val, len)`).
-- **Op codes** are the same numbers in both tracers (2.6.30 has 1-50 and
-  55-59, 3.4 1-59); a new op goes at the end of both enums. 60-64 belong to
-  `../wl-mmio-trap/`, whose records merge into the same streams: the next op
-  here is 65. Hook-table fields use
+- **Op codes** are the same numbers in both tracers (2.6.30 has 1-50, 55-59
+  and 65-66, 3.4 1-59 and 65-66); a new op goes at the end of both enums.
+  60-64 belong to `../wl-mmio-trap/`, whose records merge into the same
+  streams: the next op here is 67. Hook-table fields use
   designated initializers: a positional field once shifted `retcap` to false
   for every hook.
 
@@ -94,6 +95,8 @@ of interest is `../reverse-tools/callsites_pic.py`'s question.
 | `tplbudget` | `256` | template RAM writes left to record, counting down |
 | `rxdump` | `0` | bytes of each received frame to record, up to 256; 96 cover the RX header, the PLCP and an 802.11 header. Writable at run time |
 | `rxbudget` | `256` | RX frames left to record, counting down |
+| `txsdump` | `0` | bytes of each TX status structure to record, up to 128; 64 to start with, its size differs between versions. Writable at run time |
+| `txsbudget` | `256` | TX statuses left to record, counting down |
 | `klookup` | `0` | 2.6.30 only: address of `kallsyms_lookup_name` from `/proc/kallsyms`, which that kernel does not export to modules. `../reverse-tools/gen_syms.py` builds the `insmod` line |
 | `bump_ptr`, `restore_alloc` | — | 3.4 only: rewind the reserved-module allocator on the TG789vac v2 (see `../router-data/tg789vac-v2/README.md`) |
 
@@ -150,12 +153,37 @@ in raw. `p` in a1 comes from brcmsmac's `brcms_c_recv`; on the agcombo's
 `rxtx-1s-ht20-40-80.zip` and `rxtx-2s-ht20-40-80.zip` every frame's length
 checks against the packet's.
 
+## TX statuses
+
+`wlc_dotxstatus(wlc, txs, ...)` is where wlc takes the status of a frame the
+microcode has finished with: acknowledged or not, attempts, suppression.
+With `txsdump` set, `txs_rec()` records `TXS` (`a2` at the entry, the bytes
+that follow) and the start of the `tx_status` structure in `TXS.DATA`
+records, packed like `TX.DATA`. The structure is read raw because its
+layout differs between versions; on 6.30 the function masks byte 3 with 7
+for the fifo, the low byte of the frame ID. The decoder prints it in hex,
+in the driver's byte order, and the offset where a 16-bit word equals the
+frame ID of a frame recorded at the TX post, with that `TX.PKT`'s sequence
+number: a status is tied to its descriptor, and the match places the
+fields. `txs` in a1 on 7.14 and what `a2` is are to be confirmed on the
+first capture; `../reverse-tools/audit_hooks.py` on the 7.14 module says
+whether the prologue takes the detour.
+
 ## One capture for templates, TX and RX
 
 `../wl-capture-scripts/capture_txrx.sh` takes all three in one stream: for
 each chanspec, template RAM content through the bring-up, then TX and RX
-headers while a station passes traffic both ways, cut by `MARK` records
+headers, and the TX statuses where the module has them, while a station
+passes traffic both ways, cut by `MARK` records
 (`tpl <chanspec>`, `txrx <chanspec>`, `end`) for `split_trace.py --on mark`.
+`VHTMODE=0` sets `wl vhtmode 0` while the interface is down, so a VHT
+station joins as HT and the frames are HT (frame type 2); 80 MHz needs VHT,
+so that run takes the 20 and 40 MHz chanspecs:
+
+```sh
+VHTMODE=0 sh capture_txrx.sh wl1 test-ap "5g36/20 5g40/40"
+VHTMODE=1 sh capture_txrx.sh wl1 test-ap "5g36/20 5g40/40 5g44/80"
+```
 
 ## Template RAM content
 

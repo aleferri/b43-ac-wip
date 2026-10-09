@@ -5,7 +5,8 @@
 # in the same /proc/wl_diag stream, cut by MARK records:
 #
 #   tpl <chanspec>     from here, template RAM writes with their content
-#   txrx <chanspec>    from here, TX.PKT and RX.PKT with their headers
+#   txrx <chanspec>    from here, TX.PKT and RX.PKT with their headers, and
+#                      TXS with the TX status when the module has it
 #   end
 #
 # so `reverse-tools/split_trace.py --on mark` splits it afterwards.
@@ -45,7 +46,10 @@
 #   ASSOC_WAIT  seconds to wait for a station to rejoin          (default 60)
 #   TRAFFIC     seconds of the txrx window                       (default 30)
 #   TPL_BUDGET  template RAM writes per chanspec                 (default 512)
-#   PKT_BUDGET  TX frames, and RX frames, per chanspec           (default 512)
+#   PKT_BUDGET  TX frames, RX frames and TX statuses, per chanspec (default 512)
+#   VHTMODE     0 or 1, set with `wl vhtmode` while the interface is down,
+#               so a VHT station joins as HT (0) or VHT (1); unset = as left.
+#               With MANUAL=1 it is only recorded, in a MARK at the start
 #   MANUAL      1 = channel changes done by hand, see above
 #
 # Only shell builtins plus `wl` and `sleep`: these busybox builds lack head,
@@ -69,6 +73,12 @@ for f in txdump rxdump tpldump; do
         exit 1
     fi
 done
+# The TX status capture is newer than the rest: without it the run goes on.
+TXS=1
+if [ ! -w "$P/txsdump" ]; then
+    echo "$P/txsdump is not there: no TX statuses in this run" >&2
+    TXS=
+fi
 if ! wl -i "$IF" status >/dev/null 2>&1; then
     echo "interface '$IF' does not answer 'wl -i $IF status'" >&2
     exit 1
@@ -83,6 +93,7 @@ dumps_off() {
     echo 0 > "$P/txdump"
     echo 0 > "$P/rxdump"
     echo 0 > "$P/tpldump"
+    [ -n "$TXS" ] && echo 0 > "$P/txsdump"
 }
 
 # A station in the assoclist, or ASSOC_WAIT seconds gone.
@@ -120,6 +131,9 @@ bring_up() {
     echo "$TPL_BUDGET" > "$P/tplbudget"
     echo 512 > "$P/tpldump"
     [ -n "$SSID" ] && wl -i "$IF" ssid "$SSID" > /dev/null 2>&1
+    if [ -n "$VHTMODE" ] && ! wl -i "$IF" vhtmode "$VHTMODE" > /dev/null 2>&1; then
+        echo "wl vhtmode $VHTMODE refused: `wl -i "$IF" vhtmode "$VHTMODE" 2>&1`"
+    fi
     wl -i "$IF" up
     sleep "$SETTLE"
     [ -n "$SSID" ] && wl -i "$IF" bss up > /dev/null 2>&1
@@ -127,6 +141,7 @@ bring_up() {
 }
 
 dumps_off
+[ -n "$VHTMODE" ] && mark "vhtmode $VHTMODE"
 for cs in $LIST; do
     bring_up "$cs" || continue
 
@@ -143,10 +158,15 @@ for cs in $LIST; do
     echo "$PKT_BUDGET" > "$P/rxbudget"
     echo 168 > "$P/txdump"
     echo 96 > "$P/rxdump"
+    if [ -n "$TXS" ]; then
+        echo "$PKT_BUDGET" > "$P/txsbudget"
+        echo 64 > "$P/txsdump"
+    fi
     echo ">>> $cs: traffic both ways now, $TRAFFIC s"
     sleep "$TRAFFIC"
     echo 0 > "$P/txdump"
     echo 0 > "$P/rxdump"
+    [ -n "$TXS" ] && echo 0 > "$P/txsdump"
 done
 
 mark "end"
