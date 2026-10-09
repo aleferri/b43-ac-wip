@@ -824,6 +824,13 @@ void b43_phy_ac_force_clock(struct b43_wldev *dev, bool force);
 #ifndef B43_AC_FN
 #define B43_AC_FN() do { } while (0)
 #endif
+#ifndef B43_DEBUG
+#ifdef CONFIG_B43_DEBUG
+#define B43_DEBUG 1
+#else
+#define B43_DEBUG 0
+#endif
+#endif
 #ifndef B43_AC_BLOCK
 #if B43_DEBUG
 #define B43_AC_BLOCK(dev, name) do {\
