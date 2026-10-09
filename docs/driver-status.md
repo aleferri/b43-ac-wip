@@ -77,10 +77,10 @@ on the D6220), so an agcombo capture is compared as it is, with
 ## What may be observed
 
 Allowed: hooking the stock driver's hardware I/O accessors (PHY, radio, MMIO,
-shared memory, template RAM, OTP), trapping its raw MMIO, reading the memory
-the hardware reads by DMA (descriptors and the buffers they point at, as
-`wl-mmio-trap` does at a TX index write), and reading the blob's
-`.rodata`/`.data`. Not allowed: hooking its internal logic functions.
+shared memory, template RAM, OTP, hnddma's TX post), trapping its raw MMIO,
+reading the memory the hardware reads by DMA (descriptors and the buffers
+they point at, as `wl-diag` does at hnddma's TX post and `wl-mmio-trap` at a
+TX index write), and reading the blob's `.rodata`/`.data`. Not allowed: hooking its internal logic functions.
 When a value is needed, the routes are, in order: an I/O accessor that is or
 can be covered; DMA memory at the point the hardware is handed it; an iovar
 from outside; a table in `.rodata`. If none is enough, the unknown stays

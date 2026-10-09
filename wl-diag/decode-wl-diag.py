@@ -49,7 +49,17 @@
 # read/write_objmem16 e aux porta il selettore vero; su 7.14.43 quegli accessor
 # non esistono e i record vengono da wlc_bmac_read/write_shm, che coprono il
 # SOLO spazio SHM -- la' aux e' sempre 0 e gli accessi a SCR e IHR non compaiono.
-import sys, struct
+# TX.PKT (55) + TX.DATA (56): un frame postato su un ring TX, all'ingresso di
+# dma64_txfast/txunframed. TX.PKT porta la lunghezza postata (addr), i byte
+# che seguono (val) e aux=1 per un buffer grezzo; i TX.DATA, consecutivi,
+# portano i byte, dodici per record impacchettati come MARK. L'header TX d11
+# AC lo legge ../reverse-tools/d11ac_txh.py, lo stesso che usa
+# decode-wl-mmio.py; un layout che non torna esce in esadecimale.
+import os, sys, struct
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "..", "reverse-tools"))
+import d11ac_txh
 
 REC = struct.Struct(">QIIIIBBH")   # ts_ns, seq, addr, val, aux, op, cpu, _pad
 SZ = REC.size                       # 28
@@ -71,6 +81,7 @@ OPS = {
     49: "IHR.WR",    50: "OBJ.SET",
     51: "PHY.FGC",
     52: "IOCTL",      53: "IOVAR.NAME", 54: "IOVAR.SET",
+    55: "TX.PKT",     56: "TX.DATA",
     26: "CHANSPEC",
     27: "TPL.PTRW",  28: "TPL.DATW",
     29: "TPL.PTRR",  30: "TPL.DATR",  31: "TPL.RAMW",
@@ -151,12 +162,35 @@ def unmark(addr, val, aux):
 # SET. Il valore e' il primo u32 dopo il NUL, nell'ordine di byte del driver.
 IOCTL, IOVAR_NAME, IOVAR_SET = 52, 53, 54
 IOCTL_NAMES = {2: "UP", 3: "DOWN", 26: "SET_SSID"}
+TX_PKT, TX_DATA = 55, 56
+
+
+def print_pkt(pkt):
+    """Un TX.PKT con i suoi byte; troncato se un altro record e' arrivato
+    prima della fine del gruppo, cioe' se ne sono andati persi."""
+    data = pkt["data"][:pkt["need"]]
+    src = "buf" if pkt["raw"] else "pkt"
+    lines = [f"{src} len={pkt['len']} bytes={pkt['need']}"]
+    if len(data) < pkt["need"]:
+        lines[0] += f" troncato a {len(data)}"
+    elif data:
+        txh = d11ac_txh.describe(data, pkt["len"])
+        if txh is None:
+            lines.append("layout non riconosciuto:")
+            lines += d11ac_txh.hexdump(data)
+        else:
+            lines += txh
+    print(f"{pkt['t']:14.6f} #{pkt['seq']:<8} cpu{pkt['cpu']} "
+          f"{'TX.PKT':<8} {lines[0]}")
+    for line in lines[1:]:
+        print(" " * 17 + line)
 
 
 def main():
     f = sys.stdin.buffer
     buf = b""
     iovar_name = {}
+    pkt = None          # TX.PKT in attesa dei suoi TX.DATA
     while True:
         chunk = f.read(4096)
         if not chunk:
@@ -168,6 +202,29 @@ def main():
             name = OPS.get(op, f"op{op}")
             t = ts / 1e9
             wide = op in WIDE
+            if op == TX_DATA:
+                if pkt is None:
+                    print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} "
+                          "orfano (TX.PKT perso)")
+                    continue
+                pkt["data"] += b"".join(x.to_bytes(4, "big")
+                                        for x in (addr, val, aux))
+                if len(pkt["data"]) < pkt["need"]:
+                    continue
+                print_pkt(pkt)
+                pkt = None
+                sys.stdout.flush()
+                continue
+            if pkt is not None:
+                print_pkt(pkt)
+                pkt = None
+            if op == TX_PKT:
+                pkt = {"t": t, "seq": seq, "cpu": cpu, "len": addr,
+                       "need": val, "raw": aux, "data": b""}
+                if not val:
+                    print_pkt(pkt)
+                    pkt = None
+                continue
             if op == IOVAR_NAME:
                 iovar_name[cpu] = iovar_name.get(cpu, "") + unmark(addr, val, aux)
                 continue

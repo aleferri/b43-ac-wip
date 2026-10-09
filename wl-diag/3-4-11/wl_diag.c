@@ -77,6 +77,7 @@
 #include <linux/proc_fs.h>
 #include <linux/fs.h>
 #include <linux/uaccess.h>
+#include <linux/skbuff.h>
 #include <linux/sched.h>
 #include <linux/wait.h>
 #include <linux/spinlock.h>
@@ -171,6 +172,7 @@ enum wldiag_op {
 	OP_IHR_W, OP_OBJ_SET,				/* 49,50 (append) */
 	OP_PHY_FGC,					/* 51 (append) */
 	OP_IOCTL, OP_IOVAR_NAME, OP_IOVAR_SET,		/* 52,53,54 (append) */
+	OP_TX_PKT, OP_TX_DATA,				/* 55,56 (append) */
 	OP_DROP = 255,
 };
 struct wldiag_rec {
@@ -309,6 +311,49 @@ static u32 emit(u8 op, u32 addr, u32 val, u32 aux)
 	return r.seq;
 }
 
+/*
+ * A record followed by n bytes in data records, twelve per record packed
+ * big-endian like MARK, queued under one lock hold so that the sequence
+ * numbers of the group are consecutive and no other cpu's record falls
+ * inside it. All or nothing: a group that does not fit counts as lost whole.
+ */
+static u32 emit_group(u8 op, u32 addr, u32 val, u32 aux, u8 dop,
+		      const u8 *b, u32 n)
+{
+	struct wldiag_rec r;
+	unsigned long flags;
+	u32 nrec = 1 + (n + 11) / 12, i, k, first = 0;
+
+	raw_spin_lock_irqsave(&fifo_lock, flags);
+	if (kfifo_avail(&fifo) < nrec) {
+		atomic_add(nrec, &drops);
+		raw_spin_unlock_irqrestore(&fifo_lock, flags);
+		return 0;
+	}
+	for (i = 0; i < nrec; i++) {
+		r.ts_ns = sched_clock();
+		r.seq = (u32)atomic_inc_return(&seq);
+		r.cpu = (u8)raw_smp_processor_id();
+		r._pad = 0;
+		if (!i) {
+			r.op = op;
+			r.addr = addr; r.val = val; r.aux = aux;
+			first = r.seq;
+		} else {
+			u32 w[3] = { 0, 0, 0 }, o = (i - 1) * 12;
+
+			for (k = 0; k < 12 && o + k < n; k++)
+				w[k / 4] |= (u32)b[o + k] << (24 - 8 * (k % 4));
+			r.op = dop;
+			r.addr = w[0]; r.val = w[1]; r.aux = w[2];
+		}
+		kfifo_in(&fifo, &r, 1);
+	}
+	raw_spin_unlock_irqrestore(&fifo_lock, flags);
+	wake_up_interruptible(&rq);
+	return first;
+}
+
 /* ---- markers ---------------------------------------------------------- *
  * A MARK record carries 12 characters packed into the three u32 fields, so the
  * cycle label sits INSIDE the trace and cutting it up afterwards needs no
@@ -361,6 +406,9 @@ struct hook {
 	 * the thunk's entry, and the delay slot has already set the ones it sets.
 	 * 0 = same as @aux_src. Set by name, like the three above. */
 	u8 tail_aux_src;
+	/* For OP_TX_PKT: a1 is a buffer and a2 its length, not an osl packet.
+	 * Set by name. */
+	bool txraw;
 	unsigned long addr;
 	u32 saved[4];
 	bool armed;
@@ -691,6 +739,23 @@ static struct hook hooks[] = {
 	 * short-j holds. addr=a1 raw: the andi 0xffff is o[0], re-run in the
 	 * stub, as is o[1] (addiu $v0,1), so $v0 is re-set AFTER the hook. */
 	{ "read_radio_reg",     OP_RADIO_R,   1, 0, 0, .shortj = true, .retcap = true },
+	/* The frames wl posts to a TX ring, d11 TX header in front: what the
+	 * DMA engine is handed, the PHY TX control words of data frames
+	 * included, which no register access carries. tx_rec() reads them;
+	 * nothing is recorded until txdump is set. Signatures of hnddma's GPL
+	 * sources:
+	 *
+	 *   dma64_txfast(di, p0, commit)            p0 = the osl packet
+	 *   dma64_txunframed(di, buf, len, commit)  buf, len
+	 *
+	 * Both are LOCAL in the 7.14.89 blob and reached through hnddma's
+	 * function table, so call sites cannot take them: the entry detour or
+	 * the break path. TO BE CONFIRMED on the first capture: that p0 is an
+	 * sk_buff, as linux_osl.h makes it. The decoder checks the header's
+	 * frame_len against the length, so a wrong guess shows as an
+	 * unrecognised layout and not as plausible fields. */
+	{ "dma64_txfast",       OP_TX_PKT,    0, 0, 0 },
+	{ "dma64_txunframed",   OP_TX_PKT,    0, 0, 0, .txraw = true },
 };
 #define NHOOK ARRAY_SIZE(hooks)
 
@@ -751,6 +816,61 @@ static u32 ioctl_rec(u32 cmd, u32 buf, u32 len)
 	return emit(OP_IOVAR_SET, v, len > nl + 1 ? len - nl - 1 : 0, 0);
 }
 
+/*
+ * One frame posted to a TX ring: a TX.PKT record (addr = the length posted,
+ * val = the bytes that follow, aux = 1 for a raw buffer) and up to txdump
+ * bytes of it in TX.DATA records, one group (emit_group). Off with txdump 0;
+ * txbudget counts the frames left and is written again for more. Both can be
+ * changed while tracing. Only the linear part of an sk_buff is read, where
+ * the driver pushed the header; every read goes through probe_kernel_read(),
+ * so a pointer that is not what the signature says costs the record.
+ */
+#define TXDUMP_MAX 256
+
+static uint txdump;
+module_param(txdump, uint, 0644);
+MODULE_PARM_DESC(txdump, "bytes of each frame posted to a TX ring to record, up to 256; 0=off (default). 168 covers the TX offload header, the d11 TX header and an 802.11 header");
+
+static uint txbudget = 256;
+module_param(txbudget, uint, 0644);
+MODULE_PARM_DESC(txbudget, "frames left to record; counts down to 0 (default 256)");
+
+static u32 tx_rec(const struct hook *h, u32 a1, u32 a2)
+{
+	u8 b[TXDUMP_MAX];
+	const u8 *data;
+	u32 want = ACCESS_ONCE(txdump), len, lin, n;
+	uint left;
+
+	if (!want || !a1)
+		return 0;
+	do {
+		left = ACCESS_ONCE(txbudget);
+		if (!left)
+			return 0;
+	} while (cmpxchg(&txbudget, left, left - 1) != left);
+
+	if (h->txraw) {
+		data = (const u8 *)(unsigned long)a1;
+		len = lin = a2;
+	} else {
+		const struct sk_buff *skb = (const void *)(unsigned long)a1;
+		unsigned int l, dl;
+
+		if (probe_kernel_read(&data, &skb->data, sizeof(data)) ||
+		    probe_kernel_read(&l, &skb->len, sizeof(l)) ||
+		    probe_kernel_read(&dl, &skb->data_len, sizeof(dl)))
+			return 0;
+		len = l;
+		lin = dl <= l ? l - dl : 0;
+	}
+	n = min_t(u32, want, lin);
+	n = min_t(u32, n, TXDUMP_MAX);
+	if (n && probe_kernel_read(b, data, n))
+		n = 0;
+	return emit_group(OP_TX_PKT, len, n, h->txraw, OP_TX_DATA, b, n);
+}
+
 /* Landing point of the detour: called from the stub with (id, a1, a2, a3). */
 u32 __used noinline
 wl_diag_hook(u32 id, u32 a1, u32 a2, u32 a3)
@@ -765,6 +885,8 @@ wl_diag_hook(u32 id, u32 a1, u32 a2, u32 a3)
 		return emit(h->op, 0, 0, 0);
 	if (h->op == OP_IOCTL)
 		return ioctl_rec(a1, a2, a3);
+	if (h->op == OP_TX_PKT)
+		return tx_rec(h, a1, a2);
 
 	return emit(h->op, pick(h->addr_src, a1, a2, a3),
 			   pick(h->val_src,  a1, a2, a3),

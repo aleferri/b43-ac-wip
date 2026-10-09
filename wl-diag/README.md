@@ -21,6 +21,7 @@ variant leaves out.
 | OTP, SROM control | `OTP.*`, `SROMCTL.*` |
 | chanspec | `CS.SHM`, `CHANSPEC` |
 | userspace commands | `IOVAR.SET`, `IOCTL` (hook on `wlc_ioctl`) |
+| frames posted to a TX ring | `TX.PKT` + `TX.DATA` (hooks on `dma64_txfast`, `dma64_txunframed`), off until `txdump` is set |
 
 Reads carry their value through a return trampoline (`retcap` hooks), emitted
 as a `RETVAL` record after the read. Inline I/O through the `R_REG`/`W_REG`
@@ -54,8 +55,8 @@ through object memory
   `../reverse-tools/mipsdis.py <object> --prologo <symbol>`
   (`phy_reg_write_array(pi, array, n)` takes a pointer and is only a marker;
   `wlc_bmac_write_ihr(hw, off, val)`, `wlc_bmac_set_shm(hw, off, val, len)`).
-- **Op codes** are the same numbers in both tracers (2.6.30 stops at 50, 3.4
-  goes to 54); a new op goes at the end of both enums. Hook-table fields use
+- **Op codes** are the same numbers in both tracers (2.6.30 has 1-50 and
+  55-56, 3.4 1-56); a new op goes at the end of both enums. Hook-table fields use
   designated initializers: a positional field once shifted `retcap` to false
   for every hook.
 
@@ -84,8 +85,36 @@ of interest is `../reverse-tools/callsites_pic.py`'s question.
 | `delay` | `0` | `1` = also hook `osl_delay` (noisy) |
 | `fifo_recs` | `131072` on 3.4, `8192` on 2.6.30 | queue records, 28 bytes each. On 3.4 the queue is allocated with `vmalloc` and the default is 3.5 MB, ~25 s of margin |
 | `skipphyrd` | empty | **PHY register** reads not to record, e.g. `"0x253,0x254"` |
+| `txdump` | `0` | bytes of each frame posted to a TX ring to record, up to 256; 168 cover the TX offload header, the d11 TX header and an 802.11 header. Writable at run time |
+| `txbudget` | `256` | frames left to record, counting down; write it again for more |
 | `klookup` | `0` | 2.6.30 only: address of `kallsyms_lookup_name` from `/proc/kallsyms`, which that kernel does not export to modules. `../reverse-tools/gen_syms.py` builds the `insmod` line |
 | `bump_ptr`, `restore_alloc` | — | 3.4 only: rewind the reserved-module allocator on the TG789vac v2 (see `../router-data/tg789vac-v2/README.md`) |
+
+## TX frames
+
+`dma64_txfast(di, p0, commit)` and `dma64_txunframed(di, buf, len, commit)`
+are where hnddma posts a frame to a TX ring, with the d11 TX header pushed in
+front: the PHY TX control words and PLCP of data frames reach the hardware
+only there, never through a register. At their entry `tx_rec()` reads the
+first `txdump` bytes of the frame, from the linear part of the `sk_buff` or
+from the buffer, and queues them as one group: a `TX.PKT` record (length
+posted, bytes following, 1 for a raw buffer) and the bytes in `TX.DATA`
+records, twelve each, packed like `MARK`. The decoder reads the header with
+`../reverse-tools/d11ac_txh.py`, which `../wl-mmio-trap/` shares.
+
+```sh
+echo 168 > /sys/module/wl_diag/parameters/txdump
+echo 256 > /sys/module/wl_diag/parameters/txbudget
+```
+
+Unlike the trap at a TX index write, this costs one detour per frame and
+`wl` keeps its speed, so the rate control runs as it does without a tracer.
+Both functions are reached through hnddma's function table: the entry detour
+or the break path takes them, call sites cannot. That `p0` is an `sk_buff`
+comes from hnddma's and `linux_osl.h`'s GPL sources, not from this blob; the
+decoder checks the header's `frame_len` against the length, so if it is
+wrong the output says "layout non riconosciuto" instead of printing plausible
+fields.
 
 ## Build
 

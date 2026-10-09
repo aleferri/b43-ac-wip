@@ -31,6 +31,7 @@
 #include <linux/proc_fs.h>
 #include <linux/fs.h>
 #include <linux/uaccess.h>
+#include <linux/skbuff.h>
 #include <linux/sched.h>
 #include <linux/wait.h>
 #include <linux/spinlock.h>
@@ -158,6 +159,9 @@ enum wldiag_op {
 	OP_AMT_W, OP_RCMTA_W, OP_ADDRMATCH,		/* 43,44,45 (append) */
 	OP_PHY_WARR, OP_PHY_RDW, OP_PHY_WRW,		/* 46,47,48 (append) */
 	OP_IHR_W, OP_OBJ_SET,				/* 49,50 (append) */
+	/* 51-54 sono della 3.4 (PHY.FGC, IOCTL, IOVAR.*): qui non ci sono, ma i
+	 * numeri restano quelli, cosi' il decoder resta uno. */
+	OP_TX_PKT = 55, OP_TX_DATA,			/* 55,56 (append) */
 	OP_DROP = 255,
 };
 struct wldiag_rec {
@@ -317,6 +321,51 @@ static u32 emit(u8 op, u32 addr, u32 val, u32 aux)
 	return r.seq;
 }
 
+/*
+ * Un record seguito da n byte in record di dati, dodici per record
+ * impacchettati big-endian come MARK, accodati sotto un'unica presa del lock:
+ * i numeri di sequenza del gruppo sono consecutivi e nessun record di un'altra
+ * cpu ci cade in mezzo. Tutto o niente: un gruppo che non entra conta perso
+ * per intero.
+ */
+static u32 emit_group(u8 op, u32 addr, u32 val, u32 aux, u8 dop,
+		      const u8 *b, u32 n)
+{
+	struct wldiag_rec r;
+	unsigned long flags;
+	u32 nrec = 1 + (n + 11) / 12, i, k, first = 0;
+
+	spin_lock_irqsave(&fifo_lock, flags);
+	if (fifo_recs - (u32)(ring_head - ring_tail) < nrec) {
+		atomic_add(nrec, &drops);
+		spin_unlock_irqrestore(&fifo_lock, flags);
+		return 0;
+	}
+	for (i = 0; i < nrec; i++) {
+		r.ts_ns = wldiag_now_ns();
+		r.seq = (u32)atomic_inc_return(&seq);
+		r.cpu = (u8)raw_smp_processor_id();
+		r._pad = 0;
+		if (!i) {
+			r.op = op;
+			r.addr = addr; r.val = val; r.aux = aux;
+			first = r.seq;
+		} else {
+			u32 w[3] = { 0, 0, 0 }, o = (i - 1) * 12;
+
+			for (k = 0; k < 12 && o + k < n; k++)
+				w[k / 4] |= (u32)b[o + k] << (24 - 8 * (k % 4));
+			r.op = dop;
+			r.addr = w[0]; r.val = w[1]; r.aux = w[2];
+		}
+		ring[ring_head & (fifo_recs - 1)] = r;
+		ring_head++;
+	}
+	spin_unlock_irqrestore(&fifo_lock, flags);
+	wake_up_interruptible(&rq);
+	return first;
+}
+
 /* ---- marcatori -------------------------------------------------------- *
  * Identici a quelli del tracer per il 3.4, e devono restarlo: il decoder disfa
  * l'impacchettamento a mano e non distingue le due versioni. Dodici caratteri
@@ -378,6 +427,9 @@ struct hook {
 	 * dalla coppia bulk senza toccare i thunk. I thunk restano come ripiego
 	 * per un firmware dove l'accessor non si risolve. */
 	const char *ripiego_di;
+	/* Per OP_TX_PKT: a1 e' un buffer e a2 la sua lunghezza, non un
+	 * pacchetto osl. Per nome. */
+	bool txraw;
 };
 static struct hook hooks[] = {
 	{ "phy_reg_read",       OP_PHY_R,     1, 0, 0, .retcap = true },
@@ -574,6 +626,22 @@ static struct hook hooks[] = {
 	 * riesegue o[0..1] e rientra a +8 (v0 ri-settato DOPO la hook). addr=a1
 	 * grezzo (l'andi 0xffff e' o[0], rieseguito nello stub). */
 	{ "read_radio_reg",     OP_RADIO_R,   1, 0, 0, .shortj = true, .retcap = true },
+	/* I frame che wl posta su un ring TX, con l'header TX d11 davanti:
+	 * quello che riceve l'engine DMA, comprese le PHY TX control word dei
+	 * frame dati, che nessun accesso ai registri porta. Li legge tx_rec();
+	 * finche' txdump e' 0 non si registra niente. Firme dai sorgenti GPL di
+	 * hnddma:
+	 *
+	 *   dma64_txfast(di, p0, commit)            p0 = il pacchetto osl
+	 *   dma64_txunframed(di, buf, len, commit)  buf, len
+	 *
+	 * Si raggiungono dalla tabella di funzioni di hnddma, quindi non dai
+	 * siti di chiamata: serve il detour d'ingresso. DA CONFERMARE alla prima
+	 * cattura che p0 sia uno sk_buff, come lo fa linux_osl.h: il decoder
+	 * confronta il frame_len dell'header con la lunghezza, quindi un'ipotesi
+	 * sbagliata esce come layout non riconosciuto, non come campi plausibili. */
+	{ "dma64_txfast",       OP_TX_PKT,    0, 0, 0 },
+	{ "dma64_txunframed",   OP_TX_PKT,    0, 0, 0, .txraw = true },
 };
 #define NHOOK ARRAY_SIZE(hooks)
 
@@ -581,6 +649,62 @@ static inline u32 pick(u8 src, u32 a1, u32 a2, u32 a3)
 {
 	return src == 1 ? a1 : src == 2 ? a2 : src == 3 ? a3 : 0;
 }
+/*
+ * Un frame postato su un ring TX: un record TX.PKT (addr = la lunghezza
+ * postata, val = i byte che seguono, aux = 1 per un buffer grezzo) e fino a
+ * txdump byte del frame in record TX.DATA, un solo gruppo (emit_group). Spento
+ * con txdump 0; txbudget conta i frame rimasti e si riscrive per averne
+ * altri. Entrambi si cambiano durante la cattura. Di uno sk_buff si legge
+ * solo la parte lineare, dove il driver ha messo l'header; ogni lettura passa
+ * da probe_kernel_read(), quindi un puntatore che non e' quello della firma
+ * costa il record e basta.
+ */
+#define TXDUMP_MAX 256
+
+static uint txdump;
+module_param(txdump, uint, 0644);
+MODULE_PARM_DESC(txdump, "byte di ogni frame postato su un ring TX da registrare, fino a 256; 0=spento (default). 168 coprono il TX offload header, l'header TX d11 e un header 802.11");
+
+static uint txbudget = 256;
+module_param(txbudget, uint, 0644);
+MODULE_PARM_DESC(txbudget, "frame ancora da registrare; scende fino a 0 (default 256)");
+
+static u32 tx_rec(const struct hook *h, u32 a1, u32 a2)
+{
+	u8 b[TXDUMP_MAX];
+	const u8 *data;
+	u32 want = ACCESS_ONCE(txdump), len, lin, n;
+	uint left;
+
+	if (!want || !a1)
+		return 0;
+	do {
+		left = ACCESS_ONCE(txbudget);
+		if (!left)
+			return 0;
+	} while (cmpxchg(&txbudget, left, left - 1) != left);
+
+	if (h->txraw) {
+		data = (const u8 *)(unsigned long)a1;
+		len = lin = a2;
+	} else {
+		const struct sk_buff *skb = (const void *)(unsigned long)a1;
+		unsigned int l, dl;
+
+		if (probe_kernel_read(&data, &skb->data, sizeof(data)) ||
+		    probe_kernel_read(&l, &skb->len, sizeof(l)) ||
+		    probe_kernel_read(&dl, &skb->data_len, sizeof(dl)))
+			return 0;
+		len = l;
+		lin = dl <= l ? l - dl : 0;
+	}
+	n = min_t(u32, want, lin);
+	n = min_t(u32, n, TXDUMP_MAX);
+	if (n && probe_kernel_read(b, data, n))
+		n = 0;
+	return emit_group(OP_TX_PKT, len, n, h->txraw, OP_TX_DATA, b, n);
+}
+
 /* Punto d'atterraggio del detour: chiamato dallo stub con (id, a1, a2, a3). */
 u32 __used noinline
 wl_diag_hook(u32 id, u32 a1, u32 a2, u32 a3)
@@ -591,6 +715,8 @@ wl_diag_hook(u32 id, u32 a1, u32 a2, u32 a3)
 	 * anche l'ancora per segmentare uno sweep, una per ciclo. */
 	if (h->op == OP_CAL_INIT)
 		return emit(h->op, 0, 0, 0);
+	if (h->op == OP_TX_PKT)
+		return tx_rec(h, a1, a2);
 
 	return emit(h->op, pick(h->addr_src, a1, a2, a3),
 			   pick(h->val_src,  a1, a2, a3),
