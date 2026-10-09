@@ -51,6 +51,10 @@ gate. The comparison itself is `test/unit/compare.py` (positional) and
 
 ## Analysis
 
+- **d11ac_txh.py**: the d11 AC TX header as the stock driver hands it to DMA,
+  shared by `decode-wl-diag.py` and `decode-wl-mmio.py`: packet info, rate
+  blocks with the PHY TX control words, the PLCP read as L-SIG, HT-SIG or
+  VHT-SIG-A, the 802.11 header.
 - **tracelib.py**: parsing, op normalisation, attribution of each op to its
   function through the marker stack, capture discovery inside archives
   (`archive.zip!inner.txt`). It defines "the same op".

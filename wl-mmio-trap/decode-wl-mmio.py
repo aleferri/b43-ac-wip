@@ -34,12 +34,13 @@
 # l'indirizzo di bus del descrittore, in val quello del buffer, in aux il
 # canale (31:24), i flag DD_F_* (23:16) e i byte di buffer (15:0); i DATA
 # che seguono, 12 byte ciascuno, portano i 16 byte del descrittore come
-# stanno in memoria e poi quelli del buffer. Il decoder riconosce l'header
-# TX d11 AC (124 byte, con o senza i 4 del TX offload header davanti) dal
-# frame_len che torna con il byte count del descrittore, e ne stampa i
-# campi, i blocchi di rate con le PHY TX control word e il PLCP letto come
-# L-SIG, HT-SIG o VHT-SIG-A secondo il frame type, e l'header 802.11.
-import sys, struct, argparse
+# stanno in memoria e poi quelli del buffer. L'header TX d11 AC lo legge
+# ../reverse-tools/d11ac_txh.py, lo stesso che usa decode-wl-diag.py.
+import os, sys, struct, argparse
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "..", "reverse-tools"))
+import d11ac_txh
 
 REC = struct.Struct(">QIIIIBBH")   # ts_ns, seq, addr, val, aux, op, cpu, _pad
 SZ = REC.size                       # 28
@@ -50,12 +51,6 @@ OPS = {MMIO_RD: "MMIO.RD", MMIO_WR: "MMIO.WR", MARK: "MARK",
 
 DD_SIZE = 16
 DD_F_BE, DD_F_NOBUF, DD_F_GUESS = 0x01, 0x02, 0x04
-D11AC_TXH_LEN = 124
-FT = {0: "CCK", 1: "OFDM", 2: "HT", 3: "VHT"}
-OFDM_RATE = {0xb: 6, 0xf: 9, 0xa: 12, 0xe: 18, 0x9: 24, 0xd: 36, 0x8: 48,
-             0xc: 54}
-CHSPEC_BW = {0x0800: "10", 0x1000: "20", 0x1800: "40", 0x2000: "80",
-             0x2800: "160", 0x3000: "80+80"}
 
 AUX_WIDTH = 0xff
 AUX_DELAY_SLOT = 0x100
@@ -63,51 +58,6 @@ AUX_DELAY_SLOT = 0x100
 
 def h(v, wide):
     return f"0x{v:08x}" if wide else f"0x{v:04x}"
-
-
-def u16(b, o):
-    return b[o] | (b[o + 1] << 8)
-
-
-def chanspec(v):
-    bw = CHSPEC_BW.get(v & 0x3800, f"?{v & 0x3800:#x}")
-    band = "5g" if v & 0xc000 == 0xc000 else "2g" if v & 0xc000 == 0 else "?"
-    return f"ch{v & 0xff} bw{bw} sb{(v >> 8) & 7} {band}"
-
-
-def plcp_text(ft, p):
-    """Il PLCP del blocco di rate letto secondo il frame type."""
-    if ft == 0:
-        return f"cck signal={p[0]:#04x}"
-    if ft == 1:
-        sig = p[0] | (p[1] << 8) | (p[2] << 16)
-        rate = OFDM_RATE.get(sig & 0xf, f"?{sig & 0xf:#x}")
-        return f"l-sig {rate}M len={(sig >> 5) & 0xfff}"
-    if ft == 2:
-        return (f"ht-sig mcs{p[0] & 0x7f} {'40' if p[0] & 0x80 else '20'}MHz "
-                f"len={p[1] | (p[2] << 8)} b3={p[3]:#04x} b4={p[4]:#04x} "
-                f"b5={p[5]:#04x}")
-    a1 = p[0] | (p[1] << 8) | (p[2] << 16)
-    a2 = p[3] | (p[4] << 8) | (p[5] << 16)
-    bw = {0: "20", 1: "40", 2: "80", 3: "160"}[a1 & 3]
-    stbc = (a1 >> 3) & 1
-    nsts = ((a1 >> 10) & 7) + 1
-    return (f"vht-sig-a {bw}MHz mcs{(a2 >> 4) & 0xf} nsts={nsts} stbc={stbc} "
-            f"gid={(a1 >> 4) & 0x3f} sgi={a2 & 1} ldpc={(a2 >> 2) & 1} "
-            f"a1={a1:#08x} a2={a2:#08x}")
-
-
-def txh_offset(buf, bytecount):
-    """Dove comincia l'header TX d11 AC nel buffer, o None: frame_len
-    (+10 nell'header) deve tornare con il byte count del descrittore, sia
-    con il frame nello stesso buffer sia in un descrittore a parte."""
-    for off in (4, 0):
-        if len(buf) < off + 12:
-            continue
-        fl = u16(buf, off + 10)
-        if bytecount in (off + D11AC_TXH_LEN + fl - 4, off + D11AC_TXH_LEN):
-            return off
-    return None
 
 
 def dd_lines(chan, slot, bufaddr, flags, raw, buf, hexdump):
@@ -119,47 +69,15 @@ def dd_lines(chan, slot, bufaddr, flags, raw, buf, hexdump):
     out = [f"ch={chan} dd={slot:#010x} buf={bufaddr:#010x} ctl0={w[0]:#010x} "
            f"ctl1={w[1]:#010x} bytes={bc} addrhi={w[3]:#x}"
            + (f" [{','.join(fl)}]" if fl else "")]
-    if hexdump or not buf:
-        for i in range(0, len(buf), 16):
-            out.append(f"  {i:03x}: {buf[i:i + 16].hex(' ')}")
-    off = txh_offset(buf, bc) if buf else None
-    if off is None:
-        if buf and not hexdump:
-            out.append("  layout non riconosciuto:")
-            for i in range(0, len(buf), 16):
-                out.append(f"  {i:03x}: {buf[i:i + 16].hex(' ')}")
+    if not buf:
         return out
-
-    t = buf[off:]
-    out.append(f"  txh@{off}{' toe=' + buf[:4].hex(' ') if off else ''}: "
-               f"tso={u16(t, 0):#06x} macctl={u16(t, 2):#06x}/{u16(t, 4):#06x} "
-               f"chanspec={u16(t, 6):#06x} ({chanspec(u16(t, 6))}) "
-               f"iv_off={t[8]} pktcache={t[9]} frame_len={u16(t, 10)} "
-               f"frameid={u16(t, 12):#06x} seq={u16(t, 14):#06x} "
-               f"tstamp={u16(t, 16):#06x} txstatus={u16(t, 18):#06x}")
-    for i in range(4):
-        r = 20 + 20 * i
-        if len(t) < r + 20:
-            break
-        phy = [u16(t, r + 2 * k) for k in range(3)]
-        plcp = t[r + 6:r + 12]
-        rts = u16(t, r + 16)
-        if not any(t[r:r + 20]):
-            continue
-        ft = phy[0] & 3
-        out.append(f"  rate{i}: phy={phy[0]:#06x} {phy[1]:#06x} {phy[2]:#06x} "
-                   f"ft={FT[ft]} cores={(phy[0] >> 6) & 0xf:#x} "
-                   f"plcp={plcp.hex(' ')} ({plcp_text(ft, plcp)}) "
-                   f"fbw={u16(t, r + 12):#06x} rate={u16(t, r + 14):#06x} "
-                   f"rts={rts:#06x} bfm={u16(t, r + 18):#06x}")
-        if rts & 0x0020:
-            break
-    f = buf[off + D11AC_TXH_LEN:]
-    if len(f) >= 10:
-        fc = u16(f, 0)
-        out.append(f"  802.11: fc={fc:#06x} type={(fc >> 2) & 3} "
-                   f"subtype={(fc >> 4) & 0xf:#x} dur={u16(f, 2):#06x} "
-                   f"a1={f[4:10].hex(':')}")
+    txh = d11ac_txh.describe(buf, bc)
+    if hexdump or txh is None:
+        if txh is None:
+            out.append("  layout non riconosciuto:")
+        out += ["  " + line for line in d11ac_txh.hexdump(buf)]
+    if txh:
+        out += ["  " + line for line in txh]
     return out
 
 
