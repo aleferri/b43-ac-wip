@@ -325,12 +325,12 @@ not yet run on the board. What is open:
   every chanspec of every capture (agcombo, D6220, TG789vac v2) has the
   primary at the bottom of its block.
 
-  The stock driver's own TX headers are in `router-data/agcombo/`:
-  the agcombo's `wl_vd625.ko` (7.14.43.21) and its microcode, not 784.2, at 5g36/20,
-  5g40/40 and 5g44/80, primaries 36, 40 and 44, so off the bottom of the
-  block at 40 and 80 MHz. `rxtx-ch36.zip` has 1385 frames to a one-stream
-  VHT station, `rxtx-ch36-mimo2.zip` 1089 to a two-stream one. Taken by
-  `wl-diag` at `wlc_txfifo`:
+  The stock driver's own TX headers are in `router-data/vd625-agcombo/`:
+  the agcombo's `wl_vd625.ko` (7.14.43.21) and its microcode, not 784.2, at
+  5g36/20, 5g40/40 and 5g44/80, primaries 36, 40 and 44, so off the bottom
+  of the block at 40 and 80 MHz. `rxtx-1s-ht20-40-80.zip` has 1385 frames to
+  a one-stream VHT station, `rxtx-2s-ht20-40-80.zip` 1089 to a two-stream
+  one. Taken by `wl-diag` at `wlc_txfifo`:
   - The prefix is `02 00 00 00` on broadcast data and `02 00 02 00` on
     unicast QoS data; the 124-byte header and the frame follow. The IV
     offset is the 802.11 header's length (24, 26). `frame_len` counts the
@@ -376,20 +376,19 @@ not yet run on the board. What is open:
   and reads HT-SIG and VHT-SIG-A from the six bytes in front of the frame.
   The signal is the larger of the two cores' powers in bytes 9 and 10 of
   the header, -128 for a core that did not receive, as gonsolo's port reads
-  them under 832.127. In `router-data/agcombo/rxtx-ch36.zip` (7.14.43.21 and
-  its microcode, taken by `wl-diag` at `wlc_recv`) all 1228 frames read
-  with b43's offsets (`reverse-tools/d11ac_rxh.py`): `frame_len` is the
-  packet less the 40-byte header; PHY status 0 says OFDM (1) or VHT (3) and
-  the six bytes after the optional padding hold the L-SIG or the
+  them under 832.127. In `router-data/vd625-agcombo/rxtx-1s-ht20-40-80.zip`
+  (7.14.43.21 and its microcode, taken by `wl-diag` at `wlc_recv`) all 1228
+  frames read with b43's offsets (`reverse-tools/d11ac_rxh.py`): `frame_len`
+  is the packet less the 40-byte header; PHY status 0 says OFDM (1) or VHT (3)
+  and the six bytes after the optional padding hold the L-SIG or the
   VHT-SIG-A1/A2 `b43_rx_rate_ac()` decodes, the width in SIG-A1 that of the
   channel (34 frames at 20 MHz on the wider ones); the padding flag of MAC
-  status puts the PLCP at +42 on 463 frames; the power bytes read -91 to
-  -30 dBm. `rxtx-ch36-mimo2.zip` adds 1242 frames from a two-stream
-  station, all read the same way: VHT on two streams at 20, 40 and 80 MHz,
-  and BCC (LDPC clear in SIG-A2) at MCS 0. The field at +22, which b43
-  does not read on the AC, is the chanspec (`0xd024`, `0xd926`, `0xe22a`).
-  +24..+39 change with every frame and stay unread. Under 784.2 none of it
-  is checked.
+  status puts the PLCP at +42 on 463 frames; the power bytes read -91 to -30
+  dBm. `rxtx-2s-ht20-40-80.zip` adds 1242 frames from a two-stream station,
+  all read the same way: VHT on two streams at 20, 40 and 80 MHz, and BCC
+  (LDPC clear in SIG-A2) at MCS 0. The field at +22, which b43 does not read
+  on the AC, is the chanspec (`0xd024`, `0xd926`, `0xe22a`). +24..+39 change
+  with every frame and stay unread. Under 784.2 none of it is checked.
 - **Receive buffer.** `B43_DMA0_RX_AC_BUFSIZE` holds a 3895-byte MPDU, the
   VHT minimum; the stock driver's own buffer size is not in any capture.
   The frame offset, 40, is the one both stock drivers write into the RX
@@ -421,11 +420,11 @@ not yet run on the board. What is open:
   every address upload, three times there, two of them with the address
   still zero.
 - **A-MPDU.** b43 announces no aggregation and opens no block ack session.
-  What the stock driver does, from `router-data/agcombo/` (7.14.43.21 and its
-  microcode): every MPDU is posted on its own, one descriptor each on TX
+  What the stock driver does, from `router-data/vd625-agcombo/` (7.14.43.21 and
+  its microcode): every MPDU is posted on its own, one descriptor each on TX
   ring 1, and the microcode builds the aggregate; the status that comes back
-  covers the MPDUs it sent (see "TX status"). The descriptors of the MPDUs
-  of a session (`rxtx-ch36.zip`) differ from those of the two unicast QoS
+  covers the MPDUs it sent (see "TX status"). The descriptors of the MPDUs of a
+  session (`rxtx-1s-ht20-40-80.zip`) differ from those of the two unicast QoS
   frames sent outside one in MAC TX control, `0x45c0`/`0x0000` against
   `0x4080`/`0x0004`, and in the cache info at +100, `50 04 20 20 26 15 3f
   14` against zeros: by the names of `d11actxh_t`'s cache fields in
@@ -465,20 +464,19 @@ not yet run on the board. What is open:
   capture: both above run the hybrid 6.30.223, the driver gonsolo's 832.127
   comes from.
 
-  `router-data/agcombo/rxtx-ch36-mmio.zip` (7.14.43.21 and its microcode,
-  `wl-mmio-trap` through an association and downlink traffic to a phone)
-  has 2762 statuses, most of them for A-MPDUs of up to 32 MPDUs. The first
-  package reads as above: bits 14:8 the MPDUs covered, their transmit
+  `router-data/vd625-agcombo/rxtx-1s-ht-ampdu.zip` (7.14.43.21 and its
+  microcode, `wl-mmio-trap` through an association and downlink traffic to a
+  phone) has 2762 statuses, most of them for A-MPDUs of up to 32 MPDUs. The
+  first package reads as above: bits 14:8 the MPDUs covered, their transmit
   attempts at rate 0 in bits 7:0 of the third word and the acknowledged ones
-  in bits 15:8. The second word holds the 802.11 sequence number of the
-  first MPDU covered. In the second package the second and third words are
-  the block ack bitmap from that sequence number on (`0x3f` for six MPDUs
-  all acknowledged; with gaps and bits past the MPDUs covered when the
-  block ack says so), the first word has bit 0 set and `0x00010100` to
-  `0x00030300` or zero above it, and the low half of the fourth reads
-  `0xdead` on a status with no acknowledgement. The MPDUs of one status
-  carry consecutive frame IDs: the next status starts its ID that many
-  frames on.
+  in bits 15:8. The second word holds the 802.11 sequence number of the first
+  MPDU covered. In the second package the second and third words are the block
+  ack bitmap from that sequence number on (`0x3f` for six MPDUs all
+  acknowledged; with gaps and bits past the MPDUs covered when the block ack
+  says so), the first word has bit 0 set and `0x00010100` to `0x00030300` or
+  zero above it, and the low half of the fourth reads `0xdead` on a status
+  with no acknowledgement. The MPDUs of one status carry consecutive frame
+  IDs: the next status starts its ID that many frames on.
 - **Scratch and shared memory look alike to the comparison.**
   `tracelib.normalize()` drops `sel=`, and wl-diag prints a scratch word at
   four times its index, so scratch word 3 and shared `0x000c` are the same op
@@ -785,27 +783,27 @@ ucode revision.
   side: `wl-diag` with `tpldump` on the DSL-3580L's own `wl` records each
   template RAM write with its content, so the stock beacon template, the
   bytes in front of the frame included, can be set beside what
-  `bcn_diag` logs for b43's. On `router-data/agcombo/rxtx-ch36.zip`
-  (7.14.43.21 and its microcode) it is two writes per update: 12 bytes at
-  template RAM `0x0e80`, zero but for the L-SIG at bytes 3-5 (6 Mbps, the
-  length of the frame with FCS), then the frame at `0x0e8c`, padded to a
-  multiple of four; b43's layout for 784 and 832, a 12-byte header with
-  the PLCP at 3, is the same shape. The probe response goes to `0x3680`
-  with no header at all, and the BSSID, 8 bytes, to `0x48`. That is the
-  firmware's MBSS mode, one template per BSS. `rxtx-ch36-mmio.zip`, the
-  same board under `wl-mmio-trap`, also has a stretch (369-634 s, SSID
-  `TIM-Test` on 149) in the mode b43 uses, the layout b43 takes for 832:
-  at every update the stock driver writes the PHY TX control word to
-  `0x00cc` (`0x01c5`), the TIM position to `0x001e` counted from the start
-  of the template, 12-byte header included (`0x44`), the template to
-  `0x0200` or `0x0480`, whichever MACCMD does not mark valid, its length
-  with the header to `0x0018` or `0x001a`, then sets that slot's valid bit
-  in MACCMD; at the BSS setup also DTIMPER (`0x0012`) and the beacon TSF
-  offset (`0x001c`, `0x3a`), and with every beacon the probe response
-  template at `0x0700`, its length at `0x004a` and the SSID at `0x0160`.
-  b43 writes the same cells in the same order. Whether 784.2 keeps them
-  where b43's 784 layout puts them, and whether b43's beacon leaves the
-  antenna, this board cannot say.
+  `bcn_diag` logs for b43's. On
+  `router-data/vd625-agcombo/rxtx-1s-ht20-40-80.zip` (7.14.43.21 and its
+  microcode) it is two writes per update: 12 bytes at template RAM `0x0e80`,
+  zero but for the L-SIG at bytes 3-5 (6 Mbps, the length of the frame with
+  FCS), then the frame at `0x0e8c`, padded to a multiple of four; b43's layout
+  for 784 and 832, a 12-byte header with the PLCP at 3, is the same shape. The
+  probe response goes to `0x3680` with no header at all, and the BSSID, 8
+  bytes, to `0x48`. That is the firmware's MBSS mode, one template per BSS.
+  `rxtx-1s-ht-ampdu.zip`, the same board under `wl-mmio-trap`, also has a
+  stretch (369-634 s, SSID `TIM-Test` on 149) in the mode b43 uses, the layout
+  b43 takes for 832: at every update the stock driver writes the PHY TX
+  control word to `0x00cc` (`0x01c5`), the TIM position to `0x001e` counted
+  from the start of the template, 12-byte header included (`0x44`), the
+  template to `0x0200` or `0x0480`, whichever MACCMD does not mark valid, its
+  length with the header to `0x0018` or `0x001a`, then sets that slot's valid
+  bit in MACCMD; at the BSS setup also DTIMPER (`0x0012`) and the beacon TSF
+  offset (`0x001c`, `0x3a`), and with every beacon the probe response template
+  at `0x0700`, its length at `0x004a` and the SSID at `0x0160`. b43 writes the
+  same cells in the same order. Whether 784.2 keeps them where b43's 784
+  layout puts them, and whether b43's beacon leaves the antenna, this board
+  cannot say.
 - **TX under traffic.** `bringup-log-2026-10-08-bis..txt` has a station
   through the WPA2 4-way handshake and traffic both ways, with no DMA error
   and no restart. The first attempts end in `AP-STA-POSSIBLE-PSK-MISMATCH`;

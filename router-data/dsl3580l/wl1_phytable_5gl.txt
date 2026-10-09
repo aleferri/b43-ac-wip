@@ -301,7 +301,7 @@ wl -i wl1 phytable 0x45 63 8
 # Encoded into kernel-patch/new_files/rxgain_phy_ac.c as
 # b43_phy_ac_rxgain_5g_tbl_44_5gl[64] / b43_phy_ac_rxgain_5g_tbl_45_5gl[64].
 #
-# Cross-board comparison with router-data/agcombo/agcombo_phytable_5gl.txt:
+# Cross-board comparison with router-data/vd625-agcombo/wl1_phytable_5gl.txt:
 #   - Block B [16..22]: identical byte-for-byte across DSL (BCM43b3) and
 #     agcombo (BCM4360).
 #   - Block A [8..13]: differs by a uniform +3 signed offset on agcombo

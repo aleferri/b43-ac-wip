@@ -751,7 +751,8 @@ void b43_phy_ac_rxiqcal_dds_seed_tone(struct b43_wldev *dev, int step)
  *
  * fewer chains on a tie. limit is the locale's Local Max for channel and
  * width less the antenna gain, board the top row of the operating width,
- * and the offsets those `wl curpower` prints (router-data/agcombo/stats.txt,
+ * and the offsets those `wl curpower` prints
+ * (router-data/vd625-agcombo/stats.txt,
  * dsl3580l/wl1_curpower_ch52-bw80.txt): CDD 3 and 5 dB under one chain on 2
  * and 3, TXBF 6 and 9.75. 0x05d6 as TXBF and 0x05d8 as CDD is the best of
  * the four fits tried, not a known meaning.
@@ -1055,9 +1056,9 @@ static u16 b43_phy_ac_legacy_cap(struct b43_wldev *dev,
  * The same field for VHT MCS 0-9, which only the data frames' descriptors
  * carry, by width: the group of the MCS's modulation class on the row of the
  * frame's width, under no legacy limit. The stock driver's values for these
- * are in router-data/agcombo/rxtx-ch36.zip, under the firmware's own
- * configuration, whose power targets are not in the collection; the form is
- * not checked against them.
+ * are in router-data/vd625-agcombo/rxtx-1s-ht20-40-80.zip, under the
+ * firmware's own configuration, whose power targets are not in the
+ * collection; the form is not checked against them.
  */
 static void b43_phy_ac_vht_rate_po(struct b43_phy_ac *ac, bool capped)
 {

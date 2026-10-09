@@ -1,4 +1,4 @@
-# router-data/agcombo — BCM4360, radio 2069
+# router-data/vd625-agcombo — BCM4360, radio 2069
 
 The first non-BCM43b3 board of the collection.
 
@@ -32,9 +32,9 @@ frames at `wlc_txfifo` and the RX frames at `wlc_recv`.
 | `ch36.bin`, `ch100.bin`, `ch149-wep.bin` | `wl-mmio-trap` captures at the bus, each an `up` ending with a down, with the attach done before the capture started (no EROM, no SROM, no attach AFE unit): on ch36 the first `up` after the module load, whose slot 0 host flag still reaches shared memory before the ucode load; on ch100 and on ch149 with WEP later ones. The channel changes only through a down, so none holds a channel switch on a running interface. Decode with `reverse-tools/mmio2ops.py` |
 | `mmio-decoded.zip` | the three `.bin` decoded (`.txt` raw, `.ops` through mmio2ops) and the MAC table of ch36 |
 | `cold-sweep-partial.tar.gz` | an older partial cold split, `split-agcombo/`; does not trace `OBJ` |
-| `rxtx-ch36.zip` | decoded wl-diag trace of `wl-capture-scripts/capture_txrx.sh` on 5g36/20, 5g40/40 and 5g44/80 under the firmware's own configuration (SSID `TIM-95961183`, country DE): template RAM writes with content through each bring-up (`tpl <chanspec>`), then TX and RX frames with their d11 headers while a one-stream VHT phone passes traffic (`txrx <chanspec>`) |
-| `rxtx-ch36-mimo2.zip` | the same run with a two-stream VHT station: 1089 TX and 1242 RX frames, VHT on two streams in both directions, BCC received at MCS 0 |
-| `rxtx-ch36-mmio.zip` | `wl-mmio-trap` through an association and downlink traffic to the phone on 5g36/20: every register access of `wl`, the TX status of single frames and A-MPDUs, the shared-memory writes, and a stretch (369-634 s, `TIM-Test` on 149) outside MBSS mode; its 1024 descriptor reads are `nobuf` (address bit 63 in the high word, accepted since) |
+| `rxtx-1s-ht20-40-80.zip` | decoded wl-diag trace of `wl-capture-scripts/capture_txrx.sh` on 5g36/20, 5g40/40 and 5g44/80 under the firmware's own configuration (SSID `TIM-95961183`, country DE): template RAM writes with content through each bring-up (`tpl <chanspec>`), then TX and RX frames with their d11 headers while a one-stream VHT phone passes traffic (`txrx <chanspec>`) |
+| `rxtx-2s-ht20-40-80.zip` | the same run with a two-stream VHT station: 1089 TX and 1242 RX frames, VHT on two streams in both directions, BCC received at MCS 0 |
+| `rxtx-1s-ht-ampdu.zip` | `wl-mmio-trap` through an association and downlink traffic to the phone on 5g36/20: every register access of `wl`, the TX status of single frames and A-MPDUs, the shared-memory writes, and a stretch (369-634 s, `TIM-Test` on 149) outside MBSS mode; its 1024 descriptor reads are `nobuf` (address bit 63 in the high word, accepted since) |
 
 The sweeps lack the classes listed in `../CLASS-COVERAGE.md`.
 

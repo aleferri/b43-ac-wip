@@ -65,7 +65,7 @@ The blob is derived from a proprietary object; it stays out of the tree
 ## Run the wl side
 
     python3 ../../reverse-tools/mmio2ops.py \
-        ../../router-data/agcombo/ch36.bin --no-bulk -o wl.ops
+        ../../router-data/vd625-agcombo/ch36.bin --no-bulk -o wl.ops
     ./d11sim replay --ops wl.ops --label wl --dump wl.state
     python3 "$B43_TOOLS"/interpreter/ucode_init.py d11ucode42.bin --out wl.ucode
 
@@ -93,7 +93,7 @@ Exit status is 0 when that surface is identical.
 
 Or all at once:
 
-    ./run_init_equiv.sh --wl-bin ../../router-data/agcombo/ch36.bin \
+    ./run_init_equiv.sh --wl-bin ../../router-data/vd625-agcombo/ch36.bin \
         --wl-blob d11ucode42_agcombo.bin \
         --b43-trace b43.trace --b43-blob d11ucode42.bin
 

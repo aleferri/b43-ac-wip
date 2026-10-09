@@ -6,7 +6,7 @@ Four capture formats, the same device traffic:
     mmiotrace     the Linux kernel's mmiotrace text, taken on an x86 host
                   (router-data/archer-t5e);
     wl-mmio-trap  the binary records of wl-mmio-trap/, taken on a MIPS
-                  big-endian router (router-data/agcombo/*.bin);
+                  big-endian router (router-data/vd625-agcombo/*.bin);
     bpftrace      `<ns> R32|W16|... <va> <val>` lines from kprobes on the
                   hybrid wl's osl_read*/osl_write* (router-data/macbookair6-1);
     ftrace        the kprobe events of the same accessors as the ftrace

@@ -52,9 +52,9 @@ coding class:
 | 7 | 256-QAM 5/6 | — | 9 |
 
 The evidence is the stock driver's own decode, the "Board Limits" of
-`wl curpower`: `router-data/agcombo/stats.txt` (7.14.43, ch100/80 and ch36/80)
-and `router-data/dsl3580l/wl1_curpower_ch52-bw80.txt` (6.30, ch52, a word whose
-eight nibbles all differ, which fixes every row).
+`wl curpower`: `router-data/vd625-agcombo/stats.txt` (7.14.43, ch100/80 and
+ch36/80) and `router-data/dsl3580l/wl1_curpower_ch52-bw80.txt` (6.30, ch52, a
+word whose eight nibbles all differ, which fixes every row).
 
 ## What the captures pin down
 

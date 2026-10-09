@@ -77,11 +77,11 @@ vendor took during its bring-up are delivered together when the environment
 starts, since here the bring-up is one call.
 
 **A capture taken at the bus.** The agcombo's `wl-mmio-trap` captures
-(`router-data/agcombo/*.bin`) also carry the MAC registers, the wrapper and
-every shared-memory space, and need no strip:
+(`router-data/vd625-agcombo/*.bin`) also carry the MAC registers, the wrapper
+and every shared-memory space, and need no strip:
 
 ```sh
-python3 ../../reverse-tools/mmio2ops.py ../../router-data/agcombo/ch36.bin \
+python3 ../../reverse-tools/mmio2ops.py ../../router-data/vd625-agcombo/ch36.bin \
     --keep-flush -o /tmp/ch36.m2o
 python3 ../../reverse-tools/timeline.py /tmp/ch36.m2o /tmp/ch36.tl
 B43_BOARD=agcombo B43_READ_ORACLE=/tmp/ch36.m2o B43_CHANNEL=36 B43_BW=80 \
@@ -96,7 +96,7 @@ stock driver writes. A bus capture of the stock `up` holds both:
 
 ```sh
 python3 ../../reverse-tools/fw_from_capture.py \
-    ../../router-data/agcombo/ch36.bin -o /tmp/fw-agcombo
+    ../../router-data/vd625-agcombo/ch36.bin -o /tmp/fw-agcombo
 B43_FW_DIR=/tmp/fw-agcombo B43_BOARD=agcombo ... ./b43-trace
 ```
 

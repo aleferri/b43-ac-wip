@@ -13,7 +13,7 @@ $ make                     # builds ./test
 $ make check               # ../../router-data/dsl3580l/wl1_*.txt (raw mode)
 $ make check-d6220         # ../../router-data/d6220/wl1_*.txt (raw mode)
 $ make check-bcm4360usb    # synth-mode round trip on vectors/bcm4360usb.nvram
-$ make check-agcombo       # synth-mode round trip on ../../router-data/agcombo/wl1_nvram.txt
+$ make check-agcombo       # synth-mode round trip on ../../router-data/vd625-agcombo/wl1_nvram.txt
 ```
 
 Against another vector:
@@ -56,8 +56,8 @@ The two synth vectors:
 
 - `vectors/bcm4360usb.nvram`: BCM4360 USB defaults from asuswrt-merlin /
   landonf `bhnd_nvram_fmt`, with non-saturated `triso=9` and `aa2g=3`;
-- `router-data/agcombo/wl1_nvram.txt`: a real BCM4360 3×3 dual-band dump, which
-  exercises chain 2 and the full 2.4 GHz PA chain.
+- `router-data/vd625-agcombo/wl1_nvram.txt`: a real BCM4360 3×3 dual-band
+  dump, which exercises chain 2 and the full 2.4 GHz PA chain.
 
 ## Contributing a vector
 

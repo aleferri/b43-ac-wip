@@ -17,7 +17,7 @@ The output is a directory b43 can load from (`b43_fw_header` + payload, the
 names the AC port requests) and the raw big-endian ucode the d11 simulator
 and the b43-tools interpreter take:
 
-    fw_from_capture.py router-data/agcombo/ch36.bin -o /tmp/fw-agcombo
+    fw_from_capture.py router-data/vd625-agcombo/ch36.bin -o /tmp/fw-agcombo
 
 The files are derived from a proprietary driver; keep them out of the tree.
 """

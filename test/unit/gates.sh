@@ -142,6 +142,7 @@ if [ ! -d "$DIR" ]; then
 	case $BOARD in
 	dsl)   DATA=dsl3580l ;;
 	tg789) DATA=tg789vac-v2 ;;
+	agcombo) DATA=vd625-agcombo ;;
 	*)     DATA=$BOARD ;;
 	esac
 	echo "  unzip -d $(dirname "$DIR") $REPO/router-data/$DATA/$ARCHIVE"

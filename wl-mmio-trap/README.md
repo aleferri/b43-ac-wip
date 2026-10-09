@@ -5,7 +5,7 @@ loads and stores through `wl`'s own register pointer, which have no function
 to hook. It makes `wl`'s register window fault on every access and emulates
 the trapped instruction. It finds the window by itself, so it can be loaded
 before `wl`, after it, or between two `ifconfig up`. The agcombo captures in
-`router-data/agcombo/*.bin` were taken with it.
+`router-data/vd625-agcombo/*.bin` were taken with it.
 
 ## How it works
 

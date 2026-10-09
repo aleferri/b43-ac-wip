@@ -45,7 +45,7 @@ check-d6220: test
 # fields the BCM43b3 boards leave dormant: 2.4 GHz PA chain, aa2g=7,
 # chain 2 rxgains.
 check-agcombo: test
-	./test --synth ../../router-data/agcombo/wl1_nvram.txt
+	./test --synth ../../router-data/vd625-agcombo/wl1_nvram.txt
 
 clean:
 	rm -f $(OBJS) test
