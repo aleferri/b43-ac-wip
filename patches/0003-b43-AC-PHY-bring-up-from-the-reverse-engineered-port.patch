@@ -14,7 +14,7 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     5 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |    92 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 10554 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 10555 +++++++++++++++-
  drivers/net/wireless/broadcom/b43/phy_ac.h    |   790 +-
  drivers/net/wireless/broadcom/b43/ppr_ac.c    |   270 +
  drivers/net/wireless/broadcom/b43/ppr_ac.h    |    84 +
@@ -22,7 +22,7 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
  .../net/wireless/broadcom/b43/radio_2069.h    |    48 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1079 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    51 +
- 10 files changed, 14622 insertions(+), 22 deletions(-)
+ 10 files changed, 14623 insertions(+), 22 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -146,7 +146,7 @@ index 0000000..2e3420a
 +	b43_read32(dev, B43_MMIO_MACCTL);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index fe102ea..d59c564 100644
+index fe102ea..5f0d014 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -1,17 +1,53 @@
@@ -209,7 +209,7 @@ index fe102ea..d59c564 100644
  
  static int b43_phy_ac_op_allocate(struct b43_wldev *dev)
  {
-@@ -62,27 +98,10507 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -62,27 +98,10508 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -1183,8 +1183,9 @@ index fe102ea..d59c564 100644
 + * The same field for VHT MCS 0-9, which only the data frames' descriptors
 + * carry, by width: the group of the MCS's modulation class on the row of the
 + * frame's width, under no legacy limit. The stock driver's values for these
-+ * are in router-data/vd625/rxtx-ch36.zip, on a board whose SROM is not in the
-+ * collection, so this form is not checked against them.
++ * are in router-data/agcombo/rxtx-ch36.zip, under the firmware's own
++ * configuration, whose power targets are not in the collection; the form is
++ * not checked against them.
 + */
 +static void b43_phy_ac_vht_rate_po(struct b43_phy_ac *ac, bool capped)
 +{
