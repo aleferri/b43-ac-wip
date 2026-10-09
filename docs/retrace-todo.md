@@ -981,7 +981,21 @@ ucode revision.
   length of the frame with FCS), then the frame at `0x0e8c`, padded to a
   multiple of four; b43's layout for 784 and 832, a 12-byte header with
   the PLCP at 3, is the same shape. The probe response goes to `0x3680`
-  with no header at all, and the BSSID, 8 bytes, to `0x48`.
+  with no header at all, and the BSSID, 8 bytes, to `0x48`. That is the
+  firmware's MBSS mode, one template per BSS. `rxtx-ch36-mmio.zip`, the
+  same board under `wl-mmio-trap`, also has a stretch (369-634 s, SSID
+  `TIM-Test` on 149) in the mode b43 uses, the layout b43 takes for 832:
+  at every update the stock driver writes the PHY TX control word to
+  `0x00cc` (`0x01c5`), the TIM position to `0x001e` counted from the start
+  of the template, 12-byte header included (`0x44`), the template to
+  `0x0200` or `0x0480`, whichever MACCMD does not mark valid, its length
+  with the header to `0x0018` or `0x001a`, then sets that slot's valid bit
+  in MACCMD; at the BSS setup also DTIMPER (`0x0012`) and the beacon TSF
+  offset (`0x001c`, `0x3a`), and with every beacon the probe response
+  template at `0x0700`, its length at `0x004a` and the SSID at `0x0160`.
+  b43 writes the same cells in the same order. Whether 784.2 keeps them
+  where b43's 784 layout puts them, and whether b43's beacon leaves the
+  antenna, this board cannot say.
 - **TX under traffic.** With the DMA engine at its reset values and the AC TX
   descriptor behind the TX offload header, `bringup-log-2026-10-08-bis..txt`
   has a station through the WPA2 4-way handshake and traffic both ways, with
