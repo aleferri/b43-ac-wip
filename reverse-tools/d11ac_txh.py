@@ -56,15 +56,22 @@ def plcp_text(ft, p):
 
 def offset(buf, total):
     """Where the header starts in buf, or None. total is the byte count of
-    the buffer as the driver posted it; frame_len (+10 in the header, FCS
-    included) has to account for it, with the frame in the same buffer or
-    in one of its own."""
+    the buffer as the driver posted it. frame_len (+10 in the header) counts
+    what goes on air, FCS and whatever the hardware adds for encryption
+    included, and the frame may go on in further buffers: so the buffer
+    holds the header and at most frame_len - 4 bytes of frame, and the
+    frame control right after the header has to be one."""
     for off in (4, 0):
         if len(buf) < off + 12:
             continue
         fl = u16(buf, off + 10)
-        if total in (off + TXH_LEN + fl - 4, off + TXH_LEN):
-            return off
+        if not off + TXH_LEN <= total <= off + TXH_LEN + fl - 4:
+            continue
+        if len(buf) >= off + TXH_LEN + 2:
+            fc = u16(buf, off + TXH_LEN)
+            if fc & 3 or (fc >> 2) & 3 == 3:
+                continue
+        return off
     return None
 
 
