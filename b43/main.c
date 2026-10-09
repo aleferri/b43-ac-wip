@@ -4423,23 +4423,31 @@ static bool b43_tx_rate_is_mcs(const struct ieee80211_tx_rate *rate)
 
 /*
  * Whether the TX header can carry the frame's rates. On the AC the first
- * rate block alone, legacy or a VHT MCS 0-9 on one stream at 20, 40 or
- * 80 MHz; on the other PHYs a legacy rate and its fallback. Rate control
- * picks nothing else, see b43_ac_set_ht_vht_cap(), but an injected frame can
- * ask for any rate, and the header would read an MCS as an index into the
- * legacy rate table.
+ * rate block alone, legacy or a VHT MCS 0-9 at 20, 40 or 80 MHz on a stream
+ * count the band's TX map has; on the other PHYs a legacy rate and its
+ * fallback. Rate control picks nothing else, see b43_ac_set_ht_vht_cap(),
+ * but an injected frame can ask for any rate, and the header would read an
+ * MCS as an index into the legacy rate table.
  */
 static bool b43_tx_rates_ok(struct ieee80211_hw *hw,
 			    const struct ieee80211_tx_info *info)
 {
+	const struct ieee80211_supported_band *band = hw->wiphy->bands[info->band];
 	const struct ieee80211_tx_rate *r = info->control.rates;
-	bool vht_band = hw->wiphy->bands[info->band] &&
-			hw->wiphy->bands[info->band]->vht_cap.vht_supported;
+	bool vht_band = band && band->vht_cap.vht_supported;
 
-	if (r[0].idx >= 0 && (r[0].flags & IEEE80211_TX_RC_VHT_MCS))
-		return vht_band && ieee80211_rate_get_vht_nss(&r[0]) == 1 &&
+	if (r[0].idx >= 0 && (r[0].flags & IEEE80211_TX_RC_VHT_MCS)) {
+		u8 nss = ieee80211_rate_get_vht_nss(&r[0]);
+		u16 map;
+
+		if (!vht_band)
+			return false;
+		map = le16_to_cpu(band->vht_cap.vht_mcs.tx_mcs_map);
+		return ((map >> (2 * (nss - 1))) & 3) !=
+			IEEE80211_VHT_MCS_NOT_SUPPORTED &&
 		       ieee80211_rate_get_vht_mcs(&r[0]) <= 9 &&
 		       !(r[0].flags & IEEE80211_TX_RC_160_MHZ_WIDTH);
+	}
 	return !b43_tx_rate_is_mcs(&r[0]) &&
 	       (vht_band || !b43_tx_rate_is_mcs(&r[1]));
 }
@@ -6418,11 +6426,10 @@ static const struct ieee80211_iface_combination b43_if_comb_dfs = {
  *
  *  - aggregation: the A-MPDU parameters stay at their minimum, and with no
  *    ampdu_action mac80211 opens no block ack session either way;
- *  - transmitting HT rates, and VHT on more than one stream: the TX MCS set
- *    is not defined and the VHT TX map has MCS 0-9 on the first stream
- *    only, the one layout the stock driver's descriptors show
- *    (b43_txhdr_ac_vht()). mac80211 picks legacy rates for an HT station
- *    and keeps a VHT station to one stream, see b43_op_tx();
+ *  - transmitting HT rates: the TX MCS set is not defined, so mac80211
+ *    picks legacy rates for an HT station, see b43_op_tx(). VHT goes out
+ *    in the layout of the stock driver's descriptors (b43_txhdr_ac_vht()),
+ *    MCS 0-9 on as many streams as the board has TX chains;
  *  - the long MPDUs and A-MSDUs, beyond the receive buffer;
  *  - LDPC reception, beamforming and the link adaptation the stock driver
  *    announces on VHT: nothing configures or decodes them. A VHT frame is
@@ -6430,7 +6437,8 @@ static const struct ieee80211_iface_combination b43_if_comb_dfs = {
  *    every VHT frame of the stock driver's is.
  *
  * The stock beacon carries the 4360's three streams; the streams here are
- * the board's receive chains, the SROM rxchain the PHY also uses.
+ * the board's chains, the SROM rxchain the PHY also uses for receiving and
+ * the txchain for transmitting.
  */
 static void b43_ac_set_ht_vht_cap(struct b43_wldev *dev,
 				  struct ieee80211_supported_band *band)
@@ -6438,12 +6446,16 @@ static void b43_ac_set_ht_vht_cap(struct b43_wldev *dev,
 	struct ieee80211_sta_ht_cap *ht = &band->ht_cap;
 	struct ieee80211_sta_vht_cap *vht = &band->vht_cap;
 	u8 chains = dev->dev->bus_sprom->rxchain & 0x07;
-	unsigned int nss, i;
-	u16 map = 0;
+	u8 txchains = dev->dev->bus_sprom->txchain & 0x07;
+	unsigned int nss, tx_nss, i;
+	u16 map = 0, tx_map = 0;
 
 	if (!chains)
 		chains = 0x03;
+	if (!txchains)
+		txchains = chains;
 	nss = hweight8(chains);
+	tx_nss = hweight8(txchains);
 
 	memset(ht, 0, sizeof(*ht));
 	ht->ht_supported = true;
@@ -6456,15 +6468,18 @@ static void b43_ac_set_ht_vht_cap(struct b43_wldev *dev,
 	for (i = 0; i < nss; i++)
 		ht->mcs.rx_mask[i] = 0xff;
 
-	for (i = 0; i < 8; i++)
+	for (i = 0; i < 8; i++) {
 		map |= (i < nss ? IEEE80211_VHT_MCS_SUPPORT_0_9 :
 				  IEEE80211_VHT_MCS_NOT_SUPPORTED) << (2 * i);
+		tx_map |= (i < tx_nss ? IEEE80211_VHT_MCS_SUPPORT_0_9 :
+					IEEE80211_VHT_MCS_NOT_SUPPORTED) << (2 * i);
+	}
 	memset(vht, 0, sizeof(*vht));
 	vht->vht_supported = true;
 	vht->cap = IEEE80211_VHT_CAP_MAX_MPDU_LENGTH_3895 |
 		   IEEE80211_VHT_CAP_SHORT_GI_80;
 	vht->vht_mcs.rx_mcs_map = cpu_to_le16(map);
-	vht->vht_mcs.tx_mcs_map = cpu_to_le16(0xfffc | IEEE80211_VHT_MCS_SUPPORT_0_9);
+	vht->vht_mcs.tx_mcs_map = cpu_to_le16(tx_map);
 }
 
 static int b43_setup_bands(struct b43_wldev *dev,

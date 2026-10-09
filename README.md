@@ -138,11 +138,10 @@ How the pieces fit is in [`docs/driver-status.md`](docs/driver-status.md).
   pulse as a radar.
 - Probe-response offload and the power management queue: deliberately off, see
   `docs/retrace-todo.md`.
-- HT in transmission, VHT on more than one stream, and aggregation: the AC
-  sends legacy rates to an HT station and VHT MCS 0-9 on one stream to a
-  VHT one, laid out from the stock driver's descriptors and not yet run on
-  the board, and opens no block ack session (`docs/retrace-todo.md`, "HT and
-  VHT").
+- HT in transmission and aggregation: the AC sends legacy rates to an HT
+  station and VHT MCS 0-9 on up to its TX chains to a VHT one, laid out
+  from the stock driver's descriptors and not yet run on the board, and
+  opens no block ack session (`docs/retrace-todo.md`, "HT and VHT").
 - Hardware encryption: mac80211 does the crypto, since the AC microcode's
   cipher numbers and key fields are not b43's (`b43_upload_microcode()`).
 - Temperature: raw tempsense samples are collected and not converted

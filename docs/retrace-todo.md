@@ -341,10 +341,10 @@ from the capabilities of the stock beacon in the agcombo bus capture
 defined; VHT `0x0f825832`, MCS 0-9 on three streams both ways. The port
 takes the streams from the SROM `rxchain` and leaves out what b43 does not
 do: A-MPDU and A-MSDU, MPDUs over 3895 bytes, LDPC reception, beamforming,
-link adaptation, HT rates in transmission and VHT on more than one stream.
-VHT MCS 0-9 on one stream go out in the layout of the stock driver's own
-descriptors (`b43_txhdr_ac_vht()`, from the capture below), not yet run on
-the board. What is open:
+link adaptation and HT rates in transmission. VHT MCS 0-9 go out on as
+many streams as the board has TX chains, in the layout of the stock
+driver's own descriptors (`b43_txhdr_ac_vht()`, from the captures below),
+not yet run on the board. What is open:
 
 - **TX.** The TX descriptor is the AC microcode's long format,
   `d11actxh_t` of Broadcom's `d11.h` (see `PROVENANCE.md`), 124 bytes:
@@ -358,9 +358,9 @@ the board. What is open:
   the frame length and the chanspec where the AC ucode does not read them:
   on the DSL-3580L the first frame sent over DMA came back with frame ID 0
   and the beacon, out until then, stopped. With no TX MCS set and a VHT TX map
-  of MCS 0-9 on one stream, mac80211 picks legacy rates for an HT station
-  and VHT on one stream for a VHT one, and `b43_op_tx()` drops anything
-  else. The VHT power offsets take the MCS's class on the frame's width
+  of MCS 0-9 on every TX chain, mac80211 picks legacy rates for an HT
+  station and VHT on up to as many streams as both sides have for a VHT
+  one, and `b43_op_tx()` drops anything else. The VHT power offsets take the MCS's class on the frame's width
   (`b43_phy_ac_vht_rate_po()`), not checked against the stock values below,
   whose board's SROM is not in the collection. PHY TX control word 1 carries
   the rate's power offset, the field the PHY writes into the rate blocks
@@ -379,29 +379,36 @@ the board. What is open:
   every chanspec of every capture (agcombo, D6220, TG789vac v2) has the
   primary at the bottom of its block.
 
-  The stock driver's own TX headers are in `router-data/vd625/rxtx-ch36.zip`:
-  `wl_vd625.ko` (7.14.43.21) and its microcode, not 784.2, 1385 frames to a
-  VHT station at 5g36/20, 5g40/40 and 5g44/80, primaries 36, 40 and 44, so
-  off the bottom of the block at 40 and 80 MHz. Taken by `wl-diag` at
-  `wlc_txfifo`:
+  The stock driver's own TX headers are in `router-data/vd625/`:
+  `wl_vd625.ko` (7.14.43.21) and its microcode, not 784.2, at 5g36/20,
+  5g40/40 and 5g44/80, primaries 36, 40 and 44, so off the bottom of the
+  block at 40 and 80 MHz. `rxtx-ch36.zip` has 1385 frames to a one-stream
+  VHT station, `rxtx-ch36-mimo2.zip` 1089 to a two-stream one. Taken by
+  `wl-diag` at `wlc_txfifo`:
   - The prefix is `02 00 00 00` on broadcast data and `02 00 02 00` on
     unicast QoS data; the 124-byte header and the frame follow. The IV
     offset is the 802.11 header's length (24, 26). `frame_len` counts the
     frame on air, FCS and the 8 bytes of CCMP MIC the hardware adds
     included, and the frame may go on in a further buffer.
   - Word 0: frame type in bits 1:0 (1 OFDM, 3 VHT), bit 2 on every frame,
-    bit 3 on every VHT block but the one with STBC, `0x01c0` in bits 8:6,
-    and the width in bits 15:14 on VHT frames that fill the channel:
+    bit 3 on every VHT block from MCS 4 up and on none at MCS 0, with or
+    without STBC (1-3 never appear), the core mask in bits 8:6 (`0x7`, the
+    4360's three), and the width in bits 15:14 on VHT frames that fill the
+    channel:
     `0x0000` at 20 MHz, `0x4000` at 40, `0x8000` at 80. OFDM frames keep
     `0x01c5` at every width.
   - Word 1: the subband in bits 2:0 on OFDM frames, 0, 1 and 2 for
     primaries 36, 40 and 44, the chanspec's sideband as b43 writes it; 0 on
     VHT frames that fill the channel. The power offset in bits 8:3, 3 to 8.
-  - Word 2: on VHT the MCS in bits 3:0, `0x40` more with STBC; 0 on the
-    6 Mbps OFDM frames.
+  - Word 2: on VHT the MCS in bits 3:0 and NSS - 1 in bits 5:4 (`0x0019`
+    for MCS 9 on two streams), `0x40` with STBC on one stream; 0 on the
+    6 Mbps OFDM frames. Word 1's power offset is the same for one and two
+    streams at the same MCS.
   - PLCP: L-SIG on OFDM; on VHT, VHT-SIG-A1/A2 as 802.11 lays them out,
-    group ID 63, both reserved bits set, CRC and tail left to the hardware:
-    the layout `b43_rx_rate_ac()` reads on receive.
+    group ID 63, both reserved bits set, NSTS - 1 in A1 bits 12:10, CRC and
+    tail left to the hardware: the layout `b43_rx_rate_ac()` reads on
+    receive. The SGI disambiguation and LDPC extra-symbol bits stay clear on
+    frames of every length.
   - Rate: the PHY rate in 500 kbps (12 for 6 Mbps, 780 for VHT80 MCS8 SGI).
     FBW `0x0300` on every block; RTS/CTS `0x0905` on VHT blocks, with
     `0x0020` on the last one used; what b43 calls `bfm` has `0x43`-`0x48`
@@ -414,7 +421,7 @@ the board. What is open:
     bring-up), `0x00ce` `0x0028`, `0x0019`, `0x002a` at 20, 40 and 80 MHz,
     subband and power offset as on OFDM data frames, `0x00d0` 0.
 
-  No HT frame (FT 2): the station is VHT. None of it is checked under
+  No HT frame (FT 2): both stations are VHT. None of it is checked under
   784.2: the DSL-3580L's own `wl` (6.30, which `wl-diag`'s 2.6.30 variant
   hooks) at the same chanspecs is the capture that would. A short run of
   `wl-mmio-trap` with `dd_len` checks the headers on the bus side.
@@ -431,9 +438,12 @@ the board. What is open:
   VHT-SIG-A1/A2 `b43_rx_rate_ac()` decodes, the width in SIG-A1 that of the
   channel (34 frames at 20 MHz on the wider ones); the padding flag of MAC
   status puts the PLCP at +42 on 463 frames; the power bytes read -91 to
-  -30 dBm. The field at +22, which b43 does not read on the AC, is the
-  chanspec (`0xd024`, `0xd926`, `0xe22a`). +24..+39 change with every frame
-  and stay unread. Under 784.2 none of it is checked.
+  -30 dBm. `rxtx-ch36-mimo2.zip` adds 1242 frames from a two-stream
+  station, all read the same way: VHT on two streams at 20, 40 and 80 MHz,
+  and BCC (LDPC clear in SIG-A2) at MCS 0. The field at +22, which b43
+  does not read on the AC, is the chanspec (`0xd024`, `0xd926`, `0xe22a`).
+  +24..+39 change with every frame and stay unread. Under 784.2 none of it
+  is checked.
 - **Receive buffer.** `B43_DMA0_RX_AC_BUFSIZE` holds a 3895-byte MPDU, the
   VHT minimum; the stock driver's own buffer size is not in any capture.
   The frame offset, 40, is the one both stock drivers write into the RX

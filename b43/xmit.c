@@ -382,17 +382,20 @@ static unsigned int b43_txhdr_ac_vht_bw(const struct ieee80211_tx_rate *t)
 }
 
 /*
- * One VHT rate on one stream, laid out as the stock driver lays out its own
- * (router-data/vd625/rxtx-ch36.zip, 7.14.43 and its microcode): word 0 with
- * the frame type, the width in 15:14 and 0x0008; word 1 the power offset, and
- * the primary's subband only on a frame narrower than the channel; word 2 the
- * MCS; VHT-SIG-A1/A2 as 802.11 lays them out, group ID 63 and both reserved
- * bits set, the SGI disambiguation and LDPC extra-symbol bits left clear, as
- * the stock driver leaves them on frames of every length; the PHY rate in
- * 500 kb/s; 0x0300 in the fallback bandwidth field, as on every block it
- * sends. The stock frames are all LDPC: a BCC frame differs only in SIG-A2
- * here, and that is not in any capture. Nor is a 40 MHz frame on an 80 MHz
- * channel, whose subband field carries the primary as at 20.
+ * One VHT rate, laid out as the stock driver lays out its own
+ * (router-data/vd625, 7.14.43 and its microcode, to one and two-stream
+ * stations): word 0 with the frame type, the width in 15:14, and 0x0008,
+ * which the stock blocks carry from MCS 4 up and not on MCS 0 (1-3 are in no
+ * capture and follow MCS 4); word 1 the power offset, the same for one and
+ * two streams, and the primary's subband only on a frame narrower than the
+ * channel; word 2 the MCS and NSS - 1; VHT-SIG-A1/A2 as 802.11 lays them out,
+ * group ID 63 and both reserved bits set, the SGI disambiguation and LDPC
+ * extra-symbol bits left clear, as the stock driver leaves them on frames of
+ * every length; the PHY rate in 500 kb/s; 0x0300 in the fallback bandwidth
+ * field, as on every block it sends. The stock frames are all LDPC: a BCC
+ * frame differs only in SIG-A2 here, and that is not in any capture. Nor is
+ * a 40 MHz frame on an 80 MHz channel, whose subband field carries the
+ * primary as at 20.
  */
 static void b43_txhdr_ac_vht(const struct b43_phy_ac *ac,
 			     struct b43_txhdr_ac_rate *r,
@@ -404,29 +407,32 @@ static void b43_txhdr_ac_vht(const struct b43_phy_ac *ac,
 	const struct ieee80211_tx_rate *t = &info->control.rates[0];
 	unsigned int bw = b43_txhdr_ac_vht_bw(t);
 	u8 mcs = ieee80211_rate_get_vht_mcs(t);
+	u8 nss = ieee80211_rate_get_vht_nss(t);
 	bool sgi = t->flags & IEEE80211_TX_RC_SHORT_GI;
 	struct rate_info ri = {
 		.flags = RATE_INFO_FLAGS_VHT_MCS |
 			 (sgi ? RATE_INFO_FLAGS_SHORT_GI : 0),
 		.mcs = mcs,
-		.nss = 1,
+		.nss = nss,
 		.bw = rate_bw[bw],
 	};
-	u16 phy1 = ac->rate_po_vht[bw][mcs] & B43_TXH_AC_PHY1_TXPWR_OFFSET;
+	u16 phy0, phy1 = ac->rate_po_vht[bw][mcs] & B43_TXH_AC_PHY1_TXPWR_OFFSET;
 	u32 a1, a2;
 
-	r->phy_ctl[0] = cpu_to_le16(B43_TXH_PHY_ENC_VHT |
-				    B43_TXH_AC_PHY0_NON_SOUNDING |
-				    B43_TXH_AC_PHY0_VHT_0008 |
-				    cores << B43_TXH_AC_PHY0_CORES_SHIFT |
-				    bw << B43_TXH_AC_PHY0_BW_SHIFT);
+	phy0 = B43_TXH_PHY_ENC_VHT | B43_TXH_AC_PHY0_NON_SOUNDING |
+	       cores << B43_TXH_AC_PHY0_CORES_SHIFT |
+	       bw << B43_TXH_AC_PHY0_BW_SHIFT;
+	if (mcs)
+		phy0 |= B43_TXH_AC_PHY0_VHT_0008;
+	r->phy_ctl[0] = cpu_to_le16(phy0);
 	if (bw < b43_txhdr_ac_chan_bw(ac))
 		phy1 |= (ac->chanspec & B43_PHY_AC_CHANSPEC_SB_MASK) >>
 			B43_PHY_AC_CHANSPEC_SB_SHIFT;
 	r->phy_ctl[1] = cpu_to_le16(phy1);
-	r->phy_ctl[2] = cpu_to_le16(mcs & B43_TXH_AC_PHY2_VHT_MCS);
+	r->phy_ctl[2] = cpu_to_le16((mcs & B43_TXH_AC_PHY2_VHT_MCS) |
+				    (nss - 1) << B43_TXH_AC_PHY2_VHT_NSS_SHIFT);
 
-	a1 = bw | BIT(2) | (63 << 4) | BIT(23);
+	a1 = bw | BIT(2) | (63 << 4) | (nss - 1) << 10 | BIT(23);
 	a2 = (sgi ? BIT(0) : 0) |
 	     (info->flags & IEEE80211_TX_CTL_LDPC ? BIT(2) : 0) |
 	     (mcs << 4) | BIT(9);
@@ -442,8 +448,8 @@ static void b43_txhdr_ac_vht(const struct b43_phy_ac *ac,
 
 /*
  * The AC microcode's descriptor with its first rate block only: legacy, or
- * a VHT MCS on one stream. Hardware encryption is off on B43_FW_HDR_AC. The
- * frame goes out on the TX cores the PHY keeps for the beacon.
+ * a VHT MCS. Hardware encryption is off on B43_FW_HDR_AC. The frame goes out
+ * on the TX cores the PHY keeps for the beacon.
  */
 static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 				 struct sk_buff *skb,
