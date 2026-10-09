@@ -6,15 +6,15 @@ Subject: [PATCH 2/2] b43: AC-PHY bring-up from the reverse-engineered port
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     5 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |    92 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 10526 +++++++++++++++-
- drivers/net/wireless/broadcom/b43/phy_ac.h    |   788 +-
- drivers/net/wireless/broadcom/b43/ppr_ac.c    |   258 +
- drivers/net/wireless/broadcom/b43/ppr_ac.h    |    80 +
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 10554 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.h    |   790 +-
+ drivers/net/wireless/broadcom/b43/ppr_ac.c    |   270 +
+ drivers/net/wireless/broadcom/b43/ppr_ac.h    |    84 +
  .../net/wireless/broadcom/b43/radio_2069.c    |  1671 +++
  .../net/wireless/broadcom/b43/radio_2069.h    |    48 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1079 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    51 +
- 10 files changed, 14576 insertions(+), 22 deletions(-)
+ 10 files changed, 14622 insertions(+), 22 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -138,7 +138,7 @@ index 0000000..2e3420a
 +	b43_read32(dev, B43_MMIO_MACCTL);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index fe102ea..af83405 100644
+index fe102ea..9233475 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -1,17 +1,53 @@
@@ -201,7 +201,7 @@ index fe102ea..af83405 100644
  
  static int b43_phy_ac_op_allocate(struct b43_wldev *dev)
  {
-@@ -62,27 +98,10479 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -62,27 +98,10507 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -1172,6 +1172,32 @@ index fe102ea..af83405 100644
 +}
 +
 +/*
++ * The same field for VHT MCS 0-9, which only the data frames' descriptors
++ * carry, by width: the group of the MCS's modulation class on the row of the
++ * frame's width, under no legacy limit. The stock driver's values for these
++ * are in router-data/vd625/rxtx-ch36.zip, on a board whose SROM is not in the
++ * collection, so this form is not checked against them.
++ */
++static void b43_phy_ac_vht_rate_po(struct b43_phy_ac *ac, bool capped)
++{
++	static const enum nl80211_chan_width widths[B43_PPR_AC_ROWS] = {
++		NL80211_CHAN_WIDTH_20, NL80211_CHAN_WIDTH_40, NL80211_CHAN_WIDTH_80,
++	};
++	const struct b43_ppr_ac *t = capped ? &ac->txpwr_ppr : &ac->txpwr_spacing;
++	unsigned int w, mcs;
++	u8 p;
++
++	for (w = 0; w < ARRAY_SIZE(widths); w++) {
++		for (mcs = 0; mcs < ARRAY_SIZE(ac->rate_po_vht[w]); mcs++) {
++			p = b43_ppr_ac_vht(t, widths[w], mcs);
++			ac->rate_po_vht[w][mcs] = capped ?
++				b43_phy_ac_rate_po_capped(ac, p, 0) :
++				b43_phy_ac_rate_po(ac, p, 0);
++		}
++	}
++}
++
++/*
 + * Field at +0x0e of the per-rate block, absent in brcmsmac: the rate's power
 + * offset in sixteenths of a dB, its distance from the top of the per-rate
 + * table read on the spacing table, which never saturates (on the d6220's
@@ -1235,6 +1261,8 @@ index fe102ea..af83405 100644
 +		b43_shm_read16(dev, B43_SHM_SHARED, cell);
 +		b43_shm_write16(dev, B43_SHM_SHARED, cell, val);
 +	}
++
++	b43_phy_ac_vht_rate_po(ac, capped);
 +}
 +
 +/*
@@ -10695,7 +10723,7 @@ index fe102ea..af83405 100644
 +	(void)b43_phy_ac_farrow_vals_432x_media_a1;
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.h b/drivers/net/wireless/broadcom/b43/phy_ac.h
-index 02eb6c0..84d460a 100644
+index 02eb6c0..8ce3db3 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.h
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.h
 @@ -3,6 +3,12 @@
@@ -10798,7 +10826,7 @@ index 02eb6c0..84d460a 100644
  #define B43_PHY_AC_C1_CLIP			0x6d4
  #define  B43_PHY_AC_C1_CLIP_DIS			0x4000
  #define B43_PHY_AC_C2_CLIP			0x8d4
-@@ -31,9 +100,722 @@
+@@ -31,9 +100,724 @@
  #define B43_PHY_AC_C3_CLIP			0xad4
  #define  B43_PHY_AC_C3_CLIP_DIS			0x4000
  
@@ -11233,6 +11261,8 @@ index 02eb6c0..84d460a 100644
 +	 */
 +	u16 rate_po_ofdm[8];
 +	u16 rate_po_cck;
++	/* The same field for VHT MCS 0-9, by width (20, 40, 80 MHz). */
++	u16 rate_po_vht[B43_PPR_AC_ROWS][10];
 +	u8 crs_subband;
 +	/* Operating width of the same configuration. */
 +	enum nl80211_chan_width cal_width;
@@ -11523,10 +11553,10 @@ index 02eb6c0..84d460a 100644
  #endif /* B43_PHY_AC_H_ */
 diff --git a/drivers/net/wireless/broadcom/b43/ppr_ac.c b/drivers/net/wireless/broadcom/b43/ppr_ac.c
 new file mode 100644
-index 0000000..3d2f69e
+index 0000000..a07d713
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/ppr_ac.c
-@@ -0,0 +1,258 @@
+@@ -0,0 +1,270 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Per-rate power table for the AC-PHY, SROM revision 11.
@@ -11617,6 +11647,18 @@ index 0000000..3d2f69e
 +	if (WARN_ON_ONCE(rate >= B43_PPR_AC_OFDM_RATES))
 +		return 0;
 +	return ppr->rows[b43_ppr_ac_row(width)][b43_ppr_ac_ofdm_group[rate]];
++}
++
++static const u8 b43_ppr_ac_vht_group[] = {
++	0, 0, 0, 1, 2, 3, 4, 5, 6, 7
++};
++
++u8 b43_ppr_ac_vht(const struct b43_ppr_ac *ppr, enum nl80211_chan_width width,
++		  unsigned int mcs)
++{
++	if (WARN_ON_ONCE(mcs >= ARRAY_SIZE(b43_ppr_ac_vht_group)))
++		return 0;
++	return ppr->rows[b43_ppr_ac_row(width)][b43_ppr_ac_vht_group[mcs]];
 +}
 +
 +u8 b43_ppr_ac_row_max(const struct b43_ppr_ac *ppr,
@@ -11787,10 +11829,10 @@ index 0000000..3d2f69e
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/ppr_ac.h b/drivers/net/wireless/broadcom/b43/ppr_ac.h
 new file mode 100644
-index 0000000..3a652b2
+index 0000000..cf86308
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/ppr_ac.h
-@@ -0,0 +1,80 @@
+@@ -0,0 +1,84 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +#ifndef B43_PPR_AC_H_
 +#define B43_PPR_AC_H_
@@ -11855,6 +11897,10 @@ index 0000000..3a652b2
 + */
 +u8 b43_ppr_ac_ofdm(const struct b43_ppr_ac *ppr, enum nl80211_chan_width width,
 +		   unsigned int rate);
++
++/* The same for a VHT MCS, 0-9, on the row of @width. */
++u8 b43_ppr_ac_vht(const struct b43_ppr_ac *ppr, enum nl80211_chan_width width,
++		  unsigned int mcs);
 +
 +bool b43_ppr_ac_sprom_has_subband_po(const struct ssb_sprom *sprom);
 +
