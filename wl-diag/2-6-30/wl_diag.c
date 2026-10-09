@@ -706,8 +706,7 @@ static struct hook hooks[] = {
 	 *
 	 *   wlc_dotxstatus(wlc, txs, ...)
 	 *
-	 * a2 is recorded as it comes. TO BE CONFIRMED on the first capture:
-	 * whether it is an argument, and txs in a1 on 7.14. GLOBAL, so it
+	 * a2 is recorded as it comes. GLOBAL, so it
 	 * resolves where the module keeps no local symbols. The structure's
 	 * layout differs between versions and is recorded raw: the decoder
 	 * finds the frame ID in it among those recorded at the TX post. */

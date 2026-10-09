@@ -165,9 +165,15 @@ for the fifo, the low byte of the frame ID. The decoder prints it in hex,
 in the driver's byte order, and the offset where a 16-bit word equals the
 frame ID of a frame recorded at the TX post, with that `TX.PKT`'s sequence
 number: a status is tied to its descriptor, and the match places the
-fields. `txs` in a1 on 7.14 and what `a2` is are to be confirmed on the
-first capture; `../reverse-tools/audit_hooks.py` on the 7.14 module says
-whether the prologue takes the detour.
+fields.
+
+On the D6220's 7.14.89 (`wlD6220.o_save`) the five TX and RX hooks take the
+4-word detour (`audit_hooks.py`), and the caller, `wlc_bmac_txstatus()`,
+builds `txs` on its stack: the frame ID at +2, the low half of `XMITSTAT_0`
+at +32, `XMITSTAT_2`/`3` at +34/+38, the second package at +42-+57, and
+`XMITSTAT_1` left in a2. `decode-wl-diag.py --txs-714` rebuilds the eight
+words from there in the format of b43's `TX status` warning, with the
+reading of `b43_txstatus_read_ac()`. 6.30 keeps them 16 bytes lower.
 
 ## One capture for templates, TX and RX
 

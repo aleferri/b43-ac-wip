@@ -810,11 +810,14 @@ static struct hook hooks[] = {
 	 *
 	 *   wlc_dotxstatus(wlc, txs, ...)
 	 *
-	 * a2 is recorded as it comes. TO BE CONFIRMED on the first capture:
-	 * whether it is an argument, and txs in a1 on 7.14. GLOBAL, so it
-	 * resolves where the module keeps no local symbols. The structure's
-	 * layout differs between versions and is recorded raw: the decoder
-	 * finds the frame ID in it among those recorded at the TX post. */
+	 * On the D6220's 7.14.89 (wlD6220.o_save) the caller,
+	 * wlc_bmac_txstatus(), builds txs on its stack and passes it in a1, and
+	 * on the AC path (corerev >= 40) a2 still holds XMITSTAT_1 of the first
+	 * package; wlc_dotxstatus compares the frame ID at +2 with the
+	 * descriptor's. GLOBAL, so it resolves where the module keeps no local
+	 * symbols. The structure's layout differs between versions (6.30 keeps
+	 * the raw words 16 bytes lower) and is recorded raw: the decoder finds
+	 * the frame ID in it among those recorded at the TX post. */
 	{ "wlc_dotxstatus",     OP_TXS,       1, 2, 0 },
 };
 #define NHOOK ARRAY_SIZE(hooks)

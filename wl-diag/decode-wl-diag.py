@@ -5,6 +5,7 @@
 #     ncat -l 5555 | python3 decode-wl-diag.py
 # or from a file:
 #     python3 decode-wl-diag.py < dump.bin
+#     python3 decode-wl-diag.py --txs-714 < dump.bin   TX statuses of 7.14.89
 #
 # Framing: it is a byte stream, read in blocks of 28; a record split between
 # two reads stays in the buffer until the next one.
@@ -72,6 +73,11 @@
 # like TX.DATA. The structure is printed raw, in the driver's byte order,
 # with the offset of the frame ID of a frame recorded at the TX post when
 # one of its 16-bit words matches one: that is what places the fields.
+# With --txs-714 the AC status words are also rebuilt as 7.14.89's
+# wlc_bmac_txstatus() lays them in the structure (frame ID at +2, the low
+# half of XMITSTAT_0 at +32, XMITSTAT_2/3 at +34/+38, the second package at
+# +42..+57, XMITSTAT_1 in a2), in b43_txstatus_dump()'s format and with
+# b43_txstatus_read_ac()'s reading.
 import os, sys, struct
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -194,9 +200,28 @@ POSTED_MAX = 1024   # frame IDs of the TX posts a status is matched against
 posted = {}         # frame ID -> sequence number of its TX.PKT
 
 
-def txs_lines(data):
+TXS_714 = "--txs-714" in sys.argv[1:]
+
+
+def txs_714(data, a2):
+    """The eight status words of an AC tx_status of 7.14.89, or None."""
+    if len(data) < 58:
+        return None
+    w = [int.from_bytes(data[2:4], "big") << 16 |
+         int.from_bytes(data[32:34], "big"), a2]
+    w += [int.from_bytes(data[o:o + 4], "big") for o in (34, 38, 42, 46, 50, 54)]
+    return [f"status {w[0]:08x} {w[1]:08x} {w[2]:08x} {w[3]:08x} / "
+            f"{w[4]:08x} {w[5]:08x} {w[6]:08x} {w[7]:08x}",
+            f"acked={w[0] >> 15 & 1} intermediate={w[0] >> 2 & 1} "
+            f"pm={w[0] >> 3 & 1} supp={w[0] >> 4 & 0xf} "
+            f"frames={w[2] & 0xff}"]
+
+
+def txs_lines(data, a2):
     """The tx_status in hex and where a posted frame's ID sits in it."""
     lines = d11ac_txh.hexdump(data)
+    if TXS_714:
+        lines += txs_714(data, a2) or ["troppo corto per il layout 7.14.89"]
     for o in range(0, len(data) - 1, 2):
         fid = int.from_bytes(data[o:o + 2], "big")
         if fid in posted:
@@ -216,7 +241,7 @@ def print_group(g):
         if len(data) < g["need"]:
             lines[0] += f" troncato a {len(data)}"
         elif data:
-            lines += txs_lines(data)
+            lines += txs_lines(data, g["addr"])
         print(f"{g['t']:14.6f} #{g['seq']:<8} cpu{g['cpu']} {lines[0]}")
         for line in lines[1:]:
             print(" " * 17 + line)

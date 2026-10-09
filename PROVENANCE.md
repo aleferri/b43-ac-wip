@@ -30,6 +30,10 @@ Internet Archive, which mirrors the official download centre
 `downloads.netgear.com/files/GDC`:
 https://archive.org/download/netgearfirmwaresgpl/D6220-V1.0.0.76_GPL_Src_full.zip
 
+The copy the TX status layout in `wl-diag/README.md` is read from has the
+version string `7.14.89.14.cpe4.16L03.0-kdb`, sha256
+`2bbba860d1282d9d06a02f8297a150b3e38f1e21895ccb33a031f0bf0469c80b`.
+
 ## AGSOT — `wl.ko` from `AGSOT_1_0_8.img`
 
 The `wl` module extracted from the firmware image `AGSOT_1_0_8.img`, a Sercomm
