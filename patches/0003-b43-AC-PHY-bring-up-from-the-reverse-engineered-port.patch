@@ -15,14 +15,14 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
  drivers/net/wireless/broadcom/b43/Makefile    |     4 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |   102 +
  drivers/net/wireless/broadcom/b43/phy_ac.c    | 10576 +++++++++++++++-
- drivers/net/wireless/broadcom/b43/phy_ac.h    |   802 +-
+ drivers/net/wireless/broadcom/b43/phy_ac.h    |   809 +-
  drivers/net/wireless/broadcom/b43/ppr_ac.c    |   270 +
  drivers/net/wireless/broadcom/b43/ppr_ac.h    |    84 +
  .../net/wireless/broadcom/b43/radio_2069.c    |  1671 +++
  .../net/wireless/broadcom/b43/radio_2069.h    |    48 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1079 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    51 +
- 10 files changed, 14665 insertions(+), 22 deletions(-)
+ 10 files changed, 14672 insertions(+), 22 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -155,7 +155,7 @@ index 0000000..56a4d2c
 +	b43_read32(dev, B43_MMIO_MACCTL);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index fe102ea..31d674e 100644
+index fe102ea..9c3a7d6 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -1,17 +1,53 @@
@@ -2601,7 +2601,7 @@ index fe102ea..31d674e 100644
 +		b43_actab_write_bulk(dev, 0xc, bbmult_hi[core], 16, 1, &bbmult);
 +		b43_phy_ac_tbl_write_unlock(dev, inner);
 +
-+		b43info(dev->wl,
++		b43dbg(dev->wl,
 +		       "phy-ac: txpwr_by_index core %u idx %u gain %04x/%04x/%04x bbmult %02x\n",
 +		       core, idx, g0, g1, g2, bbmult);
 +	}
@@ -2830,7 +2830,7 @@ index fe102ea..31d674e 100644
 +		u16 cur = b43_phy_read_log(dev, 0x0140);
 +		u16 next = (u16)((cur & 0x0800) | 0x05f4);
 +
-+		b43info(dev->wl,
++		b43dbg(dev->wl,
 +		       "phy-ac: channel_switch_prep 0x0140 cur=0x%04x -> 0x%04x\n",
 +		       cur, next);
 +		b43_phy_write(dev, 0x0140, next);
@@ -6045,7 +6045,7 @@ index fe102ea..31d674e 100644
 +	if (!ac->coremask)
 +		ac->coremask = 3;
 +
-+	b43info(dev->wl, "phy-ac: num_cores=%u coremask=0x%lx\n",
++	b43dbg(dev->wl, "phy-ac: num_cores=%u coremask=0x%lx\n",
 +	       ac->num_cores, ac->coremask);
 +}
 +
@@ -6134,7 +6134,7 @@ index fe102ea..31d674e 100644
 +	{
 +		u32 pllctl3 = bcma_chipco_pll_read(&dev->dev->bdev->bus->drv_cc,
 +						   BCMA_CC_PMU_PLL_CTL3);
-+		b43info(dev->wl, "AC-PHY: PLLCTL3 = 0x%08x on op_init entry\n",
++		b43dbg(dev->wl, "AC-PHY: PLLCTL3 = 0x%08x on op_init entry\n",
 +		       pllctl3);
 +	}
 +
@@ -10762,7 +10762,7 @@ index fe102ea..31d674e 100644
 +	(void)b43_phy_ac_farrow_vals_432x_media_a1;
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.h b/drivers/net/wireless/broadcom/b43/phy_ac.h
-index 02eb6c0..dc8256f 100644
+index 02eb6c0..b57822d 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.h
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.h
 @@ -3,6 +3,12 @@
@@ -10865,7 +10865,7 @@ index 02eb6c0..dc8256f 100644
  #define B43_PHY_AC_C1_CLIP			0x6d4
  #define  B43_PHY_AC_C1_CLIP_DIS			0x4000
  #define B43_PHY_AC_C2_CLIP			0x8d4
-@@ -31,9 +100,736 @@
+@@ -31,9 +100,743 @@
  #define B43_PHY_AC_C3_CLIP			0xad4
  #define  B43_PHY_AC_C3_CLIP_DIS			0x4000
  
@@ -11585,17 +11585,24 @@ index 02eb6c0..dc8256f 100644
 +
 +/*
 + * Trace points of the userspace harnesses in test/, which define them.
-+ * B43_AC_BLOCK() also names the sections of the bring-up in the kernel log,
-+ * so a hang shows the last one reached. Unlike b43info(), which is rate
-+ * limited once the core has started, it never drops a line: a dropped one
-+ * would point at the wrong section.
++ * B43_AC_BLOCK() also names the sections of the bring-up in the kernel log
++ * of a B43_DEBUG build loaded with verbose=3, so a hang shows the last one
++ * reached. Unlike b43dbg(), which is rate limited once the core has started,
++ * it never drops a line: a dropped one would point at the wrong section.
 + */
 +#ifndef B43_AC_FN
 +#define B43_AC_FN() do { } while (0)
 +#endif
 +#ifndef B43_AC_BLOCK
-+#define B43_AC_BLOCK(dev, name) \
-+	wiphy_info((dev)->wl->hw->wiphy, "AC-PHY: %s: %s\n", __func__, name)
++#if B43_DEBUG
++#define B43_AC_BLOCK(dev, name) do {\
++	if (b43_modparam_verbose >= B43_VERBOSITY_DEBUG)\
++		wiphy_printk(KERN_DEBUG, (dev)->wl->hw->wiphy,\
++			     "AC-PHY: %s: %s\n", __func__, name);\
++} while (0)
++#else
++#define B43_AC_BLOCK(dev, name) do { } while (0)
++#endif
 +#endif
 +#ifndef B43_AC_CORE_SITE
 +#define B43_AC_CORE_SITE(dev, site) do { } while (0)
@@ -11970,7 +11977,7 @@ index 0000000..cf86308
 +#endif /* B43_PPR_AC_H_ */
 diff --git a/drivers/net/wireless/broadcom/b43/radio_2069.c b/drivers/net/wireless/broadcom/b43/radio_2069.c
 new file mode 100644
-index 0000000..8951035
+index 0000000..ad7d9f1
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/radio_2069.c
 @@ -0,0 +1,1671 @@
@@ -13327,7 +13334,7 @@ index 0000000..8951035
 +	u16 chipnum = dev->dev->chip_id;
 +
 +	if (chipnum != 0x4352 && chipnum != 0x4360) {
-+		b43info(dev->wl, "radio 2069: rccal skipped, chipnum 0x%04x not supported\n",
++		b43warn(dev->wl, "radio 2069: rccal skipped, chipnum 0x%04x not supported\n",
 +		       chipnum);
 +		return;
 +	}
@@ -13348,7 +13355,7 @@ index 0000000..8951035
 +
 +				dev->phy.ac->lpf_cap0 = cap;
 +				dev->phy.ac->lpf_cap1 = cap;
-+				b43info(dev->wl,
++				b43dbg(dev->wl,
 +				       "radio 2069: rccal lpf cap 0x%02x (E=0x%04x F=0x%04x)\n",
 +				       cap, (u16)e, (u16)f);
 +			} else {
@@ -13452,7 +13459,7 @@ index 0000000..8951035
 +		post[0] = b43_radio_read_log(dev, R2069_AFE_CAL_STAT | rbase);
 +		post[1] = b43_radio_read_log(dev, R2069_AFE_CAL_STAT | rbase);
 +
-+		b43info(dev->wl,
++		b43dbg(dev->wl,
 +		       "radio 2069: afecal core %u ctrl=0x%04x stat=0x%04x/0x%04x\n",
 +		       core, ctrl, post[0], post[1]);
 +
@@ -13642,7 +13649,7 @@ index 0000000..8951035
 +	b43_radio_set(dev,     0x08ea, 0x0080);
 +	b43_radio_maskset(dev, 0x08ed, (u16)~0x0600, 0x0400);
 +
-+	b43info(dev->wl, "phy-ac: radio pwron 0x040b readback: %04x after %u polls\n",
++	b43dbg(dev->wl, "phy-ac: radio pwron 0x040b readback: %04x after %u polls\n",
 +	       pon, polls);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/radio_2069.h b/drivers/net/wireless/broadcom/b43/radio_2069.h

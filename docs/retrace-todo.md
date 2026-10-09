@@ -900,7 +900,8 @@ ucode revision.
   hardware crypto on the AC) and none is aggregated. Next: the same traffic
   with a counter of underruns instead of the warning, with the 128 slots and
   with 256, and the CPU load of the softirq.
-- **Values of the bring-up logs against `cold01-ch36-bw20.txt`.** Same as the
+- **Values of the bring-up logs against `cold01-ch36-bw20.txt`**, printed
+  since by a `B43_DEBUG` build only. Same as the
   board's own driver: radio `0x040b` reads `0x0169` after power-on, `0x0140`
   goes `0x0df7 -> 0x0df4`. Same as 7.14 and not as 6.30, which the board
   runs: the rccal comparators, `E/F = 0x0ac5..9/0x0ba8..b`, cap `0xaa`-`0xab`

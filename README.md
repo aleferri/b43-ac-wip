@@ -103,12 +103,17 @@ The DSL-3580L runs the port under OpenWrt with `ucode42.fw` 784.2 from
   128, not yet run under traffic. See `docs/retrace-todo.md`, "On
   hardware".
 
-After `B43_STAT_STARTED` every `b43info`/`b43warn`/`b43err` goes through
-`net_ratelimit()`, ten per five seconds: a bring-up spends them, and what
-follows is dropped. The cause of a controller restart and its `Controller
-RESET` line go through `b43err_restart()`, which is not rate-limited, and the
-`AC-PHY:` block markers are `wiphy_info()`: both print whatever the limit.
-`sysctl -w net.core.message_cost=0` turns the limit off.
+The log of a normal build has one `set_channel` line per channel switch and
+the warnings: TX errors (`PHY transmission error`, a frame dropped for a
+rate the header cannot carry, a suppressed TX status), RX descriptor
+underruns, unknown cookies. The bring-up steps, the `AC-PHY:` section
+markers and the PHY and radio values are debug: they need
+`CONFIG_PACKAGE_B43_DEBUG` and `verbose=3`, the markers never rate-limited.
+After `B43_STAT_STARTED` every other `b43dbg`/`b43info`/`b43warn`/`b43err`
+goes through `net_ratelimit()`, ten per five seconds; the cause of a
+controller restart and its `Controller RESET` line go through
+`b43err_restart()`, which is not. `sysctl -w net.core.message_cost=0` turns
+the limit off.
 
 ## What is ported
 

@@ -116,8 +116,7 @@ resolving it the script resumes with `CARRY_RESUME` set to that directory.
 Message, author and date come from the current patch: to change a message,
 edit it in the patch and re-run. A new AC-PHY source file enters 0003 and
 816-03 through its line in `b43/Makefile`; any other file in `b43/` goes into
-0002 and 816-02. The 816 have `CPTCFG_B43` for `CONFIG_B43` and `b43info()`
-for `b43dbg()` in the port's lines.
+0002 and 816-02. The 816 have `CPTCFG_B43` for `CONFIG_B43`.
 
 An adaptation that is not a substitution is written into the patch by hand,
 and the next run carries it like the others. The 816-02 has one: it sets
