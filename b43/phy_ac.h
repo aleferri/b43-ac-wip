@@ -175,6 +175,17 @@ struct ieee80211_channel;
 #define B43_PHY_AC_MAX_CORES		3
 
 /*
+ * Rate classes of the microcode's TX core table, shm 0x05d4 on, one cell
+ * each: CCK, OFDM, then one per space-time stream count.
+ */
+enum b43_phy_ac_txcore {
+	B43_PHY_AC_TXCORE_CCK,
+	B43_PHY_AC_TXCORE_OFDM,
+	B43_PHY_AC_TXCORE_NSTS1,
+	B43_PHY_AC_TXCORE_NUM = B43_PHY_AC_TXCORE_NSTS1 + B43_PHY_AC_MAX_CORES,
+};
+
+/*
  * Measurement passes the window keeps: two up to 40 MHz, six at 80 on the
  * d6220, seven on agcombo.
  */
@@ -522,8 +533,8 @@ struct b43_phy_ac {
 	enum nl80211_chan_width mac_width;
 	/* Chanspec last written to B43_SHM_SH_CHAN, 0 when never. */
 	u16 chanspec;
-	/* TX cores last written into shm 0x00cc, the mask frames go out on. */
-	u16 tx_cores;
+	/* The TX core table as last written, by enum b43_phy_ac_txcore. */
+	u16 txcore[B43_PHY_AC_TXCORE_NUM];
 	/*
 	 * Power offset field of each legacy rate, PHY TX control word 1, as
 	 * last written into the rate blocks: OFDM by rate index, 6 to 54 Mbit/s,

@@ -736,7 +736,10 @@ void b43_phy_ac_rxiqcal_dds_seed_tone(struct b43_wldev *dev, int step)
 
 /*
  * Chain masks of the 0x05d4-0x05dc block, which b43.h calls KEYIDXBLOCK for
- * the v4 firmware and the AC core uses for something else.
+ * the v4 firmware. On the AC core it is the microcode's TX core table, one
+ * cell per rate class (enum b43_phy_ac_txcore): the DSL-3580L's wl writes
+ * the five cells in that order (wlc_stf_txcore_shmem_write()) from the
+ * per-class masks its TX descriptors take (wlc_stf_txcore_get()).
  *
  * 0x05d4 and 0x05dc are coremask on every segment (0x3 on the d6220, 0x7 on
  * the agcombo and the tg789vac). 0x05da follows 0x05d8 while that keeps more
@@ -754,8 +757,8 @@ void b43_phy_ac_rxiqcal_dds_seed_tone(struct b43_wldev *dev, int step)
  * and the offsets those `wl curpower` prints
  * (router-data/vd625-agcombo/stats.txt,
  * dsl3580l/wl1_curpower_ch52-bw80.txt): CDD 3 and 5 dB under one chain on 2
- * and 3, TXBF 6 and 9.75. 0x05d6 as TXBF and 0x05d8 as CDD is the best of
- * the four fits tried, not a known meaning.
+ * and 3, TXBF 6 and 9.75. The OFDM cell, 0x05d6, fits the TXBF rows and the
+ * one-stream cell, 0x05d8, the CDD rows: the best of the four fits tried.
  *
  * The Local Max is not in cfg80211 and is not the cap on the target
  * (b43_phy_ac_locale_ceiling(): 20.5 dBm at ch64/20, where the masks need
@@ -888,18 +891,28 @@ static void b43_phy_ac_chain_pair(struct b43_wldev *dev,
 							      off_cdd, chains));
 }
 
+/*
+ * The cells up to two streams are written; three streams take coremask,
+ * which every capture of a three-chain board has at 0x05dc and b43 does not
+ * write.
+ */
 static void b43_phy_ac_chainmask_block(struct b43_wldev *dev,
 				       enum b43_phy_ac_chain_site site)
 {
+	u16 *txcore = dev->phy.ac->txcore;
 	u16 mask = dev->phy.ac->coremask;
 	u16 pair[2];
+	unsigned int i;
 
 	b43_phy_ac_chain_pair(dev, site, dev->phy.ac->cal_width, pair);
-	b43_shm_write16(dev, B43_SHM_SHARED, 0x05d4, mask);
-	b43_shm_write16(dev, B43_SHM_SHARED, 0x05d6, pair[0]);
-	b43_shm_write16(dev, B43_SHM_SHARED, 0x05d8, pair[1]);
-	b43_shm_write16(dev, B43_SHM_SHARED, 0x05da,
-			hweight8((u8)pair[1]) > 1 ? pair[1] : mask);
+	txcore[B43_PHY_AC_TXCORE_CCK] = mask;
+	txcore[B43_PHY_AC_TXCORE_OFDM] = pair[0];
+	txcore[B43_PHY_AC_TXCORE_NSTS1] = pair[1];
+	txcore[B43_PHY_AC_TXCORE_NSTS1 + 1] =
+		hweight8((u8)pair[1]) > 1 ? pair[1] : mask;
+	txcore[B43_PHY_AC_TXCORE_NSTS1 + 2] = mask;
+	for (i = 0; i <= B43_PHY_AC_TXCORE_NSTS1 + 1; i++)
+		b43_shm_write16(dev, B43_SHM_SHARED, 0x05d4 + 2 * i, txcore[i]);
 }
 
 /*
@@ -918,7 +931,6 @@ static void b43_phy_ac_bss_cc_update(struct b43_wldev *dev,
 	u16 cc = b43_shm_read16(dev, B43_SHM_SHARED, 0x00cc);
 
 	b43_phy_ac_chain_pair(dev, site, dev->phy.ac->cal_width, pair);
-	dev->phy.ac->tx_cores = pair[0];
 	cc = (u16)((cc & ~0x01c0) | (pair[0] << 6));
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);

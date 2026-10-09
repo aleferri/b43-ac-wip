@@ -230,8 +230,6 @@ struct b43_txhdr_ac {
 #define B43_TXH_AC_MAC_FIX_RATE		0x0002	/* Primary rate only */
 /* PHY TX control word 0: B43_TXH_PHY_ENC in 1:0, then */
 #define B43_TXH_AC_PHY0_NON_SOUNDING	0x0004
-/* On the stock driver's VHT blocks from MCS 4 up, not on MCS 0; unknown */
-#define B43_TXH_AC_PHY0_VHT_0008	0x0008
 #define B43_TXH_AC_PHY0_SHORT_PREAMBLE	0x0010
 #define B43_TXH_AC_PHY0_CORES_SHIFT	6
 #define B43_TXH_AC_PHY0_BW_SHIFT	14	/* 0 20 MHz, 1 40, 2 80 */

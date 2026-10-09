@@ -332,46 +332,53 @@ static void b43_txhdr_ctl_get(struct b43_wldev *dev,
 	}
 }
 
+/*
+ * The cores of a rate class, word 0's mask: the cell of the microcode's TX
+ * core table, as wlc_stf_txcore_get() picks it for the stock descriptors.
+ */
+static u16 b43_txhdr_ac_cores(const struct b43_phy_ac *ac,
+			      enum b43_phy_ac_txcore class)
+{
+	return (ac->txcore[class] ? : ac->coremask)
+		<< B43_TXH_AC_PHY0_CORES_SHIFT;
+}
+
+/*
+ * Word 1's subband: the primary 20 MHz within a frame of width @bw, 0 20
+ * MHz, 1 40, 2 80, as wlc_acphy_txctl1_calc() shifts the chanspec's sideband.
+ */
+static u16 b43_txhdr_ac_subband(const struct b43_phy_ac *ac, unsigned int bw)
+{
+	return ((ac->chanspec & B43_PHY_AC_CHANSPEC_SB_MASK) >>
+		B43_PHY_AC_CHANSPEC_SB_SHIFT) >> bw;
+}
+
 /* One legacy rate, on the primary 20 MHz of the channel. */
 static void b43_txhdr_ac_legacy(const struct b43_phy_ac *ac,
 				struct b43_txhdr_ac_rate *r,
-				const struct b43_txhdr_ctl *c, u16 cores,
-				unsigned int len)
+				const struct b43_txhdr_ctl *c, unsigned int len)
 {
 	u8 rate = c->rate;
+	bool ofdm = b43_is_ofdm_rate(rate);
 	u16 phy0, po;
 
-	phy0 = b43_is_ofdm_rate(rate) ? B43_TXH_PHY_ENC_OFDM :
-					B43_TXH_PHY_ENC_CCK;
+	phy0 = ofdm ? B43_TXH_PHY_ENC_OFDM : B43_TXH_PHY_ENC_CCK;
 	phy0 |= B43_TXH_AC_PHY0_NON_SOUNDING;
-	phy0 |= cores << B43_TXH_AC_PHY0_CORES_SHIFT;
+	phy0 |= b43_txhdr_ac_cores(ac, ofdm ? B43_PHY_AC_TXCORE_OFDM :
+					      B43_PHY_AC_TXCORE_CCK);
 	if (c->short_preamble)
 		phy0 |= B43_TXH_AC_PHY0_SHORT_PREAMBLE;
 	r->phy_ctl[0] = cpu_to_le16(phy0);
-	po = b43_is_ofdm_rate(rate) ?
-	     ac->rate_po_ofdm[b43_txhdr_ac_rate_idx(rate)] : ac->rate_po_cck;
+	po = ofdm ? ac->rate_po_ofdm[b43_txhdr_ac_rate_idx(rate)] :
+		    ac->rate_po_cck;
 	r->phy_ctl[1] = cpu_to_le16((po & B43_TXH_AC_PHY1_TXPWR_OFFSET) |
-				    ((ac->chanspec &
-				      B43_PHY_AC_CHANSPEC_SB_MASK) >>
-				     B43_PHY_AC_CHANSPEC_SB_SHIFT));
+				    b43_txhdr_ac_subband(ac, 0));
 	r->phy_ctl[2] = cpu_to_le16(b43_txhdr_ac_rate_idx(rate));
 	b43_generate_plcp_hdr((struct b43_plcp_hdr4 *)&r->plcp, len, rate);
 	r->tx_rate = cpu_to_le16(rate);
 }
 
-/* Width of a channel or of a VHT rate as word 0 and SIG-A1 take it. */
-static unsigned int b43_txhdr_ac_chan_bw(const struct b43_phy_ac *ac)
-{
-	switch (ac->chanspec & B43_PHY_AC_CHANSPEC_BW_MASK) {
-	case B43_PHY_AC_CHANSPEC_BW80:
-		return 2;
-	case B43_PHY_AC_CHANSPEC_BW40:
-		return 1;
-	default:
-		return 0;
-	}
-}
-
+/* Width of a VHT rate as word 0 and SIG-A1 take it. */
 static unsigned int b43_txhdr_ac_vht_bw(const struct ieee80211_tx_rate *t)
 {
 	if (t->flags & IEEE80211_TX_RC_80_MHZ_WIDTH)
@@ -382,24 +389,25 @@ static unsigned int b43_txhdr_ac_vht_bw(const struct ieee80211_tx_rate *t)
 }
 
 /*
- * One VHT rate, laid out as the stock driver lays out its own
- * (router-data/vd625-agcombo, 7.14.43 and its microcode, to one and two-stream
- * stations): word 0 with the frame type, the width in 15:14, and 0x0008,
- * which the stock blocks carry from MCS 4 up and not on MCS 0 (1-3 are in no
- * capture and follow MCS 4); word 1 the power offset, the same for one and
- * two streams, and the primary's subband only on a frame narrower than the
- * channel; word 2 the MCS and NSS - 1; VHT-SIG-A1/A2 as 802.11 lays them out,
+ * One VHT rate, as both stock drivers lay it out: the frames of the
+ * agcombo's 7.14.43 to one and two-stream stations (router-data/vd625-agcombo)
+ * and the code of the DSL-3580L's own 6.30 (wlc_acphy_txctl0/1/2_calc(),
+ * wlc_compute_plcp()). Word 0 with the frame type, the cores of the stream
+ * count's class and the width in 15:14; word 1 the power offset, the same
+ * for one and two streams, and the primary's subband within the frame's
+ * width; word 2 the MCS and NSS - 1; VHT-SIG-A1/A2 as 802.11 lays them out,
  * group ID 63 and both reserved bits set, the SGI disambiguation and LDPC
  * extra-symbol bits left clear, as the stock driver leaves them on frames of
  * every length; the PHY rate in 500 kb/s; 0x0300 in the fallback bandwidth
- * field, as on every block it sends. The stock frames are all LDPC: a BCC
- * frame differs only in SIG-A2 here, and that is not in any capture. Nor is
- * a 40 MHz frame on an 80 MHz channel, whose subband field carries the
- * primary as at 20.
+ * field, as on every block 7.14.43 sends.
+ *
+ * Word 0's bit 3 stays clear: 6.30 never sets it, and 7.14.43 sets it from
+ * MCS 4 up together with a value in the beamforming field, which b43 has
+ * nothing to put in.
  */
 static void b43_txhdr_ac_vht(const struct b43_phy_ac *ac,
 			     struct b43_txhdr_ac_rate *r,
-			     const struct ieee80211_tx_info *info, u16 cores)
+			     const struct ieee80211_tx_info *info)
 {
 	static const u8 rate_bw[] = {
 		RATE_INFO_BW_20, RATE_INFO_BW_40, RATE_INFO_BW_80,
@@ -420,15 +428,10 @@ static void b43_txhdr_ac_vht(const struct b43_phy_ac *ac,
 	u32 a1, a2;
 
 	phy0 = B43_TXH_PHY_ENC_VHT | B43_TXH_AC_PHY0_NON_SOUNDING |
-	       cores << B43_TXH_AC_PHY0_CORES_SHIFT |
+	       b43_txhdr_ac_cores(ac, B43_PHY_AC_TXCORE_NSTS1 + nss - 1) |
 	       bw << B43_TXH_AC_PHY0_BW_SHIFT;
-	if (mcs)
-		phy0 |= B43_TXH_AC_PHY0_VHT_0008;
 	r->phy_ctl[0] = cpu_to_le16(phy0);
-	if (bw < b43_txhdr_ac_chan_bw(ac))
-		phy1 |= (ac->chanspec & B43_PHY_AC_CHANSPEC_SB_MASK) >>
-			B43_PHY_AC_CHANSPEC_SB_SHIFT;
-	r->phy_ctl[1] = cpu_to_le16(phy1);
+	r->phy_ctl[1] = cpu_to_le16(phy1 | b43_txhdr_ac_subband(ac, bw));
 	r->phy_ctl[2] = cpu_to_le16((mcs & B43_TXH_AC_PHY2_VHT_MCS) |
 				    (nss - 1) << B43_TXH_AC_PHY2_VHT_NSS_SHIFT);
 
@@ -448,8 +451,7 @@ static void b43_txhdr_ac_vht(const struct b43_phy_ac *ac,
 
 /*
  * The AC microcode's descriptor with its first rate block only: legacy, or
- * a VHT MCS. Hardware encryption is off on B43_FW_HDR_AC. The frame goes out
- * on the TX cores the PHY keeps for the beacon.
+ * a VHT MCS. Hardware encryption is off on B43_FW_HDR_AC.
  */
 static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 				 struct sk_buff *skb,
@@ -462,7 +464,6 @@ static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 	    (const struct ieee80211_hdr *)skb->data;
 	const struct b43_phy_ac *ac = dev->phy.ac;
 	unsigned int len = skb->len + FCS_LEN;
-	u16 cores = ac->tx_cores ? : 0x0001;
 	u16 mac_lo = 0, rts = B43_TXH_AC_RTS_LAST_RATE;
 
 	BUILD_BUG_ON(sizeof(struct b43_txhdr_ac) != 128);
@@ -492,9 +493,9 @@ static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 	txhdr->seq = wlhdr->seq_ctrl;
 
 	if (c->vht)
-		b43_txhdr_ac_vht(ac, r, info, cores);
+		b43_txhdr_ac_vht(ac, r, info);
 	else
-		b43_txhdr_ac_legacy(ac, r, c, cores, len);
+		b43_txhdr_ac_legacy(ac, r, c, len);
 
 	if (c->rts || c->cts) {
 		u8 code;

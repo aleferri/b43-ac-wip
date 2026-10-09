@@ -124,9 +124,14 @@ word whose eight nibbles all differ, which fixes every row).
 
 ## Chain masks `0x05d6` / `0x05d8` / `0x05da`
 
-The three cells of the `0x05d4`–`0x05dc` block that are not coremask are the
-chain choice of the rate classes, and they follow the regulatory headroom,
-not the sub-band. Per class the stock driver takes the chain count `n` with
+The `0x05d4`–`0x05dc` block is the microcode's TX core table, one cell per
+rate class: CCK, OFDM, then one, two and three space-time streams. The
+DSL-3580L's `wl` writes the five cells in that order
+(`wlc_stf_txcore_shmem_write()`) from the masks its TX descriptors take per
+class (`wlc_stf_txcore_get()`), and b43's descriptors take them from the
+same cells (`b43_txhdr_ac_cores()`). The three cells that are not coremask,
+OFDM, one and two streams, follow the regulatory headroom, not the
+sub-band. Per class the stock driver takes the chain count `n` with
 the highest total power
 
     min(board, L − offset[n]) + 10·log10(n)
@@ -134,17 +139,21 @@ the highest total power
 fewer chains on a tie, with the `wl curpower` offsets (CDD on 2 and 3 chains
 3 and 5 dB under one chain, TXBF 6 and 9.75), `board` the top row of the
 operating width and `L` the locale's Local Max for the channel and width less
-the board's antenna gain. `0x05d6` behaves as the TXBF rows and `0x05d8` as
-the CDD rows; in closed form, with `d = L − board` in quarter dB:
+the board's antenna gain. `0x05d6` (OFDM) behaves as the TXBF rows and
+`0x05d8` (one stream) as the CDD rows; in closed form, with `d = L − board`
+in quarter dB:
 
 | cell | 1 chain | 2 chains | 3 chains |
 | --- | --- | --- | --- |
 | `0x05d8` (CDD) | d ≤ 0 | 1 ≤ d ≤ 13 | d ≥ 14 |
 | `0x05d6` (TXBF) | d ≤ 12 | 13 ≤ d ≤ 32 | d ≥ 33 |
 
-`0x05da` follows `0x05d8` where that keeps more than one chain and is
-coremask where it drops to one (7.14.89; the agcombo on 7.14.43 writes
-coremask there throughout). Two of three chains is the outer pair, 0x5.
+`0x05da` (two streams) follows `0x05d8` where that keeps more than one chain
+and is coremask where it drops to one, since two streams need two chains
+(7.14.89; the agcombo on 7.14.43 writes coremask there throughout). Two of
+three chains is the outer pair, 0x5. The DSL-3580L's 6.30 writes
+`3 3 3 3 0` on every channel of its sweep: both chains for every class, and
+no three-stream cell.
 
 The Local Max is neither the cap that binds the target (at ch64/20 the target
 caps at 20.5 dBm and the masks need 30 or more) nor in cfg80211. It is

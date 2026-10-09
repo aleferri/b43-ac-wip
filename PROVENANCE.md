@@ -16,6 +16,11 @@ sha256 `73b58f069e5ce3f3f8b6a111df4a3e6de57ed22761a53c41ba50c05ab0b07233`,
 extracted with `reverse-tools/extract_chan_tuning_2069rev4.py --min-freq 2400`:
 the 50 5 GHz rows and the 14 2.4 GHz rows.
 
+The TX descriptor words and the TX core table in `docs/retrace-todo.md`
+("HT and VHT") are read from the disassembly (`mips-linux-gnu-objdump -d -r`)
+of the object with version string `6.30.102.7.cpe4.12L07.0`, sha256
+`a68a032673840c17a5981b0d00f16920ce992bca35ecdfba407bd6d488f28221`.
+
 ## D6220 — `wlD6220.o_save`
 
 The `wl` driver object (rev `0x70e590e` ≈ 7.14.89.14) from Netgear's GPL
