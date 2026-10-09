@@ -11,9 +11,9 @@
 # The captures are decoded, split and folded once into BAND_TMP (default
 # /tmp/band), which later runs reuse.
 #
-# BOARD picks the harness profile (default d6220); archer carries the only
-# dual-band SROM, so the 2.4 GHz values that come from the SROM only match
-# there.
+# BOARD picks the harness profile (default d6220); archer and macbook carry
+# the two dual-band SROMs, so the 2.4 GHz values that come from the SROM
+# match only with one of them.
 #
 # Usage: [BOARD=archer] ./band_gate.sh
 set -eu

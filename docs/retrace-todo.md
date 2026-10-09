@@ -535,15 +535,11 @@ not. `0x14` is not derivable from the SROM; the port writes it under
 
 ### TX target: the second of three passes at 40/80 MHz
 
-The pass is in the port (`txpwr-target-derivation.md`, "The second pass"):
-the operating row under a 20-in-40/80 cap of 68 on ch36–48, the legacy
-rates on the primary's 20 MHz configuration. It closes ch36/40 and ch44/40
-on the d6220 and the target, CCK and beacon cells of ch36/80 (the legacy
-K there stays, see "Per-rate field `+0x0e`"), and the targets of the agcombo's
-three UNII-1 segments. Open:
+The pass is in the port (`txpwr-target-derivation.md`, "The second pass").
+Open:
 
 - **The TG789vac does not take the cap**: 68 on all three passes of
-  ch36/40, ch44/40 and ch36/80, where the port now writes 62, 16 ops per
+  ch36/40, ch44/40 and ch36/80, where the port writes 62, 16 ops per
   segment. Same `wl` 7.14.89 as the d6220, same empty `ccode` and `regrev`
   0 on all three boards; its 40 MHz row (88) and 20 MHz row (80) give 68
   only through the 40 MHz cap of 74. A board gate would be a fit; the port
@@ -556,110 +552,24 @@ three UNII-1 segments. Open:
 
 ### TX power: regulatory limits and chain masks
 
-One problem, seen in three places: the target on `0x?46`, the per-rate field
-`+0x0e`, and the chain masks `0x05d6`/`0x05d8`. The target is closed on both
-boards through the locale table of `b43_phy_ac_locale_ceiling()` (the caps
-listed under "band edges" below, per channel and width, conducted). The chain masks `0x05d6`/`0x05d8` are
-closed on the first pass of every segment of the three boards but one
-(agcombo ch36/40) through the chain choice below with a Local Max table
-(`b43_phy_ac_local_max()`), and on the second pass with that level 1 dB
-higher above 20 MHz. `0x05da` follows `0x05d8` where that keeps more than
-one chain and is coremask where it drops to one (7.14.89; the agcombo on
-7.14.43 writes coremask throughout). Not temperature: the tempsense samples
-of the five TG789vac segments with 0x5 there read 49-62 degC on the
-agcombo's calibration (`docs/tempsense-wiring-evidence.md`), in the middle
-of the sweep's 44-62, against a tempthresh of 120. Open: `0x05d8` at 0x5 on
-ch100 and ch116 at 80 MHz where ch132/80, same rows and width, has 0x7 --
-the port writes 0x7 on all three; and `+0x0e` at 40 and 80 MHz on both
-boards.
+The model is in [`txpwr-target-derivation.md`](txpwr-target-derivation.md).
+Open:
 
-**The stock limits, from the three `curpower` dumps** (`agcombo/stats.txt` at
-ch100/80 and ch36/80, `dsl3580l/wl1_curpower_ch52-bw80.txt`, two driver
-branches). The limits are per rate class, chain count and width, and their
-structure is the same in all three to the quarter dB; only the level moves:
-
-| rows | offset |
-|---|---|
-| 1 chain (OFDM, MCS0-7, VHT8-9), 20in80 | Local Max − 2 dB |
-| 1 chain, 40in80 and 80 | Local Max − 1 dB |
-| CDD on 2 chains, STBC | 1 chain − 3 dB |
-| CDD on 3 chains | 1 chain − 5 dB |
-| TXBF on 2 chains | 1 chain − 6 dB |
-| TXBF on 3 chains | 1 chain − 9.75 dB |
-
-The level is the "BSS Local Max", the value cfg80211 gives as `max_power`
-(23 dBm at ch36, 30 at ch100: ETSI), less the antenna gain the driver reports
-(0 on the agcombo whatever its NVRAM says, 5.5 dB on the DSL). The target is
-`min(board, limit) - 1.5 dB` per rate and the register takes the maximum over
-the rates, as the Power Targets of `curpower` show.
-
-**The chain masks follow the limits.** Per class the stock driver takes the
-chain count with the highest total power, the limit plus 3.0 / 4.77 dB for 2 /
-3 chains, the fewer chains on a tie; `0x05d6` behaves like the TXBF rows and
-`0x05d8` like the CDD rows. With one level per channel and width this gives the
-two masks and the target on 75 of the 86 cold segments of the d6220 and the
-TG789vac, and the same level fits both boards on 41 of 43 channel/width pairs.
-**SALAME**: the class of each cell is the best of four assignments tried, not a
-known meaning. The mask carries the chain count: 1, 3 on the d6220; 1, 5, 7 on
-the TG789vac, two chains being 0 and 2.
-
-**What does not fit, and why.**
-
-- A 20 MHz channel has its own limit: ch36/20 writes 56 on all three boards,
-  15.5 dBm per chain with antenna gains of 0, 4.25 and 5.5 dB, where the
-  20in80 row of the same channel is 21 dBm on the agcombo. No 80 MHz table has
-  that column.
-- Band edges: ch60/40 (60), ch100/40 (68), ch36/40 and ch36/80 on the
-  TG789vac (68), ch100 at 20 and 80 MHz (76) are the same on every board that
-  shows them, below what the level of the channel allows, and without changing
-  the masks. They are locale caps per channel and width.
-- The antenna gain: the d6220 (5.5 dB) and the TG789vac (4.25 dB) write the
-  same targets, so on the 7.14.89 boards the gain the driver subtracts is not
-  the SROM's.
+- `0x05d8` at 0x5 on ch100 and ch116 at 80 MHz, where ch132/80, same rows
+  and width, has 0x7; the port writes 0x7 on all three. Not temperature:
+  the tempsense samples of the five TG789vac segments with 0x5 there read
+  49-62 degC on the agcombo's calibration
+  (`docs/tempsense-wiring-evidence.md`), in the middle of the sweep's
+  44-62, against a tempthresh of 120.
+- The agcombo's masks on the first pass at ch36/40: its driver reports an
+  antenna gain of 0, the SROM has 5.5, and the port takes the SROM's.
+- The ceiling (`b43_phy_ac_locale_ceiling()`) and the Local Max
+  (`b43_phy_ac_local_max()`) are the same locale seen from two sides and
+  should become one table.
 - On the TG789vac ch36/80, 68 needs 18.5 dBm per chain, which no row of the
   agcombo's 36/80 table gives with the margin. **SALAME**: the edge levels
   differ between 7.14.43 and 7.14.89.
-
-The port today takes the tighter of cfg80211's ceiling (one EIRP per 20 MHz
-channel, less the SROM antenna gain) and its own locale table of the caps
-above, and computes the masks from the chain choice on a Local Max table
-measured from the masks themselves (84 on ch36-48/20, 120 on ch52-64/20,
-124 on ch100-144/20, 106 on ch36-44/40, 136 on ch108-140/40, 104 on ch36/80,
-132 on ch100-132/80, quarter-dBm EIRP, less the SROM gain). The two tables
-are the same locale seen from two sides and should become one; the antenna
-gain the agcombo's driver reports (0) is not its SROM's (5.5), so on that
-board the SROM gain gives the wrong masks.
-
-**The TG789vac's legacy rates at 40 and 80 MHz** are flat across the eight
-OFDM rates on every bonded segment. Where a legacy limit binds the port
-carries it in `b43_phy_ac_legacy_cap()` (see "Per-rate field `+0x0e`" for
-where it is still 1 dB off at 40 and 80 MHz). Where none binds the
-TG789vac writes the maximum of its **40 MHz row** on every rate, at 40 MHz
-and at 80 alike -- 84 on ch108-140/40 and on ch132/80 (`mcsbw405ghpo`
-nibble 1 under maxp 92), where its 80 MHz row would give 80/78 -- while the
-d6220 on ch132/80 follows its 80 MHz row with its per-group offsets
-(76/72/68, `mcsbw805ghpo` 2/4/6). Below the limits the two boards also
-differ: ch100/40 TG789vac 60, d6220 64 on the six lower rates then 62 and
-58; ch60/40 52 against 56; ch36 at 40 and 80 68 against 66 and 54. So the
-TG789vac's driver reads the legacy rows of a bonded channel from a
-different place than the d6220's, and the port's spacing table (the
-operating width's row) is the d6220's reading.
-
-The agcombo (4360, 3 chains, 7.14.43) settles what it is not. Its rows
-hold exactly where nothing binds (ch52-64/20, ch52/40, ch108-132/40:
-68/68/68/68/64/64/60/60 and 76/76/76/76/68/68/60/60 are its nibbles to the
-quarter), so the group map is right on all three boards. Where a limit
-binds it sides with neither: at ch100/40 and ch60/40 it writes the
-TG789vac's 60 and 52 (d6220 64, 56); at ch100/80 the d6220 writes 72 and
-the TG789vac 72 but the agcombo 60; at ch36/40 and 36/80 it writes 56 on
-every rate, which is its own ch36/20 legacy power (d6220 66 and 54,
-TG789vac 68); at ch100-140/20 its legacy sits at 68 under a target of 76
-where the other two sit at 76 under 80 and 84. Chip and chain count are
-ruled out (agcombo and TG789vac share both and disagree at ch100/80,
-ch36/40, ch108/40); the SROM's `dot11agdup*` are ruled out (the agcombo
-has none and still differs from the d6220). What is left is the driver
-build's own legacy table, so a port can follow one reference only; it
-follows the d6220 (7.14.89, the two full sweeps).
+- `+0x0e` at 40 and 80 MHz on both boards (see "Per-rate field `+0x0e`").
 
 ### Per-rate field `+0x0e`
 
@@ -678,38 +588,6 @@ pass at 40 and 80 MHz, where the stock single-chain limit is 1 dB higher on
 ch52/40, ch108-140/40 and ch132/80 and the tg789vac's legacy rows are flat;
 ch149 at 40 and 80 MHz on the tg789vac; the beacon at ch100/80 on all
 three.
-
-The distance of each rate from the target, in sixteenths of a dB. At 20 MHz
-it is closed: the legacy OFDM rows sit under their own limit, 76 after the
-margin on ch52–144, on the d6220 (cold and hot) and the TG789vac alike, and
-ch100/20 (target 76, K 0 on both) fits it too
-(`b43_phy_ac_legacy_cap()`; the beacon cell `0x00ce` takes the same
-cap). At 40 and 80 MHz the duplicate legacy rows are not under that limit
-(ch108–140/40: target 80, fields 0) and what they are under is not one
-number: d6220 ch60/40 writes K 0x10 and the TG789vac 0x20 at the same target
-60, the TG789vac carries `dot11agduphrpo=0x4444` which the loader does not
-apply, and on the d6220 ch149/80 writes K 0x10 with the target at the floor.
-The three-pass segments (ch36/ch44 at 40 and 80) follow the target of each
-pass. The CCK field is closed: the CCK rates sit at the 1 dBm floor and the
-field is the target's distance from it saturated at 0xf8, on all 86 segments
-(`b43_phy_ac_cck_rate_po()`); the d6220's UNII-3, maxp5ga 0, writes 0xf8
-where the rule gives 0, kept as an observed exception.
-
-**Where the general limit binds, the two boards disagree on the OFDM rows.**
-The d6220 on ch100/20 (rows 86/86/82/78/74 for the five OFDM groups, target
-76 under the 82 cap) keeps its spacing, 0/0/16/32/48: the cap moved the
-target and left the rows. The TG789vac on ch36/20 (rows 76/76/76/76/72, cap
-62) writes 0 on every rate, on ch100/20 (86/86/82/82/76, cap 82) 0 on every
-rate, on ch104/20 (same rows, target 84) 32 on every rate, on ch108-140/40
-(target 86, uncapped) 8 on every rate then 56 then 8, and on ch116/80 56 on
-every rate -- while on ch149/20, uncapped, it follows its rows exactly
-(0/0/0/16/16/40, `mcsbw205ghpo` nibbles 0/0/2/2/5). So the TG789vac's legacy
-rates are flat wherever a limit binds and at every bonded width, the d6220's
-are never flat. A per-rate clamp at the cap reproduces the TG789vac's 20 MHz
-segments and breaks the d6220's ch100 at all three widths; the port keeps
-the d6220's model. What separates the two -- 4360 vs 4352, 3 chains, the
-`dot11agduphrpo=0x4444` the loader does not apply, a different legacy limit
-table -- is not established. **SALAME** on all four.
 
 ### Sub-band row offsets
 
@@ -804,7 +682,7 @@ open too.
 as the unit harness is. `test/unit/band_gate.sh` compares the port's delta
 between ch40/ch44 and ch2/ch3 with the one the MacBookAir6,1 and the archer-t5e
 share (72 registers or cells, both on the 6.30 hybrid): 58 reproduced with the
-d6220 profile, 60 with `BOARD=archer`, whose SROM is the only dual-band one.
+d6220 profile, 60 with `BOARD=archer`, one of the two dual-band SROMs.
 
 **In the port, and matching both boards:** the 2069 channel table rows ch1–14
 (ch14 in no capture) with the 5 GHz register map, radio `0x066d = 0x18c0`, the

@@ -76,10 +76,9 @@ eight nibbles all differ, which fixes every row).
   | ch100 bw40 | 80 | 76 | 86 | **68** | 74 |
 
   The caps are conducted (the same number on three gains) and per width, so
-  cfg80211's one EIRP per 20 MHz channel cannot express them and the
-  `AC_MAX_POWER_MAP` that once stood in for them held only on a 5.5 dB board.
-  The port carries them as `b43_phy_ac_locale_ceiling()`, the tighter of the
-  two with the cfg80211 ceiling, as brcmsmac carries `locale_5g_*` in
+  cfg80211's one EIRP per 20 MHz channel cannot express them. The port
+  carries them as `b43_phy_ac_locale_ceiling()`, the tighter of the two
+  with the cfg80211 ceiling, as brcmsmac carries `locale_5g_*` in
   `channel.c`. On ch52/20 `wl` 6.30 on the DSL-3580L writes 56 where 7.14
   writes 62 on the same chip: the value lives in the binary's CLM, not in any
   read.
@@ -106,11 +105,11 @@ eight nibbles all differ, which fixes every row).
   spacing would put higher sits at that value (ch104/20: `target − 76` on the
   eight legacy fields on both, targets 80 and 84). The field is
   `max(spacing, target − limit)`.
-- Legacy OFDM rates take the row of the operating width on the D6220 (the
-  reference build, 7.14.89). The TG789vac and the agcombo read them from
-  somewhere else wherever a limit binds and at bonded widths, and the three
-  boards disagree pairwise, so this is the driver build's own legacy table;
-  `retrace-todo.md` has the numbers.
+- On the 4352 (D6220) the legacy rows keep their SROM distance from a
+  capped target, as above (`b43_phy_ac_rate_po()`); on the 4360 (TG789vac,
+  agcombo) each rate sits at its own entry of the finished table
+  (`b43_phy_ac_rate_po_capped()`, under `b43_phy_ac_legacy_capped()`). What
+  still misses is in `retrace-todo.md`, "Per-rate field `+0x0e`".
 - **The CCK rates sit at the 1 dBm floor**: their field
   (`b43_phy_ac_cck_rate_po()`) is `min(0xf8, 4 · (target − 4))` on all 86
   cold segments of the D6220 and the TG789vac, every width and sub-band
@@ -161,11 +160,20 @@ antenna gain the agcombo's driver reports (0) is not its SROM's (5.5), so
 with the SROM gain the port is wrong on that board and right on the other
 two.
 
-The sub-band table this replaces was an artefact of the two boards it was
-read from: with `maxp5ga` at 72/70/86 and 74/74/82 the headroom shrinks
-under the thresholds only where the Local Max is lowest, below 5250 MHz, so
-"sub-band 0 ⇒ partial masks" described them exactly and predicted the
-TG789vac (90/88/92/88) wrong on every channel above.
+**The stock limits**, from the three `curpower` dumps
+(`router-data/vd625-agcombo/stats.txt` at ch100/80 and ch36/80,
+`router-data/dsl3580l/wl1_curpower_ch52-bw80.txt`, two driver branches), per
+rate class, chain count and width; their structure is the same in all three
+to the quarter dB, only the level moves:
+
+| rows | offset |
+|---|---|
+| 1 chain (OFDM, MCS0-7, VHT8-9), 20in80 | Local Max − 2 dB |
+| 1 chain, 40in80 and 80 | Local Max − 1 dB |
+| CDD on 2 chains, STBC | 1 chain − 3 dB |
+| CDD on 3 chains | 1 chain − 5 dB |
+| TXBF on 2 chains | 1 chain − 6 dB |
+| TXBF on 3 chains | 1 chain − 9.75 dB |
 
 ## The second pass
 
