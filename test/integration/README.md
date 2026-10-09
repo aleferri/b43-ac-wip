@@ -11,21 +11,21 @@ README.
 
 ## Running it
 
-Prerequisites: `gcc`, `binutils`, `make`, `patch`, `curl`, `python3`, `unzip`
+Prerequisites: `gcc`, `binutils`, `make`, `curl`, `python3`, `unzip`
 (`gdb` for backtraces); kernel headers in `/usr/src`
 (`apt-get install linux-headers-generic`), which decide the b43 tag
 (`6.8.0-142` → `v6.8`; with several installed, pass `KVER=` to every `make`);
 network access to `raw.githubusercontent.com` for `make fetch`.
 
 ```sh
-make fetch          # vanilla b43 at the headers' tag + patches/: "applicate 5, saltate 5"
+make fetch          # vanilla b43 and bcma at the headers' tag, b43/ over it
 make check          # every file of b43 and of the port: must say "0 errori"
 make b43-trace      # expects "kernel 0" and only libc symbols unresolved
 ```
 
-The five bcma/ssb patches have nothing to apply here except their
-`include/linux/ssb/` hunks, which go into `kinc/`. If a patch fails, remove
-`b43-upstream kinc` before retrying: a half-patched tree still compiles.
+`make fetch` copies the whole files of `b43/` over the vanilla ones, the
+port's bcma core, ChipCommon, PMU and PCIe2 drivers over bcma's, and the two
+ssb headers of `bcma/include/linux/ssb/` into `kinc/`; nothing is patched.
 
 ### A run against a cold segment
 
@@ -138,7 +138,7 @@ The regulatory ceiling is not a knob: the D6220 has an empty `ccode`, and
 |---|---|
 | `bcma_stub.c` | the bus: MMIO reads from the oracle (`REG.RD`), shared memory at its byte offset, `MACCONTROL` as a latch, the ucode's `MAC_SUSPENDED`, the agent space as `WRAP.RD/WR`, `clk_ctl_st` |
 | `subsystem_stub.c` | mac80211/cfg80211: default channel, `power_level`, inline work items and firmware requests, the regulatory table |
-| `kernel_shim.c` | kernel services in user code, `__sw_hweight32` with the kernel's register contract |
+| `kernel_shim.c` | kernel services in user code, `__sw_hweight32` with the kernel's register contract; `cfg80211_calculate_bitrate` aborts, since no timeline sends a data frame |
 | `compat.h` | macros of kernels newer than the headers |
 | `trace_out.c` | trace output and the environment |
 

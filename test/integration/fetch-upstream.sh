@@ -11,9 +11,7 @@
 set -e
 KVER=${1:?uso: fetch-upstream.sh <versione-header, es. 6.8.0-139>}
 TAG=v$(echo "$KVER" | cut -d. -f1,2)
-# La destinazione e' sovrascrivibile: scripts/regen-patches.sh ha bisogno di
-# un albero vanilla a parte e non deve toccare quello della suite, che ha le
-# patch del port applicate sopra.
+# La destinazione e' sovrascrivibile con OUTDIR.
 DIR=${OUTDIR:-$(dirname "$0")/b43-upstream}
 ROOT=https://raw.githubusercontent.com/torvalds/linux/$TAG/drivers
 BASE=$ROOT/net/wireless/broadcom/b43
