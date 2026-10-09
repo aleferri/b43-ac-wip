@@ -1230,25 +1230,39 @@ static bool is_j_abs(u32 insn)
 
 /* ---- executable stub pool ---------------------------------------------
  *
- * kmalloc and not a static array, and the reason is the `j`. A one-word patch
- * can only be a `j`, whose 26-bit field keeps the top 4 bits of the PC, so the
- * short-j and the tail-call diversion work only if the stub sits in the same
- * 256MB region as the code being diverted. A static array lives in the
- * module's .data, which the module loader puts in the ordinary module area --
- * around 0xc3e5b000 on this family -- while the vendor loader puts `wl` in
- * KSEG0, around 0x80b9a000: different regions, and both one-word routes fall
- * back to the 4-word detour or the break. kmalloc returns KSEG0 too, so the
- * pool lands next to the target and the one-word routes become usable.
+ * Two pools, and the reason is the `j`. A one-word patch can only be a `j`,
+ * whose 26-bit field keeps the top 4 bits of the PC, so the short-j and the
+ * tail-call diversion work only if the stub sits in the same 256MB region as
+ * the code being diverted. Where `wl` sits depends on the loader: a vendor
+ * loader puts it in KSEG0, around 0x80b9a000, where kmalloc memory is too;
+ * the ordinary module loader puts it in the module area, around 0xc0aa2000 on
+ * the D6220, where this module's .bss is. scegli_pool() takes the pool in the
+ * region of the first symbol pianifica() resolves. The module area runs code
+ * on this kernel: ret_tramp below lives there.
  *
- * Nothing depends on this working: pianifica() checks the region hook by hook
- * and falls back on its own, so an allocation in the wrong region costs
- * coverage, not correctness.
+ * Nothing depends on the choice: pianifica() checks the region hook by hook
+ * and falls back on its own, so a pool in the wrong region costs coverage,
+ * not correctness. With the stubs out of reach a function with a branch in
+ * the 4-word window goes through its call sites, at most MAX_SITES of them.
  *
- * Freed only in wd_exit, never when the TARGET unloads: a stub still in flight
- * at the target's GOING has to keep running valid code. */
+ * Both are freed only in wd_exit, never when the TARGET unloads: a stub still
+ * in flight at the target's GOING has to keep running valid code. */
 #define STUB_WORDS 48
 #define STUB_POOL_BYTES (NHOOK * STUB_WORDS * sizeof(u32))
-static u32 (*stub_pool)[STUB_WORDS];
+static u32 (*stub_pool)[STUB_WORDS];		/* the one in use */
+static u32 (*stub_pool_k)[STUB_WORDS];		/* kmalloc: KSEG0 */
+static u32 stub_pool_m[NHOOK][STUB_WORDS] __attribute__((aligned(8)));
+static bool pool_scelto;
+
+static void scegli_pool(unsigned long a)
+{
+	stub_pool = !(((unsigned long)stub_pool_m ^ a) >> 28) ? stub_pool_m :
+							      stub_pool_k;
+	pool_scelto = true;
+	pr_info("wl_diag: stub pool @%px (%s), %s the target's 256MB j region\n",
+		stub_pool, stub_pool == stub_pool_m ? "module area" : "kmalloc",
+		!(((unsigned long)stub_pool ^ a) >> 28) ? "in" : "NOT in");
+}
 static u32 ret_tramp[16] __attribute__((aligned(8)));	/* shared return trampoline */
 
 /* The 'break' path for prologues that cannot be detoured (a branch in the
@@ -2053,6 +2067,7 @@ static void azzera_stato(void)
 	testo_stato = TESTO_DA_DECIDERE;
 	testo_base = 0;
 	testo_size = 0;
+	pool_scelto = false;
 
 	for (i = 0; i < NHOOK; i++) {
 		hooks[i].addr = 0;
@@ -2122,6 +2137,8 @@ static int pianifica(void)
 		}
 		hooks[i].addr = a;
 		o = (u32 *)a;
+		if (!pool_scelto)
+			scegli_pool(a);
 		/* The short-j and the tail-call diversion both need the stub in
 		 * the target's 256MB `j` region. When it is not there the hook is
 		 * not lost: it falls back on the 4-word window and, from there,
@@ -2474,15 +2491,16 @@ static int __init wd_init(void)
 
 	parse_skipphyrd();
 
-	stub_pool = kmalloc(STUB_POOL_BYTES, GFP_KERNEL);
-	if (!stub_pool) {
+	stub_pool_k = kmalloc(STUB_POOL_BYTES, GFP_KERNEL);
+	if (!stub_pool_k) {
 		pr_err("wl_diag: kmalloc of %u B for the stub pool failed\n",
 		       (unsigned int)STUB_POOL_BYTES);
 		return -ENOMEM;
 	}
-	pr_info("wl_diag: stub pool @%px (%u B): the one-word routes need it in "
-		"the target's 256MB j region\n",
-		stub_pool, (unsigned int)STUB_POOL_BYTES);
+	stub_pool = stub_pool_k;
+	pr_info("wl_diag: stub pools @%px (kmalloc) and @%px (module area), "
+		"%u B each\n", stub_pool_k, stub_pool_m,
+		(unsigned int)STUB_POOL_BYTES);
 
 	if (fifo_recs < 4096) {
 		pr_warn("wl_diag: fifo_recs=%d too small, using 4096\n", fifo_recs);
@@ -2494,8 +2512,8 @@ static int __init wd_init(void)
 		pr_err("wl_diag: vmalloc of %d KB for the queue failed. "
 		       "Retry with a lower fifo_recs.\n",
 		       (int)(fifo_recs * sizeof(struct wldiag_rec) / 1024));
-		kfree(stub_pool);
-		stub_pool = NULL;
+		kfree(stub_pool_k);
+		stub_pool_k = stub_pool = NULL;
 		return -ENOMEM;
 	}
 	err = kfifo_init(&fifo, fifo_buf, fifo_recs * sizeof(struct wldiag_rec));
@@ -2503,8 +2521,8 @@ static int __init wd_init(void)
 		pr_err("wl_diag: kfifo_init: %d\n", err);
 		vfree(fifo_buf);
 		fifo_buf = NULL;
-		kfree(stub_pool);
-		stub_pool = NULL;
+		kfree(stub_pool_k);
+		stub_pool_k = stub_pool = NULL;
 		return err;
 	}
 	pr_info("wl_diag: queue %d records (%d KB)\n", fifo_recs,
@@ -2516,8 +2534,8 @@ static int __init wd_init(void)
 		pr_err("wl_diag: proc_create(/proc/%s) failed\n", WD_PROC);
 		vfree(fifo_buf);
 		fifo_buf = NULL;
-		kfree(stub_pool);
-		stub_pool = NULL;
+		kfree(stub_pool_k);
+		stub_pool_k = stub_pool = NULL;
 		return -ENOMEM;
 	}
 
@@ -2555,8 +2573,8 @@ static int __init wd_init(void)
 		remove_proc_entry(WD_PROC, NULL);
 		vfree(fifo_buf);
 		fifo_buf = NULL;
-		kfree(stub_pool);
-		stub_pool = NULL;
+		kfree(stub_pool_k);
+		stub_pool_k = stub_pool = NULL;
 		return err;
 	}
 	mod_nb_registered = true;
@@ -2582,8 +2600,8 @@ static void __exit wd_exit(void)
 	fifo_buf = NULL;
 	/* after disarma(), which restores the words and then waits with
 	 * synchronize_sched for the stubs already in flight */
-	kfree(stub_pool);
-	stub_pool = NULL;
+	kfree(stub_pool_k);
+	stub_pool_k = stub_pool = NULL;
 	pr_info("wl_diag: unloaded (lost: %d, filtered: %d)\n",
 		atomic_read(&drops), atomic_read(&filtered));
 }
