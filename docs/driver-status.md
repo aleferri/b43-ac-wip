@@ -92,7 +92,8 @@ open.
 
 `b43/` and `bcma/` are the source of truth: whole kernel files, changed or
 new, over v6.8, the kernel `test/integration` builds against. The patches are
-generated from them and are not edited by hand, except for their message.
+generated from them and are not edited by hand, except for their message and
+the adaptations to their base.
 
 | patch | content | files |
 |---|---|---|
@@ -117,6 +118,11 @@ edit it in the patch and re-run. A new AC-PHY source file enters 0003 and
 816-03 through its line in `b43/Makefile`; any other file in `b43/` goes into
 0002 and 816-02. The 816 have `CPTCFG_B43` for `CONFIG_B43` and `b43info()`
 for `b43dbg()` in the port's lines.
+
+An adaptation that is not a substitution is written into the patch by hand,
+and the next run carries it like the others. The 816-02 has one: it sets
+`B43_RXRING_SLOTS` to 128 over the 32 of OpenWrt's 813, where `b43/` and
+0002 keep upstream's 256.
 
 `880` is 0001 for OpenWrt's kernel, which carries bcma and ssb (backports does
 not), and has no script.

@@ -10,7 +10,7 @@ Subject: [PATCH 1/2] b43: core support for the AC-PHY
  drivers/net/wireless/broadcom/b43/bcn_diag.h  |   38 +
  drivers/net/wireless/broadcom/b43/bus.c       |    4 +
  drivers/net/wireless/broadcom/b43/dma.c       |  194 +-
- drivers/net/wireless/broadcom/b43/dma.h       |   13 +-
+ drivers/net/wireless/broadcom/b43/dma.h       |   15 +-
  drivers/net/wireless/broadcom/b43/leds.c      |  225 ++-
  drivers/net/wireless/broadcom/b43/leds.h      |   24 +-
  drivers/net/wireless/broadcom/b43/main.c      | 1632 +++++++++++++++--
@@ -19,7 +19,7 @@ Subject: [PATCH 1/2] b43: core support for the AC-PHY
  drivers/net/wireless/broadcom/b43/pio.c       |   17 +-
  drivers/net/wireless/broadcom/b43/xmit.c      |  468 ++++-
  drivers/net/wireless/broadcom/b43/xmit.h      |   88 +
- 15 files changed, 2696 insertions(+), 412 deletions(-)
+ 15 files changed, 2697 insertions(+), 413 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/bcn_diag.c
  create mode 100644 drivers/net/wireless/broadcom/b43/bcn_diag.h
 
@@ -956,7 +956,7 @@ index e0a74f4..f7189c5 100644
  }
  
 diff --git a/drivers/net/wireless/broadcom/b43/dma.h b/drivers/net/wireless/broadcom/b43/dma.h
-index e86212b..d01f238 100644
+index e86212b..5725ad3 100644
 --- a/drivers/net/wireless/broadcom/b43/dma.h
 +++ b/drivers/net/wireless/broadcom/b43/dma.h
 @@ -167,12 +167,20 @@ struct b43_dmadesc_generic {
@@ -967,7 +967,8 @@ index e86212b..d01f238 100644
  
  /* DMA engine tuning knobs */
  #define B43_TXRING_SLOTS		256
- #define B43_RXRING_SLOTS		32
+-#define B43_RXRING_SLOTS		32
++#define B43_RXRING_SLOTS		128
  #define B43_DMA0_RX_FW598_BUFSIZE	(B43_DMA0_RX_FW598_FO + IEEE80211_MAX_FRAME_LEN)
  #define B43_DMA0_RX_FW351_BUFSIZE	(B43_DMA0_RX_FW351_FO + IEEE80211_MAX_FRAME_LEN)
 +/*

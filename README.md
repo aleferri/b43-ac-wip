@@ -97,7 +97,9 @@ at 4 Mbit/s.
   (see "What is missing").
 - **RX** works and is slow. Under traffic the RX ring underruns: 36
   `RX descriptor underrun` printed, and `net_ratelimit()` drops 78 messages,
-  between 268.9 s and 301.4 s. See `docs/retrace-todo.md`, "On hardware".
+  between 268.9 s and 301.4 s. The ring had the 32 slots of OpenWrt's 813;
+  the 816-02 now sets 128, not yet run on the board. See
+  `docs/retrace-todo.md`, "On hardware".
 - **Beacon**: the log does not tell whether the station found the AP from a
   beacon or from a probe response.
 

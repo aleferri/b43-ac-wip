@@ -1012,15 +1012,13 @@ ucode revision.
   uploads at 4 Mbit/s and downloads at 11. In the same log the RX ring
   underruns once at the association (229.5 s), then 36 `RX descriptor
   underrun` are printed, and `net_ratelimit()` drops 78 messages, between
-  268.9 s and 301.4 s. The underrun interrupt now drains the ring
-  (`b43_dma_rx_give()`) instead of handing back one slot; whether the log was
-  taken before or after that change is not recorded. On OpenWrt the ring has
-  32 slots (`813-b43-reduce-number-of-RX-slots.patch`, before the 816 in the
-  package), where the stock drivers keep the receive index 256 (6.30) and
-  500 (7.14) descriptors ahead of the engine. Every frame is decrypted by
-  mac80211 (no hardware crypto on the AC) and none is aggregated. Next: the
-  same traffic with a counter of underruns instead of the warning, with the
-  32 slots and with 256, and the CPU load of the softirq.
+  268.9 s and 301.4 s. Whether the log predates the underrun interrupt
+  draining the ring (`b43_dma_rx_give()`) is not recorded. The ring had 32
+  slots, from `813-b43-reduce-number-of-RX-slots.patch`, before the 816 in
+  the package; the 816-02 sets 128. Every frame is decrypted by mac80211 (no
+  hardware crypto on the AC) and none is aggregated. Next: the same traffic with a counter of underruns instead of
+  the warning, with the 128 slots and with 256, and the CPU load of the
+  softirq.
 - **Values of the bring-up logs against `cold01-ch36-bw20.txt`.** Same as the
   board's own driver: radio `0x040b` reads `0x0169` after power-on, `0x0140`
   goes `0x0df7 -> 0x0df4`. Same as 7.14 and not as 6.30, which the board
