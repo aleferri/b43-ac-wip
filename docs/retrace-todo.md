@@ -25,30 +25,11 @@ emits them at the stock points (`B43_AC_SITE_CORE_RESET`, `_UCODE_LOAD`,
 `_UCODE_START`, `_CORE_DOWN`). What differs from the stock driver in the
 core itself, seen on the agcombo bus capture:
 
-- `b43_wireless_core_reset()` wrote IHR only; the stock driver writes
-  IHR | AWAKE at every reset (brcmsmac does the same). The AC now does too
-  (see `AWAKE` under "Interrupts and DMA at the bus").
-- The PHY reset bracket, `0x14f -> 0x141 -> 0x145` on 6.30 and 7.14 alike
-  (FGC high while in reset, reset, FGC and PHY_CLKEN low together on
-  release, then the clock), where b43 wrote `0x14d -> 0x143 -> 0x145`: the
-  AC now follows it in `b43_bcma_phy_reset()`. The stock driver writes the
-  first value twice; the port once.
-- `b43_bcma_wireless_core_reset()` requested the two PLLs on `clk_ctl_st`
-  (`0x300`); neither stock driver does, 6.30 and 7.14 alike, and the PLL
-  status bits read up before any request (`0x03` on the MacBookAir6,1,
-  `EXTRESST` 7 on the agcombo). The AC no longer requests them.
-- The resets ask `b43_is_ac_core()`, the 802.11 core revision, not the PHY
-  type: the stock driver resets the AC way from its first reset on, after
-  reading only the EROM, chipcommon and the SROM (MacBookAir6,1 first load,
-  no PHY register before the first MACCONTROL write), and b43's first reset
-  of the attach comes before `b43_phy_versioning()`.
-- In AP mode the stock driver runs with `DISCPMQ` clear and without
-  `SHM_ENABLED` (`0x0416040x`). `SHM_ENABLED` is set by neither stock
-  driver nor by brcmsmac (`MCTL_SHM_EN`), and the AC no longer sets it in
-  `b43_chip_init()`. `DISCPMQ` stays set, so the AP value is `0x4416040x`:
-  the power management queue is out of scope (see below). `BEACPROMISC` is
-  set for an AP by `b43_adjust_opmode()`, as the stock driver does on the
-  AC.
+- The stock driver writes the first value of the PHY reset bracket
+  (`0x14f`) twice; `b43_bcma_phy_reset()` once.
+- In AP mode the stock driver runs with `DISCPMQ` clear (`0x0416040x`);
+  b43 keeps it set, `0x4416040x`: the power management queue is out of
+  scope (see below).
 - The mode bits the stock driver toggles inside the PHY's phases -- beacon
   promiscuity off at the tail of the channel switch and at the head of the
   down, INFRA off / DISCPMQ on / AP off on the down -- have no core site in
@@ -57,7 +38,7 @@ core itself, seen on the agcombo bus capture:
   `_DOWN_OPMODE`, `_DOWN_OPMODE_END`, and the head of the down from the flow);
   the BSS mode block before the TX power adjust -- TBTT hold, AP, INFRA,
   PRETBTT 2, beacon promiscuity -- is emitted by the flow before
-  `adjust_txpower`, which now suspends the MAC around its own body.
+  `adjust_txpower`, which suspends the MAC around its own body.
 - The MAC toggles the stock driver makes inside its down have no effect
   in b43: the PHY's down runs under `b43_wireless_core_stop()`'s suspend
   and the `b43_software_rfkill()` bracket, so the MAC stays suspended from
@@ -147,13 +128,8 @@ pieces in order. On the D6220 `cold01` (folded, op numbers of
 
 ### Order of the core init and of the exit around the PHY
 
-The stock driver brings the whole MAC up before it touches the PHY -- ucode,
-initvals, TX FIFOs, shared-memory cells, host flags, DMA rings, address
-tables -- and on the AC `b43_wireless_core_init()` does the same:
-`b43_chip_init()` stops after the MAC init and the PHY comes up at its end,
-after `b43_security_init()`. At exit the PHY goes down before the PSM stops,
-as the stock driver runs its down before the core reset. What still differs
-at the bus:
+On the AC, as in the stock driver, the whole MAC comes up before the PHY
+and the PHY goes down before the PSM stops. What still differs at the bus:
 
 - the six DMA interrupt masks: b43 writes all six, the stock driver
   `0x0024 = 0x10000` only;
@@ -175,25 +151,11 @@ With the agcombo capture's interrupts replayed (`IRQ` events of
 interrupt path and the rings are measurable. What differs from the stock
 driver:
 
-- `GEN_IRQ_MASK`: the agcombo's 7.14.43 runs with `0xb2e7a864` (after one
-  `0xb0e7a860` before the AP comes up), the MacBookAir6,1's 6.30.223, a
-  station, with `0xb0e7a860`: the AP adds TBTT and `0x02000000`. The AC now
-  runs with every bit of `0xb2e7a864` plus b43's `MAC_TXERR` and
-  `UCODE_DEBUG`, which the stock drivers mask, for its own reports:
-  `0xbae7aa64` (`B43_IRQ_MASKTEMPLATE_AC`), where b43 had `0x38058264`. That
-  unmasks the PSM watchdog, CCA, radio power-up, the general-purpose timer,
-  the three reserved bits of brcmsmac's `d11.h` and `PHY_TXERR`. As in
-  brcmsmac the watchdog restarts the controller, the timer is stopped,
-  `PHY_TXERR` is only acknowledged; the power-up and the reserved bits have
-  no handler. The mask writes differ from the capture by those two bits.
-- `AWAKE`: both stock drivers keep it set on every MACCONTROL write with
-  the MAC disabled (agcombo 85/85, MacBook 532/532); the 6.30 station
-  clears it only with the MAC enabled, and sets it again before every
-  suspend. b43 forces it around a suspend, but from the core reset to the
-  first `b43_mac_enable()` it wrote 11 values without it, the ucode upload
-  and start included. The AC now sets it at the core reset and in
-  `b43_chip_init()`, and `b43_validate_chipaccess()` expects it there. No `PWRUP` (`0x00200000`) is raised in either capture: the
-  ucode never reports a wake-up there.
+- `GEN_IRQ_MASK`: `0xbae7aa64` (`B43_IRQ_MASKTEMPLATE_AC`) is the
+  agcombo's AP mask, `0xb2e7a864`, plus b43's `MAC_TXERR` and `UCODE_DEBUG`,
+  which the stock drivers mask; the mask writes differ from the capture by
+  those two bits. The radio power-up and the three reserved bits of
+  brcmsmac's `d11.h` are unmasked with no handler.
 - Per interrupt b43 reads and acknowledges the DMA channels; the stock
   driver acknowledges channel 0 only, and only when it has a frame. Same on
   6.30: 672 acknowledgements of `0x0020` in the MacBook traffic capture and
@@ -208,23 +170,10 @@ driver:
   a descriptor protocol error after every MAC enable. Whether the D6220's
   7.14.89 writes the agcombo's is not in any capture, since the wl-diag ones
   have no MAC registers.
-- The ring and receive index: b43 asks the engine at DMA init, as the stock
-  driver does, by writing all ones to controller 0's TX ring address and
-  reading back which low bits stay (`b43_dma64_index_is_addr()`). An engine
-  that keeps bits 4-11 gets its ring address before the enable bit and the
-  low 32 bits of a descriptor's address in its index registers
-  (`op64_slot_index()`), with the default 8K ring. The DSL-3580L reads
-  `0xfffffff0` (`bringup-log-2026-10-07.txt`), as the archer-t5e's TX rings
-  do under 6.30, which posts the index as the descriptor's address
-  (`0xbcd58010` on a ring at `0xbcd58000`) and reports the current
-  descriptor as the low 16 bits of its address (`0x200085c0`).
-- The receive index: both stock drivers keep it ahead of the engine, which
-  fills up to the descriptor before it and stops there. The archer-t5e's
-  6.30 puts it 256 descriptors past the current one, ring at `0xbcd54000`,
-  `0x224 = 0xbcd55010` after `0x230` reads `0x10004010`; the agcombo's 7.14
-  500, `0x00c19f50` after `0x10008010`. Both advance it by one per frame.
-  b43 gives the engine every buffer but the one before the next it reads
-  (`b43_dma_rx_give()`), so a full ring never looks empty.
+- The receive index: the stock drivers keep it 256 (archer-t5e, 6.30) and
+  500 (agcombo, 7.14) descriptors ahead of the engine; b43 gives the engine
+  every buffer but the one before the next it reads (`b43_dma_rx_give()`),
+  on OpenWrt 128 of them (see "On hardware").
 - The stock driver reads the receive status twice per frame and the TSF
   once; b43 once and never. On 6.30 the TSF pair (`0x0180`/`0x0184`) also
   comes before every TX descriptor post.
@@ -279,11 +228,6 @@ same lever as `AC_FIRST_INIT`.
   configuration, b43's core does not do, and `test/unit` mirrors it. Wrong wherever the mask is (see
   "TX power"). `0x00d0` is written zero everywhere; nothing
   sets it.
-- **`0x078c`–`0x0790`**: the device's MAC, which every stock driver writes
-  and b43 writes through `B43_SHM_SH_AC_MACADDR`.
-- **`SLOTT`**: the bsinitvals give `0x14`, the stock driver writes `9` in the
-  readback block and the core writes `9` at core init. The `0x3ff` before it
-  in the wl-diag captures is CWmax in the scratch space, not the slot time.
 - **`PSM` (`0x05F4`), `TKIPTSCTTAK` (`0x0318`)** rest on the v4 layout
   assumption and have no evidence.
 - **Cipher numbering.** On the AC microcode WEP104 is `3` (a 13 byte key on
@@ -462,12 +406,9 @@ not yet run on the board. What is open:
   `0x680`, `0x682`, `0x700`, `0x684`) the bsinitvals. b43 takes them from
   `b0g0initvals42.fw`/`b0g0bsinitvals42.fw` of 6.30.163; the 6.30.223 values
   (decoded ops #1140–#1480) have not been diffed against them.
-- **`MACCMD` bit 2** (`B43_MACCMD_DFQ_VALID`): both stock drivers write
-  `0x4` right after `WLCOREREV` and keep it in every later command (archer-t5e
-  6.30 line 12323, agcombo 7.14 `#12697`); b43 now does the same on
-  `B43_FW_HDR_AC`. What it gates in the AC ucode is open. `compare_state.py`
-  files `MACCMD` among the volatile registers, so the state comparison does
-  not flag it.
+- **`MACCMD` bit 2** (`B43_MACCMD_DFQ_VALID`): set in every command on
+  `B43_FW_HDR_AC`, as both stock drivers do; what it gates in the AC ucode
+  is open.
 - **Missing:** the null-data template at template RAM `0x2c` (power save).
   The AC writes the station address at template RAM `0x48`, eight bytes,
   right after the address-match row of the station (index 63), and b43 does
@@ -495,9 +436,7 @@ not yet run on the board. What is open:
   station's keys and its address match entry, so a session is not
   programmed into the microcode. Open: the density, the block ack request
   after lost MPDUs, and the receive side, whose upload traffic the trap run
-  does not have. The trap's descriptor reads of that run came out `nobuf`:
-  the high address words carry bit 63 (`0x80000000`), which `dma_dd.c` now
-  accepts.
+  does not have.
 - **TX status.** `B43_FW_HDR_AC` reads both packages of an entry and decodes
   the first. In the low half of its first word bit 0 is the valid bit, bit 1
   is set on every first package, bit 2 marks an intermediate status, bit 3
@@ -543,11 +482,10 @@ not yet run on the board. What is open:
 - **Scratch and shared memory look alike to the comparison.**
   `tracelib.normalize()` drops `sel=`, and wl-diag prints a scratch word at
   four times its index, so scratch word 3 and shared `0x000c` are the same op
-  to `cmp_skip`. The PHY used to write CWmin/CWmax into shared memory and the
-  gates counted it a match. `test/unit` now traces scratch in the wl-diag
-  form; `test/integration` traces it at the bus, in words, so against a
-  wl-diag capture its scratch writes do not pair up. Keeping `sel=` and
-  folding the wl-diag form would fix both.
+  to `cmp_skip`. `test/unit` traces scratch in the wl-diag form;
+  `test/integration` traces it at the bus, in words, so against a wl-diag
+  capture its scratch writes do not pair up. Keeping `sel=` and folding the
+  wl-diag form would fix both.
 - **Not classified:** the read-modify-writes on `0x6b4`/`0x6b8` (BT coex),
   `0x6c6`, `0x6f0`/`0x6f2`, the `clk_ctl_st` pass on every hop, the `gptimer`
   writes.
@@ -566,7 +504,8 @@ sides write agree; what is open:
   4360 rev 3 as well, `wl` 6.30 writes `0x1ff` and the register reads `0x1ff`
   with b43 loaded. Whether the mask is per board, per driver build or the
   hardware's implemented resources is not established, and bcma has one
-  value for both chips.
+  value for both chips. The `wl-diag` captures trace the PLL and regulator
+  accessors (`PMU.PLL`, `PMU.RC`), not the resource masks.
 - **`pmucontrol` `NOILPONW`.** bcma sets it on every PMU revision but 1
   (`bcma_pmu_init()`); `wl` 6.30 on the MacBookAir6,1 clears it (`0x01770381`
   read, `0x01770581` written) and the register reads `0x01770181` with b43
@@ -932,12 +871,6 @@ Table `0x21` is written as zeros on 2.4 GHz, as on both boards.
   task migrating); where the double entry was seen is not recorded. On the
   hybrid 6.30.223 (MacBookAir6,1) the two arms of the attach are two entries,
   each after its own core reset, with the DMA rings probed in between.
-- **PMU resource mask.** `bcma/` sets `max_res_mask = 0x7ff` on every
-  4352/4360, the value read back on the agcombo and the DSL-3580L. The
-  hybrid `wl` 6.30.223 on the MacBookAir6,1 (4360 rev 3, 11 resources) writes
-  `0x1ff` twice in its attach, and leaves `0x1fb` up. Whether the mask is the
-  chip revision's or the driver's is open: the `wl-diag` captures trace the
-  PLL and regulator accessors (`PMU.PLL`, `PMU.RC`), not the resource masks.
 
 ## DSL-3580L (6.30): version differences, not debt
 
@@ -965,12 +898,9 @@ ucode revision.
 
 ## On hardware (DSL-3580L, OpenWrt)
 
-- **Beacon.** On `bringup-log-2026-10-07.txt` no beacon went out: the
-  beacon PHY TX control word at `0x00cc` held the initvals' CCK encoding,
-  which the core now sets to OFDM before each template
-  (`b43_write_beacon_phytxctl_ac()`). On `bringup-log-2026-10-08-bis..txt` a
-  station associates, which a probe response is enough for, so whether a
-  beacon goes out is still open. `b43/bcn_diag.c` logs the uploaded template,
+- **Beacon.** On `bringup-log-2026-10-08-bis..txt` a station associates,
+  which a probe response is enough for, so whether a beacon goes out is
+  open. `b43/bcn_diag.c` logs the uploaded template,
   what the microcode changes in template RAM, the MACCMD valid bits and the
   management frames with their TX status; it prints through `b43info()`
   every second, so it spends the rate limit (see the README). The stock
@@ -998,16 +928,12 @@ ucode revision.
   b43 writes the same cells in the same order. Whether 784.2 keeps them
   where b43's 784 layout puts them, and whether b43's beacon leaves the
   antenna, this board cannot say.
-- **TX under traffic.** With the DMA engine at its reset values and the AC TX
-  descriptor behind the TX offload header, `bringup-log-2026-10-08-bis..txt`
-  has a station through the WPA2 4-way handshake and traffic both ways, with
-  no DMA error and no restart. The first attempts end in
-  `AP-STA-POSSIBLE-PSK-MISMATCH`; one completes 22 s later. Not explained.
-  `bringup-log-2026-10-08.txt` has one `TX-status contains invalid cookie:
-  0x0000` before `AP-ENABLED`. The five core init cycles of
-  `bringup-log-2026-10-06.txt` and the descriptor protocol error on TX ring 3
-  came with the 7.14 engine parameters (see "Ring control"). b43 posts two
-  descriptors per frame where the stock driver mostly posts one.
+- **TX under traffic.** `bringup-log-2026-10-08-bis..txt` has a station
+  through the WPA2 4-way handshake and traffic both ways, with no DMA error
+  and no restart. The first attempts end in `AP-STA-POSSIBLE-PSK-MISMATCH`;
+  one completes 22 s later. Not explained. `bringup-log-2026-10-08.txt` has
+  one `TX-status contains invalid cookie: 0x0000` before `AP-ENABLED`. b43
+  posts two descriptors per frame where the stock driver mostly posts one.
 - **RX under traffic.** It works and is slow: at 20 MHz `NOHT` the station
   uploads at 4 Mbit/s and downloads at 11. In the same log the RX ring
   underruns once at the association (229.5 s), then 36 `RX descriptor
@@ -1045,7 +971,7 @@ ucode revision.
 - Size a tolerance on the residual of the model believed correct.
 - Emit a contiguous block at every site or none, and narrow `PERIMETER` in the
   same step.
-- Before saying a field is missing, look in `patches/`; before declaring a core
-  constant underivable, look in `brcmsmac`.
+- Before saying a field is missing, look in `b43/` and `bcma/`; before
+  declaring a core constant underivable, look in `brcmsmac`.
 - "Above 5250 MHz" and "radar duty" agree on ch52–140 and differ only on
   ch144–165: count any predicate on either over all 43 segments.
