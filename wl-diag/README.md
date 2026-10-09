@@ -15,13 +15,14 @@ variant leaves out.
 |---|---|
 | PHY registers, radio, PHY tables | `PHY.*` (and/or distinct), `RAD.*`, `TBL.*`, `PHY.RDW`/`WRW`, `PHY.WARR` |
 | object memory / SHM | `OBJ.RD`/`OBJ.WR`, `OBJ.BULKR`/`BULKW`, `OBJ.SET` |
-| template RAM | `TPL.*` |
+| template RAM | `TPL.*`; with `tpldump` set, the content of each `TPL.RAMW` in `TPL.DATA` |
 | MAC | `MAC.MCTRL`, `MAC.MHF`, `MAC.BW`, `AMT.WR`, `ADDRM.SET`, `RCMTA.WR`, `PHY.FGC` |
 | PMU, GPIO, core registers | `PMU.*`, `GPIO.*`, `SI.COREREG` |
 | OTP, SROM control | `OTP.*`, `SROMCTL.*` |
 | chanspec | `CS.SHM`, `CHANSPEC` |
 | userspace commands | `IOVAR.SET`, `IOCTL` (hook on `wlc_ioctl`) |
-| frames posted to a TX ring | `TX.PKT` + `TX.DATA` (hooks on `dma64_txfast`, `dma64_txunframed`), off until `txdump` is set |
+| frames posted to a TX ring | `TX.PKT` + `TX.DATA` (hooks on `dma64_txfast`, `dma64_txunframed`, or `wlc_txfifo` where those do not resolve), off until `txdump` is set |
+| frames received | `RX.PKT` + `RX.DATA` (hook on `wlc_recv`), off until `rxdump` is set |
 
 Reads carry their value through a return trampoline (`retcap` hooks), emitted
 as a `RETVAL` record after the read. Inline I/O through the `R_REG`/`W_REG`
@@ -56,7 +57,9 @@ through object memory
   (`phy_reg_write_array(pi, array, n)` takes a pointer and is only a marker;
   `wlc_bmac_write_ihr(hw, off, val)`, `wlc_bmac_set_shm(hw, off, val, len)`).
 - **Op codes** are the same numbers in both tracers (2.6.30 has 1-50 and
-  55-56, 3.4 1-56); a new op goes at the end of both enums. Hook-table fields use
+  55-59, 3.4 1-59); a new op goes at the end of both enums. 60-64 belong to
+  `../wl-mmio-trap/`, whose records merge into the same streams: the next op
+  here is 65. Hook-table fields use
   designated initializers: a positional field once shifted `retcap` to false
   for every hook.
 
@@ -87,6 +90,10 @@ of interest is `../reverse-tools/callsites_pic.py`'s question.
 | `skipphyrd` | empty | **PHY register** reads not to record, e.g. `"0x253,0x254"` |
 | `txdump` | `0` | bytes of each frame posted to a TX ring to record, up to 256; 168 cover the TX offload header, the d11 TX header and an 802.11 header. Writable at run time |
 | `txbudget` | `256` | frames left to record, counting down; write it again for more |
+| `tpldump` | `0` | bytes of each template RAM write to record, up to 1024; a beacon template is up to 512. Writable at run time |
+| `tplbudget` | `256` | template RAM writes left to record, counting down |
+| `rxdump` | `0` | bytes of each received frame to record, up to 256; 96 cover the RX header, the PLCP and an 802.11 header. Writable at run time |
+| `rxbudget` | `256` | RX frames left to record, counting down |
 | `klookup` | `0` | 2.6.30 only: address of `kallsyms_lookup_name` from `/proc/kallsyms`, which that kernel does not export to modules. `../reverse-tools/gen_syms.py` builds the `insmod` line |
 | `bump_ptr`, `restore_alloc` | — | 3.4 only: rewind the reserved-module allocator on the TG789vac v2 (see `../router-data/tg789vac-v2/README.md`) |
 
@@ -95,11 +102,11 @@ of interest is `../reverse-tools/callsites_pic.py`'s question.
 `dma64_txfast(di, p0, commit)` and `dma64_txunframed(di, buf, len, commit)`
 are where hnddma posts a frame to a TX ring, with the d11 TX header pushed in
 front: the PHY TX control words and PLCP of data frames reach the hardware
-only there, never through a register. At their entry `tx_rec()` reads the
+only there, never through a register. At their entry `pkt_rec()` reads the
 first `txdump` bytes of the frame, from the linear part of the `sk_buff` or
 from the buffer, and queues them as one group: a `TX.PKT` record (length
-posted, bytes following, 1 for a raw buffer) and the bytes in `TX.DATA`
-records, twelve each, packed like `MARK`. The decoder reads the header with
+posted, bytes following, 1 in `aux` for a raw buffer) and the bytes in
+`TX.DATA` records, twelve each, packed like `MARK`. The decoder reads the header with
 `../reverse-tools/d11ac_txh.py`, which `../wl-mmio-trap/` shares.
 
 ```sh
@@ -109,12 +116,68 @@ echo 256 > /sys/module/wl_diag/parameters/txbudget
 
 Unlike the trap at a TX index write, this costs one detour per frame and
 `wl` keeps its speed, so the rate control runs as it does without a tracer.
-Both functions are reached through hnddma's function table: the entry detour
-or the break path takes them, call sites cannot. That `p0` is an `sk_buff`
-comes from hnddma's and `linux_osl.h`'s GPL sources, not from this blob; the
-decoder checks the header's `frame_len` against the length, so if it is
-wrong the output says "layout non riconosciuto" instead of printing plausible
-fields.
+Both hnddma functions are LOCAL and reached through its function table: the
+entry detour or the break path takes them, call sites cannot, and where the
+module keeps no local symbols they do not resolve at all. That is the case
+of the 7.14.43.21 `wl_vd625.ko`, whose symbol table has no local function:
+`wlc_bmac_read/write_objmem16` and the two above come out "not found", every
+GLOBAL hook resolves. There the fallback is
+`wlc_txfifo(wlc, fifo, p, ...)`, GLOBAL, where wlc hands a frame with its
+header to the fifo; it is dropped when `dma64_txfast` hooks. In the table
+`addr_src` names the argument that holds the packet, `val_src` the length
+of a raw buffer.
+
+That the packet is an `sk_buff` and sits in a1 (hnddma) or a2 (`wlc_txfifo`,
+as in brcmsmac's `brcms_c_txfifo`) comes from GPL sources, not from these
+blobs; the decoder checks the header's `frame_len` against the length, so if
+it is wrong the output says "layout non riconosciuto" instead of printing
+plausible fields, and `addr_src` is what to change. On Broadcom's CPE
+kernels a packet can also be an FkBuff behind a pointer tagged in its low
+bits (this `wl` imports `fkb_xlate` and `fkb_free`): an unaligned packet
+pointer is recorded with 2 in `aux` and no bytes, so the decoder says how
+many frames came that way instead of reading them as an `sk_buff`.
+
+## RX frames
+
+`wlc_recv(wlc, p)` is where the bmac layer hands a received frame to wlc,
+the d11 RX header still in front of it. With `rxdump` set, `pkt_rec()`, the
+same function as for TX, records its start as `RX.PKT` + `RX.DATA`, and the
+decoder reads the header with `../reverse-tools/d11ac_rxh.py` at the offsets
+`b43_rx()` uses: frame length (checked against the packet's), PHY and MAC
+RX status, the two power bytes, the padding flag, the PLCP read by the frame
+type in PHY status 0, the 802.11 header, and the 16 bytes b43 does not read
+in raw. `p` in a1 comes from brcmsmac's `brcms_c_recv`, to be confirmed on
+the first capture as for the TX post.
+
+## One capture for templates, TX and RX
+
+`../wl-capture-scripts/capture_txrx.sh` takes all three in one stream: for
+each chanspec, template RAM content through the bring-up, then TX and RX
+headers while a station passes traffic both ways, cut by `MARK` records
+(`tpl <chanspec>`, `txrx <chanspec>`, `end`) for `split_trace.py --on mark`.
+
+## Template RAM content
+
+`wlc_bmac_write_template_ram(hw, offset, len, buf)` writes the beacon and
+probe response templates, with whatever the microcode expects in front of
+the frame, and also the PHY's tone waveforms. With `tpldump` set, the
+`TPL.RAMW` record keeps its offset and length and carries in `aux` the number
+of bytes of the write that follow in `TPL.DATA` records, one group as for
+`TX.PKT`; with it at 0, `aux` is 0 and nothing follows. `tplbudget` counts
+the writes left.
+
+```sh
+echo 512 > /sys/module/wl_diag/parameters/tpldump
+echo 64  > /sys/module/wl_diag/parameters/tplbudget
+```
+
+The decoder prints the `TPL.RAMW` line as before and the content under it:
+`../reverse-tools/d11_template.py` finds a beacon or probe response by its
+frame control and the SSID element that opens the body, prints the bytes in
+front of it raw, then header, fixed fields and elements; anything else, the
+waveforms included, comes out in hex. The tone waveforms of a calibration
+are many writes, so arm it after the bring-up, or with a budget that covers
+it.
 
 ## Build
 

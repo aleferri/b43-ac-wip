@@ -387,7 +387,13 @@ adaptation, and HT and VHT rates in transmission. What is open:
   is not checked against a capture: the receive header is in DMA memory,
   which none records. The signal is the larger of the two cores' powers in
   bytes 9 and 10 of the header, -128 for a core that did not receive, as
-  gonsolo's port reads them under 832.127.
+  gonsolo's port reads them under 832.127. Next: `wl-diag` with `rxdump`
+  records the start of every frame `wlc_recv` gets, RX header included, and
+  `reverse-tools/d11ac_rxh.py` reads it with b43's offsets: frame length
+  against the packet, PHY status 0's frame type against the PLCP, the
+  padding flag, the powers, and what the stock driver puts in +24..+39.
+  `wl-capture-scripts/capture_txrx.sh` takes it in the same run as the TX
+  headers and the templates.
 - **Receive buffer.** `B43_DMA0_RX_AC_BUFSIZE` holds a 3895-byte MPDU, the
   VHT minimum; the stock driver's own buffer size is not in any capture.
   The frame offset, 40, is the one both stock drivers write into the RX
@@ -881,7 +887,11 @@ ucode revision.
   beacon goes out is still open. `b43/bcn_diag.c` logs the uploaded template,
   what the microcode changes in template RAM, the MACCMD valid bits and the
   management frames with their TX status; it prints through `b43info()`
-  every second, so it spends the rate limit (see the README).
+  every second, so it spends the rate limit (see the README). The stock
+  side: `wl-diag` with `tpldump` on the DSL-3580L's own `wl` records each
+  template RAM write with its content, so the stock beacon template, the
+  bytes in front of the frame included, can be set beside what
+  `bcn_diag` logs for b43's.
 - **TX under traffic.** With the DMA engine at its reset values and the AC TX
   descriptor behind the TX offload header, `bringup-log-2026-10-08-bis..txt`
   has a station through the WPA2 4-way handshake and traffic both ways, with

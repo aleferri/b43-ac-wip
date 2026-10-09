@@ -173,6 +173,10 @@ enum wldiag_op {
 	OP_PHY_FGC,					/* 51 (append) */
 	OP_IOCTL, OP_IOVAR_NAME, OP_IOVAR_SET,		/* 52,53,54 (append) */
 	OP_TX_PKT, OP_TX_DATA,				/* 55,56 (append) */
+	OP_TPL_DATA,					/* 57 (append) */
+	OP_RX_PKT, OP_RX_DATA,				/* 58,59 (append) */
+	/* 60-64 are wl-mmio-trap's (MMIO.*, DMA.*), merged into the same
+	 * streams: the next op here is 65. */
 	OP_DROP = 255,
 };
 struct wldiag_rec {
@@ -312,13 +316,15 @@ static u32 emit(u8 op, u32 addr, u32 val, u32 aux)
 }
 
 /*
- * A record followed by n bytes in data records, twelve per record packed
- * big-endian like MARK, queued under one lock hold so that the sequence
- * numbers of the group are consecutive and no other cpu's record falls
- * inside it. All or nothing: a group that does not fit counts as lost whole.
+ * A record followed by n bytes of kernel memory at src in data records,
+ * twelve per record packed big-endian like MARK, queued under one lock hold
+ * so that the sequence numbers of the group are consecutive and no other
+ * cpu's record falls inside it. All or nothing: a group that does not fit
+ * counts as lost whole. The caller checks src with readable() first; a chunk
+ * that still faults is recorded as zeros.
  */
 static u32 emit_group(u8 op, u32 addr, u32 val, u32 aux, u8 dop,
-		      const u8 *b, u32 n)
+		      const u8 *src, u32 n)
 {
 	struct wldiag_rec r;
 	unsigned long flags;
@@ -341,9 +347,13 @@ static u32 emit_group(u8 op, u32 addr, u32 val, u32 aux, u8 dop,
 			first = r.seq;
 		} else {
 			u32 w[3] = { 0, 0, 0 }, o = (i - 1) * 12;
+			u8 c[12];
+			u32 m = n - o < 12 ? n - o : 12;
 
-			for (k = 0; k < 12 && o + k < n; k++)
-				w[k / 4] |= (u32)b[o + k] << (24 - 8 * (k % 4));
+			if (probe_kernel_read(c, src + o, m))
+				memset(c, 0, m);
+			for (k = 0; k < m; k++)
+				w[k / 4] |= (u32)c[k] << (24 - 8 * (k % 4));
 			r.op = dop;
 			r.addr = w[0]; r.val = w[1]; r.aux = w[2];
 		}
@@ -352,6 +362,16 @@ static u32 emit_group(u8 op, u32 addr, u32 val, u32 aux, u8 dop,
 	raw_spin_unlock_irqrestore(&fifo_lock, flags);
 	wake_up_interruptible(&rq);
 	return first;
+}
+
+/* Whether n bytes at p can be read. They are one buffer of the driver, in
+ * lowmem or vmalloc, so its two ends answer for the middle. */
+static bool readable(const void *p, u32 n)
+{
+	u8 c;
+
+	return n && !probe_kernel_read(&c, p, 1) &&
+	       !probe_kernel_read(&c, (const u8 *)p + n - 1, 1);
 }
 
 /* ---- markers ---------------------------------------------------------- *
@@ -477,7 +497,8 @@ static struct hook hooks[] = {
 	{ "wlc_bmac_mhf",       OP_MAC_MHF_W, 1, 3, 2, .nargx = 1 },
 	{ "wlc_bmac_mhf_get",   OP_MAC_MHF_R, 1, 0, 0, .retcap = true },
 	/* Template RAM: where the PHY loads the tone waveforms, the input of
-	 * RXIQ, PAPD and do_dummy_tx.
+	 * RXIQ, PAPD and do_dummy_tx, and where the beacon and probe response
+	 * templates go. tpl_rec() records the content of the bulk write.
 	 * On 6.30 the ptr/data accessors do not exist: there, only the bulk.
 	 *
 	 * short-j on all four: on 7.14.89 the branch sits in word 2 of every one
@@ -491,7 +512,7 @@ static struct hook hooks[] = {
 	  .shortj = true, .retcap = true },
 	{ "wlc_bmac_templatedata_rreg", OP_TPL_DATR, 0, 0, 0,
 	  .shortj = true, .retcap = true },
-	{ "wlc_bmac_write_template_ram", OP_TPL_RAMW, 1, 2, 3 },
+	{ "wlc_bmac_write_template_ram", OP_TPL_RAMW, 1, 2, 0 },
 	/* OTP: the generic layer has the same names on 6.30 and 7.14 and a clean
 	 * prologue, while the hndotp_ and ipxotp_ ones change. The content is the
 	 * SROM image, static and already known from the dumps: what this is for is
@@ -741,21 +762,45 @@ static struct hook hooks[] = {
 	{ "read_radio_reg",     OP_RADIO_R,   1, 0, 0, .shortj = true, .retcap = true },
 	/* The frames wl posts to a TX ring, d11 TX header in front: what the
 	 * DMA engine is handed, the PHY TX control words of data frames
-	 * included, which no register access carries. tx_rec() reads them;
-	 * nothing is recorded until txdump is set. Signatures of hnddma's GPL
+	 * included, which no register access carries. pkt_rec() reads them;
+	 * nothing is recorded until txdump is set. addr_src is the argument
+	 * that holds the osl packet (or the buffer, with txraw), val_src the
+	 * length of a raw buffer. Signatures of the GPL sources:
+	 *
+	 *   dma64_txfast(di, p0, commit)            hnddma, p0=a1
+	 *   dma64_txunframed(di, buf, len, commit)  hnddma, buf=a1, len=a2
+	 *   wlc_txfifo(wlc, fifo, p, ...)           brcmsmac's brcms_c_txfifo,
+	 *                                           p=a2
+	 *
+	 * hnddma's are LOCAL, reached through its function table, so call
+	 * sites cannot take them; where the module keeps no local symbols, as
+	 * the 7.14.43.21 wl_vd625.ko, they do not resolve at all. wlc_txfifo is
+	 * GLOBAL and is where wlc hands a frame to its fifo, the header pushed:
+	 * the fallback, dropped when dma64_txfast hooks.
+	 *
+	 * TO BE CONFIRMED on the first capture: that the packet is an sk_buff,
+	 * as linux_osl.h makes it, and that p is a2 in this wl's wlc_txfifo.
+	 * The decoder checks the header's frame_len against the length, so a
+	 * wrong guess shows as an unrecognised layout and not as plausible
+	 * fields. */
+	{ "dma64_txfast",       OP_TX_PKT,    1, 0, 0 },
+	{ "dma64_txunframed",   OP_TX_PKT,    1, 2, 0, .txraw = true },
+	{ "wlc_txfifo",         OP_TX_PKT,    2, 0, 0,
+	  .ripiego_di = "dma64_txfast" },
+	/* The frames the bmac layer hands to wlc, d11 RX header in front:
+	 * frame length, PHY and MAC RX status, then the PLCP (the HT-SIG or
+	 * VHT-SIG-A b43_rx_rate_ac() reads) and the frame. pkt_rec() reads
+	 * them; nothing is recorded until rxdump is set. Signature of the GPL
 	 * sources:
 	 *
-	 *   dma64_txfast(di, p0, commit)            p0 = the osl packet
-	 *   dma64_txunframed(di, buf, len, commit)  buf, len
+	 *   wlc_recv(wlc, p)              brcmsmac's brcms_c_recv, p=a1,
+	 *                                 p->data at the RX header
 	 *
-	 * Both are LOCAL in the 7.14.89 blob and reached through hnddma's
-	 * function table, so call sites cannot take them: the entry detour or
-	 * the break path. TO BE CONFIRMED on the first capture: that p0 is an
-	 * sk_buff, as linux_osl.h makes it. The decoder checks the header's
-	 * frame_len against the length, so a wrong guess shows as an
-	 * unrecognised layout and not as plausible fields. */
-	{ "dma64_txfast",       OP_TX_PKT,    0, 0, 0 },
-	{ "dma64_txunframed",   OP_TX_PKT,    0, 0, 0, .txraw = true },
+	 * GLOBAL, in .text.fastpath in wl_vd625.ko. TO BE CONFIRMED on the
+	 * first capture, like the TX post: p in a1 and the header still in
+	 * front of the frame at the entry. The decoder checks the header's
+	 * frame length against the packet's. */
+	{ "wlc_recv",           OP_RX_PKT,    1, 0, 0 },
 };
 #define NHOOK ARRAY_SIZE(hooks)
 
@@ -817,15 +862,19 @@ static u32 ioctl_rec(u32 cmd, u32 buf, u32 len)
 }
 
 /*
- * One frame posted to a TX ring: a TX.PKT record (addr = the length posted,
- * val = the bytes that follow, aux = 1 for a raw buffer) and up to txdump
- * bytes of it in TX.DATA records, one group (emit_group). Off with txdump 0;
- * txbudget counts the frames left and is written again for more. Both can be
- * changed while tracing. Only the linear part of an sk_buff is read, where
- * the driver pushed the header; every read goes through probe_kernel_read(),
- * so a pointer that is not what the signature says costs the record.
+ * One frame at the TX post or at the RX hand-over, with the start of its
+ * bytes: a TX.PKT / RX.PKT record (addr = the length, val = the bytes that
+ * follow, aux = PKT_F_*) and up to txdump / rxdump bytes of the frame in
+ * TX.DATA / RX.DATA records, one group (emit_group). Off with the dump
+ * length at 0; the budget counts the frames left and is written again for
+ * more. All four can be changed while tracing. Only the linear part of an
+ * sk_buff is read, where the driver keeps the d11 header; every read goes
+ * through probe_kernel_read(), so a pointer that is not what the signature
+ * says costs the record.
  */
-#define TXDUMP_MAX 256
+#define PKTDUMP_MAX 256
+#define PKT_F_RAW	1	/* aux: a raw buffer, not an osl packet */
+#define PKT_F_TAGGED	2	/* aux: a tagged nbuff pointer, not read */
 
 static uint txdump;
 module_param(txdump, uint, 0644);
@@ -833,29 +882,45 @@ MODULE_PARM_DESC(txdump, "bytes of each frame posted to a TX ring to record, up 
 
 static uint txbudget = 256;
 module_param(txbudget, uint, 0644);
-MODULE_PARM_DESC(txbudget, "frames left to record; counts down to 0 (default 256)");
+MODULE_PARM_DESC(txbudget, "TX frames left to record; counts down to 0 (default 256)");
 
-static u32 tx_rec(const struct hook *h, u32 a1, u32 a2)
+static uint rxdump;
+module_param(rxdump, uint, 0644);
+MODULE_PARM_DESC(rxdump, "bytes of each received frame to record, up to 256; 0=off (default). 96 covers the d11 RX header, the PLCP and an 802.11 header");
+
+static uint rxbudget = 256;
+module_param(rxbudget, uint, 0644);
+MODULE_PARM_DESC(rxbudget, "RX frames left to record; counts down to 0 (default 256)");
+
+static u32 pkt_rec(const struct hook *h, u32 a1, u32 a2, u32 a3,
+		   u8 op, u8 dop, uint want, uint *budget)
 {
-	u8 b[TXDUMP_MAX];
+	u32 p = pick(h->addr_src, a1, a2, a3);
 	const u8 *data;
-	u32 want = ACCESS_ONCE(txdump), len, lin, n;
+	u32 len, lin, n;
 	uint left;
 
-	if (!want || !a1)
+	if (!want || !p)
 		return 0;
 	do {
-		left = ACCESS_ONCE(txbudget);
+		left = ACCESS_ONCE(*budget);
 		if (!left)
 			return 0;
-	} while (cmpxchg(&txbudget, left, left - 1) != left);
+	} while (cmpxchg(budget, left, left - 1) != left);
 
 	if (h->txraw) {
-		data = (const u8 *)(unsigned long)a1;
-		len = lin = a2;
+		data = (const u8 *)(unsigned long)p;
+		len = lin = pick(h->val_src, a1, a2, a3);
 	} else {
-		const struct sk_buff *skb = (const void *)(unsigned long)a1;
+		const struct sk_buff *skb = (const void *)(unsigned long)p;
 		unsigned int l, dl;
+
+		/* Broadcom's CPE kernels pass an FkBuff as an nbuff pointer
+		 * tagged in its low bits; this wl imports fkb_xlate and
+		 * fkb_free. An sk_buff is aligned, so a tagged pointer is
+		 * recorded as such, with no bytes, and not read. */
+		if (p & 3)
+			return emit_group(op, 0, 0, PKT_F_TAGGED, dop, NULL, 0);
 
 		if (probe_kernel_read(&data, &skb->data, sizeof(data)) ||
 		    probe_kernel_read(&l, &skb->len, sizeof(l)) ||
@@ -865,10 +930,52 @@ static u32 tx_rec(const struct hook *h, u32 a1, u32 a2)
 		lin = dl <= l ? l - dl : 0;
 	}
 	n = min_t(u32, want, lin);
-	n = min_t(u32, n, TXDUMP_MAX);
-	if (n && probe_kernel_read(b, data, n))
+	n = min_t(u32, n, PKTDUMP_MAX);
+	if (!readable(data, n))
 		n = 0;
-	return emit_group(OP_TX_PKT, len, n, h->txraw, OP_TX_DATA, b, n);
+	return emit_group(op, len, n, h->txraw ? PKT_F_RAW : 0, dop, data, n);
+}
+
+/*
+ * One write to template RAM with its content: the TPL.RAMW record as before
+ * (addr = offset, val = length in bytes) with aux = the bytes that follow in
+ * TPL.DATA records, one group (emit_group). The beacon and the probe
+ * response templates go through here, PLCP and header in front of the
+ * frame, and so do the PHY's tone waveforms. Off with tpldump 0, when the
+ * record carries no content and aux is 0; tplbudget counts the writes left.
+ * Both can be changed while tracing.
+ *
+ *   wlc_bmac_write_template_ram(hw, offset, len, buf)  offset=a1, len=a2,
+ *                                                      buf=a3
+ */
+#define TPLDUMP_MAX 1024
+
+static uint tpldump;
+module_param(tpldump, uint, 0644);
+MODULE_PARM_DESC(tpldump, "bytes of each template RAM write to record, up to 1024; 0=off (default). A beacon template is up to 512");
+
+static uint tplbudget = 256;
+module_param(tplbudget, uint, 0644);
+MODULE_PARM_DESC(tplbudget, "template RAM writes left to record; counts down to 0 (default 256)");
+
+static u32 tpl_rec(u32 off, u32 len, u32 buf)
+{
+	const u8 *src = (const u8 *)(unsigned long)buf;
+	u32 n = min_t(u32, ACCESS_ONCE(tpldump), len);
+	uint left;
+
+	n = min_t(u32, n, TPLDUMP_MAX);
+	if (!n || !buf)
+		return emit(OP_TPL_RAMW, off, len, 0);
+	do {
+		left = ACCESS_ONCE(tplbudget);
+		if (!left)
+			return emit(OP_TPL_RAMW, off, len, 0);
+	} while (cmpxchg(&tplbudget, left, left - 1) != left);
+
+	if (!readable(src, n))
+		n = 0;
+	return emit_group(OP_TPL_RAMW, off, len, n, OP_TPL_DATA, src, n);
 }
 
 /* Landing point of the detour: called from the stub with (id, a1, a2, a3). */
@@ -886,7 +993,13 @@ wl_diag_hook(u32 id, u32 a1, u32 a2, u32 a3)
 	if (h->op == OP_IOCTL)
 		return ioctl_rec(a1, a2, a3);
 	if (h->op == OP_TX_PKT)
-		return tx_rec(h, a1, a2);
+		return pkt_rec(h, a1, a2, a3, OP_TX_PKT, OP_TX_DATA,
+			       ACCESS_ONCE(txdump), &txbudget);
+	if (h->op == OP_RX_PKT)
+		return pkt_rec(h, a1, a2, a3, OP_RX_PKT, OP_RX_DATA,
+			       ACCESS_ONCE(rxdump), &rxbudget);
+	if (h->op == OP_TPL_RAMW)
+		return tpl_rec(a1, a2, a3);
 
 	return emit(h->op, pick(h->addr_src, a1, a2, a3),
 			   pick(h->val_src,  a1, a2, a3),
@@ -2041,8 +2154,8 @@ static int pianifica(void)
 					break;
 				}
 			if (sotto) {
-				pr_info("wl_diag: skipping '%s': it is a thunk on "
-					"'%s', which did get hooked -- "
+				pr_info("wl_diag: skipping '%s': it is a fallback "
+					"for '%s', which did get hooked -- "
 					"otherwise every op would come out twice\n",
 					h->name, h->ripiego_di);
 				h->addr = 0;

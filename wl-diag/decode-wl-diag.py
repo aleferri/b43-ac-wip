@@ -53,16 +53,27 @@
 # which cover the SHM space ONLY -- there aux is always 0 and the accesses to
 # SCR and IHR do not appear.
 # TX.PKT (55) + TX.DATA (56): a frame posted to a TX ring, at the entry of
-# dma64_txfast/txunframed. TX.PKT carries the length posted (addr), the bytes
-# that follow (val) and aux=1 for a raw buffer; the TX.DATA records, right
+# the TX post. TX.PKT carries the length posted (addr), the bytes that
+# follow (val) and in aux 1 for a raw buffer, 2 for a tagged nbuff pointer
+# that was not read; the TX.DATA records, right
 # after it, carry the bytes, twelve per record packed like MARK. The d11 AC TX
 # header is read by ../reverse-tools/d11ac_txh.py, the same one
 # decode-wl-mmio.py uses; a layout that does not add up is printed in hex.
+# TPL.RAMW (31) + TPL.DATA (57): with tpldump set, aux of a TPL.RAMW is the
+# number of bytes of the write that follow in TPL.DATA records, packed the
+# same way. The TPL.RAMW line stays as it is; the content follows it,
+# indented, read by ../reverse-tools/d11_template.py when it holds a beacon
+# or a probe response, in hex otherwise.
+# RX.PKT (58) + RX.DATA (59): a received frame at the entry of wlc_recv, the
+# same shape as TX.PKT. The RX header is read by
+# ../reverse-tools/d11ac_rxh.py as b43_rx() reads it.
 import os, sys, struct
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "..", "reverse-tools"))
 import d11ac_txh
+import d11_template
+import d11ac_rxh
 
 REC = struct.Struct(">QIIIIBBH")   # ts_ns, seq, addr, val, aux, op, cpu, _pad
 SZ = REC.size                       # 28
@@ -84,7 +95,8 @@ OPS = {
     49: "IHR.WR",    50: "OBJ.SET",
     51: "PHY.FGC",
     52: "IOCTL",      53: "IOVAR.NAME", 54: "IOVAR.SET",
-    55: "TX.PKT",     56: "TX.DATA",
+    55: "TX.PKT",     56: "TX.DATA",    57: "TPL.DATA",
+    58: "RX.PKT",     59: "RX.DATA",
     26: "CHANSPEC",
     27: "TPL.PTRW",  28: "TPL.DATW",
     29: "TPL.PTRR",  30: "TPL.DATR",  31: "TPL.RAMW",
@@ -167,25 +179,40 @@ def unmark(addr, val, aux):
 IOCTL, IOVAR_NAME, IOVAR_SET = 52, 53, 54
 IOCTL_NAMES = {2: "UP", 3: "DOWN", 26: "SET_SSID"}
 TX_PKT, TX_DATA = 55, 56
+TPL_RAMW, TPL_DATA = 31, 57
+RX_PKT, RX_DATA = 58, 59
+DATA_OF = {TX_DATA: TX_PKT, TPL_DATA: TPL_RAMW, RX_DATA: RX_PKT}
 
 
-def print_pkt(pkt):
-    """A TX.PKT with its bytes; cut short if another record arrived before
-    the end of the group, that is if some were lost."""
-    data = pkt["data"][:pkt["need"]]
-    src = "buf" if pkt["raw"] else "pkt"
-    lines = [f"{src} len={pkt['len']} bytes={pkt['need']}"]
-    if len(data) < pkt["need"]:
+def print_group(g):
+    """A TX.PKT, RX.PKT or TPL.RAMW with its bytes; cut short if another
+    record arrived before the end of the group, that is if some were lost."""
+    data = g["data"][:g["need"]]
+    if g["op"] in (TX_PKT, RX_PKT):
+        src = ("buf" if g["aux"] & 1 else
+               "nbuff-tagged, not read" if g["aux"] & 2 else "pkt")
+        name = "TX.PKT" if g["op"] == TX_PKT else "RX.PKT"
+        first = f"{name:<8} {src} len={g['addr']} bytes={g['need']}"
+        describe = (d11ac_txh.describe if g["op"] == TX_PKT
+                    else d11ac_rxh.describe)
+        dump = d11ac_txh.hexdump
+        args = (data, g["addr"])
+    else:
+        first = (f"{'TPL.RAMW':<8} addr={h(g['addr'], False)} "
+                 f"val={h(g['val'], False)}")
+        describe, dump = d11_template.describe, d11_template.hexdump
+        args = (data,)
+    lines = [first]
+    if len(data) < g["need"]:
         lines[0] += f" troncato a {len(data)}"
     elif data:
-        txh = d11ac_txh.describe(data, pkt["len"])
-        if txh is None:
+        txt = describe(*args)
+        if txt is None:
             lines.append("layout non riconosciuto:")
-            lines += d11ac_txh.hexdump(data)
+            lines += dump(data)
         else:
-            lines += txh
-    print(f"{pkt['t']:14.6f} #{pkt['seq']:<8} cpu{pkt['cpu']} "
-          f"{'TX.PKT':<8} {lines[0]}")
+            lines += txt
+    print(f"{g['t']:14.6f} #{g['seq']:<8} cpu{g['cpu']} {lines[0]}")
     for line in lines[1:]:
         print(" " * 17 + line)
 
@@ -194,7 +221,7 @@ def main():
     f = sys.stdin.buffer
     buf = b""
     iovar_name = {}
-    pkt = None          # a TX.PKT waiting for its TX.DATA
+    group = None        # a TX.PKT or TPL.RAMW waiting for its data records
     while True:
         chunk = f.read(4096)
         if not chunk:
@@ -206,28 +233,29 @@ def main():
             name = OPS.get(op, f"op{op}")
             t = ts / 1e9
             wide = op in WIDE
-            if op == TX_DATA:
-                if pkt is None:
+            if op in DATA_OF:
+                if group is None or group["op"] != DATA_OF[op]:
                     print(f"{t:14.6f} #{seq:<8} cpu{cpu} {name:<8} "
-                          "orfano (TX.PKT perso)")
+                          "orfano (record di testa perso)")
                     continue
-                pkt["data"] += b"".join(x.to_bytes(4, "big")
-                                        for x in (addr, val, aux))
-                if len(pkt["data"]) < pkt["need"]:
+                group["data"] += b"".join(x.to_bytes(4, "big")
+                                          for x in (addr, val, aux))
+                if len(group["data"]) < group["need"]:
                     continue
-                print_pkt(pkt)
-                pkt = None
+                print_group(group)
+                group = None
                 sys.stdout.flush()
                 continue
-            if pkt is not None:
-                print_pkt(pkt)
-                pkt = None
-            if op == TX_PKT:
-                pkt = {"t": t, "seq": seq, "cpu": cpu, "len": addr,
-                       "need": val, "raw": aux, "data": b""}
-                if not val:
-                    print_pkt(pkt)
-                    pkt = None
+            if group is not None:
+                print_group(group)
+                group = None
+            if op in (TX_PKT, RX_PKT) or (op == TPL_RAMW and aux):
+                group = {"op": op, "t": t, "seq": seq, "cpu": cpu,
+                         "addr": addr, "val": val, "aux": aux,
+                         "need": aux if op == TPL_RAMW else val, "data": b""}
+                if not group["need"]:
+                    print_group(group)
+                    group = None
                 continue
             if op == IOVAR_NAME:
                 iovar_name[cpu] = iovar_name.get(cpu, "") + unmark(addr, val, aux)

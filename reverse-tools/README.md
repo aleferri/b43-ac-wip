@@ -55,6 +55,14 @@ gate. The comparison itself is `test/unit/compare.py` (positional) and
   shared by `decode-wl-diag.py` and `decode-wl-mmio.py`: packet info, rate
   blocks with the PHY TX control words, the PLCP read as L-SIG, HT-SIG or
   VHT-SIG-A, the 802.11 header.
+- **d11ac_rxh.py**: the d11 AC RX header as b43's `b43_rx()` reads it
+  (frame length, PHY and MAC RX status, powers, padding, PLCP by frame
+  type, 802.11 header), so a capture of the stock driver checks b43's RX
+  path; for `decode-wl-diag.py`.
+- **d11_template.py**: a beacon or probe response template as written to
+  template RAM: the bytes in front of the frame raw, then header, fixed
+  fields and elements (SSID, DS, TIM, HT and VHT operation decoded), for
+  `decode-wl-diag.py`.
 - **tracelib.py**: parsing, op normalisation, attribution of each op to its
   function through the marker stack, capture discovery inside archives
   (`archive.zip!inner.txt`). It defines "the same op".
