@@ -435,8 +435,16 @@ hardware"). What is open:
     (`sb >> bw`) on every frame, which is the primary at 20 MHz and 0 on a
     frame that fills the channel.
 
-  Not in the code read so far: FBW, MAC TX control and the RTS/CTS word of
-  6.30. A short run of `wl-mmio-trap` with `dd_len` checks the headers on
+  The D6220's 7.14.89 (`wlD6220.o_save`) has the same functions with
+  6.30's constants and branches, and beamforming on top:
+  `wlc_acphy_txctl0_calc()` without the flag that set bit 3 and took every
+  chain (7.14 sets it outside), `wlc_acphy_txctl1_calc_ex()` the same
+  `sb >> (bw - 1) | power << 3` with the power from the caller,
+  `wlc_acphy_txctl2_calc()` the same word 2, `wlc_compute_plcp()` the same
+  HT-SIG and VHT-SIG-A plus the beamformed bit of SIG-A2 (bit 8) on a
+  beamformed VHT rate. A 7.14.89 capture with `wl txbf 0` therefore shows
+  the words 6.30 would build. Not in the code read so far: FBW, MAC TX
+  control and the RTS/CTS word, which that capture has. A short run of `wl-mmio-trap` with `dd_len` checks the headers on
   the bus side.
 - **RX rates.** `b43_rx_rate_ac()` takes the frame type from PHY RX status
   0 with HT at 2 and VHT at 3, Broadcom's FT_HT and FT_VHT for these PHYs,

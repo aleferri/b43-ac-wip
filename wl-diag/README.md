@@ -186,9 +186,14 @@ passes traffic both ways, cut by `MARK` records
 station joins as HT and the frames are HT (frame type 2); 80 MHz needs VHT,
 so that run takes the 20 and 40 MHz chanspecs:
 
+`TXBF=0` sets `wl txbf 0` the same way: on 7.14.89 the PHY TX control words
+and the PLCP come from functions that are 6.30's plus beamforming (see
+`../docs/retrace-todo.md`, "TX"), so without it the descriptors are those
+6.30 would build.
+
 ```sh
-VHTMODE=0 sh capture_txrx.sh wl1 test-ap "5g36/20 5g40/40"
-VHTMODE=1 sh capture_txrx.sh wl1 test-ap "5g36/20 5g40/40 5g44/80"
+TXBF=0 VHTMODE=0 sh capture_txrx.sh wl1 test-ap "5g36/20 5g40/40"
+TXBF=0 VHTMODE=1 sh capture_txrx.sh wl1 test-ap "5g36/20 5g40/40 5g44/80"
 ```
 
 ## Template RAM content

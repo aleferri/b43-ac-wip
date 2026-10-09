@@ -50,6 +50,10 @@
 #   VHTMODE     0 or 1, set with `wl vhtmode` while the interface is down,
 #               so a VHT station joins as HT (0) or VHT (1); unset = as left.
 #               With MANUAL=1 it is only recorded, in a MARK at the start
+#   TXBF        0 or 1, set with `wl txbf` the same way; 0 keeps word 0
+#               bit 3, the beamformed bit of VHT-SIG-A2 and the bfm field
+#               out of the descriptors, the only words 7.14.89 builds
+#               differently from 6.30
 #   MANUAL      1 = channel changes done by hand, see above
 #
 # Only shell builtins plus `wl` and `sleep`: these busybox builds lack head,
@@ -134,6 +138,9 @@ bring_up() {
     if [ -n "$VHTMODE" ] && ! wl -i "$IF" vhtmode "$VHTMODE" > /dev/null 2>&1; then
         echo "wl vhtmode $VHTMODE refused: `wl -i "$IF" vhtmode "$VHTMODE" 2>&1`"
     fi
+    if [ -n "$TXBF" ] && ! wl -i "$IF" txbf "$TXBF" > /dev/null 2>&1; then
+        echo "wl txbf $TXBF refused: `wl -i "$IF" txbf "$TXBF" 2>&1`"
+    fi
     wl -i "$IF" up
     sleep "$SETTLE"
     [ -n "$SSID" ] && wl -i "$IF" bss up > /dev/null 2>&1
@@ -142,6 +149,7 @@ bring_up() {
 
 dumps_off
 [ -n "$VHTMODE" ] && mark "vhtmode $VHTMODE"
+[ -n "$TXBF" ] && mark "txbf $TXBF"
 for cs in $LIST; do
     bring_up "$cs" || continue
 
