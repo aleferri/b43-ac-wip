@@ -46,7 +46,7 @@ The TX power model -- locale caps, legacy and CCK rules, chain choice -- is in
 
 ## Current state
 
-Measured on 2026-10-08 (unit rows) and 2026-10-01 (integration rows), see below.
+Measured on 2026-10-09, see below.
 
 | gate | result |
 |---|---|
@@ -57,31 +57,28 @@ Measured on 2026-10-08 (unit rows) and 2026-10-01 (integration rows), see below.
 | unit, cold TG789vac v2 `cold01` ch36/20 | 99.93% |
 | unit, cold TG789vac v2, all 43 segments | min 99.77% (ch149/40), median 99.93%, max 99.99%; 0 wrong values on 27 of 43 |
 | unit, periodic watchdog tick | **`MATCH`** |
-| integration, cold `cold01` | `probe: 0`, `start: 0`; 82.61% (28765/34819) |
-| integration, agcombo ch36/80 at the bus | 67.53% (89699/132825), with the 561 interrupts and 283 received frames of the capture replayed |
+| integration, cold `cold01` | `probe: 0`, `start: 0`; 70.28% (26784/38110) |
+| integration, agcombo ch36/80 at the bus | 69.08% (89985/130260), with the 561 interrupts and 283 received frames of the capture replayed |
 | SROM rev 11 extractor | 77/82/83 PASS, 0 FAIL (DSL-3580L, D6220, agcombo) |
 
 The agcombo unit row runs with the capture's SSID length (7, read off
-`PRSSIDLEN` by `gates.sh`); the integration rows are from 2026-10-01. The agcombo bus row measured 70.07% before the
-interrupts were replayed: the union grew by the five DMA channels b43 reads
-and acknowledges on every interrupt where the stock driver touches one. The
-cold01 integration row measured 90.90% (29003/31905) while the whole cold
-preamble ran in `b43_phy_init()`: the window opens at the first PHY read of
-the attach AFE arm, which then came after b43's core init, so the core init
-fell outside it. With the arm back in the attach it is inside, and its 2970
-extra ops are the drop; 250 more vendor ops are matched. Since the key
-table init left the PHY its 548 words per `up` are missing on both rows.
+`PRSSIDLEN` by `gates.sh`). The two integration rows moved with `e4d13c5`,
+which writes the 48-bit table cells as the stock driver does on the bus: the
+agcombo bus row went from 64.63% to 70.61%, and `cold01` from 82.47% to
+70.42%. That part of the `cold01` match was not reproducible on the bus,
+which a `wl-diag` capture, taken at the accessors, does not show. On the
+agcombo bus row the replayed interrupts count: b43 reads and acknowledges
+the five DMA channels on every interrupt where the stock driver touches one.
+Since the key table init left the PHY its 548 words per `up` are missing on
+both integration rows.
 
 The number to quote is the `grezzo` line of `cmp_skip.py`, with its two
-parameters; how to reproduce and read it is in
-[`test/unit/README.md`](test/unit/README.md). Every row is measured with `--min-block 8 --gap-tol 2`, the unit rows on
-2026-10-08 (the TG789vac 43-segment row on 2026-09-30, before the two
-parameters, with blocks of at least two and no tolerance, which on `cold01`
-gives the same count) and the integration rows on 2026-10-01. The
-integration rows measured 82.30% and 64.86% under the older rule, which counted every equal op of an aligned block at the bus,
-however short the run around it between two wrong values. The six
+parameters, `--min-block 8 --gap-tol 2`; how to reproduce and read it is in
+[`test/unit/README.md`](test/unit/README.md) and
+[`test/integration/README.md`](test/integration/README.md). The six
 weather-radar segments (ch120/124/128 at 20 MHz, ch116/124 at 40, ch116 at
-80) end before their availability check completes and measure a partial attach.
+80) end before their availability check completes and measure a partial
+attach.
 
 ## On hardware
 
@@ -93,8 +90,9 @@ is an AP on channel 36 with a station: it associates, completes the WPA2
 at 20 MHz without HT (`NOHT`): the station downloads at 11 Mbit/s and uploads
 at 4 Mbit/s.
 
-- **TX** works, at legacy OFDM rates only: the TX descriptor carries no MCS
-  (see "What is missing").
+- **TX** works, at legacy OFDM rates: the run is `NOHT`, and the TX
+  descriptor of that build carried no MCS. VHT transmission came after and
+  is not yet run on the board (see "What is missing").
 - **RX** works and is slow. Under traffic the RX ring underruns: 36
   `RX descriptor underrun` printed, and `net_ratelimit()` drops 78 messages,
   between 268.9 s and 301.4 s. The ring had the 32 slots of OpenWrt's 813;
