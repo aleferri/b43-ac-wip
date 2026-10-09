@@ -50,23 +50,22 @@ Measured on 2026-10-09, see below.
 
 | gate | result |
 |---|---|
-| unit, cold `cold01` ch36/20 | **99.91%** (29820/29846): 0 wrong values, 26 missing (core cells outside the PHY), 0 extra |
+| unit, cold `cold01` ch36/20 | **99.91%** (29819/29845): 0 wrong values, 26 missing (core cells outside the PHY), 0 extra |
 | unit, cold, all 43 segments | min 99.80% (ch60/40), median 99.91%, max 99.95%; 0 wrong values on 38 of 43 |
-| unit, hot `up` ch36 / ch52 / ch104 | 98.49% / 99.00% / 98.93% |
+| unit, hot `up` ch36 / ch52 / ch104 | 98.50% / 99.00% / 98.94% |
 | unit, cold agcombo `cold01` ch36/20 | 90.47% |
 | unit, cold TG789vac v2 `cold01` ch36/20 | 99.93% |
 | unit, cold TG789vac v2, all 43 segments | min 99.77% (ch149/40), median 99.93%, max 99.99%; 0 wrong values on 27 of 43 |
 | unit, periodic watchdog tick | **`MATCH`** |
-| integration, cold `cold01` | `probe: 0`, `start: 0`; 70.28% (26784/38110) |
-| integration, agcombo ch36/80 at the bus | 69.08% (89985/130260), with the 561 interrupts and 283 received frames of the capture replayed |
+| integration, cold `cold01` | `probe: 0`, `start: 0`; 70.57% (26781/37951) |
+| integration, agcombo ch36/80 at the bus | 70.64% (89994/127406), with the 561 interrupts and 283 received frames of the capture replayed |
 | SROM rev 11 extractor | 77/82/83 PASS, 0 FAIL (DSL-3580L, D6220, agcombo) |
 
 The agcombo unit row runs with the capture's SSID length (7, read off
-`PRSSIDLEN` by `gates.sh`). The two integration rows moved with `e4d13c5`,
-which writes the 48-bit table cells as the stock driver does on the bus: the
-agcombo bus row went from 64.63% to 70.61%, and `cold01` from 82.47% to
-70.42%. That part of the `cold01` match was not reproducible on the bus,
-which a `wl-diag` capture, taken at the accessors, does not show. On the
+`PRSSIDLEN` by `gates.sh`). The integration rows write the 48-bit table
+cells as the stock driver does on the bus, which a `wl-diag` capture, taken
+at the accessors, does not show: that costs `cold01` against its capture
+and is right on the bus. On the
 agcombo bus row the replayed interrupts count: b43 reads and acknowledges
 the five DMA channels on every interrupt where the stock driver touches one.
 Since the key table init left the PHY its 548 words per `up` are missing on
@@ -84,29 +83,32 @@ attach.
 
 The DSL-3580L runs the port under OpenWrt with `ucode42.fw` 784.2 from
 `broadcom-wl-6.30.163.46`, byte for byte the `d11ucode42` of the board's own
-`wl`. [`bringup-log-2026-10-08-bis..txt`](bringup-log-2026-10-08-bis..txt)
-is an AP on channel 36 with a station: it associates, completes the WPA2
-4-way handshake and carries traffic, with no controller restart. The run is
-at 20 MHz without HT (`NOHT`): the station downloads at 11 Mbit/s and uploads
-at 4 Mbit/s.
+`wl`, as an AP on channel 36.
 
-- **TX** works, at legacy OFDM rates: the run is `NOHT`, and the TX
-  descriptor of that build carried no MCS. VHT transmission came after and
-  is not yet run on the board (see "What is missing").
-- **RX** works and is slow. Under traffic the RX ring underruns: 36
-  `RX descriptor underrun` printed, and `net_ratelimit()` drops 78 messages,
-  between 268.9 s and 301.4 s. The ring had the 32 slots of OpenWrt's 813;
-  the 816-02 now sets 128, not yet run on the board. See
-  `docs/retrace-todo.md`, "On hardware".
-- **Beacon**: the log does not tell whether the station found the AP from a
-  beacon or from a probe response.
+- **Beacon and association** work: stations find the AP on passive and
+  active scans and associate, with HOSTF5 bit 15 kept clear
+  (`docs/retrace-todo.md`, "Probe-response offload").
+- **TX** works at legacy OFDM rates:
+  [`bringup-log-2026-10-08-bis.txt`](bringup-log-2026-10-08-bis.txt), at
+  20 MHz `NOHT`, has a station through the WPA2 4-way handshake and
+  traffic, 11 Mbit/s down and 4 up, with no controller restart.
+- **HT and VHT** are under test.
+  [`bringup-log-2026-10-09.txt`](bringup-log-2026-10-09.txt), the first
+  run with them announced, has a station that completes the handshake and
+  gets no address. The VHT descriptor has since been aligned with the
+  board's own `wl` (cores per stream count, no beamforming bit); not yet
+  run.
+- **RX** works and is slow. Under traffic the 2026-10-08-bis run underruns
+  the RX ring, which had the 32 slots of OpenWrt's 813; the 816-02 sets
+  128, not yet run under traffic. See `docs/retrace-todo.md`, "On
+  hardware".
 
 After `B43_STAT_STARTED` every `b43info`/`b43warn`/`b43err` goes through
 `net_ratelimit()`, ten per five seconds: a bring-up spends them, and what
 follows is dropped. The cause of a controller restart and its `Controller
 RESET` line go through `b43err_restart()`, which is not rate-limited, and the
-`AC-PHY:` block markers are `wiphy_info()`: both print whatever the limit. `sysctl -w net.core.message_cost=0` turns
-the limit off.
+`AC-PHY:` block markers are `wiphy_info()`: both print whatever the limit.
+`sysctl -w net.core.message_cost=0` turns the limit off.
 
 ## What is ported
 
@@ -140,8 +142,8 @@ How the pieces fit is in [`docs/driver-status.md`](docs/driver-status.md).
   `docs/retrace-todo.md`.
 - HT in transmission and aggregation: the AC sends legacy rates to an HT
   station and VHT MCS 0-9 on up to its TX chains to a VHT one, laid out
-  from the stock driver's descriptors and not yet run on the board, and
-  opens no block ack session (`docs/retrace-todo.md`, "HT and VHT").
+  as the stock drivers lay them out, and refuses every block ack session
+  (`docs/retrace-todo.md`, "HT and VHT").
 - Hardware encryption: mac80211 does the crypto, since the AC microcode's
   cipher numbers and key fields are not b43's (`b43_upload_microcode()`).
 - Temperature: raw tempsense samples are collected and not converted

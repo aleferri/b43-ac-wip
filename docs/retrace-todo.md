@@ -221,7 +221,8 @@ same lever as `AC_FIRST_INIT`.
 ### Other shared-memory cells
 
 - **`0x00cc`.** Bits 8:6 are the `0x05d6` mask of the site that writes it,
-  composed by `b43_phy_ac_bss_cc()`; bit 2 is always set and bit 0 is the
+  the OFDM cell of the TX core table (see "TX"), composed by
+  `b43_phy_ac_bss_cc_update()`; bit 2 is always set and bit 0 is the
   core's: the encoding, 1 for OFDM, which `b43_write_beacon_phytxctl_ac()`
   sets before each beacon template as the stock drivers do. The PHY rewrites
   the mask at its two chain-mask sites; the first write, at the BSS
@@ -314,8 +315,9 @@ takes the streams from the SROM `rxchain` and leaves out what b43 does not
 do: A-MPDU and A-MSDU, MPDUs over 3895 bytes, LDPC reception, beamforming,
 link adaptation and HT rates in transmission. VHT MCS 0-9 go out on as
 many streams as the board has TX chains, in the layout of the stock
-driver's own descriptors (`b43_txhdr_ac_vht()`, from the captures below),
-not yet run on the board. What is open:
+driver's own descriptors (`b43_txhdr_ac_vht()`, from the captures below and
+the DSL-3580L's 6.30 code). On the board the HT and VHT modes are under
+test (see "On hardware"). What is open:
 
 - **TX.** The TX descriptor is the AC microcode's long format,
   `d11actxh_t` of Broadcom's `d11.h` (see `PROVENANCE.md`), 124 bytes:
@@ -337,9 +339,9 @@ not yet run on the board. What is open:
   configuration, whose power targets (`wl curpower`) are not in the
   collection. PHY TX control word 1 carries
   the rate's power offset, the field the PHY writes into the rate blocks
-  for the ucode's own frames at that rate; that the stock driver puts the
-  same value in a data frame's descriptor is not checked, since no capture
-  records one; gonsolo's port leaves it zero. Open: `D11AC_TXC_UPD_CACHE`
+  for the ucode's own frames at that rate; 6.30 puts its per-rate power
+  there on data frames too (`wlc_acphy_txctl1_calc()`), gonsolo's port
+  leaves it zero. Open: `D11AC_TXC_UPD_CACHE`
   is not set; `ASEQ` and `LFRM`, which his port does not set; the multicast
   frame ID still goes to shm `0x00a8`, `B43_SHM_SH_MCASTCOOKIE` of the older
   microcode, which no AC capture writes (none sends a multicast frame).
@@ -394,10 +396,34 @@ not yet run on the board. What is open:
     bring-up), `0x00ce` `0x0028`, `0x0019`, `0x002a` at 20, 40 and 80 MHz,
     subband and power offset as on OFDM data frames, `0x00d0` 0.
 
-  No HT frame (FT 2): both stations are VHT. None of it is checked under
-  784.2: the DSL-3580L's own `wl` (6.30, which `wl-diag`'s 2.6.30 variant
-  hooks) at the same chanspecs is the capture that would. A short run of
-  `wl-mmio-trap` with `dd_len` checks the headers on the bus side.
+  No HT frame (FT 2): both stations are VHT.
+
+  The DSL-3580L's own `wl` (6.30, `wlDSL-3580_EU.o_save`, MIPS with symbols)
+  builds the same words in `wlc_acphy_txctl0/1/2_calc()` and
+  `wlc_compute_plcp()`, called from `wlc_d11hdrs()` and
+  `wlc_beacon_phytxctl()`. From its code, against the 7.14.43 frames:
+  - Same: VHT-SIG-A1/A2 (group ID 63, 0 only on a frame to an AP; partial
+    AID 0), the HT-SIG (MCS, `0x80` at 40 MHz, byte 3 `0x07` with STBC,
+    LDPC and SGI on top), word 2, the width in word 0's 15:14 (`0x0000`,
+    `0x4000`, `0x8000`, `0xc000` at 20 to 160), the PHY rate in 500 kbps.
+  - Word 0 bit 3: 6.30 never sets it, on data frames or on the beacon (the
+    flag argument of `txctl0_calc()` is zero at both calls). Where it is
+    set the function takes every TX chain instead of the rate's cores.
+    **SALAME**: it is transmit beamforming, which is why 7.14.43 sets it
+    from MCS 4 up together with the `bfm` byte. b43 leaves it clear.
+  - The cores: by rate class, `wlc_stf_txcore_get()`: CCK, OFDM, then one,
+    two and three space-time streams, the five cells
+    `wlc_stf_txcore_shmem_write()` writes in that order. They are shm
+    `0x05d4`-`0x05dc` (`3 3 3 3 0` in the DSL-3580L's cold sweep, every
+    channel), so b43 takes the cell of the frame's class
+    (`b43_txhdr_ac_cores()`) from the values it writes there.
+  - Word 1's subband: the chanspec's sideband shifted by the frame's width
+    (`sb >> bw`) on every frame, which is the primary at 20 MHz and 0 on a
+    frame that fills the channel.
+
+  Not in the code read so far: FBW, MAC TX control and the RTS/CTS word of
+  6.30. A short run of `wl-mmio-trap` with `dd_len` checks the headers on
+  the bus side.
 - **RX rates.** `b43_rx_rate_ac()` takes the frame type from PHY RX status
   0 with HT at 2 and VHT at 3, Broadcom's FT_HT and FT_VHT for these PHYs,
   and reads HT-SIG and VHT-SIG-A from the six bytes in front of the frame.
@@ -446,7 +472,10 @@ not yet run on the board. What is open:
   bus capture writes `0x48` twice, both times after row 63; b43 writes it on
   every address upload, three times there, two of them with the address
   still zero.
-- **A-MPDU.** b43 announces no aggregation and opens no block ack session.
+- **A-MPDU.** b43 announces no aggregation and opens no block ack session:
+  `b43_op_ampdu_action()` refuses every one, and is there because mac80211
+  tries a TX session on every QoS frame to an HT station and warns on a
+  driver without the op.
   What the stock driver does, from `router-data/vd625-agcombo/` (7.14.43.21 and
   its microcode): every MPDU is posted on its own, one descriptor each on TX
   ring 1, and the microcode builds the aggregate; the status that comes back
@@ -801,17 +830,15 @@ ucode revision.
 
 ## On hardware (DSL-3580L, OpenWrt)
 
-- **Beacon.** It goes out: on 2026-10-09 a passive scan finds it on every
-  SSID length tried. An active scan found it only on some runs, and whether a
-  station could associate followed the same pattern: the probe requests were
-  being kept by the microcode, HOSTF5 bit 15 (see "Probe-response offload"),
-  and the bit's state depended on whether a hot PHY cycle had rewritten the
-  word after `b43_wireless_core_init()`'s `0x8088`, not on the SSID. Fixed by
-  keeping the bit clear. The stock side: `wl-diag` with `tpldump` on the
-  DSL-3580L's own `wl` records each template RAM write with its content,
-  so the stock beacon template, the bytes in front of the frame included,
-  can be set beside b43's. On
-  `router-data/vd625-agcombo/rxtx-1s-ht20-40-80.zip` (7.14.43.21 and its
+- **Beacon and association.** The beacon goes out and stations find the AP
+  on passive and active scans with every SSID length tried, and associate.
+  Active scans and associations used to work only on some runs: the
+  microcode was keeping the probe requests, HOSTF5 bit 15 (see
+  "Probe-response offload"), set or not depending on whether a hot PHY
+  cycle had rewritten the word. Fixed by keeping the bit clear. The stock
+  side, for a comparison of the templates: `wl-diag` with `tpldump` on the
+  DSL-3580L's own `wl` records each template RAM write with its content.
+  On `router-data/vd625-agcombo/rxtx-1s-ht20-40-80.zip` (7.14.43.21 and its
   microcode) it is two writes per update: 12 bytes at template RAM `0x0e80`,
   zero but for the L-SIG at bytes 3-5 (6 Mbps, the length of the frame with
   FCS), then the frame at `0x0e8c`, padded to a multiple of four; b43's layout
@@ -828,26 +855,34 @@ ucode revision.
   bit in MACCMD; at the BSS setup also DTIMPER (`0x0012`) and the beacon TSF
   offset (`0x001c`, `0x3a`), and with every beacon the probe response template
   at `0x0700`, its length at `0x004a` and the SSID at `0x0160`. b43 writes the
-  same cells in the same order. Whether 784.2 keeps them where b43's 784
-  layout puts them, and whether b43's beacon leaves the antenna, this board
-  cannot say.
-- **TX under traffic.** `bringup-log-2026-10-08-bis..txt` has a station
-  through the WPA2 4-way handshake and traffic both ways, with no DMA error
-  and no restart. The first attempts end in `AP-STA-POSSIBLE-PSK-MISMATCH`;
-  one completes 22 s later. Not explained. `bringup-log-2026-10-08.txt` has
+  same cells in the same order.
+- **TX under traffic, legacy.** `bringup-log-2026-10-08-bis.txt`, 20 MHz
+  `NOHT`, has a station through the WPA2 4-way handshake and traffic both
+  ways, with no DMA error and no restart. The first attempts end in
+  `AP-STA-POSSIBLE-PSK-MISMATCH`, as in the 2026-10-09 log; one completes
+  later. Not explained. `bringup-log-2026-10-08.txt` has
   one `TX-status contains invalid cookie: 0x0000` before `AP-ENABLED`. b43
   posts two descriptors per frame where the stock driver mostly posts one.
+- **HT and VHT.** Under test. `bringup-log-2026-10-09.txt` is the first run
+  with HT and VHT announced: the station associates and completes the 4-way
+  handshake, then gets no address and leaves after about 20 s, again and
+  again. The EAPOL frames go at the lowest rate (mac80211 marks the control
+  port `USE_MINRATE`), the DHCP replies at the rate minstrel picks. That
+  build put word 0 bit 3 on every VHT frame but MCS 0 and the OFDM cores,
+  one on that channel, on every frame, two streams included; both now follow
+  6.30 (see "TX" under "HT and VHT"), not yet run. The same log has the
+  mac80211 warning for the missing `ampdu_action`, fixed since.
 - **RX under traffic.** It works and is slow: at 20 MHz `NOHT` the station
-  uploads at 4 Mbit/s and downloads at 11. In the same log the RX ring
-  underruns once at the association (229.5 s), then 36 `RX descriptor
+  uploads at 4 Mbit/s and downloads at 11. In the 2026-10-08-bis log the RX
+  ring underruns once at the association (229.5 s), then 36 `RX descriptor
   underrun` are printed, and `net_ratelimit()` drops 78 messages, between
   268.9 s and 301.4 s. Whether the log predates the underrun interrupt
   draining the ring (`b43_dma_rx_give()`) is not recorded. The ring had 32
   slots, from `813-b43-reduce-number-of-RX-slots.patch`, before the 816 in
   the package; the 816-02 sets 128. Every frame is decrypted by mac80211 (no
-  hardware crypto on the AC) and none is aggregated. Next: the same traffic with a counter of underruns instead of
-  the warning, with the 128 slots and with 256, and the CPU load of the
-  softirq.
+  hardware crypto on the AC) and none is aggregated. Next: the same traffic
+  with a counter of underruns instead of the warning, with the 128 slots and
+  with 256, and the CPU load of the softirq.
 - **Values of the bring-up logs against `cold01-ch36-bw20.txt`.** Same as the
   board's own driver: radio `0x040b` reads `0x0169` after power-on, `0x0140`
   goes `0x0df7 -> 0x0df4`. Same as 7.14 and not as 6.30, which the board
