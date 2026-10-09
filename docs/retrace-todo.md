@@ -371,29 +371,63 @@ adaptation, and HT and VHT rates in transmission. What is open:
   frame on a 40 or 80 MHz channel thus has the 20 MHz words, with no width
   field set, as b43's descriptor has. The subband field is never non-zero:
   every chanspec of every capture (agcombo, D6220, TG789vac v2) has the
-  primary at the bottom of its block. No HT or VHT word is in any capture:
-  data frames carry theirs in the DMA descriptor, and the stock driver
-  sends the beacon, the probe response and the response frames at legacy
-  rates. Next: `wl-diag` with `txdump` on the DSL-3580L's own `wl` (784.2,
-  the microcode b43 loads), a station passing traffic at HT20, HT40 and
-  VHT80, with a primary off the bottom of its block at 40 and 80 MHz: the
-  frames posted to the TX rings give the whole header of each, prefix,
-  control words and PLCP included, with `wl` at full speed. A short run of
-  `wl-mmio-trap` with `dd_len` checks the same headers on the bus side.
+  primary at the bottom of its block.
+
+  The stock driver's own TX headers are in `router-data/vd625/rxtx-ch36.zip`:
+  `wl_vd625.ko` (7.14.43.21) and its microcode, not 784.2, 1385 frames to a
+  VHT station at 5g36/20, 5g40/40 and 5g44/80, primaries 36, 40 and 44, so
+  off the bottom of the block at 40 and 80 MHz. Taken by `wl-diag` at
+  `wlc_txfifo`:
+  - The prefix is `02 00 00 00` on broadcast data and `02 00 02 00` on
+    unicast QoS data; the 124-byte header and the frame follow. The IV
+    offset is the 802.11 header's length (24, 26). `frame_len` counts the
+    frame on air, FCS and the 8 bytes of CCMP MIC the hardware adds
+    included, and the frame may go on in a further buffer.
+  - Word 0: frame type in bits 1:0 (1 OFDM, 3 VHT), bit 2 on every frame,
+    bit 3 on every VHT block but the one with STBC, `0x01c0` in bits 8:6,
+    and the width in bits 15:14 on VHT frames that fill the channel:
+    `0x0000` at 20 MHz, `0x4000` at 40, `0x8000` at 80. OFDM frames keep
+    `0x01c5` at every width.
+  - Word 1: the subband in bits 2:0 on OFDM frames, 0, 1 and 2 for
+    primaries 36, 40 and 44, the chanspec's sideband as b43 writes it; 0 on
+    VHT frames that fill the channel. The power offset in bits 8:3, 3 to 8.
+  - Word 2: on VHT the MCS in bits 3:0, `0x40` more with STBC; 0 on the
+    6 Mbps OFDM frames.
+  - PLCP: L-SIG on OFDM; on VHT, VHT-SIG-A1/A2 as 802.11 lays them out,
+    group ID 63, both reserved bits set, CRC and tail left to the hardware:
+    the layout `b43_rx_rate_ac()` reads on receive.
+  - Rate: the PHY rate in 500 kbps (12 for 6 Mbps, 780 for VHT80 MCS8 SGI).
+    FBW `0x0300` on every block; RTS/CTS `0x0905` on VHT blocks, with
+    `0x0020` on the last one used; what b43 calls `bfm` has `0x43`-`0x48`
+    in its high byte on VHT blocks, larger at higher MCS, 0 on OFDM.
+  - Up to four rate blocks per frame: the stock rate control fills the
+    fallbacks (MCS8 SGI, then 6, 5, 4).
+  - MAC TX control `0x4c00`/`0x0002` on broadcast data, `0x45c0`/`0x0000`
+    on unicast QoS data.
+  - Beacon: shm `0x00cc` `0x01c5` at every width (`0x0045` at the first
+    bring-up), `0x00ce` `0x0028`, `0x0019`, `0x002a` at 20, 40 and 80 MHz,
+    subband and power offset as on OFDM data frames, `0x00d0` 0.
+
+  No HT frame (FT 2): the station is VHT. None of it is checked under
+  784.2: the DSL-3580L's own `wl` (6.30, which `wl-diag`'s 2.6.30 variant
+  hooks) at the same chanspecs is the capture that would. A short run of
+  `wl-mmio-trap` with `dd_len` checks the headers on the bus side.
 - **RX rates.** `b43_rx_rate_ac()` takes the frame type from PHY RX status
   0 with HT at 2 and VHT at 3, Broadcom's FT_HT and FT_VHT for these PHYs,
   and reads HT-SIG and VHT-SIG-A from the six bytes in front of the frame.
-  That the AC ucode puts the SIG fields there, as it puts the legacy PLCP,
-  is not checked against a capture: the receive header is in DMA memory,
-  which none records. The signal is the larger of the two cores' powers in
-  bytes 9 and 10 of the header, -128 for a core that did not receive, as
-  gonsolo's port reads them under 832.127. Next: `wl-diag` with `rxdump`
-  records the start of every frame `wlc_recv` gets, RX header included, and
-  `reverse-tools/d11ac_rxh.py` reads it with b43's offsets: frame length
-  against the packet, PHY status 0's frame type against the PLCP, the
-  padding flag, the powers, and what the stock driver puts in +24..+39.
-  `wl-capture-scripts/capture_txrx.sh` takes it in the same run as the TX
-  headers and the templates.
+  The signal is the larger of the two cores' powers in bytes 9 and 10 of
+  the header, -128 for a core that did not receive, as gonsolo's port reads
+  them under 832.127. In `router-data/vd625/rxtx-ch36.zip` (7.14.43.21 and
+  its microcode, taken by `wl-diag` at `wlc_recv`) all 1228 frames read
+  with b43's offsets (`reverse-tools/d11ac_rxh.py`): `frame_len` is the
+  packet less the 40-byte header; PHY status 0 says OFDM (1) or VHT (3) and
+  the six bytes after the optional padding hold the L-SIG or the
+  VHT-SIG-A1/A2 `b43_rx_rate_ac()` decodes, the width in SIG-A1 that of the
+  channel (34 frames at 20 MHz on the wider ones); the padding flag of MAC
+  status puts the PLCP at +42 on 463 frames; the power bytes read -91 to
+  -30 dBm. The field at +22, which b43 does not read on the AC, is the
+  chanspec (`0xd024`, `0xd926`, `0xe22a`). +24..+39 change with every frame
+  and stay unread. Under 784.2 none of it is checked.
 - **Receive buffer.** `B43_DMA0_RX_AC_BUFSIZE` holds a 3895-byte MPDU, the
   VHT minimum; the stock driver's own buffer size is not in any capture.
   The frame offset, 40, is the one both stock drivers write into the RX
@@ -891,7 +925,13 @@ ucode revision.
   side: `wl-diag` with `tpldump` on the DSL-3580L's own `wl` records each
   template RAM write with its content, so the stock beacon template, the
   bytes in front of the frame included, can be set beside what
-  `bcn_diag` logs for b43's.
+  `bcn_diag` logs for b43's. On `router-data/vd625/rxtx-ch36.zip`
+  (7.14.43.21 and its microcode) it is two writes per update: 12 bytes at
+  template RAM `0x0e80`, zero but for the L-SIG at bytes 3-5 (6 Mbps, the
+  length of the frame with FCS), then the frame at `0x0e8c`, padded to a
+  multiple of four; b43's layout for 784 and 832, a 12-byte header with
+  the PLCP at 3, is the same shape. The probe response goes to `0x3680`
+  with no header at all, and the BSSID, 8 bytes, to `0x48`.
 - **TX under traffic.** With the DMA engine at its reset values and the AC TX
   descriptor behind the TX offload header, `bringup-log-2026-10-08-bis..txt`
   has a station through the WPA2 4-way handshake and traffic both ways, with
