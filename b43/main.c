@@ -6325,6 +6325,20 @@ static int b43_op_get_survey(struct ieee80211_hw *hw, int idx,
 	return 0;
 }
 
+/*
+ * b43 does no aggregation, and AMPDU_AGGREGATION is not set. On a band with
+ * HT the TX path still calls ieee80211_start_tx_ba_session() for every QoS
+ * data frame to an HT station, which warns when the op is missing before it
+ * looks at the flag; with the op it returns there. A station's ADDBA request
+ * is declined, as without the op.
+ */
+static int b43_op_ampdu_action(struct ieee80211_hw *hw,
+			       struct ieee80211_vif *vif,
+			       struct ieee80211_ampdu_params *params)
+{
+	return -EOPNOTSUPP;
+}
+
 static const struct ieee80211_ops b43_hw_ops = {
 	.tx			= b43_op_tx,
 	.wake_tx_queue		= ieee80211_handle_wake_tx_queue,
@@ -6346,6 +6360,7 @@ static const struct ieee80211_ops b43_hw_ops = {
 	.sw_scan_start		= b43_op_sw_scan_start_notifier,
 	.sw_scan_complete	= b43_op_sw_scan_complete_notifier,
 	.get_survey		= b43_op_get_survey,
+	.ampdu_action		= b43_op_ampdu_action,
 	.rfkill_poll		= b43_rfkill_poll,
 };
 
@@ -6427,8 +6442,8 @@ static const struct ieee80211_iface_combination b43_if_comb_dfs = {
  * power save disabled; VHT at 80 MHz with the short guard interval; MCS 0-7
  * and 0-9 on every receive chain. Left out, because b43 does not do them:
  *
- *  - aggregation: the A-MPDU parameters stay at their minimum, and with no
- *    ampdu_action mac80211 opens no block ack session either way;
+ *  - aggregation: the A-MPDU parameters stay at their minimum, and
+ *    b43_op_ampdu_action() refuses every block ack session;
  *  - transmitting HT rates: the TX MCS set is not defined, so mac80211
  *    picks legacy rates for an HT station, see b43_op_tx(). VHT goes out
  *    in the layout of the stock driver's descriptors (b43_txhdr_ac_vht()),
