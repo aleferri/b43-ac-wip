@@ -477,6 +477,25 @@ not yet run on the board. What is open:
   bus capture writes `0x48` twice, both times after row 63; b43 writes it on
   every address upload, three times there, two of them with the address
   still zero.
+- **A-MPDU.** b43 announces no aggregation and opens no block ack session.
+  What the stock driver does, from `router-data/vd625/` (7.14.43.21 and its
+  microcode): every MPDU is posted on its own, one descriptor each on TX
+  ring 1, and the microcode builds the aggregate; the status that comes back
+  covers the MPDUs it sent (see "TX status"). The descriptors of the MPDUs
+  of a session (`rxtx-ch36.zip`) differ from those of the two unicast QoS
+  frames sent outside one in MAC TX control, `0x45c0`/`0x0000` against
+  `0x4080`/`0x0004`, and in the cache info at +100, `50 04 20 20 26 15 3f
+  14` against zeros: by the names of `d11actxh_t`'s cache fields in
+  Broadcom's `d11.h`, BSS index and cipher, key index, 32 MPDUs at the
+  primary and at the fallback rate, an A-MPDU duration of 5414, a block ack
+  window of 63 and `0x14` as the maximum length. Through the association and the first
+  aggregates the stock driver writes nothing to shared memory but the
+  station's keys and its address match entry, so a session is not
+  programmed into the microcode. Open: the density, the block ack request
+  after lost MPDUs, and the receive side, whose upload traffic the trap run
+  does not have. The trap's descriptor reads of that run came out `nobuf`:
+  the high address words carry bit 63 (`0x80000000`), which `dma_dd.c` now
+  accepts.
 - **TX status.** `B43_FW_HDR_AC` reads both packages of an entry and decodes
   the first. In the low half of its first word bit 0 is the valid bit, bit 1
   is set on every first package, bit 2 marks an intermediate status, bit 3
@@ -504,6 +523,21 @@ not yet run on the board. What is open:
   `0x0001` on every entry. That 784.2 reports the same is not in any
   capture: both above run the hybrid 6.30.223, the driver gonsolo's 832.127
   comes from.
+
+  `router-data/vd625/rxtx-ch36-mmio.zip` (7.14.43.21 and its microcode,
+  `wl-mmio-trap` through an association and downlink traffic to a phone)
+  has 2762 statuses, most of them for A-MPDUs of up to 32 MPDUs. The first
+  package reads as above: bits 14:8 the MPDUs covered, their transmit
+  attempts at rate 0 in bits 7:0 of the third word and the acknowledged ones
+  in bits 15:8. The second word holds the 802.11 sequence number of the
+  first MPDU covered. In the second package the second and third words are
+  the block ack bitmap from that sequence number on (`0x3f` for six MPDUs
+  all acknowledged; with gaps and bits past the MPDUs covered when the
+  block ack says so), the first word has bit 0 set and `0x00010100` to
+  `0x00030300` or zero above it, and the low half of the fourth reads
+  `0xdead` on a status with no acknowledgement. The MPDUs of one status
+  carry consecutive frame IDs: the next status starts its ID that many
+  frames on.
 - **Scratch and shared memory look alike to the comparison.**
   `tracelib.normalize()` drops `sel=`, and wl-diag prints a scratch word at
   four times its index, so scratch word 3 and shared `0x000c` are the same op

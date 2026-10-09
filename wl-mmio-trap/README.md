@@ -156,7 +156,9 @@ first write records only the slot before it (`guess`).
   order gives a valid byte count (`be` when big-endian).
 - A bus address is taken as the physical one minus `dd_bus_off` (0, the
   BCM63xx PCIe inbound window's identity), and read uncached through CKSEG1
-  only inside RAM below 512 MB. **SALAME**: that the identity holds on the
+  only inside RAM below 512 MB. The high word may carry address bit 63
+  alone, as every ring and buffer address does on the vd625
+  (`0x80000000`); any other high bit leaves the buffer unread (`nobuf`). **SALAME**: that the identity holds on the
   DSL-3580L's BCM63168 is not checked; a wrong offset reads RAM that is not
   the frame, which the decoder shows as a layout it does not recognise.
 - Reading happens inside the trapped write, after `wl` has written its

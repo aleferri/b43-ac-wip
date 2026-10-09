@@ -80,7 +80,8 @@ static bool dd_dump_one(const struct dd_ops *ops, void *ctx, unsigned int chan,
 		n = dump_len;
 	if (n > DD_MAX_DUMP)
 		n = DD_MAX_DUMP;
-	if (d->addrhi || !ops->read(ctx, d->addrlo, buf, n)) {
+	if ((d->addrhi & ~DD_ADDRHI_PCI64) ||
+	    !ops->read(ctx, d->addrlo, buf, n)) {
 		d->flags |= DD_F_NOBUF;
 		n = 0;
 	}

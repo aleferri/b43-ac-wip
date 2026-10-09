@@ -17,6 +17,7 @@ microcode revision is not recorded here.
 | file | content |
 |---|---|
 | `rxtx-ch36.zip` | `rxtx-ch36.txt`, decoded wl-diag trace of `wl-capture-scripts/capture_txrx.sh` on 5g36/20, 5g40/40 and 5g44/80: template RAM writes with content through each bring-up (`tpl <chanspec>`), then 512 TX and up to 512 RX frames with their d11 headers while a VHT station passes traffic (`txrx <chanspec>`), split by `MARK` records |
+| `rxtx-ch36-mmio.zip` | `wl-mmio-trap` through an association and downlink traffic to the phone on 5g36/20: every register access of `wl`, the TX status of single frames and A-MPDUs, the shared-memory writes; its 1024 descriptor reads are `nobuf` (address bit 63 in the high word, accepted since) |
 | `rxtx-ch36-mimo2.zip` | the same run with a two-stream VHT station: 1089 TX and 1242 RX frames, VHT on two streams in both directions, BCC received at MCS 0 |
 
 ## What it settles

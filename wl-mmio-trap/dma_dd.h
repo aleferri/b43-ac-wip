@@ -31,6 +31,10 @@
 #define DD_CTL0_EOF		0x40000000
 #define DD_CTL0_EOT		0x10000000
 #define DD_CTL1_BYTECNT		0x00007fff
+/* Address bit 63, which the engine behind PCIe carries on every address it
+ * is given (the ring's and the buffers', 0x80000000 in the high words on the
+ * vd625); not part of the memory address. */
+#define DD_ADDRHI_PCI64		0x80000000
 
 /* Flags of a dumped descriptor */
 #define DD_F_BE			0x01	/* descriptor words big-endian in memory */

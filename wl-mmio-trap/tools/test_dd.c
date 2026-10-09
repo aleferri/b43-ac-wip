@@ -7,7 +7,7 @@
  * the previous index to the new one, the wrap at the descriptor with EOT,
  * the index as an address and as an offset into the ring, the ring address
  * read back for a ring set up before the trap, both byte orders of the
- * descriptor words, the budget, dump_len 0 tracking without dumping, a
+ * descriptor words, address bit 63 in the high word, the budget, dump_len 0 tracking without dumping, a
  * buffer outside memory and a descriptor that is not one.
  *
  * What it cannot check: the byte order the stock driver actually uses on
@@ -92,6 +92,11 @@ static void mk_desc(u32 ring, unsigned int i, u32 len, bool eot, bool be)
 	put32(p + 8, buf, be);
 	put32(p + 12, 0, be);
 	memset(mem + (buf - MEM_BASE), (int)i, len);
+}
+
+static void set_addrhi(u32 ring, unsigned int i, u32 hi)
+{
+	put32(mem + (ring - MEM_BASE) + i * DD_SIZE + 12, hi, false);
 }
 
 static void reset(void)
@@ -226,6 +231,28 @@ static void test_big_endian(void)
 	       got[0].n == 100, "decoded, buffer shorter than dump_len");
 }
 
+static void test_addrhi(void)
+{
+	struct dd_state s;
+	u32 budget = 100;
+
+	printf("high address word\n");
+	reset();
+	dd_init(&s);
+	mk_desc(RING, 0, 32, false, false);
+	mk_desc(RING, 1, 32, false, false);
+	set_addrhi(RING, 0, DD_ADDRHI_PCI64);
+	set_addrhi(RING, 1, 0x00000001);
+
+	dd_on_write(&s, &ops, NULL, 0x208, RING, 32, &budget);
+	dd_on_write(&s, &ops, NULL, 0x204, RING + 2 * DD_SIZE, 32, &budget);
+	EXPECT(ngot == 2, "both descriptors");
+	EXPECT(got[0].n == 32 && !(got[0].d.flags & DD_F_NOBUF),
+	       "bit 63 alone: the buffer is read");
+	EXPECT(got[1].n == 0 && (got[1].d.flags & DD_F_NOBUF),
+	       "other high bits: not memory to read");
+}
+
 static void test_limits(void)
 {
 	struct dd_state s;
@@ -262,6 +289,7 @@ int main(void)
 	test_offset_index();
 	test_ring_before_trap();
 	test_big_endian();
+	test_addrhi();
 	test_limits();
 
 	if (fails) {
