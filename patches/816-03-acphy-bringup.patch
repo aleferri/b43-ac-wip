@@ -7,14 +7,14 @@ Subject: [PATCH 2/2] b43: AC-PHY bring-up from the reverse-engineered port
  drivers/net/wireless/broadcom/b43/Makefile    |     4 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |   102 +
  drivers/net/wireless/broadcom/b43/phy_ac.c    | 10576 +++++++++++++++-
- drivers/net/wireless/broadcom/b43/phy_ac.h    |   809 +-
+ drivers/net/wireless/broadcom/b43/phy_ac.h    |   816 +-
  drivers/net/wireless/broadcom/b43/ppr_ac.c    |   270 +
  drivers/net/wireless/broadcom/b43/ppr_ac.h    |    84 +
  .../net/wireless/broadcom/b43/radio_2069.c    |  1671 +++
  .../net/wireless/broadcom/b43/radio_2069.h    |    48 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1079 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    51 +
- 10 files changed, 14672 insertions(+), 22 deletions(-)
+ 10 files changed, 14679 insertions(+), 22 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -10754,7 +10754,7 @@ index fe102ea..9c3a7d6 100644
 +	(void)b43_phy_ac_farrow_vals_432x_media_a1;
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.h b/drivers/net/wireless/broadcom/b43/phy_ac.h
-index 02eb6c0..b57822d 100644
+index 02eb6c0..e2f11b6 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.h
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.h
 @@ -3,6 +3,12 @@
@@ -10857,7 +10857,7 @@ index 02eb6c0..b57822d 100644
  #define B43_PHY_AC_C1_CLIP			0x6d4
  #define  B43_PHY_AC_C1_CLIP_DIS			0x4000
  #define B43_PHY_AC_C2_CLIP			0x8d4
-@@ -31,9 +100,743 @@
+@@ -31,9 +100,750 @@
  #define B43_PHY_AC_C3_CLIP			0xad4
  #define  B43_PHY_AC_C3_CLIP_DIS			0x4000
  
@@ -11584,6 +11584,13 @@ index 02eb6c0..b57822d 100644
 + */
 +#ifndef B43_AC_FN
 +#define B43_AC_FN() do { } while (0)
++#endif
++#ifndef B43_DEBUG
++#ifdef CPTCFG_B43_DEBUG
++#define B43_DEBUG 1
++#else
++#define B43_DEBUG 0
++#endif
 +#endif
 +#ifndef B43_AC_BLOCK
 +#if B43_DEBUG
