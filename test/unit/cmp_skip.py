@@ -533,7 +533,7 @@ def main():
         o = C.RET_SUFFIX.sub('', o)
         if 'val=UNDEFINED' in o or C.val_nondet(o):
             o = C.VAL_TOK.sub('val=*', o, count=1)
-        return o
+        return C.senza_bit_fuori_perimetro(o)
 
     rules = [r for r in KNOWN.get(args.board, [])
              if args.bus or not r.get('solo_bus')]

@@ -497,6 +497,15 @@ PHY_ANCHE = [
 #            la scrive una volta con 0, b43 due volte (0 in b43_chip_init poi 1),
 #            quindi la' c'e' una controparte e una divergenza di valore, non
 #            un'assenza.
+#            Dello stesso offload e' HOSTF5 bit 15: il MAC.MHF slot 4 mask
+#            0x8000 con cui il vendor lo alza al primo bring-up e lo abbassa
+#            ai successivi (cold01 #9943). L'ucode 784 lo legge a 0x0AF2 e
+#            0x0CAC sul percorso RX della probe request: a 1 la consuma -- la
+#            risponde dal template e scarta il frame, r20 bit 0 -> flush a
+#            0x0A27 -- a 0 la passa al host. b43 lo tiene a 0, perche' le
+#            probe response le fa hostapd, e non emette il MAC.MHF; la
+#            OBJ.WR di 0x00d4 che segue c'e' da entrambe le parti e si
+#            confronta sotto VAL_BIT_FUORI_PERIMETRO.
 SOLO_VENDOR = (
     r"^MARK\b",
     r"^IOCTL\b",
@@ -504,6 +513,7 @@ SOLO_VENDOR = (
     r'^OBJ\.WR addr=0x(?:48|4a|18[0246])(?: |$)',
     r'^OBJ\.WR addr=0x1(?:6[02468ace]|7[02468ace])(?: |$)',
     r'^TPL\.RAMW addr=0x700(?: |$)',
+    r'^MAC\.MHF addr=0x4 val=0x(?:8000|0) mask=0x8000$',
 )
 
 # Op che il PORT emette e che il vendor legittimamente non ha. Si scartano dal
@@ -791,6 +801,17 @@ VAL_TOLLERANZA = [
 ]
 
 
+# Bit di una cella su cui il port diverge dal vendor per scelta: il confronto
+# li ignora e vincola tutti gli altri bit della stessa scrittura. Ogni voce e'
+# una decisione del port, documentata, non un residuo da misurare.
+#
+# HOSTF5 (0x00d4) bit 15, l'offload della probe response: vedi la voce in
+# SOLO_VENDOR. Il vendor scrive 0x8088 al primo bring-up, il port 0x0088.
+VAL_BIT_FUORI_PERIMETRO = [
+    (0x00d4, 0x8000, "HOSTF5 bit 15, probe response offload"),
+]
+
+
 def _s(v: int, bits: int) -> int:
     """Interpreta @v come intero con segno su @bits bit."""
     v &= (1 << bits) - 1
@@ -838,6 +859,21 @@ def val_entro_maschera(v: str, t: str) -> bool:
     mask = int(mv.group(3), 16)
     return (int(mv.group(2), 16) & mask) == (int(mt.group(2), 16) & mask)
 
+OBJ_WR_VAL = re.compile(r'^(OBJ\.WR addr=0x([0-9a-fA-F]+) val=)(0x[0-9a-fA-F]+)$')
+
+def senza_bit_fuori_perimetro(op: str) -> str:
+    """L'op con i bit di VAL_BIT_FUORI_PERIMETRO tolti dal valore, se scrive
+    una delle sue celle; altrimenti l'op com'e'."""
+    m = OBJ_WR_VAL.match(op)
+    if not m:
+        return op
+    a = int(m.group(2), 16)
+    for addr, bits, _ in VAL_BIT_FUORI_PERIMETRO:
+        if a == addr:
+            return f"{m.group(1)}{int(m.group(3), 16) & ~bits:#x}"
+    return op
+
+
 def ops_equal(v: str, t: str) -> bool:
     """Confronto op-per-op con il valore letto trattato come wildcard quando il
     vendor non lo ha registrato.
@@ -854,6 +890,8 @@ def ops_equal(v: str, t: str) -> bool:
     if v == t:
         return True
     if val_entro_maschera(v, t):
+        return True
+    if senza_bit_fuori_perimetro(v) == senza_bit_fuori_perimetro(t):
         return True
     if val_nondet(v):
         return VAL_TOK.sub('val=*', v, count=1) == VAL_TOK.sub('val=*', t, count=1)

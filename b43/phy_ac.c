@@ -10338,11 +10338,19 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	for (off = 0x0300; off <= 0x0306; off += 2)
 		b43_shm_read16(dev, B43_SHM_SHARED, off);
 	b43_phy_ac_wd_stats_poll_opt(dev, true, 0, true);
-	/* MHF4 bit 15: set on a first bring-up, cleared on a later one. */
-	b43_phy_ac_mhf_maskset(dev, 4, (u16)~0x8000,
-			       (dev->phy.ac->status_mask &
-				B43_PHY_AC_STATE_FIRST_BRINGUP) ? 0x8000 : 0);
-	/* MHF1 bit 0: the opposite polarity. */
+	/*
+	 * HOSTF5 bit 15 hands the probe requests to the microcode: 784 reads
+	 * it at 0x0AF2 and 0x0CAC on the RX path of a probe request, and with
+	 * it set answers from the probe-response template and flushes the
+	 * frame (r20 bit 0, 0x0A27), with it clear passes the frame to the
+	 * host. The stock driver sets it here and runs the offload, which on a
+	 * first bring-up is the change that writes the cell; b43 leaves the
+	 * probe responses to hostapd, keeps the bit clear and writes the word
+	 * as it stands at the same point.
+	 */
+	if (dev->phy.ac->status_mask & B43_PHY_AC_STATE_FIRST_BRINGUP)
+		b43_phy_ac_mhf_write(dev, 4);
+	/* MHF1 bit 0: set on a later bring-up, clear on the first. */
 	b43_phy_ac_mhf_maskset(dev, 1, (u16)~0x0001,
 			       (dev->phy.ac->status_mask &
 				B43_PHY_AC_STATE_FIRST_BRINGUP) ? 0 : 0x0001);

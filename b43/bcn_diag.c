@@ -22,6 +22,14 @@
  */
 #define B43_BCN_DIAG_TBTT_COUNT		0x00EA
 
+/*
+ * Shared-memory word 0xA6: the AC microcode adds one to it for every probe
+ * response it gave up on because the request was older than PRMAXTIME (784 at
+ * 0x0277). With HOSTF5 bit 15 set it is also the count of probe requests the
+ * host never saw.
+ */
+#define B43_BCN_DIAG_PRS_TIMEOUTS	0x014C
+
 #define B43_BCN_DIAG_MAX_DIFFS		8
 
 static u32 b43_bcn_diag_ram_read(struct b43_wldev *dev, u16 offset, bool swap)
@@ -98,14 +106,16 @@ void b43_bcn_diag_tick(struct b43_wldev *dev)
 	unsigned int i;
 
 	b43info(dev->wl,
-		"bcn tick: maccmd 0x%08x btl0 %u btl1 %u timbpos 0x%03x dtimper %u phyctl 0x%04x tbtt %u\n",
+		"bcn tick: maccmd 0x%08x btl0 %u btl1 %u timbpos 0x%03x dtimper %u phyctl 0x%04x tbtt %u hostf5 0x%04x prs-timeouts %u\n",
 		b43_read32(dev, B43_MMIO_MACCMD),
 		b43_shm_read16(dev, B43_SHM_SHARED, B43_SHM_SH_BTL0),
 		b43_shm_read16(dev, B43_SHM_SHARED, B43_SHM_SH_BTL1),
 		b43_shm_read16(dev, B43_SHM_SHARED, B43_SHM_SH_TIMBPOS),
 		b43_shm_read16(dev, B43_SHM_SHARED, B43_SHM_SH_DTIMPER),
 		b43_shm_read16(dev, B43_SHM_SHARED, B43_SHM_SH_BEACPHYCTL_AC),
-		b43_shm_read16(dev, B43_SHM_SHARED, B43_BCN_DIAG_TBTT_COUNT));
+		b43_shm_read16(dev, B43_SHM_SHARED, B43_BCN_DIAG_TBTT_COUNT),
+		b43_shm_read16(dev, B43_SHM_SHARED, B43_SHM_SH_HOSTF5),
+		b43_shm_read16(dev, B43_SHM_SHARED, B43_BCN_DIAG_PRS_TIMEOUTS));
 
 	for (i = 0; i < ARRAY_SIZE(dev->wl->diag.tpl); i++) {
 		const struct b43_bcn_shadow *s = &dev->wl->diag.tpl[i];

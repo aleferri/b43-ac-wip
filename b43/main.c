@@ -5974,7 +5974,10 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
 	 *
 	 * Not written: the probe response offload cells, PRSSID, PRSSIDLEN and
 	 * PRTLEN. b43 turns that offload off with PRMAXTIME just below, so
-	 * they are meant to be untouched.
+	 * they are meant to be untouched. HOSTF5 bit 15 belongs to the same
+	 * offload and is the one bit the stock driver ends with that b43 does
+	 * not take: with it set the microcode keeps the probe requests for
+	 * itself (b43_phy_ac_op_switch_channel()).
 	 */
 	if (dev->dev->core_rev >= 42) {
 		b43_shm_write16(dev, B43_SHM_SHARED,
@@ -5988,7 +5991,7 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
 		b43_shm_write16(dev, B43_SHM_SHARED,
 				B43_SHM_SH_HOSTF4, 0x0060);
 		b43_shm_write16(dev, B43_SHM_SHARED,
-				B43_SHM_SH_HOSTF5, 0x8088);
+				B43_SHM_SH_HOSTF5, 0x0088);
 	}
 
 	/*

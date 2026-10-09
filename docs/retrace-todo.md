@@ -245,18 +245,45 @@ same lever as `AC_FIRST_INIT`.
 
 ### Probe-response offload
 
-Deliberately off: b43 writes `PRMAXTIME=1`, and the cells are in `SOLO_VENDOR`
-of `test/unit/compare.py`. To implement it:
+Deliberately off: b43 writes `PRMAXTIME=1`, keeps HOSTF5 bit 15 clear, and the
+cells are in `SOLO_VENDOR` of `test/unit/compare.py`, the bit in
+`VAL_BIT_FUORI_PERIMETRO`.
+
+HOSTF5 bit 15 is the switch, read from the 784 disassembly (`d11ucode42` of
+`wlDSL-3580_EU.o_save`, `extract_ucode.py` + `b43-dasm -a 15`): the probe
+request handler at `0x0A7D` (reached from the management dispatch at
+`0x093C`, `r19 = fc >> 2 = 0x10`) matches the request's SSID against
+`PRSSIDLEN`/`PRSSID` (`[0x24]`, `[0xB0]`, compare at `0x0AB5`-`0x0AC9`),
+queues a response from the template (`0x0ACC`-`0x0AEE`, slot at `[0x5E]`,
+age from TSF), and then at `0x0AF2` and `0x0CAC` tests `[0x6A]` bit 15: set,
+`r20 |= 1` and the frame is flushed at `0x0A27`→`L665`, never reaching the
+host; clear, it goes to the host. The response itself is dropped at
+`0x0273`-`0x0279` when its age exceeds `PRMAXTIME`, counting in `[0xA6]`
+(SHM 0x14C). So with the bit set and `PRMAXTIME=1` nobody answers: the AP
+is invisible to an active scan and cannot be joined. The initvals leave
+`PRSSIDLEN = 0x0b64`, so the SSID compare fails anyway. The stock driver
+sets the bit at the `op_switch_channel` site (cold01 #9943 on the DSL,
+#13879 on the D6220, and on every `up`) because it runs the offload; b43
+writes the slot there on a first bring-up (`b43_phy_ac_mhf_write()`), with
+the bit clear, and `b43_wireless_core_init()` ends HOSTF5 at `0x0088`.
+
+To implement the offload:
 
 1. keep only `b43_chip_init()`'s `PRMAXTIME=0`;
 2. write the template at the layout's probe-response base, `0x04d8` on 784 and
    `0x0700` on 832 and 928 (the TODO above `struct b43_tpl_layout` in `b43/b43.h`),
    rewritten after every beacon once its length and the MACCMD valid bits are
    written: one `RAM_CONTROL`, then 76 words on the agcombo;
-3. write `0x0180`–`0x0186` = `0x0527`/`0x01f4`/`0`/`0x0032`, twice, the first
+3. write `PRSSIDLEN`, `PRSSID` and `PRTLEN` with the beacon, as the stock
+   driver does (`0x48`, `0x160`, `0x4a`);
+4. write `0x0180`–`0x0186` = `0x0527`/`0x01f4`/`0`/`0x0032`, twice, the first
    inside `op_init` between `bcma_chipco_gpio_control()` and `mode_init`;
    `0x0184` is read back later;
-4. remove the `SOLO_VENDOR` entry.
+5. set HOSTF5 bit 15 as the stock driver does (`0x8000` on slot 4 at the
+   `op_switch_channel` site, `0x8088` in `b43_wireless_core_init()`), and
+   handle `B43_RX_MAC_RESP` on the probe requests that still come up when the
+   bit is clear;
+6. remove the `SOLO_VENDOR` entries and `VAL_BIT_FUORI_PERIMETRO`.
 
 ### Power management queue
 
@@ -774,9 +801,13 @@ ucode revision.
 
 ## On hardware (DSL-3580L, OpenWrt)
 
-- **Beacon.** On `bringup-log-2026-10-08-bis..txt` a station associates,
-  which a probe response is enough for, so whether a beacon goes out is
-  open. `b43/bcn_diag.c` logs the uploaded template,
+- **Beacon.** It goes out: on 2026-10-09 a passive scan finds it on every
+  SSID length tried. An active scan found it only on some runs, and whether a
+  station could associate followed the same pattern: the probe requests were
+  being kept by the microcode, HOSTF5 bit 15 (see "Probe-response offload"),
+  and the bit's state depended on whether a hot PHY cycle had rewritten the
+  word after `b43_wireless_core_init()`'s `0x8088`, not on the SSID. Fixed by
+  keeping the bit clear. `b43/bcn_diag.c` logs the uploaded template,
   what the microcode changes in template RAM, the MACCMD valid bits and the
   management frames with their TX status; it prints through `b43info()`
   every second, so it spends the rate limit (see the README). The stock

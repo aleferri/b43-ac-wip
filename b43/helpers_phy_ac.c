@@ -55,6 +55,16 @@ void b43_phy_ac_mhf_maskset(struct b43_wldev *dev, u16 slot, u16 mask, u16 val)
 				b43_phy_ac_hostf_regs[slot], ac->mhfs[slot]);
 }
 
+/* Write one HOSTFn slot as it stands, changed or not. */
+void b43_phy_ac_mhf_write(struct b43_wldev *dev, u16 slot)
+{
+	if (WARN_ON(slot > 4))
+		return;
+
+	b43_shm_write16(dev, B43_SHM_SHARED, b43_phy_ac_hostf_regs[slot],
+			dev->phy.ac->mhfs[slot]);
+}
+
 /*
  * Force the PHY clock on or release it. The stock driver pairs the core's
  * forced gated clock with the MAC's side of it in PSM_PHY_HDR: set after the
