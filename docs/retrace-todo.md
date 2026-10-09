@@ -324,6 +324,21 @@ hardware"). What is open:
 - **HT40.** TODO. The width field and the HT-SIG's 40 MHz bit are written
   from 6.30's code; no microcode has run them and no capture has a HT
   frame at 40 MHz.
+- **Transmit beamforming.** TODO, not implemented. b43 announces no SU
+  beamformer capability, so a station never sends the compressed
+  beamforming feedback, and every multi-chain frame goes out with CDD on
+  the chains of the TX core table. What it takes, in 802.11ac's explicit
+  form: sounding (NDP Announcement, then the NDP), the VHT Compressed
+  Beamforming frames received and their steering matrix handed to the
+  PHY, and on the beamformed frames word 0 bit 3, the `bfm` field and the
+  beamformed bit of VHT-SIG-A2 (bit 8). What is known: 7.14.43 beamforms
+  from MCS 4 up, on every chain, `bfm` `0x43`-`0x48` in its high byte
+  (`router-data/vd625-agcombo/`); 7.14.89 sets bit 3 outside
+  `wlc_acphy_txctl0_calc()` and the SIG-A2 bit in `wlc_compute_plcp()` on a
+  rate with `RSPEC_TXBF`. Who sends the sounding, where the matrix goes
+  and what `bfm` encodes are in nothing read so far; a `wl-mmio-trap` run
+  with beamforming on would show the shared memory and PHY tables it
+  writes.
 
 - **TX.** The TX descriptor is the AC microcode's long format,
   `d11actxh_t` of Broadcom's `d11.h` (see `PROVENANCE.md`), 124 bytes:
