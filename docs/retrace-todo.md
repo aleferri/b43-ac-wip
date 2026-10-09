@@ -321,9 +321,11 @@ the captures below, the DSL-3580L's 6.30 code and, for HT20, gonsolo's port
 under 832.127). On the board HT20 and VHT20/40/80 are under test (see "On
 hardware"). What is open:
 
-- **HT40.** TODO. The width field and the HT-SIG's 40 MHz bit are written
-  from 6.30's code; no microcode has run them and no capture has a HT
-  frame at 40 MHz.
+- **HT40.** TODO on the board. The width field and the HT-SIG's 40 MHz bit
+  are written from 6.30's code; the D6220's 7.14.89 sends the same
+  (`0x40ce`, HT-SIG byte 0 `0x87` for MCS 7, word 1 0 on a primary in the
+  upper half of ch38), in
+  `router-data/d6220/rxtx-1s-ht20-40-vht20-40-80-txbf0.zip`.
 - **Transmit beamforming.** TODO, not implemented. b43 announces no SU
   beamformer capability, so a station never sends the compressed
   beamforming feedback, and every multi-chain frame goes out with CDD on
@@ -449,6 +451,31 @@ hardware"). What is open:
   - Word 1's subband: the chanspec's sideband shifted by the frame's width
     (`sb >> bw`) on every frame, which is the primary at 20 MHz and 0 on a
     frame that fills the channel.
+
+  `router-data/d6220/rxtx-1s-ht20-40-vht20-40-80-txbf0.zip`, the D6220's
+  7.14.89 with `wl txbf 0` to a one-stream phone, HT (frame type 2) at 20
+  and 40 MHz and VHT at 20, 40 and 80:
+  - The same as b43: word 2 the MCS index on HT, MCS and NSS - 1 on VHT;
+    the width field; the HT-SIG (MCS, `0x80` at 40, the length, `0x07` with
+    LDPC `0x40` and SGI `0x80` on top); VHT-SIG-A with group ID 63; the
+    rate in 500 kbps; word 1's subband; word 1's power, 0 at 20 and 40 MHz
+    and `0x0010` at 80 on ch36-48, which is what b43 computes for the D6220
+    on the three widths (`rate_po_vht`, from the unit harness).
+  - Not in b43: every unicast MCS frame has four rate blocks (MCS 7/4/3/2
+    on HT, 8/6/5/4 on VHT) and MAC TX control `0x41c0`/`0x0000`, that is
+    `STMSDU`, `LFRM`, `IACK` and `0x0040`, which b43 does not name
+    (**SALAME**: "aggregatable", the statuses below have aggregates), and no
+    `FIX_RATE`; RTS/CTS `0x0905`, `USE_RTS` with the 24 Mb/s code (`0x09`)
+    and OFDM, `0x0925` on the last block (`0x0a65`, 12 Mb/s, on HT's); the
+    802.11 duration filled in (mac80211 leaves it 0 on MCS frames). On VHT
+    to the one-stream phone STBC: SIG-A NSTS 2, word 2 `0x0040` added. On
+    HT, with `txbf 0`, word 0 bit 3, `bfm` `0x4000` and `0x0040` in the
+    RTS/CTS word; **SALAME**: implicit beamforming, which `wl txbf` does not
+    switch off. Legacy management and multicast frames keep `FIX_RATE`, one
+    block and RTS/CTS `0x0020` at 20 MHz.
+  - TX status: bit 15 of `XMITSTAT_0` is the ACK, bits 14:8 the MPDUs of an
+    aggregate (32, 16, 19 on these runs), as `b43_txstatus_read_ac()`
+    reads it; a suppressed one carries reason 1 (PMQ) in bits 7:4.
 
   The D6220's 7.14.89 (`wlD6220.o_save`) has the same functions with
   6.30's constants and branches, and beamforming on top:

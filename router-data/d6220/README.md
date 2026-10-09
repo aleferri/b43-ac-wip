@@ -23,9 +23,20 @@ revision from a different OEM.
 | `wl1_srom_raw.txt` | `wl -i wl1 srdump` |
 | `wl1_nvram.txt` | `wl -i wl1 dump nvram` |
 | `wl1-log.txt` | `wl` lines of the boot log |
+| `rxtx-1s-ht20-40-vht20-40-80-txbf0.zip` | decoded `wl-diag` trace of `wl-capture-scripts/capture_txrx.sh` with `TXBF=0`, a one-stream VHT phone passing traffic: `VHTMODE=0` on 5g36/20 and 5g40/40 (the phone joins as HT), then `VHTMODE=1` on 5g36/20, 5g40/40 and 5g44/80; 512 TX frames with their d11 headers, 512 RX frames and 512 TX statuses per chanspec, cut by `MARK` records; with the `pianifica()` hook plan of the session |
 
 The sweep segments contain wl0's attach at their head, like the other two-core
 boards; `reverse-tools/strip_other_core.py` removes it.
+
+## Throughput of the stock driver
+
+Ookla Speedtest from the phone (one stream) to a server in Milan, through
+the router's WAN, during `rxtx-1s-ht20-40-vht20-40-80-txbf0`: HT20 67 Mbit/s,
+HT40 112, VHT20 67, VHT40 135, VHT80 267. End to end, so the line and the
+router's forwarding bound them as much as the radio. The TX frames the
+capture's budget took are small (100-350 bytes) and go out in aggregates of
+up to 32: by their size, TCP ACKs or the test's latency phase rather than
+its download.
 
 ## What the D6220 settles
 
