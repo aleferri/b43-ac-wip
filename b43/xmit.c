@@ -499,6 +499,56 @@ static void b43_txhdr_ac_vht(const struct b43_phy_ac *ac,
 }
 
 /*
+ * The Duration of a unicast frame sent at an MCS. mac80211 leaves it 0 and
+ * to the hardware (ieee80211_duration()), and the AC microcode does not fill
+ * it in: the stock driver writes it, SIFS and the ACK at the highest basic
+ * rate not above the MCS's non-HT reference rate, for its last fallback rate
+ * (router-data/d6220/rxtx-1s-ht20-40-vht20-40-80-txbf0.zip: 48 us after HT
+ * MCS 2, 44 after VHT MCS 4). @mod is the modulation and coding, HT MCS
+ * modulo 8; VHT MCS 8 and 9 take MCS 7's reference rate, 54 Mb/s.
+ */
+static void b43_txhdr_ac_mcs_duration(struct b43_wldev *dev,
+				      struct sk_buff *skb,
+				      const struct ieee80211_tx_info *info,
+				      unsigned int mod)
+{
+	static const u16 ref_rate[8] = {
+		60, 120, 180, 240, 360, 480, 540, 540,	/* 100 kb/s */
+	};
+	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)skb->data;
+	struct ieee80211_hw *hw = dev->wl->hw;
+	struct ieee80211_vif *vif = info->control.vif;
+	struct ieee80211_supported_band *sband = hw->wiphy->bands[info->band];
+	struct ieee80211_rate *ack = NULL;
+	unsigned int i;
+	u16 dur;
+
+	if (!vif || !sband || !sband->n_bitrates ||
+	    ieee80211_is_ctl(hdr->frame_control) ||
+	    ieee80211_has_morefrags(hdr->frame_control) ||
+	    is_multicast_ether_addr(hdr->addr1) ||
+	    (info->flags & IEEE80211_TX_CTL_NO_ACK))
+		return;
+
+	for (i = 0; i < sband->n_bitrates; i++) {
+		struct ieee80211_rate *rate = &sband->bitrates[i];
+
+		if (!(vif->bss_conf.basic_rates & BIT(i)) ||
+		    rate->bitrate > ref_rate[mod])
+			continue;
+		if (!ack || rate->bitrate > ack->bitrate)
+			ack = rate;
+	}
+	if (!ack)
+		ack = &sband->bitrates[0];
+
+	dur = info->band == NL80211_BAND_5GHZ ? 16 : 10;
+	dur += le16_to_cpu(ieee80211_generic_frame_duration(hw, vif, info->band,
+							      10 + FCS_LEN, ack));
+	hdr->duration_id = cpu_to_le16(dur);
+}
+
+/*
  * The AC microcode's descriptor with its first rate block only: legacy, an
  * HT or a VHT MCS. Hardware encryption is off on B43_FW_HDR_AC.
  */
@@ -541,12 +591,19 @@ static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 	txhdr->cookie = cpu_to_le16(cookie);
 	txhdr->seq = wlhdr->seq_ctrl;
 
-	if (c->ht)
+	if (c->ht) {
 		b43_txhdr_ac_ht(ac, r, info, len);
-	else if (c->vht)
+		b43_txhdr_ac_mcs_duration(dev, skb, info,
+					  info->control.rates[0].idx % 8);
+	} else if (c->vht) {
 		b43_txhdr_ac_vht(ac, r, info);
-	else
+		b43_txhdr_ac_mcs_duration(dev, skb, info,
+			min_t(unsigned int,
+			      ieee80211_rate_get_vht_mcs(&info->control.rates[0]),
+			      7));
+	} else {
 		b43_txhdr_ac_legacy(ac, r, c, len);
+	}
 
 	if (c->rts || c->cts) {
 		u8 code;
