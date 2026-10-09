@@ -4,17 +4,17 @@ Date: Fri, 2 Oct 2026 17:12:17 +0000
 Subject: [PATCH 2/2] b43: AC-PHY bring-up from the reverse-engineered port
 
 ---
- drivers/net/wireless/broadcom/b43/Makefile    |     5 +
+ drivers/net/wireless/broadcom/b43/Makefile    |     4 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |   102 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 10564 +++++++++++++++-
- drivers/net/wireless/broadcom/b43/phy_ac.h    |   791 +-
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 10576 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.h    |   802 +-
  drivers/net/wireless/broadcom/b43/ppr_ac.c    |   270 +
  drivers/net/wireless/broadcom/b43/ppr_ac.h    |    84 +
  .../net/wireless/broadcom/b43/radio_2069.c    |  1671 +++
  .../net/wireless/broadcom/b43/radio_2069.h    |    48 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1079 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    51 +
- 10 files changed, 14643 insertions(+), 22 deletions(-)
+ 10 files changed, 14665 insertions(+), 22 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -24,10 +24,10 @@ Subject: [PATCH 2/2] b43: AC-PHY bring-up from the reverse-engineered port
  create mode 100644 drivers/net/wireless/broadcom/b43/tables_phy_ac.h
 
 diff --git a/drivers/net/wireless/broadcom/b43/Makefile b/drivers/net/wireless/broadcom/b43/Makefile
-index 48589b5..f1e8438 100644
+index 48589b5..3085225 100644
 --- a/drivers/net/wireless/broadcom/b43/Makefile
 +++ b/drivers/net/wireless/broadcom/b43/Makefile
-@@ -15,6 +15,11 @@ b43-$(CPTCFG_B43_PHY_HT)	+= tables_phy_ht.o
+@@ -15,6 +15,10 @@ b43-$(CPTCFG_B43_PHY_HT)	+= tables_phy_ht.o
  b43-$(CPTCFG_B43_PHY_HT)	+= radio_2059.o
  b43-$(CPTCFG_B43_PHY_LCN)	+= phy_lcn.o tables_phy_lcn.o
  b43-$(CPTCFG_B43_PHY_AC)	+= phy_ac.o
@@ -35,7 +35,6 @@ index 48589b5..f1e8438 100644
 +b43-$(CPTCFG_B43_PHY_AC)	+= radio_2069.o
 +b43-$(CPTCFG_B43_PHY_AC)	+= helpers_phy_ac.o
 +b43-$(CPTCFG_B43_PHY_AC)	+= ppr_ac.o
-+b43-y				+= bcn_diag.o
  b43-y				+= sysfs.o
  b43-y				+= xmit.o
  b43-y				+= dma.o
@@ -148,7 +147,7 @@ index 0000000..56a4d2c
 +	b43_read32(dev, B43_MMIO_MACCTL);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index fe102ea..88bd815 100644
+index fe102ea..e8f9f3c 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -1,17 +1,53 @@
@@ -211,7 +210,7 @@ index fe102ea..88bd815 100644
  
  static int b43_phy_ac_op_allocate(struct b43_wldev *dev)
  {
-@@ -62,27 +98,10517 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -62,27 +98,10529 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -866,7 +865,10 @@ index fe102ea..88bd815 100644
 +
 +/*
 + * Chain masks of the 0x05d4-0x05dc block, which b43.h calls KEYIDXBLOCK for
-+ * the v4 firmware and the AC core uses for something else.
++ * the v4 firmware. On the AC core it is the microcode's TX core table, one
++ * cell per rate class (enum b43_phy_ac_txcore): the DSL-3580L's wl writes
++ * the five cells in that order (wlc_stf_txcore_shmem_write()) from the
++ * per-class masks its TX descriptors take (wlc_stf_txcore_get()).
 + *
 + * 0x05d4 and 0x05dc are coremask on every segment (0x3 on the d6220, 0x7 on
 + * the agcombo and the tg789vac). 0x05da follows 0x05d8 while that keeps more
@@ -884,8 +886,8 @@ index fe102ea..88bd815 100644
 + * and the offsets those `wl curpower` prints
 + * (router-data/vd625-agcombo/stats.txt,
 + * dsl3580l/wl1_curpower_ch52-bw80.txt): CDD 3 and 5 dB under one chain on 2
-+ * and 3, TXBF 6 and 9.75. 0x05d6 as TXBF and 0x05d8 as CDD is the best of
-+ * the four fits tried, not a known meaning.
++ * and 3, TXBF 6 and 9.75. The OFDM cell, 0x05d6, fits the TXBF rows and the
++ * one-stream cell, 0x05d8, the CDD rows: the best of the four fits tried.
 + *
 + * The Local Max is not in cfg80211 and is not the cap on the target
 + * (b43_phy_ac_locale_ceiling(): 20.5 dBm at ch64/20, where the masks need
@@ -1018,18 +1020,28 @@ index fe102ea..88bd815 100644
 +							      off_cdd, chains));
 +}
 +
++/*
++ * The cells up to two streams are written; three streams take coremask,
++ * which every capture of a three-chain board has at 0x05dc and b43 does not
++ * write.
++ */
 +static void b43_phy_ac_chainmask_block(struct b43_wldev *dev,
 +				       enum b43_phy_ac_chain_site site)
 +{
++	u16 *txcore = dev->phy.ac->txcore;
 +	u16 mask = dev->phy.ac->coremask;
 +	u16 pair[2];
++	unsigned int i;
 +
 +	b43_phy_ac_chain_pair(dev, site, dev->phy.ac->cal_width, pair);
-+	b43_shm_write16(dev, B43_SHM_SHARED, 0x05d4, mask);
-+	b43_shm_write16(dev, B43_SHM_SHARED, 0x05d6, pair[0]);
-+	b43_shm_write16(dev, B43_SHM_SHARED, 0x05d8, pair[1]);
-+	b43_shm_write16(dev, B43_SHM_SHARED, 0x05da,
-+			hweight8((u8)pair[1]) > 1 ? pair[1] : mask);
++	txcore[B43_PHY_AC_TXCORE_CCK] = mask;
++	txcore[B43_PHY_AC_TXCORE_OFDM] = pair[0];
++	txcore[B43_PHY_AC_TXCORE_NSTS1] = pair[1];
++	txcore[B43_PHY_AC_TXCORE_NSTS1 + 1] =
++		hweight8((u8)pair[1]) > 1 ? pair[1] : mask;
++	txcore[B43_PHY_AC_TXCORE_NSTS1 + 2] = mask;
++	for (i = 0; i <= B43_PHY_AC_TXCORE_NSTS1 + 1; i++)
++		b43_shm_write16(dev, B43_SHM_SHARED, 0x05d4 + 2 * i, txcore[i]);
 +}
 +
 +/*
@@ -1048,7 +1060,6 @@ index fe102ea..88bd815 100644
 +	u16 cc = b43_shm_read16(dev, B43_SHM_SHARED, 0x00cc);
 +
 +	b43_phy_ac_chain_pair(dev, site, dev->phy.ac->cal_width, pair);
-+	dev->phy.ac->tx_cores = pair[0];
 +	cc = (u16)((cc & ~0x01c0) | (pair[0] << 6));
 +	b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
 +	b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
@@ -1122,7 +1133,7 @@ index fe102ea..88bd815 100644
 +static const struct b43_phy_ac_locale_row b43_phy_ac_legacy_20[] = {
 +	{  36,  48, 62 },
 +	{  52, 144, 94 },
- };
++};
 +
 +static const struct b43_phy_ac_locale_row b43_phy_ac_legacy_40[] = {
 +	{  36,  44, 74 },
@@ -1130,7 +1141,7 @@ index fe102ea..88bd815 100644
 +	{  60,  60, 78 },
 +	{ 100, 100, 86 },
 +	{ 108, 140, 98 },
-+};
+ };
 +
 +static const struct b43_phy_ac_locale_row b43_phy_ac_legacy_80[] = {
 +	{  36,  36, 74 },
@@ -10743,7 +10754,7 @@ index fe102ea..88bd815 100644
 +	(void)b43_phy_ac_farrow_vals_432x_media_a1;
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.h b/drivers/net/wireless/broadcom/b43/phy_ac.h
-index 02eb6c0..7242f29 100644
+index 02eb6c0..dc8256f 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.h
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.h
 @@ -3,6 +3,12 @@
@@ -10846,7 +10857,7 @@ index 02eb6c0..7242f29 100644
  #define B43_PHY_AC_C1_CLIP			0x6d4
  #define  B43_PHY_AC_C1_CLIP_DIS			0x4000
  #define B43_PHY_AC_C2_CLIP			0x8d4
-@@ -31,9 +100,725 @@
+@@ -31,9 +100,736 @@
  #define B43_PHY_AC_C3_CLIP			0xad4
  #define  B43_PHY_AC_C3_CLIP_DIS			0x4000
  
@@ -10923,6 +10934,17 @@ index 02eb6c0..7242f29 100644
 + * clamped to it in b43_phy_ac_probe_cores.
 + */
 +#define B43_PHY_AC_MAX_CORES		3
++
++/*
++ * Rate classes of the microcode's TX core table, shm 0x05d4 on, one cell
++ * each: CCK, OFDM, then one per space-time stream count.
++ */
++enum b43_phy_ac_txcore {
++	B43_PHY_AC_TXCORE_CCK,
++	B43_PHY_AC_TXCORE_OFDM,
++	B43_PHY_AC_TXCORE_NSTS1,
++	B43_PHY_AC_TXCORE_NUM = B43_PHY_AC_TXCORE_NSTS1 + B43_PHY_AC_MAX_CORES,
++};
 +
 +/*
 + * Measurement passes the window keeps: two up to 40 MHz, six at 80 on the
@@ -11272,8 +11294,8 @@ index 02eb6c0..7242f29 100644
 +	enum nl80211_chan_width mac_width;
 +	/* Chanspec last written to B43_SHM_SH_CHAN, 0 when never. */
 +	u16 chanspec;
-+	/* TX cores last written into shm 0x00cc, the mask frames go out on. */
-+	u16 tx_cores;
++	/* The TX core table as last written, by enum b43_phy_ac_txcore. */
++	u16 txcore[B43_PHY_AC_TXCORE_NUM];
 +	/*
 +	 * Power offset field of each legacy rate, PHY TX control word 1, as
 +	 * last written into the rate blocks: OFDM by rate index, 6 to 54 Mbit/s,
