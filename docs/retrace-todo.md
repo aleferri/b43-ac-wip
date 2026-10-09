@@ -340,8 +340,11 @@ from the capabilities of the stock beacon in the agcombo bus capture
 (`0x086f`, LDPC added, in its later beacons), MCS `ff ff ff`, TX MCS set not
 defined; VHT `0x0f825832`, MCS 0-9 on three streams both ways. The port
 takes the streams from the SROM `rxchain` and leaves out what b43 does not
-do: A-MPDU and A-MSDU, MPDUs over 3895 bytes, LDPC, beamforming, link
-adaptation, and HT and VHT rates in transmission. What is open:
+do: A-MPDU and A-MSDU, MPDUs over 3895 bytes, LDPC reception, beamforming,
+link adaptation, HT rates in transmission and VHT on more than one stream.
+VHT MCS 0-9 on one stream go out in the layout of the stock driver's own
+descriptors (`b43_txhdr_ac_vht()`, from the capture below), not yet run on
+the board. What is open:
 
 - **TX.** The TX descriptor is the AC microcode's long format,
   `d11actxh_t` of Broadcom's `d11.h` (see `PROVENANCE.md`), 124 bytes:
@@ -354,9 +357,12 @@ adaptation, and HT and VHT rates in transmission. What is open:
   is his as well. It replaced `format_598`, which put b43's cookie,
   the frame length and the chanspec where the AC ucode does not read them:
   on the DSL-3580L the first frame sent over DMA came back with frame ID 0
-  and the beacon, out until then, stopped. Legacy rates only: with no TX MCS
-  set and an empty VHT TX map mac80211 picks OFDM rates, and `b43_op_tx()`
-  drops a frame that asks for an MCS. PHY TX control word 1 carries
+  and the beacon, out until then, stopped. With no TX MCS set and a VHT TX map
+  of MCS 0-9 on one stream, mac80211 picks legacy rates for an HT station
+  and VHT on one stream for a VHT one, and `b43_op_tx()` drops anything
+  else. The VHT power offsets take the MCS's class on the frame's width
+  (`b43_phy_ac_vht_rate_po()`), not checked against the stock values below,
+  whose board's SROM is not in the collection. PHY TX control word 1 carries
   the rate's power offset, the field the PHY writes into the rate blocks
   for the ucode's own frames at that rate; that the stock driver puts the
   same value in a data frame's descriptor is not checked, since no capture

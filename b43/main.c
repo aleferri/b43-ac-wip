@@ -4421,6 +4421,29 @@ static bool b43_tx_rate_is_mcs(const struct ieee80211_tx_rate *rate)
 	       (rate->flags & (IEEE80211_TX_RC_MCS | IEEE80211_TX_RC_VHT_MCS));
 }
 
+/*
+ * Whether the TX header can carry the frame's rates. On the AC the first
+ * rate block alone, legacy or a VHT MCS 0-9 on one stream at 20, 40 or
+ * 80 MHz; on the other PHYs a legacy rate and its fallback. Rate control
+ * picks nothing else, see b43_ac_set_ht_vht_cap(), but an injected frame can
+ * ask for any rate, and the header would read an MCS as an index into the
+ * legacy rate table.
+ */
+static bool b43_tx_rates_ok(struct ieee80211_hw *hw,
+			    const struct ieee80211_tx_info *info)
+{
+	const struct ieee80211_tx_rate *r = info->control.rates;
+	bool vht_band = hw->wiphy->bands[info->band] &&
+			hw->wiphy->bands[info->band]->vht_cap.vht_supported;
+
+	if (r[0].idx >= 0 && (r[0].flags & IEEE80211_TX_RC_VHT_MCS))
+		return vht_band && ieee80211_rate_get_vht_nss(&r[0]) == 1 &&
+		       ieee80211_rate_get_vht_mcs(&r[0]) <= 9 &&
+		       !(r[0].flags & IEEE80211_TX_RC_160_MHZ_WIDTH);
+	return !b43_tx_rate_is_mcs(&r[0]) &&
+	       (vht_band || !b43_tx_rate_is_mcs(&r[1]));
+}
+
 static void b43_op_tx(struct ieee80211_hw *hw,
 		      struct ieee80211_tx_control *control,
 		      struct sk_buff *skb)
@@ -4433,14 +4456,7 @@ static void b43_op_tx(struct ieee80211_hw *hw,
 		return;
 	}
 	B43_WARN_ON(skb_shinfo(skb)->nr_frags);
-	/*
-	 * The TX header carries legacy rates only. Rate control never picks
-	 * an MCS, see b43_ac_set_ht_vht_cap(), but an injected frame can ask
-	 * for one, and b43_generate_txhdr() would read it as an index into the
-	 * legacy rate table.
-	 */
-	if (unlikely(b43_tx_rate_is_mcs(&IEEE80211_SKB_CB(skb)->control.rates[0]) ||
-		     b43_tx_rate_is_mcs(&IEEE80211_SKB_CB(skb)->control.rates[1]))) {
+	if (unlikely(!b43_tx_rates_ok(hw, IEEE80211_SKB_CB(skb)))) {
 		ieee80211_free_txskb(hw, skb);
 		return;
 	}
@@ -6402,12 +6418,16 @@ static const struct ieee80211_iface_combination b43_if_comb_dfs = {
  *
  *  - aggregation: the A-MPDU parameters stay at their minimum, and with no
  *    ampdu_action mac80211 opens no block ack session either way;
- *  - transmitting HT and VHT rates: the TX MCS set is not defined and the
- *    VHT TX map is empty, so mac80211 picks legacy rates only, see
- *    b43_op_tx();
+ *  - transmitting HT rates, and VHT on more than one stream: the TX MCS set
+ *    is not defined and the VHT TX map has MCS 0-9 on the first stream
+ *    only, the one layout the stock driver's descriptors show
+ *    (b43_txhdr_ac_vht()). mac80211 picks legacy rates for an HT station
+ *    and keeps a VHT station to one stream, see b43_op_tx();
  *  - the long MPDUs and A-MSDUs, beyond the receive buffer;
- *  - LDPC, beamforming and the link adaptation the stock driver announces
- *    on VHT: nothing configures or decodes them.
+ *  - LDPC reception, beamforming and the link adaptation the stock driver
+ *    announces on VHT: nothing configures or decodes them. A VHT frame is
+ *    sent with LDPC when mac80211 asks, for a station that receives it, as
+ *    every VHT frame of the stock driver's is.
  *
  * The stock beacon carries the 4360's three streams; the streams here are
  * the board's receive chains, the SROM rxchain the PHY also uses.
@@ -6444,7 +6464,7 @@ static void b43_ac_set_ht_vht_cap(struct b43_wldev *dev,
 	vht->cap = IEEE80211_VHT_CAP_MAX_MPDU_LENGTH_3895 |
 		   IEEE80211_VHT_CAP_SHORT_GI_80;
 	vht->vht_mcs.rx_mcs_map = cpu_to_le16(map);
-	vht->vht_mcs.tx_mcs_map = cpu_to_le16(0xffff);
+	vht->vht_mcs.tx_mcs_map = cpu_to_le16(0xfffc | IEEE80211_VHT_MCS_SUPPORT_0_9);
 }
 
 static int b43_setup_bands(struct b43_wldev *dev,

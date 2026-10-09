@@ -531,6 +531,8 @@ struct b43_phy_ac {
 	 */
 	u16 rate_po_ofdm[8];
 	u16 rate_po_cck;
+	/* The same field for VHT MCS 0-9, by width (20, 40, 80 MHz). */
+	u16 rate_po_vht[B43_PPR_AC_ROWS][10];
 	u8 crs_subband;
 	/* Operating width of the same configuration. */
 	enum nl80211_chan_width cal_width;

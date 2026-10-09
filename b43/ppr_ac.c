@@ -90,6 +90,18 @@ u8 b43_ppr_ac_ofdm(const struct b43_ppr_ac *ppr, enum nl80211_chan_width width,
 	return ppr->rows[b43_ppr_ac_row(width)][b43_ppr_ac_ofdm_group[rate]];
 }
 
+static const u8 b43_ppr_ac_vht_group[] = {
+	0, 0, 0, 1, 2, 3, 4, 5, 6, 7
+};
+
+u8 b43_ppr_ac_vht(const struct b43_ppr_ac *ppr, enum nl80211_chan_width width,
+		  unsigned int mcs)
+{
+	if (WARN_ON_ONCE(mcs >= ARRAY_SIZE(b43_ppr_ac_vht_group)))
+		return 0;
+	return ppr->rows[b43_ppr_ac_row(width)][b43_ppr_ac_vht_group[mcs]];
+}
+
 u8 b43_ppr_ac_row_max(const struct b43_ppr_ac *ppr,
 		      enum nl80211_chan_width width)
 {

@@ -230,11 +230,16 @@ struct b43_txhdr_ac {
 #define B43_TXH_AC_MAC_FIX_RATE		0x0002	/* Primary rate only */
 /* PHY TX control word 0: B43_TXH_PHY_ENC in 1:0, then */
 #define B43_TXH_AC_PHY0_NON_SOUNDING	0x0004
+/* On every VHT frame without STBC the stock driver sends; meaning unknown */
+#define B43_TXH_AC_PHY0_VHT_0008	0x0008
 #define B43_TXH_AC_PHY0_SHORT_PREAMBLE	0x0010
 #define B43_TXH_AC_PHY0_CORES_SHIFT	6
+#define B43_TXH_AC_PHY0_BW_SHIFT	14	/* 0 20 MHz, 1 40, 2 80 */
 /* PHY TX control word 1: primary 20 MHz subband, power offset */
 #define B43_TXH_AC_PHY1_SUBBAND		0x0007
 #define B43_TXH_AC_PHY1_TXPWR_OFFSET	0x01F8
+/* PHY TX control word 2: the legacy rate index, or the VHT MCS */
+#define B43_TXH_AC_PHY2_VHT_MCS		0x000F
 /* RTS/CTS control */
 #define B43_TXH_AC_RTS_FT_OFDM		0x0001
 #define B43_TXH_AC_RTS_USE_RTS		0x0004

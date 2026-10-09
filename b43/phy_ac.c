@@ -1052,6 +1052,32 @@ static u16 b43_phy_ac_legacy_cap(struct b43_wldev *dev,
 }
 
 /*
+ * The same field for VHT MCS 0-9, which only the data frames' descriptors
+ * carry, by width: the group of the MCS's modulation class on the row of the
+ * frame's width, under no legacy limit. The stock driver's values for these
+ * are in router-data/vd625/rxtx-ch36.zip, on a board whose SROM is not in the
+ * collection, so this form is not checked against them.
+ */
+static void b43_phy_ac_vht_rate_po(struct b43_phy_ac *ac, bool capped)
+{
+	static const enum nl80211_chan_width widths[B43_PPR_AC_ROWS] = {
+		NL80211_CHAN_WIDTH_20, NL80211_CHAN_WIDTH_40, NL80211_CHAN_WIDTH_80,
+	};
+	const struct b43_ppr_ac *t = capped ? &ac->txpwr_ppr : &ac->txpwr_spacing;
+	unsigned int w, mcs;
+	u8 p;
+
+	for (w = 0; w < ARRAY_SIZE(widths); w++) {
+		for (mcs = 0; mcs < ARRAY_SIZE(ac->rate_po_vht[w]); mcs++) {
+			p = b43_ppr_ac_vht(t, widths[w], mcs);
+			ac->rate_po_vht[w][mcs] = capped ?
+				b43_phy_ac_rate_po_capped(ac, p, 0) :
+				b43_phy_ac_rate_po(ac, p, 0);
+		}
+	}
+}
+
+/*
  * Field at +0x0e of the per-rate block, absent in brcmsmac: the rate's power
  * offset in sixteenths of a dB, its distance from the top of the per-rate
  * table read on the spacing table, which never saturates (on the d6220's
@@ -1115,6 +1141,8 @@ static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev,
 		b43_shm_read16(dev, B43_SHM_SHARED, cell);
 		b43_shm_write16(dev, B43_SHM_SHARED, cell, val);
 	}
+
+	b43_phy_ac_vht_rate_po(ac, capped);
 }
 
 /*

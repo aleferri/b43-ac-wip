@@ -63,6 +63,10 @@ u8 b43_ppr_ac_get_max(const struct b43_ppr_ac *ppr);
 u8 b43_ppr_ac_ofdm(const struct b43_ppr_ac *ppr, enum nl80211_chan_width width,
 		   unsigned int rate);
 
+/* The same for a VHT MCS, 0-9, on the row of @width. */
+u8 b43_ppr_ac_vht(const struct b43_ppr_ac *ppr, enum nl80211_chan_width width,
+		  unsigned int mcs);
+
 bool b43_ppr_ac_sprom_has_subband_po(const struct ssb_sprom *sprom);
 
 unsigned int b43_ppr_ac_subband(u16 chan, enum nl80211_chan_width width);
