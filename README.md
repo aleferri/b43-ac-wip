@@ -92,12 +92,12 @@ The DSL-3580L runs the port under OpenWrt with `ucode42.fw` 784.2 from
   [`bringup-log-2026-10-08-bis.txt`](bringup-log-2026-10-08-bis.txt), at
   20 MHz `NOHT`, has a station through the WPA2 4-way handshake and
   traffic, 11 Mbit/s down and 4 up, with no controller restart.
-- **HT and VHT** are under test.
+- **HT20 and VHT20/40/80** are under test.
   [`bringup-log-2026-10-09.txt`](bringup-log-2026-10-09.txt), the first
   run with them announced, has a station that completes the handshake and
-  gets no address. The VHT descriptor has since been aligned with the
-  board's own `wl` (cores per stream count, no beamforming bit); not yet
-  run.
+  gets no address. Since then the VHT descriptor follows the board's own
+  `wl` (cores per stream count, no beamforming bit) and HT MCS go out too;
+  neither is run yet.
 - **RX** works and is slow. Under traffic the 2026-10-08-bis run underruns
   the RX ring, which had the 32 slots of OpenWrt's 813; the 816-02 sets
   128, not yet run under traffic. See `docs/retrace-todo.md`, "On
@@ -140,10 +140,11 @@ How the pieces fit is in [`docs/driver-status.md`](docs/driver-status.md).
   pulse as a radar.
 - Probe-response offload and the power management queue: deliberately off, see
   `docs/retrace-todo.md`.
-- HT in transmission and aggregation: the AC sends legacy rates to an HT
-  station and VHT MCS 0-9 on up to its TX chains to a VHT one, laid out
-  as the stock drivers lay them out, and refuses every block ack session
-  (`docs/retrace-todo.md`, "HT and VHT").
+- HT40 and aggregation: HT MCS go out to an HT station and VHT MCS 0-9 to
+  a VHT one, on up to the board's TX chains, laid out as the stock drivers
+  lay them out; HT at 40 MHz is written from 6.30's code and not run, and
+  every block ack session is refused (`docs/retrace-todo.md`, "HT and
+  VHT").
 - Hardware encryption: mac80211 does the crypto, since the AC microcode's
   cipher numbers and key fields are not b43's (`b43_upload_microcode()`).
 - Temperature: raw tempsense samples are collected and not converted

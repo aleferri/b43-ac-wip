@@ -269,6 +269,7 @@ static u16 b43_txhdr_ac_rate_idx(u8 rate)
  */
 struct b43_txhdr_ctl {
 	struct ieee80211_rate *fbrate;
+	bool ht;		/* rates[0] is an HT MCS: rate and fbrate unset */
 	bool vht;		/* rates[0] is a VHT MCS: rate and fbrate unset */
 	u8 rate;		/* hw_value of the rate */
 	u8 rate_fb;		/* hw_value of the fallback rate */
@@ -296,6 +297,7 @@ static void b43_txhdr_ctl_get(struct b43_wldev *dev,
 	struct ieee80211_tx_rate *rates = info->control.rates;
 	struct ieee80211_rate *txrate = NULL, *rts_cts_rate;
 
+	c->ht = rates[0].idx >= 0 && (rates[0].flags & IEEE80211_TX_RC_MCS);
 	c->vht = rates[0].idx >= 0 && (rates[0].flags & IEEE80211_TX_RC_VHT_MCS);
 	if (b43_tx_rate_legacy(&rates[0]))
 		txrate = ieee80211_get_tx_rate(dev->wl->hw, info);
@@ -378,14 +380,61 @@ static void b43_txhdr_ac_legacy(const struct b43_phy_ac *ac,
 	r->tx_rate = cpu_to_le16(rate);
 }
 
-/* Width of a VHT rate as word 0 and SIG-A1 take it. */
-static unsigned int b43_txhdr_ac_vht_bw(const struct ieee80211_tx_rate *t)
+/* Width of an MCS rate as word 0 and the SIG fields take it. */
+static unsigned int b43_txhdr_ac_rate_bw(const struct ieee80211_tx_rate *t)
 {
 	if (t->flags & IEEE80211_TX_RC_80_MHZ_WIDTH)
 		return 2;
 	if (t->flags & IEEE80211_TX_RC_40_MHZ_WIDTH)
 		return 1;
 	return 0;
+}
+
+/*
+ * One HT rate, as the DSL-3580L's 6.30 lays it out (wlc_acphy_txctl0/1/2_calc(),
+ * wlc_compute_plcp()) and as gonsolo's port sends it under 832.127 on MCS
+ * 0-15 at 20 MHz: frame type 2 and the cores of the stream count's class in
+ * word 0; word 1 as on VHT, with the power offset of the VHT MCS of the same
+ * modulation, the row 6.30's ppr_get_ht_mcs() reads; word 2 the MCS index;
+ * the HT-SIG with the MCS, the length, and smoothing, not sounding and the
+ * reserved bit set.
+ *
+ * TODO: 40 MHz. The width field and the HT-SIG's 40 MHz bit are 6.30's,
+ * run on no microcode yet.
+ */
+static void b43_txhdr_ac_ht(const struct b43_phy_ac *ac,
+			    struct b43_txhdr_ac_rate *r,
+			    const struct ieee80211_tx_info *info,
+			    unsigned int len)
+{
+	const struct ieee80211_tx_rate *t = &info->control.rates[0];
+	unsigned int bw = b43_txhdr_ac_rate_bw(t);
+	u8 mcs = t->idx;
+	bool sgi = t->flags & IEEE80211_TX_RC_SHORT_GI;
+	struct rate_info ri = {
+		.flags = RATE_INFO_FLAGS_MCS |
+			 (sgi ? RATE_INFO_FLAGS_SHORT_GI : 0),
+		.mcs = mcs,
+		.bw = bw ? RATE_INFO_BW_40 : RATE_INFO_BW_20,
+	};
+	u16 phy0;
+
+	phy0 = B43_TXH_PHY_ENC_HT | B43_TXH_AC_PHY0_NON_SOUNDING |
+	       b43_txhdr_ac_cores(ac, B43_PHY_AC_TXCORE_NSTS1 + mcs / 8) |
+	       bw << B43_TXH_AC_PHY0_BW_SHIFT;
+	r->phy_ctl[0] = cpu_to_le16(phy0);
+	r->phy_ctl[1] = cpu_to_le16((ac->rate_po_vht[bw][mcs % 8] &
+				     B43_TXH_AC_PHY1_TXPWR_OFFSET) |
+				    b43_txhdr_ac_subband(ac, bw));
+	r->phy_ctl[2] = cpu_to_le16(mcs);
+
+	r->plcp.raw[0] = mcs | (bw ? 0x80 : 0);
+	r->plcp.raw[1] = len;
+	r->plcp.raw[2] = len >> 8;
+	r->plcp.raw[3] = 0x07 |
+			  (info->flags & IEEE80211_TX_CTL_LDPC ? 0x40 : 0) |
+			  (sgi ? 0x80 : 0);
+	r->tx_rate = cpu_to_le16(cfg80211_calculate_bitrate(&ri) / 5);
 }
 
 /*
@@ -413,7 +462,7 @@ static void b43_txhdr_ac_vht(const struct b43_phy_ac *ac,
 		RATE_INFO_BW_20, RATE_INFO_BW_40, RATE_INFO_BW_80,
 	};
 	const struct ieee80211_tx_rate *t = &info->control.rates[0];
-	unsigned int bw = b43_txhdr_ac_vht_bw(t);
+	unsigned int bw = b43_txhdr_ac_rate_bw(t);
 	u8 mcs = ieee80211_rate_get_vht_mcs(t);
 	u8 nss = ieee80211_rate_get_vht_nss(t);
 	bool sgi = t->flags & IEEE80211_TX_RC_SHORT_GI;
@@ -450,8 +499,8 @@ static void b43_txhdr_ac_vht(const struct b43_phy_ac *ac,
 }
 
 /*
- * The AC microcode's descriptor with its first rate block only: legacy, or
- * a VHT MCS. Hardware encryption is off on B43_FW_HDR_AC.
+ * The AC microcode's descriptor with its first rate block only: legacy, an
+ * HT or a VHT MCS. Hardware encryption is off on B43_FW_HDR_AC.
  */
 static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 				 struct sk_buff *skb,
@@ -492,7 +541,9 @@ static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 	txhdr->cookie = cpu_to_le16(cookie);
 	txhdr->seq = wlhdr->seq_ctrl;
 
-	if (c->vht)
+	if (c->ht)
+		b43_txhdr_ac_ht(ac, r, info, len);
+	else if (c->vht)
 		b43_txhdr_ac_vht(ac, r, info);
 	else
 		b43_txhdr_ac_legacy(ac, r, c, len);

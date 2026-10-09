@@ -312,12 +312,18 @@ from the capabilities of the stock beacon in the agcombo bus capture
 (`0x086f`, LDPC added, in its later beacons), MCS `ff ff ff`, TX MCS set not
 defined; VHT `0x0f825832`, MCS 0-9 on three streams both ways. The port
 takes the streams from the SROM `rxchain` and leaves out what b43 does not
-do: A-MPDU and A-MSDU, MPDUs over 3895 bytes, LDPC reception, beamforming,
-link adaptation and HT rates in transmission. VHT MCS 0-9 go out on as
-many streams as the board has TX chains, in the layout of the stock
-driver's own descriptors (`b43_txhdr_ac_vht()`, from the captures below and
-the DSL-3580L's 6.30 code). On the board the HT and VHT modes are under
-test (see "On hardware"). What is open:
+do: A-MPDU and A-MSDU, MPDUs over 3895 bytes, LDPC reception, beamforming
+and link adaptation. It defines the TX MCS set the stock beacon leaves
+undefined, so that HT MCS go out as well. HT MCS and VHT MCS 0-9 go out on
+as many streams as the board has TX chains, in the layout of the stock
+drivers' own descriptors (`b43_txhdr_ac_ht()`, `b43_txhdr_ac_vht()`, from
+the captures below, the DSL-3580L's 6.30 code and, for HT20, gonsolo's port
+under 832.127). On the board HT20 and VHT20/40/80 are under test (see "On
+hardware"). What is open:
+
+- **HT40.** TODO. The width field and the HT-SIG's 40 MHz bit are written
+  from 6.30's code; no microcode has run them and no capture has a HT
+  frame at 40 MHz.
 
 - **TX.** The TX descriptor is the AC microcode's long format,
   `d11actxh_t` of Broadcom's `d11.h` (see `PROVENANCE.md`), 124 bytes:
@@ -330,10 +336,10 @@ test (see "On hardware"). What is open:
   is his as well. It replaced `format_598`, which put b43's cookie,
   the frame length and the chanspec where the AC ucode does not read them:
   on the DSL-3580L the first frame sent over DMA came back with frame ID 0
-  and the beacon, out until then, stopped. With no TX MCS set and a VHT TX map
-  of MCS 0-9 on every TX chain, mac80211 picks legacy rates for an HT
-  station and VHT on up to as many streams as both sides have for a VHT
-  one, and `b43_op_tx()` drops anything else. The VHT power offsets take
+  and the beacon, out until then, stopped. With the HT TX MCS set and a VHT
+  TX map of MCS 0-9 on every TX chain, mac80211 picks HT for an HT station
+  and VHT for a VHT one, on up to as many streams as both sides have, and
+  `b43_op_tx()` drops anything else. The VHT power offsets take
   the MCS's class on the frame's width (`b43_phy_ac_vht_rate_po()`), not
   checked against the stock values below, taken under the firmware's own
   configuration, whose power targets (`wl curpower`) are not in the
@@ -396,7 +402,8 @@ test (see "On hardware"). What is open:
     bring-up), `0x00ce` `0x0028`, `0x0019`, `0x002a` at 20, 40 and 80 MHz,
     subband and power offset as on OFDM data frames, `0x00d0` 0.
 
-  No HT frame (FT 2): both stations are VHT.
+  No HT frame (FT 2): both stations are VHT, and the stock driver sends VHT
+  at 20 and 40 MHz as well. The two zips are named after the channel width.
 
   The DSL-3580L's own `wl` (6.30, `wlDSL-3580_EU.o_save`, MIPS with symbols)
   builds the same words in `wlc_acphy_txctl0/1/2_calc()` and
@@ -878,7 +885,10 @@ ucode revision.
   build put word 0 bit 3 on every VHT frame but MCS 0 and the OFDM cores,
   one on that channel, on every frame, two streams included; both now follow
   6.30 (see "TX" under "HT and VHT"), not yet run. The same log has the
-  mac80211 warning for the missing `ampdu_action`, fixed since.
+  mac80211 warning for the missing `ampdu_action`, fixed since. HT20, sent
+  since, tells the two apart: it shares the cores, the power and the
+  subband with VHT, and not the VHT-SIG-B and the single-MPDU A-MPDU
+  format every VHT frame has.
 - **RX under traffic.** It works and is slow: at 20 MHz `NOHT` the station
   uploads at 4 Mbit/s and downloads at 11. In the 2026-10-08-bis log the RX
   ring underruns once at the association (229.5 s), then 36 `RX descriptor
