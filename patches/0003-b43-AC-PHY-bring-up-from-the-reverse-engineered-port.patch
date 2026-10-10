@@ -14,7 +14,7 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     4 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |   102 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 10576 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 10605 +++++++++++++++-
  drivers/net/wireless/broadcom/b43/phy_ac.h    |   816 +-
  drivers/net/wireless/broadcom/b43/ppr_ac.c    |   270 +
  drivers/net/wireless/broadcom/b43/ppr_ac.h    |    84 +
@@ -22,7 +22,7 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
  .../net/wireless/broadcom/b43/radio_2069.h    |    48 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1079 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    51 +
- 10 files changed, 14679 insertions(+), 22 deletions(-)
+ 10 files changed, 14708 insertions(+), 22 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -155,7 +155,7 @@ index 0000000..56a4d2c
 +	b43_read32(dev, B43_MMIO_MACCTL);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index fe102ea..9c3a7d6 100644
+index fe102ea..623518b 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -1,17 +1,53 @@
@@ -218,7 +218,7 @@ index fe102ea..9c3a7d6 100644
  
  static int b43_phy_ac_op_allocate(struct b43_wldev *dev)
  {
-@@ -62,27 +98,10529 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -62,27 +98,10558 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -1345,6 +1345,14 @@ index fe102ea..9c3a7d6 100644
 + * tg789vac writes the same ones except for the chain-count cells. They are
 + * transcribed; their purpose is not known.
 + *
++ * The cells are at fixed distances from the block's first one, which each
++ * microcode keeps at its own offset (struct b43_shm_layout): 0x08ec on the
++ * 7.14 microcodes, 0x0894 on 784. 784 has neither 0x0020 nor the block at
++ * +0x16, and 6.30 writes the rest in the same order and with the same
++ * values (router-data/dsl3580l/cold01-ch36-bw20.txt, 9248-9292). With no
++ * layout nothing is written: at another microcode's offsets the block can
++ * land on live cells, as 7.14's does on 784's CTS-to-self.
++ *
 + * Not here yet: the fifteen cells at stride 0x14 that follow the width, the
 + * twelve at stride 0x1c that follow the centre frequency, the read of 0x00b0
 + * (the core's EXTNPHYCTL in b43.h) and 0x05dc (coremask, in KEYIDXBLOCK).
@@ -1357,45 +1365,54 @@ index fe102ea..9c3a7d6 100644
 +static void b43_phy_ac_shm_mac_config_block(struct b43_wldev *dev)
 +{
 +	B43_AC_FN();
-+	/* Sixteen consecutive words from 0x092c. */
-+	static const u16 blocco_092c[] = {
++	/* Sixteen consecutive words from +0x40. */
++	static const u16 blocco_40[] = {
 +		0x3475, 0x3475, 0x3475, 0x217c, 0x237b, 0x217c, 0x217c, 0x217c,
 +		0x3276, 0x3276, 0x3475, 0x187e, 0x217c, 0x167e, 0x1d7d, 0x1f7c,
 +	};
-+	/* Seven consecutive words from 0x0902. */
-+	static const u16 blocco_0902[] = {
++	/* Seven consecutive words from +0x16. */
++	static const u16 blocco_16[] = {
 +		0x41c2, 0x0000, 0x0017, 0x024b, 0x0097, 0x0500, 0x0000,
 +	};
++	const struct b43_shm_layout *shm = dev->fw.shm;
++	u16 base;
 +	unsigned int i;
 +
-+	b43_shm_write16(dev, B43_SHM_SHARED, 0x0020, 0x0800);
-+	b43_shm_write16(dev, B43_SHM_SHARED, 0x08ec, 0x186a);
++	if (!shm)
++		return;
++	base = shm->mac_cfg;
++
++	if (shm->mac_cfg_ext)
++		b43_shm_write16(dev, B43_SHM_SHARED, 0x0020, 0x0800);
++	b43_shm_write16(dev, B43_SHM_SHARED, base, 0x186a);
 +	/*
-+	 * The d6220, with one of its three cores unwired, writes 0x0910 and
-+	 * 0x08f4 and then 0x08f0 = 1; the agcombo and the tg789vac, all three
-+	 * wired, skip the pair and write 0x08f0 = 2. Two boards cannot tell "a
-+	 * core is unwired" from "two chains".
++	 * The d6220, with one of its three cores unwired, writes +0x24 and +0x08
++	 * and then +0x04 = 1; the agcombo and the tg789vac, all three wired,
++	 * skip the pair and write +0x04 = 2. Two boards cannot tell "a core is
++	 * unwired" from "two chains".
 +	 */
 +	if (hweight8((u8)dev->phy.ac->coremask) != dev->phy.ac->num_cores) {
-+		b43_shm_write16(dev, B43_SHM_SHARED, 0x0910, 0x80c3);
-+		b43_shm_write16(dev, B43_SHM_SHARED, 0x08f4, 0x80c2);
++		b43_shm_write16(dev, B43_SHM_SHARED, base + 0x24, 0x80c3);
++		b43_shm_write16(dev, B43_SHM_SHARED, base + 0x08, 0x80c2);
 +	}
-+	b43_shm_write16(dev, B43_SHM_SHARED, 0x08f0,
++	b43_shm_write16(dev, B43_SHM_SHARED, base + 0x04,
 +			(u16)(hweight8((u8)dev->phy.ac->coremask) - 1));
 +
 +	/*
 +	 * Read and written back: the value is zero in the capture, and the
 +	 * read-rewrite form avoids inventing it.
 +	 */
-+	b43_shm_write16(dev, B43_SHM_SHARED, 0x0eec,
-+			b43_shm_read16(dev, B43_SHM_SHARED, 0x0eec));
++	b43_shm_write16(dev, B43_SHM_SHARED, base + 0x600,
++			b43_shm_read16(dev, B43_SHM_SHARED, base + 0x600));
 +
-+	for (i = 0; i < ARRAY_SIZE(blocco_092c); i++)
++	for (i = 0; i < ARRAY_SIZE(blocco_40); i++)
 +		b43_shm_write16(dev, B43_SHM_SHARED,
-+				(u16)(0x092c + i * 2), blocco_092c[i]);
-+	for (i = 0; i < ARRAY_SIZE(blocco_0902); i++)
++				(u16)(base + 0x40 + i * 2), blocco_40[i]);
++	if (!shm->mac_cfg_ext)
++		return;
++	for (i = 0; i < ARRAY_SIZE(blocco_16); i++)
 +		b43_shm_write16(dev, B43_SHM_SHARED,
-+				(u16)(0x0902 + i * 2), blocco_0902[i]);
++				(u16)(base + 0x16 + i * 2), blocco_16[i]);
 +}
 +
 +/*
@@ -6567,10 +6584,38 @@ index fe102ea..9c3a7d6 100644
 +}
 +
 +/*
++ * Suspend the MAC, if it is not, with the CTS-to-self duration armed. On a
++ * MAC suspend with B43_SHM_SH_CTS_DURATION nonzero the microcode sends a
++ * CTS-to-self of that duration first, and each microcode's driver arms it
++ * its own way (struct b43_shm_layout): 6.30, the driver of 784, writes
++ * 4400 us once the MAC is suspended (router-data/dsl3580l/
++ * cold01-ch36-bw20.txt, #12394-12395); 7.14 writes 29000 us right before
++ * the suspend. With no layout nothing is armed. A MAC cell, here for the
++ * same reason as b43_phy_ac_shm_readback_block().
++ *
++ * No nesting: op_switch_channel() may have suspended the MAC already, and
++ * a second suspend would leave the refcount at 2, turning the pairs in
++ * rxiqcal_finalize() into no-ops.
++ */
++static void b43_phy_ac_cal_mac_suspend(struct b43_wldev *dev)
++{
++	const struct b43_shm_layout *shm = dev->fw.shm;
++
++	if (shm && !shm->cts_suspended)
++		b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_CTS_DURATION,
++				shm->cts_duration);
++	if (!dev->mac_suspended)
++		b43_mac_suspend(dev);
++	if (shm && shm->cts_suspended)
++		b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_CTS_DURATION,
++				shm->cts_duration);
++}
++
++/*
 + * RX-cal iteration 3, the third and last idle-TSSI measurement: an RX
-+ * suspend, the statistics clear, shm 0x00b8, the mac_suspend, a diagnostic
-+ * preamble, the A1 restore and the measurement, whose base index returns
-+ * to iteration 1's. What follows is b43_phy_ac_rxiqcal_apply().
++ * suspend, the statistics clear, the MAC suspend with the CTS duration, a
++ * diagnostic preamble, the A1 restore and the measurement, whose base index
++ * returns to iteration 1's. What follows is b43_phy_ac_rxiqcal_apply().
 + * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
 + *   15728-16503]
 + * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -6604,24 +6649,8 @@ index fe102ea..9c3a7d6 100644
 +		b43_phy_ac_noise_sample_request(dev);
 +	}
 +
-+	/*
-+	 * A shared-memory word, between the clear and the mac_suspend. Its
-+	 * meaning is not known, but it is 0x7148 on all 66 writes (d6220 cold
-+	 * and hot, agcombo): independent of channel, width, chip and phase,
-+	 * never read, not in NVRAM. The DSL (wl 6.30) writes 0x1130 and others,
-+	 * so it follows the blob version. b43.h does not name it. A MAC cell,
-+	 * here for the same reason as b43_phy_ac_shm_readback_block().
-+	 */
-+	b43_shm_write16(dev, B43_SHM_SHARED, 0x00b8, 0x7148);
-+
-+	/*
-+	 * Make sure the MAC is suspended without nesting: op_switch_channel()
-+	 * already suspended it, and a second suspend would leave the refcount
-+	 * at 2, turning the pairs in rxiqcal_finalize() into no-ops. The
-+	 * caller expects the MAC suspended on return.
-+	 */
-+	if (!dev->mac_suspended)
-+		b43_mac_suspend(dev);
++	/* The caller expects the MAC suspended on return. */
++	b43_phy_ac_cal_mac_suspend(dev);
 +
 +	/* Diagnostic preamble: 0x0070, 0x?640 per wired chain, then 0x0070. */
 +	b43_phy_read_log(dev, 0x0070);
