@@ -183,6 +183,8 @@ test/unit/           the PHY alone against the captures
 test/d11sim/         the ucode run on the b43-tools interpreter
 test/integration/    the whole of b43 with the port, against real kernel headers
 docs/                technical notes
+docs/ucode42/        the corerev 42 microcode: maps, subsystems, interpreter
+                     model, timetable (index in 00-INDEX.md)
 reverse-tools/       trace pipeline, analysis and extraction scripts
 wl-diag/             on-device accessor tracer for the stock wl driver
 wl-mmio-trap/        on-device MMIO trap for the stock wl driver
