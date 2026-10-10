@@ -66,10 +66,31 @@ The vendor ucode has the same check as OpenFWWF (`mac_suspend_check`):
 When the host has just written a nonzero word to SHM 0x00B8 (0x7148, once
 in almost every segment of D6220's cold sweep), the ucode copies it to SPR
 0x0E7, sets SPR_TXE0_CTL = 0x4001, puts 2 in the low bits of SPR_BRC and
-goes back to the main loop. The frame goes through COND_TX_NOW (handler at
-0x0426, like OpenFWWF's `tx_frame_now`), COND_TX_POWER (0x0742, like
-`tx_infos_update`, which clears the SPR_BRC flags) and COND_TX_DONE
-(0x079E). Only then does the suspend complete. Timing in `11`.
+goes back to the main loop. The word is brcmsmac's `M_CTS_DURATION`
+(`d11.h`), which `phy_n.c` sets to 10000 before suspending the MAC for the
+RX calibration: the frame is a CTS-to-self, the value its duration in µs.
+It goes through COND_TX_NOW (handler at 0x0426, like OpenFWWF's `tx_frame_now`),
+COND_TX_POWER (0x0742, like `tx_infos_update`, which clears the SPR_BRC
+flags) and COND_TX_DONE (0x079E). Only then does the suspend complete. Timing in `11`.
+
+On 0x310 the same path is at 0x0B6A, after UCODESTAT = 3:
+
+```
+0B6A je   [0x5C],0x0, 0B78         ; no CTS duration -> MAC_SUSPENDED
+0B6B calls 013E                    ; r18 = 0x31, frame control 0x00C4 (CTS)
+0B6C sprE7 = [0x5C]                ; the duration
+0B6E [0x5C] = 0                    ; one shot
+0B70 spr323 = 14 << 5 | [0x49F] & 0x1F    ; L-SIG: 14 bytes, rate of [0x49F]
+0B71 spr324 = [0x4A0]
+0B72 spr86 = [0x4C] with bits 1:0 = 1     ; PHY control word 0, OFDM
+0B73 spr8A = [0x4A5]                      ; PHY control word 1
+0B76 SPR_TXE0_CTL = 0x4001
+```
+
+The initvals put 0x01CB at [0x49F] (6 Mb/s), 0 at [0x4A0], 0x01C4 at
+[0x4C]. Byte offsets 0x093E/0x0940/0x094A are 7.14 cells of the MAC config
+block, which 784 keeps 0x58 bytes lower: written at the 7.14 offsets they
+give this CTS an L-SIG with no valid rate and a PHY TX error.
 
 ## Boot: the SHM clear
 

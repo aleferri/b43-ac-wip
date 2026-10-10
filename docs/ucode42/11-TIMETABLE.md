@@ -75,8 +75,8 @@ reach the suspend. With `--psm-mhz` it does:
 
 The difference between the columns, 803 instructions, is of the same order
 as the 960 that 8 µs are worth more at 200 MHz than at 80: the wait starts
-from a TSF saved shortly before. Whether 0x00B8 plays the same role in the
-0x310 family as in the 0x3A0 one is not checked.
+from a TSF saved shortly before. 0x00B8 plays the same role in the 0x310
+family as in the 0x3A0 one (`07`, MAC suspend).
 
 ## TSF and PSM clock
 
