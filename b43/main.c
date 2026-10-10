@@ -1882,6 +1882,46 @@ static const struct b43_tpl_layout *b43_tpl_layout_find(struct b43_wldev *dev)
 	return NULL;
 }
 
+/*
+ * 784 is 6.30's microcode, 928 7.14's. Of 832 only the template layout is
+ * known; the rest is taken from 928.
+ */
+static const struct b43_shm_layout b43_shm_layout_ac_784 = {
+	.mac_cfg	= B43_SHM_SH_MACCFG_AC784,
+	.cts_duration	= 4400,
+	.cts_suspended	= true,
+	.txerr		= B43_SHM_SH_TXERR_AC784,
+};
+
+static const struct b43_shm_layout b43_shm_layout_ac_832 = {
+	.mac_cfg	= B43_SHM_SH_MACCFG_AC928,
+	.mac_cfg_ext	= true,
+	.cts_duration	= 29000,
+};
+
+static const struct b43_shm_layout b43_shm_layout_ac_928 = {
+	.mac_cfg	= B43_SHM_SH_MACCFG_AC928,
+	.mac_cfg_ext	= true,
+	.cts_duration	= 29000,
+	.txerr		= B43_SHM_SH_TXERR_AC928,
+};
+
+static const struct b43_shm_layout *b43_shm_layout_find(struct b43_wldev *dev)
+{
+	if (dev->fw.hdr_format != B43_FW_HDR_AC)
+		return NULL;
+
+	switch (dev->fw.rev) {
+	case 784:
+		return &b43_shm_layout_ac_784;
+	case 832:
+		return &b43_shm_layout_ac_832;
+	case 928:
+		return &b43_shm_layout_ac_928;
+	}
+	return NULL;
+}
+
 /* Byte @i of a template: the header the layout asks for, then the frame. */
 static u8 b43_tpl_byte(const struct b43_tpl_layout *tpl,
 		       const struct b43_plcp_hdr4 *plcp,
@@ -2364,25 +2404,20 @@ out:
 			B43_DEBUGIRQ_REASON_REG, B43_DEBUGIRQ_ACK);
 }
 
-static u16 b43_ac_txerr_latch(struct b43_wldev *dev)
-{
-	switch (dev->fw.rev) {
-	case 784:
-		return B43_SHM_SH_TXERR_AC784;
-	case 928:
-		return B43_SHM_SH_TXERR_AC928;
-	}
-	return 0;
-}
-
 static void b43_ac_report_phy_txerr(struct b43_wldev *dev)
 {
-	u16 base = b43_ac_txerr_latch(dev);
+	u16 base = dev->fw.shm ? dev->fw.shm->txerr : 0;
 	u16 ctl[3], plcp[7];
 	unsigned int i;
 
-	if (!base || !b43_shm_read16(dev, B43_SHM_SHARED, base)) {
-		b43warn(dev->wl, "PHY transmission error\n");
+	if (!base) {
+		b43warn(dev->wl, "PHY transmission error; no TX fault copy "
+			"known for firmware %u\n", dev->fw.rev);
+		return;
+	}
+	if (!b43_shm_read16(dev, B43_SHM_SHARED, base)) {
+		b43warn(dev->wl, "PHY transmission error; the ucode saved "
+			"no TX fault\n");
 		return;
 	}
 	for (i = 0; i < ARRAY_SIZE(ctl); i++)
@@ -3162,6 +3197,11 @@ static int b43_upload_microcode(struct b43_wldev *dev)
 	if (!dev->fw.tpl)
 		b43warn(dev->wl, "Template RAM layout of firmware %u unknown: "
 			"no AP, mesh or IBSS\n", dev->fw.rev);
+	dev->fw.shm = b43_shm_layout_find(dev);
+	if (dev->fw.hdr_format == B43_FW_HDR_AC && !dev->fw.shm)
+		b43warn(dev->wl, "Shared memory layout of firmware %u unknown: "
+			"no MAC config block, no CTS around the calibration\n",
+			dev->fw.rev);
 	WARN_ON(dev->fw.opensource != (fwdate == 0xFFFF));
 
 	dev->qos_enabled = dev->wl->hw->queues > 1;

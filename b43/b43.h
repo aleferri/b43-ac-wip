@@ -266,6 +266,7 @@ enum {
 #define B43_SHM_SH_CHAN			0x00A0	/* Current channel (low 8bit only); the chanspec on the AC-PHY */
 #define  B43_SHM_SH_CHAN_5GHZ		0x0100	/* Bit set, if 5 Ghz channel */
 #define  B43_SHM_SH_CHAN_40MHZ		0x0200	/* Bit set, if 40 Mhz channel width */
+#define B43_SHM_SH_CTS_DURATION		0x00B8	/* Duration (us) of the CTS-to-self sent on MAC suspend */
 #define B43_SHM_SH_MACHW_L		0x00C0	/* Location where the ucode expects the MAC capabilities */
 #define B43_SHM_SH_MACHW_H		0x00C2	/* Location where the ucode expects the MAC capabilities */
 #define B43_SHM_SH_HOSTF5		0x00D4	/* Hostflags 5 for ucode options */
@@ -321,6 +322,12 @@ enum {
 #define  B43_TXERR_PHYCTL		0x0004	/* 3 words */
 #define  B43_TXERR_PLCP			0x000A	/* 7 words */
 #define  B43_TXERR_FRAME		0x001A	/* ucode frame code */
+/*
+ * First cell of the AC ucode's MAC config block, which
+ * b43_phy_ac_shm_mac_config_block() writes at fixed distances from it.
+ */
+#define B43_SHM_SH_MACCFG_AC784		0x0894	/* AC ucode 784 */
+#define B43_SHM_SH_MACCFG_AC928		0x08EC	/* AC ucode 832 and 928 */
 #define B43_SHM_SH_BTSFOFF		0x001C	/* Beacon TSF offset */
 #define B43_SHM_SH_TIMBPOS		0x001E	/* TIM B position in beacon */
 #define B43_SHM_SH_DTIMP		0x0012	/* DTIP period */
@@ -884,6 +891,19 @@ struct b43_tpl_layout {
 	u8 plcp_off;
 };
 
+/*
+ * What b43 writes to the shared memory of an AC microcode where the
+ * microcodes differ: the offsets, in bytes, and the values and order their
+ * own drivers use.
+ */
+struct b43_shm_layout {
+	u16 mac_cfg;		/* first cell of the MAC config block */
+	bool mac_cfg_ext;	/* 0x0020 and the block at mac_cfg + 0x16 */
+	u16 cts_duration;	/* us, of the CTS-to-self of the RX-cal suspend */
+	bool cts_suspended;	/* armed with the MAC already suspended */
+	u16 txerr;		/* latch of the saved TX fault; 0 if none known */
+};
+
 /* Pointers to the firmware data and meta information about it. */
 struct b43_firmware {
 	/* Microcode */
@@ -904,6 +924,8 @@ struct b43_firmware {
 	enum b43_firmware_hdr_format hdr_format;
 	/* Template RAM layout; NULL for an AC microcode not known here */
 	const struct b43_tpl_layout *tpl;
+	/* Shared memory layout; NULL but for an AC microcode known here */
+	const struct b43_shm_layout *shm;
 
 	/* Set to true, if we are using an opensource firmware.
 	 * Use this to check for proprietary vs opensource. */

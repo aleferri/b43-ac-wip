@@ -268,6 +268,15 @@ struct b43_wl {
 	struct ieee80211_hw *hw;
 };
 
+/* Come in-tree (b43.h). */
+struct b43_shm_layout {
+	u16 mac_cfg;
+	bool mac_cfg_ext;
+	u16 cts_duration;
+	bool cts_suspended;
+	u16 txerr;
+};
+
 struct b43_wldev {
 	struct b43_bus_dev *dev;
 	/* Come in-tree: profondita' di annidamento di b43_mac_suspend. */
@@ -276,6 +285,10 @@ struct b43_wldev {
 	struct b43_phy phy;
 	/* Come in-tree: il channel availability check tiene ferma la TX. */
 	bool cac_pending;
+	/* Come in-tree: la disposizione della shared memory della microcode. */
+	struct {
+		const struct b43_shm_layout *shm;
+	} fw;
 };
 
 /*
@@ -413,6 +426,7 @@ void bcma_core_set_clockmode(struct bcma_device *core,
 #define B43_SHM_SH_HOSTF5         0x00D4
 #define B43_SHM_SH_RFATT          0x0064
 #define B43_SHM_SH_CHAN           0x00A0
+#define B43_SHM_SH_CTS_DURATION   0x00B8
 #define B43_SHM_SH_SLOTT          0x0010
 #define B43_SHM_SH_PRETBTT        0x0096
 #define B43_MMIO_MACCTL           0x120

@@ -103,6 +103,8 @@ struct board_profile {
 	 * 0-3 it is what selects b43's defaults, as it does the stock
 	 * driver's. Consumed by leds.c; the pins end up in b43_gpio_init(). */
 	u8 ledbh[16];
+	/* Revision of the microcode the board's wl runs; 0 for 7.14's, 928. */
+	u16 ucode;
 };
 
 /*
@@ -253,6 +255,7 @@ static const struct board_profile PROFILE_DSL = {
 	/* boardflags, boardflags2, boardflags3 (NVRAM). */
 	.boardflags = 0x10000000, .boardflags2 = 0x2, .boardflags3 = 0x0,
 	.name = "dsl", .chip_id = 0x4352, .radio_rev = 4,
+	.ucode = 784,
 	/* deviceid dalla lista PCI di router_info.txt; il chiprev di wl1 non
 	 * e' in nessun dump, e' quello del D6220, stesso chip. */
 	.chip_rev = 0x3, .pci_device = 0x43b3,
