@@ -2364,6 +2364,43 @@ out:
 			B43_DEBUGIRQ_REASON_REG, B43_DEBUGIRQ_ACK);
 }
 
+static u16 b43_ac_txerr_latch(struct b43_wldev *dev)
+{
+	switch (dev->fw.rev) {
+	case 784:
+		return B43_SHM_SH_TXERR_AC784;
+	case 928:
+		return B43_SHM_SH_TXERR_AC928;
+	}
+	return 0;
+}
+
+static void b43_ac_report_phy_txerr(struct b43_wldev *dev)
+{
+	u16 base = b43_ac_txerr_latch(dev);
+	u16 ctl[3], plcp[7];
+	unsigned int i;
+
+	if (!base || !b43_shm_read16(dev, B43_SHM_SHARED, base)) {
+		b43warn(dev->wl, "PHY transmission error\n");
+		return;
+	}
+	for (i = 0; i < ARRAY_SIZE(ctl); i++)
+		ctl[i] = b43_shm_read16(dev, B43_SHM_SHARED,
+					base + B43_TXERR_PHYCTL + 2 * i);
+	for (i = 0; i < ARRAY_SIZE(plcp); i++)
+		plcp[i] = b43_shm_read16(dev, B43_SHM_SHARED,
+					 base + B43_TXERR_PLCP + 2 * i);
+	b43warn(dev->wl, "PHY transmission error; first TX fault saved by the "
+		"ucode: reg 0x%04x, frame 0x%04x, "
+		"phyctl %04x %04x %04x, plcp %04x %04x %04x %04x %04x %04x %04x\n",
+		b43_shm_read16(dev, B43_SHM_SHARED, base + B43_TXERR_STATUS),
+		b43_shm_read16(dev, B43_SHM_SHARED, base + B43_TXERR_FRAME),
+		ctl[0], ctl[1], ctl[2], plcp[0], plcp[1], plcp[2], plcp[3],
+		plcp[4], plcp[5], plcp[6]);
+	b43_shm_write16(dev, B43_SHM_SHARED, base, 0);
+}
+
 static void b43_do_interrupt_thread(struct b43_wldev *dev)
 {
 	u32 reason;
@@ -2390,7 +2427,7 @@ static void b43_do_interrupt_thread(struct b43_wldev *dev)
 	 */
 	if (unlikely(reason & B43_IRQ_PHY_TXERR) &&
 	    dev->phy.type == B43_PHYTYPE_AC)
-		b43warn(dev->wl, "PHY transmission error\n");
+		b43_ac_report_phy_txerr(dev);
 	if (unlikely(reason & B43_IRQ_PHY_TXERR) &&
 	    dev->phy.type != B43_PHYTYPE_AC) {
 		b43err(dev->wl, "PHY transmission error\n");

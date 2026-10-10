@@ -308,6 +308,19 @@ enum {
 #define B43_SHM_SH_BT_BASE1_AC784	0x02D8	/* AC ucode 784, beacon 1 */
 #define B43_SHM_SH_BT_BASE0_AC832	0x0200	/* AC ucode 832 on, beacon 0 */
 #define B43_SHM_SH_BT_BASE1_AC832	0x0480	/* AC ucode 832 on, beacon 1 */
+/*
+ * On the first PHY TX error or TX underflow the AC ucode saves the TX error
+ * PHY register, the frame's PHY control words, its PLCP and its internal
+ * frame code (0x20 the beacon), then sets the latch word and saves nothing
+ * more until it is cleared. Offsets from the latch word; see
+ * docs/ucode42/07-SUBSYSTEMS.md.
+ */
+#define B43_SHM_SH_TXERR_AC784		0x16C8	/* AC ucode 784, latch */
+#define B43_SHM_SH_TXERR_AC928		0x17F4	/* AC ucode 928, latch */
+#define  B43_TXERR_STATUS		0x0002	/* PHY reg 0x007, CCK one for CCK */
+#define  B43_TXERR_PHYCTL		0x0004	/* 3 words */
+#define  B43_TXERR_PLCP			0x000A	/* 7 words */
+#define  B43_TXERR_FRAME		0x001A	/* ucode frame code */
 #define B43_SHM_SH_BTSFOFF		0x001C	/* Beacon TSF offset */
 #define B43_SHM_SH_TIMBPOS		0x001E	/* TIM B position in beacon */
 #define B43_SHM_SH_DTIMP		0x0012	/* DTIP period */
