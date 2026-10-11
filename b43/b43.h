@@ -317,7 +317,7 @@ enum {
  * docs/ucode42/07-SUBSYSTEMS.md.
  */
 #define B43_SHM_SH_TXERR_AC784		0x16C8	/* AC ucode 784, latch */
-#define B43_SHM_SH_TXERR_AC928		0x17F4	/* AC ucode 928, latch */
+#define B43_SHM_SH_TXERR_AC928		0x17F4	/* AC ucode 832 and 928, latch */
 #define  B43_TXERR_STATUS		0x0002	/* PHY reg 0x007, CCK one for CCK */
 #define  B43_TXERR_PHYCTL		0x0004	/* 3 words */
 #define  B43_TXERR_PLCP			0x000A	/* 7 words */
@@ -327,7 +327,8 @@ enum {
  * b43_phy_ac_shm_mac_config_block() writes at fixed distances from it.
  */
 #define B43_SHM_SH_MACCFG_AC784		0x0894	/* AC ucode 784 */
-#define B43_SHM_SH_MACCFG_AC928		0x08EC	/* AC ucode 832 and 928 */
+#define B43_SHM_SH_MACCFG_AC832		0x08F4	/* AC ucode 832 */
+#define B43_SHM_SH_MACCFG_AC928		0x08EC	/* AC ucode 928 */
 #define B43_SHM_SH_BTSFOFF		0x001C	/* Beacon TSF offset */
 #define B43_SHM_SH_TIMBPOS		0x001E	/* TIM B position in beacon */
 #define B43_SHM_SH_DTIMP		0x0012	/* DTIP period */
@@ -898,7 +899,8 @@ struct b43_tpl_layout {
  */
 struct b43_shm_layout {
 	u16 mac_cfg;		/* first cell of the MAC config block */
-	bool mac_cfg_ext;	/* 0x0020 and the block at mac_cfg + 0x16 */
+	bool mac_cfg_0020;	/* 0x0020 = 0x0800 before the block */
+	bool mac_cfg_16;	/* the seven words from mac_cfg + 0x16 */
 	u16 cts_duration;	/* us, of the CTS-to-self of the RX-cal suspend */
 	bool cts_suspended;	/* armed with the MAC already suspended */
 	u16 txerr;		/* latch of the saved TX fault; 0 if none known */

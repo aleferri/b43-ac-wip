@@ -1883,8 +1883,9 @@ static const struct b43_tpl_layout *b43_tpl_layout_find(struct b43_wldev *dev)
 }
 
 /*
- * 784 is 6.30's microcode, 928 7.14's. Of 832 only the template layout is
- * known; the rest is taken from 928.
+ * 784 is the microcode of 6.30 on the DSL-3580L, 832 of the x86 hybrid
+ * 6.30.223, 928 of 7.14; each layout is what that driver writes
+ * (router-data/dsl3580l, router-data/archer-t5e, router-data/d6220).
  */
 static const struct b43_shm_layout b43_shm_layout_ac_784 = {
 	.mac_cfg	= B43_SHM_SH_MACCFG_AC784,
@@ -1894,14 +1895,16 @@ static const struct b43_shm_layout b43_shm_layout_ac_784 = {
 };
 
 static const struct b43_shm_layout b43_shm_layout_ac_832 = {
-	.mac_cfg	= B43_SHM_SH_MACCFG_AC928,
-	.mac_cfg_ext	= true,
+	.mac_cfg	= B43_SHM_SH_MACCFG_AC832,
+	.mac_cfg_16	= true,
 	.cts_duration	= 29000,
+	.txerr		= B43_SHM_SH_TXERR_AC928,
 };
 
 static const struct b43_shm_layout b43_shm_layout_ac_928 = {
 	.mac_cfg	= B43_SHM_SH_MACCFG_AC928,
-	.mac_cfg_ext	= true,
+	.mac_cfg_0020	= true,
+	.mac_cfg_16	= true,
 	.cts_duration	= 29000,
 	.txerr		= B43_SHM_SH_TXERR_AC928,
 };

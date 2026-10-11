@@ -1209,12 +1209,13 @@ static u16 b43_phy_ac_beacon_pwr_offset_at(struct b43_wldev *dev,
  * transcribed; their purpose is not known.
  *
  * The cells are at fixed distances from the block's first one, which each
- * microcode keeps at its own offset (struct b43_shm_layout): 0x08ec on the
- * 7.14 microcodes, 0x0894 on 784. 784 has neither 0x0020 nor the block at
- * +0x16, and 6.30 writes the rest in the same order and with the same
- * values (router-data/dsl3580l/cold01-ch36-bw20.txt, 9248-9292). With no
- * layout nothing is written: at another microcode's offsets the block can
- * land on live cells, as 7.14's does on 784's CTS-to-self.
+ * microcode keeps at its own offset (struct b43_shm_layout): 0x08ec on 928,
+ * 0x08f4 on 832, 0x0894 on 784. Their drivers write them in the same order
+ * and with the same values, but 0x0020 only on 928 and the block at +0x16
+ * not on 784 (router-data/dsl3580l/cold01-ch36-bw20.txt, 9248-9292;
+ * router-data/archer-t5e/mmiotrace.zip, #13998-14054). With no layout
+ * nothing is written: at another microcode's offsets the block can land on
+ * live cells, as 928's does on 784's CTS-to-self.
  *
  * Not here yet: the fifteen cells at stride 0x14 that follow the width, the
  * twelve at stride 0x1c that follow the centre frequency, the read of 0x00b0
@@ -1245,7 +1246,7 @@ static void b43_phy_ac_shm_mac_config_block(struct b43_wldev *dev)
 		return;
 	base = shm->mac_cfg;
 
-	if (shm->mac_cfg_ext)
+	if (shm->mac_cfg_0020)
 		b43_shm_write16(dev, B43_SHM_SHARED, 0x0020, 0x0800);
 	b43_shm_write16(dev, B43_SHM_SHARED, base, 0x186a);
 	/*
@@ -1271,7 +1272,7 @@ static void b43_phy_ac_shm_mac_config_block(struct b43_wldev *dev)
 	for (i = 0; i < ARRAY_SIZE(blocco_40); i++)
 		b43_shm_write16(dev, B43_SHM_SHARED,
 				(u16)(base + 0x40 + i * 2), blocco_40[i]);
-	if (!shm->mac_cfg_ext)
+	if (!shm->mac_cfg_16)
 		return;
 	for (i = 0; i < ARRAY_SIZE(blocco_16); i++)
 		b43_shm_write16(dev, B43_SHM_SHARED,
@@ -6452,9 +6453,10 @@ void b43_phy_ac_post_cal_finalize(struct b43_wldev *dev)
  * CTS-to-self of that duration first, and each microcode's driver arms it
  * its own way (struct b43_shm_layout): 6.30, the driver of 784, writes
  * 4400 us once the MAC is suspended (router-data/dsl3580l/
- * cold01-ch36-bw20.txt, #12394-12395); 7.14 writes 29000 us right before
- * the suspend. With no layout nothing is armed. A MAC cell, here for the
- * same reason as b43_phy_ac_shm_readback_block().
+ * cold01-ch36-bw20.txt, #12394-12395); 6.30.223 and 7.14, the drivers of
+ * 832 and 928, write 29000 us right before the suspend. With no layout
+ * nothing is armed. A MAC cell, here for the same reason as
+ * b43_phy_ac_shm_readback_block().
  *
  * No nesting: op_switch_channel() may have suspended the MAC already, and
  * a second suspend would leave the refcount at 2, turning the pairs in

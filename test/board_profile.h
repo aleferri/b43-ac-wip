@@ -380,6 +380,7 @@ static const struct board_profile PROFILE_ARCHER = {
 	/* boardflags, boardflags2, boardflags3 (SROM). */
 	.boardflags = 0x10001000, .boardflags2 = 0x2, .boardflags3 = 0x0,
 	.name = "archer", .chip_id = 0x4352, .radio_rev = 4,
+	.ucode = 832,
 	.chip_rev = 0x3, .pci_device = 0x43a0,
 	.macaddr = { 0xc0, 0x25, 0xe9, 0x29, 0x03, 0xcd },
 	.core_rev = 42, .mac_hw_cap = 0xb0518c05,
@@ -432,6 +433,7 @@ static const struct board_profile PROFILE_MACBOOK = {
 	/* boardflags, boardflags2, boardflags3 (SROM). */
 	.boardflags = 0x10401001, .boardflags2 = 0x2, .boardflags3 = 0x1,
 	.name = "macbook", .chip_id = 0x4360, .radio_rev = 4,
+	.ucode = 832,
 	.chip_rev = 0x3, .pci_device = 0x43a0,
 	.macaddr = { 0x84, 0x38, 0x35, 0x4d, 0x18, 0x6e },
 	.core_rev = 42, .mac_hw_cap = 0xb0518c05,

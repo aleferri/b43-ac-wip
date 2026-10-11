@@ -54,15 +54,21 @@ static struct b43_wldev        g_wldev;
 
 /*
  * Le disposizioni della shared memory di b43_shm_layout_find() (main.c del
- * kernel), che qui non e' nel link: 928 per le board del 7.14, 784 per la
- * DSL, scelta dal campo ucode del profilo.
+ * kernel), che qui non e' nel link: 928 per le board del 7.14, 832 per
+ * quelle del 6.30.223 x86, 784 per la DSL, scelta dal campo ucode del
+ * profilo.
  */
 static const struct b43_shm_layout g_shm_784 = {
 	.mac_cfg = 0x0894, .cts_duration = 4400, .cts_suspended = true,
 	.txerr = 0x16c8,
 };
+static const struct b43_shm_layout g_shm_832 = {
+	.mac_cfg = 0x08f4, .mac_cfg_16 = true, .cts_duration = 29000,
+	.txerr = 0x17f4,
+};
 static const struct b43_shm_layout g_shm_928 = {
-	.mac_cfg = 0x08ec, .mac_cfg_ext = true, .cts_duration = 29000,
+	.mac_cfg = 0x08ec, .mac_cfg_0020 = true, .mac_cfg_16 = true,
+	.cts_duration = 29000,
 	.txerr = 0x17f4,
 };
 
@@ -360,7 +366,8 @@ static void mount_board(const struct board_profile *p)
 	g_wldev.wl  = &g_wl;
 	g_wldev.phy.type       = B43_PHYTYPE_AC;
 	g_wldev.phy.rev        = p->phy_rev;
-	g_wldev.fw.shm         = p->ucode == 784 ? &g_shm_784 : &g_shm_928;
+	g_wldev.fw.shm         = p->ucode == 784 ? &g_shm_784 :
+				 p->ucode == 832 ? &g_shm_832 : &g_shm_928;
 	g_wldev.phy.radio_ver  = p->radio_ver;
 	g_wldev.phy.radio_rev  = p->radio_rev;
 	g_wldev.phy.dacbuf_cap = g_ac.dacbuf_cap;

@@ -271,7 +271,8 @@ struct b43_wl {
 /* Come in-tree (b43.h). */
 struct b43_shm_layout {
 	u16 mac_cfg;
-	bool mac_cfg_ext;
+	bool mac_cfg_0020;
+	bool mac_cfg_16;
 	u16 cts_duration;
 	bool cts_suspended;
 	u16 txerr;
