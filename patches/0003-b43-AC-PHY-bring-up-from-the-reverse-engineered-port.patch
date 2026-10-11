@@ -14,7 +14,7 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     4 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |   102 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 10618 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 10632 +++++++++++++++-
  drivers/net/wireless/broadcom/b43/phy_ac.h    |   816 +-
  drivers/net/wireless/broadcom/b43/ppr_ac.c    |   270 +
  drivers/net/wireless/broadcom/b43/ppr_ac.h    |    84 +
@@ -22,7 +22,7 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
  .../net/wireless/broadcom/b43/radio_2069.h    |    48 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1079 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    51 +
- 10 files changed, 14721 insertions(+), 22 deletions(-)
+ 10 files changed, 14735 insertions(+), 22 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -155,7 +155,7 @@ index 0000000..56a4d2c
 +	b43_read32(dev, B43_MMIO_MACCTL);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index fe102ea..b615b4c 100644
+index fe102ea..f70ab6c 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -1,17 +1,53 @@
@@ -218,7 +218,7 @@ index fe102ea..b615b4c 100644
  
  static int b43_phy_ac_op_allocate(struct b43_wldev *dev)
  {
-@@ -62,27 +98,10571 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -62,27 +98,10585 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -804,6 +804,19 @@ index fe102ea..b615b4c 100644
 +};
 +
 +/*
++ * A power distance in quarter dB as the power offset field of PHY control
++ * word 1 takes it (B43_TXH_AC_PHY1_TXPWR_OFFSET): sixteenths of a dB in
++ * bits 8:3, so in half-dB steps, above the frame's subband in bits 2:0. A
++ * quarter dB left over would land in the subband, so it is rounded up, to
++ * the side of the limit. Every distance the stock drivers write is a whole
++ * half dB; whether they round an odd one up or down is in no capture.
++ */
++static u16 b43_phy_ac_po_field(int qdb)
++{
++	return (u16)(DIV_ROUND_UP(qdb, 2) * 8);
++}
++
++/*
 + * The field for the CCK rates, the cck[4] group of the PPR.
 + *
 + * Rev 11 has no per-rate field for them on 5 GHz (cckbw202gpo is the 2.4 GHz
@@ -823,7 +836,8 @@ index fe102ea..b615b4c 100644
 +
 +	if (!ac->txpwr_maxp)
 +		return 0x00f8;
-+	return (u16)min((target - B43_PHY_AC_QDB(1)) * 4, 0xf8);
++	return min_t(u16, b43_phy_ac_po_field(target - B43_PHY_AC_QDB(1)),
++		     0xf8);
 +}
 +
 +/*
@@ -911,7 +925,7 @@ index fe102ea..b615b4c 100644
 +struct b43_phy_ac_local_max_row {
 +	u8 first, last;		/* primary channel range, inclusive */
 +	u8 level;		/* Local Max, quarter-dBm EIRP */
-+};
+ };
 +
 +static const struct b43_phy_ac_local_max_row b43_phy_ac_local_max_20[] = {
 +	{  36,  48,  84 },
@@ -1086,12 +1100,12 @@ index fe102ea..b615b4c 100644
 +static u16 b43_phy_ac_rate_po(const struct b43_phy_ac *ac, u8 spacing,
 +			      u16 cap)
 +{
-+	u16 dist = (u16)(b43_ppr_ac_get_max(&ac->txpwr_spacing) - spacing) * 4;
++	int dist = b43_ppr_ac_get_max(&ac->txpwr_spacing) - spacing;
 +	int target = b43_ppr_ac_get_max(&ac->txpwr_ppr);
 +
 +	if (cap && target > (int)cap - 6)
-+		dist = max(dist, (u16)(target - ((int)cap - 6)) * 4);
-+	return dist;
++		dist = max(dist, target - ((int)cap - 6));
++	return b43_phy_ac_po_field(dist);
 +}
 +
 +/* Whether legacy rates take the capped form of b43_phy_ac_rate_po_capped(). */
@@ -1118,7 +1132,7 @@ index fe102ea..b615b4c 100644
 +
 +	if (cap)
 +		p = min(p, (int)cap - 6);
-+	return target > p ? (u16)(target - p) * 4 : 0;
++	return target > p ? b43_phy_ac_po_field(target - p) : 0;
 +}
 +
 +/* A limit per primary channel range, for the tables below and the locale's. */
@@ -1149,7 +1163,7 @@ index fe102ea..b615b4c 100644
 +	{  60,  60, 78 },
 +	{ 100, 100, 86 },
 +	{ 108, 140, 98 },
- };
++};
 +
 +static const struct b43_phy_ac_locale_row b43_phy_ac_legacy_80[] = {
 +	{  36,  36, 74 },
