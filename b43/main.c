@@ -5799,6 +5799,15 @@ static void b43_bluetooth_coext_enable(struct b43_wldev *dev)
 		return;
 	if (dev->phy.type != B43_PHYTYPE_B && !dev->phy.gmode)
 		return;
+	/*
+	 * The AC microcodes take the host flags from the PHY's shadow, which
+	 * this write would bypass. The stock driver sets HOSTF1 bit 4 only on
+	 * 2.4 GHz, together with HOSTF3 0x1100, the chipcommon SECI setup and
+	 * the MAC's BTCX registers, none of which b43 programs: the flag alone
+	 * would run the microcode's coexistence engine on unconfigured inputs.
+	 */
+	if (dev->phy.type == B43_PHYTYPE_AC)
+		return;
 
 	hf = b43_hf_read(dev);
 	if (sprom->boardflags_lo & B43_BFL_BTCMOD)

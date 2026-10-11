@@ -14,7 +14,7 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     4 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |   102 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 10607 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 10618 +++++++++++++++-
  drivers/net/wireless/broadcom/b43/phy_ac.h    |   816 +-
  drivers/net/wireless/broadcom/b43/ppr_ac.c    |   270 +
  drivers/net/wireless/broadcom/b43/ppr_ac.h    |    84 +
@@ -22,7 +22,7 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
  .../net/wireless/broadcom/b43/radio_2069.h    |    48 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1079 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    51 +
- 10 files changed, 14710 insertions(+), 22 deletions(-)
+ 10 files changed, 14721 insertions(+), 22 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -155,7 +155,7 @@ index 0000000..56a4d2c
 +	b43_read32(dev, B43_MMIO_MACCTL);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index fe102ea..3efa41a 100644
+index fe102ea..b615b4c 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -1,17 +1,53 @@
@@ -218,7 +218,7 @@ index fe102ea..3efa41a 100644
  
  static int b43_phy_ac_op_allocate(struct b43_wldev *dev)
  {
-@@ -62,27 +98,10560 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -62,27 +98,10571 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -6275,11 +6275,12 @@ index fe102ea..3efa41a 100644
 +}
 +
 +/*
-+ * regctl 0 bit 1 is a PMU resource request, used by the stock driver as a
-+ * bracket around the channel work: raised in the attach preamble and
-+ * lowered at its end, then on a later bring-up lowered on entry to
-+ * op_switch_channel() and raised on exit. The bit cannot be read back, so
-+ * its state is tracked.
++ * regctl 0 bit 1 is a PMU resource request that the 7.14 drivers keep
++ * raised while the radio is powered down: raised right after the radio
++ * power-down at the end of the attach and of every `wl down` (0x0416 = 1),
++ * dropped at the start of the next bring-up, before the radio comes up, on
++ * the 4352 and the 4360 alike. 6.30.102 never writes it. The bit cannot be
++ * read back, so its state is tracked.
 + */
 +static void b43_phy_ac_pmu_req(struct b43_wldev *dev, bool on)
 +{
@@ -6508,6 +6509,16 @@ index fe102ea..3efa41a 100644
 +		b43_phy_ac_down(dev);
 +		return;
 +	}
++
++	/*
++	 * The stock driver never powers the radio up with the PMU request
++	 * raised: every radio power-down raises it and the next power-up
++	 * starts by dropping it. A bring-up arrives here with the cold
++	 * preamble's drop done; a channel change on a running interface
++	 * (b43_ac_phy_recycle()) arrives straight from b43_phy_ac_down().
++	 */
++	if (dev->phy.ac->status_mask & B43_PHY_AC_STATE_PMU_REQ)
++		b43_phy_ac_pmu_req(dev, false);
 +
 +	/*
 +	 * The chanspec heads the radio bring-up: right before the radio

@@ -6138,11 +6138,12 @@ static void b43_phy_ac_afe_arm(struct b43_wldev *dev,
 }
 
 /*
- * regctl 0 bit 1 is a PMU resource request, used by the stock driver as a
- * bracket around the channel work: raised in the attach preamble and
- * lowered at its end, then on a later bring-up lowered on entry to
- * op_switch_channel() and raised on exit. The bit cannot be read back, so
- * its state is tracked.
+ * regctl 0 bit 1 is a PMU resource request that the 7.14 drivers keep
+ * raised while the radio is powered down: raised right after the radio
+ * power-down at the end of the attach and of every `wl down` (0x0416 = 1),
+ * dropped at the start of the next bring-up, before the radio comes up, on
+ * the 4352 and the 4360 alike. 6.30.102 never writes it. The bit cannot be
+ * read back, so its state is tracked.
  */
 static void b43_phy_ac_pmu_req(struct b43_wldev *dev, bool on)
 {
@@ -6371,6 +6372,16 @@ static void b43_phy_ac_op_software_rfkill(struct b43_wldev *dev, bool blocked)
 		b43_phy_ac_down(dev);
 		return;
 	}
+
+	/*
+	 * The stock driver never powers the radio up with the PMU request
+	 * raised: every radio power-down raises it and the next power-up
+	 * starts by dropping it. A bring-up arrives here with the cold
+	 * preamble's drop done; a channel change on a running interface
+	 * (b43_ac_phy_recycle()) arrives straight from b43_phy_ac_down().
+	 */
+	if (dev->phy.ac->status_mask & B43_PHY_AC_STATE_PMU_REQ)
+		b43_phy_ac_pmu_req(dev, false);
 
 	/*
 	 * The chanspec heads the radio bring-up: right before the radio
