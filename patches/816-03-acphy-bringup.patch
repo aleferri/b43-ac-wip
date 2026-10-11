@@ -6,15 +6,15 @@ Subject: [PATCH 2/2] b43: AC-PHY bring-up from the reverse-engineered port
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     4 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |   102 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 10632 +++++++++++++++-
- drivers/net/wireless/broadcom/b43/phy_ac.h    |   816 +-
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 10645 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.h    |   819 +-
  drivers/net/wireless/broadcom/b43/ppr_ac.c    |   270 +
  drivers/net/wireless/broadcom/b43/ppr_ac.h    |    84 +
  .../net/wireless/broadcom/b43/radio_2069.c    |  1671 +++
  .../net/wireless/broadcom/b43/radio_2069.h    |    48 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1079 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    51 +
- 10 files changed, 14735 insertions(+), 22 deletions(-)
+ 10 files changed, 14751 insertions(+), 22 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -147,7 +147,7 @@ index 0000000..56a4d2c
 +	b43_read32(dev, B43_MMIO_MACCTL);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index fe102ea..f70ab6c 100644
+index fe102ea..a39c83f 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -1,17 +1,53 @@
@@ -210,7 +210,7 @@ index fe102ea..f70ab6c 100644
  
  static int b43_phy_ac_op_allocate(struct b43_wldev *dev)
  {
-@@ -62,27 +98,10585 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -62,27 +98,10598 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -3350,6 +3350,20 @@ index fe102ea..f70ab6c 100644
 +static void b43_phy_ac_rx_evm_shaping_override(struct b43_wldev *dev);
 +
 +/*
++ * The width the PHY and the MAC run at. 20 MHz with HT and without it are
++ * one configuration to both; mac80211 tells them apart for what the BSS
++ * announces. The PHY code takes its width from here, so it never sees
++ * NL80211_CHAN_WIDTH_20_NOHT, which is also the zero "never" of
++ * b43_phy_ac::mac_width.
++ */
++static enum nl80211_chan_width
++b43_phy_ac_width(const struct cfg80211_chan_def *chandef)
++{
++	return chandef->width == NL80211_CHAN_WIDTH_20_NOHT ?
++	       NL80211_CHAN_WIDTH_20 : chandef->width;
++}
++
++/*
 + * The chanspec of a configuration, in the layout of B43_PHY_AC_CHANSPEC_*.
 + *
 + * The centre is the primary at 20 MHz and center_freq1 otherwise; the
@@ -3412,9 +3426,9 @@ index fe102ea..f70ab6c 100644
 +	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_CHAN, spec);
 +	ac->chanspec = spec;
 +
-+	if (ac->mac_width != chandef->width) {
++	if (ac->mac_width != b43_phy_ac_width(chandef)) {
 +		b43_mac_bw_set(dev, spec & B43_PHY_AC_CHANSPEC_BW_MASK);
-+		ac->mac_width = chandef->width;
++		ac->mac_width = b43_phy_ac_width(chandef);
 +	}
 +}
 +
@@ -10096,7 +10110,7 @@ index fe102ea..f70ab6c 100644
 +	B43_AC_FN();
 +	struct ieee80211_channel *channel = dev->wl->hw->conf.chandef.chan;
 +	const struct cfg80211_chan_def *chandef = &dev->wl->hw->conf.chandef;
-+	enum nl80211_chan_width width = chandef->width;
++	enum nl80211_chan_width width = b43_phy_ac_width(chandef);
 +	const struct b43_phy_ac_channeltab_e_radio2069 *e2069;
 +	struct b43_phy *phy = &dev->phy;
 +	u16 off, ifs, gate;
@@ -10740,7 +10754,7 @@ index fe102ea..f70ab6c 100644
 +	B43_AC_FN();
 +	const struct b43_phy_ac_farrow_mode *m = &b43_phy_ac_farrow_mode_20_40;
 +	const struct cfg80211_chan_def *chandef = &dev->wl->hw->conf.chandef;
-+	enum nl80211_chan_width width = chandef->width;
++	enum nl80211_chan_width width = b43_phy_ac_width(chandef);
 +	unsigned int freq;
 +	u32 ratio, dphase;
 +	u16 mu;
@@ -10751,8 +10765,7 @@ index fe102ea..f70ab6c 100644
 +			   B43_PHY_AC_STATE_CCA_RESET);
 +
 +	if (b43_current_band(dev->wl) == NL80211_BAND_2GHZ) {
-+		if (width != NL80211_CHAN_WIDTH_20 &&
-+		    width != NL80211_CHAN_WIDTH_20_NOHT) {
++		if (width != NL80211_CHAN_WIDTH_20) {
 +			b43_phy_ac_todo(dev,
 +				"Farrow resampler not programmed at "
 +				"2.4 GHz with width %d: not measured\n",
@@ -10810,7 +10823,7 @@ index fe102ea..f70ab6c 100644
 +	(void)b43_phy_ac_farrow_vals_432x_media_a1;
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.h b/drivers/net/wireless/broadcom/b43/phy_ac.h
-index 02eb6c0..e2f11b6 100644
+index 02eb6c0..935ed97 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.h
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.h
 @@ -3,6 +3,12 @@
@@ -10913,7 +10926,7 @@ index 02eb6c0..e2f11b6 100644
  #define B43_PHY_AC_C1_CLIP			0x6d4
  #define  B43_PHY_AC_C1_CLIP_DIS			0x4000
  #define B43_PHY_AC_C2_CLIP			0x8d4
-@@ -31,9 +100,750 @@
+@@ -31,9 +100,753 @@
  #define B43_PHY_AC_C3_CLIP			0xad4
  #define  B43_PHY_AC_C3_CLIP_DIS			0x4000
  
@@ -11346,7 +11359,10 @@ index 02eb6c0..e2f11b6 100644
 +	u8 crs_prog[B43_PHY_AC_MAX_CORES];
 +	/* CRS value chanspec_tail() last wrote, reused by the Block E site. */
 +	u8 crs_written;
-+	/* Operating width the MAC was last told about, 0 when never. */
++	/*
++	 * Operating width the MAC was last told about, as b43_phy_ac_width()
++	 * gives it; 0 when never.
++	 */
 +	enum nl80211_chan_width mac_width;
 +	/* Chanspec last written to B43_SHM_SH_CHAN, 0 when never. */
 +	u16 chanspec;

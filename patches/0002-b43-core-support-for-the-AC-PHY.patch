@@ -4601,7 +4601,7 @@ index 8358b1d..87fe13b 100644
  		b43_piorx_write32(q, B43_PIO8_RXCTL, B43_PIO8_RXCTL_DATARDY);
  	else
 diff --git a/drivers/net/wireless/broadcom/b43/xmit.c b/drivers/net/wireless/broadcom/b43/xmit.c
-index f0b0825..7ca2ac7 100644
+index f0b0825..55cf6fd 100644
 --- a/drivers/net/wireless/broadcom/b43/xmit.c
 +++ b/drivers/net/wireless/broadcom/b43/xmit.c
 @@ -16,6 +16,7 @@
@@ -4782,8 +4782,8 @@ index f0b0825..7ca2ac7 100644
 + * the HT-SIG with the MCS, the length, and smoothing, not sounding and the
 + * reserved bit set.
 + *
-+ * TODO: 40 MHz. The width field and the HT-SIG's 40 MHz bit are 6.30's,
-+ * run on no microcode yet.
++ * At 40 MHz the width field and the HT-SIG's 40 MHz bit are 6.30's
++ * (docs/retrace-todo.md, "HT40").
 + */
 +static void b43_txhdr_ac_ht(const struct b43_phy_ac *ac,
 +			    struct b43_txhdr_ac_rate *r,
