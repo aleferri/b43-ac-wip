@@ -284,7 +284,18 @@ To implement the offload:
    `op_switch_channel` site, `0x8088` in `b43_wireless_core_init()`), and
    handle `B43_RX_MAC_RESP` on the probe requests that still come up when the
    bit is clear;
-6. remove the `SOLO_VENDOR` entries and `VAL_BIT_FUORI_PERIMETRO`.
+6. remove the `SOLO_VENDOR` entries and `VAL_BIT_FUORI_PERIMETRO`;
+7. keep the cores of SHM `0x0098` (bits 8:6) on the board's chains, as
+   `b43_phy_ac_bss_cc_update()` does for `0x00cc`. The response the ucode
+   builds (frame code `0x0014`, `0x0271` on 784) takes PHY control word 0
+   from that cell as is (`0x02A6`) and skips the TX core table at `0x0E07`
+   that the ucode's other frames go through; 832 and 928 do the same (`0x031B`
+   on 928). Only the initvals write it, `0x01c4`, cores `0x7`. With the
+   offload off, the responses young enough for `PRMAXTIME=1` still go out:
+   on the DSL-3580L, coremask `0x3`, each fails with PHY `0x007 = 0x0004`
+   and a saved fault, `phyctl 01c5 0000 0000`. Harmless, since hostapd
+   answers from the host. Whether the stock drivers, which never write the
+   cell either, get the same error is in no capture.
 
 ### Power management queue
 

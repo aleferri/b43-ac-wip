@@ -151,7 +151,11 @@ How the pieces fit is in [`docs/driver-status.md`](docs/driver-status.md).
 ## Build and hardware test
 
 - a kernel with the `patches/` series applied (`git am`) and
-  `CONFIG_B43_PHY_AC=y`;
+  `CONFIG_B43_PHY_AC=y`; on OpenWrt the 816 patches in
+  `package/kernel/mac80211/patches/brcm/` and `PACKAGE_B43_PHY_AC` in
+  `broadcom.mk`, with the board selecting `DRIVER_11AC_SUPPORT`, without
+  which hostapd is built without 802.11ac and rejects `ieee80211ac` and the
+  `vht_*` options;
 - firmware in `/lib/firmware/b43/`, a 5 GHz AP on channel 36, a serial console
   or netconsole.
 
