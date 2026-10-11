@@ -3221,6 +3221,20 @@ static void b43_phy_ac_chan_tables(struct b43_wldev *dev);
 static void b43_phy_ac_rx_evm_shaping_override(struct b43_wldev *dev);
 
 /*
+ * The width the PHY and the MAC run at. 20 MHz with HT and without it are
+ * one configuration to both; mac80211 tells them apart for what the BSS
+ * announces. The PHY code takes its width from here, so it never sees
+ * NL80211_CHAN_WIDTH_20_NOHT, which is also the zero "never" of
+ * b43_phy_ac::mac_width.
+ */
+static enum nl80211_chan_width
+b43_phy_ac_width(const struct cfg80211_chan_def *chandef)
+{
+	return chandef->width == NL80211_CHAN_WIDTH_20_NOHT ?
+	       NL80211_CHAN_WIDTH_20 : chandef->width;
+}
+
+/*
  * The chanspec of a configuration, in the layout of B43_PHY_AC_CHANSPEC_*.
  *
  * The centre is the primary at 20 MHz and center_freq1 otherwise; the
@@ -3283,9 +3297,9 @@ void b43_phy_ac_write_chanspec(struct b43_wldev *dev)
 	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_CHAN, spec);
 	ac->chanspec = spec;
 
-	if (ac->mac_width != chandef->width) {
+	if (ac->mac_width != b43_phy_ac_width(chandef)) {
 		b43_mac_bw_set(dev, spec & B43_PHY_AC_CHANSPEC_BW_MASK);
-		ac->mac_width = chandef->width;
+		ac->mac_width = b43_phy_ac_width(chandef);
 	}
 }
 
@@ -9967,7 +9981,7 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	B43_AC_FN();
 	struct ieee80211_channel *channel = dev->wl->hw->conf.chandef.chan;
 	const struct cfg80211_chan_def *chandef = &dev->wl->hw->conf.chandef;
-	enum nl80211_chan_width width = chandef->width;
+	enum nl80211_chan_width width = b43_phy_ac_width(chandef);
 	const struct b43_phy_ac_channeltab_e_radio2069 *e2069;
 	struct b43_phy *phy = &dev->phy;
 	u16 off, ifs, gate;
@@ -10611,7 +10625,7 @@ static void b43_phy_ac_farrow_setup(struct b43_wldev *dev,
 	B43_AC_FN();
 	const struct b43_phy_ac_farrow_mode *m = &b43_phy_ac_farrow_mode_20_40;
 	const struct cfg80211_chan_def *chandef = &dev->wl->hw->conf.chandef;
-	enum nl80211_chan_width width = chandef->width;
+	enum nl80211_chan_width width = b43_phy_ac_width(chandef);
 	unsigned int freq;
 	u32 ratio, dphase;
 	u16 mu;
@@ -10622,8 +10636,7 @@ static void b43_phy_ac_farrow_setup(struct b43_wldev *dev,
 			   B43_PHY_AC_STATE_CCA_RESET);
 
 	if (b43_current_band(dev->wl) == NL80211_BAND_2GHZ) {
-		if (width != NL80211_CHAN_WIDTH_20 &&
-		    width != NL80211_CHAN_WIDTH_20_NOHT) {
+		if (width != NL80211_CHAN_WIDTH_20) {
 			b43_phy_ac_todo(dev,
 				"Farrow resampler not programmed at "
 				"2.4 GHz with width %d: not measured\n",

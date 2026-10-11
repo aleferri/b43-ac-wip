@@ -529,7 +529,10 @@ struct b43_phy_ac {
 	u8 crs_prog[B43_PHY_AC_MAX_CORES];
 	/* CRS value chanspec_tail() last wrote, reused by the Block E site. */
 	u8 crs_written;
-	/* Operating width the MAC was last told about, 0 when never. */
+	/*
+	 * Operating width the MAC was last told about, as b43_phy_ac_width()
+	 * gives it; 0 when never.
+	 */
 	enum nl80211_chan_width mac_width;
 	/* Chanspec last written to B43_SHM_SH_CHAN, 0 when never. */
 	u16 chanspec;
