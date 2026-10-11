@@ -15,9 +15,9 @@ Subject: [PATCH 1/2] b43: core support for the AC-PHY
  .../net/wireless/broadcom/b43/phy_common.c    |   61 +-
  .../net/wireless/broadcom/b43/phy_common.h    |   32 +-
  drivers/net/wireless/broadcom/b43/pio.c       |   16 +-
- drivers/net/wireless/broadcom/b43/xmit.c      |  695 ++++++-
- drivers/net/wireless/broadcom/b43/xmit.h      |   92 +
- 13 files changed, 2871 insertions(+), 405 deletions(-)
+ drivers/net/wireless/broadcom/b43/xmit.c      |  707 ++++++-
+ drivers/net/wireless/broadcom/b43/xmit.h      |   93 +
+ 13 files changed, 2884 insertions(+), 405 deletions(-)
 
 diff --git a/drivers/net/wireless/broadcom/b43/Kconfig b/drivers/net/wireless/broadcom/b43/Kconfig
 index 5f008b4..ceee266 100644
@@ -3974,7 +3974,7 @@ index 8358b1d..87fe13b 100644
  		b43_piorx_write32(q, B43_PIO8_RXCTL, B43_PIO8_RXCTL_DATARDY);
  	else
 diff --git a/drivers/net/wireless/broadcom/b43/xmit.c b/drivers/net/wireless/broadcom/b43/xmit.c
-index f0b0825..24946b5 100644
+index f0b0825..8e05b71 100644
 --- a/drivers/net/wireless/broadcom/b43/xmit.c
 +++ b/drivers/net/wireless/broadcom/b43/xmit.c
 @@ -16,6 +16,7 @@
@@ -3985,7 +3985,7 @@ index f0b0825..24946b5 100644
  #include "dma.h"
  #include "pio.h"
  
-@@ -232,6 +233,481 @@ static u8 b43_calc_fallback_rate(u8 bitrate, int gmode)
+@@ -232,6 +233,493 @@ static u8 b43_calc_fallback_rate(u8 bitrate, int gmode)
  }
  
  /* Generate a TX data header. */
@@ -4387,6 +4387,13 @@ index f0b0825..24946b5 100644
 + * ends the list there, and is cut from it with the rest, so that the status
 + * reports the rates tried (b43_fill_txstatus_report()). Hardware encryption
 + * is off on B43_FW_HDR_AC.
++ *
++ * A VHT PPDU carries an A-MPDU. Outside an aggregate SVHT has the microcode
++ * send the frame as an A-MPDU of one MPDU, as the agcombo's 7.14.43 does on
++ * the unicast QoS frames it sends outside a block ack session (MAC TX
++ * control 0x4080/0x0004, router-data/vd625-agcombo/rxtx-1s-ht20-40-80.zip).
++ * The flag is the frame's, so a VHT frame keeps VHT fallbacks only, as the
++ * stock ones are.
 + */
 +static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 +				 struct sk_buff *skb,
@@ -4411,9 +4418,13 @@ index f0b0825..24946b5 100644
 +	if (WARN_ON_ONCE(info->control.hw_key))
 +		return -EOPNOTSUPP;
 +
-+	for (n = 1; n < B43_TXH_AC_RATES; n++)
-+		if (!rates[n].count || !b43_txhdr_ac_rate_ok(sband, &rates[n]))
++	for (n = 1; n < B43_TXH_AC_RATES; n++) {
++		const struct ieee80211_tx_rate *t = &rates[n];
++
++		if (!t->count || !b43_txhdr_ac_rate_ok(sband, t) ||
++		    (c->vht && !(t->flags & IEEE80211_TX_RC_VHT_MCS)))
 +			break;
++	}
 +	for (i = n; i < IEEE80211_TX_MAX_RATES; i++)
 +		rates[i].idx = -1;
 +
@@ -4431,7 +4442,8 @@ index f0b0825..24946b5 100644
 +		mac_lo |= B43_TXH_AC_MAC_LFRM;
 +
 +	txhdr->mac_ctl_lo = cpu_to_le16(mac_lo);
-+	txhdr->mac_ctl_hi = cpu_to_le16(n == 1 ? B43_TXH_AC_MAC_FIX_RATE : 0);
++	txhdr->mac_ctl_hi = cpu_to_le16((n == 1 ? B43_TXH_AC_MAC_FIX_RATE : 0) |
++					(c->vht ? B43_TXH_AC_MAC_SVHT : 0));
 +	txhdr->chanspec = cpu_to_le16(ac->chanspec);
 +	txhdr->iv_offset = ieee80211_hdrlen(wlhdr->frame_control);
 +	txhdr->frame_len = cpu_to_le16(len);
@@ -4467,7 +4479,7 @@ index f0b0825..24946b5 100644
  int b43_generate_txhdr(struct b43_wldev *dev,
  		       u8 *_txhdr,
  		       struct sk_buff *skb_frag,
-@@ -256,16 +732,19 @@ int b43_generate_txhdr(struct b43_wldev *dev,
+@@ -256,16 +744,19 @@ int b43_generate_txhdr(struct b43_wldev *dev,
  			      phy->type == B43_PHYTYPE_N ||
  			      phy->type == B43_PHYTYPE_HT);
  	u8 extra_ft = 0;
@@ -4493,7 +4505,7 @@ index f0b0825..24946b5 100644
  	rate_fb_ofdm = b43_is_ofdm_rate(rate_fb);
  
  	if (rate_ofdm)
-@@ -338,6 +817,7 @@ int b43_generate_txhdr(struct b43_wldev *dev,
+@@ -338,6 +829,7 @@ int b43_generate_txhdr(struct b43_wldev *dev,
  		}
  	}
  	switch (dev->fw.hdr_format) {
@@ -4501,7 +4513,7 @@ index f0b0825..24946b5 100644
  	case B43_FW_HDR_598:
  		b43_generate_plcp_hdr((struct b43_plcp_hdr4 *)(&txhdr->format_598.plcp),
  				      plcp_fragment_len, rate);
-@@ -371,7 +851,7 @@ int b43_generate_txhdr(struct b43_wldev *dev,
+@@ -371,7 +863,7 @@ int b43_generate_txhdr(struct b43_wldev *dev,
  		phy_ctl |= B43_TXH_PHY_ENC_OFDM;
  	else
  		phy_ctl |= B43_TXH_PHY_ENC_CCK;
@@ -4510,7 +4522,7 @@ index f0b0825..24946b5 100644
  		phy_ctl |= B43_TXH_PHY_SHORTPRMBL;
  
  	switch (b43_ieee80211_antenna_sanitize(dev, 0)) {
-@@ -394,51 +874,36 @@ int b43_generate_txhdr(struct b43_wldev *dev,
+@@ -394,51 +886,36 @@ int b43_generate_txhdr(struct b43_wldev *dev,
  		B43_WARN_ON(1);
  	}
  
@@ -4570,7 +4582,7 @@ index f0b0825..24946b5 100644
  			case B43_FW_HDR_598:
  				cts = (struct ieee80211_cts *)
  					(txhdr->format_598.rts_frame);
-@@ -461,6 +926,7 @@ int b43_generate_txhdr(struct b43_wldev *dev,
+@@ -461,6 +938,7 @@ int b43_generate_txhdr(struct b43_wldev *dev,
  			struct ieee80211_rts *rts;
  
  			switch (dev->fw.hdr_format) {
@@ -4578,7 +4590,7 @@ index f0b0825..24946b5 100644
  			case B43_FW_HDR_598:
  				rts = (struct ieee80211_rts *)
  					(txhdr->format_598.rts_frame);
-@@ -484,6 +950,7 @@ int b43_generate_txhdr(struct b43_wldev *dev,
+@@ -484,6 +962,7 @@ int b43_generate_txhdr(struct b43_wldev *dev,
  
  		/* Generate the PLCP headers for the RTS/CTS frame */
  		switch (dev->fw.hdr_format) {
@@ -4586,7 +4598,7 @@ index f0b0825..24946b5 100644
  		case B43_FW_HDR_598:
  			plcp = &txhdr->format_598.rts_plcp;
  			break;
-@@ -501,6 +968,7 @@ int b43_generate_txhdr(struct b43_wldev *dev,
+@@ -501,6 +980,7 @@ int b43_generate_txhdr(struct b43_wldev *dev,
  				      len, rts_rate_fb);
  
  		switch (dev->fw.hdr_format) {
@@ -4594,7 +4606,7 @@ index f0b0825..24946b5 100644
  		case B43_FW_HDR_598:
  			hdr = (struct ieee80211_hdr *)
  				(&txhdr->format_598.rts_frame);
-@@ -530,8 +998,8 @@ int b43_generate_txhdr(struct b43_wldev *dev,
+@@ -530,8 +1010,8 @@ int b43_generate_txhdr(struct b43_wldev *dev,
  		else
  			extra_ft |= B43_TXH_EFT_RTSFB_CCK;
  
@@ -4605,7 +4617,7 @@ index f0b0825..24946b5 100644
  			txhdr->phy_ctl1_rts = cpu_to_le16(
  				b43_generate_tx_phy_ctl1(dev, rts_rate));
  			txhdr->phy_ctl1_rts_fb = cpu_to_le16(
-@@ -541,6 +1009,7 @@ int b43_generate_txhdr(struct b43_wldev *dev,
+@@ -541,6 +1021,7 @@ int b43_generate_txhdr(struct b43_wldev *dev,
  
  	/* Magic cookie */
  	switch (dev->fw.hdr_format) {
@@ -4613,7 +4625,7 @@ index f0b0825..24946b5 100644
  	case B43_FW_HDR_598:
  		txhdr->format_598.cookie = cpu_to_le16(cookie);
  		break;
-@@ -629,6 +1098,70 @@ static s8 b43_rssi_postprocess(struct b43_wldev *dev,
+@@ -629,6 +1110,70 @@ static s8 b43_rssi_postprocess(struct b43_wldev *dev,
  	return (s8) tmp;
  }
  
@@ -4684,7 +4696,7 @@ index f0b0825..24946b5 100644
  void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
  {
  	struct ieee80211_rx_status status;
-@@ -640,6 +1173,8 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
+@@ -640,6 +1185,8 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
  	u16 chanstat, mactime;
  	u32 macstat;
  	u16 chanid;
@@ -4693,7 +4705,7 @@ index f0b0825..24946b5 100644
  	int padding, rate_idx;
  
  	memset(&status, 0, sizeof(status));
-@@ -648,6 +1183,7 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
+@@ -648,6 +1195,7 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
  	phystat0 = le16_to_cpu(rxhdr->phy_status0);
  	phystat3 = le16_to_cpu(rxhdr->phy_status3);
  	switch (dev->fw.hdr_format) {
@@ -4701,7 +4713,7 @@ index f0b0825..24946b5 100644
  	case B43_FW_HDR_598:
  		macstat = le32_to_cpu(rxhdr->format_598.mac_status);
  		mactime = le16_to_cpu(rxhdr->format_598.mac_time);
-@@ -661,6 +1197,18 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
+@@ -661,6 +1209,18 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
  		break;
  	}
  
@@ -4720,7 +4732,7 @@ index f0b0825..24946b5 100644
  	if (unlikely(macstat & B43_RX_MAC_FCSERR)) {
  		dev->wl->ieee_stats.dot11FCSErrorCount++;
  		status.flag |= RX_FLAG_FAILED_FCS_CRC;
-@@ -717,7 +1265,24 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
+@@ -717,7 +1277,24 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
  	}
  
  	/* Link quality statistics */
@@ -4746,7 +4758,7 @@ index f0b0825..24946b5 100644
  	case B43_PHYTYPE_HT:
  		/* TODO: is max the right choice? */
  		status.signal = max_t(__s8,
-@@ -741,9 +1306,10 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
+@@ -741,9 +1318,10 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
  		break;
  	}
  
@@ -4760,7 +4772,7 @@ index f0b0825..24946b5 100644
  	else
  		rate_idx = b43_plcp_get_bitrate_idx_cck(plcp);
  	if (unlikely(rate_idx == -1)) {
-@@ -776,7 +1342,7 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
+@@ -776,7 +1354,7 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
  	}
  
  	chanid = (chanstat & B43_RX_CHAN_ID) >> B43_RX_CHAN_ID_SHIFT;
@@ -4769,7 +4781,7 @@ index f0b0825..24946b5 100644
  	case B43_PHYTYPE_G:
  		status.band = NL80211_BAND_2GHZ;
  		/* Somewhere between 478.104 and 508.1084 firmware for G-PHY
-@@ -792,13 +1358,17 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
+@@ -792,13 +1370,17 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
  	case B43_PHYTYPE_HT:
  		/* chanid is the SHM channel cookie. Which is the plain
  		 * channel number in b43. */
@@ -4788,7 +4800,7 @@ index f0b0825..24946b5 100644
  	default:
  		B43_WARN_ON(1);
  		goto drop;
-@@ -815,6 +1385,23 @@ drop:
+@@ -815,6 +1397,23 @@ drop:
  	dev_kfree_skb_any(skb);
  }
  
@@ -4812,7 +4824,7 @@ index f0b0825..24946b5 100644
  void b43_handle_txstatus(struct b43_wldev *dev,
  			 const struct b43_txstatus *status)
  {
-@@ -824,6 +1411,13 @@ void b43_handle_txstatus(struct b43_wldev *dev,
+@@ -824,6 +1423,13 @@ void b43_handle_txstatus(struct b43_wldev *dev,
  		return;
  	if (status->for_ampdu)
  		return;
@@ -4826,7 +4838,7 @@ index f0b0825..24946b5 100644
  	if (!status->acked)
  		dev->wl->ieee_stats.dot11ACKFailureCount++;
  	if (status->rts_count) {
-@@ -841,6 +1435,27 @@ void b43_handle_txstatus(struct b43_wldev *dev,
+@@ -841,6 +1447,27 @@ void b43_handle_txstatus(struct b43_wldev *dev,
  	b43_phy_txpower_check(dev, 0);
  }
  
@@ -4854,7 +4866,7 @@ index f0b0825..24946b5 100644
  /* Fill out the mac80211 TXstatus report based on the b43-specific
   * txstatus report data. This returns a boolean whether the frame was
   * successfully transmitted. */
-@@ -867,6 +1482,10 @@ bool b43_fill_txstatus_report(struct b43_wldev *dev,
+@@ -867,6 +1494,10 @@ bool b43_fill_txstatus_report(struct b43_wldev *dev,
  			frame_success = false;
  		}
  	}
@@ -4866,10 +4878,10 @@ index f0b0825..24946b5 100644
  		/* The frame was not transmitted at all. */
  		report->status.rates[0].count = 0;
 diff --git a/drivers/net/wireless/broadcom/b43/xmit.h b/drivers/net/wireless/broadcom/b43/xmit.h
-index 6524a75..ccc2a81 100644
+index 6524a75..aca893d 100644
 --- a/drivers/net/wireless/broadcom/b43/xmit.h
 +++ b/drivers/net/wireless/broadcom/b43/xmit.h
-@@ -187,11 +187,75 @@ struct b43_tx_legacy_rate_phy_ctl_entry {
+@@ -187,11 +187,76 @@ struct b43_tx_legacy_rate_phy_ctl_entry {
  #define  B43_TXH_PHY1_MODUL_QAM64	0x1800 /* QAM64 */
  #define  B43_TXH_PHY1_MODUL_QAM256	0x2000 /* QAM256 */
  
@@ -4917,6 +4929,7 @@ index 6524a75..ccc2a81 100644
 +#define B43_TXH_AC_MAC_STMSDU		0x4000	/* First MSDU */
 +/* MAC TX control, high */
 +#define B43_TXH_AC_MAC_FIX_RATE		0x0002	/* Primary rate only */
++#define B43_TXH_AC_MAC_SVHT		0x0004	/* Single VHT MPDU A-MPDU */
 +/* PHY TX control word 0: B43_TXH_PHY_ENC in 1:0, then */
 +#define B43_TXH_AC_PHY0_NON_SOUNDING	0x0004
 +#define B43_TXH_AC_PHY0_SHORT_PREAMBLE	0x0010
@@ -4945,7 +4958,7 @@ index 6524a75..ccc2a81 100644
  	case B43_FW_HDR_598:
  		return 112 + sizeof(struct b43_plcp_hdr6);
  	case B43_FW_HDR_410:
-@@ -203,6 +267,8 @@ size_t b43_txhdr_size(struct b43_wldev *dev)
+@@ -203,6 +268,8 @@ size_t b43_txhdr_size(struct b43_wldev *dev)
  }
  
  
@@ -4954,7 +4967,7 @@ index 6524a75..ccc2a81 100644
  int b43_generate_txhdr(struct b43_wldev *dev,
  		       u8 * txhdr,
  		       struct sk_buff *skb_frag,
-@@ -221,6 +287,8 @@ struct b43_txstatus {
+@@ -221,6 +288,8 @@ struct b43_txstatus {
  	u8 intermediate;	/* Intermediate status notification (not final) */
  	u8 for_ampdu;		/* Status is for an AMPDU (afterburner) */
  	u8 acked;		/* Wireless ACK received */
@@ -4963,7 +4976,7 @@ index 6524a75..ccc2a81 100644
  };
  
  /* txstatus supp_reason values */
-@@ -311,6 +379,8 @@ struct b43_rxhdr_fw4 {
+@@ -311,6 +380,8 @@ struct b43_rxhdr_fw4 {
  #define  B43_RX_PHYST0_OFDM		0x0001 /* Frame type: OFDM */
  #define  B43_RX_PHYST0_PRE_N		0x0002 /* Pre-standard N-PHY frame */
  #define  B43_RX_PHYST0_STD_N		0x0003 /* Standard N-PHY frame */
@@ -4972,7 +4985,7 @@ index 6524a75..ccc2a81 100644
  
  /* PHY RX Status 2 */
  #define B43_RX_PHYST2_LNAG		0xC000 /* LNA Gain */
-@@ -356,6 +426,8 @@ void b43_generate_plcp_hdr(struct b43_plcp_hdr4 *plcp,
+@@ -356,6 +427,8 @@ void b43_generate_plcp_hdr(struct b43_plcp_hdr4 *plcp,
  
  void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr);
  
@@ -4981,7 +4994,7 @@ index 6524a75..ccc2a81 100644
  void b43_handle_txstatus(struct b43_wldev *dev,
  			 const struct b43_txstatus *status);
  bool b43_fill_txstatus_report(struct b43_wldev *dev,
-@@ -374,6 +446,26 @@ static inline int b43_new_kidx_api(struct b43_wldev *dev)
+@@ -374,6 +447,26 @@ static inline int b43_new_kidx_api(struct b43_wldev *dev)
  	/* FIXME: Not sure the change was at rev 351 */
  	return (dev->fw.rev >= 351);
  }
