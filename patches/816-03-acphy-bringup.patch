@@ -6,7 +6,7 @@ Subject: [PATCH 2/2] b43: AC-PHY bring-up from the reverse-engineered port
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     4 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |   102 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 10605 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 10607 +++++++++++++++-
  drivers/net/wireless/broadcom/b43/phy_ac.h    |   816 +-
  drivers/net/wireless/broadcom/b43/ppr_ac.c    |   270 +
  drivers/net/wireless/broadcom/b43/ppr_ac.h    |    84 +
@@ -14,7 +14,7 @@ Subject: [PATCH 2/2] b43: AC-PHY bring-up from the reverse-engineered port
  .../net/wireless/broadcom/b43/radio_2069.h    |    48 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1079 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    51 +
- 10 files changed, 14708 insertions(+), 22 deletions(-)
+ 10 files changed, 14710 insertions(+), 22 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -147,7 +147,7 @@ index 0000000..56a4d2c
 +	b43_read32(dev, B43_MMIO_MACCTL);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index fe102ea..623518b 100644
+index fe102ea..3efa41a 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -1,17 +1,53 @@
@@ -210,7 +210,7 @@ index fe102ea..623518b 100644
  
  static int b43_phy_ac_op_allocate(struct b43_wldev *dev)
  {
-@@ -62,27 +98,10558 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -62,27 +98,10560 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -1338,12 +1338,13 @@ index fe102ea..623518b 100644
 + * transcribed; their purpose is not known.
 + *
 + * The cells are at fixed distances from the block's first one, which each
-+ * microcode keeps at its own offset (struct b43_shm_layout): 0x08ec on the
-+ * 7.14 microcodes, 0x0894 on 784. 784 has neither 0x0020 nor the block at
-+ * +0x16, and 6.30 writes the rest in the same order and with the same
-+ * values (router-data/dsl3580l/cold01-ch36-bw20.txt, 9248-9292). With no
-+ * layout nothing is written: at another microcode's offsets the block can
-+ * land on live cells, as 7.14's does on 784's CTS-to-self.
++ * microcode keeps at its own offset (struct b43_shm_layout): 0x08ec on 928,
++ * 0x08f4 on 832, 0x0894 on 784. Their drivers write them in the same order
++ * and with the same values, but 0x0020 only on 928 and the block at +0x16
++ * not on 784 (router-data/dsl3580l/cold01-ch36-bw20.txt, 9248-9292;
++ * router-data/archer-t5e/mmiotrace.zip, #13998-14054). With no layout
++ * nothing is written: at another microcode's offsets the block can land on
++ * live cells, as 928's does on 784's CTS-to-self.
 + *
 + * Not here yet: the fifteen cells at stride 0x14 that follow the width, the
 + * twelve at stride 0x1c that follow the centre frequency, the read of 0x00b0
@@ -1374,7 +1375,7 @@ index fe102ea..623518b 100644
 +		return;
 +	base = shm->mac_cfg;
 +
-+	if (shm->mac_cfg_ext)
++	if (shm->mac_cfg_0020)
 +		b43_shm_write16(dev, B43_SHM_SHARED, 0x0020, 0x0800);
 +	b43_shm_write16(dev, B43_SHM_SHARED, base, 0x186a);
 +	/*
@@ -1400,7 +1401,7 @@ index fe102ea..623518b 100644
 +	for (i = 0; i < ARRAY_SIZE(blocco_40); i++)
 +		b43_shm_write16(dev, B43_SHM_SHARED,
 +				(u16)(base + 0x40 + i * 2), blocco_40[i]);
-+	if (!shm->mac_cfg_ext)
++	if (!shm->mac_cfg_16)
 +		return;
 +	for (i = 0; i < ARRAY_SIZE(blocco_16); i++)
 +		b43_shm_write16(dev, B43_SHM_SHARED,
@@ -6581,9 +6582,10 @@ index fe102ea..623518b 100644
 + * CTS-to-self of that duration first, and each microcode's driver arms it
 + * its own way (struct b43_shm_layout): 6.30, the driver of 784, writes
 + * 4400 us once the MAC is suspended (router-data/dsl3580l/
-+ * cold01-ch36-bw20.txt, #12394-12395); 7.14 writes 29000 us right before
-+ * the suspend. With no layout nothing is armed. A MAC cell, here for the
-+ * same reason as b43_phy_ac_shm_readback_block().
++ * cold01-ch36-bw20.txt, #12394-12395); 6.30.223 and 7.14, the drivers of
++ * 832 and 928, write 29000 us right before the suspend. With no layout
++ * nothing is armed. A MAC cell, here for the same reason as
++ * b43_phy_ac_shm_readback_block().
 + *
 + * No nesting: op_switch_channel() may have suspended the MAC already, and
 + * a second suspend would leave the refcount at 2, turning the pairs in
