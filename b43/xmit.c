@@ -631,6 +631,13 @@ static void b43_txhdr_ac_block(const struct b43_phy_ac *ac,
  * ends the list there, and is cut from it with the rest, so that the status
  * reports the rates tried (b43_fill_txstatus_report()). Hardware encryption
  * is off on B43_FW_HDR_AC.
+ *
+ * A VHT PPDU carries an A-MPDU. Outside an aggregate SVHT has the microcode
+ * send the frame as an A-MPDU of one MPDU, as the agcombo's 7.14.43 does on
+ * the unicast QoS frames it sends outside a block ack session (MAC TX
+ * control 0x4080/0x0004, router-data/vd625-agcombo/rxtx-1s-ht20-40-80.zip).
+ * The flag is the frame's, so a VHT frame keeps VHT fallbacks only, as the
+ * stock ones are.
  */
 static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 				 struct sk_buff *skb,
@@ -655,9 +662,13 @@ static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 	if (WARN_ON_ONCE(info->control.hw_key))
 		return -EOPNOTSUPP;
 
-	for (n = 1; n < B43_TXH_AC_RATES; n++)
-		if (!rates[n].count || !b43_txhdr_ac_rate_ok(sband, &rates[n]))
+	for (n = 1; n < B43_TXH_AC_RATES; n++) {
+		const struct ieee80211_tx_rate *t = &rates[n];
+
+		if (!t->count || !b43_txhdr_ac_rate_ok(sband, t) ||
+		    (c->vht && !(t->flags & IEEE80211_TX_RC_VHT_MCS)))
 			break;
+	}
 	for (i = n; i < IEEE80211_TX_MAX_RATES; i++)
 		rates[i].idx = -1;
 
@@ -675,7 +686,8 @@ static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 		mac_lo |= B43_TXH_AC_MAC_LFRM;
 
 	txhdr->mac_ctl_lo = cpu_to_le16(mac_lo);
-	txhdr->mac_ctl_hi = cpu_to_le16(n == 1 ? B43_TXH_AC_MAC_FIX_RATE : 0);
+	txhdr->mac_ctl_hi = cpu_to_le16((n == 1 ? B43_TXH_AC_MAC_FIX_RATE : 0) |
+					(c->vht ? B43_TXH_AC_MAC_SVHT : 0));
 	txhdr->chanspec = cpu_to_le16(ac->chanspec);
 	txhdr->iv_offset = ieee80211_hdrlen(wlhdr->frame_control);
 	txhdr->frame_len = cpu_to_le16(len);

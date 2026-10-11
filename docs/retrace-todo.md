@@ -483,8 +483,8 @@ hardware"). What is open:
     the 802.11 duration filled in (mac80211 leaves it 0 on MCS frames) for
     the last block's rate.
   - Not in b43: MAC TX control `0x41c0`/`0x0000`, that is `STMSDU`, `LFRM`,
-    `IACK` and `0x0040`, which b43 does not name (**SALAME**:
-    "aggregatable", the statuses below have aggregates); RTS/CTS `0x0905`,
+    `IACK` and `0x0040`, `D11AC_TXC_AMPDU`, "aggregatable" in Broadcom's
+    `d11.h` (b43 does not aggregate); RTS/CTS `0x0905`,
     `USE_RTS` with the 24 Mb/s code (`0x09`) and OFDM, `0x0925` on the last
     block (`0x0a65`, 12 Mb/s, on HT's), where b43 asks for RTS only when
     mac80211 does. On VHT
@@ -568,7 +568,10 @@ hardware"). What is open:
   covers the MPDUs it sent (see "TX status"). The descriptors of the MPDUs of a
   session (`rxtx-1s-ht20-40-80.zip`) differ from those of the two unicast QoS
   frames sent outside one in MAC TX control, `0x45c0`/`0x0000` against
-  `0x4080`/`0x0004`, and in the cache info at +100, `50 04 20 20 26 15 3f
+  `0x4080`/`0x0004`: `0x0040` low is `D11AC_TXC_AMPDU` ("aggregatable") and
+  `0x0004` high `D11AC_TXC_SVHT`, a single VHT MPDU sent as an A-MPDU, which
+  b43 sets on every VHT frame since it does not aggregate. Both frames are
+  VHT with four VHT blocks. They differ also in the cache info at +100, `50 04 20 20 26 15 3f
   14` against zeros: by the names of `d11actxh_t`'s cache fields in
   Broadcom's `d11.h`, BSS index and cipher, key index, 32 MPDUs at the
   primary and at the fallback rate, an A-MPDU duration of 5414, a block ack
