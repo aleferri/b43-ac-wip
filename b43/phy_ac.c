@@ -667,6 +667,19 @@ static const struct b43_phy_ac_prb_rsp_rate b43_phy_ac_prb_rsp_rates[12] = {
 };
 
 /*
+ * A power distance in quarter dB as the power offset field of PHY control
+ * word 1 takes it (B43_TXH_AC_PHY1_TXPWR_OFFSET): sixteenths of a dB in
+ * bits 8:3, so in half-dB steps, above the frame's subband in bits 2:0. A
+ * quarter dB left over would land in the subband, so it is rounded up, to
+ * the side of the limit. Every distance the stock drivers write is a whole
+ * half dB; whether they round an odd one up or down is in no capture.
+ */
+static u16 b43_phy_ac_po_field(int qdb)
+{
+	return (u16)(DIV_ROUND_UP(qdb, 2) * 8);
+}
+
+/*
  * The field for the CCK rates, the cck[4] group of the PPR.
  *
  * Rev 11 has no per-rate field for them on 5 GHz (cckbw202gpo is the 2.4 GHz
@@ -686,7 +699,8 @@ static u16 b43_phy_ac_cck_rate_po(struct b43_phy_ac *ac)
 
 	if (!ac->txpwr_maxp)
 		return 0x00f8;
-	return (u16)min((target - B43_PHY_AC_QDB(1)) * 4, 0xf8);
+	return min_t(u16, b43_phy_ac_po_field(target - B43_PHY_AC_QDB(1)),
+		     0xf8);
 }
 
 /*
@@ -949,12 +963,12 @@ static void b43_phy_ac_bss_cc_update(struct b43_wldev *dev,
 static u16 b43_phy_ac_rate_po(const struct b43_phy_ac *ac, u8 spacing,
 			      u16 cap)
 {
-	u16 dist = (u16)(b43_ppr_ac_get_max(&ac->txpwr_spacing) - spacing) * 4;
+	int dist = b43_ppr_ac_get_max(&ac->txpwr_spacing) - spacing;
 	int target = b43_ppr_ac_get_max(&ac->txpwr_ppr);
 
 	if (cap && target > (int)cap - 6)
-		dist = max(dist, (u16)(target - ((int)cap - 6)) * 4);
-	return dist;
+		dist = max(dist, target - ((int)cap - 6));
+	return b43_phy_ac_po_field(dist);
 }
 
 /* Whether legacy rates take the capped form of b43_phy_ac_rate_po_capped(). */
@@ -981,7 +995,7 @@ static u16 b43_phy_ac_rate_po_capped(const struct b43_phy_ac *ac, u8 power,
 
 	if (cap)
 		p = min(p, (int)cap - 6);
-	return target > p ? (u16)(target - p) * 4 : 0;
+	return target > p ? b43_phy_ac_po_field(target - p) : 0;
 }
 
 /* A limit per primary channel range, for the tables below and the locale's. */
