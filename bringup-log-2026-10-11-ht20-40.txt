@@ -1,0 +1,132 @@
+Sat Oct  3 20:20:03 2026 daemon.notice hostapd: Set MLD config: [ ]
+Sat Oct  3 20:20:10 2026 authpriv.info dropbear[2689]: Child connection from 192.168.1.237:42610
+Sat Oct  3 20:20:10 2026 authpriv.notice dropbear[2689]: Auth succeeded with blank password for 'root' from 192.168.1.237:42610
+Sat Oct  3 20:20:40 2026 daemon.notice hostapd: Set MLD config: [ ]
+Sat Oct  3 20:20:40 2026 daemon.notice wpa_supplicant[1558]: Set MLD config: [ ]
+Sat Oct  3 20:20:40 2026 daemon.notice hostapd: Set MLD config: [ ]
+Sat Oct  3 20:20:41 2026 daemon.notice netifd: radio1 (2707): wifi-scripts: Tearing down phy1
+Sat Oct  3 20:20:41 2026 daemon.notice hostapd: Set new config for phy phy1:
+Sat Oct  3 20:20:41 2026 daemon.notice hostapd: Failed to open phy phy1
+Sat Oct  3 20:20:41 2026 daemon.notice wpa_supplicant[1558]: Set new config for phy phy1
+Sat Oct  3 20:20:42 2026 daemon.notice netifd: radio1 (2707): Reference error: left-hand side expression is null
+Sat Oct  3 20:20:42 2026 daemon.notice netifd: radio1 (2707): In /usr/share/hostap/wdev.uc, line 170, byte 14:
+Sat Oct  3 20:20:42 2026 daemon.notice netifd: radio1 (2707):
+Sat Oct  3 20:20:42 2026 daemon.notice netifd: radio1 (2707):  `phy = phydev.phy;`
+Sat Oct  3 20:20:42 2026 daemon.notice netifd: radio1 (2707):   Near here ---^
+Sat Oct  3 20:20:42 2026 daemon.notice netifd: radio1 (2707):
+Sat Oct  3 20:20:42 2026 daemon.notice netifd: radio1 (2707):
+Sat Oct  3 20:20:42 2026 daemon.notice wpa_supplicant[1558]: Could not open phy phy1
+Sat Oct  3 20:20:42 2026 daemon.notice netifd: radio1 (2713): wifi-scripts: Starting
+Sat Oct  3 20:20:45 2026 daemon.notice hostapd: Set new config for phy phy3:
+Sat Oct  3 20:20:45 2026 daemon.notice wpa_supplicant[1558]: Set new config for phy phy3
+Sat Oct  3 20:20:45 2026 daemon.notice wpa_supplicant[1558]: Set new config for phy phy3
+Sat Oct  3 20:20:46 2026 daemon.notice hostapd: Set new config for phy phy3: /var/run/hostapd-phy3.conf
+Sat Oct  3 20:20:46 2026 daemon.notice hostapd: Restart interface for phy phy3
+Sat Oct  3 20:20:46 2026 daemon.notice netifd: radio1 (2713): wifi-scripts: Setting country code to IT
+Sat Oct  3 20:20:46 2026 daemon.notice netifd: radio1 (2713): wifi-scripts: Configuring 'phy3' distance: 0
+Sat Oct  3 20:20:46 2026 daemon.notice netifd: radio1 (2713): wifi-scripts: Setting antenna for 'phy3' txantenna: 4294967295, rxantenna: 4294967295
+Sat Oct  3 20:20:46 2026 daemon.notice netifd: radio1 (2713): wifi-scripts: Preparing interface: phy3-ap0 with MAC: 00:90:4c:0d:db:00
+Sat Oct  3 20:20:46 2026 daemon.notice wpa_supplicant[1558]: Start pending MLD interfaces
+Sat Oct  3 20:20:47 2026 daemon.notice hostapd: Configuration file: <inline> (phy phy3) --> new PHY
+Sat Oct  3 20:20:47 2026 daemon.notice hostapd: Configuration file: Reading configuration file '<inline>'
+Sat Oct  3 20:20:48 2026 daemon.notice hostapd: Configuration file: Reading configuration file '<inline>'
+Sat Oct  3 20:20:48 2026 kern.info kernel: [  185.910000] b43-phy3: Loading firmware version 784.2 (2012-08-15 21:43:22)
+Sat Oct  3 20:20:48 2026 kern.info kernel: [  185.930000] b43-phy3: phy-ac: set_channel ch36 (5180 MHz) start
+Sat Oct  3 20:20:48 2026 kern.info kernel: [  185.970000] b43-phy3: phy-ac: set_channel ch36 (5180 MHz) start
+Sat Oct  3 20:20:48 2026 kern.info kernel: [  186.040000] br-lan: port 5(phy3-ap0) entered blocking state
+Sat Oct  3 20:20:48 2026 kern.info kernel: [  186.040000] br-lan: port 5(phy3-ap0) entered disabled state
+Sat Oct  3 20:20:48 2026 kern.info kernel: [  186.050000] b43 bcma1:1 phy3-ap0: entered allmulticast mode
+Sat Oct  3 20:20:48 2026 kern.info kernel: [  186.050000] b43 bcma1:1 phy3-ap0: entered promiscuous mode
+Sat Oct  3 20:20:48 2026 daemon.notice hostapd: phy3-ap0: interface state UNINITIALIZED->COUNTRY_UPDATE
+Sat Oct  3 20:20:52 2026 kern.info kernel: [  189.260000] b43-phy3: phy-ac: set_channel ch36 (5180 MHz) start
+Sat Oct  3 20:20:52 2026 kern.info kernel: [  189.340000] br-lan: port 5(phy3-ap0) entered blocking state
+Sat Oct  3 20:20:52 2026 kern.info kernel: [  189.340000] br-lan: port 5(phy3-ap0) entered forwarding state
+Sat Oct  3 20:20:52 2026 daemon.notice netifd: Network device 'phy3-ap0' link is up
+Sat Oct  3 20:20:55 2026 daemon.notice hostapd: phy3-ap0: interface state COUNTRY_UPDATE->ENABLED
+Sat Oct  3 20:20:55 2026 daemon.notice hostapd: phy3-ap0: AP-ENABLED
+Sat Oct  3 20:21:06 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b IEEE 802.11: authenticated
+Sat Oct  3 20:21:06 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b IEEE 802.11: associated (aid 1)
+Sat Oct  3 20:21:06 2026 daemon.notice hostapd: phy3-ap0: AP-STA-CONNECTED ba:73:1c:45:1d:5b auth_alg=open
+Sat Oct  3 20:21:06 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b WPA: pairwise key handshake completed (RSN)
+Sat Oct  3 20:21:06 2026 daemon.notice hostapd: phy3-ap0: EAPOL-4WAY-HS-COMPLETED ba:73:1c:45:1d:5b
+Sat Oct  3 20:21:07 2026 daemon.warn odhcpd[1727]: No default route present, setting ra_lifetime to 0!
+Sat Oct  3 20:22:03 2026 kern.warn kernel: [  261.040000] sched: RT throttling activated
+Sat Oct  3 20:22:19 2026 daemon.warn odhcpd[1727]: No default route present, setting ra_lifetime to 0!
+Sat Oct  3 20:22:23 2026 daemon.warn odhcpd[1727]: No default route present, setting ra_lifetime to 0!
+Sat Oct  3 20:22:27 2026 daemon.notice netifd: radio1 (2754): wifi-scripts: Tearing down phy3
+Sat Oct  3 20:22:27 2026 daemon.notice hostapd: Set new config for phy phy3:
+Sat Oct  3 20:22:27 2026 daemon.notice hostapd: Remove interface 'phy3'
+Sat Oct  3 20:22:27 2026 daemon.notice hostapd: phy3-ap0: interface state ENABLED->DISABLED
+Sat Oct  3 20:22:27 2026 daemon.notice hostapd: phy3-ap0: AP-STA-DISCONNECTED ba:73:1c:45:1d:5b
+Sat Oct  3 20:22:27 2026 daemon.notice hostapd: phy3-ap0: AP-DISABLED
+Sat Oct  3 20:22:27 2026 daemon.notice hostapd: phy3-ap0: CTRL-EVENT-TERMINATING
+Sat Oct  3 20:22:27 2026 daemon.err hostapd: rmdir[ctrl_interface=/var/run/hostapd]: Permission denied
+Sat Oct  3 20:22:27 2026 daemon.notice hostapd: nl80211: deinit ifname=phy3-ap0 disabled_11b_rates=0
+Sat Oct  3 20:22:27 2026 kern.info kernel: [  284.520000] b43 bcma1:1 phy3-ap0: left allmulticast mode
+Sat Oct  3 20:22:27 2026 kern.info kernel: [  284.520000] b43 bcma1:1 phy3-ap0: left promiscuous mode
+Sat Oct  3 20:22:27 2026 kern.info kernel: [  284.530000] br-lan: port 5(phy3-ap0) entered disabled state
+Sat Oct  3 20:22:27 2026 daemon.notice netifd: Network device 'phy3-ap0' link is down
+Sat Oct  3 20:22:27 2026 daemon.notice wpa_supplicant[1558]: Set new config for phy phy3
+Sat Oct  3 20:22:27 2026 daemon.warn odhcpd[1727]: No default route present, setting ra_lifetime to 0!
+Sat Oct  3 20:22:30 2026 daemon.notice wpa_supplicant[1558]: Start pending MLD interfaces
+Sat Oct  3 20:22:32 2026 daemon.warn odhcpd[1727]: No default route present, setting ra_lifetime to 0!
+Sat Oct  3 20:22:36 2026 daemon.notice hostapd: Set MLD config: [ ]
+Sat Oct  3 20:22:36 2026 daemon.notice wpa_supplicant[1558]: Set MLD config: [ ]
+Sat Oct  3 20:22:36 2026 daemon.notice hostapd: Set MLD config: [ ]
+Sat Oct  3 20:22:36 2026 daemon.notice netifd: radio1 (2774): wifi-scripts: Starting
+Sat Oct  3 20:22:37 2026 daemon.notice hostapd: Set new config for phy phy3:
+Sat Oct  3 20:22:37 2026 daemon.notice wpa_supplicant[1558]: Set new config for phy phy3
+Sat Oct  3 20:22:37 2026 daemon.notice wpa_supplicant[1558]: Set new config for phy phy3
+Sat Oct  3 20:22:37 2026 daemon.notice hostapd: Set new config for phy phy3: /var/run/hostapd-phy3.conf
+Sat Oct  3 20:22:37 2026 daemon.notice hostapd: Restart interface for phy phy3
+Sat Oct  3 20:22:37 2026 daemon.notice hostapd: Configuration file: <inline> (phy phy3) --> new PHY
+Sat Oct  3 20:22:37 2026 daemon.notice hostapd: Configuration file: Reading configuration file '<inline>'
+Sat Oct  3 20:22:37 2026 daemon.notice hostapd: Configuration file: Reading configuration file '<inline>'
+Sat Oct  3 20:22:37 2026 daemon.notice netifd: radio1 (2774): wifi-scripts: Setting country code to IT
+Sat Oct  3 20:22:37 2026 daemon.notice netifd: radio1 (2774): wifi-scripts: Configuring 'phy3' distance: 0
+Sat Oct  3 20:22:37 2026 daemon.notice netifd: radio1 (2774): wifi-scripts: Setting antenna for 'phy3' txantenna: 4294967295, rxantenna: 4294967295
+Sat Oct  3 20:22:37 2026 daemon.notice netifd: radio1 (2774): wifi-scripts: Preparing interface: phy3-ap0 with MAC: 00:90:4c:0d:db:00
+Sat Oct  3 20:22:37 2026 daemon.notice wpa_supplicant[1558]: Start pending MLD interfaces
+Sat Oct  3 20:22:38 2026 kern.info kernel: [  295.260000] b43-phy3: Loading firmware version 784.2 (2012-08-15 21:43:22)
+Sat Oct  3 20:22:38 2026 kern.info kernel: [  295.280000] b43-phy3: phy-ac: set_channel ch36 (5180 MHz) start
+Sat Oct  3 20:22:38 2026 kern.info kernel: [  295.320000] b43-phy3: phy-ac: set_channel ch36 (5180 MHz) start
+Sat Oct  3 20:22:38 2026 kern.info kernel: [  295.390000] br-lan: port 5(phy3-ap0) entered blocking state
+Sat Oct  3 20:22:38 2026 kern.info kernel: [  295.400000] br-lan: port 5(phy3-ap0) entered disabled state
+Sat Oct  3 20:22:38 2026 kern.info kernel: [  295.400000] b43 bcma1:1 phy3-ap0: entered allmulticast mode
+Sat Oct  3 20:22:38 2026 kern.info kernel: [  295.440000] b43 bcma1:1 phy3-ap0: entered promiscuous mode
+Sat Oct  3 20:22:40 2026 daemon.notice hostapd: phy3-ap0: interface state UNINITIALIZED->COUNTRY_UPDATE
+Sat Oct  3 20:22:41 2026 daemon.notice hostapd: phy3-ap0: interface state COUNTRY_UPDATE->HT_SCAN
+Sat Oct  3 20:22:41 2026 kern.info kernel: [  298.540000] b43-phy3: phy-ac: set_channel ch40 (5200 MHz) start
+Sat Oct  3 20:22:41 2026 kern.info kernel: [  298.870000] b43-phy3: phy-ac: set_channel ch36 (5180 MHz) start
+Sat Oct  3 20:22:42 2026 kern.info kernel: [  299.600000] b43-phy3: phy-ac: set_channel ch36 (5180 MHz) start
+Sat Oct  3 20:22:42 2026 kern.info kernel: [  299.680000] br-lan: port 5(phy3-ap0) entered blocking state
+Sat Oct  3 20:22:42 2026 kern.info kernel: [  299.680000] br-lan: port 5(phy3-ap0) entered forwarding state
+Sat Oct  3 20:22:42 2026 daemon.notice netifd: Network device 'phy3-ap0' link is up
+Sat Oct  3 20:22:42 2026 daemon.notice hostapd: phy3-ap0: interface state HT_SCAN->ENABLED
+Sat Oct  3 20:22:42 2026 daemon.notice hostapd: phy3-ap0: AP-ENABLED
+Sat Oct  3 20:23:04 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b IEEE 802.11: authenticated
+Sat Oct  3 20:23:04 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b IEEE 802.11: associated (aid 1)
+Sat Oct  3 20:23:04 2026 daemon.notice hostapd: phy3-ap0: AP-STA-CONNECTED ba:73:1c:45:1d:5b auth_alg=open
+Sat Oct  3 20:23:04 2026 daemon.info hostapd: phy3-ap0: STA ba:73:1c:45:1d:5b WPA: pairwise key handshake completed (RSN)
+Sat Oct  3 20:23:04 2026 daemon.notice hostapd: phy3-ap0: EAPOL-4WAY-HS-COMPLETED ba:73:1c:45:1d:5b
+Sat Oct  3 20:23:05 2026 daemon.warn odhcpd[1727]: No default route present, setting ra_lifetime to 0!
+Sat Oct  3 20:23:27 2026 daemon.warn odhcpd[1727]: No default route present, setting ra_lifetime to 0!
+Sat Oct  3 20:23:48 2026 daemon.notice netifd: radio1 (2811): wifi-scripts: Tearing down phy3
+Sat Oct  3 20:23:48 2026 daemon.notice hostapd: Set new config for phy phy3:
+Sat Oct  3 20:23:48 2026 daemon.notice hostapd: Remove interface 'phy3'
+Sat Oct  3 20:23:48 2026 daemon.notice hostapd: phy3-ap0: interface state ENABLED->DISABLED
+Sat Oct  3 20:23:48 2026 daemon.notice hostapd: phy3-ap0: AP-STA-DISCONNECTED ba:73:1c:45:1d:5b
+Sat Oct  3 20:23:48 2026 daemon.notice hostapd: phy3-ap0: AP-DISABLED
+Sat Oct  3 20:23:48 2026 daemon.notice hostapd: phy3-ap0: CTRL-EVENT-TERMINATING
+Sat Oct  3 20:23:48 2026 daemon.err hostapd: rmdir[ctrl_interface=/var/run/hostapd]: Permission denied
+Sat Oct  3 20:23:48 2026 daemon.notice hostapd: nl80211: deinit ifname=phy3-ap0 disabled_11b_rates=0
+Sat Oct  3 20:23:48 2026 daemon.notice netifd: Network device 'phy3-ap0' link is down
+Sat Oct  3 20:23:48 2026 kern.info kernel: [  366.100000] br-lan: port 5(phy3-ap0) entered disabled state
+Sat Oct  3 20:23:49 2026 kern.info kernel: [  366.350000] br-lan: port 5(phy3-ap0) entered disabled state
+Sat Oct  3 20:23:49 2026 kern.info kernel: [  366.350000] b43 bcma1:1 phy3-ap0: left allmulticast mode
+Sat Oct  3 20:23:49 2026 kern.info kernel: [  366.360000] b43 bcma1:1 phy3-ap0: left promiscuous mode
+Sat Oct  3 20:23:49 2026 kern.info kernel: [  366.360000] br-lan: port 5(phy3-ap0) entered disabled state
+Sat Oct  3 20:23:49 2026 daemon.notice wpa_supplicant[1558]: Set new config for phy phy3
+Sat Oct  3 20:23:51 2026 daemon.notice wpa_supplicant[1558]: Start pending MLD interfaces
+Sat Oct  3 20:24:08 2026 daemon.warn odhcpd[1727]: No default route present, setting ra_lifetime to 0!
+
