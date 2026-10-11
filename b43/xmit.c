@@ -355,12 +355,54 @@ static u16 b43_txhdr_ac_subband(const struct b43_phy_ac *ac, unsigned int bw)
 		B43_PHY_AC_CHANSPEC_SB_SHIFT) >> bw;
 }
 
-/* One legacy rate, on the primary 20 MHz of the channel. */
-static void b43_txhdr_ac_legacy(const struct b43_phy_ac *ac,
-				struct b43_txhdr_ac_rate *r,
-				const struct b43_txhdr_ctl *c, unsigned int len)
+/* Whether @r is an HT MCS on the streams of the band's TX MCS set. */
+static bool b43_txhdr_ac_ht_ok(const struct ieee80211_supported_band *band,
+			       const struct ieee80211_tx_rate *r)
 {
-	u8 rate = c->rate;
+	const struct ieee80211_mcs_info *mcs = &band->ht_cap.mcs;
+	unsigned int nss = r->idx / 8 + 1;
+
+	if (!(mcs->tx_params & IEEE80211_HT_MCS_TX_DEFINED) || r->idx > 31)
+		return false;
+	if ((mcs->tx_params & IEEE80211_HT_MCS_TX_RX_DIFF) &&
+	    nss > ((mcs->tx_params & IEEE80211_HT_MCS_TX_MAX_STREAMS_MASK) >>
+		   IEEE80211_HT_MCS_TX_MAX_STREAMS_SHIFT) + 1)
+		return false;
+	return mcs->rx_mask[r->idx / 8] & BIT(r->idx % 8);
+}
+
+/*
+ * Whether a rate block of the AC descriptor can carry @r: a legacy rate of
+ * the band, an HT MCS 0-31 at 20 or 40 MHz in the band's TX MCS set, or a
+ * VHT MCS 0-9 at 20, 40 or 80 MHz on a stream count the band's TX map has.
+ */
+bool b43_txhdr_ac_rate_ok(const struct ieee80211_supported_band *band,
+			  const struct ieee80211_tx_rate *r)
+{
+	if (r->idx < 0)
+		return false;
+	if (r->flags & IEEE80211_TX_RC_VHT_MCS) {
+		u8 nss = ieee80211_rate_get_vht_nss(r);
+		u16 map;
+
+		if (!band->vht_cap.vht_supported)
+			return false;
+		map = le16_to_cpu(band->vht_cap.vht_mcs.tx_mcs_map);
+		return ((map >> (2 * (nss - 1))) & 3) !=
+			IEEE80211_VHT_MCS_NOT_SUPPORTED &&
+		       ieee80211_rate_get_vht_mcs(r) <= 9 &&
+		       !(r->flags & IEEE80211_TX_RC_160_MHZ_WIDTH);
+	}
+	if (r->flags & IEEE80211_TX_RC_MCS)
+		return b43_txhdr_ac_ht_ok(band, r);
+	return r->idx < band->n_bitrates;
+}
+
+/* One legacy rate, @rate a B43_*_RATE_*, on the primary 20 MHz. */
+static void b43_txhdr_ac_legacy(const struct b43_phy_ac *ac,
+				struct b43_txhdr_ac_rate *r, u8 rate,
+				bool short_preamble, unsigned int len)
+{
 	bool ofdm = b43_is_ofdm_rate(rate);
 	u16 phy0, po;
 
@@ -368,7 +410,7 @@ static void b43_txhdr_ac_legacy(const struct b43_phy_ac *ac,
 	phy0 |= B43_TXH_AC_PHY0_NON_SOUNDING;
 	phy0 |= b43_txhdr_ac_cores(ac, ofdm ? B43_PHY_AC_TXCORE_OFDM :
 					      B43_PHY_AC_TXCORE_CCK);
-	if (c->short_preamble)
+	if (short_preamble)
 		phy0 |= B43_TXH_AC_PHY0_SHORT_PREAMBLE;
 	r->phy_ctl[0] = cpu_to_le16(phy0);
 	po = ofdm ? ac->rate_po_ofdm[b43_txhdr_ac_rate_idx(rate)] :
@@ -404,10 +446,9 @@ static unsigned int b43_txhdr_ac_rate_bw(const struct ieee80211_tx_rate *t)
  */
 static void b43_txhdr_ac_ht(const struct b43_phy_ac *ac,
 			    struct b43_txhdr_ac_rate *r,
-			    const struct ieee80211_tx_info *info,
+			    const struct ieee80211_tx_rate *t, bool ldpc,
 			    unsigned int len)
 {
-	const struct ieee80211_tx_rate *t = &info->control.rates[0];
 	unsigned int bw = b43_txhdr_ac_rate_bw(t);
 	u8 mcs = t->idx;
 	bool sgi = t->flags & IEEE80211_TX_RC_SHORT_GI;
@@ -431,8 +472,7 @@ static void b43_txhdr_ac_ht(const struct b43_phy_ac *ac,
 	r->plcp.raw[0] = mcs | (bw ? 0x80 : 0);
 	r->plcp.raw[1] = len;
 	r->plcp.raw[2] = len >> 8;
-	r->plcp.raw[3] = 0x07 |
-			  (info->flags & IEEE80211_TX_CTL_LDPC ? 0x40 : 0) |
+	r->plcp.raw[3] = 0x07 | (ldpc ? 0x40 : 0) |
 			  (sgi ? 0x80 : 0);
 	r->tx_rate = cpu_to_le16(cfg80211_calculate_bitrate(&ri) / 5);
 }
@@ -456,12 +496,11 @@ static void b43_txhdr_ac_ht(const struct b43_phy_ac *ac,
  */
 static void b43_txhdr_ac_vht(const struct b43_phy_ac *ac,
 			     struct b43_txhdr_ac_rate *r,
-			     const struct ieee80211_tx_info *info)
+			     const struct ieee80211_tx_rate *t, bool ldpc)
 {
 	static const u8 rate_bw[] = {
 		RATE_INFO_BW_20, RATE_INFO_BW_40, RATE_INFO_BW_80,
 	};
-	const struct ieee80211_tx_rate *t = &info->control.rates[0];
 	unsigned int bw = b43_txhdr_ac_rate_bw(t);
 	u8 mcs = ieee80211_rate_get_vht_mcs(t);
 	u8 nss = ieee80211_rate_get_vht_nss(t);
@@ -486,7 +525,7 @@ static void b43_txhdr_ac_vht(const struct b43_phy_ac *ac,
 
 	a1 = bw | BIT(2) | (63 << 4) | (nss - 1) << 10 | BIT(23);
 	a2 = (sgi ? BIT(0) : 0) |
-	     (info->flags & IEEE80211_TX_CTL_LDPC ? BIT(2) : 0) |
+	     (ldpc ? BIT(2) : 0) |
 	     (mcs << 4) | BIT(9);
 	r->plcp.raw[0] = a1;
 	r->plcp.raw[1] = a1 >> 8;
@@ -504,17 +543,14 @@ static void b43_txhdr_ac_vht(const struct b43_phy_ac *ac,
  * it in: the stock driver writes it, SIFS and the ACK at the highest basic
  * rate not above the MCS's non-HT reference rate, for its last fallback rate
  * (router-data/d6220/rxtx-1s-ht20-40-vht20-40-80-txbf0.zip: 48 us after HT
- * MCS 2, 44 after VHT MCS 4). @mod is the modulation and coding, HT MCS
- * modulo 8; VHT MCS 8 and 9 take MCS 7's reference rate, 54 Mb/s.
+ * MCS 2, 44 after VHT MCS 4). @ref is that rate's non-HT reference rate, in
+ * 100 kb/s (b43_txhdr_ac_ref_rate()).
  */
 static void b43_txhdr_ac_mcs_duration(struct b43_wldev *dev,
 				      struct sk_buff *skb,
 				      const struct ieee80211_tx_info *info,
-				      unsigned int mod)
+				      u16 ref)
 {
-	static const u16 ref_rate[8] = {
-		60, 120, 180, 240, 360, 480, 540, 540,	/* 100 kb/s */
-	};
 	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)skb->data;
 	struct ieee80211_hw *hw = dev->wl->hw;
 	struct ieee80211_vif *vif = info->control.vif;
@@ -534,7 +570,7 @@ static void b43_txhdr_ac_mcs_duration(struct b43_wldev *dev,
 		struct ieee80211_rate *rate = &sband->bitrates[i];
 
 		if (!(vif->bss_conf.basic_rates & BIT(i)) ||
-		    rate->bitrate > ref_rate[mod])
+		    rate->bitrate > ref)
 			continue;
 		if (!ack || rate->bitrate > ack->bitrate)
 			ack = rate;
@@ -549,8 +585,52 @@ static void b43_txhdr_ac_mcs_duration(struct b43_wldev *dev,
 }
 
 /*
- * The AC microcode's descriptor with its first rate block only: legacy, an
- * HT or a VHT MCS. Hardware encryption is off on B43_FW_HDR_AC.
+ * The non-HT reference rate of @t, in 100 kb/s: an MCS's by its modulation
+ * and coding, HT MCS modulo 8, VHT MCS 8 and 9 as 7 (54 Mb/s); a legacy
+ * rate's own.
+ */
+static u16 b43_txhdr_ac_ref_rate(const struct ieee80211_supported_band *sband,
+				 const struct ieee80211_tx_rate *t)
+{
+	static const u16 ref_rate[8] = {
+		60, 120, 180, 240, 360, 480, 540, 540,
+	};
+
+	if (t->flags & IEEE80211_TX_RC_VHT_MCS)
+		return ref_rate[min_t(unsigned int,
+				       ieee80211_rate_get_vht_mcs(t), 7)];
+	if (t->flags & IEEE80211_TX_RC_MCS)
+		return ref_rate[t->idx % 8];
+	return sband->bitrates[t->idx].bitrate;
+}
+
+/* One rate block from one of the frame's rates. */
+static void b43_txhdr_ac_block(const struct b43_phy_ac *ac,
+			       const struct ieee80211_supported_band *sband,
+			       struct b43_txhdr_ac_rate *r,
+			       const struct ieee80211_tx_rate *t, bool ldpc,
+			       unsigned int len)
+{
+	bool sp = t->flags & IEEE80211_TX_RC_USE_SHORT_PREAMBLE;
+
+	if (t->flags & IEEE80211_TX_RC_VHT_MCS)
+		b43_txhdr_ac_vht(ac, r, t, ldpc);
+	else if (t->flags & IEEE80211_TX_RC_MCS)
+		b43_txhdr_ac_ht(ac, r, t, ldpc, len);
+	else
+		b43_txhdr_ac_legacy(ac, r, sband->bitrates[t->idx].hw_value, sp,
+				    len);
+}
+
+/*
+ * The AC microcode's descriptor: a rate block for each of the frame's rates,
+ * which the microcode tries in order, as the stock drivers fill up to four
+ * on unicast data (router-data/d6220/rxtx-1s-ht20-40-vht20-40-80-txbf0.zip),
+ * the last one marked in its RTS/CTS word; FIX_RATE when there is one, as on
+ * their management and multicast frames. A fallback the header cannot carry
+ * ends the list there, and is cut from it with the rest, so that the status
+ * reports the rates tried (b43_fill_txstatus_report()). Hardware encryption
+ * is off on B43_FW_HDR_AC.
  */
 static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 				 struct sk_buff *skb,
@@ -558,17 +638,28 @@ static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 				 const struct b43_txhdr_ctl *c, u16 cookie)
 {
 	struct b43_txhdr_ac *txhdr = (struct b43_txhdr_ac *)_txhdr;
-	struct b43_txhdr_ac_rate *r = &txhdr->rate[0];
 	const struct ieee80211_hdr *wlhdr =
 	    (const struct ieee80211_hdr *)skb->data;
+	const struct ieee80211_supported_band *sband =
+		dev->wl->hw->wiphy->bands[info->band];
+	struct ieee80211_tx_rate *rates = info->control.rates;
+	bool ldpc = info->flags & IEEE80211_TX_CTL_LDPC;
 	const struct b43_phy_ac *ac = dev->phy.ac;
 	unsigned int len = skb->len + FCS_LEN;
-	u16 mac_lo = 0, rts = B43_TXH_AC_RTS_LAST_RATE;
+	u16 mac_lo = 0, rts = 0;
+	unsigned int n, i;
 
 	BUILD_BUG_ON(sizeof(struct b43_txhdr_ac) != 128);
+	BUILD_BUG_ON(B43_TXH_AC_RATES > IEEE80211_TX_MAX_RATES);
 
 	if (WARN_ON_ONCE(info->control.hw_key))
 		return -EOPNOTSUPP;
+
+	for (n = 1; n < B43_TXH_AC_RATES; n++)
+		if (!rates[n].count || !b43_txhdr_ac_rate_ok(sband, &rates[n]))
+			break;
+	for (i = n; i < IEEE80211_TX_MAX_RATES; i++)
+		rates[i].idx = -1;
 
 	memset(txhdr, 0, sizeof(*txhdr));
 	txhdr->toe[0] = 0x02;
@@ -584,26 +675,19 @@ static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 		mac_lo |= B43_TXH_AC_MAC_LFRM;
 
 	txhdr->mac_ctl_lo = cpu_to_le16(mac_lo);
-	txhdr->mac_ctl_hi = cpu_to_le16(B43_TXH_AC_MAC_FIX_RATE);
+	txhdr->mac_ctl_hi = cpu_to_le16(n == 1 ? B43_TXH_AC_MAC_FIX_RATE : 0);
 	txhdr->chanspec = cpu_to_le16(ac->chanspec);
 	txhdr->iv_offset = ieee80211_hdrlen(wlhdr->frame_control);
 	txhdr->frame_len = cpu_to_le16(len);
 	txhdr->cookie = cpu_to_le16(cookie);
 	txhdr->seq = wlhdr->seq_ctrl;
 
-	if (c->ht) {
-		b43_txhdr_ac_ht(ac, r, info, len);
+	for (i = 0; i < n; i++)
+		b43_txhdr_ac_block(ac, sband, &txhdr->rate[i], &rates[i], ldpc,
+				   len);
+	if (c->ht || c->vht)
 		b43_txhdr_ac_mcs_duration(dev, skb, info,
-					  info->control.rates[0].idx % 8);
-	} else if (c->vht) {
-		b43_txhdr_ac_vht(ac, r, info);
-		b43_txhdr_ac_mcs_duration(dev, skb, info,
-			min_t(unsigned int,
-			      ieee80211_rate_get_vht_mcs(&info->control.rates[0]),
-			      7));
-	} else {
-		b43_txhdr_ac_legacy(ac, r, c, len);
-	}
+			b43_txhdr_ac_ref_rate(sband, &rates[n - 1]));
 
 	if (c->rts || c->cts) {
 		u8 code;
@@ -617,7 +701,9 @@ static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 		}
 		rts |= (code & 0x0f) << B43_TXH_AC_RTS_RATE_SHIFT;
 	}
-	r->rts_cts_ctl = cpu_to_le16(rts);
+	for (i = 0; i < n; i++)
+		txhdr->rate[i].rts_cts_ctl = cpu_to_le16(rts);
+	txhdr->rate[n - 1].rts_cts_ctl |= cpu_to_le16(B43_TXH_AC_RTS_LAST_RATE);
 
 	return 0;
 }
@@ -1348,6 +1434,27 @@ void b43_handle_txstatus(struct b43_wldev *dev,
 	b43_phy_txpower_check(dev, 0);
 }
 
+/*
+ * The AC status counts the attempts at each rate block, and the frame's
+ * rates are its blocks (b43_generate_txhdr_ac()). With one block, FIX_RATE,
+ * only block 0's count is attempts (b43_txstatus_read_ac()).
+ */
+static void b43_fill_txstatus_rates_ac(struct ieee80211_tx_info *report,
+				       const struct b43_txstatus *status)
+{
+	struct ieee80211_tx_rate *rates = report->status.rates;
+	unsigned int n, i;
+
+	for (n = 0; n < B43_TXH_AC_RATES && rates[n].idx >= 0; n++)
+		;
+	if (n <= 1) {
+		rates[0].count = status->frame_count;
+		return;
+	}
+	for (i = 0; i < n; i++)
+		rates[i].count = status->rate_tries[i];
+}
+
 /* Fill out the mac80211 TXstatus report based on the b43-specific
  * txstatus report data. This returns a boolean whether the frame was
  * successfully transmitted. */
@@ -1373,6 +1480,10 @@ bool b43_fill_txstatus_report(struct b43_wldev *dev,
 			/* ...but we expected an ACK. */
 			frame_success = false;
 		}
+	}
+	if (dev->fw.hdr_format == B43_FW_HDR_AC) {
+		b43_fill_txstatus_rates_ac(report, status);
+		return frame_success;
 	}
 	if (status->frame_count == 0) {
 		/* The frame was not transmitted at all. */

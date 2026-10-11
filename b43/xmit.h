@@ -204,6 +204,9 @@ struct b43_txhdr_ac_rate {
 	__le16 bfm0;
 } __packed;
 
+/* Rate blocks of the AC descriptor, tried in order */
+#define B43_TXH_AC_RATES		4
+
 struct b43_txhdr_ac {
 	__u8 toe[4];			/* TX offload header */
 	__le16 tso_info;
@@ -217,7 +220,7 @@ struct b43_txhdr_ac {
 	__le16 seq;
 	__le16 tstamp;
 	__le16 tx_status;
-	struct b43_txhdr_ac_rate rate[4];
+	struct b43_txhdr_ac_rate rate[B43_TXH_AC_RATES];
 	__u8 cache[24];
 } __packed;
 
@@ -264,6 +267,8 @@ size_t b43_txhdr_size(struct b43_wldev *dev)
 }
 
 
+bool b43_txhdr_ac_rate_ok(const struct ieee80211_supported_band *band,
+			  const struct ieee80211_tx_rate *r);
 int b43_generate_txhdr(struct b43_wldev *dev,
 		       u8 * txhdr,
 		       struct sk_buff *skb_frag,
@@ -282,6 +287,7 @@ struct b43_txstatus {
 	u8 intermediate;	/* Intermediate status notification (not final) */
 	u8 for_ampdu;		/* Status is for an AMPDU (afterburner) */
 	u8 acked;		/* Wireless ACK received */
+	u8 rate_tries[B43_TXH_AC_RATES]; /* AC: attempts at each rate block */
 	u32 raw[8];		/* AC: the two packages, as read */
 };
 

@@ -1591,11 +1591,12 @@ void b43_wireless_core_reset(struct b43_wldev *dev, bool gmode)
  * the next one is looked at. Returns false when the queue is empty.
  *
  * In the first package word 0 holds the frame ID in its high half and the
- * status bits in its low half, words 2 and 3 the transmit attempts at rates
- * 0-1 and 2-3, in bits 7:0 and 23:16. b43's descriptor asks for its first
- * rate only, so the attempts are those of rate 0: on such a frame bits 23:16
- * read 1 once it is acknowledged, which is not an attempt. The second
- * package is not decoded.
+ * status bits in its low half, words 2 and 3 the transmit attempts at rate
+ * blocks 0-1 and 2-3, in bits 7:0 and 23:16, as the hybrid 6.30.223 reports
+ * them under 832. On a frame with FIX_RATE, one block, bits 23:16 read 1
+ * once it is acknowledged, which is not an attempt: frame_count is block
+ * 0's alone, and b43_fill_txstatus_report() takes the others only on a
+ * frame with more blocks. The second package is not decoded.
  */
 static bool b43_txstatus_read_ac(struct b43_wldev *dev,
 				 struct b43_txstatus *stat)
@@ -1624,6 +1625,10 @@ static bool b43_txstatus_read_ac(struct b43_wldev *dev,
 	stat->pm_indicated = !!(w[0] & B43_TXST_AC_PM_INDICATED);
 	stat->supp_reason = (w[0] & B43_TXST_AC_SUPP) >> B43_TXST_AC_SUPP_SHIFT;
 	stat->frame_count = w[2] & 0xff;
+	stat->rate_tries[0] = w[2] & 0xff;
+	stat->rate_tries[1] = (w[2] >> 16) & 0xff;
+	stat->rate_tries[2] = w[3] & 0xff;
+	stat->rate_tries[3] = (w[3] >> 16) & 0xff;
 	return true;
 }
 
@@ -4487,54 +4492,25 @@ static bool b43_tx_rate_is_mcs(const struct ieee80211_tx_rate *rate)
 	       (rate->flags & (IEEE80211_TX_RC_MCS | IEEE80211_TX_RC_VHT_MCS));
 }
 
-/* Whether @r is an HT MCS on the streams of the band's TX MCS set. */
-static bool b43_tx_ht_rate_ok(const struct ieee80211_supported_band *band,
-			      const struct ieee80211_tx_rate *r)
-{
-	const struct ieee80211_mcs_info *mcs = &band->ht_cap.mcs;
-	unsigned int nss = r->idx / 8 + 1;
-
-	if (!(mcs->tx_params & IEEE80211_HT_MCS_TX_DEFINED) || r->idx > 31)
-		return false;
-	if ((mcs->tx_params & IEEE80211_HT_MCS_TX_RX_DIFF) &&
-	    nss > ((mcs->tx_params & IEEE80211_HT_MCS_TX_MAX_STREAMS_MASK) >>
-		   IEEE80211_HT_MCS_TX_MAX_STREAMS_SHIFT) + 1)
-		return false;
-	return mcs->rx_mask[r->idx / 8] & BIT(r->idx % 8);
-}
-
 /*
  * Whether the TX header can carry the frame's rates. On the AC the first
- * rate block alone: legacy, an HT MCS 0-31 at 20 or 40 MHz in the band's TX
- * MCS set, or a VHT MCS 0-9 at 20, 40 or 80 MHz on a stream count the band's
- * TX map has; on the other PHYs a legacy rate and its fallback. Rate control
- * picks nothing else, see b43_ac_set_ht_vht_cap(), but an injected frame can
- * ask for any rate, and the header would read an MCS as an index into the
- * legacy rate table.
+ * rate block must (b43_txhdr_ac_rate_ok()); a fallback it cannot carry ends
+ * the blocks, in b43_generate_txhdr(). On the other PHYs a legacy rate and
+ * its fallback. Rate control picks nothing else, see b43_ac_set_ht_vht_cap(),
+ * but an injected frame can ask for any rate, and the header would read an
+ * MCS as an index into the legacy rate table.
  */
 static bool b43_tx_rates_ok(struct ieee80211_hw *hw,
 			    const struct ieee80211_tx_info *info)
 {
 	const struct ieee80211_supported_band *band = hw->wiphy->bands[info->band];
 	const struct ieee80211_tx_rate *r = info->control.rates;
-	bool vht_band = band && band->vht_cap.vht_supported;
 
-	if (r[0].idx >= 0 && (r[0].flags & IEEE80211_TX_RC_VHT_MCS)) {
-		u8 nss = ieee80211_rate_get_vht_nss(&r[0]);
-		u16 map;
-
-		if (!vht_band)
-			return false;
-		map = le16_to_cpu(band->vht_cap.vht_mcs.tx_mcs_map);
-		return ((map >> (2 * (nss - 1))) & 3) !=
-			IEEE80211_VHT_MCS_NOT_SUPPORTED &&
-		       ieee80211_rate_get_vht_mcs(&r[0]) <= 9 &&
-		       !(r[0].flags & IEEE80211_TX_RC_160_MHZ_WIDTH);
-	}
-	if (r[0].idx >= 0 && (r[0].flags & IEEE80211_TX_RC_MCS))
-		return band && b43_tx_ht_rate_ok(band, &r[0]);
-	return !b43_tx_rate_is_mcs(&r[0]) &&
-	       (vht_band || !b43_tx_rate_is_mcs(&r[1]));
+	if (!band)
+		return false;
+	if (band->vht_cap.vht_supported)
+		return b43_txhdr_ac_rate_ok(band, &r[0]);
+	return !b43_tx_rate_is_mcs(&r[0]) && !b43_tx_rate_is_mcs(&r[1]);
 }
 
 static void b43_op_tx(struct ieee80211_hw *hw,
@@ -6627,6 +6603,8 @@ static int b43_setup_bands(struct b43_wldev *dev,
 			*band = b43_band_5GHz_acphy;
 			b43_ac_set_ht_vht_cap(dev, band);
 			hw->wiphy->bands[NL80211_BAND_5GHZ] = band;
+			/* A rate and its fallbacks, a block each. */
+			hw->max_rates = B43_TXH_AC_RATES;
 		}
 	} else
 	if (dev->phy.type == B43_PHYTYPE_N) {

@@ -360,8 +360,8 @@ hardware"). What is open:
 
 - **TX.** The TX descriptor is the AC microcode's long format,
   `d11actxh_t` of Broadcom's `d11.h` (see `PROVENANCE.md`), 124 bytes:
-  per-frame fields, four rate blocks of which b43 fills the first, and the
-  link fields left zero. In front of it go 4 bytes of TX offload header,
+  per-frame fields, four rate blocks, which b43 fills with mac80211's rate
+  and fallbacks, and the link fields left zero. In front of it go 4 bytes of TX offload header,
   `02 00 02 00`, and the IV offset carries the length of the 802.11 header,
   as gonsolo's port sends them under the 832.127 microcode, where they
   associate and carry traffic; under 784.2, the DSL-3580L's, the same
@@ -477,13 +477,17 @@ hardware"). What is open:
     rate in 500 kbps; word 1's subband; word 1's power, 0 at 20 and 40 MHz
     and `0x0010` at 80 on ch36-48, which is what b43 computes for the D6220
     on the three widths (`rate_po_vht`, from the unit harness).
-  - Not in b43: every unicast MCS frame has four rate blocks (MCS 7/4/3/2
-    on HT, 8/6/5/4 on VHT) and MAC TX control `0x41c0`/`0x0000`, that is
-    `STMSDU`, `LFRM`, `IACK` and `0x0040`, which b43 does not name
-    (**SALAME**: "aggregatable", the statuses below have aggregates), and no
-    `FIX_RATE`; RTS/CTS `0x0905`, `USE_RTS` with the 24 Mb/s code (`0x09`)
-    and OFDM, `0x0925` on the last block (`0x0a65`, 12 Mb/s, on HT's); the
-    802.11 duration filled in (mac80211 leaves it 0 on MCS frames). On VHT
+  - As in b43 (`b43_generate_txhdr_ac()`, with minstrel's rates): every
+    unicast MCS frame has four rate blocks (MCS 7/4/3/2 on HT, 8/6/5/4 on
+    VHT) and no `FIX_RATE`, `0x0020` in the last block's RTS/CTS word, and
+    the 802.11 duration filled in (mac80211 leaves it 0 on MCS frames) for
+    the last block's rate.
+  - Not in b43: MAC TX control `0x41c0`/`0x0000`, that is `STMSDU`, `LFRM`,
+    `IACK` and `0x0040`, which b43 does not name (**SALAME**:
+    "aggregatable", the statuses below have aggregates); RTS/CTS `0x0905`,
+    `USE_RTS` with the 24 Mb/s code (`0x09`) and OFDM, `0x0925` on the last
+    block (`0x0a65`, 12 Mb/s, on HT's), where b43 asks for RTS only when
+    mac80211 does. On VHT
     to the one-stream phone STBC: SIG-A NSTS 2, word 2 `0x0040` added. On
     HT, with `txbf 0`, word 0 bit 3, `bfm` `0x4000` and `0x0040` in the
     RTS/CTS word; **SALAME**: implicit beamforming, which `wl txbf` does not
@@ -590,17 +594,17 @@ hardware"). What is open:
   suppression reason 4 and no attempt; the acknowledged statuses whose count
   sits in bits 23:16 only are aggregates of 2 and 4 MPDUs sent at rate 1;
   `0x810b`, bit 3 on an acknowledged frame, is the MacBook in power save. On
-  b43's frames, which ask for the first rate only, bits 23:16 read 1 on
-  every acknowledged frame (gonsolo's port, his note 110: counted as
-  attempts they made every frame look retried, and minstrel kept the lowest
-  rates), so `frame_count` is bits 7:0 alone. The field names are those of
-  `TX_STATUS40_*` in Broadcom's `d11.h` (see `PROVENANCE.md`). Open:
-  `b43_fill_txstatus_report()` splits the count between the rate and its
-  fallback by the retry limit, though the descriptor asks for no fallback;
-  the second package is read and dropped, the low half of its first word is
-  `0x0001` on every entry. That 784.2 reports the same is not in any
-  capture: both above run the hybrid 6.30.223, the driver gonsolo's 832.127
-  comes from.
+  a frame with `FIX_RATE`, one block, bits 23:16 read 1 on every
+  acknowledged frame (gonsolo's port, his note 110: counted as attempts
+  they made every frame look retried, and minstrel kept the lowest rates),
+  so there `frame_count` is bits 7:0 alone; on a frame with more blocks b43
+  reports the four counts, one per rate, to mac80211
+  (`b43_fill_txstatus_report()`). The field names are those of
+  `TX_STATUS40_*` in Broadcom's `d11.h` (see `PROVENANCE.md`). The second
+  package is read and dropped, the low half of its first word is `0x0001`
+  on every entry. That 784.2 walks the blocks and reports them the same is
+  not in any capture: both above run the hybrid 6.30.223, the driver
+  gonsolo's 832.127 comes from; on the DSL-3580L `rc_stats` shows it.
 
   `router-data/vd625-agcombo/rxtx-1s-ht-ampdu.zip` (7.14.43.21 and its
   microcode, `wl-mmio-trap` through an association and downlink traffic to a
