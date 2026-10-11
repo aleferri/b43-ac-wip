@@ -570,7 +570,12 @@ hardware"). What is open:
   frames sent outside one in MAC TX control, `0x45c0`/`0x0000` against
   `0x4080`/`0x0004`: `0x0040` low is `D11AC_TXC_AMPDU` ("aggregatable") and
   `0x0004` high `D11AC_TXC_SVHT`, a single VHT MPDU sent as an A-MPDU, which
-  b43 sets on every VHT frame since it does not aggregate. Both frames are
+  b43 sets on every VHT frame since it does not aggregate. The 784 honours
+  it: at `0x02E3` it skips the aggregation path, at `0x04C2` it sets bit 0,
+  EOF, of the delimiter word it builds in `sprB9` from the frame length (low
+  12 bits from bit 4, high two at bits 3:2, as 802.11ac lays the VHT
+  delimiter out); 832 and 928 do the same at `0x035D`/`0x055C` and
+  `0x0388`/`0x05A9`. Both frames are
   VHT with four VHT blocks. They differ also in the cache info at +100, `50 04 20 20 26 15 3f
   14` against zeros: by the names of `d11actxh_t`'s cache fields in
   Broadcom's `d11.h`, BSS index and cipher, key index, 32 MPDUs at the
