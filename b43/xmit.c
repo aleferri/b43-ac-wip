@@ -399,8 +399,8 @@ static unsigned int b43_txhdr_ac_rate_bw(const struct ieee80211_tx_rate *t)
  * the HT-SIG with the MCS, the length, and smoothing, not sounding and the
  * reserved bit set.
  *
- * TODO: 40 MHz. The width field and the HT-SIG's 40 MHz bit are 6.30's,
- * run on no microcode yet.
+ * At 40 MHz the width field and the HT-SIG's 40 MHz bit are 6.30's
+ * (docs/retrace-todo.md, "HT40").
  */
 static void b43_txhdr_ac_ht(const struct b43_phy_ac *ac,
 			    struct b43_txhdr_ac_rate *r,

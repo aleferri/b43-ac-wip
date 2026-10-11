@@ -209,13 +209,18 @@ The copy, at offsets from the latch:
 On 0x310 word 0xB70, in between, is rewritten with sprE at every end of
 transmission (0x07FD) while the latch is clear.
 
-The meaning of the bits of PHY register 0x007 on the AC is OPEN. In this
-repository `b43_ac_report_phy_txerr()` (`b43/main.c`) prints the copy when
-`B43_IRQ_PHY_TXERR` arrives and clears the latch.
+The meaning of the bits of PHY register 0x007 on the AC is OPEN. Two
+values are seen on 0x310, each with its cause found: bit 13 (0x2000) on a
+CTS-to-self whose L-SIG carried no valid rate, bit 5 (0x0020) on a beacon
+whose PHY control word 1 carried 4 in the subband field (bits 2:0) at
+40 MHz. In this repository `b43_ac_report_phy_txerr()` (`b43/main.c`)
+prints the copy when `B43_IRQ_PHY_TXERR` arrives and clears the latch.
 
 In the model 0x2D, held until an EOI, blocks the beacon, because on 0x310
 the EOI of 0x2D (`jext 0xAD`) is only at 0x0609, on a TX path, and not in
-the main-loop handler. How the hardware clears it is OPEN.
+the main-loop handler. On the DSL-3580L it does not: with the subband
+fault the ucode tried the beacon at every TBTT and saved a fault each time.
+How the hardware clears it is OPEN.
 
 ## TX core selection
 

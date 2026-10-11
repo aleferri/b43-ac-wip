@@ -318,14 +318,19 @@ undefined, so that HT MCS go out as well. HT MCS and VHT MCS 0-9 go out on
 as many streams as the board has TX chains, in the layout of the stock
 drivers' own descriptors (`b43_txhdr_ac_ht()`, `b43_txhdr_ac_vht()`, from
 the captures below, the DSL-3580L's 6.30 code and, for HT20, gonsolo's port
-under 832.127). On the board HT20 and VHT20/40/80 are under test (see "On
+under 832.127). On the board HT20 and HT40 work and VHT is next (see "On
 hardware"). What is open:
 
-- **HT40.** TODO on the board. The width field and the HT-SIG's 40 MHz bit
-  are written from 6.30's code; the D6220's 7.14.89 sends the same
-  (`0x40ce`, HT-SIG byte 0 `0x87` for MCS 7, word 1 0 on a primary in the
-  upper half of ch38), in
+- **HT40.** It runs on the DSL-3580L under 784.2 with the HT20 throughput,
+  so the log does not show whether minstrel took the 40 MHz rates. The
+  width field and the HT-SIG's 40 MHz bit are written from 6.30's code; the
+  D6220's 7.14.89 sends the same (`0x40ce`, HT-SIG byte 0 `0x87` for MCS 7,
+  word 1 0 on a primary in the upper half of ch38), in
   `router-data/d6220/rxtx-1s-ht20-40-vht20-40-80-txbf0.zip`.
+- **Aggregation.** `b43_op_ampdu_action()` refuses every block ack session,
+  so no A-MPDU goes out or is accepted; with HT40 at the HT20 throughput it
+  is the likely limit. The stock layout of an A-MPDU and its statuses are
+  in `router-data/vd625-agcombo/rxtx-1s-ht-ampdu.zip` (see "TX status").
 - **Transmit beamforming.** TODO, not implemented. b43 announces no SU
   beamformer capability, so a station never sends the compressed
   beamforming feedback, and every multi-chain frame goes out with CDD on
@@ -348,9 +353,9 @@ hardware"). What is open:
   link fields left zero. In front of it go 4 bytes of TX offload header,
   `02 00 02 00`, and the IV offset carries the length of the 802.11 header,
   as gonsolo's port sends them under the 832.127 microcode, where they
-  associate and carry traffic; under 784.2, the DSL-3580L's, the prefix is
-  not checked against anything, and the PLCP of the rate block at offset 0
-  is his as well. It replaced `format_598`, which put b43's cookie,
+  associate and carry traffic; under 784.2, the DSL-3580L's, the same
+  prefix carries legacy, HT20 and HT40 traffic. The PLCP of the rate block
+  at offset 0 is his as well. It replaced `format_598`, which put b43's cookie,
   the frame length and the chanspec where the AC ucode does not read them:
   on the DSL-3580L the first frame sent over DMA came back with frame ID 0
   and the beacon, out until then, stopped. With the HT TX MCS set and a VHT
@@ -505,7 +510,9 @@ hardware"). What is open:
   all read the same way: VHT on two streams at 20, 40 and 80 MHz, and BCC
   (LDPC clear in SIG-A2) at MCS 0. The field at +22, which b43 does not read
   on the AC, is the chanspec (`0xd024`, `0xd926`, `0xe22a`). +24..+39 change
-  with every frame and stay unread. Under 784.2 none of it is checked.
+  with every frame and stay unread. Under 784.2 the header carries the
+  legacy, HT20 and HT40 traffic of the DSL-3580L; its rate and power
+  fields are not compared against a capture of that microcode.
 - **Receive buffer.** `B43_DMA0_RX_AC_BUFSIZE` holds a 3895-byte MPDU, the
   VHT minimum; the stock driver's own buffer size is not in any capture.
   The frame offset, 40, is the one both stock drivers write into the RX
@@ -920,36 +927,19 @@ ucode revision.
   offset (`0x001c`, `0x3a`), and with every beacon the probe response template
   at `0x0700`, its length at `0x004a` and the SSID at `0x0160`. b43 writes the
   same cells in the same order.
-- **TX under traffic, legacy.** `bringup-log-2026-10-08-bis.txt`, 20 MHz
-  `NOHT`, has a station through the WPA2 4-way handshake and traffic both
-  ways, with no DMA error and no restart. The first attempts end in
-  `AP-STA-POSSIBLE-PSK-MISMATCH`, as in the 2026-10-09 log; one completes
-  later. Not explained. `bringup-log-2026-10-08.txt` has
-  one `TX-status contains invalid cookie: 0x0000` before `AP-ENABLED`. b43
-  posts two descriptors per frame where the stock driver mostly posts one.
-- **HT and VHT.** Under test. `bringup-log-2026-10-09.txt` is the first run
-  with HT and VHT announced: the station associates and completes the 4-way
-  handshake, then gets no address and leaves after about 20 s, again and
-  again. The EAPOL frames go at the lowest rate (mac80211 marks the control
-  port `USE_MINRATE`), the DHCP replies at the rate minstrel picks. That
-  build put word 0 bit 3 on every VHT frame but MCS 0 and the OFDM cores,
-  one on that channel, on every frame, two streams included; both now follow
-  6.30 (see "TX" under "HT and VHT"), not yet run. The same log has the
-  mac80211 warning for the missing `ampdu_action`, fixed since. HT20, sent
-  since, tells the two apart: it shares the cores, the power and the
-  subband with VHT, and not the VHT-SIG-B and the single-MPDU A-MPDU
-  format every VHT frame has.
-- **RX under traffic.** It works and is slow: at 20 MHz `NOHT` the station
-  uploads at 4 Mbit/s and downloads at 11. In the 2026-10-08-bis log the RX
-  ring underruns once at the association (229.5 s), then 36 `RX descriptor
-  underrun` are printed, and `net_ratelimit()` drops 78 messages, between
-  268.9 s and 301.4 s. Whether the log predates the underrun interrupt
-  draining the ring (`b43_dma_rx_give()`) is not recorded. The ring had 32
-  slots, from `813-b43-reduce-number-of-RX-slots.patch`, before the 816 in
-  the package; the 816-02 sets 128. Every frame is decrypted by mac80211 (no
-  hardware crypto on the AC) and none is aggregated. Next: the same traffic
-  with a counter of underruns instead of the warning, with the 128 slots and
-  with 256, and the CPU load of the softirq.
+- **Traffic.** `bringup-log-2026-10-11-ht20-40.txt`: at HT20 on 36 and at
+  HT40 on 36/40 a station associates, completes the WPA2 4-way handshake at
+  the first attempt and carries traffic, with no PHY TX error, no DMA error
+  and no restart. The two widths give the same throughput (see
+  "Aggregation" under "HT and VHT"). Every frame is decrypted by mac80211:
+  there is no hardware crypto on the AC. The log has one `sched: RT
+  throttling activated` under traffic; the cause is not looked at.
+- **VHT.** Next on the board. Its only run, `bringup-log-2026-10-09.txt`,
+  predates the VHT descriptor as 6.30 lays it out (see "TX" under "HT and
+  VHT") and the power offset in half-dB steps (`b43_phy_ac_po_field()`):
+  the station there completed the handshake and got no address.
+- **RX under traffic.** No `RX descriptor underrun` in the 2026-10-11 log,
+  with the 128 slots of 816-02 (OpenWrt's 813 alone gives 32).
 - **Values of the bring-up logs against `cold01-ch36-bw20.txt`**, printed
   since by a `B43_DEBUG` build only. Same as the
   board's own driver: radio `0x040b` reads `0x0169` after power-on, `0x0140`
@@ -962,7 +952,8 @@ ucode revision.
   `0x269..0x26b/0x26f..0x274`, where 6.30 here reads `0x0930/0x0944` and
   writes `0x24c/0x251`, and the D6220's core 1 reads zero. `PLLCTL3 =
   0x100e` is bcma's own write, which 6.30 here does not make
-  (`0x00133333`). The ranges cover the six cycles of the two logs. Which TX
+  (`0x00133333`). The ranges cover the six cycles of the two 2026-10-08
+  logs, which are in the history, not in the tree. Which TX
   gain table fits this board's front end is open: the two drivers program
   different gains at the same index.
 
