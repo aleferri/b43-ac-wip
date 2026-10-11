@@ -357,6 +357,14 @@ static void mount_board(const struct board_profile *p)
 			fprintf(stderr, "AC_BW=%s: expected 20, 40 or 80\n", e);
 			exit(1);
 		}
+		/*
+		 * AC_CENTER, in MHz, puts the block elsewhere around the
+		 * primary, for a primary other than the lowest channel.
+		 */
+		e = getenv("AC_CENTER");
+		if (e)
+			g_hw.conf.chandef.center_freq1 =
+				(u32)strtoul(e, NULL, 10);
 	}
 	g_hw.wiphy = NULL;
 	g_wl.hw = &g_hw;

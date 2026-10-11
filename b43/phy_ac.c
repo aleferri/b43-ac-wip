@@ -1817,7 +1817,7 @@ static u16 b43_phy_ac_reg_ceiling(struct b43_wldev *dev)
 	const struct cfg80211_chan_def *chandef = &dev->wl->hw->conf.chandef;
 	const struct ssb_sprom *sprom = dev->dev->bus_sprom;
 	struct b43_phy_ac *ac = dev->phy.ac;
-	unsigned int span, i;
+	unsigned int span, low, i;
 	int antgain, best = INT_MAX;
 
 	if (!chandef->chan)
@@ -1840,16 +1840,16 @@ static u16 b43_phy_ac_reg_ceiling(struct b43_wldev *dev)
 		antgain = 0;
 
 	/*
-	 * The block starts at the primary and runs upwards in 20 MHz steps;
-	 * each channel is looked up on its own, since a domain may cap them
-	 * differently.
+	 * Every 20 MHz channel of the block, from the lowest up, whichever of
+	 * them is the primary; each is looked up on its own, since a domain
+	 * may cap them differently.
 	 */
+	low = ac->cal_freq - 10 * (span - 1);
 	for (i = 0; i < span; i++) {
 		struct ieee80211_channel *sub;
 		int lim;
 
-		sub = ieee80211_get_channel(dev->wl->hw->wiphy,
-					   5000 + 5 * (ac->cal_channel + 4 * i));
+		sub = ieee80211_get_channel(dev->wl->hw->wiphy, low + 20 * i);
 		if (!sub || sub->max_power <= 0)
 			continue;
 
