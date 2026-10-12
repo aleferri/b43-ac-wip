@@ -910,19 +910,28 @@ Table `0x21` is written as zeros on 2.4 GHz, as on both boards.
 
 **Open:**
 
-- **TX target and per-rate fields.** Scan hops rewrite `0x0646` unchanged, so
-  the only 2.4 GHz target captured is the MacBook's ch6 calibration, `0x2e`.
-  The per-rate cells (`0x099a`… OFDM, `0x0a3a`… CCK) are flat `0x18` on the
-  archer-t5e, whose 2.4 GHz offsets are all zero and `maxp2ga` 80, and zero on
-  the MacBook, whose SROM (`router-data/macbookair6-1/srom-raw.txt`) has
-  `mcsbw202gpo = mcsbw402gpo = 0xaa555000`, `dot11agofdmhrbw202gpo = 0x4400`,
-  CCK offsets 0 and `maxp2ga` 80. The rule is still to find.
+- **TX target and per-rate fields.** The power table takes the 2.4 GHz SROM
+  words on 2.4 GHz: `maxp2ga` per core, `mcsbw202gpo`/`mcsbw402gpo` for the
+  OFDM and MCS groups, `cckbw202gpo` for the four CCK rates, and the 2.4 GHz
+  antenna gain `ag0` (`b43_phy_ac_antgain()`). It took the 5 GHz ones
+  before, `maxp5ga` of the first sub-band among them, and put the CCK
+  rates' field at the 5 GHz floor, `0xf8`, 15.5 dB under the target. A CCK
+  rate keeps its SROM distance from the target like an OFDM one. Scan hops
+  rewrite `0x0646` unchanged, so the only 2.4 GHz target captured is the
+  MacBook's ch6 calibration, `0x2e`, where the SROM gives `0x4a` (`maxp2ga`
+  80 less the margin); its per-rate cells (`0x099a`… OFDM, `0x0a3a`… CCK)
+  are all zero, where `mcsbw202gpo = 0xaa555000` gives 2.5 dB on 36 to 54
+  Mb/s. Both fit a limit below every rate, which saturates them all on
+  it, as the CLM of its `wl` would set; whether that is what happens is
+  not in the capture. The archer-t5e's cells are flat `0x18`, its offsets
+  all zero and `maxp2ga` 80. The beacon cell `0x00ce` takes the 6 Mb/s
+  field on 2.4 GHz too, where a beacon at 1 Mb/s would want the CCK one;
+  on the two boards with 2.4 GHz SROM data the two are the same.
 - **First cell of each noise-shaping run.** 6.30 and 7.14 already write it
   differently on 5 GHz; 2.4 GHz keeps 7.14's 5 GHz value and warns.
 - **Board data.** `0x06dd`, `0x06df`, `0x06e1`–`0x06e5` and table `0x07`
   `[0xf9 + core]` change between the two boards on the same core; `0x06e1`
-  does on 5 GHz too, where the port writes the D6220's `0x0018`. The CCK rate
-  cells `0x0a3a`… need the SROM's CCK offsets.
+  does on 5 GHz too, where the port writes the D6220's `0x0018`.
 - **FEM control.** The port has the tables of `femctrl 6, femctrl_sub 0` (the
   routers) and `femctrl 2, femctrl_sub 1` (the MacBook, `boardflags3 = 1`),
   and stops with its warning on any other: the archer-t5e has `femctrl = 1`,

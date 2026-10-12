@@ -171,6 +171,9 @@ struct ssb_sprom {
 	u32 mcsbw205glpo, mcsbw405glpo, mcsbw805glpo;
 	u32 mcsbw205gmpo, mcsbw405gmpo, mcsbw805gmpo;
 	u32 mcsbw205ghpo, mcsbw405ghpo, mcsbw805ghpo;
+	/* The same at 2.4 GHz, 20 and 40 MHz, and the CCK rates' nibbles. */
+	u32 mcsbw202gpo, mcsbw402gpo;
+	u16 cckbw202gpo;
 	/* Antenna gain per band, quarter-dB, SROM ag0/ag1. Index 1 is 5 GHz. */
 	u16 pdoffset40ma[3];
 	u16 pdoffset80ma[3];

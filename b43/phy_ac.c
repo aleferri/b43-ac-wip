@@ -642,22 +642,23 @@ static void b43_phy_ac_shm_readback_block(struct b43_wldev *dev)
 /*
  * The twelve rates of the rateset in increasing bitrate, the order the stock
  * driver visits the blocks, CCK interleaved with OFDM. @dirmap is the index
- * in the direct-map table (the SIGNAL low nibble), @ofdm the legacy rate
- * index for b43_ppr_ac_ofdm(), 0 = 6 Mbit/s to 7 = 54.
+ * in the direct-map table (the SIGNAL low nibble), @idx the rate's index in
+ * its class: for b43_ppr_ac_ofdm(), 0 = 6 Mbit/s to 7 = 54, for
+ * b43_ppr_ac_cck(), 0 = 1 Mbit/s to 3 = 11.
  */
 struct b43_phy_ac_prb_rsp_rate {
 	u8 dirmap;
-	u8 ofdm;
+	u8 idx;
 	bool cck;
 };
 
 static const struct b43_phy_ac_prb_rsp_rate b43_phy_ac_prb_rsp_rates[12] = {
 	{ 10, 0, true  },	/*  1 Mbit/s */
-	{  4, 0, true  },	/*  2 */
-	{  7, 0, true  },	/*  5.5 */
+	{  4, 1, true  },	/*  2 */
+	{  7, 2, true  },	/*  5.5 */
 	{ 11, 0, false },	/*  6 */
 	{ 15, 1, false },	/*  9 */
-	{ 14, 0, true  },	/* 11 */
+	{ 14, 3, true  },	/* 11 */
 	{ 10, 2, false },	/* 12 */
 	{ 14, 3, false },	/* 18 */
 	{  9, 4, false },	/* 24 */
@@ -746,6 +747,18 @@ void b43_phy_ac_rxiqcal_dds_seed_tone(struct b43_wldev *dev, int step)
 			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
 
 	b43_phy_ac_tone_table_write(dev, b43_phy_ac_tone_period, step);
+}
+
+/*
+ * The SROM's antenna gain of the band the PHY is on, in quarter dB, negative
+ * ones as none: ag0 on 2.4 GHz, aga0 on 5 GHz (antenna_gain_qdb[0] and [1]).
+ */
+static int b43_phy_ac_antgain(struct b43_wldev *dev)
+{
+	const struct ssb_sprom *sprom = dev->dev->bus_sprom;
+	bool g = dev->phy.ac->cal_channel <= 14;
+
+	return max_t(int, sprom->antenna_gain_qdb[g ? 0 : 1], 0);
 }
 
 /*
@@ -879,7 +892,6 @@ static void b43_phy_ac_chain_pair(struct b43_wldev *dev,
 	static const u8 off_cdd[] = { 0, 0, 12, 20 };
 	static const u8 off_txbf[] = { 0, 0, 24, 39 };
 	struct b43_phy_ac *ac = dev->phy.ac;
-	const struct ssb_sprom *sprom = dev->dev->bus_sprom;
 	unsigned int chains = hweight8(ac->coremask);
 	u16 level = b43_phy_ac_local_max(ac, width);
 	int board, limit, antgain;
@@ -888,9 +900,7 @@ static void b43_phy_ac_chain_pair(struct b43_wldev *dev,
 	if (!level || !ac->txpwr_maxp)
 		return;
 
-	antgain = sprom->antenna_gain_qdb[1];
-	if (antgain < 0)
-		antgain = 0;
+	antgain = b43_phy_ac_antgain(dev);
 	limit = (int)level - antgain;
 	if (site == B43_PHY_AC_CHAIN_TXPWR && width != NL80211_CHAN_WIDTH_20)
 		limit += 4;
@@ -1124,7 +1134,8 @@ static void b43_phy_ac_vht_rate_po(struct b43_phy_ac *ac, bool capped)
  * with K constant over a segment's rates (1 dB on ch60/40, 2 dB on ch116/80,
  * 3 dB on ch36/80) and not derived yet; ch100 at 40 and 80 MHz does not take
  * even that form (docs/retrace-todo.md). CCK has no 5 GHz SROM field in rev
- * 11, see b43_phy_ac_cck_rate_po().
+ * 11, see b43_phy_ac_cck_rate_po(); on 2.4 GHz a CCK rate keeps its SROM
+ * distance from the target like an OFDM one, with no legacy limit.
  * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   13009-13068, 13683-13742, 36065-36124]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -1151,21 +1162,24 @@ static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev,
 		u16 cell = (u16)(2 * ptr + B43_AC_RT_RATE_PO);
 		u16 val;
 
-		if (r->cck)
+		if (r->cck && sp->has_cck)
+			val = ac->rate_po_cck = b43_phy_ac_rate_po(ac,
+					b43_ppr_ac_cck(sp, r->idx), 0);
+		else if (r->cck)
 			val = ac->rate_po_cck = b43_phy_ac_cck_rate_po(ac);
 		else if (capped)
 			val = b43_phy_ac_rate_po_capped(ac,
 					b43_ppr_ac_ofdm(&ac->txpwr_ppr,
-							ac->cal_width, r->ofdm),
+							ac->cal_width, r->idx),
 					cap);
 		else
 			val = b43_phy_ac_rate_po(ac,
 						 b43_ppr_ac_ofdm(sp, ac->cal_width,
-								 r->ofdm),
+								 r->idx),
 						 cap);
 
 		if (!r->cck)
-			ac->rate_po_ofdm[r->ofdm] = val;
+			ac->rate_po_ofdm[r->idx] = val;
 		b43_shm_read16(dev, B43_SHM_SHARED, cell);
 		b43_shm_write16(dev, B43_SHM_SHARED, cell, val);
 	}
@@ -1815,7 +1829,6 @@ static u16 b43_phy_ac_locale_20in_ceiling(struct b43_phy_ac *ac)
 static u16 b43_phy_ac_reg_ceiling(struct b43_wldev *dev)
 {
 	const struct cfg80211_chan_def *chandef = &dev->wl->hw->conf.chandef;
-	const struct ssb_sprom *sprom = dev->dev->bus_sprom;
 	struct b43_phy_ac *ac = dev->phy.ac;
 	unsigned int span, low, i;
 	int antgain, best = INT_MAX;
@@ -1835,9 +1848,7 @@ static u16 b43_phy_ac_reg_ceiling(struct b43_wldev *dev)
 		break;
 	}
 
-	antgain = sprom->antenna_gain_qdb[1];
-	if (antgain < 0)
-		antgain = 0;
+	antgain = b43_phy_ac_antgain(dev);
 
 	/*
 	 * Every 20 MHz channel of the block, from the lowest up, whichever of
@@ -1941,7 +1952,9 @@ bool b43_phy_ac_txpwr_recalc(struct b43_wldev *dev)
 			"the 40/80 MHz power target may differ\n");
 
 	for (core = 0; core < ac->num_cores; core++) {
-		u8 own = sprom->core_pwr_info[core].maxp5ga[sb];
+		const struct ssb_sprom_core_pwr_info *pi =
+			&sprom->core_pwr_info[core];
+		u8 own = ac->cal_channel <= 14 ? pi->maxp2ga : pi->maxp5ga[sb];
 		u8 target = max;
 
 		if (own > maxp)

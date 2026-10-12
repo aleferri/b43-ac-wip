@@ -78,6 +78,10 @@ struct board_profile {
 	/* The 2.4 GHz fields, per core: pa2ga (a1, b0, b1) and rxgains 2g. Only
 	 * the archer profile carries them; the routers are zero there. */
 	u16 pa2ga[3][3];
+	/* 2.4 GHz power: maxp2ga per core, mcsbw{20,40}2gpo, cckbw202gpo. */
+	u8 maxp2ga[3];
+	u32 mcsbw2g_po[2];
+	u16 cckbw202gpo;
 	u8 rxgains_2g_elnagain[3];
 	u8 rxgains_2g_triso[3];
 	/* R2069_RCCAL_E/F (radio 0x0414/0x0415) read by rccal in op_init to
@@ -407,6 +411,8 @@ static const struct board_profile PROFILE_ARCHER = {
 	},
 	.rxgains_5gl_elnagain = { 3, 3, 3 },
 	.rxgains_5gl_triso    = { 9, 9, 9 },
+	/* /tmp/srom/archer.vars: maxp2ga0..2 = 80, every 2.4 GHz offset 0. */
+	.maxp2ga = { 80, 80, 80 },
 	.pa2ga = {
 		{ 0xff37, 0x1b77, 0xfcb0 },
 		{ 0xff36, 0x1b2e, 0xfcb6 },
@@ -459,6 +465,12 @@ static const struct board_profile PROFILE_MACBOOK = {
 	},
 	.rxgains_5gl_elnagain = { 3, 3, 7 },
 	.rxgains_5gl_triso    = { 7, 6, 15 },
+	/*
+	 * srom-raw.txt, as docs/retrace-todo.md ("2.4 GHz") decodes it: maxp2ga
+	 * 80, mcsbw202gpo = mcsbw402gpo = 0xaa555000, CCK offsets 0.
+	 */
+	.maxp2ga = { 80, 80, 80 },
+	.mcsbw2g_po = { 0xaa555000, 0xaa555000 },
 	.pa2ga = {
 		{ 0xff39, 0x1776, 0xfd13 },
 		{ 0xff32, 0x17c1, 0xfd0d },
@@ -568,7 +580,11 @@ static inline void board_profile_to_sprom(const struct board_profile *p,
 		       sizeof(s->core_pwr_info[c].maxp5ga));
 		memcpy(s->core_pwr_info[c].pa2ga, p->pa2ga[c],
 		       sizeof(s->core_pwr_info[c].pa2ga));
+		s->core_pwr_info[c].maxp2ga = p->maxp2ga[c];
 	}
+	s->mcsbw202gpo = p->mcsbw2g_po[0];
+	s->mcsbw402gpo = p->mcsbw2g_po[1];
+	s->cckbw202gpo = p->cckbw202gpo;
 
 	for (b = 0; b < 3; b++) {
 		u32 *dst[3][3] = {

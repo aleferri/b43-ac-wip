@@ -34,11 +34,16 @@ struct ssb_sprom;
  * and the 80 MHz row at 80: those are the 20-in-40, 20-in-80 and 40-in-80 rate
  * groups of a bonded channel, and the reason the maximum over the table is
  * taken over every width the channel contains.
+ *
+ * On 2.4 GHz the same groups come from mcsbw202gpo and mcsbw402gpo under
+ * maxp2ga, and the four CCK rates, 1, 2, 5.5 and 11 Mb/s, from the four
+ * nibbles of cckbw202gpo, in cck[].
  */
 
 #define B43_PPR_AC_GROUPS	8
 #define B43_PPR_AC_ROWS		3	/* 20, 40, 80 MHz */
 #define B43_PPR_AC_OFDM_RATES	8	/* 6, 9, 12, 18, 24, 36, 48, 54 Mb/s */
+#define B43_PPR_AC_CCK_RATES	4	/* 1, 2, 5.5, 11 Mb/s, 2.4 GHz only */
 
 struct b43_ppr_ac {
 	union {
@@ -47,6 +52,8 @@ struct b43_ppr_ac {
 	};
 	/* Entries the current width loads: 8 at 20 MHz, 16 at 40, 24 at 80. */
 	unsigned int num;
+	u8 cck[B43_PPR_AC_CCK_RATES];
+	bool has_cck;		/* 2.4 GHz */
 };
 
 void b43_ppr_ac_clear(struct b43_ppr_ac *ppr, enum nl80211_chan_width width);
@@ -62,6 +69,9 @@ u8 b43_ppr_ac_get_max(const struct b43_ppr_ac *ppr);
  */
 u8 b43_ppr_ac_ofdm(const struct b43_ppr_ac *ppr, enum nl80211_chan_width width,
 		   unsigned int rate);
+
+/* The power of a CCK rate, 0 = 1 Mb/s to 3 = 11; zero off 2.4 GHz. */
+u8 b43_ppr_ac_cck(const struct b43_ppr_ac *ppr, unsigned int rate);
 
 /* The same for a VHT MCS, 0-9, on the row of @width. */
 u8 b43_ppr_ac_vht(const struct b43_ppr_ac *ppr, enum nl80211_chan_width width,

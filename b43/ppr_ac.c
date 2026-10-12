@@ -17,6 +17,11 @@
 	     i < (ppr)->num;						\
 	     i++, entry++)
 
+#define ppr_ac_for_each_cck(ppr, i, entry)					\
+	for (i = 0, entry = (ppr)->cck;					\
+	     (ppr)->has_cck && i < B43_PPR_AC_CCK_RATES;			\
+	     i++, entry++)
+
 /* Row of the table a width sits on; also the number of rows it loads - 1. */
 static unsigned int b43_ppr_ac_row(enum nl80211_chan_width width)
 {
@@ -43,6 +48,8 @@ void b43_ppr_ac_add(struct b43_ppr_ac *ppr, int diff)
 
 	ppr_ac_for_each_entry(ppr, i, entry)
 		*entry = (u8)clamp_t(int, *entry + diff, 0, 127);
+	ppr_ac_for_each_cck(ppr, i, entry)
+		*entry = (u8)clamp_t(int, *entry + diff, 0, 127);
 }
 
 void b43_ppr_ac_apply_max(struct b43_ppr_ac *ppr, u8 max)
@@ -51,6 +58,8 @@ void b43_ppr_ac_apply_max(struct b43_ppr_ac *ppr, u8 max)
 	u8 *entry;
 
 	ppr_ac_for_each_entry(ppr, i, entry)
+		*entry = min(*entry, max);
+	ppr_ac_for_each_cck(ppr, i, entry)
 		*entry = min(*entry, max);
 }
 
@@ -61,6 +70,8 @@ void b43_ppr_ac_apply_min(struct b43_ppr_ac *ppr, u8 min)
 
 	ppr_ac_for_each_entry(ppr, i, entry)
 		*entry = max(*entry, min);
+	ppr_ac_for_each_cck(ppr, i, entry)
+		*entry = max(*entry, min);
 }
 
 u8 b43_ppr_ac_get_max(const struct b43_ppr_ac *ppr)
@@ -70,6 +81,8 @@ u8 b43_ppr_ac_get_max(const struct b43_ppr_ac *ppr)
 
 	for (i = 0; i < ppr->num; i++)
 		res = max(ppr->__all[i], res);
+	for (i = 0; ppr->has_cck && i < B43_PPR_AC_CCK_RATES; i++)
+		res = max(ppr->cck[i], res);
 
 	return res;
 }
@@ -88,6 +101,13 @@ u8 b43_ppr_ac_ofdm(const struct b43_ppr_ac *ppr, enum nl80211_chan_width width,
 	if (WARN_ON_ONCE(rate >= B43_PPR_AC_OFDM_RATES))
 		return 0;
 	return ppr->rows[b43_ppr_ac_row(width)][b43_ppr_ac_ofdm_group[rate]];
+}
+
+u8 b43_ppr_ac_cck(const struct b43_ppr_ac *ppr, unsigned int rate)
+{
+	if (WARN_ON_ONCE(rate >= B43_PPR_AC_CCK_RATES))
+		return 0;
+	return ppr->has_cck ? ppr->cck[rate] : 0;
 }
 
 static const u8 b43_ppr_ac_vht_group[] = {
@@ -173,7 +193,15 @@ unsigned int b43_ppr_ac_po_band(u16 chan)
 	return 2;
 }
 
-/* Fill the rows the width loads from @top less each group's nibble. */
+static bool b43_ppr_ac_is_2g(u16 chan)
+{
+	return chan <= 14;
+}
+
+/*
+ * Fill the rows the width loads from @top less each group's nibble, and on
+ * 2.4 GHz the CCK rates less theirs.
+ */
 static void b43_ppr_ac_fill_rows(const struct ssb_sprom *sprom,
 				 struct b43_ppr_ac *ppr, u16 chan, u8 top)
 {
@@ -182,13 +210,21 @@ static void b43_ppr_ac_fill_rows(const struct ssb_sprom *sprom,
 		{ sprom->mcsbw205gmpo, sprom->mcsbw405gmpo, sprom->mcsbw805gmpo },
 		{ sprom->mcsbw205ghpo, sprom->mcsbw405ghpo, sprom->mcsbw805ghpo },
 	};
-	unsigned int band = b43_ppr_ac_po_band(chan);
-	unsigned int row, g;
+	const u32 po2g[B43_PPR_AC_ROWS] = {
+		sprom->mcsbw202gpo, sprom->mcsbw402gpo, 0,
+	};
+	bool g = b43_ppr_ac_is_2g(chan);
+	const u32 *rowpo = g ? po2g : po[b43_ppr_ac_po_band(chan)];
+	u16 cck = sprom->cckbw202gpo;
+	unsigned int row, i;
 
 	for (row = 0; row < ppr->num / B43_PPR_AC_GROUPS; row++)
-		for (g = 0; g < B43_PPR_AC_GROUPS; g++)
-			ppr->rows[row][g] = b43_ppr_ac_sub(top,
-						b43_ppr_ac_off(po[band][row], g));
+		for (i = 0; i < B43_PPR_AC_GROUPS; i++)
+			ppr->rows[row][i] = b43_ppr_ac_sub(top,
+						b43_ppr_ac_off(rowpo[row], i));
+	ppr->has_cck = g;
+	for (i = 0; g && i < B43_PPR_AC_CCK_RATES; i++)
+		ppr->cck[i] = b43_ppr_ac_sub(top, b43_ppr_ac_off(cck, i));
 }
 
 u8 b43_ppr_ac_load_max_from_sprom(const struct ssb_sprom *sprom, u8 coremask,
@@ -203,9 +239,13 @@ u8 b43_ppr_ac_load_max_from_sprom(const struct ssb_sprom *sprom, u8 coremask,
 	b43_ppr_ac_clear(ppr, width);
 
 	for (c = 0; c < num_cores && c < ARRAY_SIZE(sprom->core_pwr_info); c++) {
+		const struct ssb_sprom_core_pwr_info *pi;
+
 		if (!(coremask & (1u << c)))
 			continue;
-		maxp = min(maxp, sprom->core_pwr_info[c].maxp5ga[sb]);
+		pi = &sprom->core_pwr_info[c];
+		maxp = min(maxp, b43_ppr_ac_is_2g(chan) ? pi->maxp2ga
+							  : pi->maxp5ga[sb]);
 	}
 	if (maxp == 0xff)
 		maxp = 0;
