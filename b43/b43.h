@@ -785,6 +785,14 @@ struct b43_stats {
 	u8 link_noise;
 };
 
+/*
+ * Per station, in ieee80211_sta::drv_priv: the window of each TID's block
+ * ack session on TX, 0 without one.
+ */
+struct b43_sta {
+	u8 ampdu_win[IEEE80211_NUM_TIDS];
+};
+
 struct b43_key {
 	/* If keyconf is NULL, this key is disabled.
 	 * keyconf is a cookie. Don't derefenrence it outside of the set_key

@@ -623,6 +623,65 @@ static void b43_txhdr_ac_block(const struct b43_phy_ac *ac,
 }
 
 /*
+ * The aggregation fields of an MPDU of a block ack session, as the agcombo's
+ * 7.14.43 fills them for a one-stream VHT phone at every width
+ * (router-data/vd625-agcombo/rxtx-1s-ht20-40-80.zip: 0x20 0x20 0x1526 0x3f
+ * 0x14): 32 MPDUs at most at the primary rate and at the fallback; the
+ * longest A-MPDU, 0x152 times 16 us, above the MPDU density in d11.h's
+ * "minimum duration index", 6 (8 us); the session's window of 64 less one;
+ * and the phone's longest A-MPDU, 2^(13 + 7) bytes, as the exponent. The
+ * aggregation queue manager takes no minimum MPDU length
+ * (b43_aqm_init_rev42()), so the density is the descriptor's. Whether 6 is
+ * the phone's own or the stock driver's floor is not in the capture: the
+ * station's, raised to 6, gives the spacing it asks for and the stock
+ * one, at the cost of padding behind MPDUs shorter than 8 us. The window
+ * is the session's (b43_op_ampdu_action()); without one the MPDU goes out
+ * alone.
+ */
+static unsigned int b43_sta_ampdu_exp(const struct ieee80211_sta *sta)
+{
+	const struct ieee80211_sta_vht_cap *vht = &sta->deflink.vht_cap;
+
+	if (!vht->vht_supported)
+		return sta->deflink.ht_cap.ampdu_factor;
+	return u32_get_bits(vht->cap,
+			    IEEE80211_VHT_CAP_MAX_A_MPDU_LENGTH_EXPONENT_MASK);
+}
+
+static bool b43_txhdr_ac_ampdu(struct b43_txhdr_ac *txhdr,
+			       const struct ieee80211_tx_info *info,
+			       struct ieee80211_hdr *hdr)
+{
+	struct ieee80211_sta *sta;
+	unsigned int win = 0, exp = 0, density = 0;
+
+	if (!info->control.vif || !ieee80211_is_data_qos(hdr->frame_control))
+		return false;
+
+	rcu_read_lock();
+	sta = ieee80211_find_sta(info->control.vif, hdr->addr1);
+	if (sta) {
+		const struct b43_sta *bsta = (const void *)sta->drv_priv;
+
+		win = READ_ONCE(bsta->ampdu_win[ieee80211_get_tid(hdr)]);
+		exp = b43_sta_ampdu_exp(sta);
+		density = sta->deflink.ht_cap.ampdu_density;
+	}
+	rcu_read_unlock();
+	if (!win)
+		return false;
+
+	txhdr->mpdu_max = min(win, 32U);
+	txhdr->mpdu_max_fb = txhdr->mpdu_max;
+	density = max_t(unsigned int, density, IEEE80211_HT_MPDU_DENSITY_8);
+	txhdr->ampdu_dur = cpu_to_le16(0x152 << B43_TXH_AC_AMPDU_MAX_DUR_SHIFT |
+				       (density & B43_TXH_AC_AMPDU_DENSITY));
+	txhdr->ba_win = win - 1;
+	txhdr->max_agg_len = IEEE80211_HT_MAX_AMPDU_FACTOR + exp;
+	return true;
+}
+
+/*
  * The AC microcode's descriptor: a rate block for each of the frame's rates,
  * which the microcode tries in order, as the stock drivers fill up to four
  * on unicast data (router-data/d6220/rxtx-1s-ht20-40-vht20-40-80-txbf0.zip),
@@ -643,7 +702,8 @@ static void b43_txhdr_ac_block(const struct b43_phy_ac *ac,
  * the unicast QoS frames it sends outside a block ack session (MAC TX
  * control 0x4080/0x0004, router-data/vd625-agcombo/rxtx-1s-ht20-40-80.zip).
  * The flag is the frame's, so a VHT frame keeps VHT fallbacks only, as the
- * stock ones are.
+ * stock ones are. An MPDU of a block ack session is AMPDU instead, and the
+ * microcode puts it in an A-MPDU with the MPDUs posted after it.
  */
 static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 				 struct sk_buff *skb,
@@ -660,7 +720,7 @@ static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 	const struct b43_phy_ac *ac = dev->phy.ac;
 	const struct ieee80211_key_conf *key = info->control.hw_key;
 	unsigned int len = skb->len + FCS_LEN;
-	u16 mac_lo = 0, rts = 0;
+	u16 mac_lo = 0, mac_hi = 0, rts = 0;
 	unsigned int n, i;
 
 	BUILD_BUG_ON(sizeof(struct b43_txhdr_ac) != 128);
@@ -691,10 +751,19 @@ static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 		mac_lo |= B43_TXH_AC_MAC_STMSDU;
 	if (c->long_frame)
 		mac_lo |= B43_TXH_AC_MAC_LFRM;
+	if (n == 1)
+		mac_hi |= B43_TXH_AC_MAC_FIX_RATE;
+	/* IEEE80211_TX_CTL_AMPDU stays only on an MPDU sent as one. */
+	if ((info->flags & IEEE80211_TX_CTL_AMPDU) &&
+	    b43_txhdr_ac_ampdu(txhdr, info, (struct ieee80211_hdr *)skb->data))
+		mac_lo |= B43_TXH_AC_MAC_AMPDU;
+	else
+		info->flags &= ~IEEE80211_TX_CTL_AMPDU;
+	if (c->vht && !(mac_lo & B43_TXH_AC_MAC_AMPDU))
+		mac_hi |= B43_TXH_AC_MAC_SVHT;
 
 	txhdr->mac_ctl_lo = cpu_to_le16(mac_lo);
-	txhdr->mac_ctl_hi = cpu_to_le16((n == 1 ? B43_TXH_AC_MAC_FIX_RATE : 0) |
-					(c->vht ? B43_TXH_AC_MAC_SVHT : 0));
+	txhdr->mac_ctl_hi = cpu_to_le16(mac_hi);
 	txhdr->chanspec = cpu_to_le16(ac->chanspec);
 	txhdr->iv_offset = ieee80211_hdrlen(wlhdr->frame_control);
 	txhdr->frame_len = cpu_to_le16(len);
@@ -1461,24 +1530,52 @@ void b43_handle_txstatus(struct b43_wldev *dev,
 }
 
 /*
+ * Whether an MPDU of an A-MPDU status was acknowledged: the block ack came
+ * and has its bit, counted from the first MPDU's sequence number.
+ */
+bool b43_txstatus_mpdu_acked(const struct b43_txstatus *status,
+			     const struct sk_buff *skb)
+{
+	const struct ieee80211_hdr *hdr = (const void *)skb->data;
+	u16 sn = IEEE80211_SEQ_TO_SN(le16_to_cpu(hdr->seq_ctrl));
+	unsigned int off = (sn - status->ba_ssn) & IEEE80211_MAX_SN;
+
+	return status->acked && off < 64 && (status->ba_bitmap & BIT_ULL(off));
+}
+
+/*
  * The AC status counts the attempts at each rate block, and the frame's
  * rates are its blocks (b43_generate_txhdr_ac()). With one block, FIX_RATE,
  * only block 0's count is attempts (b43_txstatus_read_ac()).
+ *
+ * The counts of an A-MPDU's status are its MPDUs' attempts: mac80211 takes
+ * them as the A-MPDU's, each times ampdu_len, so they are divided by the
+ * MPDUs. Its first MPDU carries the A-MPDU's figures for rate control, the
+ * others only their acknowledgement.
  */
 static void b43_fill_txstatus_rates_ac(struct ieee80211_tx_info *report,
 				       const struct b43_txstatus *status)
 {
 	struct ieee80211_tx_rate *rates = report->status.rates;
-	unsigned int n, i;
+	unsigned int mpdus = 1, n, i;
+
+	if (report->flags & IEEE80211_TX_CTL_AMPDU) {
+		mpdus = max_t(unsigned int, status->mpdus, 1);
+		if (status->mpdu_index == 0) {
+			report->flags |= IEEE80211_TX_STAT_AMPDU;
+			report->status.ampdu_len = mpdus;
+			report->status.ampdu_ack_len = status->mpdus_acked;
+		}
+	}
 
 	for (n = 0; n < B43_TXH_AC_RATES && rates[n].idx >= 0; n++)
 		;
 	if (n <= 1) {
-		rates[0].count = status->frame_count;
+		rates[0].count = DIV_ROUND_UP(status->frame_count, mpdus);
 		return;
 	}
 	for (i = 0; i < n; i++)
-		rates[i].count = status->rate_tries[i];
+		rates[i].count = DIV_ROUND_UP(status->rate_tries[i], mpdus);
 }
 
 /* Fill out the mac80211 TXstatus report based on the b43-specific

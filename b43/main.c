@@ -1592,6 +1592,8 @@ void b43_wireless_core_reset(struct b43_wldev *dev, bool gmode)
 #define B43_TXST_AC_PM_INDICATED	0x00000008
 #define B43_TXST_AC_SUPP		0x000000f0
 #define B43_TXST_AC_SUPP_SHIFT		4
+#define B43_TXST_AC_MPDUS		0x00007f00
+#define B43_TXST_AC_MPDUS_SHIFT		8
 #define B43_TXST_AC_ACKED		0x00008000
 
 /*
@@ -1606,7 +1608,14 @@ void b43_wireless_core_reset(struct b43_wldev *dev, bool gmode)
  * them under 832. On a frame with FIX_RATE, one block, bits 23:16 read 1
  * once it is acknowledged, which is not an attempt: frame_count is block
  * 0's alone, and b43_fill_txstatus_report() takes the others only on a
- * frame with more blocks. The second package is not decoded.
+ * frame with more blocks.
+ *
+ * A status covers bits 14:8 of word 0 MPDUs, posted in a row from the frame
+ * ID on; bits 15:8 and 31:24 of words 2 and 3 count the acknowledged ones
+ * at each rate. Word 1 holds the sequence number of the first, and words 1
+ * and 2 of the second package the block ack bitmap from it on, as the
+ * agcombo's 7.14.43 reports its A-MPDUs (router-data/vd625-agcombo/
+ * rxtx-1s-ht-ampdu.zip).
  */
 static bool b43_txstatus_read_ac(struct b43_wldev *dev,
 				 struct b43_txstatus *stat)
@@ -1639,6 +1648,11 @@ static bool b43_txstatus_read_ac(struct b43_wldev *dev,
 	stat->rate_tries[1] = (w[2] >> 16) & 0xff;
 	stat->rate_tries[2] = w[3] & 0xff;
 	stat->rate_tries[3] = (w[3] >> 16) & 0xff;
+	stat->mpdus = (w[0] & B43_TXST_AC_MPDUS) >> B43_TXST_AC_MPDUS_SHIFT;
+	stat->mpdus_acked = ((w[2] >> 8) & 0xff) + ((w[2] >> 24) & 0xff) +
+			    ((w[3] >> 8) & 0xff) + ((w[3] >> 24) & 0xff);
+	stat->ba_ssn = w[1] & IEEE80211_MAX_SN;
+	stat->ba_bitmap = stat->raw[5] | ((u64)stat->raw[6] << 32);
 	return true;
 }
 
@@ -6444,17 +6458,44 @@ static int b43_op_get_survey(struct ieee80211_hw *hw, int idx,
 }
 
 /*
- * b43 does no aggregation, and AMPDU_AGGREGATION is not set. On a band with
- * HT the TX path still calls ieee80211_start_tx_ba_session() for every QoS
- * data frame to an HT station, which warns when the op is missing before it
- * looks at the flag; with the op it returns there. A station's ADDBA request
- * is declined, as without the op.
+ * Block ack sessions on TX, on the AC through DMA: the microcode builds the
+ * A-MPDU from MPDUs posted one by one with the session's window in their
+ * header (b43_txhdr_ac_ampdu()), and the stock driver programs nothing in
+ * it for a session, so a session is the window kept here. A station's
+ * ADDBA request is declined: the receive side is not mapped.
  */
 static int b43_op_ampdu_action(struct ieee80211_hw *hw,
 			       struct ieee80211_vif *vif,
 			       struct ieee80211_ampdu_params *params)
 {
-	return -EOPNOTSUPP;
+	struct b43_wl *wl = hw_to_b43_wl(hw);
+	struct b43_sta *bsta = (struct b43_sta *)params->sta->drv_priv;
+	struct b43_wldev *dev;
+	bool ok;
+
+	switch (params->action) {
+	case IEEE80211_AMPDU_TX_START:
+		mutex_lock(&wl->mutex);
+		dev = wl->current_dev;
+		ok = dev && dev->fw.hdr_format == B43_FW_HDR_AC &&
+		     !b43_using_pio_transfers(dev);
+		mutex_unlock(&wl->mutex);
+		return ok ? IEEE80211_AMPDU_TX_START_IMMEDIATE : -EOPNOTSUPP;
+	case IEEE80211_AMPDU_TX_OPERATIONAL:
+		WRITE_ONCE(bsta->ampdu_win[params->tid], params->buf_size);
+		return 0;
+	case IEEE80211_AMPDU_TX_STOP_CONT:
+		WRITE_ONCE(bsta->ampdu_win[params->tid], 0);
+		ieee80211_stop_tx_ba_cb_irqsafe(vif, params->sta->addr,
+						params->tid);
+		return 0;
+	case IEEE80211_AMPDU_TX_STOP_FLUSH:
+	case IEEE80211_AMPDU_TX_STOP_FLUSH_CONT:
+		WRITE_ONCE(bsta->ampdu_win[params->tid], 0);
+		return 0;
+	default:
+		return -EOPNOTSUPP;
+	}
 }
 
 static const struct ieee80211_ops b43_hw_ops = {
@@ -6648,6 +6689,9 @@ static int b43_setup_bands(struct b43_wldev *dev,
 			hw->wiphy->bands[NL80211_BAND_5GHZ] = band;
 			/* A rate and its fallbacks, a block each. */
 			hw->max_rates = B43_TXH_AC_RATES;
+			ieee80211_hw_set(hw, AMPDU_AGGREGATION);
+			hw->max_tx_aggregation_subframes =
+				IEEE80211_MAX_AMPDU_BUF_HT;
 		}
 	} else
 	if (dev->phy.type == B43_PHYTYPE_N) {
@@ -6988,6 +7032,7 @@ static struct b43_wl *b43_wireless_init(struct b43_bus_dev *dev)
 
 	wl->hw_registered = false;
 	hw->max_rates = 2;
+	hw->sta_data_size = sizeof(struct b43_sta);
 	SET_IEEE80211_DEV(hw, dev->dev);
 	if (is_valid_ether_addr(sprom->et1mac))
 		SET_IEEE80211_PERM_ADDR(hw, sprom->et1mac);

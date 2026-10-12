@@ -223,13 +223,23 @@ struct b43_txhdr_ac {
 	struct b43_txhdr_ac_rate rate[B43_TXH_AC_RATES];
 	__u8 cipher_bss;		/* Cipher in 7:4, BSS index in 3:0 */
 	__u8 key_idx;			/* Key slot */
-	__u8 cache[22];
+	__u8 mpdu_max;			/* MPDUs per A-MPDU, primary rate */
+	__u8 mpdu_max_fb;		/* and fallback rate */
+	__le16 ampdu_dur;		/* Longest A-MPDU, MPDU density */
+	__u8 ba_win;			/* Block ack window less one */
+	__u8 max_agg_len;		/* Longest A-MPDU, log2 of its bytes */
+	__u8 tkip_p1k[10];
+	__u8 tsc_pn[6];
 } __packed;
 
 /* Cache info, cipher_bss */
 #define B43_TXH_AC_CIPHER_SHIFT		4
+/* Cache info, ampdu_dur: d11.h's minimum duration index and maximum */
+#define B43_TXH_AC_AMPDU_DENSITY	0x000F	/* MPDU density, 802.11 code */
+#define B43_TXH_AC_AMPDU_MAX_DUR_SHIFT	4	/* In 16 us units */
 
 /* MAC TX control, low */
+#define B43_TXH_AC_MAC_AMPDU		0x0040	/* Aggregatable */
 #define B43_TXH_AC_MAC_IACK		0x0080	/* Expect an immediate ACK */
 #define B43_TXH_AC_MAC_LFRM		0x0100	/* Long frame retry limit */
 #define B43_TXH_AC_MAC_ASEQ		0x0800	/* ucode assigns the sequence number */
@@ -275,6 +285,8 @@ size_t b43_txhdr_size(struct b43_wldev *dev)
 
 bool b43_txhdr_ac_rate_ok(const struct ieee80211_supported_band *band,
 			  const struct ieee80211_tx_rate *r);
+bool b43_txstatus_mpdu_acked(const struct b43_txstatus *status,
+			     const struct sk_buff *skb);
 int b43_generate_txhdr(struct b43_wldev *dev,
 		       u8 * txhdr,
 		       struct sk_buff *skb_frag,
@@ -294,6 +306,11 @@ struct b43_txstatus {
 	u8 for_ampdu;		/* Status is for an AMPDU (afterburner) */
 	u8 acked;		/* Wireless ACK received */
 	u8 rate_tries[B43_TXH_AC_RATES]; /* AC: attempts at each rate block */
+	u8 mpdus;		/* AC: MPDUs the status covers */
+	u8 mpdus_acked;		/* AC: of them acknowledged */
+	u8 mpdu_index;		/* AC: the MPDU being reported, from 0 */
+	u16 ba_ssn;		/* AC: sequence number of the first MPDU */
+	u64 ba_bitmap;		/* AC: block ack bitmap from ba_ssn */
 	u32 raw[8];		/* AC: the two packages, as read */
 };
 

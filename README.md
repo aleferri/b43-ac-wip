@@ -93,9 +93,8 @@ The DSL-3580L runs the port under OpenWrt with `ucode42.fw` 784.2 from
   MCS 9.
 - **Throughput** with WPA2-CCMP in hardware: 69 Mbit/s down, 55 up, what
   minstrel expects of VHT80 MCS 9 without aggregation (63 Mbit/s); with
-  CCMP in mac80211 it was 10, the b43 IRQ thread filling a core. Every
-  block ack session is refused, so nothing is aggregated (see "What is
-  missing").
+  CCMP in mac80211 it was 10, the b43 IRQ thread filling a core. Both
+  without aggregation, before TX block ack sessions were taken.
 - **RX** under traffic: no `RX descriptor underrun`, with the 128 slots of
   816-02. See `docs/retrace-todo.md`, "On hardware".
 
@@ -141,11 +140,12 @@ How the pieces fit is in [`docs/driver-status.md`](docs/driver-status.md).
   pulse as a radar.
 - Probe-response offload and the power management queue: deliberately off, see
   `docs/retrace-todo.md`.
-- Aggregation and beamforming: HT MCS go out to an HT station and VHT MCS
-  0-9 to a VHT one, on up to the board's TX chains, laid out as the stock
-  drivers lay them out, but `b43_op_ampdu_action()` refuses every block ack
-  session, so neither A-MPDU nor A-MSDU, and there is no transmit
-  beamforming (`docs/retrace-todo.md`, "HT and VHT").
+- Receive aggregation and beamforming: HT MCS go out to an HT station and
+  VHT MCS 0-9 to a VHT one, on up to the board's TX chains, laid out as the
+  stock drivers lay them out, and A-MPDUs on TX, built by the microcode, but
+  a station's ADDBA request is declined, so it sends without aggregating;
+  no A-MSDU and no transmit beamforming (`docs/retrace-todo.md`, "HT and
+  VHT").
 - Hardware encryption: CCMP and WEP keys go to the hardware, TKIP stays
   with mac80211, and so do protected management frames on TX
   (`docs/retrace-todo.md`, "Hardware encryption"); `nohwcrypt=1` leaves all

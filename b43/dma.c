@@ -1479,14 +1479,24 @@ out:
 	return err;
 }
 
-void b43_dma_handle_txstatus(struct b43_wldev *dev,
-			     const struct b43_txstatus *status)
+static int first_used_slot(struct b43_dmaring *ring)
+{
+	int firstused = ring->current_slot - ring->used_slots + 1;
+
+	return firstused < 0 ? ring->nr_slots + firstused : firstused;
+}
+
+/* One frame's status. Returns its ring, NULL when it could not be matched. */
+static struct b43_dmaring *
+dma_handle_txstatus_one(struct b43_wldev *dev,
+			const struct b43_txstatus *status)
 {
 	const struct b43_dma_ops *ops;
 	struct b43_dmaring *ring;
 	struct b43_dmadesc_meta *meta;
 	static const struct b43_txstatus fake; /* filled with 0 */
 	const struct b43_txstatus *txstat;
+	struct b43_txstatus mpdu;
 	int slot, firstused;
 	bool frame_succeed;
 	int skip;
@@ -1495,16 +1505,14 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
 	ring = parse_cookie(dev, status->cookie, &slot);
 	if (unlikely(!ring)) {
 		b43_txstatus_dump(dev, status);
-		return;
+		return NULL;
 	}
 	B43_WARN_ON(!ring->tx);
 
 	/* Sanity check: TX packets are processed in-order on one ring.
 	 * Check if the slot deduced from the cookie really is the first
 	 * used slot. */
-	firstused = ring->current_slot - ring->used_slots + 1;
-	if (firstused < 0)
-		firstused = ring->nr_slots + firstused;
+	firstused = first_used_slot(ring);
 
 	skip = 0;
 	if (unlikely(slot != firstused)) {
@@ -1535,7 +1543,7 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
 			        ring->index, firstused, slot);
 			if (dev->fw.opensource)
 				b43_controller_restart(dev, "Out of order TX");
-			return;
+			return NULL;
 		}
 	}
 
@@ -1585,12 +1593,19 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
 			 * the status of the transmission. When skipping over
 			 * a missed TX status report, use a status structure
 			 * filled with zeros to indicate that the frame was not
-			 * sent (frame_count 0) and not acknowledged
+			 * sent (frame_count 0) and not acknowledged. An MPDU of
+			 * an A-MPDU is acknowledged by its block ack bit.
 			 */
-			if (unlikely(skip))
+			if (unlikely(skip)) {
 				txstat = &fake;
-			else
+			} else if (info->flags & IEEE80211_TX_CTL_AMPDU) {
+				mpdu = *status;
+				mpdu.acked = b43_txstatus_mpdu_acked(status,
+								     meta->skb);
+				txstat = &mpdu;
+			} else {
 				txstat = status;
+			}
 
 			frame_succeed = b43_fill_txstatus_report(dev, info,
 								 txstat);
@@ -1647,6 +1662,28 @@ void b43_dma_handle_txstatus(struct b43_wldev *dev,
 	}
 	/* Add work to the queue. */
 	ieee80211_queue_work(dev->wl->hw, &dev->wl->tx_work);
+
+	return ring;
+}
+
+/*
+ * A status of the AC microcode can cover an A-MPDU: status->mpdus frames
+ * posted in a row on the ring, the first named by the cookie, all reported
+ * from the one status.
+ */
+void b43_dma_handle_txstatus(struct b43_wldev *dev,
+			     const struct b43_txstatus *status)
+{
+	struct b43_txstatus mpdu = *status;
+	struct b43_dmaring *ring;
+
+	for (mpdu.mpdu_index = 0; ; mpdu.mpdu_index++) {
+		ring = dma_handle_txstatus_one(dev, &mpdu);
+		if (!ring || mpdu.mpdu_index + 1 >= status->mpdus ||
+		    !ring->used_slots)
+			break;
+		mpdu.cookie = generate_cookie(ring, first_used_slot(ring));
+	}
 }
 
 static void dma_rx(struct b43_dmaring *ring, int *slot)

@@ -271,6 +271,13 @@ void ieee80211_stop_queue(struct ieee80211_hw *hw, int queue) { }
 void ieee80211_free_txskb(struct ieee80211_hw *hw, struct sk_buff *skb) { }
 void ieee80211_handle_wake_tx_queue(struct ieee80211_hw *hw,
 				    struct ieee80211_txq *txq) { }
+/* Nessuna stazione e nessuna sessione block ack: le catture non ne hanno. */
+struct ieee80211_sta *ieee80211_find_sta(struct ieee80211_vif *vif,
+					 const u8 *addr) { return NULL; }
+void ieee80211_stop_tx_ba_cb_irqsafe(struct ieee80211_vif *vif,
+				     const u8 *ra, u16 tid) { }
+void __rcu_read_lock(void) { }
+void __rcu_read_unlock(void) { }
 /* In linea, come queue_work_on(): la suite e' a un thread, e il work che
  * b43_phy_txpower_check() accoda e' adjust_txpower, cioe' op da confrontare. */
 void ieee80211_queue_work(struct ieee80211_hw *hw, struct work_struct *work)

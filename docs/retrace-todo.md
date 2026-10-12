@@ -367,10 +367,9 @@ hardware"). What is open:
   D6220's 7.14.89 sends the same (`0x40ce`, HT-SIG byte 0 `0x87` for MCS 7,
   word 1 0 on a primary in the upper half of ch38), in
   `router-data/d6220/rxtx-1s-ht20-40-vht20-40-80-txbf0.zip`.
-- **Aggregation.** `b43_op_ampdu_action()` refuses every block ack session,
-  so no A-MPDU goes out or is accepted; with HT40 at the HT20 throughput it
-  is the likely limit. The stock layout of an A-MPDU and its statuses are
-  in `router-data/vd625-agcombo/rxtx-1s-ht-ampdu.zip` (see "TX status").
+- **Aggregation.** On TX, see "A-MPDU" under "MAC and DMA": block ack
+  sessions are taken and the microcode builds the A-MPDUs. On RX a station's
+  ADDBA request is declined, so it sends without aggregating.
 - **Transmit beamforming.** TODO, not implemented. b43 announces no SU
   beamformer capability, so a station never sends the compressed
   beamforming feedback, and every multi-chain frame goes out with CDD on
@@ -587,34 +586,53 @@ hardware"). What is open:
   bus capture writes `0x48` twice, both times after row 63; b43 writes it on
   every address upload, three times there, two of them with the address
   still zero.
-- **A-MPDU.** b43 announces no aggregation and opens no block ack session:
-  `b43_op_ampdu_action()` refuses every one, and is there because mac80211
-  tries a TX session on every QoS frame to an HT station and warns on a
-  driver without the op.
-  What the stock driver does, from `router-data/vd625-agcombo/` (7.14.43.21 and
-  its microcode): every MPDU is posted on its own, one descriptor each on TX
-  ring 1, and the microcode builds the aggregate; the status that comes back
-  covers the MPDUs it sent (see "TX status"). The descriptors of the MPDUs of a
-  session (`rxtx-1s-ht20-40-80.zip`) differ from those of the two unicast QoS
-  frames sent outside one in MAC TX control, `0x45c0`/`0x0000` against
+- **A-MPDU.** What the stock driver does, from `router-data/vd625-agcombo/`
+  (7.14.43.21 and its microcode): every MPDU is posted on its own, one
+  descriptor each on TX ring 1, and the microcode builds the aggregate; the
+  status that comes back covers the MPDUs it sent (see "TX status"). Through
+  the association and the first aggregates the stock driver writes nothing to
+  shared memory but the station's keys and its address match entry, so a
+  session is not programmed into the microcode. b43 does the same:
+  `b43_op_ampdu_action()` takes TX sessions on the AC through DMA and keeps
+  their window per station and TID, `b43_txhdr_ac_ampdu()` fills the MPDUs of
+  a session, and `b43_dma_handle_txstatus()` reports every MPDU a status
+  covers, acknowledged by its block ack bit, the first with the A-MPDU's
+  figures for minstrel.
+  The descriptors of the MPDUs of a session (`rxtx-1s-ht20-40-80.zip`, the
+  same at 20, 40 and 80 MHz) differ from those of the two unicast QoS frames
+  sent outside one in MAC TX control, `0x45c0`/`0x0000` against
   `0x4080`/`0x0004`: `0x0040` low is `D11AC_TXC_AMPDU` ("aggregatable") and
   `0x0004` high `D11AC_TXC_SVHT`, a single VHT MPDU sent as an A-MPDU, which
-  b43 sets on every VHT frame since it does not aggregate. The 784 honours
-  it: at `0x02E3` it skips the aggregation path, at `0x04C2` it sets bit 0,
-  EOF, of the delimiter word it builds in `sprB9` from the frame length (low
-  12 bits from bit 4, high two at bits 3:2, as 802.11ac lays the VHT
-  delimiter out); 832 and 928 do the same at `0x035D`/`0x055C` and
-  `0x0388`/`0x05A9`. Both frames are
-  VHT with four VHT blocks. They differ also in the cache info at +100, `50 04 20 20 26 15 3f
-  14` against zeros: by the names of `d11actxh_t`'s cache fields in
-  Broadcom's `d11.h`, BSS index and cipher, key index, 32 MPDUs at the
-  primary and at the fallback rate, an A-MPDU duration of 5414, a block ack
-  window of 63 and `0x14` as the maximum length. Through the association and the first
-  aggregates the stock driver writes nothing to shared memory but the
-  station's keys and its address match entry, so a session is not
-  programmed into the microcode. Open: the density, the block ack request
-  after lost MPDUs, and the receive side, whose upload traffic the trap run
-  does not have.
+  b43 sets on every VHT frame outside a session. The 784 honours it: at
+  `0x02E3` it skips the aggregation path, at `0x04C2` it sets bit 0, EOF, of
+  the delimiter word it builds in `sprB9` from the frame length (low 12 bits
+  from bit 4, high two at bits 3:2, as 802.11ac lays the VHT delimiter out);
+  832 and 928 do the same at `0x035D`/`0x055C` and `0x0388`/`0x05A9`. Both
+  frames are VHT with four VHT blocks. They differ also in the cache info at
+  +100, `50 04 20 20 26 15 3f 14` against zeros: by the names of
+  `d11actxh_t`'s cache fields in Broadcom's `d11.h`, BSS index and cipher, key
+  slot, 32 MPDUs at the primary and at the fallback rate, `AmpduDur` `0x1526`,
+  the longest A-MPDU in 16 us units (`0x152`, 5408 us) in bits 15:4 above
+  d11.h's "minimum duration index" in bits 3:0, the MPDU density, 6 (8 us), a
+  block ack window of 63, the session's 64 less one, and `0x14` as the maximum
+  length, 2^20 bytes, the phone's VHT exponent 7 over 13 (in kilobytes the
+  32-MPDU aggregates of the statuses would not fit). Of the 1052 aggregates of
+  `rxtx-1s-ht-ampdu.zip` none ends with an MPDU unacknowledged; where MPDUs
+  were lost the microcode sent them again itself, more attempts than MPDUs in
+  the status, once the whole aggregate again at the fallback rate. The
+  aggregation queue manager (d11.h's `AQM*` registers from `0x800`) is written
+  right after the TX FIFOs, 6.30.223 and 7.14.43 alike: `AQMConfig` `0x02`
+  with the FIFO pair index in bits 5:4, `AQMAggParams` `0x103f`, `AQMMaxIdx`
+  64, an A-MPDU of at most 65535 bytes and `AQMMinMpduLen` 0, so the spacing
+  is the descriptor's (`b43_aqm_init_rev42()`). b43 takes the station's
+  density raised to 6: whether 6 is the phone's or the stock driver's floor is
+  not in the capture. Open: the frame ID, consecutive in the stock driver, the
+  DMA slot in b43's cookie, two apart per frame; the 784 with a session; and
+  the receive side, whose upload traffic the trap run does not have. On it the
+  784 has a frame of its own (code `0x38`, `0x05C6`) next to a table per
+  station and TID at word `0x0334` with an enable bit 12 and a pointer to
+  16-word scoreboards (`[0x58]`): **SALAME**, the receive block ack state, to
+  set at an ADDBA.
 - **TX status.** `B43_FW_HDR_AC` reads both packages of an entry and decodes
   the first. In the low half of its first word bit 0 is the valid bit, bit 1
   is set on every first package, bit 2 marks an intermediate status, bit 3
