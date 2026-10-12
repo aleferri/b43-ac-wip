@@ -143,8 +143,10 @@ How the pieces fit is in [`docs/driver-status.md`](docs/driver-status.md).
   drivers lay them out, but `b43_op_ampdu_action()` refuses every block ack
   session, so neither A-MPDU nor A-MSDU, and there is no transmit
   beamforming (`docs/retrace-todo.md`, "HT and VHT").
-- Hardware encryption: mac80211 does the crypto, since the AC microcode's
-  cipher numbers and key fields are not b43's (`b43_upload_microcode()`).
+- Hardware encryption: CCMP and WEP keys go to the hardware, TKIP stays
+  with mac80211, and so do protected management frames on TX
+  (`docs/retrace-todo.md`, "Hardware encryption"); `nohwcrypt=1` leaves all
+  of it to mac80211.
 - Temperature: raw tempsense samples are collected and not converted
   ([`docs/tempsense-wiring-evidence.md`](docs/tempsense-wiring-evidence.md)).
 

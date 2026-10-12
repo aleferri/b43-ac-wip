@@ -1064,7 +1064,7 @@ static void key_write(struct b43_wldev *dev,
 	    algorithm == B43_SEC_ALGO_NONE)
 		value = 0;
 	else
-		value = ((kidx << 4) | algorithm);
+		value = (kidx << 4) | b43_sec_algo_fw(dev, algorithm);
 	b43_shm_write16(dev, B43_SHM_SHARED,
 			b43_shm_sh_keyidxblock(dev) + (kidx * 2), value);
 
@@ -1093,10 +1093,18 @@ static void keymac_write(struct b43_wldev *dev, u8 index, const u8 *addr)
 	index -= pairwise_keys_start;
 	B43_WARN_ON(index >= b43_amt_entries(dev));
 
-	/* Receive match transmitter address (RCMTA) mechanism. Keep the flags:
-	 * on the wide layout the self and BSSID entries carry them, and a key
-	 * row has no business changing what is above its address. */
-	b43_amt_write(dev, index, addr, B43_AMT_KEEP_FLAGS);
+	/*
+	 * Receive match transmitter address (RCMTA) mechanism. On the wide
+	 * layout a key row says it is live in its flags: the agcombo's 7.14.43
+	 * writes B43_AMT_F_KEY above the station's address when it installs
+	 * its pairwise key and clears the row with the key
+	 * (router-data/vd625-agcombo/rxtx-1s-ht-ampdu.zip). Elsewhere the
+	 * flags are kept.
+	 */
+	if (b43_amt_wide(dev))
+		b43_amt_write(dev, index, addr, addr ? B43_AMT_F_KEY : 0);
+	else
+		b43_amt_write(dev, index, addr, B43_AMT_KEEP_FLAGS);
 }
 
 /* The ucode will use phase1 key with TEK key to decrypt rx packets.
@@ -1123,7 +1131,8 @@ static void rx_tkip_phase1_write(struct b43_wldev *dev, u8 index, u32 iv32,
 	u32 offset;
 	u8 pairwise_keys_start = B43_NR_GROUP_KEYS * 2;
 
-	if (!modparam_hwtkip)
+	/* Where the AC microcode keeps its RX TKIP table is not known. */
+	if (!modparam_hwtkip || dev->fw.hdr_format == B43_FW_HDR_AC)
 		return;
 
 	if (b43_new_kidx_api(dev))
@@ -1342,7 +1351,8 @@ static void b43_dump_keymemory(struct b43_wldev *dev)
 		}
 
 		algo = b43_shm_read16(dev, B43_SHM_SHARED,
-				      B43_SHM_SH_KEYIDXBLOCK + (index * 2));
+				      b43_shm_sh_keyidxblock(dev) +
+				      (index * 2));
 		printk("   Algo: %04X/%02X", algo, key->algorithm);
 
 		if (index >= pairwise_keys_start) {
@@ -3213,13 +3223,8 @@ static int b43_upload_microcode(struct b43_wldev *dev)
 	WARN_ON(dev->fw.opensource != (fwdate == 0xFFFF));
 
 	dev->qos_enabled = dev->wl->hw->queues > 1;
-	/*
-	 * Default to firmware/hardware crypto acceleration, except on the AC
-	 * microcode: its cipher numbers are not b43's (WEP104 is 3 there, and
-	 * a 16 byte pairwise key 5), and the key fields of its TX and RX
-	 * headers are not mapped. mac80211 does the crypto instead.
-	 */
-	dev->hwcrypto_enabled = dev->fw.hdr_format != B43_FW_HDR_AC;
+	/* Default to firmware/hardware crypto acceleration. */
+	dev->hwcrypto_enabled = true;
 
 	if (dev->fw.opensource) {
 		u16 fwcapa;
@@ -5288,9 +5293,13 @@ static int b43_op_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 
 	switch (cmd) {
 	case SET_KEY:
+		/*
+		 * The AC header's TKIP fields (the phase 1 key, AMIC) are not
+		 * filled, so TKIP stays with mac80211 there.
+		 */
 		if (algorithm == B43_SEC_ALGO_TKIP &&
 		    (!(key->flags & IEEE80211_KEY_FLAG_PAIRWISE) ||
-		    !modparam_hwtkip)) {
+		    !modparam_hwtkip || dev->fw.hdr_format == B43_FW_HDR_AC)) {
 			/* We support only pairwise key */
 			err = -EOPNOTSUPP;
 			goto out_unlock;
@@ -5313,8 +5322,17 @@ static int b43_op_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 		if (err)
 			goto out_unlock;
 
-		if (algorithm == B43_SEC_ALGO_WEP40 ||
-		    algorithm == B43_SEC_ALGO_WEP104) {
+		/*
+		 * The AC microcode's host flags are not the older ones',
+		 * and the agcombo's 7.14.43 leaves them alone when it
+		 * installs a WEP key (router-data/vd625-agcombo/
+		 * ch149-wep.bin). Whether it encrypts a protected
+		 * management frame is not known: mac80211 does.
+		 */
+		if (dev->fw.hdr_format == B43_FW_HDR_AC) {
+			key->flags |= IEEE80211_KEY_FLAG_SW_MGMT_TX;
+		} else if (algorithm == B43_SEC_ALGO_WEP40 ||
+			   algorithm == B43_SEC_ALGO_WEP104) {
 			b43_hf_write(dev, b43_hf_read(dev) | B43_HF_USEDEFKEYS);
 		} else {
 			b43_hf_write(dev,

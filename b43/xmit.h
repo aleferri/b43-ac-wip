@@ -221,8 +221,13 @@ struct b43_txhdr_ac {
 	__le16 tstamp;
 	__le16 tx_status;
 	struct b43_txhdr_ac_rate rate[B43_TXH_AC_RATES];
-	__u8 cache[24];
+	__u8 cipher_bss;		/* Cipher in 7:4, BSS index in 3:0 */
+	__u8 key_idx;			/* Key slot */
+	__u8 cache[22];
 } __packed;
+
+/* Cache info, cipher_bss */
+#define B43_TXH_AC_CIPHER_SHIFT		4
 
 /* MAC TX control, low */
 #define B43_TXH_AC_MAC_IACK		0x0080	/* Expect an immediate ACK */
@@ -480,6 +485,29 @@ static inline u8 b43_kidx_to_fw(struct b43_wldev *dev, u8 raw_kidx)
 	}
 	return firmware_kidx;
 }
+
+/*
+ * The cipher number the microcode takes, in the key index block and the TX
+ * header. The AC microcode numbers them as Broadcom's d11.h does from core
+ * revision 40 (WSEC_ALGO_*): AES 5 and WEP104 3, where the older microcode
+ * has AES at 3 and WEP104 at 4, which is b43's own numbering.
+ */
+static inline u8 b43_sec_algo_fw(struct b43_wldev *dev, u8 algorithm)
+{
+	static const u8 ac[] = {
+		[B43_SEC_ALGO_NONE]		= 0,
+		[B43_SEC_ALGO_WEP40]		= 1,
+		[B43_SEC_ALGO_TKIP]		= 2,
+		[B43_SEC_ALGO_AES]		= 5,
+		[B43_SEC_ALGO_WEP104]		= 3,
+		[B43_SEC_ALGO_AES_LEGACY]	= 4,
+	};
+
+	if (dev->fw.hdr_format != B43_FW_HDR_AC || algorithm >= ARRAY_SIZE(ac))
+		return algorithm;
+	return ac[algorithm];
+}
+
 static inline u8 b43_kidx_to_raw(struct b43_wldev *dev, u8 firmware_kidx)
 {
 	u8 raw_kidx;

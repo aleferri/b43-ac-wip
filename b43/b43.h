@@ -448,6 +448,7 @@ enum {
 #define B43_AMT_F_VALID			0x8000
 #define B43_AMT_F_BSSID			(B43_AMT_F_VALID | 0x0002)
 #define B43_AMT_F_SELF			(B43_AMT_F_VALID | 0x0008)
+#define B43_AMT_F_KEY			(B43_AMT_F_VALID | 0x0004)
 
 /* PowerControl */
 #define B43_PCTL_IN			0xB0

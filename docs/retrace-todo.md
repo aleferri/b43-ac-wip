@@ -231,18 +231,47 @@ same lever as `AC_FIRST_INIT`.
   sets it.
 - **`PSM` (`0x05F4`), `TKIPTSCTTAK` (`0x0318`)** rest on the v4 layout
   assumption and have no evidence.
-- **Cipher numbering.** On the AC microcode WEP104 is `3` (a 13 byte key on
-  the agcombo's 7.14.43) and a 16 byte pairwise or group key is `5` (WPA on
-  the archer-t5e's 6.30.223, and on the BCM4352 WPA2 capture the core patch
-  cites), CCMP or TKIP not told apart; b43's enum has WEP104 at 4 and AES at 3. Hardware crypto is off on
-  `B43_FW_HDR_AC` until the numbers and the key fields of the TX and RX
-  headers are mapped.
 - **`MACHW_H` (`0x00c2`), bit 31.** The capability register reads
   `0xb0518c05`. Every stock driver clears bit 31 before writing the high
   half (DSL-3580L 6.30.102.7 with ucode 784; D6220, TG789vac v2 and agcombo,
   7.14 with 928) except the x86 hybrid 6.30.223 with ucode 832, and
   `B43_FW_HDR_AC` does the same, 832 included. Whether that is the ucode or
   the hybrid build, and what the bit is, is open.
+
+### Hardware encryption
+
+CCMP and WEP keys go to the hardware on the AC, as the agcombo's 7.14.43 puts
+them there as an AP (`vd625-agcombo/rxtx-1s-ht-ampdu.zip`, a phone joining
+in WPA2-CCMP; `ch149-wep.bin`, WEP104) and the archer-t5e's 6.30.223 as a
+station (`archer-t5e/mmiotrace.zip`); the field names are `d11.h`'s.
+
+- **Key table.** Entry n of the key index block (`0x05e0`, 68 entries) is
+  `(n << 4) | cipher`, the key material slot n at twice the key table
+  pointer plus 16·n. The pointer (`0x0056`) is the microcode's, read at
+  init: `0x087a` (`0x10f4`) under 832 and 928, `0x0852` (`0x10a4`) under the
+  DSL-3580L's 784. Entries 0-3 are the group keys by key ID, entry 4 + r the
+  pairwise key of address match row r, whose flags are `0x8004`
+  (`B43_AMT_F_KEY`) while the key is there; a removal writes the entry with
+  cipher 0 and clears the row. The cipher numbers are `WSEC_ALGO_*`: WEP40
+  1, TKIP 2, WEP104 3, AES 5 (`b43_sec_algo_fw()`). Neither driver touches
+  the host flags for it.
+- **TX.** mac80211 writes the IV: the stock frames carry their PN in their
+  own CCMP header, counting up per key, and `TSCPN` in the descriptor is
+  zero. The cache info holds the cipher in bits 7:4 of its first byte
+  (`0x50`) and the key slot in the second; `IVOffset` is the 802.11 header
+  length, and `FrameLen` counts the MIC the microcode appends (12 bytes over
+  the frame with the FCS on single-buffer frames).
+- **RX.** `RxStatus1`, b43's `mac_status`, has `DECATMPT` (bit 3) and the
+  slot in bits 10:5 on the phone's frames (`0x808a`, slot 4).
+- **Open.** Whether the microcode leaves the IV and the MIC in a frame it
+  decrypts: b43 assumes it does, as on the older cores, and mac80211 strips
+  them; the RX records of the capture stop before the payload. The 784
+  itself: its driver clears the same index block and reads its own key table
+  pointer (`dsl3580l/cold01-ch36-bw20.txt`), no capture of it holds an
+  installed key. Whether it encrypts a protected management frame: mac80211
+  does those (`IEEE80211_KEY_FLAG_SW_MGMT_TX`). TKIP would need the phase 1
+  key (`TkipPH1Key`), `AMIC` and the RX TKIP table, whose place on the AC is
+  not known; `rx_tkip_phase1_write()` stays off there.
 
 ### Probe-response offload
 

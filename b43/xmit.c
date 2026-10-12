@@ -629,8 +629,14 @@ static void b43_txhdr_ac_block(const struct b43_phy_ac *ac,
  * the last one marked in its RTS/CTS word; FIX_RATE when there is one, as on
  * their management and multicast frames. A fallback the header cannot carry
  * ends the list there, and is cut from it with the rest, so that the status
- * reports the rates tried (b43_fill_txstatus_report()). Hardware encryption
- * is off on B43_FW_HDR_AC.
+ * reports the rates tried (b43_fill_txstatus_report()).
+ *
+ * A frame with a hardware key carries its IV from mac80211, and the cache
+ * info names the cipher and the key slot; the microcode encrypts it and
+ * appends the MIC or ICV, which the frame length counts. The agcombo's
+ * 7.14.43 sends CCMP so: 0x50 and the key slot in the cache info, the PN in
+ * the frame's own CCMP header and none in the descriptor's, and a length 12
+ * bytes over the frame (router-data/vd625-agcombo/rxtx-1s-ht20-40-80.zip).
  *
  * A VHT PPDU carries an A-MPDU. Outside an aggregate SVHT has the microcode
  * send the frame as an A-MPDU of one MPDU, as the agcombo's 7.14.43 does on
@@ -652,6 +658,7 @@ static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 	struct ieee80211_tx_rate *rates = info->control.rates;
 	bool ldpc = info->flags & IEEE80211_TX_CTL_LDPC;
 	const struct b43_phy_ac *ac = dev->phy.ac;
+	const struct ieee80211_key_conf *key = info->control.hw_key;
 	unsigned int len = skb->len + FCS_LEN;
 	u16 mac_lo = 0, rts = 0;
 	unsigned int n, i;
@@ -659,8 +666,8 @@ static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 	BUILD_BUG_ON(sizeof(struct b43_txhdr_ac) != 128);
 	BUILD_BUG_ON(B43_TXH_AC_RATES > IEEE80211_TX_MAX_RATES);
 
-	if (WARN_ON_ONCE(info->control.hw_key))
-		return -EOPNOTSUPP;
+	if (key)
+		len += key->icv_len;
 
 	for (n = 1; n < B43_TXH_AC_RATES; n++) {
 		const struct ieee80211_tx_rate *t = &rates[n];
@@ -691,6 +698,13 @@ static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 	txhdr->chanspec = cpu_to_le16(ac->chanspec);
 	txhdr->iv_offset = ieee80211_hdrlen(wlhdr->frame_control);
 	txhdr->frame_len = cpu_to_le16(len);
+	if (key) {
+		u8 kidx = key->hw_key_idx;
+		u8 cipher = b43_sec_algo_fw(dev, dev->key[kidx].algorithm);
+
+		txhdr->cipher_bss = cipher << B43_TXH_AC_CIPHER_SHIFT;
+		txhdr->key_idx = b43_kidx_to_fw(dev, kidx);
+	}
 	txhdr->cookie = cpu_to_le16(cookie);
 	txhdr->seq = wlhdr->seq_ctrl;
 
