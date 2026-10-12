@@ -165,9 +165,11 @@ config B43_DFS
 	help
 	  Let an access point run on channels that require radar detection.
 	  mac80211 runs the channel availability check and the AC-PHY polls
-	  its radar pulse FIFOs. Any pulse over the detection threshold is
-	  reported as a radar: the pulses are not matched against the radar
-	  patterns, which certification requires.
+	  its radar pulse FIFOs. A radar is reported when more pulses arrive
+	  within 100 ms than the stock driver lets pass as noise: the pulses
+	  are counted, not matched against the radar patterns, which
+	  certification requires, and bursts of fewer than 17 pulses go
+	  unseen.
 
 	  Say N.
 

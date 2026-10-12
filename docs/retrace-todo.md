@@ -273,6 +273,25 @@ station (`archer-t5e/mmiotrace.zip`); the field names are `d11.h`'s.
   phase 1 key (`TkipPH1Key`), `AMIC` and the RX TKIP table, whose place on
   the AC is not known; `rx_tkip_phase1_write()` stays off there.
 
+### Radar pulses
+
+The two radar FIFOs (PHY `0x0253`/`0x0254`, levels in `0x0251`/`0x0252`)
+hold four words a pulse. On the agcombo's 7.14.43 at this driver's threshold
+(`vd625-agcombo/bss-up.zip`, ch100/80) the stock driver drains 182 pulses in
+31 of 1155 polls over 175 s, finishes its channel availability check after
+60 s and keeps the channel: noise. Word 0 is a coarse timestamp, rising on
+all 148 consecutive pairs by about 1220 a second (0.82 ms a step); the
+second FIFO mostly repeats the first's pulses within a step. The low byte of
+word 2 takes only 0-3 and word 3 sits in `0x20`-`0x2f`; **SALAME**, the
+sub-channel of the pulse and a power. The fine time is not in word 1:
+`word0:word1` rises on 102 of 148 pairs, 71 of 95 per low byte of word 2.
+`b43_phy_ac_radar_pulse()` therefore counts: a radar is 17 distinct pulses
+within 100 ms, one more than the stock driver let pass in any such window.
+FCC types 1 and 2 and ETSI bursts of 17 pulses and more are seen in a
+replay of the rule over synthetic bursts; FCC type 4 (12-16 pulses) and the
+shorter ETSI bursts are not. Open: the fine time, the width and the chirp,
+for which a known radar in front of the board is the way.
+
 ### Probe-response offload
 
 Deliberately off: b43 writes `PRMAXTIME=1`, keeps HOSTF5 bit 15 clear, and the

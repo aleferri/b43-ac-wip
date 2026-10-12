@@ -136,8 +136,10 @@ How the pieces fit is in [`docs/driver-status.md`](docs/driver-status.md).
   port and checked against two boards (`test/unit/band_gate.sh`, with the
   driver built with `ALLOW_24`); board data and calibrations are open
   (`docs/retrace-todo.md`, "2.4 GHz").
-- Radar detection without pattern matching: `CONFIG_B43_DFS` reports every
-  pulse as a radar.
+- Radar detection without pattern matching: `CONFIG_B43_DFS` reports a radar
+  on 17 pulses within 100 ms, one more than the stock driver let pass as
+  noise, and does not decode the pulse width or the fine time
+  (`b43_phy_ac_radar_pulse()`); bursts of fewer pulses go unseen.
 - Probe-response offload and the power management queue: deliberately off, see
   `docs/retrace-todo.md`.
 - A-MSDU and beamforming: HT MCS go out to an HT station and VHT MCS 0-9

@@ -4339,9 +4339,8 @@ static void b43_radar_work_handler(struct work_struct *work)
 	if (likely(b43_status(dev) == B43_STAT_STARTED) &&
 	    wl->hw->conf.radar_enabled) {
 		/*
-		 * A pulse over the PHY's threshold is reported as a radar: the
-		 * pulses are not matched against the radar patterns, so this
-		 * errs towards leaving the channel.
+		 * The PHY counts pulses, it does not match them against the
+		 * radar types (b43_phy_ac_radar_pulse()).
 		 */
 		if (dev->phy.ops->radar_poll(dev))
 			ieee80211_radar_detected(wl->hw);

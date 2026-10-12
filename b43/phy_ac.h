@@ -320,6 +320,12 @@ void b43_phy_ac_write_chanspec(struct b43_wldev *dev);
 /* Bit 11 of the same readback, surviving the shift by two. */
 #define B43_PHY_AC_IDLE_TSSI_BASE		0x0200
 
+/*
+ * Distinct radar pulses within B43_PHY_AC_RADAR_WINDOW that make a radar:
+ * one more than the stock driver let pass (b43_phy_ac_radar_pulse()).
+ */
+#define B43_PHY_AC_RADAR_PULSES		17
+
 struct b43_phy_ac {
 	/* physical core count (PHY reg 0x0b & 0x07), set by probe_cores */
 	u8 num_cores;
@@ -380,8 +386,16 @@ struct b43_phy_ac {
 	 * another meanwhile.
 	 */
 	bool noise_pending;
-	/* A radar pulse arrived since the last b43_phy_ac_radar_poll(). */
+	/* A radar was seen since the last b43_phy_ac_radar_poll(). */
 	bool radar_pulses;
+	/*
+	 * Recent radar pulses, by the FIFO's coarse timestamp unwrapped
+	 * (b43_phy_ac_radar_pulse()), oldest first.
+	 */
+	u32 radar_ts[B43_PHY_AC_RADAR_PULSES];
+	unsigned int radar_n;
+	u32 radar_wrap;
+	u16 radar_last;
 	/* One more turn without a peek, after the entry turn. */
 	bool peek_skip_one;
 	/*

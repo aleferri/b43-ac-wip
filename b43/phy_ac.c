@@ -9676,21 +9676,93 @@ static void b43_phy_ac_radar_thresh(struct b43_wldev *dev)
  * the calibration gate.
  *
  * 0x0251 and 0x0252 are the fill levels in 16-bit words of the two radar
- * pulse FIFOs, 0x0253 and 0x0254 their data ports: with the DSL-3580L's
- * lower threshold the levels are multiples of four (four words a pulse),
- * saturate at 0x05fc and match the words drained. With this driver's
- * threshold the FIFOs stay empty on every capture, so a pulse is an event,
- * reported by the poll. The pulse words are drained, not decoded.
+ * pulse FIFOs, 0x0253 and 0x0254 their data ports: four words a pulse, the
+ * levels saturating at 0x05fc.
  */
 #define B43_PHY_AC_RADAR_FIFO_WORDS	0x0600
 
-static void b43_phy_ac_radar_fifo_drain(struct b43_wldev *dev, u16 data,
-					u16 level)
-{
-	u16 i;
+/*
+ * The radar test. The pulse words are not decoded beyond the first, a
+ * coarse timestamp: on the agcombo's 7.14.43 at this driver's threshold
+ * (vd625-agcombo/bss-up.zip, ch100/80, 175 s of polls) it rises on all
+ * 148 consecutive pairs and by about 1220 a second, 0.82 ms a step; the
+ * second FIFO mostly holds the first's pulses again, within a step. What
+ * carries the fine time, the width and the chirp is not established, so
+ * the pulses cannot be matched against the radar types.
+ *
+ * What the stock driver let pass is known instead. Over that capture it
+ * drained 182 pulses in 31 of its 1155 polls, at most 16 distinct ones
+ * within any 100 or 150 ms, finished its channel availability check after
+ * 60 s and kept the channel to the end. So a radar is declared, the test
+ * being conservative, when B43_PHY_AC_RADAR_PULSES distinct pulses fall
+ * within 100 ms (B43_PHY_AC_RADAR_WINDOW, in steps): one more than the
+ * stock driver discarded. The radar types send 10 to 29 pulses a burst, so
+ * the shorter bursts go unseen; the window catches a burst split across two
+ * polls. A pulse of the second FIFO within a step of one of the first's is
+ * the same pulse. The timestamp wraps every 54 s and polls come every
+ * 150 ms, so a timestamp lower than the last one is a wrap.
+ */
+#define B43_PHY_AC_RADAR_WINDOW		122
 
-	for (i = 0; i < min_t(u16, level, B43_PHY_AC_RADAR_FIFO_WORDS); i++)
-		b43_phy_read(dev, data);
+static void b43_phy_ac_radar_pulse(struct b43_phy_ac *ac, u16 stamp)
+{
+	u32 ts, oldest = 0;
+	unsigned int i, keep;
+
+	if (stamp < ac->radar_last)
+		ac->radar_wrap += 0x10000;
+	ac->radar_last = stamp;
+	ts = ac->radar_wrap + stamp;
+
+	if (ts > B43_PHY_AC_RADAR_WINDOW)
+		oldest = ts - B43_PHY_AC_RADAR_WINDOW;
+	for (keep = 0, i = 0; i < ac->radar_n; i++)
+		if (ac->radar_ts[i] >= oldest)
+			ac->radar_ts[keep++] = ac->radar_ts[i];
+	if (keep == ARRAY_SIZE(ac->radar_ts))
+		memmove(ac->radar_ts, ac->radar_ts + 1, --keep * sizeof(u32));
+	ac->radar_ts[keep++] = ts;
+	ac->radar_n = keep;
+
+	if (keep >= B43_PHY_AC_RADAR_PULSES)
+		ac->radar_pulses = true;
+}
+
+/*
+ * One poll's pulses. Those of the second FIFO within a step of one of the
+ * first's are its pulses again; past B43_PHY_AC_RADAR_POLL_PULSES in the
+ * first the poll alone is a radar, so no more are kept for the comparison.
+ */
+#define B43_PHY_AC_RADAR_POLL_PULSES	32
+
+static void b43_phy_ac_radar_fifos(struct b43_wldev *dev, u16 level0,
+				   u16 level1)
+{
+	u16 first[B43_PHY_AC_RADAR_POLL_PULSES];
+	unsigned int nfirst = 0, i, j;
+	u16 n0 = min_t(u16, level0, B43_PHY_AC_RADAR_FIFO_WORDS);
+	u16 n1 = min_t(u16, level1, B43_PHY_AC_RADAR_FIFO_WORDS);
+
+	for (i = 0; i < n0; i++) {
+		u16 w = b43_phy_read(dev, 0x0253);
+
+		if (i % 4 || n0 - i < 4)
+			continue;
+		if (nfirst < ARRAY_SIZE(first))
+			first[nfirst++] = w;
+		b43_phy_ac_radar_pulse(dev->phy.ac, w);
+	}
+	for (i = 0; i < n1; i++) {
+		u16 w = b43_phy_read(dev, 0x0254);
+		bool again = false;
+
+		if (i % 4 || n1 - i < 4)
+			continue;
+		for (j = 0; j < nfirst; j++)
+			again |= (u16)(w - first[j] + 1) <= 2;
+		if (!again)
+			b43_phy_ac_radar_pulse(dev->phy.ac, w);
+	}
 }
 
 static void b43_phy_ac_cac_poll(struct b43_wldev *dev, unsigned int turns)
@@ -9713,11 +9785,8 @@ static void b43_phy_ac_cac_poll(struct b43_wldev *dev, unsigned int turns)
 		b43_mac_suspend(dev);
 		level0 = b43_phy_read_log(dev, 0x0251);
 		level1 = b43_phy_read_log(dev, 0x0252);
-		b43_phy_ac_radar_fifo_drain(dev, 0x0253, level0);
-		b43_phy_ac_radar_fifo_drain(dev, 0x0254, level1);
+		b43_phy_ac_radar_fifos(dev, level0, level1);
 		b43_mac_enable(dev);
-		if (level0 || level1)
-			dev->phy.ac->radar_pulses = true;
 	}
 }
 
