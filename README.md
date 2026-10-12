@@ -140,12 +140,11 @@ How the pieces fit is in [`docs/driver-status.md`](docs/driver-status.md).
   pulse as a radar.
 - Probe-response offload and the power management queue: deliberately off, see
   `docs/retrace-todo.md`.
-- Receive aggregation and beamforming: HT MCS go out to an HT station and
-  VHT MCS 0-9 to a VHT one, on up to the board's TX chains, laid out as the
-  stock drivers lay them out, and A-MPDUs on TX, built by the microcode, but
-  a station's ADDBA request is declined, so it sends without aggregating;
-  no A-MSDU and no transmit beamforming (`docs/retrace-todo.md`, "HT and
-  VHT").
+- A-MSDU and beamforming: HT MCS go out to an HT station and VHT MCS 0-9
+  to a VHT one, on up to the board's TX chains, laid out as the stock
+  drivers lay them out, and A-MPDUs in both directions, built by the
+  microcode on TX and acknowledged by it on RX, but no A-MSDU and no
+  transmit beamforming (`docs/retrace-todo.md`, "HT and VHT").
 - Hardware encryption: CCMP and WEP keys go to the hardware, TKIP stays
   with mac80211, and so do protected management frames on TX
   (`docs/retrace-todo.md`, "Hardware encryption"); `nohwcrypt=1` leaves all

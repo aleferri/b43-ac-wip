@@ -6458,11 +6458,13 @@ static int b43_op_get_survey(struct ieee80211_hw *hw, int idx,
 }
 
 /*
- * Block ack sessions on TX, on the AC through DMA: the microcode builds the
+ * Block ack sessions, on the AC through DMA. On TX the microcode builds the
  * A-MPDU from MPDUs posted one by one with the session's window in their
  * header (b43_txhdr_ac_ampdu()), and the stock driver programs nothing in
- * it for a session, so a session is the window kept here. A station's
- * ADDBA request is declined: the receive side is not mapped.
+ * it for a session, so a session is the window kept here. On RX the
+ * microcode answers an A-MPDU or a block ack request with a block ack of
+ * its own making (frame code 0x25, at 0x076C on 784), from no table a
+ * driver fills; mac80211 reorders.
  */
 static int b43_op_ampdu_action(struct ieee80211_hw *hw,
 			       struct ieee80211_vif *vif,
@@ -6475,12 +6477,17 @@ static int b43_op_ampdu_action(struct ieee80211_hw *hw,
 
 	switch (params->action) {
 	case IEEE80211_AMPDU_TX_START:
+	case IEEE80211_AMPDU_RX_START:
 		mutex_lock(&wl->mutex);
 		dev = wl->current_dev;
 		ok = dev && dev->fw.hdr_format == B43_FW_HDR_AC &&
 		     !b43_using_pio_transfers(dev);
 		mutex_unlock(&wl->mutex);
-		return ok ? IEEE80211_AMPDU_TX_START_IMMEDIATE : -EOPNOTSUPP;
+		if (!ok)
+			return -EOPNOTSUPP;
+		if (params->action == IEEE80211_AMPDU_RX_START)
+			return 0;
+		return IEEE80211_AMPDU_TX_START_IMMEDIATE;
 	case IEEE80211_AMPDU_TX_OPERATIONAL:
 		WRITE_ONCE(bsta->ampdu_win[params->tid], params->buf_size);
 		return 0;
@@ -6492,6 +6499,8 @@ static int b43_op_ampdu_action(struct ieee80211_hw *hw,
 	case IEEE80211_AMPDU_TX_STOP_FLUSH:
 	case IEEE80211_AMPDU_TX_STOP_FLUSH_CONT:
 		WRITE_ONCE(bsta->ampdu_win[params->tid], 0);
+		return 0;
+	case IEEE80211_AMPDU_RX_STOP:
 		return 0;
 	default:
 		return -EOPNOTSUPP;
@@ -6599,10 +6608,10 @@ static const struct ieee80211_iface_combination b43_if_comb_dfs = {
  * starting point is what the stock driver puts in its beacon (agcombo,
  * 7.14.43, ch36/80): HT 20/40 with the short guard interval on both, SM
  * power save disabled; VHT at 80 MHz with the short guard interval; MCS 0-7
- * and 0-9 on every receive chain. Left out, because b43 does not do them:
+ * and 0-9 on every receive chain; A-MPDUs of up to 64 KiB in HT and 1 MiB
+ * in VHT (exponent 7), MPDUs 8 us apart (A-MPDU parameters 0x1b, VHT
+ * capabilities 0x0f8259b2). Left out, because b43 does not do them:
  *
- *  - aggregation: the A-MPDU parameters stay at their minimum, and
- *    b43_op_ampdu_action() refuses every block ack session;
  *  - transmitting on more streams than the board has TX chains: HT MCS
  *    and VHT MCS 0-9 go out on up to the txchain's, in the layout of the
  *    stock drivers' descriptors (b43_txhdr_ac_ht(), b43_txhdr_ac_vht());
@@ -6639,8 +6648,8 @@ static void b43_ac_set_ht_vht_cap(struct b43_wldev *dev,
 		  IEEE80211_HT_CAP_SGI_20 |
 		  IEEE80211_HT_CAP_SGI_40 |
 		  (WLAN_HT_CAP_SM_PS_DISABLED << IEEE80211_HT_CAP_SM_PS_SHIFT);
-	ht->ampdu_factor = IEEE80211_HT_MAX_AMPDU_8K;
-	ht->ampdu_density = IEEE80211_HT_MPDU_DENSITY_NONE;
+	ht->ampdu_factor = IEEE80211_HT_MAX_AMPDU_64K;
+	ht->ampdu_density = IEEE80211_HT_MPDU_DENSITY_8;
 	for (i = 0; i < nss; i++)
 		ht->mcs.rx_mask[i] = 0xff;
 	ht->mcs.tx_params = IEEE80211_HT_MCS_TX_DEFINED;
@@ -6657,7 +6666,8 @@ static void b43_ac_set_ht_vht_cap(struct b43_wldev *dev,
 	memset(vht, 0, sizeof(*vht));
 	vht->vht_supported = true;
 	vht->cap = IEEE80211_VHT_CAP_MAX_MPDU_LENGTH_3895 |
-		   IEEE80211_VHT_CAP_SHORT_GI_80;
+		   IEEE80211_VHT_CAP_SHORT_GI_80 |
+		   IEEE80211_VHT_CAP_MAX_A_MPDU_LENGTH_EXPONENT_MASK;
 	vht->vht_mcs.rx_mcs_map = cpu_to_le16(map);
 	vht->vht_mcs.tx_mcs_map = cpu_to_le16(tx_map);
 }
@@ -6691,6 +6701,8 @@ static int b43_setup_bands(struct b43_wldev *dev,
 			hw->max_rates = B43_TXH_AC_RATES;
 			ieee80211_hw_set(hw, AMPDU_AGGREGATION);
 			hw->max_tx_aggregation_subframes =
+				IEEE80211_MAX_AMPDU_BUF_HT;
+			hw->max_rx_aggregation_subframes =
 				IEEE80211_MAX_AMPDU_BUF_HT;
 		}
 	} else

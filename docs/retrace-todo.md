@@ -367,9 +367,9 @@ hardware"). What is open:
   D6220's 7.14.89 sends the same (`0x40ce`, HT-SIG byte 0 `0x87` for MCS 7,
   word 1 0 on a primary in the upper half of ch38), in
   `router-data/d6220/rxtx-1s-ht20-40-vht20-40-80-txbf0.zip`.
-- **Aggregation.** On TX, see "A-MPDU" under "MAC and DMA": block ack
-  sessions are taken and the microcode builds the A-MPDUs. On RX a station's
-  ADDBA request is declined, so it sends without aggregating.
+- **Aggregation.** See "A-MPDU" under "MAC and DMA": block ack sessions
+  are taken both ways, the microcode builds the A-MPDUs on TX and answers
+  them with its own block ack on RX, and mac80211 reorders.
 - **Transmit beamforming.** TODO, not implemented. b43 announces no SU
   beamformer capability, so a station never sends the compressed
   beamforming feedback, and every multi-chain frame goes out with CDD on
@@ -627,12 +627,22 @@ hardware"). What is open:
   is the descriptor's (`b43_aqm_init_rev42()`). b43 takes the station's
   density raised to 6: whether 6 is the phone's or the stock driver's floor is
   not in the capture. Open: the frame ID, consecutive in the stock driver, the
-  DMA slot in b43's cookie, two apart per frame; the 784 with a session; and
-  the receive side, whose upload traffic the trap run does not have. On it the
-  784 has a frame of its own (code `0x38`, `0x05C6`) next to a table per
-  station and TID at word `0x0334` with an enable bit 12 and a pointer to
-  16-word scoreboards (`[0x58]`): **SALAME**, the receive block ack state, to
-  set at an ADDBA.
+  DMA slot in b43's cookie, two apart per frame; and the 784 with a session.
+  On RX the microcode answers by itself, as for an ACK or a CTS: on all three
+  a block ack request (frame code `0x21`, type and subtype as the microcode
+  keys frames) or an A-MPDU gets a block ack it builds (`0x25`, `0x076C` on
+  784), from the reception's own state and no table a driver fills. b43
+  accepts a station's ADDBA and leaves the reordering to mac80211, and
+  announces what the stock beacon does (agcombo, 7.14.43): A-MPDU parameters
+  `0x1b`, 64 KiB with MPDUs 8 us apart, and the VHT exponent 7 of capabilities
+  `0x0f8259b2`. Not checked on hardware yet, and the rate b43 reports for an
+  MPDU after the first of an A-MPDU, if the hardware gives it no SIG fields,
+  would be MCS 0. The table at word `0x0334` per address match row (enable bit
+  12, a slot in 15:13 into 16-word entries at `[0x58]`) and the frame `0x38`
+  next to it belong to beamforming, not to block ack: they are reached on a
+  VHT NDP announcement (`0x15`, control subtype 5), and `0x38` is an action
+  no-ack frame, the compressed beamforming report a beamformee sends; the TX
+  path uses the same entries by the cache index of its descriptor.
 - **TX status.** `B43_FW_HDR_AC` reads both packages of an entry and decodes
   the first. In the low half of its first word bit 0 is the valid bit, bit 1
   is set on every first package, bit 2 marks an intermediate status, bit 3
