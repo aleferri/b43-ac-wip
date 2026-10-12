@@ -263,15 +263,15 @@ station (`archer-t5e/mmiotrace.zip`); the field names are `d11.h`'s.
   the frame with the FCS on single-buffer frames).
 - **RX.** `RxStatus1`, b43's `mac_status`, has `DECATMPT` (bit 3) and the
   slot in bits 10:5 on the phone's frames (`0x808a`, slot 4).
-- **Open.** Whether the microcode leaves the IV and the MIC in a frame it
-  decrypts: b43 assumes it does, as on the older cores, and mac80211 strips
-  them; the RX records of the capture stop before the payload. The 784
-  itself: its driver clears the same index block and reads its own key table
-  pointer (`dsl3580l/cold01-ch36-bw20.txt`), no capture of it holds an
-  installed key. Whether it encrypts a protected management frame: mac80211
-  does those (`IEEE80211_KEY_FLAG_SW_MGMT_TX`). TKIP would need the phase 1
-  key (`TkipPH1Key`), `AMIC` and the RX TKIP table, whose place on the AC is
-  not known; `rx_tkip_phase1_write()` stays off there.
+- **On the DSL-3580L.** WPA2-CCMP runs in hardware under the 784, with its
+  own key table pointer (`0x0852`, the material at `0x10a4`), and the
+  microcode leaves the IV and the MIC in a frame it decrypts, as b43
+  assumes on the older cores: mac80211 strips them and traffic flows both
+  ways (see "Throughput" under "On hardware").
+- **Open.** Whether the microcode encrypts a protected management frame:
+  mac80211 does those (`IEEE80211_KEY_FLAG_SW_MGMT_TX`). TKIP would need the
+  phase 1 key (`TkipPH1Key`), `AMIC` and the RX TKIP table, whose place on
+  the AC is not known; `rx_tkip_phase1_write()` stays off there.
 
 ### Probe-response offload
 
@@ -983,13 +983,23 @@ ucode revision.
   HT40 on 36/40 a station associates, completes the WPA2 4-way handshake at
   the first attempt and carries traffic, with no PHY TX error, no DMA error
   and no restart. The two widths give the same throughput (see
-  "Aggregation" under "HT and VHT"). Every frame is decrypted by mac80211:
-  there is no hardware crypto on the AC. The log has one `sched: RT
-  throttling activated` under traffic; the cause is not looked at.
-- **VHT.** Next on the board. Its only run, `bringup-log-2026-10-09.txt`,
-  predates the VHT descriptor as 6.30 lays it out (see "TX" under "HT and
-  VHT") and the power offset in half-dB steps (`b43_phy_ac_po_field()`):
-  the station there completed the handshake and got no address.
+  "Aggregation" under "HT and VHT").
+- **VHT.** VHT20, VHT40 and VHT80 carry traffic once VHT frames go out as
+  single-MPDU A-MPDUs (`B43_TXH_AC_MAC_SVHT`); before that the station
+  completed the handshake, sent at the lowest legacy rate, and got no
+  address. A one-stream phone at -49 dBm runs at VHT80 SGI MCS 9, 94% of
+  its attempts acknowledged in `rc_stats`; minstrel expects 63 Mbit/s.
+- **Throughput.** With CCMP in mac80211 the b43 IRQ thread filled a core
+  (it runs `ieee80211_rx_ni()` and with it the decryption) and TCP
+  stopped at 10 Mbit/s each way, with `sched: RT throttling activated`;
+  on an open network 90. With CCMP in hardware (see "Hardware encryption"):
+  69 Mbit/s down and 55 up, the thread at 35-40% in BusyBox `top`, which
+  counts both hardware threads. Measured through the board's Ethernet,
+  whose `bcm6368-enetsw` has no TX interrupt on the 6362 (OpenWrt's
+  `bcm6362.dtsi` declares only the RX DMA line, and Broadcom's
+  `6362_intr.h` has no other) and frees its TX descriptors only from the
+  RX poll: UDP out of the router alone stalls at ~1.5 Mbit/s, TCP flows
+  run since their ACKs come in.
 - **RX under traffic.** No `RX descriptor underrun` in the 2026-10-11 log,
   with the 128 slots of 816-02 (OpenWrt's 813 alone gives 32).
 - **Values of the bring-up logs against `cold01-ch36-bw20.txt`**, printed

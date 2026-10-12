@@ -85,16 +85,19 @@ The DSL-3580L runs the port under OpenWrt with `ucode42.fw` 784.2 from
 `broadcom-wl-6.30.163.46`, byte for byte the `d11ucode42` of the board's own
 `wl`, as an AP on channel 36.
 
-- **20 MHz without HT, HT20 and HT40 work**: the beacon goes out, stations
-  find the AP on passive and active scans, associate, complete the WPA2
-  4-way handshake and carry traffic
-  ([`bringup-log-2026-10-11-ht20-40.txt`](bringup-log-2026-10-11-ht20-40.txt),
-  HT20 on 36 and HT40 on 36/40). HT40 gives the HT20 throughput: every
-  block ack session is refused, so nothing is aggregated, the likely limit
-  (see "What is missing").
-- **VHT** is the next width to run on the board.
-- **RX** under traffic: no `RX descriptor underrun` in the 2026-10-11 log,
-  with the 128 slots of 816-02. See `docs/retrace-todo.md`, "On hardware".
+- **20 MHz without HT, HT20, HT40, VHT20, VHT40 and VHT80 work**: the
+  beacon goes out, stations find the AP on passive and active scans,
+  associate, complete the WPA2 4-way handshake and carry traffic
+  ([`bringup-log-2026-10-11-ht20-40.txt`](bringup-log-2026-10-11-ht20-40.txt)
+  for HT20 on 36 and HT40 on 36/40). A one-stream VHT phone runs at VHT80
+  MCS 9.
+- **Throughput** with WPA2-CCMP in hardware: 69 Mbit/s down, 55 up, what
+  minstrel expects of VHT80 MCS 9 without aggregation (63 Mbit/s); with
+  CCMP in mac80211 it was 10, the b43 IRQ thread filling a core. Every
+  block ack session is refused, so nothing is aggregated (see "What is
+  missing").
+- **RX** under traffic: no `RX descriptor underrun`, with the 128 slots of
+  816-02. See `docs/retrace-todo.md`, "On hardware".
 
 The log of a normal build has one `set_channel` line per channel switch and
 the warnings: TX errors (`PHY transmission error`, a frame dropped for a
