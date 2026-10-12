@@ -11,13 +11,13 @@ Subject: [PATCH 1/2] b43: core support for the AC-PHY
  drivers/net/wireless/broadcom/b43/dma.h       |   15 +-
  drivers/net/wireless/broadcom/b43/leds.c      |  225 +-
  drivers/net/wireless/broadcom/b43/leds.h      |   24 +-
- drivers/net/wireless/broadcom/b43/main.c      | 1834 +++++++++++++++--
+ drivers/net/wireless/broadcom/b43/main.c      | 1846 +++++++++++++++--
  .../net/wireless/broadcom/b43/phy_common.c    |   61 +-
  .../net/wireless/broadcom/b43/phy_common.h    |   32 +-
  drivers/net/wireless/broadcom/b43/pio.c       |   16 +-
  drivers/net/wireless/broadcom/b43/xmit.c      |  818 +++++++-
  drivers/net/wireless/broadcom/b43/xmit.h      |  138 ++
- 13 files changed, 3207 insertions(+), 431 deletions(-)
+ 13 files changed, 3219 insertions(+), 431 deletions(-)
 
 diff --git a/drivers/net/wireless/broadcom/b43/Kconfig b/drivers/net/wireless/broadcom/b43/Kconfig
 index 5f008b4..ceee266 100644
@@ -1362,7 +1362,7 @@ index 9e9634c..4ce00d3 100644
  
  #endif /* B43_LEDS_H_ */
 diff --git a/drivers/net/wireless/broadcom/b43/main.c b/drivers/net/wireless/broadcom/b43/main.c
-index 95a5d0b..e07c25b 100644
+index 95a5d0b..6c488ca 100644
 --- a/drivers/net/wireless/broadcom/b43/main.c
 +++ b/drivers/net/wireless/broadcom/b43/main.c
 @@ -322,6 +322,23 @@ static struct ieee80211_channel b43_5ghz_aphy_chantable[] = {
@@ -3728,16 +3728,18 @@ index 95a5d0b..e07c25b 100644
  	wl->operating = true;
  	wl->vif = vif;
  	wl->if_type = vif->type;
-@@ -5240,6 +6528,47 @@ static int b43_op_get_antenna(struct ieee80211_hw *hw, int radio_idx,
+@@ -5240,6 +6528,56 @@ static int b43_op_get_antenna(struct ieee80211_hw *hw, int radio_idx,
  	return 0;
  }
  
 +/*
-+ * Block ack sessions on TX, on the AC through DMA: the microcode builds the
++ * Block ack sessions, on the AC through DMA. On TX the microcode builds the
 + * A-MPDU from MPDUs posted one by one with the session's window in their
 + * header (b43_txhdr_ac_ampdu()), and the stock driver programs nothing in
-+ * it for a session, so a session is the window kept here. A station's
-+ * ADDBA request is declined: the receive side is not mapped.
++ * it for a session, so a session is the window kept here. On RX the
++ * microcode answers an A-MPDU or a block ack request with a block ack of
++ * its own making (frame code 0x25, at 0x076C on 784), from no table a
++ * driver fills; mac80211 reorders.
 + */
 +static int b43_op_ampdu_action(struct ieee80211_hw *hw,
 +			       struct ieee80211_vif *vif,
@@ -3750,12 +3752,17 @@ index 95a5d0b..e07c25b 100644
 +
 +	switch (params->action) {
 +	case IEEE80211_AMPDU_TX_START:
++	case IEEE80211_AMPDU_RX_START:
 +		mutex_lock(&wl->mutex);
 +		dev = wl->current_dev;
 +		ok = dev && dev->fw.hdr_format == B43_FW_HDR_AC &&
 +		     !b43_using_pio_transfers(dev);
 +		mutex_unlock(&wl->mutex);
-+		return ok ? IEEE80211_AMPDU_TX_START_IMMEDIATE : -EOPNOTSUPP;
++		if (!ok)
++			return -EOPNOTSUPP;
++		if (params->action == IEEE80211_AMPDU_RX_START)
++			return 0;
++		return IEEE80211_AMPDU_TX_START_IMMEDIATE;
 +	case IEEE80211_AMPDU_TX_OPERATIONAL:
 +		WRITE_ONCE(bsta->ampdu_win[params->tid], params->buf_size);
 +		return 0;
@@ -3768,6 +3775,8 @@ index 95a5d0b..e07c25b 100644
 +	case IEEE80211_AMPDU_TX_STOP_FLUSH_CONT:
 +		WRITE_ONCE(bsta->ampdu_win[params->tid], 0);
 +		return 0;
++	case IEEE80211_AMPDU_RX_STOP:
++		return 0;
 +	default:
 +		return -EOPNOTSUPP;
 +	}
@@ -3776,7 +3785,7 @@ index 95a5d0b..e07c25b 100644
  static const struct ieee80211_ops b43_hw_ops = {
  	.add_chanctx = ieee80211_emulate_add_chanctx,
  	.remove_chanctx = ieee80211_emulate_remove_chanctx,
-@@ -5265,6 +6594,7 @@ static const struct ieee80211_ops b43_hw_ops = {
+@@ -5265,6 +6603,7 @@ static const struct ieee80211_ops b43_hw_ops = {
  	.sw_scan_start		= b43_op_sw_scan_start_notifier,
  	.sw_scan_complete	= b43_op_sw_scan_complete_notifier,
  	.get_survey		= b43_op_get_survey,
@@ -3784,7 +3793,7 @@ index 95a5d0b..e07c25b 100644
  	.rfkill_poll		= b43_rfkill_poll,
  	.set_antenna		= b43_op_set_antenna,
  	.get_antenna		= b43_op_get_antenna,
-@@ -5314,7 +6644,7 @@ out:
+@@ -5314,7 +6653,7 @@ out:
  	mutex_unlock(&wl->mutex);
  
  	if (err) {
@@ -3793,7 +3802,7 @@ index 95a5d0b..e07c25b 100644
  		return;
  	}
  
-@@ -5326,6 +6656,89 @@ out:
+@@ -5326,6 +6665,90 @@ out:
  	b43info(wl, "Controller restarted\n");
  }
  
@@ -3817,10 +3826,10 @@ index 95a5d0b..e07c25b 100644
 + * starting point is what the stock driver puts in its beacon (agcombo,
 + * 7.14.43, ch36/80): HT 20/40 with the short guard interval on both, SM
 + * power save disabled; VHT at 80 MHz with the short guard interval; MCS 0-7
-+ * and 0-9 on every receive chain. Left out, because b43 does not do them:
++ * and 0-9 on every receive chain; A-MPDUs of up to 64 KiB in HT and 1 MiB
++ * in VHT (exponent 7), MPDUs 8 us apart (A-MPDU parameters 0x1b, VHT
++ * capabilities 0x0f8259b2). Left out, because b43 does not do them:
 + *
-+ *  - aggregation: the A-MPDU parameters stay at their minimum, and
-+ *    b43_op_ampdu_action() refuses every block ack session;
 + *  - transmitting on more streams than the board has TX chains: HT MCS
 + *    and VHT MCS 0-9 go out on up to the txchain's, in the layout of the
 + *    stock drivers' descriptors (b43_txhdr_ac_ht(), b43_txhdr_ac_vht());
@@ -3857,8 +3866,8 @@ index 95a5d0b..e07c25b 100644
 +		  IEEE80211_HT_CAP_SGI_20 |
 +		  IEEE80211_HT_CAP_SGI_40 |
 +		  (WLAN_HT_CAP_SM_PS_DISABLED << IEEE80211_HT_CAP_SM_PS_SHIFT);
-+	ht->ampdu_factor = IEEE80211_HT_MAX_AMPDU_8K;
-+	ht->ampdu_density = IEEE80211_HT_MPDU_DENSITY_NONE;
++	ht->ampdu_factor = IEEE80211_HT_MAX_AMPDU_64K;
++	ht->ampdu_density = IEEE80211_HT_MPDU_DENSITY_8;
 +	for (i = 0; i < nss; i++)
 +		ht->mcs.rx_mask[i] = 0xff;
 +	ht->mcs.tx_params = IEEE80211_HT_MCS_TX_DEFINED;
@@ -3875,7 +3884,8 @@ index 95a5d0b..e07c25b 100644
 +	memset(vht, 0, sizeof(*vht));
 +	vht->vht_supported = true;
 +	vht->cap = IEEE80211_VHT_CAP_MAX_MPDU_LENGTH_3895 |
-+		   IEEE80211_VHT_CAP_SHORT_GI_80;
++		   IEEE80211_VHT_CAP_SHORT_GI_80 |
++		   IEEE80211_VHT_CAP_MAX_A_MPDU_LENGTH_EXPONENT_MASK;
 +	vht->vht_mcs.rx_mcs_map = cpu_to_le16(map);
 +	vht->vht_mcs.tx_mcs_map = cpu_to_le16(tx_map);
 +}
@@ -3883,7 +3893,7 @@ index 95a5d0b..e07c25b 100644
  static int b43_setup_bands(struct b43_wldev *dev,
  			   bool have_2ghz_phy, bool have_5ghz_phy)
  {
-@@ -5343,6 +6756,21 @@ static int b43_setup_bands(struct b43_wldev *dev,
+@@ -5343,6 +6766,23 @@ static int b43_setup_bands(struct b43_wldev *dev,
  	if (have_2ghz_phy)
  		hw->wiphy->bands[NL80211_BAND_2GHZ] = limited_2g ?
  			&b43_band_2ghz_limited : &b43_band_2GHz;
@@ -3900,12 +3910,14 @@ index 95a5d0b..e07c25b 100644
 +			ieee80211_hw_set(hw, AMPDU_AGGREGATION);
 +			hw->max_tx_aggregation_subframes =
 +				IEEE80211_MAX_AMPDU_BUF_HT;
++			hw->max_rx_aggregation_subframes =
++				IEEE80211_MAX_AMPDU_BUF_HT;
 +		}
 +	} else
  	if (dev->phy.type == B43_PHYTYPE_N) {
  		if (have_5ghz_phy)
  			hw->wiphy->bands[NL80211_BAND_5GHZ] = limited_5g ?
-@@ -5356,6 +6784,19 @@ static int b43_setup_bands(struct b43_wldev *dev,
+@@ -5356,6 +6796,19 @@ static int b43_setup_bands(struct b43_wldev *dev,
  	dev->phy.supports_2ghz = have_2ghz_phy;
  	dev->phy.supports_5ghz = have_5ghz_phy;
  
@@ -3925,7 +3937,7 @@ index 95a5d0b..e07c25b 100644
  	return 0;
  }
  
-@@ -5427,6 +6868,12 @@ static void b43_supported_bands(struct b43_wldev *dev, bool *have_2ghz_phy,
+@@ -5427,6 +6880,12 @@ static void b43_supported_bands(struct b43_wldev *dev, bool *have_2ghz_phy,
  
  	/* As a fallback, try to guess using PHY type */
  	switch (dev->phy.type) {
@@ -3938,7 +3950,7 @@ index 95a5d0b..e07c25b 100644
  	case B43_PHYTYPE_G:
  	case B43_PHYTYPE_N:
  	case B43_PHYTYPE_LP:
-@@ -5667,6 +7114,7 @@ static struct b43_wl *b43_wireless_init(struct b43_bus_dev *dev)
+@@ -5667,6 +7126,7 @@ static struct b43_wl *b43_wireless_init(struct b43_bus_dev *dev)
  
  	wl->hw_registered = false;
  	hw->max_rates = 2;
@@ -3946,7 +3958,7 @@ index 95a5d0b..e07c25b 100644
  	SET_IEEE80211_DEV(hw, dev->dev);
  	if (is_valid_ether_addr(sprom->et1mac))
  		SET_IEEE80211_PERM_ADDR(hw, sprom->et1mac);
-@@ -5738,6 +7186,7 @@ bcma_out:
+@@ -5738,6 +7198,7 @@ bcma_out:
  static void b43_bcma_remove(struct bcma_device *core)
  {
  	struct b43_wldev *wldev = bcma_get_drvdata(core);
@@ -3954,7 +3966,7 @@ index 95a5d0b..e07c25b 100644
  	struct b43_wl *wl = wldev->wl;
  
  	/* We must cancel any work here before unregistering from ieee80211,
-@@ -5753,14 +7202,14 @@ static void b43_bcma_remove(struct bcma_device *core)
+@@ -5753,14 +7214,14 @@ static void b43_bcma_remove(struct bcma_device *core)
  		ieee80211_unregister_hw(wl->hw);
  	}
  
@@ -3971,7 +3983,7 @@ index 95a5d0b..e07c25b 100644
  }
  
  static struct bcma_driver b43_bcma_driver = {
-@@ -5858,9 +7307,12 @@ static struct ssb_driver b43_ssb_driver = {
+@@ -5858,9 +7319,12 @@ static struct ssb_driver b43_ssb_driver = {
  void b43_controller_restart(struct b43_wldev *dev, const char *reason)
  {
  	/* Must avoid requeueing, if we are in shutdown. */
