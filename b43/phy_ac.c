@@ -379,6 +379,8 @@ static void b43_phy_ac_crs_block_e(struct b43_wldev *dev);
 static void b43_phy_ac_wd_stats_tail(struct b43_wldev *dev);
 static void b43_phy_ac_tempsense(struct b43_wldev *dev);
 static bool b43_phy_ac_cal_reads_temp(struct b43_wldev *dev);
+static void b43_phy_ac_temp_update(struct b43_phy_ac *ac);
+static void b43_phy_ac_temp_cal_mark(struct b43_phy_ac *ac);
 static bool b43_phy_ac_rfseq_wait_done(struct b43_wldev *dev, u16 busy,
 				       unsigned int turns);
 static void b43_phy_ac_run_samples(struct b43_wldev *dev, u16 nsamp,
@@ -5539,6 +5541,8 @@ static void b43_phy_ac_calibration_block(struct b43_wldev *dev)
 	B43_AC_FN();
 	u16 gate;
 
+	b43_phy_ac_temp_cal_mark(dev->phy.ac);
+
 	/* Post-cal finalize, iterations 2 and 3. */
 	b43_phy_ac_post_cal_finalize(dev);
 	b43_phy_ac_post_cal_finalize_iter3(dev);
@@ -5907,6 +5911,72 @@ static void b43_phy_ac_tempsense(struct b43_wldev *dev)
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
 	b43_phy_ac_meas_ctl_restore(dev, &ctl);
 	b43_phy_ac_tbl_write_unlock(dev, gate_meas);
+	b43_phy_ac_temp_update(ac);
+}
+
+/*
+ * The temperature of the last reading. The samples are 12-bit two's
+ * complement; on each chain the thermal signal is
+ * ((step 1 - step 0) + (step 3 - step 2)) / 2 over the eight-sample means,
+ * and the chains are averaged. On the agcombo's 7.14.43 that signal is
+ * -1245 at the 39-40 deg C of a cold bss-up and -936 and -905 at the 54 and
+ * 56 its `wl phy_tempsense` printed warm (vd625-agcombo/bss-up.zip,
+ * up-nobss-ioctl.zip; docs/tempsense-wiring-evidence.md): about
+ * 0.0485 deg C a count, 100 at zero. Three points from one board give the
+ * direction and the size, not the exact line.
+ */
+static void b43_phy_ac_temp_update(struct b43_phy_ac *ac)
+{
+	const u16 (*smp)[8];
+	int sum = 0, n = 0;
+	unsigned int c, k, i;
+
+	for_each_set_bit(c, &ac->coremask, ac->num_cores) {
+		int m[4] = { 0 };
+
+		smp = ac->tempsense_samples[c];
+		for (k = 0; k < 4; k++)
+			for (i = 0; i < 8; i++)
+				m[k] += sign_extend32(smp[k][i], 11);
+		sum += (m[1] - m[0]) + (m[3] - m[2]);
+		n++;
+	}
+	if (!n)
+		return;
+	/* sum is 16 times the signal per chain, at most 2^18 in magnitude. */
+	ac->temp = sum * 485 / (16 * 10000 * n) + 100;
+	ac->temp_valid = true;
+}
+
+/*
+ * How far the temperature may move from the last calibration's before the
+ * watchdog runs the calibrations again: the SROM's phycal_tempdelta in
+ * deg C, none when it is 0 (b43_phy_ac_cal_reads_temp()), and 40 above 64,
+ * which takes in 255, unprogrammed. That is the rule of the D6220's wl
+ * (wlc_phy_read_tempdelta_settings() in its wl.o), and the 40 the
+ * DSL-3580L's wl reports for its 255 through `wl phycal_tempdelta`.
+ */
+static int b43_phy_ac_temp_delta(struct b43_wldev *dev)
+{
+	u8 d = dev->dev->bus_sprom->phycal_tempdelta;
+
+	return d > 64 ? 40 : d;
+}
+
+/* The calibration about to run takes the temperature of the last reading. */
+static void b43_phy_ac_temp_cal_mark(struct b43_phy_ac *ac)
+{
+	ac->temp_cal = ac->temp;
+	ac->temp_cal_valid = ac->temp_valid;
+}
+
+static bool b43_phy_ac_temp_recal_due(struct b43_wldev *dev)
+{
+	const struct b43_phy_ac *ac = dev->phy.ac;
+	int delta = b43_phy_ac_temp_delta(dev);
+
+	return delta && ac->temp_valid && ac->temp_cal_valid &&
+	       abs(ac->temp - ac->temp_cal) >= delta;
 }
 
 /*
@@ -9349,6 +9419,25 @@ static void b43_phy_ac_wd_stats_poll(struct b43_wldev *dev)
 }
 
 /*
+ * The calibrations again when the temperature has moved by
+ * b43_phy_ac_temp_delta() since the last ones, as b43_phy_ac_bss_up() runs
+ * them on a live interface, where the channel allows it. The stock
+ * driver's own trigger is not in a capture: none spans such a change.
+ */
+static void b43_phy_ac_temp_recal(struct b43_wldev *dev)
+{
+	struct b43_phy_ac *ac = dev->phy.ac;
+
+	if (!b43_phy_ac_temp_recal_due(dev) ||
+	    !b43_phy_ac_may_calibrate_tx(dev))
+		return;
+	b43dbg(dev->wl, "AC-PHY: %d deg C, calibrated at %d: calibrating\n",
+	       ac->temp, ac->temp_cal);
+	b43_phy_ac_calibration_block(dev);
+	ac->crs_update_pending = true;
+}
+
+/*
  * The second half of a watchdog turn: statistics poll, optional
  * tempsense (@tempsense, MAC suspended), latch of the SHM window (@tail).
  */
@@ -9361,6 +9450,7 @@ static void b43_phy_ac_wd_body(struct b43_wldev *dev, bool tempsense,
 		b43_mac_suspend(dev);
 		b43_phy_ac_tempsense(dev);
 		b43_mac_enable(dev);
+		b43_phy_ac_temp_recal(dev);
 	}
 
 	if (tail)

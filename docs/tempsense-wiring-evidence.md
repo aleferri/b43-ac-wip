@@ -1,7 +1,28 @@
 # Tempsense: from raw samples to a temperature (agcombo, BCM4360)
 
-The port replays the stock measurement and stops at the raw samples; nothing
-converts or consumes them yet. This is the material to close that.
+The port replays the stock measurement and converts it on the fit below
+(`b43_phy_ac_temp_update()`); the watchdog runs the calibrations again when
+the temperature has moved by `phycal_tempdelta` since the last ones
+(`b43_phy_ac_temp_recal()`). Nothing else consumes it yet. This is the
+material to refine the fit.
+
+## Defaults of the SROM fields
+
+From the D6220's `wl.o` (7.14, MIPS, not stripped), for an AC-PHY:
+
+- `phycal_tempdelta` (`wlc_phy_read_tempdelta_settings()`): 0 stays 0, no
+  temperature-driven calibration; above 64, 255 included, it becomes 40;
+  otherwise the SROM's value. The 40 matches what the DSL-3580L's
+  `wl phycal_tempdelta` reports for its 255.
+- `tempthresh` (`wlc_phy_attach()`): 1 to 254 as programmed, 0 and 255 give
+  150 on the HT and AC PHYs (115 on the others). On a BCM4360 where a field
+  of the shared info (offset 68, not identified) reads 273 or 279, 120
+  whatever the SROM says; the tg789vac programs 120 itself.
+- `temps_hysteresis`: 0 and 15 give 5. The attach keeps
+  `tempthresh - temps_hysteresis` beside them and the full chain mask, which
+  `wlc_phy_stf_chain_temp_throttle_acphy()` and
+  `wlc_phy_stf_chain_active_get()` use to drop TX chains above the threshold
+  and give them back below the lower one. The port does not throttle yet.
 
 ## What the port collects
 
@@ -54,6 +75,8 @@ average or chain 0.
 ## To close it
 
 - more (diff, `phy_tempsense`) pairs over a wider span;
+- a capture where the stock driver recalibrates on a temperature change, for
+  its trigger and for what it runs then (the port runs the bss-up's block);
 - the AC-PHY default slope and offset from the blob's `.rodata`, to check the
   fit against;
 - whether b43 averages the chains or keeps one reading per core, since they

@@ -151,7 +151,9 @@ How the pieces fit is in [`docs/driver-status.md`](docs/driver-status.md).
   with mac80211, and so do protected management frames on TX
   (`docs/retrace-todo.md`, "Hardware encryption"); `nohwcrypt=1` leaves all
   of it to mac80211.
-- Temperature: raw tempsense samples are collected and not converted
+- Temperature: converted on a three-point fit from one board, and used only
+  to run the calibrations again after a move of `phycal_tempdelta` (40 deg C
+  above 64, so when unprogrammed); no thermal throttling
   ([`docs/tempsense-wiring-evidence.md`](docs/tempsense-wiring-evidence.md)).
 
 ## Build and hardware test

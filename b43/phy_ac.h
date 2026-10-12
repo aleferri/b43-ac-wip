@@ -606,11 +606,15 @@ struct b43_phy_ac {
 	 * The last temperature reading of each chain, from
 	 * b43_phy_ac_tempsense_chain(), as [core][step][sample]: the four
 	 * {bit1, bit2} configurations of radio 0x?00e, (1,0), (0,0), (1,1),
-	 * (0,1), and the eight reads of PHY 0x0013 each. Not consumed yet: the
-	 * conversion to degrees needs two calibration points from the stock
-	 * driver's phy_tempsense.
+	 * (0,1), and the eight reads of PHY 0x0013 each, turned into @temp by
+	 * b43_phy_ac_temp_update().
 	 */
 	u16 tempsense_samples[B43_PHY_AC_MAX_CORES][4][8];
+	/* Last reading and the last calibration's, deg C. */
+	int temp;
+	int temp_cal;
+	bool temp_valid;
+	bool temp_cal_valid;
 	/*
 	 * Shadow of the five HOSTFn shared-memory words, and whether a change
 	 * is written through to the cell.
