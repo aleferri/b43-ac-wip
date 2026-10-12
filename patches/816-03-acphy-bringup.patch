@@ -6,15 +6,15 @@ Subject: [PATCH 2/2] b43: AC-PHY bring-up from the reverse-engineered port
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     4 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |   102 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 10645 +++++++++++++++-
- drivers/net/wireless/broadcom/b43/phy_ac.h    |   819 +-
- drivers/net/wireless/broadcom/b43/ppr_ac.c    |   270 +
- drivers/net/wireless/broadcom/b43/ppr_ac.h    |    84 +
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 10672 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.h    |   821 +-
+ drivers/net/wireless/broadcom/b43/ppr_ac.c    |   310 +
+ drivers/net/wireless/broadcom/b43/ppr_ac.h    |    94 +
  .../net/wireless/broadcom/b43/radio_2069.c    |  1671 +++
  .../net/wireless/broadcom/b43/radio_2069.h    |    48 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1079 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    51 +
- 10 files changed, 14751 insertions(+), 22 deletions(-)
+ 10 files changed, 14830 insertions(+), 22 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -147,7 +147,7 @@ index 0000000..56a4d2c
 +	b43_read32(dev, B43_MMIO_MACCTL);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index fe102ea..37583a2 100644
+index fe102ea..a4788b0 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -1,17 +1,53 @@
@@ -210,7 +210,38 @@ index fe102ea..37583a2 100644
  
  static int b43_phy_ac_op_allocate(struct b43_wldev *dev)
  {
-@@ -62,27 +98,10598 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -25,15 +61,30 @@ static int b43_phy_ac_op_allocate(struct b43_wldev *dev)
+ 	return 0;
+ }
+ 
++/*
++ * The chipcommon chipcontrol bits the FEM setup sets go back to their
++ * power-on state: chipcommon outlives the core's resets and a module
++ * reload, so a driver loaded after this one in the same boot would
++ * otherwise find them set without setting them itself.
++ */
+ static void b43_phy_ac_op_free(struct b43_wldev *dev)
+ {
+ 	struct b43_phy *phy = &dev->phy;
+ 	struct b43_phy_ac *phy_ac = phy->ac;
+ 
++	if (phy_ac && phy_ac->chipctl_set)
++		bcma_cc_mask32(&dev->dev->bdev->bus->drv_cc, BCMA_CC_CHIPCTL,
++			       ~phy_ac->chipctl_set);
+ 	kfree(phy_ac);
+ 	phy->ac = NULL;
+ }
+ 
++static void b43_phy_ac_chipctl_set(struct b43_wldev *dev, u32 bits)
++{
++	bcma_cc_set32(&dev->dev->bdev->bus->drv_cc, BCMA_CC_CHIPCTL, bits);
++	dev->phy.ac->chipctl_set |= bits;
++}
++
+ static void b43_phy_ac_op_maskset(struct b43_wldev *dev, u16 reg, u16 mask,
+ 				  u16 set)
+ {
+@@ -62,27 +113,10610 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -771,22 +802,23 @@ index fe102ea..37583a2 100644
 +/*
 + * The twelve rates of the rateset in increasing bitrate, the order the stock
 + * driver visits the blocks, CCK interleaved with OFDM. @dirmap is the index
-+ * in the direct-map table (the SIGNAL low nibble), @ofdm the legacy rate
-+ * index for b43_ppr_ac_ofdm(), 0 = 6 Mbit/s to 7 = 54.
++ * in the direct-map table (the SIGNAL low nibble), @idx the rate's index in
++ * its class: for b43_ppr_ac_ofdm(), 0 = 6 Mbit/s to 7 = 54, for
++ * b43_ppr_ac_cck(), 0 = 1 Mbit/s to 3 = 11.
 + */
 +struct b43_phy_ac_prb_rsp_rate {
 +	u8 dirmap;
-+	u8 ofdm;
++	u8 idx;
 +	bool cck;
 +};
 +
 +static const struct b43_phy_ac_prb_rsp_rate b43_phy_ac_prb_rsp_rates[12] = {
 +	{ 10, 0, true  },	/*  1 Mbit/s */
-+	{  4, 0, true  },	/*  2 */
-+	{  7, 0, true  },	/*  5.5 */
++	{  4, 1, true  },	/*  2 */
++	{  7, 2, true  },	/*  5.5 */
 +	{ 11, 0, false },	/*  6 */
 +	{ 15, 1, false },	/*  9 */
-+	{ 14, 0, true  },	/* 11 */
++	{ 14, 3, true  },	/* 11 */
 +	{ 10, 2, false },	/* 12 */
 +	{ 14, 3, false },	/* 18 */
 +	{  9, 4, false },	/* 24 */
@@ -878,6 +910,18 @@ index fe102ea..37583a2 100644
 +}
 +
 +/*
++ * The SROM's antenna gain of the band the PHY is on, in quarter dB, negative
++ * ones as none: ag0 on 2.4 GHz, aga0 on 5 GHz (antenna_gain_qdb[0] and [1]).
++ */
++static int b43_phy_ac_antgain(struct b43_wldev *dev)
++{
++	const struct ssb_sprom *sprom = dev->dev->bus_sprom;
++	bool g = dev->phy.ac->cal_channel <= 14;
++
++	return max_t(int, sprom->antenna_gain_qdb[g ? 0 : 1], 0);
++}
++
++/*
 + * Chain masks of the 0x05d4-0x05dc block, which b43.h calls KEYIDXBLOCK for
 + * the v4 firmware. On the AC core it is the microcode's TX core table, one
 + * cell per rate class (enum b43_phy_ac_txcore): the DSL-3580L's wl writes
@@ -917,7 +961,7 @@ index fe102ea..37583a2 100644
 +struct b43_phy_ac_local_max_row {
 +	u8 first, last;		/* primary channel range, inclusive */
 +	u8 level;		/* Local Max, quarter-dBm EIRP */
- };
++};
 +
 +static const struct b43_phy_ac_local_max_row b43_phy_ac_local_max_20[] = {
 +	{  36,  48,  84 },
@@ -965,7 +1009,7 @@ index fe102ea..37583a2 100644
 +enum b43_phy_ac_chain_site {
 +	B43_PHY_AC_CHAIN_SETUP,		/* channel setup (x2) and down */
 +	B43_PHY_AC_CHAIN_TXPWR,		/* b43_phy_ac_txpwr_adjust() */
-+};
+ };
 +
 +/* Chain count of the class whose per-chain offsets are @off, see above. */
 +static unsigned int b43_phy_ac_chain_count(int board, int limit,
@@ -1008,7 +1052,6 @@ index fe102ea..37583a2 100644
 +	static const u8 off_cdd[] = { 0, 0, 12, 20 };
 +	static const u8 off_txbf[] = { 0, 0, 24, 39 };
 +	struct b43_phy_ac *ac = dev->phy.ac;
-+	const struct ssb_sprom *sprom = dev->dev->bus_sprom;
 +	unsigned int chains = hweight8(ac->coremask);
 +	u16 level = b43_phy_ac_local_max(ac, width);
 +	int board, limit, antgain;
@@ -1017,9 +1060,7 @@ index fe102ea..37583a2 100644
 +	if (!level || !ac->txpwr_maxp)
 +		return;
 +
-+	antgain = sprom->antenna_gain_qdb[1];
-+	if (antgain < 0)
-+		antgain = 0;
++	antgain = b43_phy_ac_antgain(dev);
 +	limit = (int)level - antgain;
 +	if (site == B43_PHY_AC_CHAIN_TXPWR && width != NL80211_CHAN_WIDTH_20)
 +		limit += 4;
@@ -1253,7 +1294,8 @@ index fe102ea..37583a2 100644
 + * with K constant over a segment's rates (1 dB on ch60/40, 2 dB on ch116/80,
 + * 3 dB on ch36/80) and not derived yet; ch100 at 40 and 80 MHz does not take
 + * even that form (docs/retrace-todo.md). CCK has no 5 GHz SROM field in rev
-+ * 11, see b43_phy_ac_cck_rate_po().
++ * 11, see b43_phy_ac_cck_rate_po(); on 2.4 GHz a CCK rate keeps its SROM
++ * distance from the target like an OFDM one, with no legacy limit.
 + * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
 + *   13009-13068, 13683-13742, 36065-36124]
 + * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -1280,21 +1322,24 @@ index fe102ea..37583a2 100644
 +		u16 cell = (u16)(2 * ptr + B43_AC_RT_RATE_PO);
 +		u16 val;
 +
-+		if (r->cck)
++		if (r->cck && sp->has_cck)
++			val = ac->rate_po_cck = b43_phy_ac_rate_po(ac,
++					b43_ppr_ac_cck(sp, r->idx), 0);
++		else if (r->cck)
 +			val = ac->rate_po_cck = b43_phy_ac_cck_rate_po(ac);
 +		else if (capped)
 +			val = b43_phy_ac_rate_po_capped(ac,
 +					b43_ppr_ac_ofdm(&ac->txpwr_ppr,
-+							ac->cal_width, r->ofdm),
++							ac->cal_width, r->idx),
 +					cap);
 +		else
 +			val = b43_phy_ac_rate_po(ac,
 +						 b43_ppr_ac_ofdm(sp, ac->cal_width,
-+								 r->ofdm),
++								 r->idx),
 +						 cap);
 +
 +		if (!r->cck)
-+			ac->rate_po_ofdm[r->ofdm] = val;
++			ac->rate_po_ofdm[r->idx] = val;
 +		b43_shm_read16(dev, B43_SHM_SHARED, cell);
 +		b43_shm_write16(dev, B43_SHM_SHARED, cell, val);
 +	}
@@ -1944,7 +1989,6 @@ index fe102ea..37583a2 100644
 +static u16 b43_phy_ac_reg_ceiling(struct b43_wldev *dev)
 +{
 +	const struct cfg80211_chan_def *chandef = &dev->wl->hw->conf.chandef;
-+	const struct ssb_sprom *sprom = dev->dev->bus_sprom;
 +	struct b43_phy_ac *ac = dev->phy.ac;
 +	unsigned int span, low, i;
 +	int antgain, best = INT_MAX;
@@ -1964,9 +2008,7 @@ index fe102ea..37583a2 100644
 +		break;
 +	}
 +
-+	antgain = sprom->antenna_gain_qdb[1];
-+	if (antgain < 0)
-+		antgain = 0;
++	antgain = b43_phy_ac_antgain(dev);
 +
 +	/*
 +	 * Every 20 MHz channel of the block, from the lowest up, whichever of
@@ -2070,7 +2112,9 @@ index fe102ea..37583a2 100644
 +			"the 40/80 MHz power target may differ\n");
 +
 +	for (core = 0; core < ac->num_cores; core++) {
-+		u8 own = sprom->core_pwr_info[core].maxp5ga[sb];
++		const struct ssb_sprom_core_pwr_info *pi =
++			&sprom->core_pwr_info[core];
++		u8 own = ac->cal_channel <= 14 ? pi->maxp2ga : pi->maxp5ga[sb];
 +		u8 target = max;
 +
 +		if (own > maxp)
@@ -3176,7 +3220,7 @@ index fe102ea..37583a2 100644
 +	B43_AC_FN();
 +	b43_phy_set(dev, 0x040a, 0x0100);
 +	b43_phy_write(dev, 0x0414, 0x0555);
-+	bcma_cc_set32(&dev->dev->bdev->bus->drv_cc, BCMA_CC_CHIPCTL, 0x00000008);
++	b43_phy_ac_chipctl_set(dev, 0x00000008);
 +}
 +
 +static const struct b43_phy_ac_fem b43_phy_ac_fems[] = {
@@ -3243,8 +3287,7 @@ index fe102ea..37583a2 100644
 +	 * sets bit 24 of chipcommon chipcontrol here; the routers do not.
 +	 */
 +	if (sprom->boardflags_lo & B43_BFL_BTCOEXIST)
-+		bcma_cc_set32(&dev->dev->bdev->bus->drv_cc, BCMA_CC_CHIPCTL,
-+			      0x01000000);
++		b43_phy_ac_chipctl_set(dev, 0x01000000);
 +
 +	b43_phy_ac_tbl_write_unlock(dev, saved);
 +}
@@ -10823,7 +10866,7 @@ index fe102ea..37583a2 100644
 +	(void)b43_phy_ac_farrow_vals_432x_media_a1;
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.h b/drivers/net/wireless/broadcom/b43/phy_ac.h
-index 02eb6c0..935ed97 100644
+index 02eb6c0..1a5b9a6 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.h
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.h
 @@ -3,6 +3,12 @@
@@ -10926,7 +10969,7 @@ index 02eb6c0..935ed97 100644
  #define B43_PHY_AC_C1_CLIP			0x6d4
  #define  B43_PHY_AC_C1_CLIP_DIS			0x4000
  #define B43_PHY_AC_C2_CLIP			0x8d4
-@@ -31,9 +100,753 @@
+@@ -31,9 +100,755 @@
  #define B43_PHY_AC_C3_CLIP			0xad4
  #define  B43_PHY_AC_C3_CLIP_DIS			0x4000
  
@@ -11158,6 +11201,8 @@ index 02eb6c0..935ed97 100644
 +	 * so that for_each_set_bit() walks it directly.
 +	 */
 +	unsigned long coremask;
++	/* Chipcommon chipcontrol bits set by the FEM setup, cleared on free. */
++	u32 chipctl_set;
 +	/* LPF and DAC-buffer caps, measured by b43_radio_2069_rccal(). */
 +	u8 lpf_cap0;
 +	u8 lpf_cap1;
@@ -11682,10 +11727,10 @@ index 02eb6c0..935ed97 100644
  #endif /* B43_PHY_AC_H_ */
 diff --git a/drivers/net/wireless/broadcom/b43/ppr_ac.c b/drivers/net/wireless/broadcom/b43/ppr_ac.c
 new file mode 100644
-index 0000000..a07d713
+index 0000000..4e21ce3
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/ppr_ac.c
-@@ -0,0 +1,270 @@
+@@ -0,0 +1,310 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Per-rate power table for the AC-PHY, SROM revision 11.
@@ -11703,6 +11748,11 @@ index 0000000..a07d713
 +#define ppr_ac_for_each_entry(ppr, i, entry)				\
 +	for (i = 0, entry = (ppr)->__all;					\
 +	     i < (ppr)->num;						\
++	     i++, entry++)
++
++#define ppr_ac_for_each_cck(ppr, i, entry)					\
++	for (i = 0, entry = (ppr)->cck;					\
++	     (ppr)->has_cck && i < B43_PPR_AC_CCK_RATES;			\
 +	     i++, entry++)
 +
 +/* Row of the table a width sits on; also the number of rows it loads - 1. */
@@ -11731,6 +11781,8 @@ index 0000000..a07d713
 +
 +	ppr_ac_for_each_entry(ppr, i, entry)
 +		*entry = (u8)clamp_t(int, *entry + diff, 0, 127);
++	ppr_ac_for_each_cck(ppr, i, entry)
++		*entry = (u8)clamp_t(int, *entry + diff, 0, 127);
 +}
 +
 +void b43_ppr_ac_apply_max(struct b43_ppr_ac *ppr, u8 max)
@@ -11739,6 +11791,8 @@ index 0000000..a07d713
 +	u8 *entry;
 +
 +	ppr_ac_for_each_entry(ppr, i, entry)
++		*entry = min(*entry, max);
++	ppr_ac_for_each_cck(ppr, i, entry)
 +		*entry = min(*entry, max);
 +}
 +
@@ -11749,6 +11803,8 @@ index 0000000..a07d713
 +
 +	ppr_ac_for_each_entry(ppr, i, entry)
 +		*entry = max(*entry, min);
++	ppr_ac_for_each_cck(ppr, i, entry)
++		*entry = max(*entry, min);
 +}
 +
 +u8 b43_ppr_ac_get_max(const struct b43_ppr_ac *ppr)
@@ -11758,6 +11814,8 @@ index 0000000..a07d713
 +
 +	for (i = 0; i < ppr->num; i++)
 +		res = max(ppr->__all[i], res);
++	for (i = 0; ppr->has_cck && i < B43_PPR_AC_CCK_RATES; i++)
++		res = max(ppr->cck[i], res);
 +
 +	return res;
 +}
@@ -11776,6 +11834,13 @@ index 0000000..a07d713
 +	if (WARN_ON_ONCE(rate >= B43_PPR_AC_OFDM_RATES))
 +		return 0;
 +	return ppr->rows[b43_ppr_ac_row(width)][b43_ppr_ac_ofdm_group[rate]];
++}
++
++u8 b43_ppr_ac_cck(const struct b43_ppr_ac *ppr, unsigned int rate)
++{
++	if (WARN_ON_ONCE(rate >= B43_PPR_AC_CCK_RATES))
++		return 0;
++	return ppr->has_cck ? ppr->cck[rate] : 0;
 +}
 +
 +static const u8 b43_ppr_ac_vht_group[] = {
@@ -11861,7 +11926,15 @@ index 0000000..a07d713
 +	return 2;
 +}
 +
-+/* Fill the rows the width loads from @top less each group's nibble. */
++static bool b43_ppr_ac_is_2g(u16 chan)
++{
++	return chan <= 14;
++}
++
++/*
++ * Fill the rows the width loads from @top less each group's nibble, and on
++ * 2.4 GHz the CCK rates less theirs.
++ */
 +static void b43_ppr_ac_fill_rows(const struct ssb_sprom *sprom,
 +				 struct b43_ppr_ac *ppr, u16 chan, u8 top)
 +{
@@ -11870,13 +11943,21 @@ index 0000000..a07d713
 +		{ sprom->mcsbw205gmpo, sprom->mcsbw405gmpo, sprom->mcsbw805gmpo },
 +		{ sprom->mcsbw205ghpo, sprom->mcsbw405ghpo, sprom->mcsbw805ghpo },
 +	};
-+	unsigned int band = b43_ppr_ac_po_band(chan);
-+	unsigned int row, g;
++	const u32 po2g[B43_PPR_AC_ROWS] = {
++		sprom->mcsbw202gpo, sprom->mcsbw402gpo, 0,
++	};
++	bool g = b43_ppr_ac_is_2g(chan);
++	const u32 *rowpo = g ? po2g : po[b43_ppr_ac_po_band(chan)];
++	u16 cck = sprom->cckbw202gpo;
++	unsigned int row, i;
 +
 +	for (row = 0; row < ppr->num / B43_PPR_AC_GROUPS; row++)
-+		for (g = 0; g < B43_PPR_AC_GROUPS; g++)
-+			ppr->rows[row][g] = b43_ppr_ac_sub(top,
-+						b43_ppr_ac_off(po[band][row], g));
++		for (i = 0; i < B43_PPR_AC_GROUPS; i++)
++			ppr->rows[row][i] = b43_ppr_ac_sub(top,
++						b43_ppr_ac_off(rowpo[row], i));
++	ppr->has_cck = g;
++	for (i = 0; g && i < B43_PPR_AC_CCK_RATES; i++)
++		ppr->cck[i] = b43_ppr_ac_sub(top, b43_ppr_ac_off(cck, i));
 +}
 +
 +u8 b43_ppr_ac_load_max_from_sprom(const struct ssb_sprom *sprom, u8 coremask,
@@ -11891,9 +11972,13 @@ index 0000000..a07d713
 +	b43_ppr_ac_clear(ppr, width);
 +
 +	for (c = 0; c < num_cores && c < ARRAY_SIZE(sprom->core_pwr_info); c++) {
++		const struct ssb_sprom_core_pwr_info *pi;
++
 +		if (!(coremask & (1u << c)))
 +			continue;
-+		maxp = min(maxp, sprom->core_pwr_info[c].maxp5ga[sb]);
++		pi = &sprom->core_pwr_info[c];
++		maxp = min(maxp, b43_ppr_ac_is_2g(chan) ? pi->maxp2ga
++							  : pi->maxp5ga[sb]);
 +	}
 +	if (maxp == 0xff)
 +		maxp = 0;
@@ -11958,10 +12043,10 @@ index 0000000..a07d713
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/ppr_ac.h b/drivers/net/wireless/broadcom/b43/ppr_ac.h
 new file mode 100644
-index 0000000..cf86308
+index 0000000..24c3e8b
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/ppr_ac.h
-@@ -0,0 +1,84 @@
+@@ -0,0 +1,94 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +#ifndef B43_PPR_AC_H_
 +#define B43_PPR_AC_H_
@@ -11998,11 +12083,16 @@ index 0000000..cf86308
 + * and the 80 MHz row at 80: those are the 20-in-40, 20-in-80 and 40-in-80 rate
 + * groups of a bonded channel, and the reason the maximum over the table is
 + * taken over every width the channel contains.
++ *
++ * On 2.4 GHz the same groups come from mcsbw202gpo and mcsbw402gpo under
++ * maxp2ga, and the four CCK rates, 1, 2, 5.5 and 11 Mb/s, from the four
++ * nibbles of cckbw202gpo, in cck[].
 + */
 +
 +#define B43_PPR_AC_GROUPS	8
 +#define B43_PPR_AC_ROWS		3	/* 20, 40, 80 MHz */
 +#define B43_PPR_AC_OFDM_RATES	8	/* 6, 9, 12, 18, 24, 36, 48, 54 Mb/s */
++#define B43_PPR_AC_CCK_RATES	4	/* 1, 2, 5.5, 11 Mb/s, 2.4 GHz only */
 +
 +struct b43_ppr_ac {
 +	union {
@@ -12011,6 +12101,8 @@ index 0000000..cf86308
 +	};
 +	/* Entries the current width loads: 8 at 20 MHz, 16 at 40, 24 at 80. */
 +	unsigned int num;
++	u8 cck[B43_PPR_AC_CCK_RATES];
++	bool has_cck;		/* 2.4 GHz */
 +};
 +
 +void b43_ppr_ac_clear(struct b43_ppr_ac *ppr, enum nl80211_chan_width width);
@@ -12026,6 +12118,9 @@ index 0000000..cf86308
 + */
 +u8 b43_ppr_ac_ofdm(const struct b43_ppr_ac *ppr, enum nl80211_chan_width width,
 +		   unsigned int rate);
++
++/* The power of a CCK rate, 0 = 1 Mb/s to 3 = 11; zero off 2.4 GHz. */
++u8 b43_ppr_ac_cck(const struct b43_ppr_ac *ppr, unsigned int rate);
 +
 +/* The same for a VHT MCS, 0-9, on the row of @width. */
 +u8 b43_ppr_ac_vht(const struct b43_ppr_ac *ppr, enum nl80211_chan_width width,
