@@ -4962,6 +4962,32 @@ static bool b43_ac_retune_needed(struct b43_wldev *dev,
 }
 
 /*
+ * A band change on the AC PHY is a full init, the core's included: the
+ * band's initvals, the MAC block, the PHY's tables, radio setup and
+ * calibrations of the other band are all rewritten, and the reset the old
+ * path takes the PHY through leaves nothing of it for the hot path to
+ * build on. So the controller restarts; its core init comes up on the
+ * band of the configured channel (b43_wireless_core_init()) and the
+ * reconfiguration that follows tunes it.
+ */
+static int b43_ac_switch_band(struct b43_wldev *dev,
+			      const struct ieee80211_channel *chan)
+{
+	struct b43_phy *phy = &dev->phy;
+	bool gmode = chan->band == NL80211_BAND_2GHZ;
+
+	if (!(gmode ? phy->supports_2ghz : phy->supports_5ghz)) {
+		b43err(dev->wl, "This device doesn't support %s-GHz band\n",
+		       band_to_string(chan->band));
+		return -ENODEV;
+	}
+	b43info(dev->wl, "Switching to %s GHz band: core restart\n",
+		band_to_string(chan->band));
+	ieee80211_queue_work(dev->wl->hw, &dev->restart_work);
+	return 0;
+}
+
+/*
  * A channel change on a running AC interface. The stock driver changes
  * channel only through a down and an up; this is that cycle for the PHY.
  * The up's core resets, ucode load and PLL setup are left out: the PLL
@@ -5060,6 +5086,12 @@ static int b43_op_config(struct ieee80211_hw *hw, u32 changed)
 	if (changed & IEEE80211_CONF_CHANGE_CHANNEL) {
 		phy->chandef = &conf->chandef;
 		phy->channel = conf->chandef.chan->hw_value;
+
+		if (ac && !!phy->gmode !=
+		    (conf->chandef.chan->band == NL80211_BAND_2GHZ)) {
+			err = b43_ac_switch_band(dev, conf->chandef.chan);
+			goto out_mac_enable;
+		}
 
 		/* Switch the band (if necessary). */
 		err = b43_switch_band(dev, conf->chandef.chan);
@@ -5975,6 +6007,11 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
 	u64 hf;
 
 	B43_WARN_ON(b43_status(dev) != B43_STAT_UNINIT);
+
+	/* The AC PHY comes up on the band of the configured channel. */
+	if (phy->type == B43_PHYTYPE_AC && dev->wl->hw->conf.chandef.chan)
+		phy->gmode = dev->wl->hw->conf.chandef.chan->band ==
+			     NL80211_BAND_2GHZ;
 
 	err = b43_bus_powerup(dev, 0);
 	if (err)

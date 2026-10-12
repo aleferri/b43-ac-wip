@@ -884,7 +884,12 @@ open too.
 ## 2.4 GHz
 
 `switch_channel` refuses the band unless the driver is built with `ALLOW_24`,
-as the unit harness is. `test/unit/band_gate.sh` compares the port's delta
+as the unit harness is. A band change on a running interface is a full init:
+the controller restarts and its core init comes up on the band of the
+configured channel (`b43_ac_switch_band()`). The old path put the PHY through
+a reset and rebuilt it on the hot path, which keeps the other band's tables;
+gonsolo saw the same on his port, 2.4 GHz after 5 GHz associating and
+receiving but sending nothing until he reloaded the 2.4 GHz tables. `test/unit/band_gate.sh` compares the port's delta
 between ch40/ch44 and ch2/ch3 with the one the MacBookAir6,1 and the archer-t5e
 share (72 registers or cells, both on the 6.30 hybrid): 58 reproduced with the
 d6220 profile, 60 with `BOARD=archer`, one of the two dual-band SROMs.
