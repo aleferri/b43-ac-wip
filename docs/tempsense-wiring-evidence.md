@@ -3,7 +3,7 @@
 The port replays the stock measurement and converts it on the fit below
 (`b43_phy_ac_temp_update()`); the watchdog runs the calibrations again when
 the temperature has moved by `phycal_tempdelta` since the last ones
-(`b43_phy_ac_temp_recal()`). Nothing else consumes it yet. This is the
+(`b43_phy_ac_temp_recal()`), and throttles TX on heat (below). This is the
 material to refine the fit.
 
 ## Defaults of the SROM fields
@@ -21,8 +21,13 @@ From the D6220's `wl.o` (7.14, MIPS, not stripped), for an AC-PHY:
 - `temps_hysteresis`: 0 and 15 give 5. The attach keeps
   `tempthresh - temps_hysteresis` beside them and the full chain mask, which
   `wlc_phy_stf_chain_temp_throttle_acphy()` and
-  `wlc_phy_stf_chain_active_get()` use to drop TX chains above the threshold
-  and give them back below the lower one. The port does not throttle yet.
+  `wlc_phy_stf_chain_active_get()` use: at or above the threshold the TX
+  chain mask becomes the lowest chain of the hardware's (a table
+  `{1, 1, 2, 1, 4, 1, 2, 1}`), RX keeping all of them, and at or below
+  `tempthresh - temps_hysteresis` the configured mask comes back. The port
+  does the same after each watchdog reading (`b43_phy_ac_temp_throttle()`),
+  with 120 at most on every BCM4360 since it cannot tell the ones the stock
+  driver singles out, and sends every MCS on one stream meanwhile.
 
 ## What the port collects
 

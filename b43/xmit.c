@@ -398,6 +398,26 @@ bool b43_txhdr_ac_rate_ok(const struct ieee80211_supported_band *band,
 	return r->idx < band->n_bitrates;
 }
 
+/*
+ * Under thermal throttling TX has one chain (b43_phy_ac_temp_throttle()),
+ * which carries one stream: each MCS goes out on one at the same index,
+ * and its status reports that rate.
+ */
+static void b43_txhdr_ac_one_stream(struct ieee80211_tx_rate *rates)
+{
+	unsigned int i;
+
+	for (i = 0; i < IEEE80211_TX_MAX_RATES && rates[i].idx >= 0; i++) {
+		struct ieee80211_tx_rate *r = &rates[i];
+		u8 mcs = ieee80211_rate_get_vht_mcs(r);
+
+		if (r->flags & IEEE80211_TX_RC_VHT_MCS)
+			ieee80211_rate_set_vht(r, mcs, 1);
+		else if (r->flags & IEEE80211_TX_RC_MCS)
+			r->idx %= 8;
+	}
+}
+
 /* One legacy rate, @rate a B43_*_RATE_*, on the primary 20 MHz. */
 static void b43_txhdr_ac_legacy(const struct b43_phy_ac *ac,
 				struct b43_txhdr_ac_rate *r, u8 rate,
@@ -729,6 +749,8 @@ static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 	if (key)
 		len += key->icv_len;
 
+	if (READ_ONCE(ac->thermal_throttled))
+		b43_txhdr_ac_one_stream(rates);
 	for (n = 1; n < B43_TXH_AC_RATES; n++) {
 		const struct ieee80211_tx_rate *t = &rates[n];
 

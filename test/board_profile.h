@@ -530,6 +530,7 @@ static inline void board_profile_to_sprom(const struct board_profile *p,
 	s->boardflags2_hi = p->boardflags2 >> 16;
 	s->boardflags3 = p->boardflags3;
 	s->rxchain = p->rxchain;
+	s->txchain = p->rxchain;
 	s->subband5gver = p->subband5gver;
 	for (b = 0; b < 2; b++)
 		s->antenna_gain_qdb[b] = (s8)(4 * (p->antgain_raw[b] & 0x3f) +

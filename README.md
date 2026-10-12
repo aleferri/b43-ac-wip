@@ -151,9 +151,11 @@ How the pieces fit is in [`docs/driver-status.md`](docs/driver-status.md).
   with mac80211, and so do protected management frames on TX
   (`docs/retrace-todo.md`, "Hardware encryption"); `nohwcrypt=1` leaves all
   of it to mac80211.
-- Temperature: converted on a three-point fit from one board, and used only
-  to run the calibrations again after a move of `phycal_tempdelta` (40 deg C
-  above 64, so when unprogrammed); no thermal throttling
+- Temperature: converted on a three-point fit from one board; it runs the
+  calibrations again after a move of `phycal_tempdelta` (40 deg C above 64,
+  so when unprogrammed) and drops TX to one chain at `tempthresh` (150 deg C
+  unprogrammed, 120 at most on a BCM4360) until it falls by
+  `temps_hysteresis` (5)
   ([`docs/tempsense-wiring-evidence.md`](docs/tempsense-wiring-evidence.md)).
 
 ## Build and hardware test

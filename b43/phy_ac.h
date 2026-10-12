@@ -610,6 +610,11 @@ struct b43_phy_ac {
 	 * b43_phy_ac_temp_update().
 	 */
 	u16 tempsense_samples[B43_PHY_AC_MAX_CORES][4][8];
+	/*
+	 * TX on one chain for heat (b43_phy_ac_temp_throttle()); read by the
+	 * TX path without the lock.
+	 */
+	bool thermal_throttled;
 	/* Last reading and the last calibration's, deg C. */
 	int temp;
 	int temp_cal;

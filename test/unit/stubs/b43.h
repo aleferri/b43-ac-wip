@@ -161,6 +161,9 @@ struct ssb_sprom_rxgains {
  * struct bcma_device or struct ssb_device wrapped in b43_bus_dev; here
  * we hold only the fields the scratch code reads.
  */
+#define WRITE_ONCE(x, val)	((x) = (val))
+#define READ_ONCE(x)		(x)
+
 struct ssb_sprom {
 	u8 il0mac[6];		/* MAC address of the 802.11 core */
 	/*
@@ -194,6 +197,7 @@ struct ssb_sprom {
 	u16 boardflags_lo, boardflags_hi;
 	u16 boardflags2_lo, boardflags2_hi;
 	u8 rxchain;
+	u8 txchain;
 	u8 subband;
 	u8 subband5gver;
 	/* LED behaviour per GPIO pin: ledbh0-3 dalla SROM, 4-15 dalla NVRAM

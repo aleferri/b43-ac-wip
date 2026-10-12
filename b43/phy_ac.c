@@ -901,6 +901,19 @@ static u16 b43_phy_ac_chain_mask(u16 coremask, unsigned int n)
 	return coremask & ~(u16)(lowest << 1);
 }
 
+/*
+ * The one chain left under thermal throttling: the lowest of the SROM's
+ * txchain, as the stock driver's table {1, 1, 2, 1, 4, 1, 2, 1} indexed by
+ * its TX chain mask gives it, within the wired ones.
+ */
+static u16 b43_phy_ac_throttle_chain(struct b43_wldev *dev)
+{
+	u16 coremask = dev->phy.ac->coremask;
+	u16 tx = dev->dev->bus_sprom->txchain & coremask;
+
+	return b43_phy_ac_chain_mask(tx ? tx : coremask, 1);
+}
+
 /* The pair @site writes on 0x05d6/0x05d8, into @out. */
 static void b43_phy_ac_chain_pair(struct b43_wldev *dev,
 				  enum b43_phy_ac_chain_site site,
@@ -913,6 +926,10 @@ static void b43_phy_ac_chain_pair(struct b43_wldev *dev,
 	u16 level = b43_phy_ac_local_max(ac, width);
 	int board, limit, antgain;
 
+	if (ac->thermal_throttled) {
+		out[0] = out[1] = b43_phy_ac_throttle_chain(dev);
+		return;
+	}
 	out[0] = out[1] = ac->coremask;
 	if (!level || !ac->txpwr_maxp)
 		return;
@@ -941,7 +958,8 @@ static void b43_phy_ac_chainmask_block(struct b43_wldev *dev,
 				       enum b43_phy_ac_chain_site site)
 {
 	u16 *txcore = dev->phy.ac->txcore;
-	u16 mask = dev->phy.ac->coremask;
+	u16 mask = dev->phy.ac->thermal_throttled ?
+		    b43_phy_ac_throttle_chain(dev) : dev->phy.ac->coremask;
 	u16 pair[2];
 	unsigned int i;
 
@@ -9438,6 +9456,69 @@ static void b43_phy_ac_temp_recal(struct b43_wldev *dev)
 }
 
 /*
+ * Thermal throttling, as the stock driver's
+ * wlc_phy_stf_chain_temp_throttle_acphy() does it (the D6220's wl.o): at
+ * or above tempthresh TX goes down to one chain, and comes back to all of
+ * them at tempthresh - temps_hysteresis or below; RX keeps every chain.
+ * The defaults are its wlc_phy_attach()'s: tempthresh 150 when the SROM
+ * has 0 or 255, temps_hysteresis 5 when it has 0 or 15. On some BCM4360s it
+ * takes 120 whatever the SROM says, by a field this driver cannot tell
+ * apart, so every BCM4360 here takes 120 at most. The readings are this
+ * driver's (b43_phy_ac_temp_update()), so where the fit is off the
+ * threshold moves with it.
+ *
+ * One chain carries one stream: the TX path sends every rate of a throttled
+ * interface on one (b43_txhdr_ac_one_stream()), and the TX core cells of
+ * the microcode's own frames follow b43_phy_ac_chain_pair().
+ */
+static int b43_phy_ac_tempthresh(struct b43_wldev *dev)
+{
+	u8 t = dev->dev->bus_sprom->tempthresh;
+	int thresh = (t == 0 || t == 0xff) ? 150 : t;
+
+	if (dev->dev->chip_id == 0x4360)
+		thresh = min(thresh, 120);
+	return thresh;
+}
+
+static int b43_phy_ac_temps_hysteresis(struct b43_wldev *dev)
+{
+	u8 h = dev->dev->bus_sprom->temps_hysteresis;
+
+	return (h == 0 || h == 0xf) ? 5 : h;
+}
+
+static void b43_phy_ac_temp_throttle(struct b43_wldev *dev)
+{
+	struct b43_phy_ac *ac = dev->phy.ac;
+	int thresh = b43_phy_ac_tempthresh(dev);
+	bool throttle = ac->thermal_throttled;
+
+	if (!ac->temp_valid)
+		return;
+	if (!throttle && ac->temp >= thresh)
+		throttle = true;
+	else if (throttle &&
+		 ac->temp <= thresh - b43_phy_ac_temps_hysteresis(dev))
+		throttle = false;
+	if (throttle == ac->thermal_throttled)
+		return;
+
+	if (throttle)
+		b43warn(dev->wl,
+			"AC-PHY: %d deg C, threshold %d: TX on one chain\n",
+			ac->temp, thresh);
+	else
+		b43info(dev->wl, "AC-PHY: %d deg C: TX on every chain again\n",
+			ac->temp);
+	WRITE_ONCE(ac->thermal_throttled, throttle);
+	b43_mac_suspend(dev);
+	b43_phy_ac_bss_cc_update(dev, B43_PHY_AC_CHAIN_TXPWR);
+	b43_phy_ac_chainmask_block(dev, B43_PHY_AC_CHAIN_TXPWR);
+	b43_mac_enable(dev);
+}
+
+/*
  * The second half of a watchdog turn: statistics poll, optional
  * tempsense (@tempsense, MAC suspended), latch of the SHM window (@tail).
  */
@@ -9451,6 +9532,7 @@ static void b43_phy_ac_wd_body(struct b43_wldev *dev, bool tempsense,
 		b43_phy_ac_tempsense(dev);
 		b43_mac_enable(dev);
 		b43_phy_ac_temp_recal(dev);
+		b43_phy_ac_temp_throttle(dev);
 	}
 
 	if (tail)
