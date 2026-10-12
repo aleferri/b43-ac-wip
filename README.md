@@ -95,8 +95,8 @@ The DSL-3580L runs the port under OpenWrt with `ucode42.fw` 784.2 from
   minstrel expects of VHT80 MCS 9 without aggregation (63 Mbit/s); with
   CCMP in mac80211 it was 10, the b43 IRQ thread filling a core. Both
   without aggregation, before TX block ack sessions were taken.
-- **RX** under traffic: no `RX descriptor underrun`, with the 128 slots of
-  816-02. See `docs/retrace-todo.md`, "On hardware".
+- **RX**: with A-MPDUs from the phone, 128 slots underrun; the 816-02 sets
+  192. See `docs/retrace-todo.md`, "On hardware".
 
 The log of a normal build has one `set_channel` line per channel switch and
 the warnings: TX errors (`PHY transmission error`, a frame dropped for a

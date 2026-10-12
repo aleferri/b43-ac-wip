@@ -897,7 +897,7 @@ index e0a74f4..79baf57 100644
  }
  
 diff --git a/drivers/net/wireless/broadcom/b43/dma.h b/drivers/net/wireless/broadcom/b43/dma.h
-index e86212b..5725ad3 100644
+index e86212b..6b86fc7 100644
 --- a/drivers/net/wireless/broadcom/b43/dma.h
 +++ b/drivers/net/wireless/broadcom/b43/dma.h
 @@ -167,12 +167,20 @@ struct b43_dmadesc_generic {
@@ -909,7 +909,7 @@ index e86212b..5725ad3 100644
  /* DMA engine tuning knobs */
  #define B43_TXRING_SLOTS		256
 -#define B43_RXRING_SLOTS		32
-+#define B43_RXRING_SLOTS		128
++#define B43_RXRING_SLOTS		192
  #define B43_DMA0_RX_FW598_BUFSIZE	(B43_DMA0_RX_FW598_FO + IEEE80211_MAX_FRAME_LEN)
  #define B43_DMA0_RX_FW351_BUFSIZE	(B43_DMA0_RX_FW351_FO + IEEE80211_MAX_FRAME_LEN)
 +/*

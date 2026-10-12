@@ -1028,8 +1028,14 @@ ucode revision.
   `6362_intr.h` has no other) and frees its TX descriptors only from the
   RX poll: UDP out of the router alone stalls at ~1.5 Mbit/s, TCP flows
   run since their ACKs come in.
-- **RX under traffic.** No `RX descriptor underrun` in the 2026-10-11 log,
-  with the 128 slots of 816-02 (OpenWrt's 813 alone gives 32).
+- **RX under traffic.** With 128 slots no `RX descriptor underrun` while
+  stations send single frames (the 2026-10-11 log); with A-MPDUs from the
+  phone they underrun, so the 816-02 sets 192 over the 32 of OpenWrt's
+  813, between those and upstream's 256, which `b43/` and 0002 keep. The
+  6.30 driver keeps its receive index 256 descriptors ahead of the engine,
+  7.14 500. On the AC a slot holds a 3895-byte MPDU and its header, about
+  1.5 MiB for 192. The ring needs no power of two: `next_slot()` wraps at
+  `nr_slots`, and 192 descriptors fill well under a ring page.
 - **Values of the bring-up logs against `cold01-ch36-bw20.txt`**, printed
   since by a `B43_DEBUG` build only. Same as the
   board's own driver: radio `0x040b` reads `0x0169` after power-on, `0x0140`

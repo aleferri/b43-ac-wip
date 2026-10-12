@@ -120,7 +120,7 @@ edit it in the patch and re-run. A new AC-PHY source file enters 0003 and
 
 An adaptation that is not a substitution is written into the patch by hand,
 and the next run carries it like the others. The 816-02 has one: it sets
-`B43_RXRING_SLOTS` to 128 over the 32 of OpenWrt's 813, where `b43/` and
+`B43_RXRING_SLOTS` to 192 over the 32 of OpenWrt's 813, where `b43/` and
 0002 keep upstream's 256.
 
 `880` is 0001 for OpenWrt's kernel, which carries bcma and ssb (backports does
