@@ -3903,6 +3903,30 @@ static int b43_txfifo_init_rev42(struct b43_wldev *dev)
 }
 
 /*
+ * The aggregation queue manager, which builds the A-MPDUs the microcode
+ * sends. The stock drivers write it right after the TX FIFOs, 6.30.223
+ * under 832 (router-data/archer-t5e/mmiotrace.zip) and 7.14.43 under 928
+ * (router-data/vd625-agcombo/rxtx-1s-ht-ampdu.zip, its 16-bit lanes
+ * swapped by the big-endian bus) alike: AQMConfig once per FIFO pair
+ * index, 0x02 with the index in bits 5:4, then AQMAggParams 0x103f,
+ * AQMMaxIdx 64, an A-MPDU of at most 65535 bytes and no minimum MPDU
+ * length, which leaves the spacing to the descriptor. What the values mean
+ * beyond the names is not known.
+ */
+static void b43_aqm_init_rev42(struct b43_wldev *dev)
+{
+	unsigned int i;
+
+	for (i = 0; i < 4; i++)
+		b43_write16(dev, B43_MMIO_AQMCONFIG, (i << 4) | 0x0002);
+	b43_write16(dev, B43_MMIO_AQMAGGPARAMS, 0x103f);
+	b43_write16(dev, B43_MMIO_AQMMAXIDX, 0x0040);
+	b43_write16(dev, B43_MMIO_AQMMAXAGGLEN_LO, 0xffff);
+	b43_write16(dev, B43_MMIO_AQMMAXAGGLEN_HI, 0x0000);
+	b43_write16(dev, B43_MMIO_AQMMINMPDULEN, 0x0000);
+}
+
+/*
  * Airtime of an OFDM frame of @len bytes at 5 GHz, preamble and SIGNAL
  * included, from the bits per symbol of its rate.
  */
@@ -4118,6 +4142,7 @@ static int b43_chip_init(struct b43_wldev *dev)
 		err = b43_txfifo_init_rev42(dev);
 		if (err)
 			goto err_gpio_clean;
+		b43_aqm_init_rev42(dev);
 		b43_mac_switch_freq(dev, 0);
 	}
 

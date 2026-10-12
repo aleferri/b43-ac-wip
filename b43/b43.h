@@ -176,6 +176,13 @@
 #define B43_MMIO_BTCOEX_STAT		0x6B6 /* Bluetooth Coexistence Status */
 #define B43_MMIO_BTCOEX_TXCTL		0x6B8 /* Bluetooth Coexistence Transmit Control */
 #define B43_MMIO_WEPCTL			0x7C0
+/* Aggregation queue manager, core rev >= 40 (Broadcom's d11.h names) */
+#define B43_MMIO_AQMCONFIG		0x800
+#define B43_MMIO_AQMMAXIDX		0x804
+#define B43_MMIO_AQMMAXAGGLEN_LO	0x812
+#define B43_MMIO_AQMMAXAGGLEN_HI	0x814
+#define B43_MMIO_AQMAGGPARAMS		0x816
+#define B43_MMIO_AQMMINMPDULEN		0x818
 
 /* SPROM boardflags_lo values */
 #define B43_BFL_BTCOEXIST		0x0001	/* implements Bluetooth coexistance */
