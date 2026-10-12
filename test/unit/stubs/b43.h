@@ -400,6 +400,7 @@ void bcma_chipco_regctl_maskset(struct bcma_drv_cc *cc, u32 offset,
 				u32 mask, u32 set);
 #define BCMA_CC_CHIPCTL 0x0028
 void bcma_cc_set32(struct bcma_drv_cc *cc, u16 offset, u32 set);
+void bcma_cc_mask32(struct bcma_drv_cc *cc, u16 offset, u32 mask);
 
 enum bcma_clkmode {
 	BCMA_CLKMODE_FAST,

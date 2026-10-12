@@ -61,13 +61,28 @@ static int b43_phy_ac_op_allocate(struct b43_wldev *dev)
 	return 0;
 }
 
+/*
+ * The chipcommon chipcontrol bits the FEM setup sets go back to their
+ * power-on state: chipcommon outlives the core's resets and a module
+ * reload, so a driver loaded after this one in the same boot would
+ * otherwise find them set without setting them itself.
+ */
 static void b43_phy_ac_op_free(struct b43_wldev *dev)
 {
 	struct b43_phy *phy = &dev->phy;
 	struct b43_phy_ac *phy_ac = phy->ac;
 
+	if (phy_ac && phy_ac->chipctl_set)
+		bcma_cc_mask32(&dev->dev->bdev->bus->drv_cc, BCMA_CC_CHIPCTL,
+			       ~phy_ac->chipctl_set);
 	kfree(phy_ac);
 	phy->ac = NULL;
+}
+
+static void b43_phy_ac_chipctl_set(struct b43_wldev *dev, u32 bits)
+{
+	bcma_cc_set32(&dev->dev->bdev->bus->drv_cc, BCMA_CC_CHIPCTL, bits);
+	dev->phy.ac->chipctl_set |= bits;
 }
 
 static void b43_phy_ac_op_maskset(struct b43_wldev *dev, u16 reg, u16 mask,
@@ -3060,7 +3075,7 @@ static void b43_phy_ac_fem2_sub1_setup(struct b43_wldev *dev)
 	B43_AC_FN();
 	b43_phy_set(dev, 0x040a, 0x0100);
 	b43_phy_write(dev, 0x0414, 0x0555);
-	bcma_cc_set32(&dev->dev->bdev->bus->drv_cc, BCMA_CC_CHIPCTL, 0x00000008);
+	b43_phy_ac_chipctl_set(dev, 0x00000008);
 }
 
 static const struct b43_phy_ac_fem b43_phy_ac_fems[] = {
@@ -3127,8 +3142,7 @@ static void b43_phy_ac_set_regtbl_on_femctrl(struct b43_wldev *dev)
 	 * sets bit 24 of chipcommon chipcontrol here; the routers do not.
 	 */
 	if (sprom->boardflags_lo & B43_BFL_BTCOEXIST)
-		bcma_cc_set32(&dev->dev->bdev->bus->drv_cc, BCMA_CC_CHIPCTL,
-			      0x01000000);
+		b43_phy_ac_chipctl_set(dev, 0x01000000);
 
 	b43_phy_ac_tbl_write_unlock(dev, saved);
 }

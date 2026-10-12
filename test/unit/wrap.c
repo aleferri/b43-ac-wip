@@ -1738,6 +1738,15 @@ void bcma_cc_set32(struct bcma_drv_cc *cc, u16 offset, u32 set)
 		offset, set, set);
 }
 
+/* The bits the mask clears, as a set to zero of the same form. */
+void bcma_cc_mask32(struct bcma_drv_cc *cc, u16 offset, u32 mask)
+{
+	(void)cc;
+	fprintf(trace(),
+		"cpu1 SI.COREREG core=0x0000 off=0x%04x val=0x00000000 mask=0x%08x\n",
+		offset, ~mask);
+}
+
 /*
  * PLL readback for the driver's own PLLCTL verification. Not traced: the
  * reference captures were taken before the tracer logged PLL reads, so

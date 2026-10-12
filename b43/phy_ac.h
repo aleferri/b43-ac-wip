@@ -328,6 +328,8 @@ struct b43_phy_ac {
 	 * so that for_each_set_bit() walks it directly.
 	 */
 	unsigned long coremask;
+	/* Chipcommon chipcontrol bits set by the FEM setup, cleared on free. */
+	u32 chipctl_set;
 	/* LPF and DAC-buffer caps, measured by b43_radio_2069_rccal(). */
 	u8 lpf_cap0;
 	u8 lpf_cap1;
