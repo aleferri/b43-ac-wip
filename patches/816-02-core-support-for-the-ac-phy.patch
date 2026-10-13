@@ -15,9 +15,9 @@ Subject: [PATCH 1/2] b43: core support for the AC-PHY
  .../net/wireless/broadcom/b43/phy_common.c    |   61 +-
  .../net/wireless/broadcom/b43/phy_common.h    |   32 +-
  drivers/net/wireless/broadcom/b43/pio.c       |   16 +-
- drivers/net/wireless/broadcom/b43/xmit.c      |  840 +++++++-
+ drivers/net/wireless/broadcom/b43/xmit.c      |  857 +++++++-
  drivers/net/wireless/broadcom/b43/xmit.h      |  138 ++
- 13 files changed, 3285 insertions(+), 437 deletions(-)
+ 13 files changed, 3297 insertions(+), 442 deletions(-)
 
 diff --git a/drivers/net/wireless/broadcom/b43/Kconfig b/drivers/net/wireless/broadcom/b43/Kconfig
 index 5f008b4..c111eaf 100644
@@ -4329,7 +4329,7 @@ index 8358b1d..87fe13b 100644
  		b43_piorx_write32(q, B43_PIO8_RXCTL, B43_PIO8_RXCTL_DATARDY);
  	else
 diff --git a/drivers/net/wireless/broadcom/b43/xmit.c b/drivers/net/wireless/broadcom/b43/xmit.c
-index f0b0825..3de20f2 100644
+index f0b0825..4845f5a 100644
 --- a/drivers/net/wireless/broadcom/b43/xmit.c
 +++ b/drivers/net/wireless/broadcom/b43/xmit.c
 @@ -16,6 +16,7 @@
@@ -5024,9 +5024,9 @@ index f0b0825..3de20f2 100644
  		int rts_rate_ofdm, rts_rate_fb_ofdm;
  		struct b43_plcp_hdr6 *plcp;
 -		struct ieee80211_rate *rts_cts_rate;
- 
--		rts_cts_rate = ieee80211_get_rts_cts_rate(dev->wl->hw, info);
 -
+-		rts_cts_rate = ieee80211_get_rts_cts_rate(dev->wl->hw, info);
+ 
 -		rts_rate = rts_cts_rate ? rts_cts_rate->hw_value : B43_CCK_RATE_1MB;
 +		rts_rate = c.rts_rate;
  		rts_rate_ofdm = b43_is_ofdm_rate(rts_rate);
@@ -5192,7 +5192,32 @@ index f0b0825..3de20f2 100644
  	if (unlikely(macstat & B43_RX_MAC_FCSERR)) {
  		dev->wl->ieee_stats.dot11FCSErrorCount++;
  		status.flag |= RX_FLAG_FAILED_FCS_CRC;
-@@ -717,7 +1382,24 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
+@@ -669,12 +1334,19 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
+ 		status.flag |= RX_FLAG_FAILED_PLCP_CRC;
+ 	if (phystat0 & B43_RX_PHYST0_SHORTPRMBL)
+ 		status.enc_flags |= RX_ENC_FLAG_SHORTPRE;
+-	if (macstat & B43_RX_MAC_DECERR) {
+-		/* Decryption with the given key failed.
+-		 * Drop the packet. We also won't be able to decrypt it with
+-		 * the key in software. */
++	/*
++	 * Decryption with the given key failed: drop the packet, which the key
++	 * in software would not decrypt either. On the AC the error stands
++	 * only where decryption was attempted. Its microcode also sets the
++	 * bit on frames it did not try to decrypt, with the attempt bit clear,
++	 * when no hardware key applies: gonsolo found the MacBookAir6,1's
++	 * EAPOL key messages, DHCP and ARP replies flagged so, unprotected
++	 * ones among them, and its download stalling on the drops (his
++	 * notes/50). Those go up, for mac80211 to decrypt or take as they are.
++	 */
++	if ((macstat & B43_RX_MAC_DECERR) &&
++	    (dev->phy.type != B43_PHYTYPE_AC || (macstat & B43_RX_MAC_DEC)))
+ 		goto drop;
+-	}
+ 
+ 	/* Skip PLCP and padding */
+ 	padding = (macstat & B43_RX_MAC_PADDING) ? 2 : 0;
+@@ -717,7 +1389,24 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
  	}
  
  	/* Link quality statistics */
@@ -5218,7 +5243,7 @@ index f0b0825..3de20f2 100644
  	case B43_PHYTYPE_HT:
  		/* TODO: is max the right choice? */
  		status.signal = max_t(__s8,
-@@ -741,9 +1423,10 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
+@@ -741,9 +1430,10 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
  		break;
  	}
  
@@ -5232,7 +5257,7 @@ index f0b0825..3de20f2 100644
  	else
  		rate_idx = b43_plcp_get_bitrate_idx_cck(plcp);
  	if (unlikely(rate_idx == -1)) {
-@@ -776,7 +1459,7 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
+@@ -776,7 +1466,7 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
  	}
  
  	chanid = (chanstat & B43_RX_CHAN_ID) >> B43_RX_CHAN_ID_SHIFT;
@@ -5241,7 +5266,7 @@ index f0b0825..3de20f2 100644
  	case B43_PHYTYPE_G:
  		status.band = NL80211_BAND_2GHZ;
  		/* Somewhere between 478.104 and 508.1084 firmware for G-PHY
-@@ -792,13 +1475,17 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
+@@ -792,13 +1482,17 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
  	case B43_PHYTYPE_HT:
  		/* chanid is the SHM channel cookie. Which is the plain
  		 * channel number in b43. */
@@ -5260,7 +5285,7 @@ index f0b0825..3de20f2 100644
  	default:
  		B43_WARN_ON(1);
  		goto drop;
-@@ -815,6 +1502,23 @@ drop:
+@@ -815,6 +1509,23 @@ drop:
  	dev_kfree_skb_any(skb);
  }
  
@@ -5284,7 +5309,7 @@ index f0b0825..3de20f2 100644
  void b43_handle_txstatus(struct b43_wldev *dev,
  			 const struct b43_txstatus *status)
  {
-@@ -824,6 +1528,13 @@ void b43_handle_txstatus(struct b43_wldev *dev,
+@@ -824,6 +1535,13 @@ void b43_handle_txstatus(struct b43_wldev *dev,
  		return;
  	if (status->for_ampdu)
  		return;
@@ -5298,7 +5323,7 @@ index f0b0825..3de20f2 100644
  	if (!status->acked)
  		dev->wl->ieee_stats.dot11ACKFailureCount++;
  	if (status->rts_count) {
-@@ -841,6 +1552,55 @@ void b43_handle_txstatus(struct b43_wldev *dev,
+@@ -841,6 +1559,55 @@ void b43_handle_txstatus(struct b43_wldev *dev,
  	b43_phy_txpower_check(dev, 0);
  }
  
@@ -5354,7 +5379,7 @@ index f0b0825..3de20f2 100644
  /* Fill out the mac80211 TXstatus report based on the b43-specific
   * txstatus report data. This returns a boolean whether the frame was
   * successfully transmitted. */
-@@ -867,6 +1627,10 @@ bool b43_fill_txstatus_report(struct b43_wldev *dev,
+@@ -867,6 +1634,10 @@ bool b43_fill_txstatus_report(struct b43_wldev *dev,
  			frame_success = false;
  		}
  	}
