@@ -952,7 +952,8 @@ static void b43_phy_ac_chain_pair(struct b43_wldev *dev,
 /*
  * The cells up to two streams are written; three streams take coremask,
  * which every capture of a three-chain board has at 0x05dc and b43 does not
- * write.
+ * write. CCK goes out on one chain on 2.4 GHz: the MacBookAir6,1's wl
+ * writes 1 to the CCK cell there and 3 on 5 GHz, where nothing is CCK.
  */
 static void b43_phy_ac_chainmask_block(struct b43_wldev *dev,
 				       enum b43_phy_ac_chain_site site)
@@ -964,7 +965,9 @@ static void b43_phy_ac_chainmask_block(struct b43_wldev *dev,
 	unsigned int i;
 
 	b43_phy_ac_chain_pair(dev, site, dev->phy.ac->cal_width, pair);
-	txcore[B43_PHY_AC_TXCORE_CCK] = mask;
+	txcore[B43_PHY_AC_TXCORE_CCK] =
+		b43_current_band(dev->wl) == NL80211_BAND_2GHZ ?
+		b43_phy_ac_chain_mask(mask, 1) : mask;
 	txcore[B43_PHY_AC_TXCORE_OFDM] = pair[0];
 	txcore[B43_PHY_AC_TXCORE_NSTS1] = pair[1];
 	txcore[B43_PHY_AC_TXCORE_NSTS1 + 1] =
@@ -1366,11 +1369,18 @@ static void b43_phy_ac_classctl_write(struct b43_wldev *dev, bool arm)
 	 * 0x05f4/0x05f6 at 40 and 80. The only write per attach that does not
 	 * follow the width is the first, in channel_switch_prep(), which
 	 * carries bit 11 over from its peek before coeff_bank_init() has set
-	 * it.
+	 * it. On 2.4 GHz the release adds bit 0, the CCK classifier (the
+	 * N-PHY's CLASSCTL_CCKEN): the MacBookAir6,1's wl releases with 0x0df7
+	 * there, arms with 0x0df4 as on 5 GHz. Without it no CCK frame is
+	 * received, beacons and probe responses at 1 Mb/s among them.
 	 */
-	b43_phy_write(dev, 0x0140,
-		      (u16)((arm ? 0x0df4 : 0x0df6) &
-			    (b43_phy_ac_bw_step(dev) ? ~0x0800 : ~0)));
+	u16 val = arm ? 0x0df4 : 0x0df6;
+
+	if (!arm && b43_current_band(dev->wl) == NL80211_BAND_2GHZ)
+		val |= 0x0001;
+	if (b43_phy_ac_bw_step(dev))
+		val &= ~0x0800;
+	b43_phy_write(dev, 0x0140, val);
 	phy_ac->status_mask = (phy_ac->status_mask & ~B43_PHY_AC_STATE_RX_ANY) |
 			      (arm ? B43_PHY_AC_STATE_RX_WAITED
 				   : (B43_PHY_AC_STATE_RX_WAITED |
@@ -2736,9 +2746,9 @@ static void b43_phy_ac_clip_det(struct b43_wldev *dev, bool enable)
  * quiesce the PHY before reprogramming the radio; the steps are labelled A
  * onwards in the body.
  *
- * Bit 8 of 0x0003 is band-related but not confirmed; nominal 5 GHz is
- * bit 0. The clip mask here is 0x0010, distinct from the 0x0020 that
- * set_reg_on_reset() uses on the same registers.
+ * Bit 8 of 0x0003 is the band, B43_PHY_AC_BANDCTL_5GHZ. The clip mask here
+ * is 0x0010, distinct from the 0x0020 that set_reg_on_reset() uses on the
+ * same registers.
  *
  * Over the 104 segments of the d6220 cold and hot and agcombo cold sweeps
  * every write to 0x0140 is one of 0x05f4/0x05f6/0x0df4/0x0df6: bits [10:0]
@@ -2759,7 +2769,9 @@ static void b43_phy_ac_channel_switch_prep(struct b43_wldev *dev)
 	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE,
 			(u16)~B43_PHY_AC_RF_SEQ_OVERRIDE_GATE,
 			B43_PHY_AC_RF_SEQ_OVERRIDE_GATE);
-	b43_phy_maskset(dev, 0x0003, (u16)~0x0100, 0x0100);
+	b43_phy_maskset(dev, B43_PHY_AC_BANDCTL, (u16)~B43_PHY_AC_BANDCTL_5GHZ,
+			b43_current_band(dev->wl) == NL80211_BAND_5GHZ ?
+			B43_PHY_AC_BANDCTL_5GHZ : 0);
 
 	/*
 	 * B: classifier setup, a peek then a plain write. Bits [10:0] are fixed
@@ -5489,11 +5501,12 @@ static void b43_phy_ac_rxgain_init(struct b43_wldev *dev, unsigned int core)
 {
 	B43_AC_FN();
 	static const u16 fill_07[10] = { 7, 7, 7, 7, 7, 7, 7, 7, 7, 7 };
+	static const u16 fill_03[10] = { 3, 3, 3, 3, 3, 3, 3, 3, 3, 3 };
 	static const u16 fill_02[10] = { 2, 2, 2, 2, 2, 2, 2, 2, 2, 2 };
+	bool band_2g = b43_current_band(dev->wl) == NL80211_BAND_2GHZ;
 	const struct ssb_sprom *sprom = dev->dev->bus_sprom;
 	const struct ssb_sprom_rxgains *rxgains =
-		b43_current_band(dev->wl) == NL80211_BAND_2GHZ ?
-		&sprom->rxgains_2g : &sprom->rxgains_5gl;
+		band_2g ? &sprom->rxgains_2g : &sprom->rxgains_5gl;
 	u16 ps = (u16)(core * 0x0200);
 	u16 ta = (u16)(0x0044 + core * 0x0020);
 	u16 tb = (u16)(0x0045 + core * 0x0020);
@@ -5511,7 +5524,9 @@ static void b43_phy_ac_rxgain_init(struct b43_wldev *dev, unsigned int core)
 	b43_actab_write_bulk(dev, ta, 0x0000, 16, 2, hdr_arr);
 	b43_phy_write(dev,    0x173b, 0x002c);
 	b43_phy_write(dev,    0x1726, 0x000c);
-	b43_actab_write_bulk(dev, ta, 0x0020, 16, ARRAY_SIZE(fill_07), fill_07);
+	/* 2.4 GHz: 3, as the MacBook's wl leaves ch6; see the noise shaping. */
+	b43_actab_write_bulk(dev, ta, 0x0020, 16, ARRAY_SIZE(fill_07),
+			     band_2g ? fill_03 : fill_07);
 	b43_actab_write_bulk(dev, tb, 0x0020, 16, ARRAY_SIZE(fill_02), fill_02);
 }
 
@@ -10381,9 +10396,11 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	 * table ID stride 0x20), from the d6220 ch36 trace.
 	 *
 	 * On 2.4 GHz the MacBookAir6,1 and the archer-t5e (6.30 hybrid) write
-	 * the nshp runs below, the same on both boards and every core. The
-	 * first cell of each run is not taken from them: 6.30 and 7.14 already
-	 * differ there on 5 GHz, so 2.4 GHz keeps 7.14's 5 GHz value and warns.
+	 * the nshp runs below, the same on both boards and every core. 6.30 and
+	 * 7.14 differ on the first cell of each run on 5 GHz already, and only
+	 * 6.30 has a 2.4 GHz state: the MacBook's wl as it leaves ch6
+	 * (gonsolo's traces/wl-final-tables-2g-ch6.txt), the archer agreeing on
+	 * the cells its capture has. 2.4 GHz takes that whole.
 	 */
 	{
 		static const u16 nvar_data[5] = { 0x0020, 0x0021, 0x0022, 0x0023, 0x0024 };
@@ -10394,21 +10411,17 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 		static const u16 nshp_b8[6]   = { 0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005 };
 		static const u16 nshp_a10[7]  = { 0x00f5, 0x00f8, 0x00fb, 0x00fe, 0x0002, 0x0005, 0x0009 };
 		static const u16 nshp_b10[7]  = { 0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005, 0x0006 };
-		static const u16 nshp_a8_2g[6]  = { 0x00f9, 0x00ff, 0x0006, 0x000c, 0x0012, 0x0019 };
-		static const u16 nshp_a10_2g[7] = { 0x00f5, 0x00f8, 0x00fc, 0x00ff, 0x0002, 0x0002, 0x0002 };
-		static const u16 nshp_b10_2g[7] = { 0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0004, 0x0004 };
+		static const u16 nshp_a8_2g[6]  = { 0x00ff, 0x00ff, 0x0006, 0x000c, 0x0012, 0x0019 };
+		static const u16 nshp_b8_2g[6]  = { 0x0001, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005 };
+		static const u16 nshp_a10_2g[7] = { 0x00f8, 0x00f8, 0x00fc, 0x00ff, 0x0002, 0x0002, 0x0002 };
+		static const u16 nshp_b10_2g[7] = { 0x0001, 0x0001, 0x0002, 0x0003, 0x0004, 0x0004, 0x0004 };
 		bool band_2g = b43_current_band(dev->wl) == NL80211_BAND_2GHZ;
 		const u16 *a8 = band_2g ? nshp_a8_2g : nshp_a8;
+		const u16 *b8 = band_2g ? nshp_b8_2g : nshp_b8;
 		const u16 *a10 = band_2g ? nshp_a10_2g : nshp_a10;
 		const u16 *b10 = band_2g ? nshp_b10_2g : nshp_b10;
 		u16 saved, inner;
 		unsigned int core;
-
-		if (band_2g)
-			b43_phy_ac_todo(dev,
-				"2.4 GHz noise shaping: the first cell of "
-				"each run is the 5 GHz value, not measured "
-				"on 2.4 GHz\n");
 
 		/*
 		 * Phase 1: gate cycle, enable, shared tables, under the
@@ -10440,7 +10453,7 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 
 			b43_actab_read_log(dev, 0x15, nvar_off[core], 6);
 			b43_actab_write_bulk(dev, ta, 0x0008, 16, 6, a8);
-			b43_actab_write_bulk(dev, tb, 0x0008, 16, 6, nshp_b8);
+			b43_actab_write_bulk(dev, tb, 0x0008, 16, 6, b8);
 		}
 
 		b43_phy_ac_tbl_write_unlock(dev, inner);

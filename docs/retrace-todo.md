@@ -908,7 +908,30 @@ the controller restarts and its core init comes up on the band of the
 configured channel (`b43_ac_switch_band()`). The old path put the PHY through
 a reset and rebuilt it on the hot path, which keeps the other band's tables;
 gonsolo saw the same on his port, 2.4 GHz after 5 GHz associating and
-receiving but sending nothing until he reloaded the 2.4 GHz tables. `test/unit/band_gate.sh` compares the port's delta
+receiving but sending nothing until he reloaded the 2.4 GHz tables.
+
+On his MacBookAir6,1 the port faulted on every CCK frame and received
+nothing on 2.4 GHz. What the MacBook's wl does there and the port did not:
+
+- PHY `0x0003` bit 8 is the band, set on 5 GHz and clear on 2.4 GHz at each
+  channel switch's preparation; left set, the microcode faults on every CCK
+  frame (Andreas found it: "phyctl 00c4 00b8 0000" on a 1 Mb/s probe
+  request, gone on 21 scanned channels with the bit clear).
+- The classifier `0x0140` is released with 0x0df7 on 2.4 GHz, bit 0 the CCK
+  classifier, where 5 GHz has 0x0df6.
+- The CCK TX core cell `0x05d4` is 1 on 2.4 GHz, 3 on 5 GHz.
+- The noise-shaping runs of tables `0x44`/`0x45` (per core) take 6.30's
+  2.4 GHz state whole, first cells included, and `0x44[32..41]` is 3 there
+  where 7.14 writes 7 on 5 GHz (`traces/wl-final-tables-2g-ch6.txt` in
+  gonsolo's repository).
+
+Not taken: 6.30.223's TX-to-RX sequencer list in table 7 starts with an
+extra `0xb3` (cells 16-31, and the delays at 128-143 get a leading 1), on
+the MacBook and the archer alike and on both bands; 6.30.102 on the DSL and
+7.14 on the routers have the port's list. Andreas found it made no
+difference to 2.4 GHz reception.
+
+`test/unit/band_gate.sh` compares the port's delta
 between ch40/ch44 and ch2/ch3 with the one the MacBookAir6,1 and the archer-t5e
 share (72 registers or cells, both on the 6.30 hybrid): 58 reproduced with the
 d6220 profile, 60 with `BOARD=archer`, one of the two dual-band SROMs.

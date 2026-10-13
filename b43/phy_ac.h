@@ -13,7 +13,12 @@ struct ieee80211_channel;
 #define B43_PHY_AC_BBCFG			0x001
 #define  B43_PHY_AC_BBCFG_RSTCCA		0x4000	/* Reset CCA */
 #define B43_PHY_AC_BANDCTL			0x003	/* Band control */
-#define  B43_PHY_AC_BANDCTL_5GHZ		0x0001
+/*
+ * Set on 5 GHz, clear on 2.4 GHz: the MacBookAir6,1's wl writes 0x0100
+ * when it switches to a 5 GHz channel and 0 to a 2.4 GHz one. Left set on
+ * 2.4 GHz, the microcode faults on every CCK frame.
+ */
+#define  B43_PHY_AC_BANDCTL_5GHZ		0x0100
 #define B43_PHY_AC_TABLE_ID			0x00d
 #define B43_PHY_AC_TABLE_OFFSET			0x00e
 /*
