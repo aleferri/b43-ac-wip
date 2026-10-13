@@ -1660,7 +1660,7 @@ static void handle_irq_transmit_status(struct b43_wldev *dev)
 {
 	u32 v0, v1;
 	u16 tmp;
-	struct b43_txstatus stat;
+	struct b43_txstatus stat = {};
 
 	if (dev->fw.hdr_format == B43_FW_HDR_AC) {
 		while (b43_txstatus_read_ac(dev, &stat))

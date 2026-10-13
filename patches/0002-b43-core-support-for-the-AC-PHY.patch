@@ -618,13 +618,13 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
  drivers/net/wireless/broadcom/b43/dma.h       |   13 +-
  drivers/net/wireless/broadcom/b43/leds.c      |  225 +-
  drivers/net/wireless/broadcom/b43/leds.h      |   24 +-
- drivers/net/wireless/broadcom/b43/main.c      | 1854 +++++++++++++++--
+ drivers/net/wireless/broadcom/b43/main.c      | 1856 +++++++++++++++--
  .../net/wireless/broadcom/b43/phy_common.c    |   61 +-
  .../net/wireless/broadcom/b43/phy_common.h    |   32 +-
  drivers/net/wireless/broadcom/b43/pio.c       |   16 +-
  drivers/net/wireless/broadcom/b43/xmit.c      |  857 +++++++-
  drivers/net/wireless/broadcom/b43/xmit.h      |  138 ++
- 13 files changed, 3276 insertions(+), 421 deletions(-)
+ 13 files changed, 3277 insertions(+), 422 deletions(-)
 
 diff --git a/drivers/net/wireless/broadcom/b43/Kconfig b/drivers/net/wireless/broadcom/b43/Kconfig
 index 4559549..4f3bb9f 100644
@@ -1970,7 +1970,7 @@ index 5ebd1b2..ec38dea 100644
  
  #endif /* B43_LEDS_H_ */
 diff --git a/drivers/net/wireless/broadcom/b43/main.c b/drivers/net/wireless/broadcom/b43/main.c
-index 817448e..ad54a20 100644
+index 817448e..6fb304f 100644
 --- a/drivers/net/wireless/broadcom/b43/main.c
 +++ b/drivers/net/wireless/broadcom/b43/main.c
 @@ -317,6 +317,23 @@ static struct ieee80211_channel b43_5ghz_aphy_chantable[] = {
@@ -2528,7 +2528,8 @@ index 817448e..ad54a20 100644
  {
  	u32 v0, v1;
  	u16 tmp;
- 	struct b43_txstatus stat;
+-	struct b43_txstatus stat;
++	struct b43_txstatus stat = {};
  
 +	if (dev->fw.hdr_format == B43_FW_HDR_AC) {
 +		while (b43_txstatus_read_ac(dev, &stat))
