@@ -6,15 +6,15 @@ Subject: [PATCH 2/2] b43: AC-PHY bring-up from the reverse-engineered port
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     4 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |   102 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 10672 +++++++++++++++-
- drivers/net/wireless/broadcom/b43/phy_ac.h    |   821 +-
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 10926 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.h    |   851 +-
  drivers/net/wireless/broadcom/b43/ppr_ac.c    |   310 +
  drivers/net/wireless/broadcom/b43/ppr_ac.h    |    94 +
  .../net/wireless/broadcom/b43/radio_2069.c    |  1671 +++
  .../net/wireless/broadcom/b43/radio_2069.h    |    48 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1079 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    51 +
- 10 files changed, 14830 insertions(+), 22 deletions(-)
+ 10 files changed, 15113 insertions(+), 23 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -147,7 +147,7 @@ index 0000000..56a4d2c
 +	b43_read32(dev, B43_MMIO_MACCTL);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index fe102ea..a4788b0 100644
+index fe102ea..289524f 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -1,17 +1,53 @@
@@ -241,7 +241,7 @@ index fe102ea..a4788b0 100644
  static void b43_phy_ac_op_maskset(struct b43_wldev *dev, u16 reg, u16 mask,
  				  u16 set)
  {
-@@ -62,27 +113,10610 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -62,27 +113,10864 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -524,6 +524,8 @@ index fe102ea..a4788b0 100644
 +static void b43_phy_ac_wd_stats_tail(struct b43_wldev *dev);
 +static void b43_phy_ac_tempsense(struct b43_wldev *dev);
 +static bool b43_phy_ac_cal_reads_temp(struct b43_wldev *dev);
++static void b43_phy_ac_temp_update(struct b43_phy_ac *ac);
++static void b43_phy_ac_temp_cal_mark(struct b43_phy_ac *ac);
 +static bool b43_phy_ac_rfseq_wait_done(struct b43_wldev *dev, u16 busy,
 +				       unsigned int turns);
 +static void b43_phy_ac_run_samples(struct b43_wldev *dev, u16 nsamp,
@@ -1044,6 +1046,19 @@ index fe102ea..a4788b0 100644
 +	return coremask & ~(u16)(lowest << 1);
 +}
 +
++/*
++ * The one chain left under thermal throttling: the lowest of the SROM's
++ * txchain, as the stock driver's table {1, 1, 2, 1, 4, 1, 2, 1} indexed by
++ * its TX chain mask gives it, within the wired ones.
++ */
++static u16 b43_phy_ac_throttle_chain(struct b43_wldev *dev)
++{
++	u16 coremask = dev->phy.ac->coremask;
++	u16 tx = dev->dev->bus_sprom->txchain & coremask;
++
++	return b43_phy_ac_chain_mask(tx ? tx : coremask, 1);
++}
++
 +/* The pair @site writes on 0x05d6/0x05d8, into @out. */
 +static void b43_phy_ac_chain_pair(struct b43_wldev *dev,
 +				  enum b43_phy_ac_chain_site site,
@@ -1056,6 +1071,10 @@ index fe102ea..a4788b0 100644
 +	u16 level = b43_phy_ac_local_max(ac, width);
 +	int board, limit, antgain;
 +
++	if (ac->thermal_throttled) {
++		out[0] = out[1] = b43_phy_ac_throttle_chain(dev);
++		return;
++	}
 +	out[0] = out[1] = ac->coremask;
 +	if (!level || !ac->txpwr_maxp)
 +		return;
@@ -1078,18 +1097,22 @@ index fe102ea..a4788b0 100644
 +/*
 + * The cells up to two streams are written; three streams take coremask,
 + * which every capture of a three-chain board has at 0x05dc and b43 does not
-+ * write.
++ * write. CCK goes out on one chain on 2.4 GHz: the MacBookAir6,1's wl
++ * writes 1 to the CCK cell there and 3 on 5 GHz, where nothing is CCK.
 + */
 +static void b43_phy_ac_chainmask_block(struct b43_wldev *dev,
 +				       enum b43_phy_ac_chain_site site)
 +{
 +	u16 *txcore = dev->phy.ac->txcore;
-+	u16 mask = dev->phy.ac->coremask;
++	u16 mask = dev->phy.ac->thermal_throttled ?
++		    b43_phy_ac_throttle_chain(dev) : dev->phy.ac->coremask;
 +	u16 pair[2];
 +	unsigned int i;
 +
 +	b43_phy_ac_chain_pair(dev, site, dev->phy.ac->cal_width, pair);
-+	txcore[B43_PHY_AC_TXCORE_CCK] = mask;
++	txcore[B43_PHY_AC_TXCORE_CCK] =
++		b43_current_band(dev->wl) == NL80211_BAND_2GHZ ?
++		b43_phy_ac_chain_mask(mask, 1) : mask;
 +	txcore[B43_PHY_AC_TXCORE_OFDM] = pair[0];
 +	txcore[B43_PHY_AC_TXCORE_NSTS1] = pair[1];
 +	txcore[B43_PHY_AC_TXCORE_NSTS1 + 1] =
@@ -1491,11 +1514,18 @@ index fe102ea..a4788b0 100644
 +	 * 0x05f4/0x05f6 at 40 and 80. The only write per attach that does not
 +	 * follow the width is the first, in channel_switch_prep(), which
 +	 * carries bit 11 over from its peek before coeff_bank_init() has set
-+	 * it.
++	 * it. On 2.4 GHz the release adds bit 0, the CCK classifier (the
++	 * N-PHY's CLASSCTL_CCKEN): the MacBookAir6,1's wl releases with 0x0df7
++	 * there, arms with 0x0df4 as on 5 GHz. Without it no CCK frame is
++	 * received, beacons and probe responses at 1 Mb/s among them.
 +	 */
-+	b43_phy_write(dev, 0x0140,
-+		      (u16)((arm ? 0x0df4 : 0x0df6) &
-+			    (b43_phy_ac_bw_step(dev) ? ~0x0800 : ~0)));
++	u16 val = arm ? 0x0df4 : 0x0df6;
++
++	if (!arm && b43_current_band(dev->wl) == NL80211_BAND_2GHZ)
++		val |= 0x0001;
++	if (b43_phy_ac_bw_step(dev))
++		val &= ~0x0800;
++	b43_phy_write(dev, 0x0140, val);
 +	phy_ac->status_mask = (phy_ac->status_mask & ~B43_PHY_AC_STATE_RX_ANY) |
 +			      (arm ? B43_PHY_AC_STATE_RX_WAITED
 +				   : (B43_PHY_AC_STATE_RX_WAITED |
@@ -2861,9 +2891,9 @@ index fe102ea..a4788b0 100644
 + * quiesce the PHY before reprogramming the radio; the steps are labelled A
 + * onwards in the body.
 + *
-+ * Bit 8 of 0x0003 is band-related but not confirmed; nominal 5 GHz is
-+ * bit 0. The clip mask here is 0x0010, distinct from the 0x0020 that
-+ * set_reg_on_reset() uses on the same registers.
++ * Bit 8 of 0x0003 is the band, B43_PHY_AC_BANDCTL_5GHZ. The clip mask here
++ * is 0x0010, distinct from the 0x0020 that set_reg_on_reset() uses on the
++ * same registers.
 + *
 + * Over the 104 segments of the d6220 cold and hot and agcombo cold sweeps
 + * every write to 0x0140 is one of 0x05f4/0x05f6/0x0df4/0x0df6: bits [10:0]
@@ -2884,7 +2914,9 @@ index fe102ea..a4788b0 100644
 +	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE,
 +			(u16)~B43_PHY_AC_RF_SEQ_OVERRIDE_GATE,
 +			B43_PHY_AC_RF_SEQ_OVERRIDE_GATE);
-+	b43_phy_maskset(dev, 0x0003, (u16)~0x0100, 0x0100);
++	b43_phy_maskset(dev, B43_PHY_AC_BANDCTL, (u16)~B43_PHY_AC_BANDCTL_5GHZ,
++			b43_current_band(dev->wl) == NL80211_BAND_5GHZ ?
++			B43_PHY_AC_BANDCTL_5GHZ : 0);
 +
 +	/*
 +	 * B: classifier setup, a peek then a plain write. Bits [10:0] are fixed
@@ -5614,11 +5646,12 @@ index fe102ea..a4788b0 100644
 +{
 +	B43_AC_FN();
 +	static const u16 fill_07[10] = { 7, 7, 7, 7, 7, 7, 7, 7, 7, 7 };
++	static const u16 fill_03[10] = { 3, 3, 3, 3, 3, 3, 3, 3, 3, 3 };
 +	static const u16 fill_02[10] = { 2, 2, 2, 2, 2, 2, 2, 2, 2, 2 };
++	bool band_2g = b43_current_band(dev->wl) == NL80211_BAND_2GHZ;
 +	const struct ssb_sprom *sprom = dev->dev->bus_sprom;
 +	const struct ssb_sprom_rxgains *rxgains =
-+		b43_current_band(dev->wl) == NL80211_BAND_2GHZ ?
-+		&sprom->rxgains_2g : &sprom->rxgains_5gl;
++		band_2g ? &sprom->rxgains_2g : &sprom->rxgains_5gl;
 +	u16 ps = (u16)(core * 0x0200);
 +	u16 ta = (u16)(0x0044 + core * 0x0020);
 +	u16 tb = (u16)(0x0045 + core * 0x0020);
@@ -5636,7 +5669,9 @@ index fe102ea..a4788b0 100644
 +	b43_actab_write_bulk(dev, ta, 0x0000, 16, 2, hdr_arr);
 +	b43_phy_write(dev,    0x173b, 0x002c);
 +	b43_phy_write(dev,    0x1726, 0x000c);
-+	b43_actab_write_bulk(dev, ta, 0x0020, 16, ARRAY_SIZE(fill_07), fill_07);
++	/* 2.4 GHz: 3, as the MacBook's wl leaves ch6; see the noise shaping. */
++	b43_actab_write_bulk(dev, ta, 0x0020, 16, ARRAY_SIZE(fill_07),
++			     band_2g ? fill_03 : fill_07);
 +	b43_actab_write_bulk(dev, tb, 0x0020, 16, ARRAY_SIZE(fill_02), fill_02);
 +}
 +
@@ -5683,6 +5718,8 @@ index fe102ea..a4788b0 100644
 +{
 +	B43_AC_FN();
 +	u16 gate;
++
++	b43_phy_ac_temp_cal_mark(dev->phy.ac);
 +
 +	/* Post-cal finalize, iterations 2 and 3. */
 +	b43_phy_ac_post_cal_finalize(dev);
@@ -6052,6 +6089,72 @@ index fe102ea..a4788b0 100644
 +	b43_phy_maskset(dev, B43_PHY_AC_REG_TBL_WRITE_GATE, (u16)~0x0002, 0x0002);
 +	b43_phy_ac_meas_ctl_restore(dev, &ctl);
 +	b43_phy_ac_tbl_write_unlock(dev, gate_meas);
++	b43_phy_ac_temp_update(ac);
++}
++
++/*
++ * The temperature of the last reading. The samples are 12-bit two's
++ * complement; on each chain the thermal signal is
++ * ((step 1 - step 0) + (step 3 - step 2)) / 2 over the eight-sample means,
++ * and the chains are averaged. On the agcombo's 7.14.43 that signal is
++ * -1245 at the 39-40 deg C of a cold bss-up and -936 and -905 at the 54 and
++ * 56 its `wl phy_tempsense` printed warm (vd625-agcombo/bss-up.zip,
++ * up-nobss-ioctl.zip; docs/tempsense-wiring-evidence.md): about
++ * 0.0485 deg C a count, 100 at zero. Three points from one board give the
++ * direction and the size, not the exact line.
++ */
++static void b43_phy_ac_temp_update(struct b43_phy_ac *ac)
++{
++	const u16 (*smp)[8];
++	int sum = 0, n = 0;
++	unsigned int c, k, i;
++
++	for_each_set_bit(c, &ac->coremask, ac->num_cores) {
++		int m[4] = { 0 };
++
++		smp = ac->tempsense_samples[c];
++		for (k = 0; k < 4; k++)
++			for (i = 0; i < 8; i++)
++				m[k] += sign_extend32(smp[k][i], 11);
++		sum += (m[1] - m[0]) + (m[3] - m[2]);
++		n++;
++	}
++	if (!n)
++		return;
++	/* sum is 16 times the signal per chain, at most 2^18 in magnitude. */
++	ac->temp = sum * 485 / (16 * 10000 * n) + 100;
++	ac->temp_valid = true;
++}
++
++/*
++ * How far the temperature may move from the last calibration's before the
++ * watchdog runs the calibrations again: the SROM's phycal_tempdelta in
++ * deg C, none when it is 0 (b43_phy_ac_cal_reads_temp()), and 40 above 64,
++ * which takes in 255, unprogrammed. That is the rule of the D6220's wl
++ * (wlc_phy_read_tempdelta_settings() in its wl.o), and the 40 the
++ * DSL-3580L's wl reports for its 255 through `wl phycal_tempdelta`.
++ */
++static int b43_phy_ac_temp_delta(struct b43_wldev *dev)
++{
++	u8 d = dev->dev->bus_sprom->phycal_tempdelta;
++
++	return d > 64 ? 40 : d;
++}
++
++/* The calibration about to run takes the temperature of the last reading. */
++static void b43_phy_ac_temp_cal_mark(struct b43_phy_ac *ac)
++{
++	ac->temp_cal = ac->temp;
++	ac->temp_cal_valid = ac->temp_valid;
++}
++
++static bool b43_phy_ac_temp_recal_due(struct b43_wldev *dev)
++{
++	const struct b43_phy_ac *ac = dev->phy.ac;
++	int delta = b43_phy_ac_temp_delta(dev);
++
++	return delta && ac->temp_valid && ac->temp_cal_valid &&
++	       abs(ac->temp - ac->temp_cal) >= delta;
 +}
 +
 +/*
@@ -9494,6 +9597,88 @@ index fe102ea..a4788b0 100644
 +}
 +
 +/*
++ * The calibrations again when the temperature has moved by
++ * b43_phy_ac_temp_delta() since the last ones, as b43_phy_ac_bss_up() runs
++ * them on a live interface, where the channel allows it. The stock
++ * driver's own trigger is not in a capture: none spans such a change.
++ */
++static void b43_phy_ac_temp_recal(struct b43_wldev *dev)
++{
++	struct b43_phy_ac *ac = dev->phy.ac;
++
++	if (!b43_phy_ac_temp_recal_due(dev) ||
++	    !b43_phy_ac_may_calibrate_tx(dev))
++		return;
++	b43dbg(dev->wl, "AC-PHY: %d deg C, calibrated at %d: calibrating\n",
++	       ac->temp, ac->temp_cal);
++	b43_phy_ac_calibration_block(dev);
++	ac->crs_update_pending = true;
++}
++
++/*
++ * Thermal throttling, as the stock driver's
++ * wlc_phy_stf_chain_temp_throttle_acphy() does it (the D6220's wl.o): at
++ * or above tempthresh TX goes down to one chain, and comes back to all of
++ * them at tempthresh - temps_hysteresis or below; RX keeps every chain.
++ * The defaults are its wlc_phy_attach()'s: tempthresh 150 when the SROM
++ * has 0 or 255, temps_hysteresis 5 when it has 0 or 15. On some BCM4360s it
++ * takes 120 whatever the SROM says, by a field this driver cannot tell
++ * apart, so every BCM4360 here takes 120 at most. The readings are this
++ * driver's (b43_phy_ac_temp_update()), so where the fit is off the
++ * threshold moves with it.
++ *
++ * One chain carries one stream: the TX path sends every rate of a throttled
++ * interface on one (b43_txhdr_ac_one_stream()), and the TX core cells of
++ * the microcode's own frames follow b43_phy_ac_chain_pair().
++ */
++static int b43_phy_ac_tempthresh(struct b43_wldev *dev)
++{
++	u8 t = dev->dev->bus_sprom->tempthresh;
++	int thresh = (t == 0 || t == 0xff) ? 150 : t;
++
++	if (dev->dev->chip_id == 0x4360)
++		thresh = min(thresh, 120);
++	return thresh;
++}
++
++static int b43_phy_ac_temps_hysteresis(struct b43_wldev *dev)
++{
++	u8 h = dev->dev->bus_sprom->temps_hysteresis;
++
++	return (h == 0 || h == 0xf) ? 5 : h;
++}
++
++static void b43_phy_ac_temp_throttle(struct b43_wldev *dev)
++{
++	struct b43_phy_ac *ac = dev->phy.ac;
++	int thresh = b43_phy_ac_tempthresh(dev);
++	bool throttle = ac->thermal_throttled;
++
++	if (!ac->temp_valid)
++		return;
++	if (!throttle && ac->temp >= thresh)
++		throttle = true;
++	else if (throttle &&
++		 ac->temp <= thresh - b43_phy_ac_temps_hysteresis(dev))
++		throttle = false;
++	if (throttle == ac->thermal_throttled)
++		return;
++
++	if (throttle)
++		b43warn(dev->wl,
++			"AC-PHY: %d deg C, threshold %d: TX on one chain\n",
++			ac->temp, thresh);
++	else
++		b43info(dev->wl, "AC-PHY: %d deg C: TX on every chain again\n",
++			ac->temp);
++	WRITE_ONCE(ac->thermal_throttled, throttle);
++	b43_mac_suspend(dev);
++	b43_phy_ac_bss_cc_update(dev, B43_PHY_AC_CHAIN_TXPWR);
++	b43_phy_ac_chainmask_block(dev, B43_PHY_AC_CHAIN_TXPWR);
++	b43_mac_enable(dev);
++}
++
++/*
 + * The second half of a watchdog turn: statistics poll, optional
 + * tempsense (@tempsense, MAC suspended), latch of the SHM window (@tail).
 + */
@@ -9506,6 +9691,8 @@ index fe102ea..a4788b0 100644
 +		b43_mac_suspend(dev);
 +		b43_phy_ac_tempsense(dev);
 +		b43_mac_enable(dev);
++		b43_phy_ac_temp_recal(dev);
++		b43_phy_ac_temp_throttle(dev);
 +	}
 +
 +	if (tail)
@@ -9821,21 +10008,93 @@ index fe102ea..a4788b0 100644
 + * the calibration gate.
 + *
 + * 0x0251 and 0x0252 are the fill levels in 16-bit words of the two radar
-+ * pulse FIFOs, 0x0253 and 0x0254 their data ports: with the DSL-3580L's
-+ * lower threshold the levels are multiples of four (four words a pulse),
-+ * saturate at 0x05fc and match the words drained. With this driver's
-+ * threshold the FIFOs stay empty on every capture, so a pulse is an event,
-+ * reported by the poll. The pulse words are drained, not decoded.
++ * pulse FIFOs, 0x0253 and 0x0254 their data ports: four words a pulse, the
++ * levels saturating at 0x05fc.
 + */
 +#define B43_PHY_AC_RADAR_FIFO_WORDS	0x0600
 +
-+static void b43_phy_ac_radar_fifo_drain(struct b43_wldev *dev, u16 data,
-+					u16 level)
-+{
-+	u16 i;
++/*
++ * The radar test. The pulse words are not decoded beyond the first, a
++ * coarse timestamp: on the agcombo's 7.14.43 at this driver's threshold
++ * (vd625-agcombo/bss-up.zip, ch100/80, 175 s of polls) it rises on all
++ * 148 consecutive pairs and by about 1220 a second, 0.82 ms a step; the
++ * second FIFO mostly holds the first's pulses again, within a step. What
++ * carries the fine time, the width and the chirp is not established, so
++ * the pulses cannot be matched against the radar types.
++ *
++ * What the stock driver let pass is known instead. Over that capture it
++ * drained 182 pulses in 31 of its 1155 polls, at most 16 distinct ones
++ * within any 100 or 150 ms, finished its channel availability check after
++ * 60 s and kept the channel to the end. So a radar is declared, the test
++ * being conservative, when B43_PHY_AC_RADAR_PULSES distinct pulses fall
++ * within 100 ms (B43_PHY_AC_RADAR_WINDOW, in steps): one more than the
++ * stock driver discarded. The radar types send 10 to 29 pulses a burst, so
++ * the shorter bursts go unseen; the window catches a burst split across two
++ * polls. A pulse of the second FIFO within a step of one of the first's is
++ * the same pulse. The timestamp wraps every 54 s and polls come every
++ * 150 ms, so a timestamp lower than the last one is a wrap.
++ */
++#define B43_PHY_AC_RADAR_WINDOW		122
 +
-+	for (i = 0; i < min_t(u16, level, B43_PHY_AC_RADAR_FIFO_WORDS); i++)
-+		b43_phy_read(dev, data);
++static void b43_phy_ac_radar_pulse(struct b43_phy_ac *ac, u16 stamp)
++{
++	u32 ts, oldest = 0;
++	unsigned int i, keep;
++
++	if (stamp < ac->radar_last)
++		ac->radar_wrap += 0x10000;
++	ac->radar_last = stamp;
++	ts = ac->radar_wrap + stamp;
++
++	if (ts > B43_PHY_AC_RADAR_WINDOW)
++		oldest = ts - B43_PHY_AC_RADAR_WINDOW;
++	for (keep = 0, i = 0; i < ac->radar_n; i++)
++		if (ac->radar_ts[i] >= oldest)
++			ac->radar_ts[keep++] = ac->radar_ts[i];
++	if (keep == ARRAY_SIZE(ac->radar_ts))
++		memmove(ac->radar_ts, ac->radar_ts + 1, --keep * sizeof(u32));
++	ac->radar_ts[keep++] = ts;
++	ac->radar_n = keep;
++
++	if (keep >= B43_PHY_AC_RADAR_PULSES)
++		ac->radar_pulses = true;
++}
++
++/*
++ * One poll's pulses. Those of the second FIFO within a step of one of the
++ * first's are its pulses again; past B43_PHY_AC_RADAR_POLL_PULSES in the
++ * first the poll alone is a radar, so no more are kept for the comparison.
++ */
++#define B43_PHY_AC_RADAR_POLL_PULSES	32
++
++static void b43_phy_ac_radar_fifos(struct b43_wldev *dev, u16 level0,
++				   u16 level1)
++{
++	u16 first[B43_PHY_AC_RADAR_POLL_PULSES];
++	unsigned int nfirst = 0, i, j;
++	u16 n0 = min_t(u16, level0, B43_PHY_AC_RADAR_FIFO_WORDS);
++	u16 n1 = min_t(u16, level1, B43_PHY_AC_RADAR_FIFO_WORDS);
++
++	for (i = 0; i < n0; i++) {
++		u16 w = b43_phy_read(dev, 0x0253);
++
++		if (i % 4 || n0 - i < 4)
++			continue;
++		if (nfirst < ARRAY_SIZE(first))
++			first[nfirst++] = w;
++		b43_phy_ac_radar_pulse(dev->phy.ac, w);
++	}
++	for (i = 0; i < n1; i++) {
++		u16 w = b43_phy_read(dev, 0x0254);
++		bool again = false;
++
++		if (i % 4 || n1 - i < 4)
++			continue;
++		for (j = 0; j < nfirst; j++)
++			again |= (u16)(w - first[j] + 1) <= 2;
++		if (!again)
++			b43_phy_ac_radar_pulse(dev->phy.ac, w);
++	}
 +}
 +
 +static void b43_phy_ac_cac_poll(struct b43_wldev *dev, unsigned int turns)
@@ -9858,11 +10117,8 @@ index fe102ea..a4788b0 100644
 +		b43_mac_suspend(dev);
 +		level0 = b43_phy_read_log(dev, 0x0251);
 +		level1 = b43_phy_read_log(dev, 0x0252);
-+		b43_phy_ac_radar_fifo_drain(dev, 0x0253, level0);
-+		b43_phy_ac_radar_fifo_drain(dev, 0x0254, level1);
++		b43_phy_ac_radar_fifos(dev, level0, level1);
 +		b43_mac_enable(dev);
-+		if (level0 || level1)
-+			dev->phy.ac->radar_pulses = true;
 +	}
 +}
 +
@@ -10285,9 +10541,11 @@ index fe102ea..a4788b0 100644
 +	 * table ID stride 0x20), from the d6220 ch36 trace.
 +	 *
 +	 * On 2.4 GHz the MacBookAir6,1 and the archer-t5e (6.30 hybrid) write
-+	 * the nshp runs below, the same on both boards and every core. The
-+	 * first cell of each run is not taken from them: 6.30 and 7.14 already
-+	 * differ there on 5 GHz, so 2.4 GHz keeps 7.14's 5 GHz value and warns.
++	 * the nshp runs below, the same on both boards and every core. 6.30 and
++	 * 7.14 differ on the first cell of each run on 5 GHz already, and only
++	 * 6.30 has a 2.4 GHz state: the MacBook's wl as it leaves ch6
++	 * (gonsolo's traces/wl-final-tables-2g-ch6.txt), the archer agreeing on
++	 * the cells its capture has. 2.4 GHz takes that whole.
 +	 */
 +	{
 +		static const u16 nvar_data[5] = { 0x0020, 0x0021, 0x0022, 0x0023, 0x0024 };
@@ -10298,21 +10556,17 @@ index fe102ea..a4788b0 100644
 +		static const u16 nshp_b8[6]   = { 0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005 };
 +		static const u16 nshp_a10[7]  = { 0x00f5, 0x00f8, 0x00fb, 0x00fe, 0x0002, 0x0005, 0x0009 };
 +		static const u16 nshp_b10[7]  = { 0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005, 0x0006 };
-+		static const u16 nshp_a8_2g[6]  = { 0x00f9, 0x00ff, 0x0006, 0x000c, 0x0012, 0x0019 };
-+		static const u16 nshp_a10_2g[7] = { 0x00f5, 0x00f8, 0x00fc, 0x00ff, 0x0002, 0x0002, 0x0002 };
-+		static const u16 nshp_b10_2g[7] = { 0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0004, 0x0004 };
++		static const u16 nshp_a8_2g[6]  = { 0x00ff, 0x00ff, 0x0006, 0x000c, 0x0012, 0x0019 };
++		static const u16 nshp_b8_2g[6]  = { 0x0001, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005 };
++		static const u16 nshp_a10_2g[7] = { 0x00f8, 0x00f8, 0x00fc, 0x00ff, 0x0002, 0x0002, 0x0002 };
++		static const u16 nshp_b10_2g[7] = { 0x0001, 0x0001, 0x0002, 0x0003, 0x0004, 0x0004, 0x0004 };
 +		bool band_2g = b43_current_band(dev->wl) == NL80211_BAND_2GHZ;
 +		const u16 *a8 = band_2g ? nshp_a8_2g : nshp_a8;
++		const u16 *b8 = band_2g ? nshp_b8_2g : nshp_b8;
 +		const u16 *a10 = band_2g ? nshp_a10_2g : nshp_a10;
 +		const u16 *b10 = band_2g ? nshp_b10_2g : nshp_b10;
 +		u16 saved, inner;
 +		unsigned int core;
-+
-+		if (band_2g)
-+			b43_phy_ac_todo(dev,
-+				"2.4 GHz noise shaping: the first cell of "
-+				"each run is the 5 GHz value, not measured "
-+				"on 2.4 GHz\n");
 +
 +		/*
 +		 * Phase 1: gate cycle, enable, shared tables, under the
@@ -10344,7 +10598,7 @@ index fe102ea..a4788b0 100644
 +
 +			b43_actab_read_log(dev, 0x15, nvar_off[core], 6);
 +			b43_actab_write_bulk(dev, ta, 0x0008, 16, 6, a8);
-+			b43_actab_write_bulk(dev, tb, 0x0008, 16, 6, nshp_b8);
++			b43_actab_write_bulk(dev, tb, 0x0008, 16, 6, b8);
 +		}
 +
 +		b43_phy_ac_tbl_write_unlock(dev, inner);
@@ -10866,10 +11120,10 @@ index fe102ea..a4788b0 100644
 +	(void)b43_phy_ac_farrow_vals_432x_media_a1;
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.h b/drivers/net/wireless/broadcom/b43/phy_ac.h
-index 02eb6c0..1a5b9a6 100644
+index 02eb6c0..bf04dfc 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.h
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.h
-@@ -3,6 +3,12 @@
+@@ -3,20 +3,83 @@
  #define B43_PHY_AC_H_
  
  #include "phy_common.h"
@@ -10882,8 +11136,14 @@ index 02eb6c0..1a5b9a6 100644
  
  #define B43_PHY_AC_BBCFG			0x001
  #define  B43_PHY_AC_BBCFG_RSTCCA		0x4000	/* Reset CCA */
-@@ -10,13 +16,65 @@
- #define  B43_PHY_AC_BANDCTL_5GHZ		0x0001
+ #define B43_PHY_AC_BANDCTL			0x003	/* Band control */
+-#define  B43_PHY_AC_BANDCTL_5GHZ		0x0001
++/*
++ * Set on 5 GHz, clear on 2.4 GHz: the MacBookAir6,1's wl writes 0x0100
++ * when it switches to a 5 GHz channel and 0 to a 2.4 GHz one. Left set on
++ * 2.4 GHz, the microcode faults on every CCK frame.
++ */
++#define  B43_PHY_AC_BANDCTL_5GHZ		0x0100
  #define B43_PHY_AC_TABLE_ID			0x00d
  #define B43_PHY_AC_TABLE_OFFSET			0x00e
 -#define B43_PHY_AC_TABLE_DATA1			0x00f
@@ -10951,7 +11211,7 @@ index 02eb6c0..1a5b9a6 100644
  #define B43_PHY_AC_BW1A				0x371
  #define B43_PHY_AC_BW2				0x372
  #define B43_PHY_AC_BW3				0x373
-@@ -24,6 +82,17 @@
+@@ -24,6 +87,17 @@
  #define B43_PHY_AC_BW5				0x375
  #define B43_PHY_AC_BW6				0x376
  #define B43_PHY_AC_RFCTL_CMD			0x408
@@ -10969,7 +11229,7 @@ index 02eb6c0..1a5b9a6 100644
  #define B43_PHY_AC_C1_CLIP			0x6d4
  #define  B43_PHY_AC_C1_CLIP_DIS			0x4000
  #define B43_PHY_AC_C2_CLIP			0x8d4
-@@ -31,9 +100,755 @@
+@@ -31,9 +105,778 @@
  #define B43_PHY_AC_C3_CLIP			0xad4
  #define  B43_PHY_AC_C3_CLIP_DIS			0x4000
  
@@ -11193,6 +11453,12 @@ index 02eb6c0..1a5b9a6 100644
 +/* Bit 11 of the same readback, surviving the shift by two. */
 +#define B43_PHY_AC_IDLE_TSSI_BASE		0x0200
 +
++/*
++ * Distinct radar pulses within B43_PHY_AC_RADAR_WINDOW that make a radar:
++ * one more than the stock driver let pass (b43_phy_ac_radar_pulse()).
++ */
++#define B43_PHY_AC_RADAR_PULSES		17
++
  struct b43_phy_ac {
 +	/* physical core count (PHY reg 0x0b & 0x07), set by probe_cores */
 +	u8 num_cores;
@@ -11253,8 +11519,16 @@ index 02eb6c0..1a5b9a6 100644
 +	 * another meanwhile.
 +	 */
 +	bool noise_pending;
-+	/* A radar pulse arrived since the last b43_phy_ac_radar_poll(). */
++	/* A radar was seen since the last b43_phy_ac_radar_poll(). */
 +	bool radar_pulses;
++	/*
++	 * Recent radar pulses, by the FIFO's coarse timestamp unwrapped
++	 * (b43_phy_ac_radar_pulse()), oldest first.
++	 */
++	u32 radar_ts[B43_PHY_AC_RADAR_PULSES];
++	unsigned int radar_n;
++	u32 radar_wrap;
++	u16 radar_last;
 +	/* One more turn without a peek, after the entry turn. */
 +	bool peek_skip_one;
 +	/*
@@ -11465,11 +11739,20 @@ index 02eb6c0..1a5b9a6 100644
 +	 * The last temperature reading of each chain, from
 +	 * b43_phy_ac_tempsense_chain(), as [core][step][sample]: the four
 +	 * {bit1, bit2} configurations of radio 0x?00e, (1,0), (0,0), (1,1),
-+	 * (0,1), and the eight reads of PHY 0x0013 each. Not consumed yet: the
-+	 * conversion to degrees needs two calibration points from the stock
-+	 * driver's phy_tempsense.
++	 * (0,1), and the eight reads of PHY 0x0013 each, turned into @temp by
++	 * b43_phy_ac_temp_update().
 +	 */
 +	u16 tempsense_samples[B43_PHY_AC_MAX_CORES][4][8];
++	/*
++	 * TX on one chain for heat (b43_phy_ac_temp_throttle()); read by the
++	 * TX path without the lock.
++	 */
++	bool thermal_throttled;
++	/* Last reading and the last calibration's, deg C. */
++	int temp;
++	int temp_cal;
++	bool temp_valid;
++	bool temp_cal_valid;
 +	/*
 +	 * Shadow of the five HOSTFn shared-memory words, and whether a change
 +	 * is written through to the cell.
