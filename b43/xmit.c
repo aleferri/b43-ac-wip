@@ -1334,12 +1334,19 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
 		status.flag |= RX_FLAG_FAILED_PLCP_CRC;
 	if (phystat0 & B43_RX_PHYST0_SHORTPRMBL)
 		status.enc_flags |= RX_ENC_FLAG_SHORTPRE;
-	if (macstat & B43_RX_MAC_DECERR) {
-		/* Decryption with the given key failed.
-		 * Drop the packet. We also won't be able to decrypt it with
-		 * the key in software. */
+	/*
+	 * Decryption with the given key failed: drop the packet, which the key
+	 * in software would not decrypt either. On the AC the error stands
+	 * only where decryption was attempted. Its microcode also sets the
+	 * bit on frames it did not try to decrypt, with the attempt bit clear,
+	 * when no hardware key applies: gonsolo found the MacBookAir6,1's
+	 * EAPOL key messages, DHCP and ARP replies flagged so, unprotected
+	 * ones among them, and its download stalling on the drops (his
+	 * notes/50). Those go up, for mac80211 to decrypt or take as they are.
+	 */
+	if ((macstat & B43_RX_MAC_DECERR) &&
+	    (dev->phy.type != B43_PHYTYPE_AC || (macstat & B43_RX_MAC_DEC)))
 		goto drop;
-	}
 
 	/* Skip PLCP and padding */
 	padding = (macstat & B43_RX_MAC_PADDING) ? 2 : 0;
