@@ -903,11 +903,15 @@ open too.
 ## 2.4 GHz
 
 `switch_channel` refuses the band unless the driver is built with `ALLOW_24`,
-as the unit harness is. A band change on a running interface is a full init:
-the controller restarts and its core init comes up on the band of the
-configured channel (`b43_ac_switch_band()`). The old path put the PHY through
-a reset and rebuilt it on the hot path, which keeps the other band's tables;
-gonsolo saw the same on his port, 2.4 GHz after 5 GHz associating and
+as the unit harness is. A band change on a running interface is synchronous,
+inside `b43_op_config()`: the PHY goes through a reset and a full init for the
+new band, the MAC's GMODE and the slot time follow, and DMA, interrupts and
+keys stay (`b43_ac_switch_band()`). The MacBookAir6,1's wl does less in the
+middle of a scan, no PHY reset and some 4400 PHY writes of band setup; the
+port's PHY setup has no such step. A first version restarted the controller,
+which a station's scan triggers some fifteen times and which lost the keys;
+before it, the PHY reset was followed by the hot path, which keeps the other
+band's tables. gonsolo saw that on his port, 2.4 GHz after 5 GHz associating and
 receiving but sending nothing until he reloaded the 2.4 GHz tables.
 
 On his MacBookAir6,1 the port faulted on every CCK frame and received

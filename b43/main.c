@@ -4863,6 +4863,43 @@ static const char *band_to_string(enum nl80211_band band)
 	return "";
 }
 
+/*
+ * A band change on the AC PHY, with the MAC suspended by b43_op_config().
+ * The MacBookAir6,1's wl crosses bands in the middle of a scan without a
+ * core reset or a microcode load: it flips GMODE in the core's ioctl,
+ * writes the band's host flags and the IFS slot (0x0207 on 5 GHz, 0x0212 on
+ * 2.4), and runs the PHY's band setup, some 4400 PHY and 160 radio writes
+ * (router-data/macbookair6-1/wl-firstload-20260926-190438.trace.xz). Here
+ * the PHY goes through a reset and a full init instead, what a core init on
+ * that band gives it, the port's PHY setup having no step that rebuilds the
+ * other band's tables on a running PHY; the MAC's GMODE follows the core's,
+ * and the slot time is the band's default until mac80211 sets the BSS's.
+ * DMA, interrupts and keys are left alone, and b43_op_config() tunes the
+ * channel as after a core init before it returns. This is the part after
+ * the core's GMODE and the band initvals, which b43_switch_band() writes
+ * for every PHY.
+ */
+static int b43_ac_switch_band(struct b43_wldev *dev, bool gmode)
+{
+	struct b43_phy *phy = &dev->phy;
+	int err;
+
+	b43_maskset32(dev, B43_MMIO_MACCTL, ~B43_MACCTL_GMODE,
+		      gmode ? B43_MACCTL_GMODE : 0);
+	phy->ops->prepare_structs(dev);
+	phy->do_full_init = true;
+	err = b43_phy_init(dev);
+	if (err)
+		return err;
+	memset(&dev->tuned_chandef, 0, sizeof(dev->tuned_chandef));
+
+	if (gmode)
+		b43_short_slot_timing_disable(dev);
+	else
+		b43_short_slot_timing_enable(dev);
+	return 0;
+}
+
 /* Expects wl->mutex locked */
 static int b43_switch_band(struct b43_wldev *dev,
 			   struct ieee80211_channel *chan)
@@ -4930,6 +4967,8 @@ static int b43_switch_band(struct b43_wldev *dev,
 
 	b43_bsinit(dev);
 
+	if (phy->type == B43_PHYTYPE_AC)
+		return b43_ac_switch_band(dev, gmode);
 	b43_phy_init(dev);
 
 	return 0;
@@ -4999,32 +5038,6 @@ static bool b43_ac_retune_needed(struct b43_wldev *dev,
 	return !(def->chan == cur->chan &&
 		 def->width == NL80211_CHAN_WIDTH_20_NOHT &&
 		 !b43_ac_beaconing(dev->wl));
-}
-
-/*
- * A band change on the AC PHY is a full init, the core's included: the
- * band's initvals, the MAC block, the PHY's tables, radio setup and
- * calibrations of the other band are all rewritten, and the reset the old
- * path takes the PHY through leaves nothing of it for the hot path to
- * build on. So the controller restarts; its core init comes up on the
- * band of the configured channel (b43_wireless_core_init()) and the
- * reconfiguration that follows tunes it.
- */
-static int b43_ac_switch_band(struct b43_wldev *dev,
-			      const struct ieee80211_channel *chan)
-{
-	struct b43_phy *phy = &dev->phy;
-	bool gmode = chan->band == NL80211_BAND_2GHZ;
-
-	if (!(gmode ? phy->supports_2ghz : phy->supports_5ghz)) {
-		b43err(dev->wl, "This device doesn't support %s-GHz band\n",
-		       band_to_string(chan->band));
-		return -ENODEV;
-	}
-	b43info(dev->wl, "Switching to %s GHz band: core restart\n",
-		band_to_string(chan->band));
-	ieee80211_queue_work(dev->wl->hw, &dev->restart_work);
-	return 0;
 }
 
 /*
@@ -5126,12 +5139,6 @@ static int b43_op_config(struct ieee80211_hw *hw, u32 changed)
 	if (changed & IEEE80211_CONF_CHANGE_CHANNEL) {
 		phy->chandef = &conf->chandef;
 		phy->channel = conf->chandef.chan->hw_value;
-
-		if (ac && !!phy->gmode !=
-		    (conf->chandef.chan->band == NL80211_BAND_2GHZ)) {
-			err = b43_ac_switch_band(dev, conf->chandef.chan);
-			goto out_mac_enable;
-		}
 
 		/* Switch the band (if necessary). */
 		err = b43_switch_band(dev, conf->chandef.chan);
