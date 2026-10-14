@@ -925,6 +925,11 @@ nothing on 2.4 GHz. What the MacBook's wl does there and the port did not:
   where 7.14 writes 7 on 5 GHz (`traces/wl-final-tables-2g-ch6.txt` in
   gonsolo's repository).
 
+The 2.4 GHz band announces HT at 20 MHz with the same MCS as 5 GHz and no
+VHT; before, it was the legacy band of the older PHYs and a station stayed
+on legacy rates (Andreas: tx 54, rx 24 Mb/s). 40 MHz on 2.4 GHz has no
+capture and stays off.
+
 Not taken: 6.30.223's TX-to-RX sequencer list in table 7 starts with an
 extra `0xb3` (cells 16-31, and the delays at 128-143 get a leading 1), on
 the MacBook and the archer alike and on both bands; 6.30.102 on the DSL and
