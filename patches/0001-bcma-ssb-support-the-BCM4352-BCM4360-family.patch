@@ -49,25 +49,28 @@ TG789vac v2 dump, the one board here that programs them, has THERMAL =
 0x7800 and TEMPDELTA = 0x5500, matching tempthresh=120 and
 temps_period=5 in its NVRAM.
 
-PMU init (PLL + resources) for the BCM4352/BCM4360 family
----------------------------------------------------------
+PMU init for the BCM4352/BCM4360 family
+---------------------------------------
 
 Neither bcma_pmu_pll_init() nor bcma_pmu_resources_init() have a case
-for the BCM4352/BCM4360 family; both are no-ops for this chip today.
+for the family; both are no-ops for these chips today.
 
-PLL: the stock driver writes PLLCTL2/PLLCTL3 unconditionally during
-attach. Values captured from an MMIO trace of the stock driver's
-attach sequence on a BCM43b3 (BCM4352-family) device (Netgear D6220,
-wl-diag-d6220-4352-wl1-attach.txt, #161359-161360, last of three observed
-attach cycles in the capture -- see commit message discussion for why
-the earlier two are not used as-is). Only one crystal/board sample is
-available, so this is not split by xtalfreq like the existing 43142
-case; revisit if a board with a different crystal shows different
-values.
+Program chip rev 3 only, the one revision captured: the stock driver
+programs the others differently. On rev 3:
 
-Resources: program the PMU max resource mask to 0x7ff. This value was
-read back at runtime from the ChipCommon PMU of a live BCM4360 and is
-applied as-is; not yet confirmed on BCM4352 (D6220/DSL-3580L).
+- PLLCTL2/PLLCTL3 = 0x0c31/0x100e, a 960.0098 MHz fractional VCO, which
+  the stock driver computes for a 40 MHz crystal on every board, latched
+  with PLL_UPD. A BCM4360 with the USB strap (chipstatus bit 8) is left
+  alone: the stock driver skips it there once HT is up.
+- Resource 6 up/down time 0x00200001.
+- With chipstatus bit 5 clear, PLLCTL6 = PLLCTL14 = 0x09048562, latched,
+  and a max resource mask of 0x1ff; with it set, both masks keep their
+  reset values.
+
+The PCIe2 core's HT available request is made on rev 3 only as well.
+
+Both branches of bit 5 are captured on rev 3: clear on a BCM4360
+(MacBookAir6,1), set on a BCM4352 (Archer T5E).
 
 Add BCM4352 (0x43b3) to the PCI bridge table
 --------------------------------------------
@@ -123,17 +126,18 @@ case.
 
 Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
 ---
- drivers/bcma/core.c                       |   2 +-
- drivers/bcma/driver_chipcommon.c          |  10 +
- drivers/bcma/driver_chipcommon_pmu.c      |  58 +++++-
- drivers/bcma/driver_pcie2.c               |   7 +
- drivers/bcma/host_pci.c                   |   1 +
- drivers/bcma/sprom.c                      | 216 +++++++++++++++++++++-
- drivers/firmware/broadcom/bcm47xx_sprom.c | 124 ++++++++++---
- include/linux/bcm47xx_sprom.h             |  16 ++
- include/linux/ssb/ssb.h                   |  74 ++++++++
- include/linux/ssb/ssb_regs.h              | 110 +++++++++++
- 10 files changed, 589 insertions(+), 29 deletions(-)
+ drivers/bcma/core.c                         |   2 +-
+ drivers/bcma/driver_chipcommon.c            |  10 +
+ drivers/bcma/driver_chipcommon_pmu.c        |  66 +++++-
+ drivers/bcma/driver_pcie2.c                 |   4 +
+ drivers/bcma/host_pci.c                     |   1 +
+ drivers/bcma/sprom.c                        | 216 +++++++++++++++++++-
+ drivers/firmware/broadcom/bcm47xx_sprom.c   | 124 +++++++++--
+ include/linux/bcm47xx_sprom.h               |  16 ++
+ include/linux/bcma/bcma_driver_chipcommon.h |   4 +
+ include/linux/ssb/ssb.h                     |  74 +++++++
+ include/linux/ssb/ssb_regs.h                | 110 ++++++++++
+ 11 files changed, 598 insertions(+), 29 deletions(-)
 
 diff --git a/drivers/bcma/core.c b/drivers/bcma/core.c
 index 37a5ffe..f424668 100644
@@ -170,74 +174,82 @@ index fd91a39..46cc081 100644
  
  	cc->setup_done = true;
 diff --git a/drivers/bcma/driver_chipcommon_pmu.c b/drivers/bcma/driver_chipcommon_pmu.c
-index 263ef6f..3e1d48d 100644
+index 263ef6f..41b6fbe 100644
 --- a/drivers/bcma/driver_chipcommon_pmu.c
 +++ b/drivers/bcma/driver_chipcommon_pmu.c
-@@ -149,6 +149,7 @@ static void bcma_pmu_pll_init(struct bcma_drv_cc *cc)
+@@ -145,6 +145,54 @@ static void bcma_pmu2_pll_init0(struct bcma_drv_cc *cc, u32 xtalfreq)
+ 	/* TODO: Do we need to update OTP? */
+ }
+ 
++/*
++ * BCM4352/BCM4360: chip rev 3 only. The stock driver programs other revisions
++ * differently, and none of them has been captured.
++ */
++static void bcma_pmu_4360_pll_init(struct bcma_drv_cc *cc)
++{
++	struct bcma_bus *bus = cc->core->bus;
++	u32 ctl2, ctl3;
++
++	if (bus->chipinfo.rev != 3)
++		return;
++	/* The stock driver skips a USB-strapped BCM4360 once HT is up. */
++	if (bus->chipinfo.id == BCMA_CHIP_ID_BCM4360 &&
++	    cc->status & BCMA_CC_CHIPST_4360_MODE_USB)
++		return;
++
++	/*
++	 * Fractional VCO, 960.0098 MHz from the 40 MHz crystal. wl 6.30 does
++	 * not write it on the 4352, the DSL-3580L's included, and leaves
++	 * PLLCTL3 at 0x00133333.
++	 */
++	ctl2 = bcma_chipco_pll_read(cc, BCMA_CC_PMU_PLL_CTL2);
++	ctl3 = bcma_chipco_pll_read(cc, BCMA_CC_PMU_PLL_CTL3);
++	bcma_info(bus, "PMU PLL pre-write: ctl2=0x%08x ctl3=0x%08x\n",
++		  ctl2, ctl3);
++	bcma_chipco_pll_write(cc, BCMA_CC_PMU_PLL_CTL2, 0x0c31);
++	bcma_chipco_pll_write(cc, BCMA_CC_PMU_PLL_CTL3, 0x100e);
++	bcma_pmu_set32(cc, BCMA_CC_PMU_CTL, BCMA_CC_PMU_CTL_PLL_UPD);
++}
++
++/* Returns the max resource mask to program, 0 to leave it alone. */
++static u32 bcma_pmu_4360_resources_init(struct bcma_drv_cc *cc)
++{
++	if (cc->core->bus->chipinfo.rev != 3)
++		return 0;
++
++	bcma_pmu_write32(cc, BCMA_CC_PMU_RES_TABSEL, 6);
++	bcma_pmu_write32(cc, BCMA_CC_PMU_RES_UPDNTM, 0x00200001);
++
++	/* min_res_mask keeps its reset value in both cases. */
++	if (cc->status & BCMA_CC_CHIPST_4360_RSRC_INIT_MODE0)
++		return 0;
++	bcma_chipco_pll_write(cc, BCMA_CC_PMU_PLL_CTL6, 0x09048562);
++	bcma_chipco_pll_write(cc, BCMA_CC_PMU_PLL_CTL14, 0x09048562);
++	bcma_pmu_set32(cc, BCMA_CC_PMU_CTL, BCMA_CC_PMU_CTL_PLL_UPD);
++	return 0x1ff;
++}
++
+ static void bcma_pmu_pll_init(struct bcma_drv_cc *cc)
  {
  	struct bcma_bus *bus = cc->core->bus;
- 	u32 xtalfreq = bcma_pmu_xtalfreq(cc);
-+	u32 ctl2, ctl3;
- 
- 	switch (bus->chipinfo.id) {
- 	case BCMA_CHIP_ID_BCM43142:
-@@ -156,6 +157,36 @@ static void bcma_pmu_pll_init(struct bcma_drv_cc *cc)
+@@ -156,6 +204,10 @@ static void bcma_pmu_pll_init(struct bcma_drv_cc *cc)
  			xtalfreq = 20000;
  		bcma_pmu2_pll_init0(cc, xtalfreq);
  		break;
 +	case BCMA_CHIP_ID_BCM4352:
 +	case BCMA_CHIP_ID_BCM4360:
-+		/*
-+		 * PLLCTL2/PLLCTL3 on a cold attach, same values on both chips:
-+		 * agcombo (4360) and D6220 (4352) both write 0x0c31 and 0x100e
-+		 * with a full mask, then read them back later in the same
-+		 * sequence (D6220 attach-to-bss-up #15, #23, then #164, #172).
-+		 * A down->up capture only shows the reads, which is why these
-+		 * writes were once thought to be 4360-only.
-+		 *
-+		 * The DSL-3580L, also a 4352, is a known exception: its stock
-+		 * driver is missing the fractional vcofreq support (checked with
-+		 * strings), leaves PLLCTL3 at the ROM value 0x00133333, and
-+		 * works that way. Newer stock drivers do set vcofreq. Writing
-+		 * these values there is therefore untested, not a fix.
-+		 */
-+		ctl2 = bcma_chipco_pll_read(cc, BCMA_CC_PMU_PLL_CTL2);
-+		ctl3 = bcma_chipco_pll_read(cc, BCMA_CC_PMU_PLL_CTL3);
-+		bcma_info(bus, "PMU PLL pre-write: ctl2=0x%08x ctl3=0x%08x\n",
-+			  ctl2, ctl3);
-+		bcma_chipco_pll_write(cc, BCMA_CC_PMU_PLL_CTL2, 0x0c31);
-+		bcma_chipco_pll_write(cc, BCMA_CC_PMU_PLL_CTL3, 0x100e);
-+		/*
-+		 * Latch them: the PMU only takes the new PLL control values on
-+		 * PLL_UPD. The stock driver raises it immediately after these
-+		 * two writes. Same flush bcma_pmu2_pll_init0() already does for
-+		 * the PMU15 path.
-+		 */
-+		bcma_pmu_set32(cc, BCMA_CC_PMU_CTL, BCMA_CC_PMU_CTL_PLL_UPD);
++		bcma_pmu_4360_pll_init(cc);
 +		break;
  	}
  }
  
-@@ -188,11 +219,34 @@ static void bcma_pmu_resources_init(struct bcma_drv_cc *cc)
+@@ -188,11 +240,21 @@ static void bcma_pmu_resources_init(struct bcma_drv_cc *cc)
  			  BCMA_RES_4314_WL_CORE_READY;
  		max_msk = 0x3FFFFFFF;
  		break;
 +	case BCMA_CHIP_ID_BCM4352:
 +	case BCMA_CHIP_ID_BCM4360:
-+		/*
-+		 * Confirmed by reading the live PMU on both a BCM4360
-+		 * (agcombo) and a BCM4352 (DSL-3580L): max_res_mask reads
-+		 * back 0x7ff on hardware. min_res_mask is left untouched
-+		 * (min_msk stays 0) as the ROM value (observed 0x7fb).
-+		 */
-+		max_msk = 0x7ff;
-+		/*
-+		 * The up/down time of resource 6, which the stock driver sets
-+		 * on the BCM4360 (agcombo, wl 7.14) and the BCM4352 (Archer
-+		 * T5E, wl 6.30.223) alike, before the masks take effect.
-+		 */
-+		bcma_pmu_write32(cc, BCMA_CC_PMU_RES_TABSEL, 6);
-+		bcma_pmu_write32(cc, BCMA_CC_PMU_RES_UPDNTM, 0x00200001);
++		max_msk = bcma_pmu_4360_resources_init(cc);
 +		break;
  	default:
  		bcma_debug(bus, "PMU resource config unknown or not needed for device 0x%04X\n",
@@ -253,7 +265,7 @@ index 263ef6f..3e1d48d 100644
  	/* Set the resource masks. */
  	if (min_msk)
  		bcma_pmu_write32(cc, BCMA_CC_PMU_MINRES_MSK, min_msk);
-@@ -288,8 +342,8 @@ void bcma_pmu_early_init(struct bcma_drv_cc *cc)
+@@ -288,8 +350,8 @@ void bcma_pmu_early_init(struct bcma_drv_cc *cc)
  	pmucap = bcma_pmu_read32(cc, BCMA_CC_PMU_CAP);
  	cc->pmu.rev = (pmucap & BCMA_CC_PMU_CAP_REVISION);
  
@@ -265,20 +277,17 @@ index 263ef6f..3e1d48d 100644
  
  void bcma_pmu_init(struct bcma_drv_cc *cc)
 diff --git a/drivers/bcma/driver_pcie2.c b/drivers/bcma/driver_pcie2.c
-index cf889fc..31e59e4 100644
+index cf889fc..f35c048 100644
 --- a/drivers/bcma/driver_pcie2.c
 +++ b/drivers/bcma/driver_pcie2.c
-@@ -170,6 +170,13 @@ void bcma_core_pcie2_init(struct bcma_drv_pcie2 *pcie2)
+@@ -170,6 +170,10 @@ void bcma_core_pcie2_init(struct bcma_drv_pcie2 *pcie2)
  	case BCMA_CHIP_ID_BCM4360:
  	case BCMA_CHIP_ID_BCM4352:
  		pcie2->reqsize = 1024;
-+		/*
-+		 * The host interface asks the PMU to keep HT available, so the
-+		 * backplane does not depend on the 802.11 core holding it once
-+		 * that core runs on a dynamic clock. The stock driver sets the
-+		 * request after every chip reset, wl 6.30 and 7.14 alike.
-+		 */
-+		pcie2_set32(pcie2, BCMA_CLKCTLST, BCMA_CLKCTLST_HAVEHTREQ);
++		/* As the stock driver, on the only chip rev captured. */
++		if (ci->rev == 3)
++			pcie2_set32(pcie2, BCMA_CLKCTLST,
++				    BCMA_CLKCTLST_HAVEHTREQ);
  		break;
  	default:
  		pcie2->reqsize = 128;
@@ -755,6 +764,28 @@ index 40a7da3..b52c028 100644
 +#endif
 +
  #endif /* __BCM47XX_SPROM_H */
+diff --git a/include/linux/bcma/bcma_driver_chipcommon.h b/include/linux/bcma/bcma_driver_chipcommon.h
+index 0cb6638..45c37b6 100644
+--- a/include/linux/bcma/bcma_driver_chipcommon.h
++++ b/include/linux/bcma/bcma_driver_chipcommon.h
+@@ -107,6 +107,8 @@
+ #define  BCMA_CC_CHIPST_4706_PCIE1_DISABLE	BIT(5) /* PCIE1 enable strap pin */
+ #define  BCMA_CC_CHIPST_5357_NAND_BOOT		BIT(4) /* NAND boot, valid for CC rev 38 and/or BCM5357 */
+ #define  BCMA_CC_CHIPST_4360_XTAL_40MZ		0x00000001
++#define  BCMA_CC_CHIPST_4360_RSRC_INIT_MODE0	0x00000020
++#define  BCMA_CC_CHIPST_4360_MODE_USB		0x00000100
+ #define BCMA_CC_JCMD			0x0030		/* Rev >= 10 only */
+ #define  BCMA_CC_JCMD_START		0x80000000
+ #define  BCMA_CC_JCMD_BUSY		0x80000000
+@@ -500,6 +502,8 @@
+ #define BCMA_CC_PMU_PLL_CTL3		3
+ #define BCMA_CC_PMU_PLL_CTL4		4
+ #define BCMA_CC_PMU_PLL_CTL5		5
++#define BCMA_CC_PMU_PLL_CTL6		6
++#define BCMA_CC_PMU_PLL_CTL14		14
+ 
+ #define BCMA_CC_PMU1_PLL0_PC0_P1DIV_MASK	0x00f00000
+ #define BCMA_CC_PMU1_PLL0_PC0_P1DIV_SHIFT	20
 diff --git a/include/linux/ssb/ssb.h b/include/linux/ssb/ssb.h
 index 7fee9af..ec5c666 100644
 --- a/include/linux/ssb/ssb.h
