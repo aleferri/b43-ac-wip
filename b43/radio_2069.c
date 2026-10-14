@@ -990,10 +990,10 @@ b43_phy_ac_get_channeltab_e_r2069(struct b43_wldev *dev __always_unused,
 /* Per-entry write list. */
 struct r2069_chan_write {
 	u16 reg;     /* 2069 radio register address */
-	s16 raw_idx; /* >=0: radio_raw[idx]; <0: chan_raw6[-idx-1] (valori radio) */
+	s16 raw_idx; /* >=0: radio_raw[idx]; <0: chan_raw6[-idx-1] (radio values) */
 };
 
-#define BW(N)	(-(N))   /* raw_idx negativo = chan_raw6[N-1] (valori RADIO) */
+#define BW(N)	(-(N))   /* negative raw_idx = chan_raw6[N-1] (RADIO values) */
 /* Per-channel radio writes, the same on both bands. These registers cover
  * chips 0x4352 and 0x4360 only; the different AC variant is ignored. */
 static const struct r2069_chan_write r2069_chan_writes[] = {
@@ -1002,7 +1002,7 @@ static const struct r2069_chan_write r2069_chan_writes[] = {
 	{ 0x08e5,  8 }, { 0x08eb,  9 }, { 0x08d6, 10 }, { 0x0113, 11 },
 	{ 0x08db, 12 }, { 0x08da, 13 }, { 0x08d7, 14 }, { 0x0885, 15 },
 	{ 0x0886, 16 }, { 0x0887, 17 }, { 0x08d9, 18 }, { 0x08d8, 19 },
-	{ 0x08c9, 20 }, { 0x08ca, 21 }, { 0x08cc, 22 },     /* PLL cfg + cfg-tail (0x08cb non toccato) */
+	{ 0x08c9, 20 }, { 0x08ca, 21 }, { 0x08cc, 22 },     /* PLL cfg + cfg-tail (0x08cb untouched) */
 	{ 0x08c7, 23 }, { 0x08c8, 24 },                      /* PLL cfg-tail cont. */
 	{ 0x0892, 25 }, { 0x0894, 26 }, { 0x0895, 27 },     /* PLL tune bank A */
 	{ 0x0896, 28 }, { 0x0897, 29 },
@@ -1011,7 +1011,7 @@ static const struct r2069_chan_write r2069_chan_writes[] = {
 	{ 0x0112, 34 }, { 0x0629, 35 }, { 0x065b, 36 }, { 0x065e, 37 },
 	{ 0x0668, 38 },
 	{ 0x011a, BW(1) }, { 0x011b, BW(2) }, { 0x0719, BW(3) },
-	{ 0x0630, BW(4) }, { 0x065c, BW(5) }, { 0x0662, BW(6) }, /* target verificati su trace */
+	{ 0x0630, BW(4) }, { 0x065c, BW(5) }, { 0x0662, BW(6) }, /* targets verified on traces */
 };
 
 /*
@@ -1542,9 +1542,9 @@ void b43_radio_2069_init(struct b43_wldev *dev)
 	u16 saved_728;
 
 	saved_728 = b43_phy_read_log(dev, 0x0728);
-	b43_phy_read_log(dev, 0x0408);	/* base letta prima delle write sotto; loggata per HW (write assoluta) */
+	b43_phy_read_log(dev, 0x0408);	/* base read before the writes below; logged for HW (absolute write) */
 
-	/* --- Prologo: PHY register writes --- */
+	/* --- Prologue: PHY register writes --- */
 	b43_phy_write(dev, 0x0415, 0x0000);
 	b43_phy_write(dev, 0x040e, 0x0000);
 	b43_phy_write(dev, 0x040c, 0x2000);
@@ -1554,7 +1554,7 @@ void b43_radio_2069_init(struct b43_wldev *dev)
 
 	/* 0x728 &= 0x7e7f (clears 0x8000/0x0100/0x0080); wl7 writes 0x720 = 0x03ff. */
 	b43_phy_write(dev, 0x0728, saved_728 & 0x7e7f);
-	b43_phy_read_log(dev, 0x0720);	/* base loggata per HW; write sotto assoluta */
+	b43_phy_read_log(dev, 0x0720);	/* base logged for HW; the write below is absolute */
 	b43_phy_write(dev, 0x0720, 0x03ff);
 	b43_phy_write(dev, B43_PHY_AC_RFCTL_CMD, 0x0c00);
 

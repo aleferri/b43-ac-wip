@@ -125,7 +125,7 @@ static void actab_zerofill_common(struct b43_wldev *dev, u16 id, u16 offset,
 {
 	size_t i;
 
-	/* Stesso prologo di actab_write_bulk_common: vedi la nota su `peek`. */
+	/* Same prologue as actab_write_bulk_common: see the note on `peek`. */
 	if (peek)
 		b43_phy_read_log(dev, B43_PHY_AC_REG_TBL_WRITE_GATE);
 

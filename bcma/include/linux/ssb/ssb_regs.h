@@ -619,9 +619,9 @@
 #define SSB_SPROM11_AGBG2A0		0x00A4	/* agbg2 low byte, aga0 high */
 #define SSB_SPROM11_AGA21		0x00A6	/* aga1 low byte, aga2 high */
 #define SSB_SPROM11_TXRXC		0x00A8
-/* FEM / PA control block. Layout canonico da bcmsrom_tbl.h (SROM11_FEM_CFG1/2);
- * offset verificato sui dump raw di DSL-3580L e D6220, dove le due word
- * decodificano tutti e sei i campi di ciascuna: 0x30A1 e 0x00A1.
+/* FEM / PA control block. Layout from bcmsrom_tbl.h (SROM11_FEM_CFG1/2);
+ * offsets verified on the DSL-3580L and D6220 raw dumps, where the two
+ * words, 0x30A1 and 0x00A1, decode into all six fields of each.
  */
 #define SSB_SPROM11_FEM_CFG1		0x00AA
 #define SSB_SPROM11_FEM_CFG2		0x00AC

@@ -247,9 +247,9 @@ struct ssb_sprom {
 	u16 sb40and80lr5gpo[3];
 	u16 dot11agduphrpo;
 	u16 dot11agduplrpo;
-	/* FEM / PA control block (SROM11_FEM_CFG1/2). femctrl seleziona lo
-	 * schema di controllo del front-end module: un driver che programma
-	 * la tabella di controllo FEM deve verificarlo, non assumerlo.
+	/* FEM / PA control block (SROM11_FEM_CFG1/2). femctrl selects the
+	 * front-end module control scheme: a driver that programs the FEM
+	 * control table must check it, not assume it.
 	 */
 	u8 tssiposslope2g;
 	u8 epagain2g;
@@ -263,7 +263,7 @@ struct ssb_sprom {
 	u8 tworangetssi5g;
 	u8 papdcap5g;
 	u8 gainctrlsph;
-	/* TSSI floor: 0x3ff quando il campo non e' programmato. */
+	/* TSSI floor: 0x3ff when the field is not programmed. */
 	u16 tssifloor2g;
 	u16 tssifloor5g[4];
 };
