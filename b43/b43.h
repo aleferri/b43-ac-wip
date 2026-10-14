@@ -799,6 +799,8 @@ struct b43_key {
 	 * path, because b43 doesn't own it. */
 	struct ieee80211_key_conf *keyconf;
 	u8 algorithm;
+	/* The station of a pairwise key, for b43_keys_restore(). */
+	u8 addr[ETH_ALEN];
 };
 
 /* SHM offsets to the QOS data structures for the 4 different queues. */

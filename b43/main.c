@@ -1286,6 +1286,10 @@ static int b43_key_write(struct b43_wldev *dev,
 	}
 	keyconf->hw_key_idx = index;
 	dev->key[index].keyconf = keyconf;
+	if (mac_addr)
+		ether_addr_copy(dev->key[index].addr, mac_addr);
+	else
+		eth_zero_addr(dev->key[index].addr);
 
 	return 0;
 }
@@ -1315,6 +1319,43 @@ static void b43_clear_keys(struct b43_wldev *dev)
 		count = B43_NR_GROUP_KEYS * 2 + B43_NR_PAIRWISE_KEYS;
 	for (i = 0; i < count; i++)
 		b43_key_clear(dev, i);
+}
+
+/*
+ * A core init clears the key memory (b43_security_init()), and mac80211 is
+ * not told: after a controller restart, a band change on the AC among
+ * them, the keys it believes installed would be gone, frames going out
+ * with a key slot that holds nothing and coming in undecrypted. The
+ * restart takes the slots before the core goes down and writes them back
+ * once it is up, in slot order, so that each pairwise key lands in the
+ * slot it had. The key_conf pointers are mac80211's and stay valid: a
+ * DISABLE_KEY clears its slot under the same mutex, before the snapshot or
+ * after the restore.
+ */
+static struct b43_key *b43_keys_save(struct b43_wldev *dev)
+{
+	return kmemdup(dev->key, sizeof(dev->key), GFP_KERNEL);
+}
+
+static void b43_keys_restore(struct b43_wldev *dev, struct b43_key *saved)
+{
+	unsigned int i;
+
+	if (!saved)
+		return;
+	for (i = 0; i < ARRAY_SIZE(dev->key); i++) {
+		struct ieee80211_key_conf *k = saved[i].keyconf;
+		bool pairwise;
+
+		if (!k)
+			continue;
+		pairwise = k->flags & IEEE80211_KEY_FLAG_PAIRWISE;
+		if (b43_key_write(dev, pairwise ? -1 : i, saved[i].algorithm,
+				  k->key, k->keylen,
+				  pairwise ? saved[i].addr : NULL, k))
+			b43warn(dev->wl, "Key %u not restored\n", i);
+	}
+	kfree(saved);
 }
 
 static void b43_dump_keymemory(struct b43_wldev *dev)
@@ -6576,6 +6617,7 @@ static void b43_chip_reset(struct work_struct *work)
 	struct b43_wldev *dev =
 	    container_of(work, struct b43_wldev, restart_work);
 	struct b43_wl *wl = dev->wl;
+	struct b43_key *keys = NULL;
 	int err = 0;
 	int prev_status;
 
@@ -6590,14 +6632,18 @@ static void b43_chip_reset(struct work_struct *work)
 			goto out;
 		}
 	}
-	if (prev_status >= B43_STAT_INITIALIZED)
+	if (prev_status >= B43_STAT_INITIALIZED) {
+		keys = b43_keys_save(dev);
 		b43_wireless_core_exit(dev);
+	}
 
 	/* ...and up again. */
 	if (prev_status >= B43_STAT_INITIALIZED) {
 		err = b43_wireless_core_init(dev);
 		if (err)
 			goto out;
+		b43_keys_restore(dev, keys);
+		keys = NULL;
 	}
 	if (prev_status >= B43_STAT_STARTED) {
 		err = b43_wireless_core_start(dev);
@@ -6607,6 +6653,7 @@ static void b43_chip_reset(struct work_struct *work)
 		}
 	}
 out:
+	kfree(keys);
 	if (err)
 		wl->current_dev = NULL; /* Failed to init the dev. */
 	mutex_unlock(&wl->mutex);
