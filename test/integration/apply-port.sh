@@ -9,8 +9,9 @@
 # b43/ tiene i file interi, quindi qui non si applica niente: si copiano
 # sopra quelli vanilla. Di bcma/ servono i due header ssb, con i campi della
 # SROM rev 11 senza cui phy_ac.c non compila e gpio_ext[] senza cui non
-# compila leds.c, e i file della gestione del core che il port cambia; il
-# resto e' codice del bus, che qui e' finto (bcma_stub.c).
+# compila leds.c, l'header della ChipCommon per i bit di chipstatus del 4360,
+# e i file della gestione del core che il port cambia; il resto e' codice del
+# bus, che qui e' finto (bcma_stub.c).
 #
 # Uso: apply-port.sh
 set -e
@@ -27,4 +28,6 @@ done
 mkdir -p "$HERE/kinc/linux/ssb"
 cp "$REPO"/bcma/include/linux/ssb/ssb.h "$REPO"/bcma/include/linux/ssb/ssb_regs.h \
     "$HERE/kinc/linux/ssb/"
-echo "b43/ copiato su b43-upstream/ ($(ls "$REPO"/b43 | wc -l) file), header ssb da bcma/"
+mkdir -p "$HERE/kinc/linux/bcma"
+cp "$REPO"/bcma/include/linux/bcma/bcma_driver_chipcommon.h "$HERE/kinc/linux/bcma/"
+echo "b43/ copiato su b43-upstream/ ($(ls "$REPO"/b43 | wc -l) file), header ssb e ChipCommon da bcma/"

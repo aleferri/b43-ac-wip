@@ -33,8 +33,9 @@ KG      := /usr/src/linux-headers-$(KVER)-generic
 UP      := b43-upstream
 
 # kinc/ tiene i due header ssb di bcma/, con i campi della SROM rev11 (pa5ga,
-# maxp5ga, femctrl, subband5gver, rxgains). Vanno PRIMA degli header kernel,
-# o phy_ac.c non compila: quei campi in mainline non esistono. Il resto di
+# maxp5ga, femctrl, subband5gver, rxgains), e quello della ChipCommon, con i
+# bit di chipstatus del 4360. Vanno PRIMA degli header kernel: in mainline
+# quei campi e quei bit non esistono. Il resto di
 # bcma/, drivers/bcma/sprom.c compreso, non serve: qui il bus e' finto.
 KINC := -I$(CURDIR)/kinc -I$(KG)/include -I$(K)/include -I$(K)/include/uapi \
         -I$(KG)/include/generated/uapi \

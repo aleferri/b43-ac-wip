@@ -56,10 +56,9 @@ struct board_profile {
 	/*
 	 * ChipCommon at reset, as bcma's chipcommon and PMU init read it:
 	 * capabilities, capabilities_ext, chipstatus and pmucapabilities.
-	 * Zero leaves the PMU out of the harness's bcma init. The 4360 values
-	 * are a rev 3's, from the MacBookAir6,1 firstload capture; chipstatus
-	 * bit 0 is the 40 MHz crystal the agcombo's PCIe PM clock period
-	 * (0x32) also implies.
+	 * Zero leaves the PMU out of the harness's bcma init. macbook and
+	 * archer: their own attach captures. agcombo and tg789: the MacBook's,
+	 * chipstatus included, so their PMU branch (bit 5) is the MacBook's.
 	 */
 	u32 cc_caps, cc_capext, cc_chipstatus, pmu_caps;
 	/* Power-detector offsets per chain, one nibble per pa5g sub-band; NVRAM
@@ -385,6 +384,9 @@ static const struct board_profile PROFILE_ARCHER = {
 	.boardflags = 0x10001000, .boardflags2 = 0x2, .boardflags3 = 0x0,
 	.name = "archer", .chip_id = 0x4352, .radio_rev = 4,
 	.ucode = 832,
+	/* archer-t5e/mmiotrace.zip #91-#94. */
+	.cc_caps = 0x58680001, .cc_capext = 0x00000003,
+	.cc_chipstatus = 0x00001a6d, .pmu_caps = 0x10a22b11,
 	.chip_rev = 0x3, .pci_device = 0x43a0,
 	.macaddr = { 0xc0, 0x25, 0xe9, 0x29, 0x03, 0xcd },
 	.core_rev = 42, .mac_hw_cap = 0xb0518c05,
@@ -440,6 +442,9 @@ static const struct board_profile PROFILE_MACBOOK = {
 	.boardflags = 0x10401001, .boardflags2 = 0x2, .boardflags3 = 0x1,
 	.name = "macbook", .chip_id = 0x4360, .radio_rev = 4,
 	.ucode = 832,
+	/* wl-firstload-20260926-190438 #90-#93. */
+	.cc_caps = 0x58680001, .cc_capext = 0x00000003,
+	.cc_chipstatus = 0x0000024d, .pmu_caps = 0x10a22b11,
 	.chip_rev = 0x3, .pci_device = 0x43a0,
 	.macaddr = { 0x84, 0x38, 0x35, 0x4d, 0x18, 0x6e },
 	.core_rev = 42, .mac_hw_cap = 0xb0518c05,

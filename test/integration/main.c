@@ -80,7 +80,9 @@ static void build_core(void)
 	test_pci.device = board->pci_device;
 	test_bus.host_pci = &test_pci;
 	test_bus.chipinfo.id = board->chip_id;
-	test_bus.chipinfo.rev = board->chip_rev;
+	/* B43_CHIP_REV: a chip rev no capture has (pmu_gate.sh). */
+	test_bus.chipinfo.rev = b43_test_env_long("B43_CHIP_REV",
+						   board->chip_rev);
 	test_bus.chipinfo.pkg = 0x1;
 
 	/*
@@ -94,10 +96,13 @@ static void build_core(void)
 	test_cc_core.id.rev = 43;
 	test_bus.drv_cc.core = &test_cc_core;
 	b43_test_cc_seed(BCMA_CC_ID, board->chip_id |
-			 ((u32)board->chip_rev << BCMA_CC_ID_REV_SHIFT));
+			 ((u32)test_bus.chipinfo.rev << BCMA_CC_ID_REV_SHIFT));
 	b43_test_cc_seed(BCMA_CC_CAP, board->cc_caps);
 	b43_test_cc_seed(BCMA_CC_CAP_EXT, board->cc_capext);
-	b43_test_cc_seed(BCMA_CC_CHIPSTAT, board->cc_chipstatus);
+	/* B43_CC_CHIPSTATUS: a strap no capture has; an oracle overrides it. */
+	b43_test_cc_seed(BCMA_CC_CHIPSTAT,
+			 b43_test_env_long("B43_CC_CHIPSTATUS",
+					   board->cc_chipstatus));
 	b43_test_cc_seed(BCMA_CC_PMU_CAP, board->pmu_caps);
 
 	/* The PCIe2 host bridge of the 4360 family, rev 1 in the archer's EROM. */

@@ -104,6 +104,18 @@ None of the three holds the attach, which ran before the capture. `ch36` is
 the first `up` after the module load; `ch100` and `ch149-wep` are later ups
 and read no `UCODEREV`, so their probe takes its reads from `ch36`.
 
+### bcma's PMU against the stock attach
+
+```sh
+./pmu_gate.sh
+```
+
+compares the PMU and PCIe2 writes of the harness's bcma init (`pmu_ops.py`)
+with the stock driver's attach on `macbook` and `archer`, chip rev 3 with
+chipstatus bit 5 clear and set. Chip revs 2 and 4 (`B43_CHIP_REV`) must write
+nothing, a USB-strapped 4360 (`B43_CC_CHIPSTATUS`) no PLL. Every line must
+say `PASS`.
+
 ### Why `--bus`
 
 The bus has none of the accessor classes: a `PHY.MOD` is a `PHY.RD` plus a
