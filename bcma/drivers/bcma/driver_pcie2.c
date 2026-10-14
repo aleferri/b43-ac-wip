@@ -170,13 +170,10 @@ void bcma_core_pcie2_init(struct bcma_drv_pcie2 *pcie2)
 	case BCMA_CHIP_ID_BCM4360:
 	case BCMA_CHIP_ID_BCM4352:
 		pcie2->reqsize = 1024;
-		/*
-		 * The host interface asks the PMU to keep HT available, so the
-		 * backplane does not depend on the 802.11 core holding it once
-		 * that core runs on a dynamic clock. The stock driver sets the
-		 * request after every chip reset, wl 6.30 and 7.14 alike.
-		 */
-		pcie2_set32(pcie2, BCMA_CLKCTLST, BCMA_CLKCTLST_HAVEHTREQ);
+		/* As the stock driver, on the only chip rev captured. */
+		if (ci->rev == 3)
+			pcie2_set32(pcie2, BCMA_CLKCTLST,
+				    BCMA_CLKCTLST_HAVEHTREQ);
 		break;
 	default:
 		pcie2->reqsize = 128;

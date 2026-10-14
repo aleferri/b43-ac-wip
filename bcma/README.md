@@ -11,11 +11,12 @@ it.
 | `drivers/bcma/sprom.c` | `bcma_sprom_extract_r11()`, NVRAM `ledbh4..15` over the device's own SROM |
 | `include/linux/ssb/ssb.h`, `ssb_regs.h` | the rev 11 fields and offsets, `gpio_ext[]`, `boardflags3`, `AvVmid` |
 | `drivers/firmware/broadcom/bcm47xx_sprom.c`, `include/linux/bcm47xx_sprom.h` | `ledbh4..15`, `boardflags3` and `AvVmid_c0..2` from NVRAM |
-| `drivers/bcma/driver_chipcommon_pmu.c` | PLL and resource init for the family |
+| `drivers/bcma/driver_chipcommon_pmu.c` | PLL and resource init for the family, on chip rev 3 only, the branch chosen by chipstatus as the stock driver does |
+| `include/linux/bcma/bcma_driver_chipcommon.h` | the 4360 chipstatus bits and PLL control registers 6 and 14 that the PMU init uses |
 | `drivers/bcma/host_pci.c` | the BCM4352 PCI ID, `0x43b3` |
 | `drivers/bcma/driver_chipcommon.c` | corecontrol bits 5:2 next to the GPIO timer, as the stock driver sets them |
 | `drivers/bcma/core.c` | `BCMA_CLKMODE_DYNAMIC` clears FORCEHT instead of setting every other bit |
-| `drivers/bcma/driver_pcie2.c` | the HT available request of the PCIe2 core, which the stock driver sets |
+| `drivers/bcma/driver_pcie2.c` | the HT available request of the PCIe2 core, which the stock driver sets, on chip rev 3 only |
 
 The SROM rev 11 extractor adds `bcma_sprom_extract_r11()` and the fields the
 AC-PHY reads:

@@ -145,11 +145,58 @@ static void bcma_pmu2_pll_init0(struct bcma_drv_cc *cc, u32 xtalfreq)
 	/* TODO: Do we need to update OTP? */
 }
 
+/*
+ * BCM4352/BCM4360: chip rev 3 only. The stock driver programs other revisions
+ * differently, and none of them has been captured.
+ */
+static void bcma_pmu_4360_pll_init(struct bcma_drv_cc *cc)
+{
+	struct bcma_bus *bus = cc->core->bus;
+	u32 ctl2, ctl3;
+
+	if (bus->chipinfo.rev != 3)
+		return;
+	/* The stock driver skips a USB-strapped BCM4360 once HT is up. */
+	if (bus->chipinfo.id == BCMA_CHIP_ID_BCM4360 &&
+	    cc->status & BCMA_CC_CHIPST_4360_MODE_USB)
+		return;
+
+	/*
+	 * Fractional VCO, 960.0098 MHz from the 40 MHz crystal. wl 6.30 does
+	 * not write it on the 4352, the DSL-3580L's included, and leaves
+	 * PLLCTL3 at 0x00133333.
+	 */
+	ctl2 = bcma_chipco_pll_read(cc, BCMA_CC_PMU_PLL_CTL2);
+	ctl3 = bcma_chipco_pll_read(cc, BCMA_CC_PMU_PLL_CTL3);
+	bcma_info(bus, "PMU PLL pre-write: ctl2=0x%08x ctl3=0x%08x\n",
+		  ctl2, ctl3);
+	bcma_chipco_pll_write(cc, BCMA_CC_PMU_PLL_CTL2, 0x0c31);
+	bcma_chipco_pll_write(cc, BCMA_CC_PMU_PLL_CTL3, 0x100e);
+	bcma_pmu_set32(cc, BCMA_CC_PMU_CTL, BCMA_CC_PMU_CTL_PLL_UPD);
+}
+
+/* Returns the max resource mask to program, 0 to leave it alone. */
+static u32 bcma_pmu_4360_resources_init(struct bcma_drv_cc *cc)
+{
+	if (cc->core->bus->chipinfo.rev != 3)
+		return 0;
+
+	bcma_pmu_write32(cc, BCMA_CC_PMU_RES_TABSEL, 6);
+	bcma_pmu_write32(cc, BCMA_CC_PMU_RES_UPDNTM, 0x00200001);
+
+	/* min_res_mask keeps its reset value in both cases. */
+	if (cc->status & BCMA_CC_CHIPST_4360_RSRC_INIT_MODE0)
+		return 0;
+	bcma_chipco_pll_write(cc, BCMA_CC_PMU_PLL_CTL6, 0x09048562);
+	bcma_chipco_pll_write(cc, BCMA_CC_PMU_PLL_CTL14, 0x09048562);
+	bcma_pmu_set32(cc, BCMA_CC_PMU_CTL, BCMA_CC_PMU_CTL_PLL_UPD);
+	return 0x1ff;
+}
+
 static void bcma_pmu_pll_init(struct bcma_drv_cc *cc)
 {
 	struct bcma_bus *bus = cc->core->bus;
 	u32 xtalfreq = bcma_pmu_xtalfreq(cc);
-	u32 ctl2, ctl3;
 
 	switch (bus->chipinfo.id) {
 	case BCMA_CHIP_ID_BCM43142:
@@ -159,33 +206,7 @@ static void bcma_pmu_pll_init(struct bcma_drv_cc *cc)
 		break;
 	case BCMA_CHIP_ID_BCM4352:
 	case BCMA_CHIP_ID_BCM4360:
-		/*
-		 * PLLCTL2/PLLCTL3 on a cold attach, same values on both chips:
-		 * agcombo (4360) and D6220 (4352) both write 0x0c31 and 0x100e
-		 * with a full mask, then read them back later in the same
-		 * sequence (D6220 attach-to-bss-up #15, #23, then #164, #172).
-		 * A down->up capture only shows the reads, which is why these
-		 * writes were once thought to be 4360-only.
-		 *
-		 * The DSL-3580L, also a 4352, is a known exception: its stock
-		 * driver is missing the fractional vcofreq support (checked with
-		 * strings), leaves PLLCTL3 at the ROM value 0x00133333, and
-		 * works that way. Newer stock drivers do set vcofreq. Writing
-		 * these values there is therefore untested, not a fix.
-		 */
-		ctl2 = bcma_chipco_pll_read(cc, BCMA_CC_PMU_PLL_CTL2);
-		ctl3 = bcma_chipco_pll_read(cc, BCMA_CC_PMU_PLL_CTL3);
-		bcma_info(bus, "PMU PLL pre-write: ctl2=0x%08x ctl3=0x%08x\n",
-			  ctl2, ctl3);
-		bcma_chipco_pll_write(cc, BCMA_CC_PMU_PLL_CTL2, 0x0c31);
-		bcma_chipco_pll_write(cc, BCMA_CC_PMU_PLL_CTL3, 0x100e);
-		/*
-		 * Latch them: the PMU only takes the new PLL control values on
-		 * PLL_UPD. The stock driver raises it immediately after these
-		 * two writes. Same flush bcma_pmu2_pll_init0() already does for
-		 * the PMU15 path.
-		 */
-		bcma_pmu_set32(cc, BCMA_CC_PMU_CTL, BCMA_CC_PMU_CTL_PLL_UPD);
+		bcma_pmu_4360_pll_init(cc);
 		break;
 	}
 }
@@ -221,20 +242,7 @@ static void bcma_pmu_resources_init(struct bcma_drv_cc *cc)
 		break;
 	case BCMA_CHIP_ID_BCM4352:
 	case BCMA_CHIP_ID_BCM4360:
-		/*
-		 * Confirmed by reading the live PMU on both a BCM4360
-		 * (agcombo) and a BCM4352 (DSL-3580L): max_res_mask reads
-		 * back 0x7ff on hardware. min_res_mask is left untouched
-		 * (min_msk stays 0) as the ROM value (observed 0x7fb).
-		 */
-		max_msk = 0x7ff;
-		/*
-		 * The up/down time of resource 6, which the stock driver sets
-		 * on the BCM4360 (agcombo, wl 7.14) and the BCM4352 (Archer
-		 * T5E, wl 6.30.223) alike, before the masks take effect.
-		 */
-		bcma_pmu_write32(cc, BCMA_CC_PMU_RES_TABSEL, 6);
-		bcma_pmu_write32(cc, BCMA_CC_PMU_RES_UPDNTM, 0x00200001);
+		max_msk = bcma_pmu_4360_resources_init(cc);
 		break;
 	default:
 		bcma_debug(bus, "PMU resource config unknown or not needed for device 0x%04X\n",
