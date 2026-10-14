@@ -12,8 +12,8 @@ Add SPROM revision 11 extraction
 
 SPROM revision 11 is introduced with the BCM4352/BCM4360 family. Extend
 struct ssb_sprom with the rev-11 fields actually parsed (per-band rxgains,
-per-chain maxp/pa power info, 80 MHz MCS power offsets, pdoffset40ma)
-and add bcma_sprom_extract_r11(), dispatched from bcma_sprom_get() when the
+per-chain maxp/pa power info, the FEM/PA control block, the TSSI floor,
+subband5gver, 80 MHz MCS power offsets, pdoffset40ma) and add bcma_sprom_extract_r11(), dispatched from bcma_sprom_get() when the
 SPROM revision word reads as 11. bcma_sprom_get() already probes the rev-11
 buffer size, and bcma_sprom_valid() populates bus->sprom.revision before
 the dispatch. Revisions <= 10 keep the extract_r8 path.
@@ -27,7 +27,7 @@ offsets moved. CCODE uses 0x96, since rev-8 0x92 collides with the middle
 word of the rev-11 IL0MAC block. The LED words are 0x9A/0x9C: extract_r8
 would read them from 0x96/0x98, which on rev 11 are CCODE and REGREV, and
 leaving them unset gives b43 zeros instead of the 0xff that selects its
-LED defaults.
+LED defaults. boardflags3 is words 70-71 (0x8C).
 
 Also extracts the explicit per-rate-group offsets of the bonded channels'
 sub-band rows (sb20in40*, sb20in80and160*, sb40and80*, dot11agdup*,
@@ -115,12 +115,29 @@ in the same files; without the flag it uses a default set of its own.
 
 AvVmid has no field in struct ssb_sprom; add avvmid[3][5][2] and
 avvmid_valid, the chains whose variable parsed, so that a flag without the
-variable leaves the driver on its defaults. boardflags3 has one, filled
-from NVRAM by bcm47xx_sprom_fill_auto() for a SPROM that comes from NVRAM,
-but nothing fills it for a SPROM read from the device: the rev 11
-extraction does not take the word. Read both in
-bcm47xx_sprom_fill_nvram_only(), next to ledbh4..15, which runs in either
-case.
+variable leaves the driver on its defaults. Read both in
+bcm47xx_sprom_fill_nvram_only(), next to ledbh4..15, which runs for a
+SPROM from NVRAM and on top of one read from the device. On the latter,
+a boardflags3 in NVRAM replaces the word the rev 11 extraction read.
+
+Clear only FORCEHT for BCMA_CLKMODE_DYNAMIC
+-------------------------------------------
+
+bcma_core_set_clockmode() sets every bit of CLKCTLST but FORCEHT
+instead of clearing FORCEHT. Mask it out.
+
+Set corecontrol bits 5:2 on the family
+--------------------------------------
+
+The stock driver sets them next to the GPIO timer: wl 6.30.223 writes
+0x3c on the Archer T5E, wl 6.30.102.7 pulses them low and back high on
+the DSL-3580L. Bit 3 is UARTCLKEN, the others are unnamed.
+
+Log PMU and SPROM probing at info level
+---------------------------------------
+
+The PMU and SPROM revisions, the SPROM source, and the PLL and resource
+mask values the family's PMU init overwrites, for the bring-up logs.
 
 Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
 ---
@@ -778,7 +795,7 @@ index 0cb6638..45c37b6 100644
  #define BCMA_CC_PMU1_PLL0_PC0_P1DIV_MASK	0x00f00000
  #define BCMA_CC_PMU1_PLL0_PC0_P1DIV_SHIFT	20
 diff --git a/include/linux/ssb/ssb.h b/include/linux/ssb/ssb.h
-index e1fb11e..fa651bd 100644
+index e1fb11e..0de18fd 100644
 --- a/include/linux/ssb/ssb.h
 +++ b/include/linux/ssb/ssb.h
 @@ -23,6 +23,19 @@ struct ssb_sprom_core_pwr_info {
@@ -854,9 +871,9 @@ index e1fb11e..fa651bd 100644
 +	u16 sb40and80lr5gpo[3];
 +	u16 dot11agduphrpo;
 +	u16 dot11agduplrpo;
-+	/* FEM / PA control block (SROM11_FEM_CFG1/2). femctrl seleziona lo
-+	 * schema di controllo del front-end module: un driver che programma
-+	 * la tabella di controllo FEM deve verificarlo, non assumerlo.
++	/* FEM / PA control block (SROM11_FEM_CFG1/2). femctrl selects the
++	 * front-end module control scheme: a driver that programs the FEM
++	 * control table must check it, not assume it.
 +	 */
 +	u8 tssiposslope2g;
 +	u8 epagain2g;
@@ -870,14 +887,14 @@ index e1fb11e..fa651bd 100644
 +	u8 tworangetssi5g;
 +	u8 papdcap5g;
 +	u8 gainctrlsph;
-+	/* TSSI floor: 0x3ff quando il campo non e' programmato. */
++	/* TSSI floor: 0x3ff when the field is not programmed. */
 +	u16 tssifloor2g;
 +	u16 tssifloor5g[4];
  };
  
  /* Information about the PCB the circuitry is soldered on. */
 diff --git a/include/linux/ssb/ssb_regs.h b/include/linux/ssb/ssb_regs.h
-index 210f464..f5b2a23 100644
+index 210f464..7053800 100644
 --- a/include/linux/ssb/ssb_regs.h
 +++ b/include/linux/ssb/ssb_regs.h
 @@ -606,6 +606,116 @@
@@ -897,9 +914,9 @@ index 210f464..f5b2a23 100644
 +#define SSB_SPROM11_AGBG2A0		0x00A4	/* agbg2 low byte, aga0 high */
 +#define SSB_SPROM11_AGA21		0x00A6	/* aga1 low byte, aga2 high */
 +#define SSB_SPROM11_TXRXC		0x00A8
-+/* FEM / PA control block. Layout canonico da bcmsrom_tbl.h (SROM11_FEM_CFG1/2);
-+ * offset verificato sui dump raw di DSL-3580L e D6220, dove le due word
-+ * decodificano tutti e sei i campi di ciascuna: 0x30A1 e 0x00A1.
++/* FEM / PA control block. Layout from bcmsrom_tbl.h (SROM11_FEM_CFG1/2);
++ * offsets verified on the DSL-3580L and D6220 raw dumps, where the two
++ * words, 0x30A1 and 0x00A1, decode into all six fields of each.
 + */
 +#define SSB_SPROM11_FEM_CFG1		0x00AA
 +#define SSB_SPROM11_FEM_CFG2		0x00AC
