@@ -170,7 +170,7 @@ void bcma_core_pcie2_init(struct bcma_drv_pcie2 *pcie2)
 	case BCMA_CHIP_ID_BCM4360:
 	case BCMA_CHIP_ID_BCM4352:
 		pcie2->reqsize = 1024;
-		/* As the stock driver, on the only chip rev captured. */
+		/* Only chip rev 3 has been captured. */
 		if (ci->rev == 3)
 			pcie2_set32(pcie2, BCMA_CLKCTLST,
 				    BCMA_CLKCTLST_HAVEHTREQ);

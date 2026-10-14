@@ -145,10 +145,7 @@ static void bcma_pmu2_pll_init0(struct bcma_drv_cc *cc, u32 xtalfreq)
 	/* TODO: Do we need to update OTP? */
 }
 
-/*
- * BCM4352/BCM4360: chip rev 3 only. The stock driver programs other revisions
- * differently, and none of them has been captured.
- */
+/* BCM4352/BCM4360: only chip rev 3 has been captured. */
 static void bcma_pmu_4360_pll_init(struct bcma_drv_cc *cc)
 {
 	struct bcma_bus *bus = cc->core->bus;
@@ -156,16 +153,12 @@ static void bcma_pmu_4360_pll_init(struct bcma_drv_cc *cc)
 
 	if (bus->chipinfo.rev != 3)
 		return;
-	/* The stock driver skips a USB-strapped BCM4360 once HT is up. */
+	/* No capture has the USB strap. */
 	if (bus->chipinfo.id == BCMA_CHIP_ID_BCM4360 &&
 	    cc->status & BCMA_CC_CHIPST_4360_MODE_USB)
 		return;
 
-	/*
-	 * Fractional VCO, 960.0098 MHz from the 40 MHz crystal. wl 6.30 does
-	 * not write it on the 4352, the DSL-3580L's included, and leaves
-	 * PLLCTL3 at 0x00133333.
-	 */
+	/* Fractional VCO, 960.0098 MHz from a 40 MHz crystal. */
 	ctl2 = bcma_chipco_pll_read(cc, BCMA_CC_PMU_PLL_CTL2);
 	ctl3 = bcma_chipco_pll_read(cc, BCMA_CC_PMU_PLL_CTL3);
 	bcma_info(bus, "PMU PLL pre-write: ctl2=0x%08x ctl3=0x%08x\n",
