@@ -9498,10 +9498,10 @@ static void b43_phy_ac_temp_recal(struct b43_wldev *dev)
  * or above tempthresh TX goes down to one chain, and comes back to all of
  * them at tempthresh - temps_hysteresis or below; RX keeps every chain.
  * The defaults are its wlc_phy_attach()'s: tempthresh 150 when the SROM
- * has 0 or 255, temps_hysteresis 5 when it has 0 or 15. On some BCM4360s it
- * takes 120 whatever the SROM says, by a field this driver cannot tell
- * apart, so every BCM4360 here takes 120 at most. The readings are this
- * driver's (b43_phy_ac_temp_update()), so where the fit is off the
+ * has 0 or 255, temps_hysteresis 5 when it has 0 or 15. On a BCM4360 of
+ * boardtype 0x111 or 0x117 (the MacBookAir6,1's) it takes 120 whatever the
+ * SROM says. Every BCM4360 here takes 120 at most: the readings are this
+ * driver's (b43_phy_ac_temp_update()), and where the fit is off the
  * threshold moves with it.
  *
  * One chain carries one stream: the TX path sends every rate of a throttled

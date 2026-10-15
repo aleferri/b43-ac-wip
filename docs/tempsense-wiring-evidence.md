@@ -15,8 +15,8 @@ From the D6220's `wl.o` (7.14, MIPS, not stripped), for an AC-PHY:
   otherwise the SROM's value. The 40 matches what the DSL-3580L's
   `wl phycal_tempdelta` reports for its 255.
 - `tempthresh` (`wlc_phy_attach()`): 1 to 254 as programmed, 0 and 255 give
-  150 on the HT and AC PHYs (115 on the others). On a BCM4360 where a field
-  of the shared info (offset 68, not identified) reads 273 or 279, 120
+  150 on the HT and AC PHYs (115 on the others). On a BCM4360 of boardtype
+  273 or 279 (0x111, 0x117; the MacBookAir6,1's SROM has 0x117), 120
   whatever the SROM says; the tg789vac programs 120 itself.
 - `temps_hysteresis`: 0 and 15 give 5. The attach keeps
   `tempthresh - temps_hysteresis` beside them and the full chain mask, which
@@ -26,8 +26,8 @@ From the D6220's `wl.o` (7.14, MIPS, not stripped), for an AC-PHY:
   `{1, 1, 2, 1, 4, 1, 2, 1}`), RX keeping all of them, and at or below
   `tempthresh - temps_hysteresis` the configured mask comes back. The port
   does the same after each watchdog reading (`b43_phy_ac_temp_throttle()`),
-  with 120 at most on every BCM4360 since it cannot tell the ones the stock
-  driver singles out, and sends every MCS on one stream meanwhile.
+  with 120 at most on every BCM4360, its readings being a fit, and sends
+  every MCS on one stream meanwhile.
 
 ## What the port collects
 
