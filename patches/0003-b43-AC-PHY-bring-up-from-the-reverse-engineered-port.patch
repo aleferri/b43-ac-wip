@@ -13,16 +13,16 @@ hand, so it cannot drift out of sync with the tree the unit suite measures.
 Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     4 +
- .../wireless/broadcom/b43/helpers_phy_ac.c    |   102 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 10926 +++++++++++++++-
- drivers/net/wireless/broadcom/b43/phy_ac.h    |   851 +-
- drivers/net/wireless/broadcom/b43/ppr_ac.c    |   310 +
+ .../wireless/broadcom/b43/helpers_phy_ac.c    |   106 +
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 10930 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.h    |   853 +-
+ drivers/net/wireless/broadcom/b43/ppr_ac.c    |   314 +
  drivers/net/wireless/broadcom/b43/ppr_ac.h    |    94 +
- .../net/wireless/broadcom/b43/radio_2069.c    |  1671 +++
+ .../net/wireless/broadcom/b43/radio_2069.c    |  1674 +++
  .../net/wireless/broadcom/b43/radio_2069.h    |    48 +
- .../net/wireless/broadcom/b43/tables_phy_ac.c |  1079 ++
+ .../net/wireless/broadcom/b43/tables_phy_ac.c |  1082 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    51 +
- 10 files changed, 15113 insertions(+), 23 deletions(-)
+ 10 files changed, 15136 insertions(+), 20 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -48,13 +48,17 @@ index 54f92ce..62386e2 100644
  b43-y				+= dma.o
 diff --git a/drivers/net/wireless/broadcom/b43/helpers_phy_ac.c b/drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
 new file mode 100644
-index 0000000..56a4d2c
+index 0000000..2e2d4fe
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,106 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +/*
-+ * Broadcom B43 wireless driver AC-PHY low-level helpers.
++ * Broadcom B43 wireless driver
++ * AC-PHY low-level helpers
++ *
++ * Copyright (c) 2026 Alessio Ferri <alessio.ferri.3012@gmail.com>
++ * Copyright (c) 2026 Andreas Wendleder <andreas.wendleder@proton.me>
 + *
 + * Kept out of phy_ac.c for two reasons:
 + *   1. These are the only AC-PHY primitives that belong to neither the
@@ -155,18 +159,17 @@ index 0000000..56a4d2c
 +	b43_read32(dev, B43_MMIO_MACCTL);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index fe102ea..289524f 100644
+index fe102ea..adc50de 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
-@@ -1,17 +1,53 @@
- // SPDX-License-Identifier: GPL-2.0-or-later
- /*
-- * Broadcom B43 wireless driver
-- * IEEE 802.11ac AC-PHY support
-+ * Broadcom B43 wireless driver IEEE 802.11ac AC-PHY support Copyright (c) 2015
-+ * Rafał Miłecki <zajec5@gmail.com>
-+ */
-+
+@@ -4,14 +4,48 @@
+  * IEEE 802.11ac AC-PHY support
+  *
+  * Copyright (c) 2015 Rafał Miłecki <zajec5@gmail.com>
++ * Copyright (c) 2026 Alessio Ferri <alessio.ferri.3012@gmail.com>
++ * Copyright (c) 2026 Andreas Wendleder <andreas.wendleder@proton.me>
+  */
+ 
 +/*
 + * Transcription conventions for the whole file:
 + *
@@ -190,13 +193,12 @@ index fe102ea..289524f 100644
 + *   gate the caller holds.
 + * - "the observed order" means the order comes from a capture and must not
 + *   be rearranged; the op-for-op comparison checks it.
-  *
-- * Copyright (c) 2015 Rafał Miłecki <zajec5@gmail.com>
++ *
 + * The #NNNNN indices are episode positions in a reference capture. The index
 + * spaces of the captures overlap, so a bare index can resolve to several ops:
 + * check it with `reverse-tools/anchors.py span` before relying on it.
-  */
- 
++ */
++
 +#include <linux/slab.h>
  #include "b43.h"
  #include "phy_ac.h"
@@ -208,17 +210,11 @@ index fe102ea..289524f 100644
 -/**************************************************
 - * Basic PHY ops
 - **************************************************/
-+/* The 2.4 GHz channel set is incomplete: the band is refused unless the
-+ * build sets ALLOW_24. */
-+#ifndef ALLOW_24
-+#define ALLOW_24 false
-+#endif
-+
 +/* Basic PHY ops */
  
  static int b43_phy_ac_op_allocate(struct b43_wldev *dev)
  {
-@@ -25,15 +61,30 @@ static int b43_phy_ac_op_allocate(struct b43_wldev *dev)
+@@ -25,15 +59,30 @@ static int b43_phy_ac_op_allocate(struct b43_wldev *dev)
  	return 0;
  }
  
@@ -249,7 +245,7 @@ index fe102ea..289524f 100644
  static void b43_phy_ac_op_maskset(struct b43_wldev *dev, u16 reg, u16 mask,
  				  u16 set)
  {
-@@ -62,27 +113,10864 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -62,27 +111,10876 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -1383,7 +1379,9 @@ index fe102ea..289524f 100644
 + *
 + * Same form as the per-rate field of b43_phy_ac_prb_rsp_rate_po(), with two
 + * differences: it is for the beacon rate only (6 Mbit/s at 5 GHz), and it is
-+ * always read on the 20 MHz row, not the operating width's.
++ * always read on the 20 MHz row, not the operating width's. A beacon at a
++ * CCK rate on 2.4 GHz takes the 1 Mbit/s field instead, from the SROM's CCK
++ * offsets (b43_phy_ac_op_beacon_rate_set()).
 + *
 + * The vendor writes it from the 20 MHz power of the beacon rate, which
 + * depends only on the per-rate table, so it is derived from that.
@@ -1402,6 +1400,10 @@ index fe102ea..289524f 100644
 +	enum nl80211_chan_width w = ac->cal_width;
 +	u16 cap;
 +
++	if (ac->beacon_cck && ac->txpwr_spacing.has_cck)
++		return b43_phy_ac_rate_po(ac, b43_ppr_ac_cck(&ac->txpwr_spacing,
++								 0), 0);
++
 +	/*
 +	 * The cell is the 6 Mbit/s field, in each chip's form: at 20 and
 +	 * 40 MHz that of the operating width; at 80 MHz that of the 20 MHz row
@@ -1418,6 +1420,24 @@ index fe102ea..289524f 100644
 +				b43_ppr_ac_ofdm(&ac->txpwr_ppr, w, 0), cap);
 +	return b43_phy_ac_rate_po(ac, b43_ppr_ac_ofdm(&ac->txpwr_spacing,
 +						      w, 0), cap);
++}
++
++/*
++ * The beacon's rate class, from the template writer: on 2.4 GHz a CCK
++ * beacon's power offset is the 1 Mbit/s field, rewritten here when the
++ * class changes the field.
++ */
++static void b43_phy_ac_op_beacon_rate_set(struct b43_wldev *dev, bool cck)
++{
++	struct b43_phy_ac *ac = dev->phy.ac;
++
++	if (ac->beacon_cck == cck)
++		return;
++	ac->beacon_cck = cck;
++	if (ac->txpwr_spacing.has_cck)
++		b43_shm_write16(dev, B43_SHM_SHARED, 0x00ce,
++				b43_phy_ac_beacon_pwr_offset_at(dev,
++						B43_PHY_AC_CHAIN_TXPWR));
 +}
 +
 +/*
@@ -5919,7 +5939,7 @@ index fe102ea..289524f 100644
 +		b43_phy_ac_txpwr_recalc(dev);
 +	}
 +
-+	/* The chain mask into 0x00cc, see b43_phy_ac_bss_cc(). */
++	/* The chain mask into 0x00cc, see b43_phy_ac_bss_cc_update(). */
 +	b43_phy_ac_bss_cc_update(dev, B43_PHY_AC_CHAIN_TXPWR);
 +	b43_shm_write16(dev, B43_SHM_SHARED, 0x00ce,
 +			b43_phy_ac_beacon_pwr_offset_at(dev, B43_PHY_AC_CHAIN_TXPWR));
@@ -9629,10 +9649,10 @@ index fe102ea..289524f 100644
 + * or above tempthresh TX goes down to one chain, and comes back to all of
 + * them at tempthresh - temps_hysteresis or below; RX keeps every chain.
 + * The defaults are its wlc_phy_attach()'s: tempthresh 150 when the SROM
-+ * has 0 or 255, temps_hysteresis 5 when it has 0 or 15. On some BCM4360s it
-+ * takes 120 whatever the SROM says, by a field this driver cannot tell
-+ * apart, so every BCM4360 here takes 120 at most. The readings are this
-+ * driver's (b43_phy_ac_temp_update()), so where the fit is off the
++ * has 0 or 255, temps_hysteresis 5 when it has 0 or 15. On a BCM4360 of
++ * boardtype 0x111 or 0x117 (the MacBookAir6,1's) it takes 120 whatever the
++ * SROM says. Every BCM4360 here takes 120 at most: the readings are this
++ * driver's (b43_phy_ac_temp_update()), and where the fit is off the
 + * threshold moves with it.
 + *
 + * One chain carries one stream: the TX path sends every rate of a throttled
@@ -10022,25 +10042,19 @@ index fe102ea..289524f 100644
 +#define B43_PHY_AC_RADAR_FIFO_WORDS	0x0600
 +
 +/*
-+ * The radar test. The pulse words are not decoded beyond the first, a
-+ * coarse timestamp: on the agcombo's 7.14.43 at this driver's threshold
-+ * (vd625-agcombo/bss-up.zip, ch100/80, 175 s of polls) it rises on all
-+ * 148 consecutive pairs and by about 1220 a second, 0.82 ms a step; the
-+ * second FIFO mostly holds the first's pulses again, within a step. What
-+ * carries the fine time, the width and the chirp is not established, so
-+ * the pulses cannot be matched against the radar types.
++ * The radar test. Of the four words of a pulse only the first is decoded,
++ * a coarse timestamp of about 1220 steps a second (0.82 ms): on the
++ * agcombo's 7.14.43 at this threshold (vd625-agcombo/bss-up.zip, ch100/80)
++ * it rises on every consecutive pair. Fine time, width and chirp are not
++ * established, so the pulses cannot be matched against the radar types.
 + *
-+ * What the stock driver let pass is known instead. Over that capture it
-+ * drained 182 pulses in 31 of its 1155 polls, at most 16 distinct ones
-+ * within any 100 or 150 ms, finished its channel availability check after
-+ * 60 s and kept the channel to the end. So a radar is declared, the test
-+ * being conservative, when B43_PHY_AC_RADAR_PULSES distinct pulses fall
-+ * within 100 ms (B43_PHY_AC_RADAR_WINDOW, in steps): one more than the
-+ * stock driver discarded. The radar types send 10 to 29 pulses a burst, so
-+ * the shorter bursts go unseen; the window catches a burst split across two
-+ * polls. A pulse of the second FIFO within a step of one of the first's is
-+ * the same pulse. The timestamp wraps every 54 s and polls come every
-+ * 150 ms, so a timestamp lower than the last one is a wrap.
++ * What the stock driver let pass is known: over 175 s of that capture, 182
++ * pulses, at most 16 distinct within any 100 ms, and it kept the channel.
++ * A radar is B43_PHY_AC_RADAR_PULSES distinct pulses within 100 ms
++ * (B43_PHY_AC_RADAR_WINDOW steps), one more; bursts of fewer pulses go
++ * unseen, and the window catches a burst split across two polls. The
++ * timestamp wraps every 54 s and polls come every 150 ms, so a timestamp
++ * below the last one is a wrap.
 + */
 +#define B43_PHY_AC_RADAR_WINDOW		122
 +
@@ -10421,13 +10435,6 @@ index fe102ea..289524f 100644
 +	const struct b43_phy_ac_channeltab_e_radio2069 *e2069;
 +	struct b43_phy *phy = &dev->phy;
 +	u16 off, ifs, gate;
-+
-+	if (!ALLOW_24 && b43_current_band(dev->wl) == NL80211_BAND_2GHZ) {
-+		b43info(dev->wl,
-+		       "AC-PHY: 2.4 GHz channel %u not supported on this board\n",
-+		       new_channel);
-+		return -EOPNOTSUPP;
-+	}
 +
 +	/*
 +	 * b43 keeps the MAC active between channel switches, and this runs with
@@ -10949,6 +10956,7 @@ index fe102ea..289524f 100644
 +	.channel_calibrate	= b43_phy_ac_op_channel_calibrate,
 +	.noise_sample_done	= b43_phy_ac_noise_sample_done,
 +	.radar_poll		= b43_phy_ac_radar_poll,
++	.beacon_rate_set	= b43_phy_ac_op_beacon_rate_set,
 +	.cac_done		= b43_phy_ac_bss_up,
 +};
 +
@@ -11128,7 +11136,7 @@ index fe102ea..289524f 100644
 +	(void)b43_phy_ac_farrow_vals_432x_media_a1;
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.h b/drivers/net/wireless/broadcom/b43/phy_ac.h
-index 02eb6c0..e08b1f9 100644
+index 02eb6c0..c28d4c1 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.h
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.h
 @@ -3,20 +3,83 @@
@@ -11237,7 +11245,7 @@ index 02eb6c0..e08b1f9 100644
  #define B43_PHY_AC_C1_CLIP			0x6d4
  #define  B43_PHY_AC_C1_CLIP_DIS			0x4000
  #define B43_PHY_AC_C2_CLIP			0x8d4
-@@ -31,9 +105,778 @@
+@@ -31,9 +105,780 @@
  #define B43_PHY_AC_C3_CLIP			0xad4
  #define  B43_PHY_AC_C3_CLIP_DIS			0x4000
  
@@ -11702,6 +11710,8 @@ index 02eb6c0..e08b1f9 100644
 +	 */
 +	u16 rate_po_ofdm[8];
 +	u16 rate_po_cck;
++	/* The beacon goes out at a CCK rate, see op_beacon_rate_set(). */
++	bool beacon_cck;
 +	/* The same field for VHT MCS 0-9, by width (20, 40, 80 MHz). */
 +	u16 rate_po_vht[B43_PPR_AC_ROWS][10];
 +	u8 crs_subband;
@@ -12018,19 +12028,23 @@ index 02eb6c0..e08b1f9 100644
  #endif /* B43_PHY_AC_H_ */
 diff --git a/drivers/net/wireless/broadcom/b43/ppr_ac.c b/drivers/net/wireless/broadcom/b43/ppr_ac.c
 new file mode 100644
-index 0000000..4e21ce3
+index 0000000..0dff844
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/ppr_ac.c
-@@ -0,0 +1,310 @@
+@@ -0,0 +1,314 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
-+ * Per-rate power table for the AC-PHY, SROM revision 11.
++ * Broadcom B43 wireless driver
++ * Per-rate power table for the AC-PHY, SROM revision 11
++ *
++ * Copyright (c) 2026 Alessio Ferri <alessio.ferri.3012@gmail.com>
++ * Copyright (c) 2026 Andreas Wendleder <andreas.wendleder@proton.me>
 + *
 + * The primitives follow b43's ppr.c one for one. What differs is the load:
-+ * rev 11 has per-core maxp5ga[] over four 5 GHz sub-bands and the power
-+ * offsets per bandwidth and modulation class (see ppr_ac.h), and the table
-+ * takes the minimum maxp over the active cores as
-+ * b43_ppr_load_max_from_sprom() does over its two.
++ * rev 11 has per-core maxima, maxp2ga on 2.4 GHz and maxp5ga[] over four
++ * 5 GHz sub-bands, and power offsets per band, bandwidth and modulation
++ * class (see ppr_ac.h); the table takes the minimum over the active cores
++ * as ppr.c's b43_ppr_load_max_from_sprom() does over its two.
 + */
 +
 +#include "b43.h"
@@ -12434,14 +12448,17 @@ index 0000000..24c3e8b
 +#endif /* B43_PPR_AC_H_ */
 diff --git a/drivers/net/wireless/broadcom/b43/radio_2069.c b/drivers/net/wireless/broadcom/b43/radio_2069.c
 new file mode 100644
-index 0000000..7bd0d7f
+index 0000000..a9d8a30
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/radio_2069.c
-@@ -0,0 +1,1671 @@
+@@ -0,0 +1,1674 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +/*
-+ * Broadcom B43 wireless driver 2069 radio — per-channel tuning table, lookup,
-+ * and apply.
++ * Broadcom B43 wireless driver
++ * 2069 radio: the per-channel tuning table, its lookup and its apply
++ *
++ * Copyright (c) 2026 Alessio Ferri <alessio.ferri.3012@gmail.com>
++ * Copyright (c) 2026 Andreas Wendleder <andreas.wendleder@proton.me>
 + */
 +
 +#include <linux/delay.h>
@@ -14165,14 +14182,17 @@ index 0000000..7edb72e
 +#endif /* B43_RADIO_2069_H_ */
 diff --git a/drivers/net/wireless/broadcom/b43/tables_phy_ac.c b/drivers/net/wireless/broadcom/b43/tables_phy_ac.c
 new file mode 100644
-index 0000000..36ff5fa
+index 0000000..fef867a
 --- /dev/null
 +++ b/drivers/net/wireless/broadcom/b43/tables_phy_ac.c
-@@ -0,0 +1,1079 @@
+@@ -0,0 +1,1082 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +/*
-+ * Broadcom B43 wireless driver AC-PHY init tables and the bulk write path that
-+ * feeds them into the chip.
++ * Broadcom B43 wireless driver
++ * AC-PHY init tables and the bulk write path that feeds them into the chip
++ *
++ * Copyright (c) 2026 Alessio Ferri <alessio.ferri.3012@gmail.com>
++ * Copyright (c) 2026 Andreas Wendleder <andreas.wendleder@proton.me>
 + */
 +
 +#include "b43.h"
