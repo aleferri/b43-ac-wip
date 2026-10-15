@@ -140,9 +140,8 @@ goal:
   intercepted at link time with `-Wl,--wrap=<sym>` (`WRAP_SYMS` in the
   `Makefile`). A new driver helper that touches hardware needs a line there, or
   its operations vanish.
-- **What the driver leaves to the harness.** `-DALLOW_24=true`, temporary,
-  lifts `switch_channel`'s refusal of 2.4 GHz; `AC_CHANNEL` 1 to 14 is that
-  band. `../ac_trace.h` (shared with `../integration`) and `core_sites.h` are
+- **What the driver leaves to the harness.** `AC_CHANNEL` 1 to 14 is the
+  2.4 GHz band. `../ac_trace.h` (shared with `../integration`) and `core_sites.h` are
   force-included and give a body to the trace points the driver leaves as
   no-ops: `B43_AC_FN()` and `B43_AC_BLOCK()`, and `B43_AC_CORE_SITE()`, the
   points where the stock driver runs core work inside a PHY sequence -- the

@@ -45,12 +45,6 @@
 #include "radio_2069.h"
 #include "main.h"
 
-/* The 2.4 GHz channel set is incomplete: the band is refused unless the
- * build sets ALLOW_24. */
-#ifndef ALLOW_24
-#define ALLOW_24 false
-#endif
-
 /* Basic PHY ops */
 
 static int b43_phy_ac_op_allocate(struct b43_wldev *dev)
@@ -10266,13 +10260,6 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	const struct b43_phy_ac_channeltab_e_radio2069 *e2069;
 	struct b43_phy *phy = &dev->phy;
 	u16 off, ifs, gate;
-
-	if (!ALLOW_24 && b43_current_band(dev->wl) == NL80211_BAND_2GHZ) {
-		b43info(dev->wl,
-		       "AC-PHY: 2.4 GHz channel %u not supported on this board\n",
-		       new_channel);
-		return -EOPNOTSUPP;
-	}
 
 	/*
 	 * b43 keeps the MAC active between channel switches, and this runs with

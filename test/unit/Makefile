@@ -25,7 +25,6 @@ AC_HDRS := $(addprefix $(SCRATCH)/,phy_ac.h tables_phy_ac.h radio_2069.h \
 # directory comes next for its own headers ("phy_ac.h" etc.).
 CFLAGS  := -O0 -g -Wall -Werror -Wno-unused-parameter \
            -Wno-pointer-sign -Wno-sign-compare \
-           -DALLOW_24=true \
            -include ../ac_trace.h -include core_sites.h \
            -I$(STUBS) -I$(SCRATCH) \
            -include stubs/linux/types.h \

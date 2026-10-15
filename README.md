@@ -132,10 +132,10 @@ How the pieces fit is in [`docs/driver-status.md`](docs/driver-status.md).
 
 ## What is missing
 
-- 2.4 GHz: `switch_channel` returns `-EOPNOTSUPP`. The channel set is in the
-  port and checked against two boards (`test/unit/band_gate.sh`, with the
-  driver built with `ALLOW_24`); board data and calibrations are open
-  (`docs/retrace-todo.md`, "2.4 GHz").
+- 2.4 GHz at 40 MHz, and part of the 2.4 GHz board data and calibrations:
+  the band runs at 20 MHz, checked against two boards
+  (`test/unit/band_gate.sh`) and on the MacBookAir6,1 (`docs/retrace-todo.md`,
+  "2.4 GHz").
 - Radar detection without pattern matching: `CONFIG_B43_DFS` reports a radar
   on 17 pulses within 100 ms, one more than the stock driver let pass as
   noise, and does not decode the pulse width or the fine time

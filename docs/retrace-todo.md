@@ -902,8 +902,8 @@ open too.
 
 ## 2.4 GHz
 
-`switch_channel` refuses the band unless the driver is built with `ALLOW_24`,
-as the unit harness is. A band change on a running interface is synchronous,
+2.4 GHz runs at 20 MHz; Andreas has the MacBookAir6,1 associating, scanning
+and passing traffic there. A band change on a running interface is synchronous,
 inside `b43_op_config()`: the PHY goes through a reset and a full init for the
 new band, the MAC's GMODE and the slot time follow, and DMA, interrupts and
 keys stay (`b43_ac_switch_band()`). The MacBookAir6,1's wl does less in the
@@ -978,11 +978,14 @@ Table `0x21` is written as zeros on 2.4 GHz, as on both boards.
   all zero and `maxp2ga` 80. The beacon cell `0x00ce` takes the 6 Mb/s
   field on 2.4 GHz too, where a beacon at 1 Mb/s would want the CCK one;
   on the two boards with 2.4 GHz SROM data the two are the same.
-- **First cell of each noise-shaping run.** 6.30 and 7.14 already write it
-  differently on 5 GHz; 2.4 GHz keeps 7.14's 5 GHz value and warns.
 - **Board data.** `0x06dd`, `0x06df`, `0x06e1`–`0x06e5` and table `0x07`
   `[0xf9 + core]` change between the two boards on the same core; `0x06e1`
-  does on 5 GHz too, where the port writes the D6220's `0x0018`.
+  does on 5 GHz too, where the port writes the D6220's `0x0018`. Core 0 is
+  the same on both boards on 2.4 GHz, where their `rxgains2gelnagaina0` are
+  4 and their `rxgains2gtrisoa0` 7 and 9; core 1 differs (`0x0634`/`0x0624`,
+  `0xcca5`/`0xc8a5`), where the MacBook's elnagain is 3 and the archer's 4.
+  The elnagain fits 2.4 GHz alone: on 5 GHz both have 3 and `0x0604`. Not
+  enough boards to fix a rule; the port writes the D6220's 5 GHz values.
 - **FEM control.** The port has the tables of `femctrl 6, femctrl_sub 0` (the
   routers) and `femctrl 2, femctrl_sub 1` (the MacBook, `boardflags3 = 1`),
   and stops with its warning on any other: the archer-t5e has `femctrl = 1`,
@@ -995,13 +998,12 @@ Table `0x21` is written as zeros on 2.4 GHz, as on both boards.
 - **Radio `0x002c`.** The core transition works on `0x002c` instead of
   `0x0033`; the bus shows a read and a write of the same value, so field and
   value are not known.
-- **`0x0140`.** 6.30 sets bit 0 on the band with a MOD; the port writes the
-  register in 7.14's form.
 - **40 MHz** on 2.4 GHz has no capture; the Farrow setup warns and programs
   nothing there.
-- **Version.** Everything above is 6.30. On 5 GHz the hybrid's TX gain table
-  differs from 7.14's in 38 of 384 words, so the 2.4 GHz one needs a 7.14 blob
-  before it is more than a 6.30 value.
+- **Version.** The rest is 6.30. The 2.4 GHz TX gain table is 7.14's as well:
+  `acphy_txgain_epa_2g_2069rev4` in the D6220's `wl.o` matches the port's on
+  384 of 384 words. That object also has an `_id1` variant, 158 words alike,
+  whose boards are not known.
 - **Calibrations.** The only 2.4 GHz channel set with them is the ch6 one at
   the end of the MacBook capture, a hot one.
 
