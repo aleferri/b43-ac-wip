@@ -739,7 +739,7 @@ void b43_tsf_write(struct b43_wldev *dev, u64 tsf)
  * half-word, rather than the plain address rows the older cores take.
  *
  * 42 is the revision the captures report, on all three boards they come from,
- * and the one on which the OEM driver's MACFILTER writer is never entered. 41
+ * and the one on which the stock driver's MACFILTER writer is never entered. 41
  * has not been seen and lower revisions are untested, so they keep the old
  * path: getting this boundary wrong downwards would leave the receive filter
  * unprogrammed, while getting it wrong upwards only leaves things as they are
@@ -812,11 +812,10 @@ void b43_macfilter_set(struct b43_wldev *dev, u16 offset, const u8 *mac)
 		mac = zero_addr;
 
 	/*
-	 * On the wide layout this port is not what the hardware reads: the
-	 * address match table has taken over, and the two rows at the top of
-	 * it hold what the port used to. A capture with the OEM driver's writer
-	 * for this port traced shows it never being entered, while the table is
-	 * written throughout the bring-up.
+	 * On the wide layout the hardware does not read this port: the address
+	 * match table replaces it, its two top rows holding these addresses. A
+	 * capture with the stock driver's writer for the port traced never
+	 * enters it, while the table is written throughout the bring-up.
 	 */
 	if (b43_amt_wide(dev)) {
 		u16 index, flags;
@@ -1324,15 +1323,13 @@ static void b43_clear_keys(struct b43_wldev *dev)
 }
 
 /*
- * A core init clears the key memory (b43_security_init()), and mac80211 is
- * not told: after a controller restart, a band change on the AC among
- * them, the keys it believes installed would be gone, frames going out
- * with a key slot that holds nothing and coming in undecrypted. The
- * restart takes the slots before the core goes down and writes them back
- * once it is up, in slot order, so that each pairwise key lands in the
- * slot it had. The key_conf pointers are mac80211's and stay valid: a
- * DISABLE_KEY clears its slot under the same mutex, before the snapshot or
- * after the restore.
+ * A core init clears the key memory (b43_security_init()) without telling
+ * mac80211, so a controller restart would lose the keys it believes
+ * installed. The restart copies the slots before the core goes down and
+ * writes them back once it is up, in slot order, so that each pairwise key
+ * lands in the slot it had. The key_conf pointers are mac80211's and stay
+ * valid: a DISABLE_KEY clears its slot under the same mutex, before the copy
+ * or after the restore.
  */
 static struct b43_key *b43_keys_save(struct b43_wldev *dev)
 {
@@ -3660,7 +3657,7 @@ void b43_mac_switch_freq(struct b43_wldev *dev, u8 spurmode)
 		 * bcma programs the PMU PLL of these chips with
 		 * pllcontrol[2..3] = 0x0c31, 0x100e: the VCO runs at
 		 * 40 MHz * (24 + 0x100e / 2^24) and the MAC at a sixth of it,
-		 * 160.0016 MHz, so 2^26 / 160.0016 = 0x66662. The OEM driver
+		 * 160.0016 MHz, so 2^26 / 160.0016 = 0x66662. The stock driver
 		 * writes it after reading the PLL back, with no spur mode
 		 * involved.
 		 */
@@ -3884,17 +3881,17 @@ static void b43_mgmtframe_txantenna(struct b43_wldev *dev, int antenna)
 /*
  * TX FIFO geometry of the 802.11 core revision 42.
  *
- * The OEM driver programs it right after the initvals and before touching
+ * The stock driver programs it right after the initvals and before touching
  * the PHY: it flushes the FIFO block pool, allocates blocks to the template
  * FIFO (selector 0x17) and to FIFOs 0-5 (selectors 0x10-0x15), then chains
  * the 42 blocks of the pool, each entry naming a block and the two after it.
  * Nothing in this block is documented for this core; the register names are
  * the ones b43.h carries for the same offsets on the older layout, and the
- * values are the OEM driver's, the same on every bring-up of a BCM4352 and a
+ * values are the stock driver's, the same on every bring-up of a BCM4352 and a
  * BCM4360. The microcode does not size the FIFOs by itself, so without this
  * they keep whatever geometry the previous driver left in the hardware.
  *
- * Both waits are the OEM driver's, as the bus shows them on the agcombo. The
+ * Both waits are the stock driver's, as the bus shows them on the agcombo. The
  * flush polls the command's busy bit and reads it once more to check it.
  * Each chain entry waits for its command field to clear, 21 retries 10 us
  * apart, and on these chips it never does: all 22 reads of every entry
@@ -4399,7 +4396,7 @@ static void b43_periodic_tasks_setup(struct b43_wldev *dev)
 
 	dev->periodic_state = 0;
 	INIT_DELAYED_WORK(work, b43_periodic_work_handler);
-	/* A 1-second tick starts one second after the core, as the OEM's does. */
+	/* The 1 s tick starts 1 s after the core, as the stock driver's. */
 	ieee80211_queue_delayed_work(dev->wl->hw, work,
 				     b43_periodic_ticks_per_15sec(dev) > 1 ? HZ : 0);
 
@@ -4866,20 +4863,15 @@ static const char *band_to_string(enum nl80211_band band)
 }
 
 /*
- * A band change on the AC PHY, with the MAC suspended by b43_op_config().
- * The MacBookAir6,1's wl crosses bands in the middle of a scan without a
- * core reset or a microcode load: it flips GMODE in the core's ioctl,
- * writes the band's host flags and the IFS slot (0x0207 on 5 GHz, 0x0212 on
- * 2.4), and runs the PHY's band setup, some 4400 PHY and 160 radio writes
- * (router-data/macbookair6-1/wl-firstload-20260926-190438.trace.xz). Here
- * the PHY goes through a reset and a full init instead, what a core init on
- * that band gives it, the port's PHY setup having no step that rebuilds the
- * other band's tables on a running PHY; the MAC's GMODE follows the core's,
- * and the slot time is the band's default until mac80211 sets the BSS's.
- * DMA, interrupts and keys are left alone, and b43_op_config() tunes the
- * channel as after a core init before it returns. This is the part after
- * the core's GMODE and the band initvals, which b43_switch_band() writes
- * for every PHY.
+ * A band change on the AC PHY, with the MAC suspended by b43_op_config(),
+ * after the core's GMODE and the band initvals that b43_switch_band() writes
+ * for every PHY. The stock driver crosses bands in place too, without a core
+ * reset or a microcode load, but runs only its PHY band setup (the
+ * MacBookAir6,1's wl, wl-firstload-20260926-190438.trace.xz). The port's PHY
+ * has no step that rebuilds the other band's tables on a running PHY, so it
+ * gets a full init, as a core init on that band gives it, and the slot time
+ * the band's default until mac80211 sets the BSS's. DMA, interrupts and keys
+ * stay; b43_op_config() then tunes the channel as after a core init.
  */
 static int b43_ac_switch_band(struct b43_wldev *dev, bool gmode)
 {
@@ -6172,30 +6164,18 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
 	}
 
 	/*
-	 * Cells b43 has been leaving at whatever the microcode starts them
-	 * with, and that the OEM driver writes. Every value below is the same
-	 * on a BCM4352 and on a BCM4360, across every channel and both driver
-	 * versions, so none of it is board data.
+	 * Cells the stock driver always writes over the microcode's defaults.
+	 * The values are the same on a BCM4352 and a BCM4360, on every channel
+	 * and both driver versions, so none is board data; most are known only
+	 * by their b43.h names. A cell the stock driver writes more than once
+	 * (host flags 4 and 5 gain bits as it goes) takes its final value: the
+	 * end state matches, not the order. The beacon TSF offset depends on
+	 * the mode, see b43_adjust_opmode().
 	 *
-	 * The meaning of most of these is not established beyond the name
-	 * b43.h already carries, and the values are observed rather than
-	 * derived. They are written because the hardware is evidently expected
-	 * to have them: leaving a cell at a microcode default the OEM driver
-	 * always overwrites is a guess too, and the worse one.
-	 *
-	 * Where a cell is written more than once during bring-up -- host flags
-	 * 4 and 5 gain bits as the driver goes -- the value here is the one it
-	 * ends at. The beacon TSF offset depends on the mode and is in
-	 * b43_adjust_opmode(). b43's core init has a
-	 * different shape from the OEM's and the intermediate points have no
-	 * counterpart in it, so the end state matches and the order does not.
-	 *
-	 * Not written: the probe response offload cells, PRSSID, PRSSIDLEN and
-	 * PRTLEN. b43 turns that offload off with PRMAXTIME just below, so
-	 * they are meant to be untouched. HOSTF5 bit 15 belongs to the same
-	 * offload and is the one bit the stock driver ends with that b43 does
-	 * not take: with it set the microcode keeps the probe requests for
-	 * itself (b43_phy_ac_op_switch_channel()).
+	 * The probe-response offload stays off (PRMAXTIME below), so its cells,
+	 * PRSSID, PRSSIDLEN and PRTLEN, are left alone, and so is HOSTF5 bit
+	 * 15, with which the microcode keeps probe requests for itself
+	 * (b43_phy_ac_op_switch_channel()).
 	 */
 	if (dev->dev->core_rev >= 42) {
 		b43_shm_write16(dev, B43_SHM_SHARED,
@@ -6280,7 +6260,7 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
 	b43_bus_powerup(dev, !(sprom->boardflags_lo & B43_BFL_XTAL_NOSLOW));
 	/*
 	 * Clear the whole address match table before anything is put in it. The
-	 * OEM driver does this from its own core init, all 64 rows, and it
+	 * stock driver does this from its own core init, all 64 rows, and it
 	 * matters because a row left over with its valid flag set matches an
 	 * address nobody asked for.
 	 */

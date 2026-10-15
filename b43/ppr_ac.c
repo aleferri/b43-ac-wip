@@ -7,10 +7,10 @@
  * Copyright (c) 2026 Andreas Wendleder <andreas.wendleder@proton.me>
  *
  * The primitives follow b43's ppr.c one for one. What differs is the load:
- * rev 11 has per-core maxp5ga[] over four 5 GHz sub-bands and the power
- * offsets per bandwidth and modulation class (see ppr_ac.h), and the table
- * takes the minimum maxp over the active cores as
- * b43_ppr_load_max_from_sprom() does over its two.
+ * rev 11 has per-core maxima, maxp2ga on 2.4 GHz and maxp5ga[] over four
+ * 5 GHz sub-bands, and power offsets per band, bandwidth and modulation
+ * class (see ppr_ac.h); the table takes the minimum over the active cores
+ * as ppr.c's b43_ppr_load_max_from_sprom() does over its two.
  */
 
 #include "b43.h"

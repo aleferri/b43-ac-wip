@@ -5770,7 +5770,7 @@ static void b43_phy_ac_txpwr_adjust(struct b43_wldev *dev)
 		b43_phy_ac_txpwr_recalc(dev);
 	}
 
-	/* The chain mask into 0x00cc, see b43_phy_ac_bss_cc(). */
+	/* The chain mask into 0x00cc, see b43_phy_ac_bss_cc_update(). */
 	b43_phy_ac_bss_cc_update(dev, B43_PHY_AC_CHAIN_TXPWR);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00ce,
 			b43_phy_ac_beacon_pwr_offset_at(dev, B43_PHY_AC_CHAIN_TXPWR));
@@ -9873,25 +9873,19 @@ static void b43_phy_ac_radar_thresh(struct b43_wldev *dev)
 #define B43_PHY_AC_RADAR_FIFO_WORDS	0x0600
 
 /*
- * The radar test. The pulse words are not decoded beyond the first, a
- * coarse timestamp: on the agcombo's 7.14.43 at this driver's threshold
- * (vd625-agcombo/bss-up.zip, ch100/80, 175 s of polls) it rises on all
- * 148 consecutive pairs and by about 1220 a second, 0.82 ms a step; the
- * second FIFO mostly holds the first's pulses again, within a step. What
- * carries the fine time, the width and the chirp is not established, so
- * the pulses cannot be matched against the radar types.
+ * The radar test. Of the four words of a pulse only the first is decoded,
+ * a coarse timestamp of about 1220 steps a second (0.82 ms): on the
+ * agcombo's 7.14.43 at this threshold (vd625-agcombo/bss-up.zip, ch100/80)
+ * it rises on every consecutive pair. Fine time, width and chirp are not
+ * established, so the pulses cannot be matched against the radar types.
  *
- * What the stock driver let pass is known instead. Over that capture it
- * drained 182 pulses in 31 of its 1155 polls, at most 16 distinct ones
- * within any 100 or 150 ms, finished its channel availability check after
- * 60 s and kept the channel to the end. So a radar is declared, the test
- * being conservative, when B43_PHY_AC_RADAR_PULSES distinct pulses fall
- * within 100 ms (B43_PHY_AC_RADAR_WINDOW, in steps): one more than the
- * stock driver discarded. The radar types send 10 to 29 pulses a burst, so
- * the shorter bursts go unseen; the window catches a burst split across two
- * polls. A pulse of the second FIFO within a step of one of the first's is
- * the same pulse. The timestamp wraps every 54 s and polls come every
- * 150 ms, so a timestamp lower than the last one is a wrap.
+ * What the stock driver let pass is known: over 175 s of that capture, 182
+ * pulses, at most 16 distinct within any 100 ms, and it kept the channel.
+ * A radar is B43_PHY_AC_RADAR_PULSES distinct pulses within 100 ms
+ * (B43_PHY_AC_RADAR_WINDOW steps), one more; bursts of fewer pulses go
+ * unseen, and the window catches a burst split across two polls. The
+ * timestamp wraps every 54 s and polls come every 150 ms, so a timestamp
+ * below the last one is a wrap.
  */
 #define B43_PHY_AC_RADAR_WINDOW		122
 
