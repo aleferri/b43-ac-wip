@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Broadcom B43 wireless driver AC-PHY low-level helpers.
+ * Broadcom B43 wireless driver
+ * AC-PHY low-level helpers
+ *
+ * Copyright (c) 2026 Alessio Ferri <alessio.ferri.3012@gmail.com>
+ * Copyright (c) 2026 Andreas Wendleder <andreas.wendleder@proton.me>
  *
  * Kept out of phy_ac.c for two reasons:
  *   1. These are the only AC-PHY primitives that belong to neither the

@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Broadcom B43 wireless driver IEEE 802.11ac AC-PHY support Copyright (c) 2015
- * Rafał Miłecki <zajec5@gmail.com>
+ * Broadcom B43 wireless driver
+ * IEEE 802.11ac AC-PHY support
+ *
+ * Copyright (c) 2015 Rafał Miłecki <zajec5@gmail.com>
+ * Copyright (c) 2026 Alessio Ferri <alessio.ferri.3012@gmail.com>
+ * Copyright (c) 2026 Andreas Wendleder <andreas.wendleder@proton.me>
  */
 
 /*

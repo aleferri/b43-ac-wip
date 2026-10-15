@@ -9,6 +9,8 @@
   Copyright (c) 2005-2007 Michael Buesch <m@bues.ch>
   Copyright (c) 2005 Danny van Dyk <kugelfang@gentoo.org>
   Copyright (c) 2005 Andreas Jaggi <andreas.jaggi@waterwave.ch>
+  Copyright (c) 2026 Alessio Ferri <alessio.ferri.3012@gmail.com>
+  Copyright (c) 2026 Andreas Wendleder <andreas.wendleder@proton.me>
 
 
 */

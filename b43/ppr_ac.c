@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Per-rate power table for the AC-PHY, SROM revision 11.
+ * Broadcom B43 wireless driver
+ * Per-rate power table for the AC-PHY, SROM revision 11
+ *
+ * Copyright (c) 2026 Alessio Ferri <alessio.ferri.3012@gmail.com>
+ * Copyright (c) 2026 Andreas Wendleder <andreas.wendleder@proton.me>
  *
  * The primitives follow b43's ppr.c one for one. What differs is the load:
  * rev 11 has per-core maxp5ga[] over four 5 GHz sub-bands and the power

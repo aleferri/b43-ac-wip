@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Broadcom B43 wireless driver 2069 radio — per-channel tuning table, lookup,
- * and apply.
+ * Broadcom B43 wireless driver
+ * 2069 radio: the per-channel tuning table, its lookup and its apply
+ *
+ * Copyright (c) 2026 Alessio Ferri <alessio.ferri.3012@gmail.com>
+ * Copyright (c) 2026 Andreas Wendleder <andreas.wendleder@proton.me>
  */
 
 #include <linux/delay.h>

@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Broadcom B43 wireless driver AC-PHY init tables and the bulk write path that
- * feeds them into the chip.
+ * Broadcom B43 wireless driver
+ * AC-PHY init tables and the bulk write path that feeds them into the chip
+ *
+ * Copyright (c) 2026 Alessio Ferri <alessio.ferri.3012@gmail.com>
+ * Copyright (c) 2026 Andreas Wendleder <andreas.wendleder@proton.me>
  */
 
 #include "b43.h"
