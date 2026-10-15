@@ -975,9 +975,9 @@ Table `0x21` is written as zeros on 2.4 GHz, as on both boards.
   Mb/s. Both fit a limit below every rate, which saturates them all on
   it, as the CLM of its `wl` would set; whether that is what happens is
   not in the capture. The archer-t5e's cells are flat `0x18`, its offsets
-  all zero and `maxp2ga` 80. The beacon cell `0x00ce` takes the 6 Mb/s
-  field on 2.4 GHz too, where a beacon at 1 Mb/s would want the CCK one;
-  on the two boards with 2.4 GHz SROM data the two are the same.
+  all zero and `maxp2ga` 80. A beacon at a CCK rate takes the 1 Mb/s field
+  in `0x00ce` (`b43_phy_ac_op_beacon_rate_set()`), the same as the 6 Mb/s one
+  on the two boards with 2.4 GHz SROM data.
 - **Board data.** `0x06dd`, `0x06df`, `0x06e1`–`0x06e5` and table `0x07`
   `[0xf9 + core]` change between the two boards on the same core; `0x06e1`
   does on 5 GHz too, where the port writes the D6220's `0x0018`. Core 0 is

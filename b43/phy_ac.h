@@ -566,6 +566,8 @@ struct b43_phy_ac {
 	 */
 	u16 rate_po_ofdm[8];
 	u16 rate_po_cck;
+	/* The beacon goes out at a CCK rate, see op_beacon_rate_set(). */
+	bool beacon_cck;
 	/* The same field for VHT MCS 0-9, by width (20, 40, 80 MHz). */
 	u16 rate_po_vht[B43_PPR_AC_ROWS][10];
 	u8 crs_subband;

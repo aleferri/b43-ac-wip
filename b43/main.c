@@ -2112,7 +2112,8 @@ static void b43_write_beacon_phytxctl(struct b43_wldev *dev, u16 rate)
 
 /*
  * The PHY keeps the chain mask in this word (b43_phy_ac_bss_cc_update()) and
- * the beacon's power offset in the next. The encoding is the core's: the
+ * the beacon's power offset in the next, which follows the rate class
+ * (b43_phy_ac_op_beacon_rate_set()). The encoding is the core's: the
  * stock drivers set it before each beacon template, 0x00c4 to 0x00c5 on the
  * DSL-3580L, 0x0144 to 0x0145 on the agcombo; the initvals' 0x0044 says CCK,
  * which 5 GHz cannot carry.
@@ -2125,6 +2126,8 @@ static void b43_write_beacon_phytxctl_ac(struct b43_wldev *dev, u16 rate)
 	ctl &= ~B43_TXH_PHY_ENC;
 	ctl |= b43_is_cck_rate(rate) ? B43_TXH_PHY_ENC_CCK : B43_TXH_PHY_ENC_OFDM;
 	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_BEACPHYCTL_AC, ctl);
+	if (dev->phy.ops->beacon_rate_set)
+		dev->phy.ops->beacon_rate_set(dev, b43_is_cck_rate(rate));
 }
 
 static void b43_write_beacon_template(struct b43_wldev *dev,

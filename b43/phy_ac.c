@@ -1228,7 +1228,9 @@ static void b43_phy_ac_prb_rsp_rate_po(struct b43_wldev *dev,
  *
  * Same form as the per-rate field of b43_phy_ac_prb_rsp_rate_po(), with two
  * differences: it is for the beacon rate only (6 Mbit/s at 5 GHz), and it is
- * always read on the 20 MHz row, not the operating width's.
+ * always read on the 20 MHz row, not the operating width's. A beacon at a
+ * CCK rate on 2.4 GHz takes the 1 Mbit/s field instead, from the SROM's CCK
+ * offsets (b43_phy_ac_op_beacon_rate_set()).
  *
  * The vendor writes it from the 20 MHz power of the beacon rate, which
  * depends only on the per-rate table, so it is derived from that.
@@ -1247,6 +1249,10 @@ static u16 b43_phy_ac_beacon_pwr_offset_at(struct b43_wldev *dev,
 	enum nl80211_chan_width w = ac->cal_width;
 	u16 cap;
 
+	if (ac->beacon_cck && ac->txpwr_spacing.has_cck)
+		return b43_phy_ac_rate_po(ac, b43_ppr_ac_cck(&ac->txpwr_spacing,
+								 0), 0);
+
 	/*
 	 * The cell is the 6 Mbit/s field, in each chip's form: at 20 and
 	 * 40 MHz that of the operating width; at 80 MHz that of the 20 MHz row
@@ -1263,6 +1269,24 @@ static u16 b43_phy_ac_beacon_pwr_offset_at(struct b43_wldev *dev,
 				b43_ppr_ac_ofdm(&ac->txpwr_ppr, w, 0), cap);
 	return b43_phy_ac_rate_po(ac, b43_ppr_ac_ofdm(&ac->txpwr_spacing,
 						      w, 0), cap);
+}
+
+/*
+ * The beacon's rate class, from the template writer: on 2.4 GHz a CCK
+ * beacon's power offset is the 1 Mbit/s field, rewritten here when the
+ * class changes the field.
+ */
+static void b43_phy_ac_op_beacon_rate_set(struct b43_wldev *dev, bool cck)
+{
+	struct b43_phy_ac *ac = dev->phy.ac;
+
+	if (ac->beacon_cck == cck)
+		return;
+	ac->beacon_cck = cck;
+	if (ac->txpwr_spacing.has_cck)
+		b43_shm_write16(dev, B43_SHM_SHARED, 0x00ce,
+				b43_phy_ac_beacon_pwr_offset_at(dev,
+						B43_PHY_AC_CHAIN_TXPWR));
 }
 
 /*
@@ -10781,6 +10805,7 @@ const struct b43_phy_operations b43_phyops_ac = {
 	.channel_calibrate	= b43_phy_ac_op_channel_calibrate,
 	.noise_sample_done	= b43_phy_ac_noise_sample_done,
 	.radar_poll		= b43_phy_ac_radar_poll,
+	.beacon_rate_set	= b43_phy_ac_op_beacon_rate_set,
 	.cac_done		= b43_phy_ac_bss_up,
 };
 
