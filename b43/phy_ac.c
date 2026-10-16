@@ -4855,12 +4855,17 @@ static const u16 b43_phy_ac_adc_lo[8] = { 0x33c, 0x33d, 0x340, 0x341,
  * The cell is 48 bits, read as three words through the data port 0x0011:
  * the first is the bbmult, the other two the 32 bits the stock driver
  * unpacks into the three coefficient cells of table 0x0007, as fields of
- * 8/16/8 bits from bit 0.
+ * 8/16/8 bits from bit 0. The first field goes into the high byte of its
+ * cell.
  *
- * Checked on two different cells: 0x0040 reads (0x0035, 0x1300, 0xf32f) and
- * the stock driver writes (0x0000, 0x2f13, 0x00f3) with bbmult 0x35; 0x0000
- * reads (0x0044, 0x7f00, 0xf3ff) and writes (0x0000, 0xff7f, 0x00f3) with
- * bbmult 0x44. Constant on all 43 segments.
+ * Checked on 0x0040, which reads (0x0035, 0x1300, 0xf32f) and the stock
+ * driver writes (0x0000, 0x2f13, 0x00f3) with bbmult 0x35; on 0x0000,
+ * (0x0044, 0x7f00, 0xf3ff) and (0x0000, 0xff7f, 0x00f3) with bbmult 0x44;
+ * and on the 2.4 GHz entry 0x000a, (0x0041, 0xffff, 0xa787) and
+ * (0xff00, 0x87ff, 0x00a7), the only one of the three whose first field is
+ * not zero. Over the d6220, tg789vac, DSL-3580L and MacBookAir6,1
+ * captures, 1001 unpacks: the 36 with that field non-zero, all on 2.4 GHz,
+ * put it in the high byte.
  * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   11284-11301, 28531-28554]
  */
@@ -4879,7 +4884,7 @@ static void b43_phy_ac_read_gaincurve(struct b43_wldev *dev, u16 offset,
 	packed = ((u32)cell[2] << 16) | cell[1];
 
 	gc->bbmult = cell[0] & 0xff;
-	gc->coeff[0] = (u16)(packed & 0xff);
+	gc->coeff[0] = (u16)((packed & 0xff) << 8);
 	gc->coeff[1] = (u16)((packed >> 8) & 0xffff);
 	gc->coeff[2] = (u16)(packed >> 24);
 }
