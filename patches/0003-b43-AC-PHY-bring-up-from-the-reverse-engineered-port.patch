@@ -14,7 +14,7 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     4 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |   106 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 10930 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 11019 +++++++++++++++-
  drivers/net/wireless/broadcom/b43/phy_ac.h    |   853 +-
  drivers/net/wireless/broadcom/b43/ppr_ac.c    |   314 +
  drivers/net/wireless/broadcom/b43/ppr_ac.h    |    94 +
@@ -22,7 +22,7 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
  .../net/wireless/broadcom/b43/radio_2069.h    |    48 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1082 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    51 +
- 10 files changed, 15136 insertions(+), 20 deletions(-)
+ 10 files changed, 15225 insertions(+), 20 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -159,7 +159,7 @@ index 0000000..2e2d4fe
 +	b43_read32(dev, B43_MMIO_MACCTL);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index fe102ea..adc50de 100644
+index fe102ea..13aa84f 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -4,14 +4,48 @@
@@ -245,7 +245,7 @@ index fe102ea..adc50de 100644
  static void b43_phy_ac_op_maskset(struct b43_wldev *dev, u16 reg, u16 mask,
  				  u16 set)
  {
-@@ -62,27 +111,10876 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -62,27 +111,10965 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -5006,12 +5006,17 @@ index fe102ea..adc50de 100644
 + * The cell is 48 bits, read as three words through the data port 0x0011:
 + * the first is the bbmult, the other two the 32 bits the stock driver
 + * unpacks into the three coefficient cells of table 0x0007, as fields of
-+ * 8/16/8 bits from bit 0.
++ * 8/16/8 bits from bit 0. The first field goes into the high byte of its
++ * cell.
 + *
-+ * Checked on two different cells: 0x0040 reads (0x0035, 0x1300, 0xf32f) and
-+ * the stock driver writes (0x0000, 0x2f13, 0x00f3) with bbmult 0x35; 0x0000
-+ * reads (0x0044, 0x7f00, 0xf3ff) and writes (0x0000, 0xff7f, 0x00f3) with
-+ * bbmult 0x44. Constant on all 43 segments.
++ * Checked on 0x0040, which reads (0x0035, 0x1300, 0xf32f) and the stock
++ * driver writes (0x0000, 0x2f13, 0x00f3) with bbmult 0x35; on 0x0000,
++ * (0x0044, 0x7f00, 0xf3ff) and (0x0000, 0xff7f, 0x00f3) with bbmult 0x44;
++ * and on the 2.4 GHz entry 0x000a, (0x0041, 0xffff, 0xa787) and
++ * (0xff00, 0x87ff, 0x00a7), the only one of the three whose first field is
++ * not zero. Over the d6220, tg789vac, DSL-3580L and MacBookAir6,1
++ * captures, 1001 unpacks: the 36 with that field non-zero, all on 2.4 GHz,
++ * put it in the high byte.
 + * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
 + *   11284-11301, 28531-28554]
 + */
@@ -5030,7 +5035,7 @@ index fe102ea..adc50de 100644
 +	packed = ((u32)cell[2] << 16) | cell[1];
 +
 +	gc->bbmult = cell[0] & 0xff;
-+	gc->coeff[0] = (u16)(packed & 0xff);
++	gc->coeff[0] = (u16)((packed & 0xff) << 8);
 +	gc->coeff[1] = (u16)((packed >> 8) & 0xffff);
 +	gc->coeff[2] = (u16)(packed >> 24);
 +}
@@ -8460,10 +8465,55 @@ index fe102ea..adc50de 100644
 +	0x0020, 0x0021, 0x0022, 0x0023, 0x003a, 0x003d,
 +};
 +
++struct b43_phy_ac_rad_mod_op {
++	u16 reg;
++	u16 mask;
++	u16 val;
++};
++
++/*
++ * The ten bit-field MODs of radio_iqcal_config() on 5 GHz, in the order
++ * the stock driver emits them.
++ */
++static const struct b43_phy_ac_rad_mod_op b43_phy_ac_iqcal_config_5g[10] = {
++	{ 0x0023, 0x0100, 0x0000 },
++	{ 0x003d, 0x0010, 0x0000 },
++	{ 0x0023, 0x0020, 0x0000 },
++	{ 0x0023, 0x0040, 0x0000 },
++	{ 0x0021, 0x0020, 0x0000 },
++	{ 0x0021, 0x0004, 0x0004 },
++	{ 0x0023, 0x0001, 0x0001 },
++	{ 0x0023, 0x0200, 0x0200 },
++	{ 0x0021, 0x0003, 0x0000 },
++	{ 0x0023, 0x0006, 0x0000 },
++};
++
++/*
++ * The same ten on 2.4 GHz: 0x0022, 0x003a and 0x0020 where 5 GHz has
++ * 0x0023, 0x003d and 0x0021, and the two bits set in 0x0022 are 9 and 7
++ * (0x0280 at the end, 0x0201 in 0x0023 on 5 GHz). Only the MacBookAir6,1's
++ * 6.30.223 bus captures have it (docs/retrace-todo.md, "2.4 GHz"), which
++ * show values and not masks: the masks are the bits seen set, and zero
++ * where a MOD writes back the zero the clear above left, which is what
++ * every mask there would do.
++ */
++static const struct b43_phy_ac_rad_mod_op b43_phy_ac_iqcal_config_2g[10] = {
++	{ 0x0022, 0x0000, 0x0000 },
++	{ 0x003a, 0x0000, 0x0000 },
++	{ 0x0022, 0x0000, 0x0000 },
++	{ 0x0022, 0x0000, 0x0000 },
++	{ 0x0020, 0x0000, 0x0000 },
++	{ 0x0020, 0x0004, 0x0004 },
++	{ 0x0022, 0x0200, 0x0200 },
++	{ 0x0022, 0x0080, 0x0080 },
++	{ 0x0020, 0x0000, 0x0000 },
++	{ 0x0022, 0x0000, 0x0000 },
++};
++
 +/*
 + * Radio 2069 IQ-cal configuration, per core (84 ops): save the six
 + * registers for radio_iqcal_teardown(), zero them, then ten bit-field MODs
-+ * in the observed order.
++ * in the observed order, on the band's registers.
 + * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
 + *   28085-28200]
 + * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -8477,19 +8527,9 @@ index fe102ea..adc50de 100644
 +			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
 +			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
 +
-+	struct rad_mod_op { u16 reg; u16 mask; u16 val; };
-+	static const struct rad_mod_op configs[10] = {
-+		{ 0x0023, 0x0100, 0x0000 },
-+		{ 0x003d, 0x0010, 0x0000 },
-+		{ 0x0023, 0x0020, 0x0000 },
-+		{ 0x0023, 0x0040, 0x0000 },
-+		{ 0x0021, 0x0020, 0x0000 },
-+		{ 0x0021, 0x0004, 0x0004 },
-+		{ 0x0023, 0x0001, 0x0001 },
-+		{ 0x0023, 0x0200, 0x0200 },
-+		{ 0x0021, 0x0003, 0x0000 },
-+		{ 0x0023, 0x0006, 0x0000 },
-+	};
++	const struct b43_phy_ac_rad_mod_op *configs =
++		b43_current_band(dev->wl) == NL80211_BAND_2GHZ ?
++		b43_phy_ac_iqcal_config_2g : b43_phy_ac_iqcal_config_5g;
 +	struct b43_phy_ac *ac = dev->phy.ac;
 +	unsigned int core, i;
 +
@@ -8504,7 +8544,7 @@ index fe102ea..adc50de 100644
 +			b43_radio_write(dev,
 +					b43_phy_ac_iqcal_radio_regs[i] + stride, 0);
 +
-+		for (i = 0; i < ARRAY_SIZE(configs); i++)
++		for (i = 0; i < ARRAY_SIZE(b43_phy_ac_iqcal_config_5g); i++)
 +			b43_radio_maskset(dev, configs[i].reg + stride,
 +					  (u16)~configs[i].mask,
 +					  configs[i].val);
@@ -8515,6 +8555,12 @@ index fe102ea..adc50de 100644
 + * Gain control final apply (129 ops). @core_mask is the search round's
 + * set, not the board's coremask: the stock driver emits core 2 on a
 + * two-chain board too.
++ *
++ * The loopback gains and the TX gain entry the tone goes out at follow the
++ * band: 0x?730 = 0x00b0, 0x?731 = 0x0004 and entry 0 of table 0x20 on
++ * 5 GHz, on 7.14 and 6.30 alike; 0x0080, 0x0000 and entry 10 on 2.4 GHz,
++ * the same on both chains of the three 2.4 GHz calibrations of the
++ * MacBookAir6,1 (two on ch1, one on ch6).
 + * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
 + *   28201-28359, 28579-28731, 28955-29107, 29331-29432]
 + * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -8531,6 +8577,10 @@ index fe102ea..adc50de 100644
 +			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
 +			   B43_PHY_AC_STATE_CCA_RESET | B43_PHY_AC_STATE_MAC_EN);
 +
++	bool band_2g = b43_current_band(dev->wl) == NL80211_BAND_2GHZ;
++	u16 r730 = band_2g ? 0x0080 : 0x00b0;
++	u16 r731 = band_2g ? 0x0000 : 0x0004;
++	u16 txgain_entry = band_2g ? 0x000a : 0x0000;
 +	unsigned int core;
 +
 +	if (with_peek_preamble) {
@@ -8549,8 +8599,8 @@ index fe102ea..adc50de 100644
 +			continue;
 +
 +		/* Gain registers; 0x?734 is the caller's, per core. */
-+		b43_phy_write(dev, 0x0730 + stride, 0x00b0);
-+		b43_phy_write(dev, 0x0731 + stride, 0x0004);
++		b43_phy_write(dev, 0x0730 + stride, r730);
++		b43_phy_write(dev, 0x0731 + stride, r731);
 +		b43_phy_write(dev, 0x0734 + stride, r734_vals[core]);
 +
 +		/* Set bits 1/2/3 of 0x?722. */
@@ -8560,8 +8610,7 @@ index fe102ea..adc50de 100644
 +
 +		gate = b43_phy_ac_tbl_write_lock(dev);
 +
-+		/* Gain curve entry 0x0000. */
-+		b43_phy_ac_read_gaincurve(dev, 0x0000, &gc);
++		b43_phy_ac_read_gaincurve(dev, txgain_entry, &gc);
 +		dev->phy.ac->bbmult_meas = gc.bbmult;
 +		bbmult_val = gc.bbmult;
 +
@@ -8728,15 +8777,29 @@ index fe102ea..adc50de 100644
 +
 +/*
 + * Loopback gain search. The mean power per sample is
-+ * round(ii / 1024) + round(qq / 1024); above PWR_HI the index is halved,
-+ * and the search stops when the power is at or below it or the index is 0.
-+ * The index never goes up: over the 323 searches of the d6220 and tg789vac
-+ * cold sweeps every chain's sequence of 0x?734 writes is non-increasing
-+ * (4, 2, 1, 0 and its prefixes), so there is no lower edge to the window.
++ * round(ii / 1024) + round(qq / 1024) and is brought into the window
++ * [PWR_LO, PWR_HI] through the index in bits 2:0 of 0x?734, one step of
++ * which doubles it (x1.93 on each step the 2.4 GHz captures take).
++ *
++ * Above the window the index goes down by the steps the excess calls for,
++ * at most half of it rounded up; below, it goes up by the steps the deficit
++ * calls for. That reproduces the 7.14 sweeps, where every chain's sequence
++ * is 4, 2, 1, 0 or a prefix (the halving binds), and the 6.30.223 ones of
++ * the MacBookAir6,1: on 5 GHz 4 to 3 at 1.77 times PWR_HI, on 2.4 GHz 0 to
++ * 4 from a sixteenth of PWR_LO and 4 to 5 from just under it.
++ *
++ * A search moves one way only. On 5 GHz it starts at 4, above the window,
++ * and the 7.14 sweeps end chains at index 0 with a power under PWR_LO
++ * (0x0b33) without raising them; on 2.4 GHz it starts at 0, below it, and
++ * no chain comes down. Whether the stock driver would turn back is not in
++ * any capture.
 + * Derivation and check: "Structure" in docs/rxiq-cal-analysis.md.
 + */
++#define B43_PHY_AC_LOOPBACK_PWR_LO	0x0b57
 +#define B43_PHY_AC_LOOPBACK_PWR_HI	0x169e
 +#define B43_PHY_AC_LOOPBACK_IDX_5G	4
++#define B43_PHY_AC_LOOPBACK_IDX_2G	0
++#define B43_PHY_AC_LOOPBACK_IDX_MAX	7
 +#define B43_PHY_AC_LOOPBACK_REG		0x0734
 +
 +/* Mean power per sample from the latest accumulator round. */
@@ -8746,21 +8809,45 @@ index fe102ea..adc50de 100644
 +	return ((acc->ii[0] + 512) >> 10) + ((acc->qq[0] + 512) >> 10);
 +}
 +
++/* Doubling steps from @from up to at least @to: ceil(log2(to / from)). */
++static unsigned int b43_phy_ac_loopback_steps(u32 from, u32 to)
++{
++	unsigned int n = 0;
++
++	if (!from)
++		return B43_PHY_AC_LOOPBACK_IDX_MAX;
++	while (from < to) {
++		from <<= 1;
++		n++;
++	}
++	return n;
++}
++
 +/*
 + * Update the index from the measurement. Returns true when the power is inside
-+ * the window, meaning the search is done and *idx is the value to apply.
++ * the window, or the search cannot move further its way: the search is done
++ * and *idx is the value to apply. @up is the search's direction.
 + */
 +static bool b43_phy_ac_loopback_step(struct b43_wldev *dev, unsigned int core,
-+				     u8 *idx)
++				     bool up, u8 *idx)
 +{
++	unsigned int n;
 +	u32 pwr;
 +
 +	if (core >= B43_PHY_AC_MAX_CORES)
 +		return true;
 +	pwr = b43_phy_ac_loopback_pwr(&dev->phy.ac->iq_acc[core]);
 +
-+	if (pwr > B43_PHY_AC_LOOPBACK_PWR_HI && *idx) {
-+		*idx = (u8)(*idx / 2);
++	if (!up && pwr > B43_PHY_AC_LOOPBACK_PWR_HI && *idx) {
++		n = b43_phy_ac_loopback_steps(B43_PHY_AC_LOOPBACK_PWR_HI, pwr);
++		*idx -= (u8)min_t(unsigned int, n, (*idx + 1) / 2);
++		return false;
++	}
++	if (up && pwr < B43_PHY_AC_LOOPBACK_PWR_LO &&
++	    *idx < B43_PHY_AC_LOOPBACK_IDX_MAX) {
++		n = b43_phy_ac_loopback_steps(pwr, B43_PHY_AC_LOOPBACK_PWR_LO);
++		*idx = (u8)min_t(unsigned int, *idx + n,
++				 B43_PHY_AC_LOOPBACK_IDX_MAX);
 +		return false;
 +	}
 +	return true;
@@ -8777,12 +8864,12 @@ index fe102ea..adc50de 100644
 + *
 + * A core the board does not wire is never measured and follows a fixed
 + * schedule of {4, 1, 0}: core 2 on the d6220, on every channel and width.
-+ * Transcribed; the rule behind it is unknown.
++ * Transcribed from 5 GHz; the rule behind it is unknown, and the 6.30.223
++ * captures, the only ones on 2.4 GHz, write no unwired core on either band.
 + *
-+ * The starting index is the 5 GHz one; the port refuses 2.4 GHz, where it
-+ * would start from 0. With a read oracle it reproduces the d6220 ch36/20
-+ * sequence {4,4,4} {2,2,1} {1,1,0} {0,0}. The round cap is a safety budget;
-+ * the most observed is 4.
++ * With a read oracle it reproduces the d6220 ch36/20 sequence {4,4,4}
++ * {2,2,1} {1,1,0} {0,0}, and the MacBookAir6,1's ch6/20 {0,0} {4,4} {4,5}.
++ * The round cap is a safety budget; the most observed is 4.
 + * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
 + *   28201-29655]
 + * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -8793,6 +8880,7 @@ index fe102ea..adc50de 100644
 +	B43_AC_FN();
 +	static const u16 unwired_sched[3] = { 4, 1, 0 };
 +	struct b43_phy_ac *ac = dev->phy.ac;
++	bool up = b43_current_band(dev->wl) == NL80211_BAND_2GHZ;
 +	unsigned long searching = ac->coremask;
 +	unsigned long unwired = GENMASK(ac->num_cores - 1, 0) & ~ac->coremask;
 +	u16 r734[B43_PHY_AC_MAX_CORES] = { 0 };
@@ -8800,7 +8888,8 @@ index fe102ea..adc50de 100644
 +	unsigned int round, c;
 +
 +	for (c = 0; c < B43_PHY_AC_MAX_CORES; c++)
-+		idx[c] = B43_PHY_AC_LOOPBACK_IDX_5G;
++		idx[c] = up ? B43_PHY_AC_LOOPBACK_IDX_2G
++			    : B43_PHY_AC_LOOPBACK_IDX_5G;
 +
 +	for (round = 0; searching; round++) {
 +		u8 mask = (u8)searching;
@@ -8824,7 +8913,7 @@ index fe102ea..adc50de 100644
 +		b43_phy_ac_rxiqcal_meas_post_dds_apply(dev);
 +
 +		for_each_set_bit(c, &searching, ac->num_cores)
-+			if (b43_phy_ac_loopback_step(dev, c, &idx[c]))
++			if (b43_phy_ac_loopback_step(dev, c, up, &idx[c]))
 +				__clear_bit(c, &searching);
 +	}
 +}
