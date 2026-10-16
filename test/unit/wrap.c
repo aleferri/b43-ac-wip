@@ -1621,6 +1621,7 @@ struct ieee80211_channel *ieee80211_get_channel(struct wiphy *wiphy, int freq)
 void b43_test_reg_init(int dflt, const char *map)
 {
 	static const u16 chans[] = {
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
 		36, 40, 44, 48, 52, 56, 60, 64,
 		100, 104, 108, 112, 116, 120, 124, 128,
 		132, 136, 140, 144, 149, 153, 157, 161, 165,
@@ -1630,7 +1631,10 @@ void b43_test_reg_init(int dflt, const char *map)
 	g_reg_n = 0;
 	for (i = 0; i < sizeof(chans) / sizeof(chans[0]); i++) {
 		g_reg_chans[g_reg_n].hw_value = chans[i];
-		g_reg_chans[g_reg_n].center_freq = 5000 + 5 * chans[i];
+		g_reg_chans[g_reg_n].center_freq =
+			chans[i] == 14 ? 2484 :
+			chans[i] < 14 ? 2407 + 5 * chans[i] :
+			5000 + 5 * chans[i];
 		g_reg_chans[g_reg_n].max_power = dflt;
 		g_reg_n++;
 	}
