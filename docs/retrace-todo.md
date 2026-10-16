@@ -967,14 +967,23 @@ Table `0x21` is written as zeros on 2.4 GHz, as on both boards.
   antenna gain `ag0` (`b43_phy_ac_antgain()`). It took the 5 GHz ones
   before, `maxp5ga` of the first sub-band among them, and put the CCK
   rates' field at the 5 GHz floor, `0xf8`, 15.5 dB under the target. A CCK
-  rate keeps its SROM distance from the target like an OFDM one. Scan hops
-  rewrite `0x0646` unchanged, so the only 2.4 GHz target captured is the
-  MacBook's ch6 calibration, `0x2e`, where the SROM gives `0x4a` (`maxp2ga`
-  80 less the margin); its per-rate cells (`0x099a`… OFDM, `0x0a3a`… CCK)
-  are all zero, where `mcsbw202gpo = 0xaa555000` gives 2.5 dB on 36 to 54
-  Mb/s. Both fit a limit below every rate, which saturates them all on
-  it, as the CLM of its `wl` would set; whether that is what happens is
-  not in the capture. The archer-t5e's cells are flat `0x18`, its offsets
+  rate keeps its SROM distance from the target like an OFDM one. The
+  MacBook's wl writes `0x0646` on every scan hop, by channel: `0x2e` on
+  ch1-13, `0x32` on 36-48, `0x35` on 52-60, `0x34` on 64, `0x33` on
+  100-140, `0x18` on 149-161, `0x34` on 52/80, `0x37` on 100/80, the same
+  in its three captures; the SROM alone gives `0x4a` on 2.4 GHz (`maxp2ga`
+  80 less the margin) and `0x46` above ch52. The cap is cfg80211's EIRP less
+  the antenna gain (`b43_phy_ac_reg_ceiling()`, the SROM's `ag0` is 6 dB on
+  that board), which the harness applied on 5 GHz only: with 2.4 GHz
+  channels in its regulatory stub and the German limits, 20 dBm gives
+  `0x32` on ch6, 14 dBm `0x1a` on ch149-161, 23 dBm `0x38` on ch36 and
+  `0x3e` on ch52, 27 dBm `0x46` on ch100. The MacBook's targets are 0.5 to
+  4.75 dB lower than those and not by one offset: its CLM, which is not in
+  the captures. Its
+  per-rate cells (`0x099a`… OFDM, `0x0a3a`… CCK) are all zero, where
+  `mcsbw202gpo = 0xaa555000` gives 2.5 dB on 36 to 54 Mb/s: a limit below
+  every rate saturates them all on it. The archer-t5e's cells are flat
+  `0x18`, its offsets
   all zero and `maxp2ga` 80. A beacon at a CCK rate takes the 1 Mb/s field
   in `0x00ce` (`b43_phy_ac_op_beacon_rate_set()`), the same as the 6 Mb/s one
   on the two boards with 2.4 GHz SROM data.
@@ -1020,7 +1029,16 @@ Table `0x21` is written as zeros on 2.4 GHz, as on both boards.
   direction, not a gate. Open: each 2.4 GHz measurement pass is wrapped in
   a teardown, a measurement without the loopback setup and a new setup,
   three pairs where 5 GHz has one; what that measurement feeds is not
-  known.
+  known. The coefficients point at the phase: on the eight 2.4 GHz
+  points (`reverse-tools/rxiq_points.py`) the port's solve has `b` on
+  seven and `a` on none, off by -6 to +2, and the stock's angle lies
+  outside its two tones' on five; on 5 GHz the same driver's `a` is right
+  on both points. Subtracting the second measurement from the
+  tone's accumulators, as uncorrelated power, does not reproduce it; a
+  phase taken after subtracting 15.5 times it does on all eight, with the
+  magnitude from the raw tone, a two-parameter fit on eight points that
+  is not taken. Off by 6 in 1024, the port's phase leaves the image near
+  -50 dB.
 
 ## Chip and board differences
 
