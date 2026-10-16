@@ -1004,8 +1004,23 @@ Table `0x21` is written as zeros on 2.4 GHz, as on both boards.
   `acphy_txgain_epa_2g_2069rev4` in the D6220's `wl.o` matches the port's on
   384 of 384 words. That object also has an `_id1` variant, 158 words alike,
   whose boards are not known.
-- **Calibrations.** The only 2.4 GHz channel set with them is the ch6 one at
-  the end of the MacBook capture, a hot one.
+- **Calibrations.** Four 2.4 GHz calibrations, all on the MacBookAir6,1's
+  6.30.223: ch6 at the end of `wl-init-20260926`, a hot one; two on ch1 in
+  segment 37 of `wl-firstload-20260926`, the first association after the
+  module load; one on ch1 at the head of `wl-firstload-5g`. Against the same
+  driver's 5 GHz ones, the band changes the radio IQ-cal setup
+  (`0x22`/`0x3a`/`0x20` for `0x23`/`0x3d`/`0x21`), the loopback gains
+  `0x?730`/`0x?731`, the TX gain entry of the tone (10 for 0) and the start
+  of the loopback gain search (0 for 4, rising); the port has them
+  (`docs/rxiq-cal-analysis.md`, "Structure"). Run on ch6 and ch1 with the
+  capture's reads, the port reproduces the search, and from the first
+  radio IQ-cal setup to the last teardown 33.5% of the stock ops in blocks
+  of at least eight, from 17.9% and 19.3%; the comparison is with a bus
+  capture, which folds MODs and gate cycles differently, so the figure is a
+  direction, not a gate. Open: each 2.4 GHz measurement pass is wrapped in
+  a teardown, a measurement without the loopback setup and a new setup,
+  three pairs where 5 GHz has one; what that measurement feeds is not
+  known.
 
 ## Chip and board differences
 

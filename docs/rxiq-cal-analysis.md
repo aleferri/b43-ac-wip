@@ -13,15 +13,29 @@ The block runs inside the post-switch calibrations on the hardware estimator:
 command `0x0270`, sample count `0x0272`, accumulators `0x?c0`–`0x?c5` (`ii`,
 `qq`, `iq`, three 32-bit hi/lo pairs per chain, read hi first).
 
-1. **Loopback gain search**, `SAMCNT = 0x0400`. The index in
-   `0x0734 + core*0x200` starts at 4 on 5 GHz and halves (4, 2, 1, 0) while
-   `round(ii/1024) + round(qq/1024)` is above `0x169e`; it never rises. The
-   lower edge `0xb57`, read at the start, has no observed effect.
-2. **Measurement tones**, `SAMCNT = 0x4000`. Two tones up to 40 MHz, six at
+1. **Loopback gain search**, `SAMCNT = 0x0400`. The index, bits 2:0 of
+   `0x0734 + core*0x200`, brings `round(ii/1024) + round(qq/1024)` into
+   `[0x0b57, 0x169e]`; one step of it doubles the power (x1.93 on the 2.4 GHz
+   steps). It starts at 4 on 5 GHz and at 0 on 2.4 GHz, with
+   `0x?730 = 0x00b0`, `0x?731 = 0x0004` and the tone at entry 0 of table `0x20`
+   on 5 GHz, `0x0080`, `0x0000` and entry 10 on 2.4 GHz. Above the window it
+   goes down by `ceil(log2(pwr / 0x169e))`, at most half the index rounded up;
+   below, up by `ceil(log2(0x0b57 / pwr))`. That reproduces every step of the
+   captures: 7.14 (d6220 cold and hot, tg789vac, 839 steps), where the
+   halving always binds (4, 2, 1, 0), 6.30.102 (DSL-3580L, 104) and 6.30.223
+   (MacBookAir6,1, 22): on 5 GHz 4 to 3 at 1.77 times the top, on 2.4 GHz
+   0 to 4 and 4 to 5. A search moves one way: the 7.14 sweeps leave chains at
+   index 0 below the bottom (`0x0b33`), and no 2.4 GHz chain comes down.
+2. **2.4 GHz only.** The 6.30.223 calibrations wrap each measurement pass in
+   a teardown of the radio IQ-cal setup, a second measurement without it,
+   and a new setup: three setup/teardown pairs where 5 GHz, at 20 and 80 MHz,
+   has one. What the second measurement feeds is not known; the port runs
+   the 5 GHz structure on both bands.
+3. **Measurement tones**, `SAMCNT = 0x4000`. Two tones up to 40 MHz, six at
    80 MHz: one 20-entry period sampled at a step of +1/−1, then +3/−3/+4/−4 at
    80 (`b43_phy_ac_tone_steps[]`), the step being the tone frequency in units of
    rate/20.
-3. **Coefficients and teardown.** Two 10-bit signed coefficients per chain,
+4. **Coefficients and teardown.** Two 10-bit signed coefficients per chain,
    `0x?a0` (`a`) and `0x?a1` (`b`), as on the N-PHY; then the compensation
    registers are restored and the tone engine stopped.
 
@@ -92,4 +106,8 @@ word is subtracted separately.
 - The paths of the mismatch for accumulators of 31 bits or more, for
   `nb(qq - ii) < 11` and for a zero divisor: transcribed, never exercised.
 - What the stock driver does if the gain search is still above the window at
-  index 0.
+  index 0, or below it at 7.
+- Whether a search can turn back, and the step from a power under a
+  sixteenth of the bottom: the eight 0-to-4 steps of the 2.4 GHz captures
+  start at 15 to 16 times below it, where `ceil(log2)` is 4, and a fixed
+  first step to 4 would fit them as well.
