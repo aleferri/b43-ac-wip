@@ -8,11 +8,11 @@ top-level README.
 
 - `op_init()` accepts only the BCMA bus and chips `0x4352`/`0x4360`
   (`-EOPNOTSUPP` otherwise).
-- `op_switch_channel()` returns `-EOPNOTSUPP` on 2.4 GHz, and `-ESRCH` when the
-  radio is not 2069 rev 4 or the channel table has no row for the frequency.
-- The 2069 channel table has 50 rows, 5170–5825 MHz, keyed on the frequency the
-  synthesiser is tuned to: the primary channel at 20 MHz, `center_freq1` at 40
-  and 80. Nothing filters by configuration.
+- `op_switch_channel()` returns `-ESRCH` when the radio is not 2069 rev 4 or
+  the channel table has no row for the frequency.
+- The 2069 channel table has 64 rows, 2412–2484 MHz and 5170–5825 MHz, keyed
+  on the frequency the synthesiser is tuned to: the primary channel at 20 MHz,
+  `center_freq1` at 40 and 80. Nothing filters by configuration.
 
 ## Entry points
 
