@@ -3084,6 +3084,11 @@ static const u32 b43_acphy_txv_for_spexp[243] = {
  *   femctrl 2, sub 1  fem5516_fc1 on cores 0 and 2, x29c_c1_fc2_sub1 on
  *                     core 1, plus b43_phy_ac_fem2_sub1_setup():
  *                     MacBookAir6,1.
+ *   femctrl 1, sub 0  fem5516_fc1 on every core, after bit 8 of 0x040a
+ *                     (b43_phy_ac_fem_040a_set()): archer-t5e
+ *                     (router-data/archer-t5e/mmiotrace.zip, #7128-#7234).
+ *                     The same 6.30.223 as the MacBook's sets that bit
+ *                     after its table; the routers never touch 0x040a.
  *
  * TODO: femctrl 2 sub 2 (femctrl2_sub2_c0 on core 0, femctrl2_sub2_c12 on
  * cores 1 and 2) needs a capture of a board with it.
@@ -3111,11 +3116,21 @@ static const u8 b43_phy_ac_fem_x29c_c1_fc2_sub1[32] = {
 	0x40, 0x41, 0x40, 0x40,  0x40, 0x40, 0x40, 0x40,
 };
 
+/*
+ * What a board writes inside the table-write gate before its FEM table
+ * (@pre) and after it (@setup).
+ */
 struct b43_phy_ac_fem {
 	u8 femctrl, sub;
 	const u8 *tbl[3];
+	void (*pre)(struct b43_wldev *dev);
 	void (*setup)(struct b43_wldev *dev);
 };
+
+static void b43_phy_ac_fem_040a_set(struct b43_wldev *dev)
+{
+	b43_phy_set(dev, 0x040a, 0x0100);
+}
 
 /*
  * What the MacBookAir6,1 writes between its FEM table and the release of the
@@ -3127,16 +3142,18 @@ struct b43_phy_ac_fem {
 static void b43_phy_ac_fem2_sub1_setup(struct b43_wldev *dev)
 {
 	B43_AC_FN();
-	b43_phy_set(dev, 0x040a, 0x0100);
+	b43_phy_ac_fem_040a_set(dev);
 	b43_phy_write(dev, 0x0414, 0x0555);
 	b43_phy_ac_chipctl_set(dev, 0x00000008);
 }
 
 static const struct b43_phy_ac_fem b43_phy_ac_fems[] = {
 	{ 6, 0, { b43_phy_ac_fem_femctrl6, b43_phy_ac_fem_femctrl6,
-		  b43_phy_ac_fem_femctrl6 }, NULL },
+		  b43_phy_ac_fem_femctrl6 }, NULL, NULL },
 	{ 2, 1, { b43_phy_ac_fem_fem5516_fc1, b43_phy_ac_fem_x29c_c1_fc2_sub1,
-		  b43_phy_ac_fem_fem5516_fc1 }, b43_phy_ac_fem2_sub1_setup },
+		  b43_phy_ac_fem_fem5516_fc1 }, NULL, b43_phy_ac_fem2_sub1_setup },
+	{ 1, 0, { b43_phy_ac_fem_fem5516_fc1, b43_phy_ac_fem_fem5516_fc1,
+		  b43_phy_ac_fem_fem5516_fc1 }, b43_phy_ac_fem_040a_set, NULL },
 };
 
 static const struct b43_phy_ac_fem *b43_phy_ac_fem_lookup(struct b43_wldev *dev)
@@ -3182,6 +3199,9 @@ static void b43_phy_ac_set_regtbl_on_femctrl(struct b43_wldev *dev)
 		return;
 
 	saved = b43_phy_ac_tbl_write_lock(dev);
+
+	if (fem->pre)
+		fem->pre(dev);
 
 	for (core = 0; core < min_t(u8, dev->phy.ac->num_cores,
 				    ARRAY_SIZE(fem->tbl)); core++)

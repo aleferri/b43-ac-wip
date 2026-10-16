@@ -375,8 +375,8 @@ static const struct board_profile PROFILE_TG789 = {
  * archer-t5e: BCM4360 PCIe card (chip 0x4352 rev 3), hybrid wl 6.30.223, the
  * only dual-band SROM of the collection. Every field is decoded from
  * router-data/archer-t5e/srom.txt with the rev 11 offsets of bcma/drivers/bcma/sprom.c;
- * rccal and MAC_HW_CAP are the reads of its mmiotrace. femctrl is 1, not 6:
- * the FEM control table stops with its warning on this profile.
+ * rccal and MAC_HW_CAP are the reads of its mmiotrace. femctrl is 1, not 6,
+ * with femctrl_sub 0.
  * tssifloor5g is not decoded and takes the routers' value.
  */
 static const struct board_profile PROFILE_ARCHER = {

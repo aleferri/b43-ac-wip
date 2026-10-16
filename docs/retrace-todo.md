@@ -942,8 +942,12 @@ difference to 2.4 GHz reception.
 
 `test/unit/band_gate.sh` compares the port's delta
 between ch40/ch44 and ch2/ch3 with the one the MacBookAir6,1 and the archer-t5e
-share (72 registers or cells, both on the 6.30 hybrid): 58 reproduced with the
-d6220 profile, 60 with `BOARD=archer`, one of the two dual-band SROMs.
+share (73 registers or cells, both on the 6.30 hybrid): 58 reproduced with the
+d6220 profile, 60 with `BOARD=macbook` and 52 with `BOARD=archer`, the two
+dual-band SROMs. On the archer profile the port reads the gain curve entry
+`0x40` once per wired chain, three times, where both captures, the
+archer's included, read it twice; the shift costs the eight cells of
+`0x07` and `0x0c` it reproduces on the MacBook profile.
 
 **In the port, and matching both boards:** the 2069 channel table rows ch1–14
 (ch14 in no capture) with the 5 GHz register map, radio `0x066d = 0x18c0`, the
@@ -996,9 +1000,14 @@ Table `0x21` is written as zeros on 2.4 GHz, as on both boards.
   The elnagain fits 2.4 GHz alone: on 5 GHz both have 3 and `0x0604`. Not
   enough boards to fix a rule; the port writes the D6220's 5 GHz values.
 - **FEM control.** The port has the tables of `femctrl 6, femctrl_sub 0` (the
-  routers) and `femctrl 2, femctrl_sub 1` (the MacBook, `boardflags3 = 1`),
-  and stops with its warning on any other: the archer-t5e has `femctrl = 1`,
-  and `femctrl 2, femctrl_sub 2` waits for a capture. After its table the
+  routers), `femctrl 2, femctrl_sub 1` (the MacBook, `boardflags3 = 1`) and
+  `femctrl 1, femctrl_sub 0` (the archer-t5e: `fem5516_fc1` on its three
+  cores, after bit 8 of `0x040a`, which the MacBook sets after its table and
+  the routers never touch), and stops with its warning on any other:
+  `femctrl 2, femctrl_sub 2` waits for a capture. Both `femctrl 1` and
+  `2/1` come from 6.30.223; what 7.14 loads for them is not captured.
+  The band gate with `BOARD=archer` stays at 52: the table is loaded at the
+  reset, not on a band change. After its table the
   MacBook reads and writes back unchanged `0x0418` (`0x0010`), `0x040a`
   (`0x0390`) and the chipcommon `gpioout`, `gpioouten` (`0xa7`) and
   `gpiocontrol`; with no change on the bus, field and value are not known
