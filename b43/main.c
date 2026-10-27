@@ -5508,6 +5508,8 @@ static void b43_op_configure_filter(struct ieee80211_hw *hw,
 		   FIF_OTHER_BSS |
 		   FIF_BCN_PRBRESP_PROMISC;
 
+	/* @changed is against mac80211's flags, which survive b43_op_start(). */
+	changed |= wl->filter_flags ^ *fflags;
 	wl->filter_flags = *fflags;
 
 	if (changed && b43_status(dev) >= B43_STAT_INITIALIZED)
