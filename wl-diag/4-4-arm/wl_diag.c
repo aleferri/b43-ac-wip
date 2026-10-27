@@ -7,8 +7,9 @@
  * table, whose signatures are commented there: see its head and
  * ../README.md. What differs is how a hook is attached. That kernel has no
  * CONFIG_KPROBES and patches the accessors' prologues; this one requires
- * CONFIG_KPROBES and CONFIG_KRETPROBES and puts a kprobe at the entry of
- * each accessor, or a kretprobe where the value read is wanted (retcap).
+ * CONFIG_KPROBES (CONFIG_KRETPROBES follows from it on ARM) and puts a
+ * kprobe at the entry of each accessor, or a kretprobe where the value read
+ * is wanted (retcap).
  *
  * The ARM calling convention passes the first four arguments in r0-r3, as
  * o32 does in a0-a3, and the fifth and sixth at [sp] and [sp + 4] at the

@@ -30,11 +30,14 @@ The kernel needs, on top of its usual configuration:
 ```
 CONFIG_KALLSYMS=y
 CONFIG_KPROBES=y
-CONFIG_KRETPROBES=y
 ```
 
-`wl_diag` attaches to `wl` with kprobes; the MIPS variants patch code by
-hand because the vendor kernels lack them. Rebuild and flash that kernel,
+`CONFIG_KRETPROBES` is not a separate option: it is `def_bool y` once
+`KPROBES` is on and the architecture has `HAVE_KRETPROBES`, which ARM
+selects for every little-endian non-XIP build, so enabling `KPROBES` is
+enough. `wl_diag` attaches to `wl` with kprobes; the MIPS variants patch
+code by hand because the vendor kernels lack them. Rebuild and flash that
+kernel,
 then build the module against the same tree, with its `.config` and
 `Module.symvers`:
 

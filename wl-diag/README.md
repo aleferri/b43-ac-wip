@@ -69,8 +69,9 @@ through object memory
 
 `4-4-arm/` hooks the same accessors, from the same table, through kprobes:
 a kprobe at the entry, or a kretprobe where the value read is wanted
-(`retcap`). The kernel needs `CONFIG_KPROBES` and `CONFIG_KRETPROBES` (and
-`CONFIG_KALLSYMS`), so it is for a kernel built by the user, not a vendor's.
+(`retcap`). The kernel needs `CONFIG_KPROBES` and `CONFIG_KALLSYMS`
+(`CONFIG_KRETPROBES` comes with `KPROBES` on ARM, it is not a separate
+option), so it is for a kernel built by the user, not a vendor's.
 None of the prologue questions above apply: a probe attaches wherever
 kprobes accepts the instruction, and where it does not the plan says
 `refused` with the error. Arguments a1-a3 are r1-r3 and the stack
