@@ -68,20 +68,32 @@ captured so far; another revision is something to know now. `chanspecs`
 gives the strings the driver accepts, which is how a 40 MHz 2.4 GHz sweep
 will be written.
 
-And the NVRAM of the radios. Their variables sit under a prefix, `0:`,
-`1:`, ..., whose `devpathN` names the PCIe slot:
+And the NVRAM of the radios. Their variables sit under a per-device
+prefix: `0:`, `1:`, ... on some boards, but `pci/1/1/`, `pci/2/1/`, ...
+on the Netgear boards, the `devpathN` that names each radio's PCIe slot.
+The kernel builds the same `pci/U/U/` prefix from `devpathN` itself
+(`bcm47xx_sprom.c`), so the driver reads them wherever they are; the dump
+is only for the offline check. Capture both the `devpath` lines and every
+prefixed line so the prefix in use is visible:
 
 ```sh
-nvram show | grep -E '^(devpath[0-9]|[0-9]:)' > nvram-radios.txt
+nvram show | grep -E '^(devpath[0-9]+=|[0-9]+:|pci/[0-9]+/[0-9]+/)' > nvram-radios.txt
 ```
 
-That file, as it is, is what is needed; the harness in `bcma/harness/`
-takes one radio's variables with the prefix stripped:
+The harness in `bcma/harness/` runs the real `bcm47xx_sprom.c` on that
+dump; pass the radio's prefix, and it strips it and checks every field:
 
 ```sh
-sed -n 's/^0://p' nvram-radios.txt > nvram0.txt
-make -C bcma/harness test_nvram && bcma/harness/test_nvram nvram0.txt
+make -C bcma/harness test_nvram
+# the 2.4 GHz radio, on a Netgear board:
+bcma/harness/test_nvram nvram-radios.txt pci/1/1/
+# the 5 GHz one:
+bcma/harness/test_nvram nvram-radios.txt pci/2/1/
 ```
+
+`femctrl=3` showing up as a PASS there is the point: it means the driver
+now reads it from NVRAM. It also means the PHY code will then stop at
+"femctrl 3 not supported" until that table is filled from the captures.
 
 ## 3. The plan, dry run
 

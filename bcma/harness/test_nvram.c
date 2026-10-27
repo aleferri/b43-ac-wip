@@ -129,16 +129,30 @@ int main(int argc, char **argv)
 	char key[48];
 	int c, b;
 
-	if (argc != 2) {
-		fprintf(stderr, "usage: %s wl_nvram_dump.txt\n", argv[0]);
+	const char *prefix = "";
+
+	if (argc < 2 || argc > 3) {
+		fprintf(stderr,
+			"usage: %s wl_nvram_dump.txt [prefix]\n"
+			"  The repo's dumps carry bare keys, so prefix defaults\n"
+			"  to \"\". Pass a raw `nvram show` and its prefix to test\n"
+			"  that: \"0:\"/\"1:\" or, on a Netgear board, \"pci/1/1/\" /\n"
+			"  \"pci/2/1/\", the devpathN that names the radio's slot.\n",
+			argv[0]);
 		return 2;
 	}
-	if (nvram_backend_load(argv[1], "0:") < 0)
+	if (argc == 3)
+		prefix = argv[2];
+	/* The backend strips @prefix off the keys at load, so from here on
+	 * the dump is bare and bcm47xx_fill_sprom() runs with no prefix,
+	 * whatever the dump used. */
+	if (nvram_backend_load(argv[1], prefix) < 0)
 		return 2;
-	printf("=== bcm47xx_fill_sprom, prefix 0: ===\n  nvram: %s\n\n", argv[1]);
+	printf("=== bcm47xx_fill_sprom, dump prefix %s ===\n  nvram: %s\n\n",
+	       prefix[0] ? prefix : "(none)", argv[1]);
 
 	memset(&sprom, 0, sizeof(sprom));
-	bcm47xx_fill_sprom(&sprom, "0:", false);
+	bcm47xx_fill_sprom(&sprom, "", false);
 
 	printf("[ Header ]\n");
 	CHECK("sromrev", sprom.revision);
