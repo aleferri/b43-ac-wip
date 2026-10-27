@@ -22,7 +22,8 @@
 
 obj-m := wl_mmio_trap.o
 wl_mmio_trap-objs := wl_mmio_trap_main.o arm_mmio_emulate.o mmio_pte.o \
-                     arm_syms.o win_find_shared.o wl_ring_shared.o
+                     arm_syms.o win_find_shared.o wl_ring_shared.o \
+                     dma_dd_shared.o
 
 ccflags-y := -I$(src)/..
 

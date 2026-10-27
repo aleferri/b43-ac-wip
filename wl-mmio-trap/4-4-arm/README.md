@@ -86,8 +86,8 @@ The workflow is `../README.md`'s, with these differences:
   way the MIPS one can, it polls `init_mm` for the mapping at load and gives
   up after `poll_secs`;
 - `autoarm`, `on`/`off`, `mark <label>` and `status` on `/proc/wl_mmio_trap`
-  work as on MIPS; `redirect`, `klookup`, `init_mm_addr` and the `dd_*` TX
-  descriptor parameters do not exist here.
+  work as on MIPS, and so do the `dd_*` TX descriptor parameters (below);
+  `redirect`, `klookup` and `init_mm_addr` do not exist here.
 
 ```sh
 insmod wl_mmio_trap.ko autoarm=0     # dry run: the self-test must pass
@@ -101,11 +101,35 @@ echo status      > /proc/wl_mmio_trap; dmesg | tail -1
 
 Decode on the host with `python3 ../decode-wl-mmio.py < trace.bin`.
 
+## TX descriptors
+
+Like the MIPS build, at a TX channel's index write the module walks the DMA
+descriptors posted since the previous index out of RAM and records each with
+up to `dd_len` bytes of its buffer (`dma_dd.c`, shared). Off until `dd_len`
+is set:
+
+```sh
+echo 168 > /sys/module/wl_mmio_trap/parameters/dd_len
+echo 256 > /sys/module/wl_mmio_trap/parameters/dd_budget
+```
+
+The one ARM difference is the memory read. The MIPS build reads RAM uncached
+through `CKSEG1`; on ARM `ioremap()` refuses RAM, so the read is through the
+cached linear map (`phys_to_virt`) after a clean+invalidate of the range
+(`__cpuc_flush_dcache_area`), so it reflects what `wl` wrote before posting
+the frame. A frame buffer in highmem has no linear address and is refused
+(the descriptor is still recorded, without its buffer); the ring and the
+descriptors are in lowmem. On a board whose DMA bus addresses are not the
+identity of the physical ones, pass `dd_bus_off=`.
+
+**SALAME**: on a Cortex-A9 with an L2C-310 outer cache, cleaning the inner
+cache alone does not prove the descriptor reached DRAM; `wl` flushes it for
+DMA before the index write, so it is there by the time this runs, but that
+ordering is assumed from how a DMA driver must behave, not read from the
+blob.
+
 ## Not yet here
 
-- **TX descriptors.** The MIPS build reads the DMA descriptors and buffers at
-  a TX index write (`dma_dd.c`, the `dd_*` parameters). This version records
-  register accesses only.
 - **Thumb.** The emulator decodes A32. A Thumb faulting instruction is
   refused by status, not mis-decoded, so the module says so rather than
   guessing.

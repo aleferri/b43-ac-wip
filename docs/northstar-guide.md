@@ -182,5 +182,5 @@ TXBF=0 VHTMODE=0 sh capture_txrx.sh <2.4 GHz if> test-ap "2g1/20 2g6/20 2g11/20"
   return value is recorded; past it the value is lost and counted.
 - `wl-mmio-trap/4-4-arm/` traces the register accesses no accessor carries,
   by faulting the window; load it after `wl` is up and its self-test must
-  pass first. It does not record TX descriptors yet, where the MIPS build
-  does.
+  pass first. It records TX descriptors too, with `dd_len`/`dd_budget` as on
+  MIPS.

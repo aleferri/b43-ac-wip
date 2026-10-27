@@ -45,6 +45,8 @@
 #include <linux/sched.h>
 #include <linux/workqueue.h>
 #include <linux/pci.h>
+#include <linux/mm.h>
+#include <linux/highmem.h>
 #include <asm/io.h>
 #include <asm/cacheflush.h>
 
@@ -53,6 +55,7 @@
 #include "win_find.h"
 #include "wl_ring.h"
 #include "arm_mmio_emulate.h"
+#include "dma_dd.h"
 
 #define PROC_NAME "wl_mmio_trap"
 
@@ -101,11 +104,23 @@ static int stop_on_full = 1;
 module_param(stop_on_full, int, 0644);
 MODULE_PARM_DESC(stop_on_full, "1=open the window and stop tracing at the first overflow (default)");
 
+static uint dd_len;
+module_param(dd_len, uint, 0644);
+MODULE_PARM_DESC(dd_len, "bytes of each TX buffer to record at an index write, up to 256; 0 = off (default). 168 covers the 4-byte TX offload header, the 124-byte d11 TX header and an 802.11 header");
+
+static uint dd_budget = 256;
+module_param(dd_budget, uint, 0644);
+MODULE_PARM_DESC(dd_budget, "TX descriptors left to record; counts down to 0, write it again for more (default 256)");
+
+static ulong dd_bus_off;
+module_param(dd_bus_off, ulong, 0444);
+MODULE_PARM_DESC(dd_bus_off, "subtracted from a DMA bus address to get the physical one (default 0, the identity the Northstar PCIe inbound window gives)");
+
 /* ---- records: the MIPS build's format, ops 60-64 ----------------------- */
 #define OP_MMIO_R    60
 #define OP_MMIO_W    61
 #define OP_MMIO_MARK 62
-#define OP_MMIO_DD   63		/* unused here; reserved so the op space matches */
+#define OP_MMIO_DD   63
 #define OP_MMIO_DATA 64
 #define OP_DROP     255
 
@@ -128,6 +143,7 @@ static atomic_t n_mismatch = ATOMIC_INIT(0);
 static atomic_t n_not_ls = ATOMIC_INIT(0);
 static atomic_t n_cond = ATOMIC_INIT(0);
 static atomic_t n_foreign = ATOMIC_INIT(0);	/* faults that were not ours */
+static atomic_t n_dd = ATOMIC_INIT(0);		/* TX descriptors recorded */
 
 static bool overflow_seen;
 static void overflow_work_fn(struct work_struct *w);
@@ -220,6 +236,116 @@ static bool region_owns(const struct trap_region *r, unsigned long va)
 	return r && r->alias && va >= r->base && va < r->base + r->len;
 }
 
+/* ---- TX descriptors -----------------------------------------------------
+ * The d11 TX header and the DMA descriptor pointing at it never cross the
+ * window: the engine reads them from RAM. The TX channel's index write does
+ * cross it, and dma_dd.c walks the descriptors posted since the previous
+ * index out of RAM at that write. Off until dd_len is set; one record group
+ * per descriptor (OP_MMIO_DD + OP_MMIO_DATA), as on MIPS.
+ */
+static struct dd_state dd;
+static DEFINE_RAW_SPINLOCK(dd_lock);
+
+/*
+ * Read @len bytes of RAM at the physical address @bus - dd_bus_off. ARM
+ * ioremap() refuses RAM, so the read is through the cached linear map,
+ * preceded by a clean+invalidate of the range so it reflects what wl wrote
+ * before posting the frame.
+ *
+ * A highmem page has no linear address, and kmap from inside a data abort
+ * is not safe, so a buffer there is refused (dd_dump records the descriptor
+ * with DD_F_NOBUF). The 16-byte descriptors live in the coherent ring, in
+ * lowmem; it is a frame buffer that could be high.
+ *
+ * SALAME: on a Cortex-A9 with an L2C-310 outer cache, a clean of the inner
+ * cache alone does not guarantee the line reached DRAM if wl's write is
+ * still in the outer cache; wl flushes the descriptor and buffer for DMA
+ * before the index write, so in practice they are in DRAM by the time this
+ * runs, but that ordering is assumed, not read from the blob.
+ */
+static bool dd_mem_read(void *ctx, u32 bus, void *dst, u32 len)
+{
+	unsigned long phys = (unsigned long)bus - dd_bus_off;
+	unsigned long pfn = phys >> PAGE_SHIFT;
+	unsigned long last = (phys + len - 1) >> PAGE_SHIFT;
+	void *va;
+
+	(void)ctx;
+	if (!len)
+		return true;
+	if (phys + len < phys || !pfn_valid(pfn) || !pfn_valid(last))
+		return false;
+	if (PageHighMem(pfn_to_page(pfn)) || PageHighMem(pfn_to_page(last)))
+		return false;
+
+	va = phys_to_virt(phys);
+	__cpuc_flush_dcache_area(va, len);
+	memcpy(dst, va, len);
+	return true;
+}
+
+/* A ring set up before the trap was engaged: its address register, read
+ * through the alias right after wl wrote the same channel's index, so the
+ * window is on the core wl was talking to. DMA64 layout: channel n at
+ * 0x200 + 0x40 * n, TX ring address low word at +0x08. */
+static u32 dd_ring_addr(void *ctx, unsigned int chan)
+{
+	struct trap_region *r = ctx;
+
+	return __raw_readl((char __iomem *)r->alias + 0x208 + 0x40 * chan);
+}
+
+static void dd_emit(void *ctx, unsigned int chan, u32 slot, const u8 *raw,
+		    const struct dd_desc *d, const u8 *buf, u32 n)
+{
+	struct wl_mmio_rec rec;
+	unsigned long flags;
+	u32 total = DD_SIZE + n, i, k;
+	bool ok;
+
+	(void)ctx;
+	raw_spin_lock_irqsave(&fifo_lock, flags);
+	memset(&rec, 0, sizeof(rec));
+	rec.op = OP_MMIO_DD;
+	rec.addr = slot;
+	rec.val = d->addrlo;
+	rec.aux = (chan << 24) | ((u32)d->flags << 16) | n;
+	ok = push_rec_locked(&rec);
+	for (i = 0; ok && i < total; i += 12) {
+		u8 *p = (u8 *)&rec.addr;
+
+		memset(&rec, 0, sizeof(rec));
+		rec.op = OP_MMIO_DATA;
+		for (k = 0; k < 12 && i + k < total; k++)
+			p[k] = i + k < DD_SIZE ? raw[i + k] : buf[i + k - DD_SIZE];
+		ok = push_rec_locked(&rec);
+	}
+	raw_spin_unlock_irqrestore(&fifo_lock, flags);
+
+	if (ok)
+		atomic_inc(&n_dd);
+	else
+		note_full();
+}
+
+static const struct dd_ops dd_ops = {
+	.read = dd_mem_read,
+	.ring_addr = dd_ring_addr,
+	.emit = dd_emit,
+};
+
+static void dd_on_mmio_write(struct trap_region *r, u32 off, u32 val)
+{
+	unsigned long flags;
+	u32 budget;
+
+	raw_spin_lock_irqsave(&dd_lock, flags);
+	budget = ACCESS_ONCE(dd_budget);
+	dd_on_write(&dd, &dd_ops, r, off, val, ACCESS_ONCE(dd_len), &budget);
+	dd_budget = budget;
+	raw_spin_unlock_irqrestore(&dd_lock, flags);
+}
+
 /*
  * The replacement for fsr_info[7].fn. On a fault inside the window, decode
  * and emulate the one load/store and return 0 (handled); otherwise chain to
@@ -267,6 +393,8 @@ static int trap_fault_fn(unsigned long addr, unsigned int fsr,
 	log_rec(res.is_write ? OP_MMIO_W : OP_MMIO_R,
 		(u32)(addr - r->base), res.value, res.width);
 	atomic_inc(&n_emulated);
+	if (res.is_write && res.width == 4 && r == &live)
+		dd_on_mmio_write(r, (u32)(addr - r->base), res.value);
 	return 0;
 }
 
@@ -568,11 +696,12 @@ static ssize_t proc_write(struct file *f, const char __user *buf, size_t count,
 	} else if (!strcmp(cmd, "off")) {
 		region_open();
 	} else if (!strcmp(cmd, "status")) {
-		pr_info("wl_mmio_trap: %s, emulated=%d foreign=%d not-ls=%d mismatch=%d cond=%d drops=%d\n",
+		pr_info("wl_mmio_trap: %s, emulated=%d dd=%d foreign=%d not-ls=%d mismatch=%d cond=%d drops=%d\n",
 			live.win && mmio_pte_is_closed(live.win) ? "trapping" : "open",
-			atomic_read(&n_emulated), atomic_read(&n_foreign),
-			atomic_read(&n_not_ls), atomic_read(&n_mismatch),
-			atomic_read(&n_cond), atomic_read(&drops));
+			atomic_read(&n_emulated), atomic_read(&n_dd),
+			atomic_read(&n_foreign), atomic_read(&n_not_ls),
+			atomic_read(&n_mismatch), atomic_read(&n_cond),
+			atomic_read(&drops));
 	} else if (!strncmp(cmd, "mark ", 5)) {
 		char label[12] = { 0 };
 
@@ -610,6 +739,8 @@ static int __init wmt_init(void)
 	if (err)
 		return err;
 
+	dd_init(&dd);
+
 	if (fifo_recs < 4096)
 		fifo_recs = 4096;
 	slots = 1 << (fls(fifo_recs) - 1);
@@ -639,6 +770,7 @@ static int __init wmt_init(void)
 	wl_ring_init(&ring, fifo_buf, slots, sizeof(struct wl_mmio_rec));
 	atomic_set(&rec_seq, 0);
 	atomic_set(&n_emulated, 0);
+	atomic_set(&n_dd, 0);
 
 	err = arm_window();
 	if (err) {
@@ -663,9 +795,9 @@ static void __exit wmt_exit(void)
 	remove_proc_entry(PROC_NAME, NULL);
 	vfree(fifo_buf);
 	fifo_buf = NULL;
-	pr_info("wl_mmio_trap: unloaded (emulated %d, foreign %d, drops %d)\n",
-		atomic_read(&n_emulated), atomic_read(&n_foreign),
-		atomic_read(&drops));
+	pr_info("wl_mmio_trap: unloaded (emulated %d, dd %d, foreign %d, drops %d)\n",
+		atomic_read(&n_emulated), atomic_read(&n_dd),
+		atomic_read(&n_foreign), atomic_read(&drops));
 }
 
 module_init(wmt_init);

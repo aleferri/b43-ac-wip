@@ -7,6 +7,10 @@
 #
 # Nothing here is cross-compiled and nothing here says anything about
 # behaviour under a real data abort or about the target gcc's encodings.
+#
+# Only the ARM-specific unit is here. The TX descriptor walker (dma_dd.c) is
+# shared with the MIPS build and checked by ../../tools (make -C ../../tools
+# check); the ring and win_find are shared too.
 
 CC ?= cc
 CFLAGS ?= -Wall -Wextra -Wno-unused-parameter -O2
