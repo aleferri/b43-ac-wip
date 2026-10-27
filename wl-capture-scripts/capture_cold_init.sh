@@ -57,6 +57,8 @@
 #   sh capture_cold_init.sh 20 36                     un canale
 #   sh capture_cold_init.sh 20 36 40 44 48            piu' canali, un ciclo ognuno
 #   sh capture_cold_init.sh 20dfs                     un profilo di capture_profiles.sh
+#   sh capture_cold_init.sh 2g20                      i canali a 2.4 GHz, 20 MHz
+#   BAND=2g sh capture_cold_init.sh 20 1 6 11          canali a 2.4 GHz scelti a mano
 #   IF=wl1 SETTLE=10 SSID=test-ap sh capture_cold_init.sh 40 36 44
 #
 # I profili sono gli stessi dello sweep a caldo e stanno in
@@ -67,6 +69,8 @@
 #
 # Variabili d'ambiente:
 #   IF         interfaccia                                   (default wl1)
+#   BAND       5g o 2g, il prefisso del chanspec; con un profilo lo
+#              decide il profilo                               (default 5g)
 #   SETTLE     attesa dopo up, secondi                        (default 10)
 #   SETTLE_BSS attesa dopo bss up, secondi                    (default $SETTLE)
 #   SSID       se impostato: ssid + bss up prima dell'attesa  (default vuoto)
@@ -138,6 +142,7 @@ fi
 # lo stesso `wl` serve -- 0x435f e 0x4354 sul 6362 -- ed e' il punto del
 # controllo: catturare l'altra radio produce una traccia plausibile e sbagliata.
 [ -n "$DEVID" ]  || DEVID="0x43b3 0x43a2"
+[ -n "$BAND" ]   || BAND=5g
 
 case "$SETTLE" in
     ''|*[!0-9]*) echo "attesa non numerica: '$SETTLE'" >&2; exit 1 ;;
@@ -282,7 +287,7 @@ carica_wl() {
 
 ciclo() {
     ch="$1"
-    cs="5g$ch/$BW"
+    cs="$BAND$ch/$BW"
 
     echo ""
     echo "=================== $cs ==================="
@@ -343,7 +348,7 @@ for c in "$@"; do
     esac
     if ! ciclo "$c"; then
         echo "" >&2
-        echo "ciclo su 5g$c/$BW interrotto. Stato lasciato com'e' per l'ispezione:" >&2
+        echo "ciclo su $BAND$c/$BW interrotto. Stato lasciato com'e' per l'ispezione:" >&2
         echo "  grep -E '^(wl|wl_diag) ' /proc/modules ; dmesg | grep wl_diag" >&2
         exit 1
     fi

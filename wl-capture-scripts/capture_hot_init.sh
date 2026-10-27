@@ -24,6 +24,7 @@
 #   sh capture_hot_init.sh 80           gli 80 MHz senza guardia radar
 #   sh capture_hot_init.sh 20dfs        i soli canali con guardia radar, 20 MHz
 #   sh capture_hot_init.sh 20meteo      i soli 5600-5650, che vogliono 600 s
+#   sh capture_hot_init.sh 2g20         i canali a 2.4 GHz, 20 MHz
 #   sh capture_hot_init.sh 20 wl1 10    interfaccia e attesa espliciti
 #   sh capture_hot_init.sh 20 wl1 10 test-ap    con SSID, per programmare il BSS
 #
@@ -122,7 +123,7 @@ bss_su() {
 }
 
 imposta() {
-    cs="5g$1/$BW"
+    cs="$BAND$1/$BW"
     if ! wl -i "$IF" chanspec "$cs" > /dev/null 2>&1; then
         msg=`wl -i "$IF" chanspec "$cs" 2>&1`
         echo "salto $cs: $msg"

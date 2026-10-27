@@ -11,6 +11,11 @@
 #   <bw>        i canali SENZA guardia radar di quella larghezza
 #   <bw>dfs     quelli con guardia radar, CAC ~60 s: SETTLE=70
 #   <bw>meteo   i 5600-5650 del radar meteo, CAC 600 s: SETTLE=620
+#   2g20        i canali a 2.4 GHz, 20 MHz
+#
+# Ogni profilo imposta anche BAND, il prefisso del chanspec (5g o 2g). I
+# canali che il dominio regolatorio della board non ammette, 12 e 13 a 2.4
+# GHz fuori dall'Europa, vengono rifiutati da `wl chanspec` e saltati.
 #
 # Niente head/awk/sed: il busybox di questi firmware non li ha tutti.
 #
@@ -33,10 +38,14 @@ C80="36 149"
 C80DFS="52 100 132"
 C80METEO="116"
 
-PROFILI="20 40 80 20dfs 40dfs 80dfs 20meteo 40meteo 80meteo"
+C20_2G="1 2 3 4 5 6 7 8 9 10 11 12 13"
 
-# profilo <nome>: imposta LIST e BW, ritorna 1 se il nome non e' un profilo.
+PROFILI="20 40 80 20dfs 40dfs 80dfs 20meteo 40meteo 80meteo 2g20"
+
+# profilo <nome>: imposta LIST, BW e BAND, ritorna 1 se il nome non e' un
+# profilo.
 profilo() {
+    BAND=5g
     case "$1" in
         20)      LIST="$C20";      BW=20 ;;
         40)      LIST="$C40";      BW=40 ;;
@@ -47,6 +56,7 @@ profilo() {
         20meteo) LIST="$C20METEO"; BW=20 ;;
         40meteo) LIST="$C40METEO"; BW=40 ;;
         80meteo) LIST="$C80METEO"; BW=80 ;;
+        2g20)    LIST="$C20_2G";   BW=20; BAND=2g ;;
         *)       return 1 ;;
     esac
     return 0
