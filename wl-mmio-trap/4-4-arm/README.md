@@ -77,6 +77,13 @@ Kernel configuration, in the Makefile's head: `CONFIG_KALLSYMS=y` (and
 Northstar `wl` is A32). `win_find.c` and `wl_ring.c` are shared with the MIPS
 build one level up, compiled through the one-line `*_shared.c` wrappers.
 
+The window's ptes are written with the processor's `set_pte_ext`, not
+`set_pte_at`: the latter references `__sync_icache_dcache`, which the kernel
+does not export (it is for user exec pages, a branch a kernel address never
+takes), so a module calling `set_pte_at` fails `modpost`. `arm_syms` resolves
+`cpu_v7_set_pte_ext` by name, like `flush_tlb_kernel_range`, which works on
+both the single-CPU DD-WRT build and a `CONFIG_MULTI_CPU` one.
+
 ## Capture
 
 The workflow is `../README.md`'s, with these differences:

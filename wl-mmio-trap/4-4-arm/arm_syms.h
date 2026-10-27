@@ -20,6 +20,7 @@
 #define ARM_SYMS_H
 
 #include <linux/types.h>
+#include <asm/pgtable.h>	/* pte_t, for as_set_pte_ext */
 
 struct mm_struct;
 struct pt_regs;
@@ -32,6 +33,15 @@ int as_init(unsigned long fsr_info_fn7_hint);
 
 struct mm_struct *as_init_mm(void);
 void as_flush_tlb_kernel(unsigned long start, unsigned long end);
+
+/* Write a kernel pte through the processor's set_pte_ext, with ext 0. This
+ * is what set_pte_ext() expands to, called directly so the module does not
+ * pull set_pte_at()'s __sync_icache_dcache() -- that one is for user exec
+ * pages and is not exported. On a CONFIG_MULTI_CPU kernel set_pte_ext()
+ * goes through the exported `processor` struct, but the DD-WRT Northstar
+ * build is single-CPU, where it inlines a call to the unexported
+ * cpu_v7_set_pte_ext; as_init() resolves it by name either way. */
+void as_set_pte_ext(pte_t *ptep, pte_t pte);
 
 /* The address of fsr_info[7].fn, so the caller can swap it and put it back.
  * NULL if fsr_info was not resolved. */

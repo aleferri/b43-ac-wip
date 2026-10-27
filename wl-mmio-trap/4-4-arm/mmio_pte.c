@@ -4,9 +4,11 @@
  *
  * The structure is the MIPS mmio_pte's. What changes on ARM:
  *   - the bits that make a page reachable are L_PTE_PRESENT | L_PTE_VALID
- *     (both bit 0 on this layout) and L_PTE_YOUNG; set_pte_ext() mirrors the
- *     Linux pte into the hardware pt 2 KB above it, so clearing them stops
- *     the MMU from translating the page while the PFN stays recoverable;
+ *     (both bit 0 on this layout) and L_PTE_YOUNG; as_set_pte_ext() (the
+ *     processor's set_pte_ext, resolved in arm_syms, not set_pte_at which
+ *     pulls the unexported __sync_icache_dcache) mirrors the Linux pte into
+ *     the hardware pt 2 KB above it, so clearing them stops the MMU from
+ *     translating the page while the PFN stays recoverable;
  *   - init_mm and the TLB flush come from arm_syms.
  */
 #include <linux/mm.h>
@@ -119,8 +121,8 @@ void mmio_pte_close(struct mmio_window *w)
 	if (!w || w->closed)
 		return;
 	for (i = 0; i < w->npages; i++)
-		set_pte_at(as_init_mm(), w->pages[i].va, w->pages[i].ptep,
-			   pte_make_absent(w->pages[i].orig));
+		as_set_pte_ext(w->pages[i].ptep,
+			       pte_make_absent(w->pages[i].orig));
 	w->closed = true;
 	as_flush_tlb_kernel(w->base, w->base + w->len);
 }
@@ -132,8 +134,7 @@ void mmio_pte_open(struct mmio_window *w)
 	if (!w || !w->closed)
 		return;
 	for (i = 0; i < w->npages; i++)
-		set_pte_at(as_init_mm(), w->pages[i].va, w->pages[i].ptep,
-			   w->pages[i].orig);
+		as_set_pte_ext(w->pages[i].ptep, w->pages[i].orig);
 	w->closed = false;
 	as_flush_tlb_kernel(w->base, w->base + w->len);
 }

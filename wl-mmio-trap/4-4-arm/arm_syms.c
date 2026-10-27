@@ -36,8 +36,10 @@ struct as_fsr_info {
 #define AS_FSR_PAGE_TRANSLATION 7
 
 typedef void (*as_range_fn_t)(unsigned long, unsigned long);
+typedef void (*as_set_pte_fn_t)(pte_t *, pte_t, unsigned int);
 
 static as_range_fn_t p_flush_tlb;
+static as_set_pte_fn_t p_set_pte_ext;
 static fault_fn_t *p_fault_slot;
 
 unsigned long as_lookup(const char *name)
@@ -55,6 +57,11 @@ void as_flush_tlb_kernel(unsigned long start, unsigned long end)
 {
 	if (p_flush_tlb)
 		p_flush_tlb(start, end);
+}
+
+void as_set_pte_ext(pte_t *ptep, pte_t pte)
+{
+	p_set_pte_ext(ptep, pte, 0);
 }
 
 fault_fn_t *as_fault_slot(void)
@@ -77,6 +84,20 @@ int as_init(unsigned long fsr_info_fn7_hint)
 		return -ENOENT;
 	}
 	p_flush_tlb = (as_range_fn_t)a;
+
+	/* The processor's set_pte_ext. set_pte_at() is not usable from a
+	 * module here: it references __sync_icache_dcache, unexported, even
+	 * though that branch is user-address only. cpu_v7_set_pte_ext is the
+	 * V7 implementation; on a single-CPU build set_pte_ext() inlines a
+	 * call to it, on MULTI_CPU it goes through `processor`, and either
+	 * symbol would do, but resolving the concrete one by name works on
+	 * both and matches how flush_tlb is handled above. */
+	a = kallsyms_lookup_name("cpu_v7_set_pte_ext");
+	if (!a) {
+		pr_err("wl_mmio_trap: cpu_v7_set_pte_ext not resolvable; is this a CPU_V7 build?\n");
+		return -ENOENT;
+	}
+	p_set_pte_ext = (as_set_pte_fn_t)a;
 
 	if (fsr_info_fn7_hint) {
 		p_fault_slot = (fault_fn_t *)fsr_info_fn7_hint;
