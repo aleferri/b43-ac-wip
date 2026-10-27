@@ -7,6 +7,13 @@ the trapped instruction. It finds the window by itself, so it can be loaded
 before `wl`, after it, or between two `ifconfig up`. The agcombo captures in
 `router-data/vd625-agcombo/*.bin` were taken with it.
 
+This is the MIPS build, for kernels 3.4 and 2.6.30. The ARM build for the
+Northstar routers (kernel 4.4) is in [`4-4-arm/`](4-4-arm/): it hooks the
+data-abort dispatch table rather than a breakpoint on a fault path, so it
+needs no `CONFIG_KPROBES`-off and emulates A32 loads and stores instead of
+MIPS ones; the record format and `decode-wl-mmio.py` are the same. The rest
+of this file is the MIPS build.
+
 ## How it works
 
 The kernel facts below were checked against the v3.4 sources; the 2.6.30
