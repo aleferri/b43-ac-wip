@@ -628,13 +628,13 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
  drivers/net/wireless/broadcom/b43/dma.h       |   15 +-
  drivers/net/wireless/broadcom/b43/leds.c      |  227 +-
  drivers/net/wireless/broadcom/b43/leds.h      |   24 +-
- drivers/net/wireless/broadcom/b43/main.c      | 1952 +++++++++++++++--
+ drivers/net/wireless/broadcom/b43/main.c      | 1956 +++++++++++++++--
  .../net/wireless/broadcom/b43/phy_common.c    |   61 +-
  .../net/wireless/broadcom/b43/phy_common.h    |   35 +-
  drivers/net/wireless/broadcom/b43/pio.c       |   16 +-
  drivers/net/wireless/broadcom/b43/xmit.c      |  859 +++++++-
  drivers/net/wireless/broadcom/b43/xmit.h      |  138 ++
- 13 files changed, 3370 insertions(+), 443 deletions(-)
+ 13 files changed, 3374 insertions(+), 443 deletions(-)
 
 diff --git a/drivers/net/wireless/broadcom/b43/Kconfig b/drivers/net/wireless/broadcom/b43/Kconfig
 index 4559549..4f3bb9f 100644
@@ -2027,7 +2027,7 @@ index 5ebd1b2..ec38dea 100644
  
  #endif /* B43_LEDS_H_ */
 diff --git a/drivers/net/wireless/broadcom/b43/main.c b/drivers/net/wireless/broadcom/b43/main.c
-index 817448e..dfc15fd 100644
+index 817448e..0123bad 100644
 --- a/drivers/net/wireless/broadcom/b43/main.c
 +++ b/drivers/net/wireless/broadcom/b43/main.c
 @@ -9,6 +9,8 @@
@@ -3611,7 +3611,10 @@ index 817448e..dfc15fd 100644
 +	int err;
 +	u32 macctl;
 +	u16 value16;
-+
+ 
+-	/* Probe Response Timeout value */
+-	/* FIXME: Default to 0, has to be set by ioctl probably... :-/ */
+-	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_PRMAXTIME, 0);
 +	/*
 +	 * Initialize the MAC control. The AC's stock drivers, 6.30 and 7.14,
 +	 * keep the ucode awake here and never set SHM_ENABLED, nor does
@@ -3642,16 +3645,21 @@ index 817448e..dfc15fd 100644
 +	if (err)
 +		goto err_gpio_clean;
  
--	/* Probe Response Timeout value */
--	/* FIXME: Default to 0, has to be set by ioctl probably... :-/ */
--	b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_PRMAXTIME, 0);
+-	/* Initially set the wireless operation mode. */
+-	b43_adjust_opmode(dev);
 +	b43dbg(dev->wl, "init: band initvals\n");
 +	err = b43_bsinit(dev);
 +	if (err)
 +		goto err_gpio_clean;
  
--	/* Initially set the wireless operation mode. */
--	b43_adjust_opmode(dev);
+-	if (dev->dev->core_rev < 3) {
+-		b43_write16(dev, 0x060E, 0x0000);
+-		b43_write16(dev, 0x0610, 0x8000);
+-		b43_write16(dev, 0x0604, 0x0000);
+-		b43_write16(dev, 0x0606, 0x0200);
+-	} else {
+-		b43_write32(dev, 0x0188, 0x80000000);
+-		b43_write32(dev, 0x018C, 0x02000000);
 +	if (dev->dev->core_rev == 42) {
 +		b43dbg(dev->wl, "init: TX FIFOs\n");
 +		err = b43_txfifo_init_rev42(dev);
@@ -3659,13 +3667,16 @@ index 817448e..dfc15fd 100644
 +			goto err_gpio_clean;
 +		b43_aqm_init_rev42(dev);
 +		b43_mac_switch_freq(dev, 0);
-+	}
+ 	}
+-	b43_write32(dev, B43_MMIO_GEN_IRQ_REASON, 0x00004000);
+-	b43_write32(dev, B43_MMIO_DMA0_IRQ_MASK, 0x0001FC00);
+-	b43_write32(dev, B43_MMIO_DMA1_IRQ_MASK, 0x0000DC00);
+-	b43_write32(dev, B43_MMIO_DMA2_IRQ_MASK, 0x0000DC00);
+-	b43_write32(dev, B43_MMIO_DMA3_IRQ_MASK, 0x0001DC00);
+-	b43_write32(dev, B43_MMIO_DMA4_IRQ_MASK, 0x0000DC00);
+-	b43_write32(dev, B43_MMIO_DMA5_IRQ_MASK, 0x0000DC00);
  
--	if (dev->dev->core_rev < 3) {
--		b43_write16(dev, 0x060E, 0x0000);
--		b43_write16(dev, 0x0610, 0x8000);
--		b43_write16(dev, 0x0604, 0x0000);
--		b43_write16(dev, 0x0606, 0x0200);
+-	b43_mac_phy_clock_set(dev, true);
 +	/*
 +	 * The AC cores' stock driver sets the whole MAC up before it touches
 +	 * the PHY: the MAC init here, then the shared-memory cells, host
@@ -3677,23 +3688,12 @@ index 817448e..dfc15fd 100644
 +	if (phy->type == B43_PHYTYPE_AC) {
 +		b43dbg(dev->wl, "init: MAC\n");
 +		b43_chip_init_mac(dev);
- 	} else {
--		b43_write32(dev, 0x0188, 0x80000000);
--		b43_write32(dev, 0x018C, 0x02000000);
++	} else {
 +		err = b43_phy_bringup(dev);
 +		if (err)
 +			goto err_gpio_clean;
- 	}
--	b43_write32(dev, B43_MMIO_GEN_IRQ_REASON, 0x00004000);
--	b43_write32(dev, B43_MMIO_DMA0_IRQ_MASK, 0x0001FC00);
--	b43_write32(dev, B43_MMIO_DMA1_IRQ_MASK, 0x0000DC00);
--	b43_write32(dev, B43_MMIO_DMA2_IRQ_MASK, 0x0000DC00);
--	b43_write32(dev, B43_MMIO_DMA3_IRQ_MASK, 0x0001DC00);
--	b43_write32(dev, B43_MMIO_DMA4_IRQ_MASK, 0x0000DC00);
--	b43_write32(dev, B43_MMIO_DMA5_IRQ_MASK, 0x0000DC00);
++	}
  
--	b43_mac_phy_clock_set(dev, true);
--
 -	switch (dev->dev->bus_type) {
 -#ifdef CONFIG_B43_BCMA
 -	case B43_BUS_BCMA:
@@ -4710,7 +4710,7 @@ index 817448e..dfc15fd 100644
  static int b43_setup_bands(struct b43_wldev *dev,
  			   bool have_2ghz_phy, bool have_5ghz_phy)
  {
-@@ -5286,6 +6786,37 @@ static int b43_setup_bands(struct b43_wldev *dev,
+@@ -5286,6 +6786,35 @@ static int b43_setup_bands(struct b43_wldev *dev,
  	if (have_2ghz_phy)
  		hw->wiphy->bands[NL80211_BAND_2GHZ] = limited_2g ?
  			&b43_band_2ghz_limited : &b43_band_2GHz;
@@ -4729,6 +4729,11 @@ index 817448e..dfc15fd 100644
 +		hw->wiphy->bands[NL80211_BAND_2GHZ] = band;
 +	}
 +	if (dev->phy.type == B43_PHYTYPE_AC) {
++		/* A rate and its fallbacks, a block each. */
++		hw->max_rates = B43_TXH_AC_RATES;
++		ieee80211_hw_set(hw, AMPDU_AGGREGATION);
++		hw->max_tx_aggregation_subframes = IEEE80211_MAX_AMPDU_BUF_HT;
++		hw->max_rx_aggregation_subframes = IEEE80211_MAX_AMPDU_BUF_HT;
 +		if (have_5ghz_phy) {
 +			struct ieee80211_supported_band *band =
 +				&dev->wl->band_5ghz_ac;
@@ -4736,19 +4741,12 @@ index 817448e..dfc15fd 100644
 +			*band = b43_band_5GHz_acphy;
 +			b43_ac_set_ht_vht_cap(dev, band);
 +			hw->wiphy->bands[NL80211_BAND_5GHZ] = band;
-+			/* A rate and its fallbacks, a block each. */
-+			hw->max_rates = B43_TXH_AC_RATES;
-+			ieee80211_hw_set(hw, AMPDU_AGGREGATION);
-+			hw->max_tx_aggregation_subframes =
-+				IEEE80211_MAX_AMPDU_BUF_HT;
-+			hw->max_rx_aggregation_subframes =
-+				IEEE80211_MAX_AMPDU_BUF_HT;
 +		}
 +	} else
  	if (dev->phy.type == B43_PHYTYPE_N) {
  		if (have_5ghz_phy)
  			hw->wiphy->bands[NL80211_BAND_5GHZ] = limited_5g ?
-@@ -5299,6 +6830,18 @@ static int b43_setup_bands(struct b43_wldev *dev,
+@@ -5299,6 +6828,18 @@ static int b43_setup_bands(struct b43_wldev *dev,
  	dev->phy.supports_2ghz = have_2ghz_phy;
  	dev->phy.supports_5ghz = have_5ghz_phy;
  
@@ -4767,7 +4765,17 @@ index 817448e..dfc15fd 100644
  	return 0;
  }
  
-@@ -5370,6 +6913,12 @@ static void b43_supported_bands(struct b43_wldev *dev, bool *have_2ghz_phy,
+@@ -5366,10 +6907,22 @@ static void b43_supported_bands(struct b43_wldev *dev, bool *have_2ghz_phy,
+ 		*have_2ghz_phy = false;
+ 		*have_5ghz_phy = true;
+ 		return;
++	case 0x43a1: /* BCM4360 */
++	case 0x43b2: /* BCM4352 */
++		/* 2.4 GHz only devices */
++		*have_2ghz_phy = true;
++		*have_5ghz_phy = false;
++		return;
+ 	}
  
  	/* As a fallback, try to guess using PHY type */
  	switch (dev->phy.type) {
@@ -4780,7 +4788,7 @@ index 817448e..dfc15fd 100644
  	case B43_PHYTYPE_G:
  	case B43_PHYTYPE_N:
  	case B43_PHYTYPE_LP:
-@@ -5605,6 +7154,7 @@ static struct b43_wl *b43_wireless_init(struct b43_bus_dev *dev)
+@@ -5605,6 +7158,7 @@ static struct b43_wl *b43_wireless_init(struct b43_bus_dev *dev)
  
  	wl->hw_registered = false;
  	hw->max_rates = 2;
@@ -4788,7 +4796,7 @@ index 817448e..dfc15fd 100644
  	SET_IEEE80211_DEV(hw, dev->dev);
  	if (is_valid_ether_addr(sprom->et1mac))
  		SET_IEEE80211_PERM_ADDR(hw, sprom->et1mac);
-@@ -5676,6 +7226,7 @@ bcma_out:
+@@ -5676,6 +7230,7 @@ bcma_out:
  static void b43_bcma_remove(struct bcma_device *core)
  {
  	struct b43_wldev *wldev = bcma_get_drvdata(core);
@@ -4796,7 +4804,7 @@ index 817448e..dfc15fd 100644
  	struct b43_wl *wl = wldev->wl;
  
  	/* We must cancel any work here before unregistering from ieee80211,
-@@ -5691,14 +7242,14 @@ static void b43_bcma_remove(struct bcma_device *core)
+@@ -5691,14 +7246,14 @@ static void b43_bcma_remove(struct bcma_device *core)
  		ieee80211_unregister_hw(wl->hw);
  	}
  
@@ -4813,7 +4821,7 @@ index 817448e..dfc15fd 100644
  }
  
  static struct bcma_driver b43_bcma_driver = {
-@@ -5796,9 +7347,12 @@ static struct ssb_driver b43_ssb_driver = {
+@@ -5796,9 +7351,12 @@ static struct ssb_driver b43_ssb_driver = {
  void b43_controller_restart(struct b43_wldev *dev, const char *reason)
  {
  	/* Must avoid requeueing, if we are in shutdown. */
