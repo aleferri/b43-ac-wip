@@ -211,8 +211,9 @@ struct ssb_sprom {
 	u8 sar2g;
 	u8 sar5g;
 
-	/* SROM rev 11. Populated only by the rev 11 extractor; zero on
-	 * rev <= 10 boards.
+	/* SROM rev 11. Populated by the rev 11 extractor from the device's
+	 * SPROM, or by bcm47xx_sprom from NVRAM on a board without one; zero
+	 * on rev <= 10 boards.
 	 */
 	struct ssb_sprom_rxgains rxgains_2g;
 	struct ssb_sprom_rxgains rxgains_5gl;
@@ -220,8 +221,7 @@ struct ssb_sprom {
 	struct ssb_sprom_rxgains rxgains_5gh;
 	u8 subband5gver;
 	/* Antenna gain in quarter dB, per band: agbg0 for 2.4 GHz, aga0 for
-	 * 5 GHz, decoded from the SROM's whole-dB [5:0] + quarter-dB [7:6]
-	 * encoding. */
+	 * 5 GHz, decoded by ssb_sprom_antgain_qdb(). */
 	s8 antenna_gain_qdb[2];
 	u16 dot11agofdmhrbw202gpo;
 	u16 ofdmlrbw202gpo;
@@ -267,6 +267,18 @@ struct ssb_sprom {
 	u16 tssifloor2g;
 	u16 tssifloor5g[4];
 };
+
+/*
+ * A SROM rev 11 antenna gain byte, agbg0 or aga0, in quarter dB: whole dB in
+ * bits [5:0], signed, and quarter dB in bits [7:6]. The NVRAM variable holds
+ * the same byte.
+ */
+static inline s8 ssb_sprom_antgain_qdb(u8 raw)
+{
+	s8 gain = (s8)((raw & 0x3f) << 2) >> 2;
+
+	return 4 * gain + (raw >> 6);
+}
 
 /* Information about the PCB the circuitry is soldered on. */
 struct ssb_boardinfo {

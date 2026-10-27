@@ -1,2 +1,4 @@
 *.o
 test
+ssb_sprom_gen.h
+test_nvram

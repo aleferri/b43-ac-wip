@@ -60,6 +60,7 @@ Measured on 2026-10-09, see below.
 | integration, cold `cold01` | `probe: 0`, `start: 0`; 70.57% (26781/37951) |
 | integration, agcombo ch36/80 at the bus | 70.64% (89994/127406), with the 561 interrupts and 283 received frames of the capture replayed |
 | SROM rev 11 extractor | 77/82/83 PASS, 0 FAIL (DSL-3580L, D6220, agcombo) |
+| SROM rev 11 from NVRAM | 116/123/123/123 PASS, 0 FAIL (DSL-3580L, D6220, agcombo, TG789vac v2) |
 
 The agcombo unit row runs with the capture's SSID length (7, read off
 `PRSSIDLEN` by `gates.sh`). The integration rows write the 48-bit table
@@ -112,8 +113,10 @@ the limit off.
 
 ## What is ported
 
-- **SROM rev 11** (`bcma/drivers/bcma/sprom.c`, in `patches/0001`), with a
-  test harness in [`bcma/harness/`](bcma/harness/).
+- **SROM rev 11** (`bcma/drivers/bcma/sprom.c`, in `patches/0001`), and the
+  same fields from NVRAM for a board without a SROM, such as the Northstar
+  routers (`bcma/drivers/firmware/broadcom/bcm47xx_sprom.c`), with a test
+  harness for both in [`bcma/harness/`](bcma/harness/).
 - **The PHY** (the AC-PHY files of `b43/`, `patches/0003`): `op_init`,
   `software_rfkill`, `switch_analog`, `switch_channel` on every row of the
   2069 table (5170–5825 MHz) at 20, 40 and 80 MHz, the post-switch

@@ -10,7 +10,7 @@ it.
 |---|---|
 | `drivers/bcma/sprom.c` | `bcma_sprom_extract_r11()`, NVRAM `ledbh4..15` over the device's own SROM |
 | `include/linux/ssb/ssb.h`, `ssb_regs.h` | the rev 11 fields and offsets, `gpio_ext[]`, `boardflags3`, `AvVmid` |
-| `drivers/firmware/broadcom/bcm47xx_sprom.c`, `include/linux/bcm47xx_sprom.h` | `ledbh4..15`, `boardflags3` and `AvVmid_c0..2` from NVRAM |
+| `drivers/firmware/broadcom/bcm47xx_sprom.c`, `include/linux/bcm47xx_sprom.h` | the SROM rev 11 fields from NVRAM, for a board without a SROM; `ledbh4..15`, `boardflags3` and `AvVmid_c0..2` from NVRAM |
 | `drivers/bcma/driver_chipcommon_pmu.c` | PLL and resource init for the family, on chip rev 3, the only one captured, the branch chosen by chipstatus bit 5 |
 | `include/linux/bcma/bcma_driver_chipcommon.h` | the 4360 chipstatus bits and PLL control registers 6 and 14 that the PMU init uses |
 | `drivers/bcma/host_pci.c` | the BCM4352 PCI ID, `0x43b3` |
@@ -47,8 +47,10 @@ extractor in mainline is `bcma_sprom_extract_r8`, which runs unchanged on rev 11
 input. The rev-11-specific fields therefore stay zero in `struct ssb_sprom`, and
 any consumer — the b43 AC-PHY among them — sees an empty board calibration.
 
-The complementary NVRAM path (`bcm47xx_sprom.c`) maps part of rev 11 and has no
-path for the per-chain rev 11 arrays.
+The complementary NVRAM path (`bcm47xx_sprom.c`), which a board without a SROM
+takes -- the Northstar routers keep the data of their PCIe radios in NVRAM --
+mapped only the rev 11 fields rev 9 already had, so `femctrl`, the per-chain
+power info and the rxgains stayed zero there.
 
 ## What the tree covers
 
@@ -58,8 +60,13 @@ path for the per-chain rev 11 arrays.
    per-chain `pdoffset*ma`. `struct ssb_sprom_core_pwr_info` gains
    rev-11-shaped `maxp2ga`, `maxp5ga[4]`, `pa2ga[3]` and `pa5ga[12]`. Existing
    fields do not move.
-2. **`bcm47xx_sprom.c` NVRAM mapping**: `ledbh4..15`, `boardflags3` and
-   `AvVmid_c0..2` only; the rev 11 per-chain arrays have no NVRAM path.
+2. **`bcm47xx_sprom.c` NVRAM mapping**: every field the rev 11 extractor
+   fills, under the names `wl` gives them (`maxp5ga0=72,70,86,0`,
+   `rxgains5gmtrisoa1=15`, `femctrl=6`, ...), read when `sromrev=11`: the
+   scalars in `bcm47xx_sprom_fill_auto()`, the per-chain fields, the lists and
+   the antenna gain in `bcm47xx_fill_sprom_path_r11()`. A list is taken whole
+   or not at all. `ledbh4..15`, `boardflags3` and `AvVmid_c0..2` are read on
+   top of a SROM from the device too.
 3. **`bcma_sprom_extract_r11`**, selected from `bcma_sprom_get` when the revision
    word reads 11. It decodes:
    - the shared header;
@@ -90,8 +97,9 @@ path for the per-chain rev 11 arrays.
 ## Test vectors
 
 The harness in `harness/` checks the extractor against the DSL-3580L, D6220
-and agcombo dumps and a BCM4360 USB NVRAM template; results in
-`harness/README.md`.
+and agcombo dumps and a BCM4360 USB NVRAM template, and the NVRAM path, the
+tree's `bcm47xx_sprom.c` itself, against the NVRAM of all four boards;
+results in `harness/README.md`.
 
 ## Open before sending upstream
 

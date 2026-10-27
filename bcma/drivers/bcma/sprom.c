@@ -664,14 +664,10 @@ static void bcma_sprom_extract_r11(struct bcma_bus *bus, const u16 *sprom)
 	     SSB_SPROM8_TEMPDELTA_HYSTERESIS,
 	     SSB_SPROM8_TEMPDELTA_HYSTERESIS_SHIFT);
 
-	/* Whole dB in bits [5:0], sign-extended, quarter dB in bits [7:6]. */
-	for (i = 0; i < 2; i++) {
-		u8 raw = i ? (sprom[SSB_SPROM11_AGBG2A0 / 2] >> 8) & 0xff
-			 : sprom[SSB_SPROM11_AGBG10 / 2] & 0xff;
-		s8 gain = (s8)((raw & 0x3f) << 2) >> 2;
-
-		bus->sprom.antenna_gain_qdb[i] = (s8)(4 * gain + (raw >> 6));
-	}
+	bus->sprom.antenna_gain_qdb[0] =
+		ssb_sprom_antgain_qdb(sprom[SPOFF(SSB_SPROM11_AGBG10)] & 0xff);
+	bus->sprom.antenna_gain_qdb[1] =
+		ssb_sprom_antgain_qdb(sprom[SPOFF(SSB_SPROM11_AGBG2A0)] >> 8);
 }
 
 /*

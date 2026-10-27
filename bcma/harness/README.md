@@ -59,6 +59,29 @@ The two synth vectors:
 - `router-data/vd625-agcombo/wl1_nvram.txt`: a real BCM4360 3×3 dual-band
   dump, which exercises chain 2 and the full 2.4 GHz PA chain.
 
+## The NVRAM path
+
+`test_nvram` covers the other source of the same fields: a board without a
+SROM, whose NVRAM says `sromrev=11` and holds the radio's variables under a
+device prefix, as on the Northstar routers. It compiles
+`../drivers/firmware/broadcom/bcm47xx_sprom.c` as it is, against the tree's
+`struct ssb_sprom`, which the Makefile cuts out of
+`../include/linux/ssb/ssb.h`; `nvram_shim/` stands in for the other kernel
+headers. A dump is served under the prefix `0:`, `bcm47xx_fill_sprom()` runs
+on it, and every rev 11 field, and the older ones the AC-PHY reads, is
+compared with the dump; a variable missing from the dump is SKIP.
+
+```
+$ make check-nvram         # the four boards' wl1_nvram.txt and bcm4360usb.nvram
+$ ./test_nvram path/to/nvram.txt
+```
+
+| vector | result |
+|---|---|
+| DSL-3580L | 116 PASS / 0 FAIL / 7 SKIP (no `tssifloor*`, no `rpcal*`) |
+| D6220, agcombo, TG789vac v2 | 123 PASS / 0 FAIL / 0 SKIP each |
+| bcm4360usb | 30 PASS / 0 FAIL / 93 SKIP |
+
 ## Contributing a vector
 
 On a router with Broadcom's `wl` tool:
@@ -67,6 +90,15 @@ On a router with Broadcom's `wl` tool:
 $ wl -i wl1 srdump     > srom_<board>.txt
 $ wl -i wl1 nvram_dump > nvram_<board>.txt
 $ ./test srom_<board>.txt nvram_<board>.txt
+```
+
+On a router without a SROM, the radio's variables are in NVRAM under its
+prefix, `0:` or `1:` (the one whose `devpathN` names its PCIe slot); strip it
+and run the NVRAM path on them:
+
+```
+$ nvram show | sed -n 's/^0://p' > nvram_<board>.txt
+$ ./test_nvram nvram_<board>.txt
 ```
 
 The most useful boards have:
@@ -87,4 +119,7 @@ The most useful boards have:
 - `ssb_regs.h`: `SSB_SPROM*` byte offsets, rev 11 additions included.
 - `data_load.{h,c}`: text parsers for the two dump files.
 - `test.c`: the table of field checks and the diff/summary driver.
+- `test_nvram.c`, `nvram_backend.{h,c}`, `nvram_shim.h`, `nvram_shim/`: the
+  NVRAM path's test, the dump as `bcm47xx_nvram_getenv()`, and the kernel
+  shim it is compiled with.
 - `vectors/`: NVRAM-only test vectors.
