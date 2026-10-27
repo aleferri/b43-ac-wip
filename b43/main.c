@@ -6781,6 +6781,11 @@ static int b43_setup_bands(struct b43_wldev *dev,
 		hw->wiphy->bands[NL80211_BAND_2GHZ] = band;
 	}
 	if (dev->phy.type == B43_PHYTYPE_AC) {
+		/* A rate and its fallbacks, a block each. */
+		hw->max_rates = B43_TXH_AC_RATES;
+		ieee80211_hw_set(hw, AMPDU_AGGREGATION);
+		hw->max_tx_aggregation_subframes = IEEE80211_MAX_AMPDU_BUF_HT;
+		hw->max_rx_aggregation_subframes = IEEE80211_MAX_AMPDU_BUF_HT;
 		if (have_5ghz_phy) {
 			struct ieee80211_supported_band *band =
 				&dev->wl->band_5ghz_ac;
@@ -6788,13 +6793,6 @@ static int b43_setup_bands(struct b43_wldev *dev,
 			*band = b43_band_5GHz_acphy;
 			b43_ac_set_ht_vht_cap(dev, band);
 			hw->wiphy->bands[NL80211_BAND_5GHZ] = band;
-			/* A rate and its fallbacks, a block each. */
-			hw->max_rates = B43_TXH_AC_RATES;
-			ieee80211_hw_set(hw, AMPDU_AGGREGATION);
-			hw->max_tx_aggregation_subframes =
-				IEEE80211_MAX_AMPDU_BUF_HT;
-			hw->max_rx_aggregation_subframes =
-				IEEE80211_MAX_AMPDU_BUF_HT;
 		}
 	} else
 	if (dev->phy.type == B43_PHYTYPE_N) {
@@ -6888,6 +6886,12 @@ static void b43_supported_bands(struct b43_wldev *dev, bool *have_2ghz_phy,
 		/* 5 GHz only devices */
 		*have_2ghz_phy = false;
 		*have_5ghz_phy = true;
+		return;
+	case 0x43a1: /* BCM4360 */
+	case 0x43b2: /* BCM4352 */
+		/* 2.4 GHz only devices */
+		*have_2ghz_phy = true;
+		*have_5ghz_phy = false;
 		return;
 	}
 
