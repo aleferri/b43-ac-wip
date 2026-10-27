@@ -718,6 +718,8 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
 			if (!parity)
 				enable |= B43_DMA64_TXPARITYDISABLE;
 			if (ring->dev->dma.index_is_addr) {
+				value |= b43_dma_read(ring, B43_DMA64_TXCTL) &
+					 B43_DMA64_TXCTL_KEEP;
 				b43_dma_write(ring, B43_DMA64_TXCTL, value);
 				b43_dma_write(ring, B43_DMA64_TXRINGLO, addrlo);
 				b43_dma_write(ring, B43_DMA64_TXRINGHI, addrhi);
@@ -759,6 +761,8 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
 			if (!parity)
 				value |= B43_DMA64_RXPARITYDISABLE;
 			if (ring->dev->dma.index_is_addr) {
+				value |= b43_dma_read(ring, B43_DMA64_RXCTL) &
+					 B43_DMA64_RXCTL_KEEP;
 				b43_dma_write(ring, B43_DMA64_RXRINGLO, addrlo);
 				b43_dma_write(ring, B43_DMA64_RXRINGHI, addrhi);
 				b43_dma_write(ring, B43_DMA64_RXCTL, value);
@@ -1099,8 +1103,8 @@ static bool b43_dma_translation_in_low_word(struct b43_wldev *dev,
  * addresses in its index registers, asked of the engine as the stock driver
  * does: write all ones to the ring address and see which low bits stay, the
  * 0xff0 of brcmsmac's _dma_descriptor_align(). Such an engine also gets its
- * ring address before it is enabled; the others after, as b43 has always
- * done.
+ * ring address before it is enabled, and keeps its outstanding reads, burst
+ * and prefetch; the others are set up as b43 has always done.
  */
 static bool b43_dma64_index_is_addr(struct b43_wldev *dev)
 {
