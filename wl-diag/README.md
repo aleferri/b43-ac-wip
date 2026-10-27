@@ -3,8 +3,9 @@
 A kernel module that hooks the stock Broadcom `wl` driver's hardware accessors
 with an entry detour (no kprobes) and exposes the records through
 `/proc/wl_diag`. `3-4-11/` targets kernel 3.4 with `wl` 7.14; `2-6-30/`
-targets 2.6.30 with `wl` 6.30. The two share the record format and
-`decode-wl-diag.py`. The head of `3-4-11/wl_diag.c` documents the mechanism
+targets 2.6.30 with `wl` 6.30; `4-4-arm/` targets kernel 4.4 on ARM (the
+Northstar routers, BCM4709) and attaches with kprobes instead, see "ARM"
+below. The three share the record format and `decode-wl-diag.py`. The head of `3-4-11/wl_diag.c` documents the mechanism
 and its limits: MIPS32R1, module memory written in place,
 `flush_icache_range`; the head of `2-6-30/wl_diag.c` lists what the 2.6.30
 variant leaves out.
@@ -58,11 +59,41 @@ through object memory
   (`phy_reg_write_array(pi, array, n)` takes a pointer and is only a marker;
   `wlc_bmac_write_ihr(hw, off, val)`, `wlc_bmac_set_shm(hw, off, val, len)`).
 - **Op codes** are the same numbers in both tracers (2.6.30 has 1-50, 55-59
-  and 65-66, 3.4 1-59 and 65-66); a new op goes at the end of both enums.
+  and 65-66, 3.4 1-59 and 65-66); a new op goes at the end of all three enums.
   60-64 belong to `../wl-mmio-trap/`, whose records merge into the same
   streams: the next op here is 67. Hook-table fields use
   designated initializers: a positional field once shifted `retcap` to false
   for every hook.
+
+## ARM
+
+`4-4-arm/` hooks the same accessors, from the same table, through kprobes:
+a kprobe at the entry, or a kretprobe where the value read is wanted
+(`retcap`). The kernel needs `CONFIG_KPROBES` and `CONFIG_KRETPROBES` (and
+`CONFIG_KALLSYMS`), so it is for a kernel built by the user, not a vendor's.
+None of the prologue questions above apply: a probe attaches wherever
+kprobes accepts the instruction, and where it does not the plan says
+`refused` with the error. Arguments a1-a3 are r1-r3 and the stack
+arguments of `nargx` are at `[sp]` and `[sp + 4]`, the same positions o32
+gives them.
+
+Symbols are resolved as `wl:<name>`, in the target only; the plan lists
+each hook as `kprobe`, `kretprobe`, `absent`, `dropped` or `refused`, then
+how many resolved and attached. `maxactive` (default 64) is the number of
+calls of one `retcap` accessor that can be pending at once; past it a
+return value is lost, and the count is logged at disarm. The records are
+handed out big-endian, so `decode-wl-diag.py` reads the stream unchanged.
+
+```sh
+cd 4-4-arm && make KDIR=/path/to/kernel-4.4 ARCH=arm CROSS_COMPILE=arm-linux-gnueabi- -j
+insmod wl_diag.ko; dmesg | grep wl_diag; rmmod wl_diag   # the plan
+insmod wl_diag.ko arm=1
+```
+
+If `wl` is already loaded at `insmod` it is hooked straight away, which is
+what a hot capture needs; a cold capture reloads it, as on MIPS. `delay`,
+`target`, `fifo_recs`, `skipphyrd` and the dump parameters are the same;
+`klookup`, `bump_ptr` and `restore_alloc` do not exist there.
 
 ## Checking the plan before flashing
 
