@@ -4697,10 +4697,17 @@ static bool b43_tx_rates_ok(struct ieee80211_hw *hw,
 {
 	const struct ieee80211_supported_band *band = hw->wiphy->bands[info->band];
 	const struct ieee80211_tx_rate *r = info->control.rates;
+	struct b43_wldev *dev = hw_to_b43_wl(hw)->current_dev;
 
 	if (!band)
 		return false;
-	if (band->vht_cap.vht_supported)
+	/*
+	 * Whether the frame gets the AC descriptor follows the firmware's
+	 * header format, not the band: the 2.4 GHz band of an AC-PHY core has
+	 * HT but no VHT, and its MCS rates need the AC descriptor as well.
+	 */
+	if (band->vht_cap.vht_supported ||
+	    (dev && dev->fw.hdr_format == B43_FW_HDR_AC))
 		return b43_txhdr_ac_rate_ok(band, &r[0]);
 	return !b43_tx_rate_is_mcs(&r[0]) && !b43_tx_rate_is_mcs(&r[1]);
 }
