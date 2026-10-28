@@ -2011,9 +2011,21 @@ static void b43_write_template_common(struct b43_wldev *dev,
 				      u16 ram_offset,
 				      u16 shm_size_offset, u8 rate)
 {
+	struct b43_tpl_layout cck_tpl;
 	const struct b43_tpl_layout *tpl = dev->fw.tpl;
 	unsigned int i, total = tpl->hdr_len + size;
 	struct b43_plcp_hdr4 plcp;
+
+	/*
+	 * The 12-byte AC header carries the PLCP at offset 3 for OFDM and at
+	 * offset 6 for CCK (aleferri/b43-ac-wip#4); a CCK beacon with it at 3
+	 * faulted on every TBTT on 2.4 GHz.
+	 */
+	if (tpl->hdr_len == 12 && b43_is_cck_rate(rate)) {
+		cck_tpl = *tpl;
+		cck_tpl.plcp_off = 6;
+		tpl = &cck_tpl;
+	}
 	struct b43_ram_seq seq = { .next = U16_MAX }, *s = NULL;
 
 	if (dev->phy.type == B43_PHYTYPE_AC) {
