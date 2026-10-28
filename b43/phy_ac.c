@@ -992,6 +992,14 @@ static void b43_phy_ac_bss_cc_update(struct b43_wldev *dev,
 	u16 cc = b43_shm_read16(dev, B43_SHM_SHARED, 0x00cc);
 
 	b43_phy_ac_chain_pair(dev, site, dev->phy.ac->cal_width, pair);
+	/*
+	 * A CCK beacon on 2.4 GHz goes out on one chain, as the CCK cell of
+	 * 0x05d4 and the initvals' 0x0044 have it; with the OFDM mask (0x01c4)
+	 * every CCK beacon ended in a PHY transmission error.
+	 */
+	if (dev->phy.ac->beacon_cck &&
+	    b43_current_band(dev->wl) == NL80211_BAND_2GHZ)
+		pair[0] = b43_phy_ac_chain_mask(dev->phy.ac->coremask, 1);
 	cc = (u16)((cc & ~0x01c0) | (pair[0] << 6));
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
@@ -1284,6 +1292,7 @@ static void b43_phy_ac_op_beacon_rate_set(struct b43_wldev *dev, bool cck)
 	if (ac->beacon_cck == cck)
 		return;
 	ac->beacon_cck = cck;
+	b43_phy_ac_bss_cc_update(dev, B43_PHY_AC_CHAIN_TXPWR);
 	if (ac->txpwr_spacing.has_cck)
 		b43_shm_write16(dev, B43_SHM_SHARED, 0x00ce,
 				b43_phy_ac_beacon_pwr_offset_at(dev,
@@ -4726,16 +4735,28 @@ b43_phy_ac_post_noise_shaping_core_transition(struct b43_wldev *dev,
 	 * cleared instead (a different mask, not just a different value); radio
 	 * 0x0033's nibble goes from 0x80 to 0xc0. The 0x06ee field is always
 	 * 0x8.
+	 *
+	 * Those are 5 GHz captures. On 2.4 GHz at 20 MHz wl 7.14 on the R7000
+	 * (BCM4360, femctrl 3 sub 3, ch 11) has 0x0045 bits 9:8 clear and bit 6
+	 * set (0x70ff) and the 0x0033 nibble at 0x60 (0x4060); with the 5 GHz
+	 * values QPSK and 16-QAM 1/2 lost 17 % of their frames on the EA6900.
 	 */
-	if (dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_20)
+	if (b43_current_band(dev->wl) == NL80211_BAND_2GHZ &&
+	    dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_20)
+		b43_radio_maskset(dev, 0x0045 + stride, (u16)~0x0340, 0x0040);
+	else if (dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_20)
 		b43_radio_maskset(dev, 0x0045 + stride, (u16)~0x0300, 0x0300);
 	else
 		b43_radio_maskset(dev, 0x0045 + stride, (u16)~0x0040, 0x0000);
 	b43_phy_read_log(dev, 0x06dc + stride);
 	b43_phy_maskset(dev, 0x06ee + stride, (u16)~0x000c, 0x0008);
-	b43_radio_maskset(dev, 0x0033 + stride, (u16)~0x00f0,
-			  dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_20
-				? 0x0080 : 0x00c0);
+	if (b43_current_band(dev->wl) == NL80211_BAND_2GHZ &&
+	    dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_20)
+		b43_radio_maskset(dev, 0x0033 + stride, (u16)~0x00f0, 0x0060);
+	else
+		b43_radio_maskset(dev, 0x0033 + stride, (u16)~0x00f0,
+				  dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_20
+					? 0x0080 : 0x00c0);
 }
 
 /*

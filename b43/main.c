@@ -2011,9 +2011,21 @@ static void b43_write_template_common(struct b43_wldev *dev,
 				      u16 ram_offset,
 				      u16 shm_size_offset, u8 rate)
 {
+	struct b43_tpl_layout cck_tpl;
 	const struct b43_tpl_layout *tpl = dev->fw.tpl;
 	unsigned int i, total = tpl->hdr_len + size;
 	struct b43_plcp_hdr4 plcp;
+
+	/*
+	 * The 12-byte AC header carries the PLCP at offset 3 for OFDM and at
+	 * offset 6 for CCK (aleferri/b43-ac-wip#4); a CCK beacon with it at 3
+	 * faulted on every TBTT on 2.4 GHz.
+	 */
+	if (tpl->hdr_len == 12 && b43_is_cck_rate(rate)) {
+		cck_tpl = *tpl;
+		cck_tpl.plcp_off = 6;
+		tpl = &cck_tpl;
+	}
 	struct b43_ram_seq seq = { .next = U16_MAX }, *s = NULL;
 
 	if (dev->phy.type == B43_PHYTYPE_AC) {
@@ -4697,10 +4709,17 @@ static bool b43_tx_rates_ok(struct ieee80211_hw *hw,
 {
 	const struct ieee80211_supported_band *band = hw->wiphy->bands[info->band];
 	const struct ieee80211_tx_rate *r = info->control.rates;
+	struct b43_wldev *dev = hw_to_b43_wl(hw)->current_dev;
 
 	if (!band)
 		return false;
-	if (band->vht_cap.vht_supported)
+	/*
+	 * Whether the frame gets the AC descriptor follows the firmware's
+	 * header format, not the band: the 2.4 GHz band of an AC-PHY core has
+	 * HT but no VHT, and its MCS rates need the AC descriptor as well.
+	 */
+	if (band->vht_cap.vht_supported ||
+	    (dev && dev->fw.hdr_format == B43_FW_HDR_AC))
 		return b43_txhdr_ac_rate_ok(band, &r[0]);
 	return !b43_tx_rate_is_mcs(&r[0]) && !b43_tx_rate_is_mcs(&r[1]);
 }
