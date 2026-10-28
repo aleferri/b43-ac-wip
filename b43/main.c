@@ -6306,10 +6306,11 @@ static int b43_wireless_core_init(struct b43_wldev *dev)
 	 * end state matches, not the order. The beacon TSF offset depends on
 	 * the mode, see b43_adjust_opmode().
 	 *
-	 * The probe-response offload stays off (PRMAXTIME below), so its cells,
-	 * PRSSID, PRSSIDLEN and PRTLEN, are left alone, and so is HOSTF5 bit
-	 * 15, with which the microcode keeps probe requests for itself
-	 * (b43_phy_ac_op_switch_channel()).
+	 * The probe-response offload stays off (HOSTF2 bit 0, set by
+	 * b43_phy_ac_op_switch_channel(); the PRMAXTIME below is overwritten
+	 * there), so its cells, PRSSID, PRSSIDLEN and PRTLEN, are left alone,
+	 * and so is HOSTF5 bit 15, with which the microcode keeps probe
+	 * requests for itself.
 	 */
 	if (dev->dev->core_rev >= 42) {
 		b43_shm_write16(dev, B43_SHM_SHARED,

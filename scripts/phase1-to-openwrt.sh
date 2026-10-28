@@ -25,6 +25,7 @@ REPO=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 . "$REPO/scripts/carry.sh"
 
 TARGET_DIR=${1:-${TARGET_DIR:-}}
+TARGET_DIR=$(CDPATH= cd -- "$TARGET_DIR" && pwd) || carry_die "..."
 [ -n "$TARGET_DIR" ] ||
 	carry_die "albero OpenWrt non dato (\$TARGET_DIR o primo argomento)"
 MAC80211=$TARGET_DIR/package/kernel/mac80211

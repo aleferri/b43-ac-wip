@@ -10415,6 +10415,7 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	const struct b43_phy_ac_channeltab_e_radio2069 *e2069;
 	struct b43_phy *phy = &dev->phy;
 	u16 off, ifs, gate;
+	bool stale;
 
 	/*
 	 * b43 keeps the MAC active between channel switches, and this runs with
@@ -10814,10 +10815,9 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	b43_phy_ac_ofdm_pctl1_readback(dev);
 	/*
 	 * PRMAXTIME = 0, i.e. no timeout for the firmware's probe response. Not
-	 * transcribed: it is what b43_chip_init() writes. b43 sets it back to 1
-	 * in b43_wireless_core_init() to disable the offload, a write the
-	 * capture does not have; see "Probe-response offload" in
-	 * docs/retrace-todo.md.
+	 * transcribed: it is what b43_chip_init() writes. It overrides the 1
+	 * that b43_wireless_core_init() writes before the PHY comes up; the
+	 * offload stays off through HOSTF2 bit 0, below.
 	 */
 	B43_AC_BLOCK(dev, "shm_tail");
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x0074, 0x0000);
@@ -10853,10 +10853,23 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	 */
 	if (dev->phy.ac->status_mask & B43_PHY_AC_STATE_FIRST_BRINGUP)
 		b43_phy_ac_mhf_write(dev, 4);
-	/* MHF1 bit 0: set on a later bring-up, clear on the first. */
-	b43_phy_ac_mhf_maskset(dev, 1, (u16)~0x0001,
-			       (dev->phy.ac->status_mask &
-				B43_PHY_AC_STATE_FIRST_BRINGUP) ? 0 : 0x0001);
+	/*
+	 * HOSTF2 bit 0 keeps the microcode from answering a probe request
+	 * itself: 784 tests it at 0x0ACF, its only use, and with it clear
+	 * queues the response (frame code 0x14) that 0x0271 sends from the
+	 * probe-response template, with PHY control word 0 taken from shm
+	 * 0x0098. b43 writes neither, so that response is the initvals'
+	 * template on cores 0x7, a PHY TX error on a board with fewer chains.
+	 * The stock driver, which runs the offload, clears it on a first
+	 * bring-up and sets it on a later one; b43 keeps it set. The ucode
+	 * load clears the cell, and where the shadow has the bit already the
+	 * maskset writes nothing, so a first bring-up writes the word out.
+	 */
+	stale = (dev->phy.ac->status_mask & B43_PHY_AC_STATE_FIRST_BRINGUP) &&
+		(dev->phy.ac->mhfs[1] & 0x0001);
+	b43_phy_ac_mhf_maskset(dev, 1, (u16)~0x0001, 0x0001);
+	if (stale)
+		b43_phy_ac_mhf_write(dev, 1);
 	b43_mac_suspend(dev);
 	/* Invariant across all 26 cold segments; purpose unknown. */
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x007c, 0x0320);

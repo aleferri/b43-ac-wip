@@ -294,9 +294,23 @@ for which a known radar in front of the board is the way.
 
 ### Probe-response offload
 
-Deliberately off: b43 writes `PRMAXTIME=1`, keeps HOSTF5 bit 15 clear, and the
-cells are in `SOLO_VENDOR` of `test/unit/compare.py`, the bit in
-`VAL_BIT_FUORI_PERIMETRO`.
+Deliberately off: b43 keeps HOSTF2 bit 0 set and HOSTF5 bit 15 clear, and the
+cells are in `SOLO_VENDOR` of `test/unit/compare.py`, the two bits in
+`VAL_BIT_FUORI_PERIMETRO`. `PRMAXTIME=1` from `b43_wireless_core_init()` does
+not hold on the AC: the PHY comes up after it and writes 0 in
+`b43_phy_ac_op_switch_channel()`, as the stock driver does.
+
+HOSTF2 bit 0 is the gate of the response the microcode builds itself: 784
+tests it at `0x0ACF`, its only use, and with it clear queues a response to a
+wildcard or matching probe request (`0x0ACC`-`0x0AEE`), which `0x0271` sends
+with frame code `0x14`. The stock driver clears it on a first bring-up and
+sets it on a later one. Until b43 kept it set, a 20 MHz non-HT AP, which
+mac80211 never retunes after the first bring-up, ran with it clear: every
+probe request got that response, from a template b43 never writes and with
+PHY control word 0 from shm `0x0098`, the initvals' `0x01c4`, cores `0x7`.
+On the DSL-3580L, coremask `0x3`, each failed with PHY `0x007 = 0x0004` and a
+saved fault, `frame 0x0014`, `phyctl 01c5 0000 0000`. HT20, retuned hot after
+`start_ap`, had the bit set and no fault.
 
 HOSTF5 bit 15 is the switch, read from the 784 disassembly (`d11ucode42` of
 `wlDSL-3580_EU.o_save`, `extract_ucode.py` + `b43-dasm -a 15`): the probe
@@ -333,17 +347,14 @@ To implement the offload:
    handle `B43_RX_MAC_RESP` on the probe requests that still come up when the
    bit is clear;
 6. remove the `SOLO_VENDOR` entries and `VAL_BIT_FUORI_PERIMETRO`;
-7. keep the cores of SHM `0x0098` (bits 8:6) on the board's chains, as
-   `b43_phy_ac_bss_cc_update()` does for `0x00cc`. The response the ucode
-   builds (frame code `0x0014`, `0x0271` on 784) takes PHY control word 0
-   from that cell as is (`0x02A6`) and skips the TX core table at `0x0E07`
-   that the ucode's other frames go through; 832 and 928 do the same (`0x031B`
-   on 928). Only the initvals write it, `0x01c4`, cores `0x7`. With the
-   offload off, the responses young enough for `PRMAXTIME=1` still go out:
-   on the DSL-3580L, coremask `0x3`, each fails with PHY `0x007 = 0x0004`
-   and a saved fault, `phyctl 01c5 0000 0000`. Harmless, since hostapd
-   answers from the host. Whether the stock drivers, which never write the
-   cell either, get the same error is in no capture.
+7. clear HOSTF2 bit 0 (`b43_phy_ac_op_switch_channel()`), and keep the cores
+   of SHM `0x0098` (bits 8:6) on the board's chains, as
+   `b43_phy_ac_bss_cc_update()` does for `0x00cc`: the response takes PHY
+   control word 0 from that cell as is (`0x02A6` on 784, `0x031B` on 928)
+   and skips the TX core table at `0x0E07` that the ucode's other frames go
+   through. Only the initvals write it, `0x01c4`, cores `0x7`. The cell
+   without the template, or the bit without the cell, gives the failure
+   above.
 
 ### Power management queue
 

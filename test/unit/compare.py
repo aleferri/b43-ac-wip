@@ -807,8 +807,12 @@ VAL_TOLLERANZA = [
 #
 # HOSTF5 (0x00d4) bit 15, l'offload della probe response: vedi la voce in
 # SOLO_VENDOR. Il vendor scrive 0x8088 al primo bring-up, il port 0x0088.
+# HOSTF2 (0x0060) bit 0, la probe response del microcode: il vendor lo azzera
+# al primo bring-up, il port lo tiene sempre acceso
+# (b43_phy_ac_op_switch_channel()).
 VAL_BIT_FUORI_PERIMETRO = [
     (0x00d4, 0x8000, "HOSTF5 bit 15, probe response offload"),
+    (0x0060, 0x0001, "HOSTF2 bit 0, probe response del microcode"),
 ]
 
 
