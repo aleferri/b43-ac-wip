@@ -14,7 +14,7 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
 ---
  drivers/net/wireless/broadcom/b43/Makefile    |     4 +
  .../wireless/broadcom/b43/helpers_phy_ac.c    |   106 +
- drivers/net/wireless/broadcom/b43/phy_ac.c    | 11039 +++++++++++++++-
+ drivers/net/wireless/broadcom/b43/phy_ac.c    | 11040 +++++++++++++++-
  drivers/net/wireless/broadcom/b43/phy_ac.h    |   853 +-
  drivers/net/wireless/broadcom/b43/ppr_ac.c    |   314 +
  drivers/net/wireless/broadcom/b43/ppr_ac.h    |    94 +
@@ -22,7 +22,7 @@ Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
  .../net/wireless/broadcom/b43/radio_2069.h    |    48 +
  .../net/wireless/broadcom/b43/tables_phy_ac.c |  1082 ++
  .../net/wireless/broadcom/b43/tables_phy_ac.h |    51 +
- 10 files changed, 15245 insertions(+), 20 deletions(-)
+ 10 files changed, 15246 insertions(+), 20 deletions(-)
  create mode 100644 drivers/net/wireless/broadcom/b43/helpers_phy_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.c
  create mode 100644 drivers/net/wireless/broadcom/b43/ppr_ac.h
@@ -159,7 +159,7 @@ index 0000000..2e2d4fe
 +	b43_read32(dev, B43_MMIO_MACCTL);
 +}
 diff --git a/drivers/net/wireless/broadcom/b43/phy_ac.c b/drivers/net/wireless/broadcom/b43/phy_ac.c
-index fe102ea..3848285 100644
+index fe102ea..2d599ae 100644
 --- a/drivers/net/wireless/broadcom/b43/phy_ac.c
 +++ b/drivers/net/wireless/broadcom/b43/phy_ac.c
 @@ -4,14 +4,48 @@
@@ -245,7 +245,7 @@ index fe102ea..3848285 100644
  static void b43_phy_ac_op_maskset(struct b43_wldev *dev, u16 reg, u16 mask,
  				  u16 set)
  {
-@@ -62,27 +111,10985 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
+@@ -62,27 +111,10986 @@ static unsigned int b43_phy_ac_op_get_default_chan(struct b43_wldev *dev)
  	return 36;
  }
  
@@ -1123,7 +1123,8 @@ index fe102ea..3848285 100644
 +		hweight8((u8)pair[1]) > 1 ? pair[1] : mask;
 +	txcore[B43_PHY_AC_TXCORE_NSTS1 + 2] = mask;
 +	for (i = 0; i <= B43_PHY_AC_TXCORE_NSTS1 + 1; i++)
-+		b43_shm_write16(dev, B43_SHM_SHARED, 0x05d4 + 2 * i, txcore[i]);
++		b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_TXCORE_AC + 2 * i,
++				txcore[i]);
 +}
 +
 +/*

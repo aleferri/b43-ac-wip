@@ -438,6 +438,7 @@ void bcma_core_set_clockmode(struct bcma_device *core,
 #define B43_SHM_SH_CTS_DURATION   0x00B8
 #define B43_SHM_SH_SLOTT          0x0010
 #define B43_SHM_SH_PRETBTT        0x0096
+#define B43_SHM_SH_TXCORE_AC      0x05D4
 #define B43_MMIO_MACCTL           0x120
 #define B43_MACCTL_ENABLED        0x00000001	/* b43.h */
 #define B43_MACCTL_PSM_RUN        0x00000002	/* b43.h */

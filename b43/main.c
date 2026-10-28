@@ -2479,6 +2479,102 @@ out:
 			B43_DEBUGIRQ_REASON_REG, B43_DEBUGIRQ_ACK);
 }
 
+/*
+ * Not rate-limited: a dump is one line per rate, and net_ratelimit() would
+ * cut it short. Its callers limit it instead.
+ */
+static __printf(2, 3) void b43_ac_state_print(struct b43_wl *wl,
+					      const char *fmt, ...)
+{
+	struct va_format vaf;
+	va_list args;
+
+	if (b43_modparam_verbose < B43_VERBOSITY_INFO)
+		return;
+
+	va_start(args, fmt);
+	vaf.fmt = fmt;
+	vaf.va = &args;
+	printk(KERN_INFO "b43-%s: %pV", wiphy_name(wl->hw->wiphy), &vaf);
+	va_end(args);
+}
+
+#define B43_AC_TXERR_DUMP_INTERVAL	(60 * HZ)
+/* Words of a rate block: the direct maps point ten words apart. */
+#define B43_AC_RT_BLOCK_WORDS		10
+
+/* A rate's slot in the direct and basic maps, which are picked by its class. */
+static u16 b43_rate_map_slot(u16 hw_value, u16 *direct, u16 *basic)
+{
+	if (b43_is_cck_rate(hw_value)) {
+		*direct = B43_SHM_SH_CCKDIRECT;
+		*basic = B43_SHM_SH_CCKBASIC;
+		return b43_plcp_get_ratecode_cck(hw_value) & 0xF;
+	}
+	*direct = B43_SHM_SH_OFDMDIRECT;
+	*basic = B43_SHM_SH_OFDMBASIC;
+	return b43_plcp_get_ratecode_ofdm(hw_value) & 0xF;
+}
+
+/*
+ * What the AC microcode builds its own frames from: the beacon's PHY control
+ * words, the TX core table, the probe-response cells and, for each rate of
+ * the band, its direct and basic map entries and the rate block the direct
+ * map points to.
+ */
+static void b43_ac_dump_tx_state(struct b43_wldev *dev, const char *why)
+{
+	struct b43_wl *wl = dev->wl;
+	const struct ieee80211_supported_band *sband =
+		wl->hw->wiphy->bands[b43_current_band(wl)];
+	u16 phyctl[3], cores[5], blk[B43_AC_RT_BLOCK_WORDS];
+	unsigned int i, j;
+
+	b43_ac_state_print(wl, "%s: width %d, tuned %d, MACCTL 0x%08x, "
+			   "HOSTF5 0x%04x, PRMAXTIME %u, PRTLEN %u, "
+			   "PRSSIDLEN 0x%04x\n",
+			   why, wl->hw->conf.chandef.width,
+			   dev->tuned_chandef.width,
+			   b43_read32(dev, B43_MMIO_MACCTL),
+			   b43_shm_read16(dev, B43_SHM_SHARED, B43_SHM_SH_HOSTF5),
+			   b43_shm_read16(dev, B43_SHM_SHARED,
+					  B43_SHM_SH_PRMAXTIME),
+			   b43_shm_read16(dev, B43_SHM_SHARED, B43_SHM_SH_PRTLEN),
+			   b43_shm_read16(dev, B43_SHM_SHARED,
+					  B43_SHM_SH_PRSSIDLEN));
+
+	for (j = 0; j < ARRAY_SIZE(phyctl); j++)
+		phyctl[j] = b43_shm_read16(dev, B43_SHM_SHARED,
+					   B43_SHM_SH_BEACPHYCTL_AC + 2 * j);
+	for (j = 0; j < ARRAY_SIZE(cores); j++)
+		cores[j] = b43_shm_read16(dev, B43_SHM_SHARED,
+					  B43_SHM_SH_TXCORE_AC + 2 * j);
+	b43_ac_state_print(wl, "%s: beacon phyctl %04x %04x %04x, "
+			   "TX cores %04x %04x %04x %04x %04x\n",
+			   why, phyctl[0], phyctl[1], phyctl[2],
+			   cores[0], cores[1], cores[2], cores[3], cores[4]);
+
+	for (i = 0; i < sband->n_bitrates; i++) {
+		const struct ieee80211_rate *rate = &sband->bitrates[i];
+		u16 direct, basic, slot, ptr;
+
+		slot = b43_rate_map_slot(rate->hw_value, &direct, &basic);
+		ptr = b43_shm_read16(dev, B43_SHM_SHARED, direct + 2 * slot);
+		for (j = 0; j < ARRAY_SIZE(blk); j++)
+			blk[j] = ptr ? b43_shm_read16(dev, B43_SHM_SHARED,
+						      2 * ptr + 2 * j) : 0;
+		b43_ac_state_print(wl, "%s: %u.%u Mb/s direct 0x%04x basic "
+				   "0x%04x, block %04x %04x %04x %04x %04x "
+				   "%04x %04x %04x %04x %04x\n",
+				   why, rate->bitrate / 10, rate->bitrate % 10,
+				   ptr,
+				   b43_shm_read16(dev, B43_SHM_SHARED,
+						  basic + 2 * slot),
+				   blk[0], blk[1], blk[2], blk[3], blk[4],
+				   blk[5], blk[6], blk[7], blk[8], blk[9]);
+	}
+}
+
 static void b43_ac_report_phy_txerr(struct b43_wldev *dev)
 {
 	u16 base = dev->fw.shm ? dev->fw.shm->txerr : 0;
@@ -2508,6 +2604,8 @@ static void b43_ac_report_phy_txerr(struct b43_wldev *dev)
 		b43_shm_read16(dev, B43_SHM_SHARED, base + B43_TXERR_FRAME),
 		ctl[0], ctl[1], ctl[2], plcp[0], plcp[1], plcp[2], plcp[3],
 		plcp[4], plcp[5], plcp[6]);
+	if (__ratelimit(&dev->txerr_dump_rs))
+		b43_ac_dump_tx_state(dev, "TX fault");
 	b43_shm_write16(dev, B43_SHM_SHARED, base, 0);
 }
 
@@ -3822,7 +3920,6 @@ static void b43_rate_memory_init(struct b43_wldev *dev)
 	case B43_PHYTYPE_LP:
 	case B43_PHYTYPE_HT:
 	case B43_PHYTYPE_LCN:
-	case B43_PHYTYPE_AC:
 		b43_rate_memory_write(dev, B43_OFDM_RATE_6MB, 1);
 		b43_rate_memory_write(dev, B43_OFDM_RATE_9MB, 1);
 		b43_rate_memory_write(dev, B43_OFDM_RATE_12MB, 1);
@@ -3837,6 +3934,15 @@ static void b43_rate_memory_init(struct b43_wldev *dev)
 		b43_rate_memory_write(dev, B43_CCK_RATE_2MB, 0);
 		b43_rate_memory_write(dev, B43_CCK_RATE_5MB, 0);
 		b43_rate_memory_write(dev, B43_CCK_RATE_11MB, 0);
+		break;
+	case B43_PHYTYPE_AC:
+		/*
+		 * The AC microcode reaches its rate blocks through the direct
+		 * and basic maps at B43_SHM_SH_OFDMDIRECT and following, and
+		 * 0x480-0x4ff is no table of it. Its basic maps are written by
+		 * the PHY init (b43_phy_ac_basic_rate_map()) and by
+		 * b43_update_basic_rates().
+		 */
 		break;
 	default:
 		B43_WARN_ON(1);
@@ -5336,6 +5442,10 @@ static void b43_op_bss_info_changed(struct ieee80211_hw *hw,
 		else
 			b43_short_slot_timing_disable(dev);
 	}
+
+	if (dev->phy.type == B43_PHYTYPE_AC &&
+	    changed & BSS_CHANGED_BEACON_ENABLED && conf->enable_beacon)
+		b43_ac_dump_tx_state(dev, "beaconing");
 
 	b43_mac_enable(dev);
 out_unlock_mutex:
@@ -7051,6 +7161,9 @@ static int b43_one_core_attach(struct b43_bus_dev *dev, struct b43_wl *wl)
 	b43_set_status(wldev, B43_STAT_UNINIT);
 	wldev->bad_frames_preempt = modparam_bad_frames_preempt;
 	INIT_LIST_HEAD(&wldev->list);
+	ratelimit_state_init(&wldev->txerr_dump_rs,
+			     B43_AC_TXERR_DUMP_INTERVAL, 1);
+	ratelimit_set_flags(&wldev->txerr_dump_rs, RATELIMIT_MSG_ON_RELEASE);
 
 	err = b43_wireless_core_attach(wldev);
 	if (err)

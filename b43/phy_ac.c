@@ -972,7 +972,8 @@ static void b43_phy_ac_chainmask_block(struct b43_wldev *dev,
 		hweight8((u8)pair[1]) > 1 ? pair[1] : mask;
 	txcore[B43_PHY_AC_TXCORE_NSTS1 + 2] = mask;
 	for (i = 0; i <= B43_PHY_AC_TXCORE_NSTS1 + 1; i++)
-		b43_shm_write16(dev, B43_SHM_SHARED, 0x05d4 + 2 * i, txcore[i]);
+		b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_TXCORE_AC + 2 * i,
+				txcore[i]);
 }
 
 /*

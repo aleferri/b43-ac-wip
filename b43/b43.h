@@ -9,6 +9,7 @@
 #include <linux/bcma/bcma.h>
 #include <linux/ssb/ssb.h>
 #include <linux/completion.h>
+#include <linux/ratelimit.h>
 #include <net/mac80211.h>
 
 #include "debugfs.h"
@@ -344,6 +345,7 @@ enum {
 #define B43_SHM_SH_LFFBLIM		0x0046	/* Long frame fallback retry limit */
 #define B43_SHM_SH_BEACPHYCTL		0x0054	/* Beacon PHY TX control word (see PHY TX control) */
 #define B43_SHM_SH_BEACPHYCTL_AC	0x00CC	/* Beacon PHY TX control word, AC microcode */
+#define B43_SHM_SH_TXCORE_AC		0x05D4	/* TX core mask per rate class, 5 words, AC microcode */
 #define B43_SHM_SH_EXTNPHYCTL		0x00B0	/* Extended bytes for beacon PHY control (N) */
 #define B43_SHM_SH_BCN_LI		0x00B6	/* beacon listen interval */
 /* SHM_SHARED ACK/CTS control */
@@ -1031,6 +1033,9 @@ struct b43_wldev {
 	 */
 	bool cac_pending;
 	struct cfg80211_chan_def tuned_chandef;
+
+	/* AC: rate limit of the TX state dump on a PHY TX error. */
+	struct ratelimit_state txerr_dump_rs;
 
 	struct work_struct restart_work;
 
