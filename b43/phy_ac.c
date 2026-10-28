@@ -992,6 +992,14 @@ static void b43_phy_ac_bss_cc_update(struct b43_wldev *dev,
 	u16 cc = b43_shm_read16(dev, B43_SHM_SHARED, 0x00cc);
 
 	b43_phy_ac_chain_pair(dev, site, dev->phy.ac->cal_width, pair);
+	/*
+	 * A CCK beacon on 2.4 GHz goes out on one chain, as the CCK cell of
+	 * 0x05d4 and the initvals' 0x0044 have it; with the OFDM mask (0x01c4)
+	 * every CCK beacon ended in a PHY transmission error.
+	 */
+	if (dev->phy.ac->beacon_cck &&
+	    b43_current_band(dev->wl) == NL80211_BAND_2GHZ)
+		pair[0] = b43_phy_ac_chain_mask(dev->phy.ac->coremask, 1);
 	cc = (u16)((cc & ~0x01c0) | (pair[0] << 6));
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
 	b43_shm_write16(dev, B43_SHM_SHARED, 0x00cc, cc);
@@ -1284,6 +1292,7 @@ static void b43_phy_ac_op_beacon_rate_set(struct b43_wldev *dev, bool cck)
 	if (ac->beacon_cck == cck)
 		return;
 	ac->beacon_cck = cck;
+	b43_phy_ac_bss_cc_update(dev, B43_PHY_AC_CHAIN_TXPWR);
 	if (ac->txpwr_spacing.has_cck)
 		b43_shm_write16(dev, B43_SHM_SHARED, 0x00ce,
 				b43_phy_ac_beacon_pwr_offset_at(dev,
