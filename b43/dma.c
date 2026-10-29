@@ -717,6 +717,21 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
 			enable = B43_DMA64_TXENABLE;
 			if (!parity)
 				enable |= B43_DMA64_TXPARITYDISABLE;
+			/*
+			 * The engine comes out of reset with 16-byte bursts and
+			 * one outstanding read (the control word reads back 0).
+			 * On the AC cores that cannot keep the TX FIFO fed at VHT
+			 * rates: the FIFO runs dry and the hardware cuts each
+			 * A-MPDU after about 4 frames (BCM4360, 5 GHz VHT80:
+			 * 118 Mbit/s at every width). Use the values bgmac
+			 * programs into the same DMA engine on Northstar. TX only:
+			 * the RX equivalents corrupted received frames.
+			 */
+			if (ring->dev->dev->core_rev >= 40)
+				enable |= B43_DMA64_TXMR_2 |
+					  B43_DMA64_TXBURST_128 |
+					  B43_DMA64_TXPREFETCH_16 |
+					  B43_DMA64_TXPREFETCH_THRESH_8;
 			if (ring->dev->dma.index_is_addr) {
 				value |= b43_dma_read(ring, B43_DMA64_TXCTL) &
 					 B43_DMA64_TXCTL_KEEP;
