@@ -2738,6 +2738,30 @@ static void b43_do_interrupt_thread(struct b43_wldev *dev)
 }
 
 /* Interrupt thread handler. Handles device interrupts in thread context. */
+/*
+ * Hand the frames b43_rx() queued to mac80211. This runs after the
+ * interrupt thread has dropped wl->mutex: mac80211 passes each frame on
+ * through the bridge or the IP stack from here, and with the mutex held
+ * that kept b43_tx_work() (and with it every TCP ACK of a download from a
+ * station) spinning on the mutex for as long as the receive path ran. The
+ * interrupt thread is the only caller, so the RX calls stay serialized as
+ * mac80211 requires.
+ */
+static void b43_rx_deliver(struct b43_wl *wl)
+{
+	struct sk_buff *skb;
+	LIST_HEAD(list);
+
+	if (skb_queue_empty(&wl->rx_queue))
+		return;
+
+	local_bh_disable();
+	while ((skb = skb_dequeue(&wl->rx_queue)))
+		ieee80211_rx_list(wl->hw, NULL, skb, &list);
+	netif_receive_skb_list(&list);
+	local_bh_enable();
+}
+
 static irqreturn_t b43_interrupt_thread_handler(int irq, void *dev_id)
 {
 	struct b43_wldev *dev = dev_id;
@@ -2745,6 +2769,7 @@ static irqreturn_t b43_interrupt_thread_handler(int irq, void *dev_id)
 	mutex_lock(&dev->wl->mutex);
 	b43_do_interrupt_thread(dev);
 	mutex_unlock(&dev->wl->mutex);
+	b43_rx_deliver(dev->wl);
 
 	return IRQ_HANDLED;
 }
@@ -2826,6 +2851,7 @@ static void b43_sdio_interrupt_handler(struct b43_wldev *dev)
 		b43_do_interrupt_thread(dev);
 
 	mutex_unlock(&wl->mutex);
+	b43_rx_deliver(wl);
 }
 
 void b43_do_release_fw(struct b43_firmware_file *fw)
@@ -5718,6 +5744,7 @@ redo:
 			ieee80211_free_txskb(wl->hw, skb);
 		}
 	}
+	skb_queue_purge(&wl->rx_queue);
 
 	b43_mac_suspend(dev);
 	b43_leds_exit(dev);
@@ -7292,6 +7319,7 @@ static struct b43_wl *b43_wireless_init(struct b43_bus_dev *dev)
 		skb_queue_head_init(&wl->tx_queue[queue_num]);
 		wl->tx_queue_stopped[queue_num] = false;
 	}
+	skb_queue_head_init(&wl->rx_queue);
 
 	snprintf(chip_name, ARRAY_SIZE(chip_name),
 		 (dev->chip_id > 0x9999) ? "%d" : "%04X", dev->chip_id);

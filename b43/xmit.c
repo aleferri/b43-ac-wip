@@ -1500,7 +1500,8 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
 	}
 
 	memcpy(IEEE80211_SKB_RXCB(skb), &status, sizeof(status));
-	ieee80211_rx_ni(dev->wl->hw, skb);
+	/* Delivered by b43_rx_deliver(), outside wl->mutex. */
+	skb_queue_tail(&dev->wl->rx_queue, skb);
 
 #if B43_DEBUG
 	dev->rx_count++;
