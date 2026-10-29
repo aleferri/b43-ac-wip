@@ -1637,7 +1637,8 @@ dma_handle_txstatus_one(struct b43_wldev *dev,
 				ring->nr_failed_tx_packets++;
 			ring->nr_total_packet_tries += status->frame_count;
 #endif /* DEBUG */
-			ieee80211_tx_status_skb(dev->wl->hw, meta->skb);
+			/* Reported by b43_rx_deliver(), outside wl->mutex. */
+			skb_queue_tail(&dev->wl->txstatus_queue, meta->skb);
 
 			/* skb will be freed by ieee80211_tx_status_skb().
 			 * Poison our pointer. */

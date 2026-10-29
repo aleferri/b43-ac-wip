@@ -2752,10 +2752,18 @@ static void b43_rx_deliver(struct b43_wl *wl)
 	struct sk_buff *skb;
 	LIST_HEAD(list);
 
-	if (skb_queue_empty(&wl->rx_queue))
+	if (skb_queue_empty(&wl->rx_queue) &&
+	    skb_queue_empty(&wl->txstatus_queue))
 		return;
 
 	local_bh_disable();
+	/*
+	 * The TX status too: mac80211 enables bottom halves on the way, and
+	 * the softirqs that then run (the Ethernet NAPI poll, the bridge, the
+	 * next frames for b43) would otherwise run under wl->mutex as well.
+	 */
+	while ((skb = skb_dequeue(&wl->txstatus_queue)))
+		ieee80211_tx_status_skb(wl->hw, skb);
 	while ((skb = skb_dequeue(&wl->rx_queue)))
 		ieee80211_rx_list(wl->hw, NULL, skb, &list);
 	netif_receive_skb_list(&list);
@@ -5745,6 +5753,8 @@ redo:
 		}
 	}
 	skb_queue_purge(&wl->rx_queue);
+	while (skb_queue_len(&wl->txstatus_queue))
+		ieee80211_free_txskb(wl->hw, skb_dequeue(&wl->txstatus_queue));
 
 	b43_mac_suspend(dev);
 	b43_leds_exit(dev);
@@ -7320,6 +7330,7 @@ static struct b43_wl *b43_wireless_init(struct b43_bus_dev *dev)
 		wl->tx_queue_stopped[queue_num] = false;
 	}
 	skb_queue_head_init(&wl->rx_queue);
+	skb_queue_head_init(&wl->txstatus_queue);
 
 	snprintf(chip_name, ARRAY_SIZE(chip_name),
 		 (dev->chip_id > 0x9999) ? "%d" : "%04X", dev->chip_id);

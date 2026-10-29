@@ -1130,6 +1130,8 @@ struct b43_wl {
 	 * drops the mutex (b43_rx_deliver()).
 	 */
 	struct sk_buff_head rx_queue;
+	/* Sent frames whose TX status b43_rx_deliver() reports, likewise. */
+	struct sk_buff_head txstatus_queue;
 
 	/* Flag that implement the queues stopping. */
 	bool tx_queue_stopped[B43_QOS_QUEUE_NUM];
