@@ -1720,7 +1720,13 @@ static void dma_rx(struct b43_dmaring *ring, int *slot)
 
 	desc = ops->idx2desc(ring, *slot, &meta);
 
-	sync_descbuffer_for_cpu(ring, meta->dmaaddr, ring->rx_buffersize);
+	/*
+	 * Only the RX header and the first bytes of the frame (the poison
+	 * check) for now; the frame itself once its length is known. On a
+	 * non-coherent DMA every byte synced is a cache line invalidated, in
+	 * L2 too, and the buffer is sized for the largest frame.
+	 */
+	sync_descbuffer_for_cpu(ring, meta->dmaaddr, ring->frameoffset + 8);
 	skb = meta->skb;
 
 	rxhdr = (struct b43_rxhdr_fw4 *)skb->data;
@@ -1731,6 +1737,8 @@ static void dma_rx(struct b43_dmaring *ring, int *slot)
 		do {
 			udelay(2);
 			barrier();
+			sync_descbuffer_for_cpu(ring, meta->dmaaddr,
+						ring->frameoffset + 8);
 			len = le16_to_cpu(rxhdr->frame_len);
 		} while (len == 0 && i++ < 5);
 		if (unlikely(len == 0)) {
@@ -1779,7 +1787,10 @@ static void dma_rx(struct b43_dmaring *ring, int *slot)
 		goto drop_recycle_buffer;
 	}
 
-	unmap_descbuffer(ring, dmaaddr, ring->rx_buffersize, 0);
+	sync_descbuffer_for_cpu(ring, dmaaddr, len + ring->frameoffset);
+	dma_unmap_single_attrs(ring->dev->dev->dma_dev, dmaaddr,
+			       ring->rx_buffersize, DMA_FROM_DEVICE,
+			       DMA_ATTR_SKIP_CPU_SYNC);
 	skb_put(skb, len + ring->frameoffset);
 	skb_pull(skb, ring->frameoffset);
 
