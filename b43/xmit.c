@@ -1349,6 +1349,14 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
 	if ((macstat & B43_RX_MAC_DECERR) &&
 	    (dev->phy.type != B43_PHYTYPE_AC || (macstat & B43_RX_MAC_DEC)))
 		goto drop;
+	/*
+	 * A frame with the A-MSDU bit is not a complete MPDU: the one seen had
+	 * an intact 802.11 header and unrelated data from the QoS control on,
+	 * so mac80211 would read a random CCMP PN from it and drop every later
+	 * frame of that TID as a replay. Drop it, as brcmsmac does.
+	 */
+	if (unlikely(macstat & B43_RX_MAC_AMSDU))
+		goto drop;
 
 	/* Skip PLCP and padding */
 	padding = (macstat & B43_RX_MAC_PADDING) ? 2 : 0;
@@ -1500,7 +1508,8 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
 	}
 
 	memcpy(IEEE80211_SKB_RXCB(skb), &status, sizeof(status));
-	ieee80211_rx_ni(dev->wl->hw, skb);
+	/* Delivered by b43_rx_deliver(), outside wl->mutex. */
+	skb_queue_tail(&dev->wl->rx_queue, skb);
 
 #if B43_DEBUG
 	dev->rx_count++;

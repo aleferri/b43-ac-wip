@@ -91,6 +91,10 @@ struct b43_dmadesc32 {
 #define		B43_DMA64_TXADDREXT_MASK		0x00030000
 #define		B43_DMA64_TXADDREXT_SHIFT		16
 #define		B43_DMA64_TXCTL_KEEP		0x03FC00C0	/* Outstanding reads, burst, prefetch */
+#define		B43_DMA64_TXMR_2			0x00000040	/* 2 outstanding reads */
+#define		B43_DMA64_TXBURST_128			0x000C0000	/* 128-byte bursts */
+#define		B43_DMA64_TXPREFETCH_16			0x00600000	/* Prefetch 16 descriptors */
+#define		B43_DMA64_TXPREFETCH_THRESH_8		0x03000000	/* Prefetch threshold 8 */
 #define B43_DMA64_TXINDEX				0x04
 #define B43_DMA64_TXRINGLO				0x08
 #define B43_DMA64_TXRINGHI				0x0C

@@ -717,6 +717,21 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
 			enable = B43_DMA64_TXENABLE;
 			if (!parity)
 				enable |= B43_DMA64_TXPARITYDISABLE;
+			/*
+			 * The engine comes out of reset with 16-byte bursts and
+			 * one outstanding read (the control word reads back 0).
+			 * On the AC cores that cannot keep the TX FIFO fed at VHT
+			 * rates: the FIFO runs dry and the hardware cuts each
+			 * A-MPDU after about 4 frames (BCM4360, 5 GHz VHT80:
+			 * 118 Mbit/s at every width). Use the values bgmac
+			 * programs into the same DMA engine on Northstar. TX only:
+			 * the RX equivalents corrupted received frames.
+			 */
+			if (ring->dev->dev->core_rev >= 40)
+				enable |= B43_DMA64_TXMR_2 |
+					  B43_DMA64_TXBURST_128 |
+					  B43_DMA64_TXPREFETCH_16 |
+					  B43_DMA64_TXPREFETCH_THRESH_8;
 			if (ring->dev->dma.index_is_addr) {
 				value |= b43_dma_read(ring, B43_DMA64_TXCTL) &
 					 B43_DMA64_TXCTL_KEEP;
@@ -1622,7 +1637,8 @@ dma_handle_txstatus_one(struct b43_wldev *dev,
 				ring->nr_failed_tx_packets++;
 			ring->nr_total_packet_tries += status->frame_count;
 #endif /* DEBUG */
-			ieee80211_tx_status_skb(dev->wl->hw, meta->skb);
+			/* Reported by b43_rx_deliver(), outside wl->mutex. */
+			skb_queue_tail(&dev->wl->txstatus_queue, meta->skb);
 
 			/* skb will be freed by ieee80211_tx_status_skb().
 			 * Poison our pointer. */
@@ -1705,7 +1721,13 @@ static void dma_rx(struct b43_dmaring *ring, int *slot)
 
 	desc = ops->idx2desc(ring, *slot, &meta);
 
-	sync_descbuffer_for_cpu(ring, meta->dmaaddr, ring->rx_buffersize);
+	/*
+	 * Only the RX header and the first bytes of the frame (the poison
+	 * check) for now; the frame itself once its length is known. On a
+	 * non-coherent DMA every byte synced is a cache line invalidated, in
+	 * L2 too, and the buffer is sized for the largest frame.
+	 */
+	sync_descbuffer_for_cpu(ring, meta->dmaaddr, ring->frameoffset + 8);
 	skb = meta->skb;
 
 	rxhdr = (struct b43_rxhdr_fw4 *)skb->data;
@@ -1716,6 +1738,8 @@ static void dma_rx(struct b43_dmaring *ring, int *slot)
 		do {
 			udelay(2);
 			barrier();
+			sync_descbuffer_for_cpu(ring, meta->dmaaddr,
+						ring->frameoffset + 8);
 			len = le16_to_cpu(rxhdr->frame_len);
 		} while (len == 0 && i++ < 5);
 		if (unlikely(len == 0)) {
@@ -1764,7 +1788,10 @@ static void dma_rx(struct b43_dmaring *ring, int *slot)
 		goto drop_recycle_buffer;
 	}
 
-	unmap_descbuffer(ring, dmaaddr, ring->rx_buffersize, 0);
+	sync_descbuffer_for_cpu(ring, dmaaddr, len + ring->frameoffset);
+	dma_unmap_single_attrs(ring->dev->dev->dma_dev, dmaaddr,
+			       ring->rx_buffersize, DMA_FROM_DEVICE,
+			       DMA_ATTR_SKIP_CPU_SYNC);
 	skb_put(skb, len + ring->frameoffset);
 	skb_pull(skb, ring->frameoffset);
 
