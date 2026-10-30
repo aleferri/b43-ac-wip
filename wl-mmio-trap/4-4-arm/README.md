@@ -49,6 +49,24 @@ The module checks the slot before using it only in that it must resolve;
 getting the offset wrong points the trap at the wrong handler, so prefer
 `CONFIG_KALLSYMS_ALL` where the build allows it.
 
+## Resolving init_mm
+
+The window's ptes are found by walking `init_mm`'s page tables. `init_mm` is
+not exported, and, being data, it is in kallsyms only with
+`CONFIG_KALLSYMS_ALL`. `init_task.active_mm` is not a way in: `init_task`
+is CPU 0's idle thread, which borrows the previous task's mm on every switch
+(lazy TLB), and a user pgd lacks the L1 entry of a fresh `vmalloc` page, so
+the self-test stops at "no simple pte behind a fresh vmalloc page". Without
+`KALLSYMS_ALL`, pass the address from `System.map`:
+
+```
+grep ' init_mm$' System.map
+insmod wl_mmio_trap.ko init_mm_addr=0x<address> ...
+```
+
+The module refuses to load with neither, and checks that the address holds
+a valid `pgd` before using it.
+
 ## Self-test
 
 At load, before `wl`'s window is touched, the module traps, decodes and
@@ -94,7 +112,7 @@ The workflow is `../README.md`'s, with these differences:
   up after `poll_secs`;
 - `autoarm`, `on`/`off`, `mark <label>` and `status` on `/proc/wl_mmio_trap`
   work as on MIPS, and so do the `dd_*` TX descriptor parameters (below);
-  `redirect`, `klookup` and `init_mm_addr` do not exist here.
+  `redirect` and `klookup` do not exist here; `init_mm_addr` does (above).
 
 ```sh
 insmod wl_mmio_trap.ko autoarm=0     # dry run: the self-test must pass
