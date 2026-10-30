@@ -689,7 +689,7 @@ static ssize_t proc_read(struct file *f, char __user *buf, size_t count,
 static ssize_t proc_write(struct file *f, const char __user *buf, size_t count,
 			  loff_t *ppos)
 {
-	char cmd[16];
+	char cmd[24];	/* "mark " + a 12-character label + newline */
 	size_t n = min(count, sizeof(cmd) - 1);
 
 	if (copy_from_user(cmd, buf, n))
@@ -710,9 +710,9 @@ static ssize_t proc_write(struct file *f, const char __user *buf, size_t count,
 			atomic_read(&n_mismatch), atomic_read(&n_cond),
 			atomic_read(&drops));
 	} else if (!strncmp(cmd, "mark ", 5)) {
-		char label[12] = { 0 };
+		char label[13] = { 0 };
 
-		strncpy(label, cmd + 5, sizeof(label) - 1);
+		strncpy(label, cmd + 5, 12);
 		emit_mark(label);
 	} else {
 		return -EINVAL;
