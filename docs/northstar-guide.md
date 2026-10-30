@@ -5,9 +5,16 @@ How to take traces of the stock `wl` driver on an ARM Northstar router
 send back what the port needs. Written for a router running a kernel the
 user builds, with `wl` as a loadable module.
 
-Nothing here has run on Northstar hardware yet: `wl-diag/4-4-arm/` is built
-against v4.4 only. Start with the dry run of step 3, and send its output
-before arming anything.
+`wl-diag/4-4-arm/` is built against v4.4 only. Start with the dry run of
+step 3, and send its output before arming anything.
+
+It has run on a Netgear R7000 under DD-WRT ([`router-data/r7000/`](../router-data/r7000/)).
+DD-WRT's `wl` lacks `up`, `isup`, `revinfo`, `bss` and `ap`, and its build
+compiles `printk` out of out-of-tree modules: see
+[`wl-capture-scripts/ddwrt/`](../wl-capture-scripts/ddwrt/) for both. On
+that board the `si_*` functions are in the kernel, not in `wl.ko`, so
+`wl_diag` does not trace them, and some PHY tables are written inline:
+use `wl-mmio-trap/4-4-arm/` for those.
 
 ## What the port needs from these boards
 

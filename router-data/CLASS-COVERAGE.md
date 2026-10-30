@@ -34,6 +34,15 @@ PHY/RAD/TBL/MAC/SI/PMU/GPIO classes every capture has.
 | `dsl3580l/out-cold-dsl-decodificata.txt` | 41671 | complete, + AMT RCMTA OBJ.BULK |
 | `dsl3580l/out-cold-dsl-merged.txt` | 41671 | complete, + AMT RCMTA OBJ.BULK |
 | `tg789vac-v2/cold-sweep.zip` | 2792665 | complete, + AMT ADDRM OBJ.BULK |
+| `r7000/cold-2g20.zip` | 391609 | complete, + AMT ADDRM OBJ.BULK; no SI/GPIO/PMU/OTP/SROMCTL/CS (see below) |
+| `r7000/cold-5g20.zip` | 268657 | same |
+| `r7000/cold-5g40.zip` | 174045 | same |
+| `r7000/cold-5g80.zip` | 41251 | same |
+| `r7000/hot-2g20.zip` | 289296 | same |
+| `r7000/hot-5g20.zip` | 275577 | same |
+| `r7000/sta-2g20.zip` | 912708 | same |
+| `r7000/txrx-2g11-phone.zip` | 224900 | same |
+| `r7000/txrx-no-traffic.zip` | 237428 | same |
 | `vd625-agcombo/cold-sweep-partial.tar.gz` | 552677 | **missing OBJ** |
 | `dsl3580l/full-sweep.zip` | 1707638 | **missing CAL** |
 
@@ -63,6 +72,15 @@ python3 reverse-tools/check_class_coverage.py \
 | `dsl3580l/out-cold-dsl-decodificata.txt` | 6.30.102.7 | 122 | 54 | 0 | 7 | 1 | 4 | 4 | 1 | 0 |
 | `dsl3580l/out-cold-dsl-merged.txt` | 6.30.102.7 | 122 | 54 | 0 | 7 | 1 | 4 | 4 | 1 | 0 |
 | `tg789vac-v2/cold-sweep.zip` | 7.14.89.14 | 5415 | 0 | 2580 | 7925 | 43 | 86 | 86 | 43 | 3562 |
+| `r7000/cold-2g20.zip` | 7.14.164.18 | 1220 | 0 | 100 | 285 | 20 | 0 | 0 | 0 | 2060 |
+| `r7000/cold-5g20.zip` | 7.14.164.18 | 854 | 0 | 70 | 197 | 14 | 0 | 0 | 0 | 1504 |
+| `r7000/cold-5g40.zip` | 7.14.164.18 | 492 | 0 | 44 | 119 | 8 | 0 | 0 | 0 | 980 |
+| `r7000/cold-5g80.zip` | 7.14.164.18 | 120 | 0 | 8 | 24 | 2 | 0 | 0 | 0 | 184 |
+| `r7000/hot-2g20.zip` | 7.14.164.18 | 912 | 0 | 72 | 195 | 15 | 0 | 0 | 0 | 1438 |
+| `r7000/hot-5g20.zip` | 7.14.164.18 | 852 | 0 | 68 | 181 | 14 | 0 | 0 | 0 | 1436 |
+| `r7000/sta-2g20.zip` | 7.14.164.18 | 2688 | 0 | 204 | 453 | 44 | 0 | 0 | 0 | 6492 |
+| `r7000/txrx-2g11-phone.zip` | 7.14.164.18 | 257 | 0 | 30 | 80 | 6 | 0 | 0 | 0 | 928 |
+| `r7000/txrx-no-traffic.zip` | 7.14.164.18 | 373 | 0 | 36 | 110 | 8 | 0 | 0 | 0 | 938 |
 
 - **The agcombo sweeps** lack `AMT`, `ADDRM`, `OBJ.BULK*`, `OBJ.SET`,
   `PHY.WARR` and `PHY.FGC`, which the D6220 and TG789vac sweeps (7.14.89) and
@@ -74,6 +92,14 @@ python3 reverse-tools/check_class_coverage.py \
 - **`SROMCTL.WR`** does not split driver versions: it is absent on the D6220
   sweeps and present on the agcombo (7.14.43), the TG789vac (7.14.89) and the
   DSL (6.30).
+- **The R7000 captures (7.14.164.18 on ARM) trace no `SI`, `GPIO`, `PMU`,
+  `OTP`, `SROMCTL` or `CS` at all**, although the audit calls them complete:
+  it checks only the late classes. On Northstar the `si_*` and `otp_*`
+  functions are in the kernel, shared with the `et` driver, not in `wl.ko`,
+  and `wl_diag` lists them as `absent` in its hook plan
+  (`r7000/dmesg-wl_diag.txt`). Their zeros there say nothing about the
+  driver. The same captures miss the PHY tables `wl` writes inline; the bus
+  captures `r7000/mmio-*.zip` have them ([`r7000/README.md`](r7000/README.md)).
 
 ## Two legitimate absences
 

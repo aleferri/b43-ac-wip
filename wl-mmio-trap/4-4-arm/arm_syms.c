@@ -3,10 +3,14 @@
  * Resolve the kernel symbols the ARM trap needs.
  *
  * flush_tlb_kernel_range and fsr_info come by name through
- * kallsyms_lookup_name, which ARM exports to modules from 2.6.33 on. init_mm
- * is reached through the exported init_task, so it needs no lookup and no
- * signature scan -- unlike the MIPS side, where init_mm had to be found by
- * other means.
+ * kallsyms_lookup_name, which ARM exports to modules from 2.6.33 on.
+ *
+ * init_mm is neither exported nor, being data, in kallsyms without
+ * KALLSYMS_ALL. init_task.active_mm is not a way in: init_task is CPU 0's
+ * idle thread, which borrows the previous task's mm on every switch (lazy
+ * TLB), and a user pgd only carries the vmalloc/ioremap L1 entries that
+ * existed when it was made or that it has faulted in since. So it is looked
+ * up by name, or passed as init_mm_addr= from System.map.
  *
  * fsr_info is a static array (arch/arm/mm/fault.c), so its symbol is in
  * kallsyms only with KALLSYMS_ALL. Most kernels are built without it, so the
@@ -18,8 +22,15 @@
 #include <linux/kallsyms.h>
 #include <linux/sched.h>
 #include <linux/mm.h>
+#include <linux/moduleparam.h>
 
 #include "arm_syms.h"
+
+static ulong init_mm_addr;
+module_param(init_mm_addr, ulong, 0444);
+MODULE_PARM_DESC(init_mm_addr, "address of init_mm, for a kernel without KALLSYMS_ALL (from System.map)");
+
+static struct mm_struct *p_init_mm;
 
 /* Mirror of struct fsr_info in arch/arm/mm/fault.c: the .fn pointer is the
  * first member, so &fsr_info[7] is the address of its fn slot. */
@@ -49,8 +60,7 @@ unsigned long as_lookup(const char *name)
 
 struct mm_struct *as_init_mm(void)
 {
-	/* init_task.active_mm is &init_mm; init_task is exported. */
-	return init_task.active_mm;
+	return p_init_mm;
 }
 
 void as_flush_tlb_kernel(unsigned long start, unsigned long end)
@@ -76,6 +86,18 @@ int as_init(unsigned long fsr_info_fn7_hint)
 	if (IS_ENABLED(CONFIG_ARM_LPAE)) {
 		pr_err("wl_mmio_trap: built for a 2-level MMU; CONFIG_ARM_LPAE is on, where the fault codes differ\n");
 		return -ENOTSUPP;
+	}
+
+	a = init_mm_addr ? init_mm_addr : kallsyms_lookup_name("init_mm");
+	if (!a) {
+		pr_err("wl_mmio_trap: init_mm is not resolvable without KALLSYMS_ALL; pass init_mm_addr= from System.map\n");
+		return -ENOENT;
+	}
+	p_init_mm = (struct mm_struct *)a;
+	if (!virt_addr_valid(p_init_mm->pgd)) {
+		pr_err("wl_mmio_trap: init_mm at %p has pgd %p, not a lowmem address; wrong init_mm_addr?\n",
+		       p_init_mm, p_init_mm->pgd);
+		return -EINVAL;
 	}
 
 	a = kallsyms_lookup_name("flush_tlb_kernel_range");

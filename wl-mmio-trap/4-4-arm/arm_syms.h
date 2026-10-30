@@ -13,8 +13,8 @@
  *     arch/arm/mm/fault.c, reached by its symbol. Entry 7 is "page
  *     translation fault", where an invalidated-but-present-PFN pte lands.
  *
- * init_mm is reached through init_task, which IS exported, so it needs no
- * lookup.
+ * init_mm: by name, or init_mm_addr= from System.map (see arm_syms.c; it is
+ * not init_task.active_mm, which the idle thread lends out).
  */
 #ifndef ARM_SYMS_H
 #define ARM_SYMS_H

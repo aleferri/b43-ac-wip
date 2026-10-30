@@ -1,0 +1,1876 @@
+0
+[ 1071.441211] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 1071.458557] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 1071.476305] wl_diag: dma64_txfast                 absent
+[ 1071.493149] wl_diag: dma64_txunframed             absent
+[ 1071.520070] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 1071.543593] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 1071.561255] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 1071.578807] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 1071.596310] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 1071.602513] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 1097.345887] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 1097.363530] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 1097.380901] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 1097.420513] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 1097.437859] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 1097.455254] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 1097.472732] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 1097.490185] wl_diag: si_pmu_chipcontrol           absent
+[ 1097.506829] wl_diag: si_pmu_regcontrol            absent
+[ 1097.523411] wl_diag: si_pmu_pllcontrol            absent
+[ 1097.540188] wl_diag: si_corereg                   absent
+[ 1097.556766] wl_diag: si_gpiocontrol               absent
+[ 1097.573338] wl_diag: si_gpioout                   absent
+[ 1097.590098] wl_diag: si_gpioouten                 absent
+[ 1097.606968] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 1097.640337] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 1097.658004] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 1097.675317] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 1097.692972] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 1097.710811] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 1097.750315] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 1097.767823] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 1097.785446] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 1097.803192] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 1097.820692] wl_diag: otp_init                     absent
+[ 1097.837258] wl_diag: otp_read_word                absent
+[ 1097.853888] wl_diag: otp_read_region              absent
+[ 1097.870916] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 1097.900224] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 1097.917736] wl_diag: si_get_sromctl               absent
+[ 1097.934475] wl_diag: si_set_sromctl               absent
+[ 1097.951076] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 1097.968577] wl_diag: wlc_bmac_read_objmem16       absent
+[ 1097.985300] wl_diag: wlc_bmac_write_objmem16      absent
+[ 1098.030159] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 1098.047814] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 1098.065357] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 1098.082117] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 1098.099462] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 1098.117035] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 1098.170082] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 1098.187541] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 1098.204957] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 1098.222508] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 1098.239920] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 1098.257482] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 1098.290019] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 1098.307521] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 1098.324892] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 1098.342699] wl_diag: dma64_txfast                 absent
+[ 1098.359320] wl_diag: dma64_txunframed             absent
+[ 1098.379977] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 1098.400077] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 1098.417662] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 1098.435204] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 1098.452864] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 1098.459073] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 1124.218972] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 1124.236566] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 1124.253935] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 1124.271215] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 1124.296994] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 1124.314293] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 1124.331746] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 1124.349172] wl_diag: si_pmu_chipcontrol           absent
+[ 1124.365890] wl_diag: si_pmu_regcontrol            absent
+[ 1124.382495] wl_diag: si_pmu_pllcontrol            absent
+[ 1124.399362] wl_diag: si_corereg                   absent
+[ 1124.415889] wl_diag: si_gpiocontrol               absent
+[ 1124.432637] wl_diag: si_gpioout                   absent
+[ 1124.449178] wl_diag: si_gpioouten                 absent
+[ 1124.465776] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 1124.496807] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 1124.514379] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 1124.531709] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 1124.549321] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 1124.567205] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 1124.606761] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 1124.624224] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 1124.641806] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 1124.659613] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 1124.677163] wl_diag: otp_init                     absent
+[ 1124.693725] wl_diag: otp_read_word                absent
+[ 1124.710521] wl_diag: otp_read_region              absent
+[ 1124.727182] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 1124.756687] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 1124.774212] wl_diag: si_get_sromctl               absent
+[ 1124.790749] wl_diag: si_set_sromctl               absent
+[ 1124.807163] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 1124.824702] wl_diag: wlc_bmac_read_objmem16       absent
+[ 1124.841293] wl_diag: wlc_bmac_write_objmem16      absent
+[ 1124.876626] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 1124.894192] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 1124.911743] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 1124.928347] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 1124.945663] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 1124.966675] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 1124.986643] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 1125.004186] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 1125.021660] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 1125.039316] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 1125.066612] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 1125.084170] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 1125.101674] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 1125.119274] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 1125.143175] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 1125.160934] wl_diag: dma64_txfast                 absent
+[ 1125.177542] wl_diag: dma64_txunframed             absent
+[ 1125.206425] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 1125.223907] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 1125.241560] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 1125.259126] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 1125.276797] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 1125.283008] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 1129.925410] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 1129.943010] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 1129.960440] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 1129.977712] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 1129.995021] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 1130.044020] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 1130.061374] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 1130.078934] wl_diag: si_pmu_chipcontrol           absent
+[ 1130.095555] wl_diag: si_pmu_regcontrol            absent
+[ 1130.112183] wl_diag: si_pmu_pllcontrol            absent
+[ 1130.128728] wl_diag: si_corereg                   absent
+[ 1130.145295] wl_diag: si_gpiocontrol               absent
+[ 1130.161895] wl_diag: si_gpioout                   absent
+[ 1130.178425] wl_diag: si_gpioouten                 absent
+[ 1130.195029] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 1130.214027] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 1130.231673] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 1130.248949] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 1130.266619] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 1130.284451] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 1130.301902] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 1130.319442] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 1130.353881] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 1130.371536] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 1130.389042] wl_diag: otp_init                     absent
+[ 1130.405983] wl_diag: otp_read_word                absent
+[ 1130.422619] wl_diag: otp_read_region              absent
+[ 1130.439340] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 1130.460474] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 1130.478033] wl_diag: si_get_sromctl               absent
+[ 1130.494685] wl_diag: si_set_sromctl               absent
+[ 1130.511224] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 1130.528792] wl_diag: wlc_bmac_read_objmem16       absent
+[ 1130.545475] wl_diag: wlc_bmac_write_objmem16      absent
+[ 1130.583750] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 1130.601333] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 1130.618866] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 1130.635471] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 1130.652784] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 1130.670291] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 1130.703689] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 1130.721144] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 1130.738532] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 1130.756979] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 1130.774824] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 1130.813641] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 1130.831204] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 1130.848809] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 1130.866206] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 1130.883965] wl_diag: dma64_txfast                 absent
+[ 1130.900505] wl_diag: dma64_txunframed             absent
+[ 1130.923555] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 1130.953554] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 1130.971268] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 1130.988820] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 1131.006413] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 1131.012646] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 1238.245231] wl_diag: capture_hot_init
+[ 1238.249501] wl_diag: === inizio fase 2g20 ===
+[ 1239.274645] wl_diag: === chanspec 2g1/20 ===
+[ 1260.400675] wl_diag: === chanspec 2g2/20 ===
+[ 1281.533431] wl_diag: === chanspec 2g3/20 ===
+[ 1302.672725] wl_diag: === chanspec 2g4/20 ===
+[ 1323.798570] wl_diag: === chanspec 2g5/20 ===
+[ 1344.921332] wl_diag: === chanspec 2g6/20 ===
+[ 1366.057269] wl_diag: === chanspec 2g7/20 ===
+[ 1387.196608] wl_diag: === chanspec 2g8/20 ===
+[ 1408.329363] wl_diag: === chanspec 2g9/20 ===
+[ 1429.455339] wl_diag: === chanspec 2g10/20 ===
+[ 1450.578134] wl_diag: === chanspec 2g11/20 ===
+[ 1471.722628] wl_diag: === fine fase 2g20 ===
+[ 1573.075740] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 1573.093440] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 1573.110876] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 1573.128203] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 1573.145516] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 1573.162935] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 1573.190653] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 1573.208185] wl_diag: si_pmu_chipcontrol           absent
+[ 1573.224909] wl_diag: si_pmu_regcontrol            absent
+[ 1573.241649] wl_diag: si_pmu_pllcontrol            absent
+[ 1573.258286] wl_diag: si_corereg                   absent
+[ 1573.274871] wl_diag: si_gpiocontrol               absent
+[ 1573.291837] wl_diag: si_gpioout                   absent
+[ 1573.308468] wl_diag: si_gpioouten                 absent
+[ 1573.325078] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 1573.350618] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 1573.368119] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 1573.385367] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 1573.402954] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 1573.427204] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 1573.447159] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 1573.464622] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 1573.482188] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 1573.499930] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 1573.517350] wl_diag: otp_init                     absent
+[ 1573.533906] wl_diag: otp_read_word                absent
+[ 1573.550842] wl_diag: otp_read_region              absent
+[ 1573.567475] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 1573.585014] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 1573.602450] wl_diag: si_get_sromctl               absent
+[ 1573.619087] wl_diag: si_set_sromctl               absent
+[ 1573.635492] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 1573.653014] wl_diag: wlc_bmac_read_objmem16       absent
+[ 1573.669710] wl_diag: wlc_bmac_write_objmem16      absent
+[ 1573.710373] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 1573.727961] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 1573.745439] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 1573.762386] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 1573.779695] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 1573.797207] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 1573.830308] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 1573.847763] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 1573.865158] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 1573.882703] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 1573.900159] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 1573.940277] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 1573.957755] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 1573.975397] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 1573.992765] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 1574.010600] wl_diag: dma64_txfast                 absent
+[ 1574.027340] wl_diag: dma64_txunframed             absent
+[ 1574.060181] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 1574.090202] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 1574.107862] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 1574.125406] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 1574.143322] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 1574.149563] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 1599.932244] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 1599.949920] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 1599.967323] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 1600.007267] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 1600.024567] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 1600.041989] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 1600.059460] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 1600.076983] wl_diag: si_pmu_chipcontrol           absent
+[ 1600.093630] wl_diag: si_pmu_regcontrol            absent
+[ 1600.110408] wl_diag: si_pmu_pllcontrol            absent
+[ 1600.127066] wl_diag: si_corereg                   absent
+[ 1600.143724] wl_diag: si_gpiocontrol               absent
+[ 1600.160380] wl_diag: si_gpioout                   absent
+[ 1600.177181] wl_diag: si_gpioouten                 absent
+[ 1600.193885] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 1600.227026] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 1600.244571] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 1600.261928] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 1600.279612] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 1600.297354] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 1600.317100] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 1600.337053] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 1600.354645] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 1600.372372] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 1600.389839] wl_diag: otp_init                     absent
+[ 1600.406468] wl_diag: otp_read_word                absent
+[ 1600.423101] wl_diag: otp_read_region              absent
+[ 1600.439760] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 1600.466985] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 1600.484513] wl_diag: si_get_sromctl               absent
+[ 1600.501141] wl_diag: si_set_sromctl               absent
+[ 1600.517535] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 1600.535115] wl_diag: wlc_bmac_read_objmem16       absent
+[ 1600.551745] wl_diag: wlc_bmac_write_objmem16      absent
+[ 1600.596831] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 1600.614974] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 1600.632493] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 1600.649360] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 1600.666596] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 1600.684011] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 1600.716767] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 1600.734117] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 1600.751510] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 1600.769128] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 1600.786552] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 1600.806849] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 1600.826789] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 1600.844359] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 1600.861670] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 1600.879508] wl_diag: dma64_txfast                 absent
+[ 1600.896171] wl_diag: dma64_txunframed             absent
+[ 1600.916648] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 1600.946732] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 1600.964350] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 1600.982004] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 1600.999529] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 1601.005733] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 1626.759009] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 1626.776610] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 1626.794030] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 1626.833661] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 1626.850999] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 1626.868426] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 1626.885850] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 1626.903335] wl_diag: si_pmu_chipcontrol           absent
+[ 1626.919945] wl_diag: si_pmu_regcontrol            absent
+[ 1626.936506] wl_diag: si_pmu_pllcontrol            absent
+[ 1626.953045] wl_diag: si_corereg                   absent
+[ 1626.969705] wl_diag: si_gpiocontrol               absent
+[ 1626.986347] wl_diag: si_gpioout                   absent
+[ 1627.002980] wl_diag: si_gpioouten                 absent
+[ 1627.019568] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 1627.063486] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 1627.081056] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 1627.098333] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 1627.115909] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 1627.133674] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 1627.151138] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 1627.168701] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 1627.203439] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 1627.221113] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 1627.238623] wl_diag: otp_init                     absent
+[ 1627.255268] wl_diag: otp_read_word                absent
+[ 1627.271901] wl_diag: otp_read_region              absent
+[ 1627.288611] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 1627.310035] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 1627.327457] wl_diag: si_get_sromctl               absent
+[ 1627.344077] wl_diag: si_set_sromctl               absent
+[ 1627.360470] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 1627.377964] wl_diag: wlc_bmac_read_objmem16       absent
+[ 1627.394825] wl_diag: wlc_bmac_write_objmem16      absent
+[ 1627.433419] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 1627.451016] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 1627.468484] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 1627.485122] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 1627.502446] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 1627.519901] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 1627.553243] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 1627.570705] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 1627.588093] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 1627.606287] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 1627.623667] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 1627.663195] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 1627.680763] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 1627.698414] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 1627.715818] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 1627.733499] wl_diag: dma64_txfast                 absent
+[ 1627.750125] wl_diag: dma64_txunframed             absent
+[ 1627.773115] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 1627.803126] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 1627.820789] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 1627.838441] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 1627.856022] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 1627.862258] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 1653.617218] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 1653.634884] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 1653.652392] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 1653.669693] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 1653.687127] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 1653.704597] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 1653.750022] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 1653.767523] wl_diag: si_pmu_chipcontrol           absent
+[ 1653.784130] wl_diag: si_pmu_regcontrol            absent
+[ 1653.800755] wl_diag: si_pmu_pllcontrol            absent
+[ 1653.817401] wl_diag: si_corereg                   absent
+[ 1653.833983] wl_diag: si_gpiocontrol               absent
+[ 1653.850762] wl_diag: si_gpioout                   absent
+[ 1653.867511] wl_diag: si_gpioouten                 absent
+[ 1653.884136] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 1653.920003] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 1653.937613] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 1653.954839] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 1653.972401] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 1653.990252] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 1654.039896] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 1654.057384] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 1654.075036] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 1654.092823] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 1654.110247] wl_diag: otp_init                     absent
+[ 1654.126830] wl_diag: otp_read_word                absent
+[ 1654.143364] wl_diag: otp_read_region              absent
+[ 1654.160241] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 1654.189811] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 1654.207296] wl_diag: si_get_sromctl               absent
+[ 1654.224037] wl_diag: si_set_sromctl               absent
+[ 1654.240655] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 1654.258214] wl_diag: wlc_bmac_read_objmem16       absent
+[ 1654.274903] wl_diag: wlc_bmac_write_objmem16      absent
+[ 1654.299814] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 1654.317415] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 1654.334968] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 1654.351584] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 1654.369822] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 1654.387354] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 1654.404814] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 1654.422307] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 1654.459703] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 1654.477342] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 1654.494648] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 1654.512189] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 1654.529722] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 1654.547352] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 1654.579634] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 1654.597354] wl_diag: dma64_txfast                 absent
+[ 1654.613889] wl_diag: dma64_txunframed             absent
+[ 1654.639569] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 1654.657010] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 1654.674628] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 1654.692264] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 1654.709958] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 1654.716167] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 1680.482130] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 1680.499756] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 1680.517131] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 1680.556583] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 1680.574001] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 1680.591403] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 1680.608886] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 1680.626473] wl_diag: si_pmu_chipcontrol           absent
+[ 1680.643074] wl_diag: si_pmu_regcontrol            absent
+[ 1680.659835] wl_diag: si_pmu_pllcontrol            absent
+[ 1680.676534] wl_diag: si_corereg                   absent
+[ 1680.693157] wl_diag: si_gpiocontrol               absent
+[ 1680.709755] wl_diag: si_gpioout                   absent
+[ 1680.726604] wl_diag: si_gpioouten                 absent
+[ 1680.743218] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 1680.776425] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 1680.793926] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 1680.811160] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 1680.828759] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 1680.846631] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 1680.896403] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 1680.913994] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 1680.931569] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 1680.949345] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 1680.966780] wl_diag: otp_init                     absent
+[ 1680.983328] wl_diag: otp_read_word                absent
+[ 1681.000063] wl_diag: otp_read_region              absent
+[ 1681.016982] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 1681.034491] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 1681.051914] wl_diag: si_get_sromctl               absent
+[ 1681.068533] wl_diag: si_set_sromctl               absent
+[ 1681.084953] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 1681.102444] wl_diag: wlc_bmac_read_objmem16       absent
+[ 1681.119125] wl_diag: wlc_bmac_write_objmem16      absent
+[ 1681.156224] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 1681.173830] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 1681.191406] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 1681.208103] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 1681.225359] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 1681.242903] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 1681.276162] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 1681.293674] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 1681.311053] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 1681.328683] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 1681.346124] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 1681.363753] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 1681.396114] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 1681.413724] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 1681.431045] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 1681.448730] wl_diag: dma64_txfast                 absent
+[ 1681.465324] wl_diag: dma64_txunframed             absent
+[ 1681.486045] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 1681.506159] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 1681.523750] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 1681.541338] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 1681.558921] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 1681.565134] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 1707.358537] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 1707.376239] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 1707.393600] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 1707.410951] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 1707.428260] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 1707.445615] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 1707.482951] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 1707.500387] wl_diag: si_pmu_chipcontrol           absent
+[ 1707.516983] wl_diag: si_pmu_regcontrol            absent
+[ 1707.533568] wl_diag: si_pmu_pllcontrol            absent
+[ 1707.550262] wl_diag: si_corereg                   absent
+[ 1707.566850] wl_diag: si_gpiocontrol               absent
+[ 1707.583420] wl_diag: si_gpioout                   absent
+[ 1707.600083] wl_diag: si_gpioouten                 absent
+[ 1707.616714] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 1707.642920] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 1707.660544] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 1707.677858] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 1707.695418] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 1707.719516] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 1707.739471] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 1707.756929] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 1707.774585] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 1707.792516] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 1707.810075] wl_diag: otp_init                     absent
+[ 1707.826678] wl_diag: otp_read_word                absent
+[ 1707.843400] wl_diag: otp_read_region              absent
+[ 1707.860114] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 1707.892754] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 1707.910248] wl_diag: si_get_sromctl               absent
+[ 1707.927045] wl_diag: si_set_sromctl               absent
+[ 1707.943683] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 1707.961145] wl_diag: wlc_bmac_read_objmem16       absent
+[ 1707.977934] wl_diag: wlc_bmac_write_objmem16      absent
+[ 1707.994416] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 1708.032681] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 1708.050211] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 1708.066904] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 1708.084191] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 1708.101674] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 1708.119232] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 1708.152626] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 1708.170090] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 1708.187642] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 1708.205076] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 1708.222573] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 1708.242689] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 1708.262632] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 1708.279929] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 1708.297710] wl_diag: dma64_txfast                 absent
+[ 1708.314456] wl_diag: dma64_txunframed             absent
+[ 1708.342489] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 1708.372571] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 1708.390180] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 1708.407731] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 1708.425291] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 1708.431492] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 1734.184434] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 1734.202059] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 1734.219582] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 1734.236943] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 1734.259543] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 1734.276908] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 1734.294360] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 1734.311899] wl_diag: si_pmu_chipcontrol           absent
+[ 1734.328496] wl_diag: si_pmu_regcontrol            absent
+[ 1734.345105] wl_diag: si_pmu_pllcontrol            absent
+[ 1734.362018] wl_diag: si_corereg                   absent
+[ 1734.378670] wl_diag: si_gpiocontrol               absent
+[ 1734.395327] wl_diag: si_gpioout                   absent
+[ 1734.411990] wl_diag: si_gpioouten                 absent
+[ 1734.428659] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 1734.459355] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 1734.476884] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 1734.494162] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 1734.511766] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 1734.529582] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 1734.569308] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 1734.586875] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 1734.604524] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 1734.622263] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 1734.639794] wl_diag: otp_init                     absent
+[ 1734.656518] wl_diag: otp_read_word                absent
+[ 1734.673183] wl_diag: otp_read_region              absent
+[ 1734.689841] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 1734.729225] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 1734.746714] wl_diag: si_get_sromctl               absent
+[ 1734.763366] wl_diag: si_set_sromctl               absent
+[ 1734.780053] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 1734.797545] wl_diag: wlc_bmac_read_objmem16       absent
+[ 1734.814236] wl_diag: wlc_bmac_write_objmem16      absent
+[ 1734.830912] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 1734.879149] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 1734.896629] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 1734.913284] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 1734.930626] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 1734.948015] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 1734.965513] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 1734.983031] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 1735.029085] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 1735.046725] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 1735.064141] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 1735.081664] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 1735.099152] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 1735.116816] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 1735.134224] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 1735.152030] wl_diag: dma64_txfast                 absent
+[ 1735.168944] wl_diag: dma64_txunframed             absent
+[ 1735.218940] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 1735.236322] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 1735.254015] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 1735.271656] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 1735.289247] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 1735.295448] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 1761.058376] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 1761.076052] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 1761.093599] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 1761.110921] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 1761.128309] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 1761.165931] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 1761.183373] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 1761.200848] wl_diag: si_pmu_chipcontrol           absent
+[ 1761.217493] wl_diag: si_pmu_regcontrol            absent
+[ 1761.234265] wl_diag: si_pmu_pllcontrol            absent
+[ 1761.250916] wl_diag: si_corereg                   absent
+[ 1761.267496] wl_diag: si_gpiocontrol               absent
+[ 1761.284043] wl_diag: si_gpioout                   absent
+[ 1761.300878] wl_diag: si_gpioouten                 absent
+[ 1761.317759] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 1761.335910] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 1761.353485] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 1761.370856] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 1761.388505] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 1761.425770] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 1761.443153] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 1761.460687] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 1761.478238] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 1761.495989] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 1761.513439] wl_diag: otp_init                     absent
+[ 1761.530023] wl_diag: otp_read_word                absent
+[ 1761.546663] wl_diag: otp_read_region              absent
+[ 1761.575699] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 1761.593133] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 1761.610667] wl_diag: si_get_sromctl               absent
+[ 1761.627512] wl_diag: si_set_sromctl               absent
+[ 1761.643953] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 1761.661445] wl_diag: wlc_bmac_read_objmem16       absent
+[ 1761.678035] wl_diag: wlc_bmac_write_objmem16      absent
+[ 1761.725618] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 1761.743115] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 1761.760646] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 1761.777519] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 1761.795044] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 1761.812993] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 1761.830479] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 1761.875539] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 1761.893237] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 1761.910791] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 1761.928516] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 1761.946137] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 1761.985494] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 1762.003049] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 1762.020476] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 1762.038291] wl_diag: dma64_txfast                 absent
+[ 1762.054811] wl_diag: dma64_txunframed             absent
+[ 1762.085405] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 1762.105530] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 1762.123165] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 1762.140817] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 1762.158410] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 1762.164647] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 1787.916835] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 1787.934479] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 1787.951952] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 1787.969363] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 1787.986667] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 1788.032360] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 1788.049701] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 1788.067247] wl_diag: si_pmu_chipcontrol           absent
+[ 1788.083797] wl_diag: si_pmu_regcontrol            absent
+[ 1788.100429] wl_diag: si_pmu_pllcontrol            absent
+[ 1788.117084] wl_diag: si_corereg                   absent
+[ 1788.133674] wl_diag: si_gpiocontrol               absent
+[ 1788.150445] wl_diag: si_gpioout                   absent
+[ 1788.167152] wl_diag: si_gpioouten                 absent
+[ 1788.183711] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 1788.202367] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 1788.219900] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 1788.237149] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 1788.254802] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 1788.282314] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 1788.299697] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 1788.317167] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 1788.334772] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 1788.358871] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 1788.376405] wl_diag: otp_init                     absent
+[ 1788.393044] wl_diag: otp_read_word                absent
+[ 1788.409593] wl_diag: otp_read_region              absent
+[ 1788.428795] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 1788.446246] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 1788.463708] wl_diag: si_get_sromctl               absent
+[ 1788.480412] wl_diag: si_set_sromctl               absent
+[ 1788.496935] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 1788.514434] wl_diag: wlc_bmac_read_objmem16       absent
+[ 1788.531302] wl_diag: wlc_bmac_write_objmem16      absent
+[ 1788.547816] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 1788.582084] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 1788.599566] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 1788.616277] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 1788.633513] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 1788.650897] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 1788.668335] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 1788.712017] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 1788.729390] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 1788.746934] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 1788.764398] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 1788.781895] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 1788.799396] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 1788.831959] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 1788.849267] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 1788.866994] wl_diag: dma64_txfast                 absent
+[ 1788.883537] wl_diag: dma64_txunframed             absent
+[ 1788.911877] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 1788.931990] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 1788.949656] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 1788.967261] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 1788.984863] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 1788.991099] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 1814.751677] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 1814.769373] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 1814.786653] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 1814.818920] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 1814.836183] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 1814.853527] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 1814.871378] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 1814.889399] wl_diag: si_pmu_chipcontrol           absent
+[ 1814.905967] wl_diag: si_pmu_regcontrol            absent
+[ 1814.922632] wl_diag: si_pmu_pllcontrol            absent
+[ 1814.939527] wl_diag: si_corereg                   absent
+[ 1814.956103] wl_diag: si_gpiocontrol               absent
+[ 1814.972687] wl_diag: si_gpioout                   absent
+[ 1814.989273] wl_diag: si_gpioouten                 absent
+[ 1815.005913] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 1815.058715] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 1815.076336] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 1815.093584] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 1815.111211] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 1815.128989] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 1815.146445] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 1815.163940] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 1815.198681] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 1815.216305] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 1815.233808] wl_diag: otp_init                     absent
+[ 1815.250385] wl_diag: otp_read_word                absent
+[ 1815.267180] wl_diag: otp_read_region              absent
+[ 1815.283813] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 1815.305277] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 1815.322838] wl_diag: si_get_sromctl               absent
+[ 1815.339642] wl_diag: si_set_sromctl               absent
+[ 1815.356412] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 1815.373987] wl_diag: wlc_bmac_read_objmem16       absent
+[ 1815.390656] wl_diag: wlc_bmac_write_objmem16      absent
+[ 1815.428550] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 1815.446121] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 1815.463634] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 1815.480239] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 1815.497536] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 1815.515028] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 1815.548481] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 1815.565906] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 1815.583349] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 1815.600900] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 1815.618307] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 1815.658436] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 1815.675926] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 1815.693563] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 1815.710979] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 1815.728665] wl_diag: dma64_txfast                 absent
+[ 1815.745248] wl_diag: dma64_txunframed             absent
+[ 1815.768355] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 1815.798366] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 1815.815962] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 1815.833533] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 1815.851194] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 1815.857430] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 1841.621635] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 1841.639194] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 1841.656624] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 1841.673961] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 1841.695403] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 1841.712813] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 1841.730283] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 1841.747703] wl_diag: si_pmu_chipcontrol           absent
+[ 1841.764300] wl_diag: si_pmu_regcontrol            absent
+[ 1841.780918] wl_diag: si_pmu_pllcontrol            absent
+[ 1841.797466] wl_diag: si_corereg                   absent
+[ 1841.814006] wl_diag: si_gpiocontrol               absent
+[ 1841.830890] wl_diag: si_gpioout                   absent
+[ 1841.847490] wl_diag: si_gpioouten                 absent
+[ 1841.864056] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 1841.895201] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 1841.912853] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 1841.930189] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 1841.948793] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 1841.966586] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 1842.005193] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 1842.022717] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 1842.040302] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 1842.058030] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 1842.075444] wl_diag: otp_init                     absent
+[ 1842.091973] wl_diag: otp_read_word                absent
+[ 1842.108632] wl_diag: otp_read_region              absent
+[ 1842.125516] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 1842.155079] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 1842.172507] wl_diag: si_get_sromctl               absent
+[ 1842.189099] wl_diag: si_set_sromctl               absent
+[ 1842.205710] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 1842.223261] wl_diag: wlc_bmac_read_objmem16       absent
+[ 1842.239856] wl_diag: wlc_bmac_write_objmem16      absent
+[ 1842.275018] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 1842.292615] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 1842.310130] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 1842.326818] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 1842.344111] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 1842.365068] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 1842.385026] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 1842.402492] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 1842.419944] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 1842.437649] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 1842.465001] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 1842.482502] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 1842.500033] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 1842.517630] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 1842.541564] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 1842.559284] wl_diag: dma64_txfast                 absent
+[ 1842.575902] wl_diag: dma64_txunframed             absent
+[ 1842.604816] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 1842.622314] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 1842.639919] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 1842.657552] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 1842.675195] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 1842.681398] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 1868.444681] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 1868.462396] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 1868.479777] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 1868.511859] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 1868.529091] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 1868.546483] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 1868.563971] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 1868.581389] wl_diag: si_pmu_chipcontrol           absent
+[ 1868.597963] wl_diag: si_pmu_regcontrol            absent
+[ 1868.614762] wl_diag: si_pmu_pllcontrol            absent
+[ 1868.631521] wl_diag: si_corereg                   absent
+[ 1868.648170] wl_diag: si_gpiocontrol               absent
+[ 1868.665003] wl_diag: si_gpioout                   absent
+[ 1868.681544] wl_diag: si_gpioouten                 absent
+[ 1868.698234] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 1868.741668] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 1868.759337] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 1868.776618] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 1868.794316] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 1868.812143] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 1868.829629] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 1868.861634] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 1868.879171] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 1868.896845] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 1868.914317] wl_diag: otp_init                     absent
+[ 1868.930830] wl_diag: otp_read_word                absent
+[ 1868.947670] wl_diag: otp_read_region              absent
+[ 1868.964542] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 1868.988231] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 1869.005682] wl_diag: si_get_sromctl               absent
+[ 1869.022256] wl_diag: si_set_sromctl               absent
+[ 1869.038735] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 1869.056230] wl_diag: wlc_bmac_read_objmem16       absent
+[ 1869.072946] wl_diag: wlc_bmac_write_objmem16      absent
+[ 1869.121485] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 1869.139010] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 1869.156481] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 1869.173117] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 1869.190402] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 1869.207946] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 1869.225378] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 1869.261393] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 1869.278890] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 1869.296457] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 1869.313781] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 1869.331390] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 1869.348925] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 1869.366512] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 1869.401345] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 1869.419065] wl_diag: dma64_txfast                 absent
+[ 1869.435735] wl_diag: dma64_txunframed             absent
+[ 1869.461288] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 1869.478743] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 1869.496451] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 1869.514047] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 1869.551259] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 1869.557459] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 1874.194409] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 1874.212047] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 1874.229468] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 1874.268943] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 1874.286248] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 1874.303585] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 1874.325520] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 1874.342943] wl_diag: si_pmu_chipcontrol           absent
+[ 1874.359574] wl_diag: si_pmu_regcontrol            absent
+[ 1874.376220] wl_diag: si_pmu_pllcontrol            absent
+[ 1874.392907] wl_diag: si_corereg                   absent
+[ 1874.409507] wl_diag: si_gpiocontrol               absent
+[ 1874.426177] wl_diag: si_gpioout                   absent
+[ 1874.443096] wl_diag: si_gpioouten                 absent
+[ 1874.460121] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 1874.488825] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 1874.506400] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 1874.523729] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 1874.541361] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 1874.559221] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 1874.588735] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 1874.606282] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 1874.623901] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 1874.641575] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 1874.659019] wl_diag: otp_init                     absent
+[ 1874.675649] wl_diag: otp_read_word                absent
+[ 1874.692245] wl_diag: otp_read_region              absent
+[ 1874.708948] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 1874.748642] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 1874.766114] wl_diag: si_get_sromctl               absent
+[ 1874.782781] wl_diag: si_set_sromctl               absent
+[ 1874.799172] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 1874.816625] wl_diag: wlc_bmac_read_objmem16       absent
+[ 1874.833252] wl_diag: wlc_bmac_write_objmem16      absent
+[ 1874.849733] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 1874.878575] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 1874.896179] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 1874.912859] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 1874.930157] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 1874.958597] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 1874.975981] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 1874.993410] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 1875.010796] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 1875.028394] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 1875.058484] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 1875.075993] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 1875.093475] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 1875.111001] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 1875.128405] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 1875.146210] wl_diag: dma64_txfast                 absent
+[ 1875.162753] wl_diag: dma64_txunframed             absent
+[ 1875.208377] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 1875.225864] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 1875.243431] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 1875.261063] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 1875.278590] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 1875.284796] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 1925.623941] wl_diag: capture_hot_init
+[ 1925.628123] wl_diag: === inizio fase 2g20 ===
+[ 1926.648288] wl_diag: === chanspec 2g1/20 ===
+[ 1947.787467] wl_diag: === chanspec 2g2/20 ===
+[ 1968.917047] wl_diag: === chanspec 2g3/20 ===
+[ 1990.046186] wl_diag: === chanspec 2g4/20 ===
+[ 2011.175533] wl_diag: === chanspec 2g5/20 ===
+[ 2032.314995] wl_diag: === chanspec 2g6/20 ===
+[ 2053.454297] wl_diag: === chanspec 2g7/20 ===
+[ 2074.590226] wl_diag: === chanspec 2g8/20 ===
+[ 2095.729524] wl_diag: === chanspec 2g9/20 ===
+[ 2116.868732] wl_diag: === chanspec 2g10/20 ===
+[ 2138.008266] wl_diag: === chanspec 2g11/20 ===
+[ 2159.159181] wl_diag: === fine fase 2g20 ===
+[ 2180.439525] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 2180.457104] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 2180.474477] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 2180.491875] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 2180.509232] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 2180.534610] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 2180.564526] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 2180.581932] wl_diag: si_pmu_chipcontrol           absent
+[ 2180.598743] wl_diag: si_pmu_regcontrol            absent
+[ 2180.615282] wl_diag: si_pmu_pllcontrol            absent
+[ 2180.631812] wl_diag: si_corereg                   absent
+[ 2180.648391] wl_diag: si_gpiocontrol               absent
+[ 2180.665070] wl_diag: si_gpioout                   absent
+[ 2180.681872] wl_diag: si_gpioouten                 absent
+[ 2180.698538] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 2180.734458] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 2180.752089] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 2180.769353] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 2180.786909] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 2180.804691] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 2180.844350] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 2180.861903] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 2180.879462] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 2180.897237] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 2180.914656] wl_diag: otp_init                     absent
+[ 2180.931194] wl_diag: otp_read_word                absent
+[ 2180.947766] wl_diag: otp_read_region              absent
+[ 2180.964391] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 2181.004447] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 2181.021980] wl_diag: si_get_sromctl               absent
+[ 2181.038507] wl_diag: si_set_sromctl               absent
+[ 2181.054889] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 2181.072506] wl_diag: wlc_bmac_read_objmem16       absent
+[ 2181.089495] wl_diag: wlc_bmac_write_objmem16      absent
+[ 2181.106355] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 2181.144211] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 2181.161766] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 2181.178439] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 2181.195692] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 2181.213103] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 2181.230615] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 2181.264139] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 2181.281545] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 2181.299076] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 2181.316402] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 2181.333956] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 2181.374093] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 2181.391673] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 2181.408986] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 2181.426770] wl_diag: dma64_txfast                 absent
+[ 2181.443330] wl_diag: dma64_txunframed             absent
+[ 2181.464028] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 2181.484132] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 2181.501795] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 2181.519421] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 2181.537001] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 2181.543212] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 2207.333223] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 2207.350873] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 2207.368284] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 2207.387636] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 2207.404944] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 2207.422249] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 2207.439705] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 2207.457253] wl_diag: si_pmu_chipcontrol           absent
+[ 2207.473852] wl_diag: si_pmu_regcontrol            absent
+[ 2207.490850] wl_diag: si_pmu_pllcontrol            absent
+[ 2207.508013] wl_diag: si_corereg                   absent
+[ 2207.524624] wl_diag: si_gpiocontrol               absent
+[ 2207.541206] wl_diag: si_gpioout                   absent
+[ 2207.557803] wl_diag: si_gpioouten                 absent
+[ 2207.574634] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 2207.620864] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 2207.638447] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 2207.655749] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 2207.673328] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 2207.691128] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 2207.708561] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 2207.740804] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 2207.758480] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 2207.776224] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 2207.793722] wl_diag: otp_init                     absent
+[ 2207.810338] wl_diag: otp_read_word                absent
+[ 2207.827205] wl_diag: otp_read_region              absent
+[ 2207.844097] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 2207.870817] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 2207.888347] wl_diag: si_get_sromctl               absent
+[ 2207.905186] wl_diag: si_set_sromctl               absent
+[ 2207.921587] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 2207.939134] wl_diag: wlc_bmac_read_objmem16       absent
+[ 2207.955725] wl_diag: wlc_bmac_write_objmem16      absent
+[ 2207.972201] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 2208.030674] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 2208.048339] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 2208.065344] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 2208.082677] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 2208.100159] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 2208.117751] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 2208.135174] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 2208.170599] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 2208.188147] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 2208.205545] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 2208.223102] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 2208.240692] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 2208.260655] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 2208.280610] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 2208.298317] wl_diag: dma64_txfast                 absent
+[ 2208.314983] wl_diag: dma64_txunframed             absent
+[ 2208.340473] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 2208.370525] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 2208.388166] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 2208.405723] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 2208.423275] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 2208.429482] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 2234.193035] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 2234.210574] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 2234.227944] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 2234.267483] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 2234.284766] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 2234.302134] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 2234.319587] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 2234.337075] wl_diag: si_pmu_chipcontrol           absent
+[ 2234.353893] wl_diag: si_pmu_regcontrol            absent
+[ 2234.370567] wl_diag: si_pmu_pllcontrol            absent
+[ 2234.387175] wl_diag: si_corereg                   absent
+[ 2234.403816] wl_diag: si_gpiocontrol               absent
+[ 2234.420472] wl_diag: si_gpioout                   absent
+[ 2234.437107] wl_diag: si_gpioouten                 absent
+[ 2234.454018] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 2234.487316] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 2234.504928] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 2234.522217] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 2234.539864] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 2234.557676] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 2234.597273] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 2234.614764] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 2234.632368] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 2234.650077] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 2234.667577] wl_diag: otp_init                     absent
+[ 2234.684139] wl_diag: otp_read_word                absent
+[ 2234.700880] wl_diag: otp_read_region              absent
+[ 2234.717847] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 2234.767159] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 2234.784605] wl_diag: si_get_sromctl               absent
+[ 2234.801157] wl_diag: si_set_sromctl               absent
+[ 2234.817839] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 2234.835459] wl_diag: wlc_bmac_read_objmem16       absent
+[ 2234.852193] wl_diag: wlc_bmac_write_objmem16      absent
+[ 2234.868747] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 2234.907114] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 2234.924577] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 2234.941282] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 2234.958599] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 2234.976000] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 2234.993472] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 2235.037041] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 2235.054466] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 2235.072020] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 2235.089437] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 2235.107020] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 2235.124504] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 2235.142038] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 2235.176977] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 2235.194782] wl_diag: dma64_txfast                 absent
+[ 2235.211369] wl_diag: dma64_txunframed             absent
+[ 2235.236919] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 2235.254373] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 2235.271961] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 2235.289503] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 2235.326889] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 2235.333094] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 2261.119282] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 2261.136930] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 2261.154338] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 2261.193913] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 2261.211212] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 2261.228569] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 2261.246052] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 2261.263585] wl_diag: si_pmu_chipcontrol           absent
+[ 2261.280254] wl_diag: si_pmu_regcontrol            absent
+[ 2261.296933] wl_diag: si_pmu_pllcontrol            absent
+[ 2261.313789] wl_diag: si_corereg                   absent
+[ 2261.330394] wl_diag: si_gpiocontrol               absent
+[ 2261.347253] wl_diag: si_gpioout                   absent
+[ 2261.363926] wl_diag: si_gpioouten                 absent
+[ 2261.380677] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 2261.413727] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 2261.431307] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 2261.448658] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 2261.466236] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 2261.484050] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 2261.523695] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 2261.541200] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 2261.558828] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 2261.576618] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 2261.594098] wl_diag: otp_init                     absent
+[ 2261.610690] wl_diag: otp_read_word                absent
+[ 2261.627306] wl_diag: otp_read_region              absent
+[ 2261.643947] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 2261.683598] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 2261.701139] wl_diag: si_get_sromctl               absent
+[ 2261.717817] wl_diag: si_set_sromctl               absent
+[ 2261.734286] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 2261.751911] wl_diag: wlc_bmac_read_objmem16       absent
+[ 2261.768630] wl_diag: wlc_bmac_write_objmem16      absent
+[ 2261.785209] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 2261.823542] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 2261.841011] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 2261.857749] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 2261.875025] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 2261.892433] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 2261.909978] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 2261.943474] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 2261.960935] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 2261.978555] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 2261.996024] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 2262.013683] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 2262.053434] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 2262.071005] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 2262.088332] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 2262.106105] wl_diag: dma64_txfast                 absent
+[ 2262.122708] wl_diag: dma64_txunframed             absent
+[ 2262.143359] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 2262.163472] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 2262.181067] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 2262.198610] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 2262.216273] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 2262.222484] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 2287.996897] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 2288.014590] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 2288.031923] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 2288.049249] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 2288.066742] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 2288.084106] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 2288.140274] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 2288.157703] wl_diag: si_pmu_chipcontrol           absent
+[ 2288.174450] wl_diag: si_pmu_regcontrol            absent
+[ 2288.191084] wl_diag: si_pmu_pllcontrol            absent
+[ 2288.207696] wl_diag: si_corereg                   absent
+[ 2288.224703] wl_diag: si_gpiocontrol               absent
+[ 2288.241579] wl_diag: si_gpioout                   absent
+[ 2288.258225] wl_diag: si_gpioouten                 absent
+[ 2288.275190] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 2288.310240] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 2288.327923] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 2288.345281] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 2288.362845] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 2288.380754] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 2288.430136] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 2288.447589] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 2288.465253] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 2288.483043] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 2288.500675] wl_diag: otp_init                     absent
+[ 2288.517253] wl_diag: otp_read_word                absent
+[ 2288.533876] wl_diag: otp_read_region              absent
+[ 2288.550772] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 2288.600040] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 2288.617673] wl_diag: si_get_sromctl               absent
+[ 2288.634362] wl_diag: si_set_sromctl               absent
+[ 2288.650838] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 2288.668346] wl_diag: wlc_bmac_read_objmem16       absent
+[ 2288.685080] wl_diag: wlc_bmac_write_objmem16      absent
+[ 2288.701668] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 2288.719278] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 2288.736891] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 2288.753619] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 2288.789955] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 2288.807439] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 2288.824929] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 2288.842523] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 2288.859921] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 2288.877539] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 2288.919882] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 2288.937408] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 2288.955107] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 2288.972702] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 2288.990036] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 2289.007727] wl_diag: dma64_txfast                 absent
+[ 2289.024549] wl_diag: dma64_txunframed             absent
+[ 2289.119738] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 2289.137259] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 2289.154988] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 2289.172772] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 2289.190437] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 2289.196639] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 2314.972318] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 2314.989945] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 2315.007398] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 2315.046764] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 2315.064053] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 2315.081445] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 2315.098808] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 2315.116350] wl_diag: si_pmu_chipcontrol           absent
+[ 2315.133239] wl_diag: si_pmu_regcontrol            absent
+[ 2315.149913] wl_diag: si_pmu_pllcontrol            absent
+[ 2315.166557] wl_diag: si_corereg                   absent
+[ 2315.183108] wl_diag: si_gpiocontrol               absent
+[ 2315.199886] wl_diag: si_gpioout                   absent
+[ 2315.216494] wl_diag: si_gpioouten                 absent
+[ 2315.233175] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 2315.250516] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 2315.286585] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 2315.303915] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 2315.321541] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 2315.339402] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 2315.356925] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 2315.396557] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 2315.414170] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 2315.431891] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 2315.449360] wl_diag: otp_init                     absent
+[ 2315.465868] wl_diag: otp_read_word                absent
+[ 2315.482496] wl_diag: otp_read_region              absent
+[ 2315.499498] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 2315.523172] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 2315.540649] wl_diag: si_get_sromctl               absent
+[ 2315.557274] wl_diag: si_set_sromctl               absent
+[ 2315.586477] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 2315.603956] wl_diag: wlc_bmac_read_objmem16       absent
+[ 2315.620679] wl_diag: wlc_bmac_write_objmem16      absent
+[ 2315.637183] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 2315.654708] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 2315.672245] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 2315.716373] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 2315.733683] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 2315.751148] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 2315.768711] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 2315.786167] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 2315.803614] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 2315.836320] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 2315.853661] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 2315.871105] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 2315.888704] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 2315.906304] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 2315.926398] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 2315.944098] wl_diag: dma64_txfast                 absent
+[ 2315.960642] wl_diag: dma64_txunframed             absent
+[ 2315.996189] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 2316.013699] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 2316.031354] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 2316.048959] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 2316.066564] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 2316.072788] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 2341.838918] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 2341.856483] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 2341.873914] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 2341.913221] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 2341.930462] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 2341.947895] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 2341.965259] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 2341.982773] wl_diag: si_pmu_chipcontrol           absent
+[ 2341.999690] wl_diag: si_pmu_regcontrol            absent
+[ 2342.016333] wl_diag: si_pmu_pllcontrol            absent
+[ 2342.032936] wl_diag: si_corereg                   absent
+[ 2342.049506] wl_diag: si_gpiocontrol               absent
+[ 2342.066335] wl_diag: si_gpioout                   absent
+[ 2342.082978] wl_diag: si_gpioouten                 absent
+[ 2342.099698] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 2342.143049] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 2342.160587] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 2342.177823] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 2342.195507] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 2342.213387] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 2342.253001] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 2342.270582] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 2342.288199] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 2342.305921] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 2342.323424] wl_diag: otp_init                     absent
+[ 2342.339980] wl_diag: otp_read_word                absent
+[ 2342.356636] wl_diag: otp_read_region              absent
+[ 2342.373288] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 2342.402917] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 2342.420397] wl_diag: si_get_sromctl               absent
+[ 2342.437019] wl_diag: si_set_sromctl               absent
+[ 2342.453594] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 2342.471165] wl_diag: wlc_bmac_read_objmem16       absent
+[ 2342.487804] wl_diag: wlc_bmac_write_objmem16      absent
+[ 2342.522875] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 2342.540403] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 2342.557951] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 2342.574551] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 2342.591830] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 2342.609502] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 2342.632860] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 2342.650381] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 2342.667860] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 2342.685479] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 2342.702867] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 2342.742758] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 2342.761518] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 2342.779153] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 2342.796582] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 2342.814394] wl_diag: dma64_txfast                 absent
+[ 2342.831009] wl_diag: dma64_txunframed             absent
+[ 2342.852683] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 2342.882685] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 2342.900407] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 2342.918003] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 2342.935683] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 2342.941919] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 2368.716587] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 2368.734152] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 2368.751579] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 2368.768893] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 2368.786257] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 2368.809719] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 2368.839635] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 2368.857164] wl_diag: si_pmu_chipcontrol           absent
+[ 2368.873765] wl_diag: si_pmu_regcontrol            absent
+[ 2368.890305] wl_diag: si_pmu_pllcontrol            absent
+[ 2368.906832] wl_diag: si_corereg                   absent
+[ 2368.923586] wl_diag: si_gpiocontrol               absent
+[ 2368.940201] wl_diag: si_gpioout                   absent
+[ 2368.956817] wl_diag: si_gpioouten                 absent
+[ 2368.973506] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 2368.996172] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 2369.013744] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 2369.031040] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 2369.048628] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 2369.066364] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 2369.083750] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 2369.101323] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 2369.139451] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 2369.157187] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 2369.174693] wl_diag: otp_init                     absent
+[ 2369.191275] wl_diag: otp_read_word                absent
+[ 2369.207823] wl_diag: otp_read_region              absent
+[ 2369.224559] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 2369.246066] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 2369.263534] wl_diag: si_get_sromctl               absent
+[ 2369.280206] wl_diag: si_set_sromctl               absent
+[ 2369.296646] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 2369.314266] wl_diag: wlc_bmac_read_objmem16       absent
+[ 2369.330969] wl_diag: wlc_bmac_write_objmem16      absent
+[ 2369.369335] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 2369.386950] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 2369.404544] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 2369.421266] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 2369.438461] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 2369.455892] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 2369.473413] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 2369.490871] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 2369.519275] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 2369.536902] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 2369.554223] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 2369.571784] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 2369.589278] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 2369.629207] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 2369.646551] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 2369.664357] wl_diag: dma64_txfast                 absent
+[ 2369.680971] wl_diag: dma64_txunframed             absent
+[ 2369.719114] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 2369.736485] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 2369.754104] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 2369.771657] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 2369.789294] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 2369.795506] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 2395.580318] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 2395.597999] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 2395.615382] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 2395.632721] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 2395.666146] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 2395.683564] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 2395.700999] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 2395.718574] wl_diag: si_pmu_chipcontrol           absent
+[ 2395.735319] wl_diag: si_pmu_regcontrol            absent
+[ 2395.751978] wl_diag: si_pmu_pllcontrol            absent
+[ 2395.768794] wl_diag: si_corereg                   absent
+[ 2395.785472] wl_diag: si_gpiocontrol               absent
+[ 2395.802137] wl_diag: si_gpioout                   absent
+[ 2395.818742] wl_diag: si_gpioouten                 absent
+[ 2395.835611] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 2395.866050] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 2395.883619] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 2395.900869] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 2395.918452] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 2395.936190] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 2395.965921] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 2395.983475] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 2396.001048] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 2396.018817] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 2396.036320] wl_diag: otp_init                     absent
+[ 2396.052930] wl_diag: otp_read_word                absent
+[ 2396.069529] wl_diag: otp_read_region              absent
+[ 2396.086235] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 2396.103699] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 2396.121160] wl_diag: si_get_sromctl               absent
+[ 2396.137786] wl_diag: si_set_sromctl               absent
+[ 2396.154471] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 2396.171951] wl_diag: wlc_bmac_read_objmem16       absent
+[ 2396.188565] wl_diag: wlc_bmac_write_objmem16      absent
+[ 2396.205109] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 2396.222665] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 2396.240167] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 2396.256766] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 2396.274039] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 2396.291562] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 2396.325738] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 2396.343219] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 2396.360624] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 2396.378198] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 2396.395619] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 2396.413226] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 2396.445678] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 2396.463325] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 2396.480613] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 2396.498418] wl_diag: dma64_txfast                 absent
+[ 2396.515063] wl_diag: dma64_txunframed             absent
+[ 2396.545598] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 2396.575693] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 2396.593270] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 2396.610972] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 2396.628529] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 2396.634734] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 2422.418557] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 2422.436129] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 2422.453593] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 2422.470921] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 2422.488304] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 2422.512640] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 2422.542567] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 2422.559977] wl_diag: si_pmu_chipcontrol           absent
+[ 2422.576514] wl_diag: si_pmu_regcontrol            absent
+[ 2422.593093] wl_diag: si_pmu_pllcontrol            absent
+[ 2422.609830] wl_diag: si_corereg                   absent
+[ 2422.626520] wl_diag: si_gpiocontrol               absent
+[ 2422.643523] wl_diag: si_gpioout                   absent
+[ 2422.660116] wl_diag: si_gpioouten                 absent
+[ 2422.676805] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 2422.712489] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 2422.730102] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 2422.747404] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 2422.765005] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 2422.782791] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 2422.822392] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 2422.839904] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 2422.857480] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 2422.875137] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 2422.892633] wl_diag: otp_init                     absent
+[ 2422.909425] wl_diag: otp_read_word                absent
+[ 2422.926699] wl_diag: otp_read_region              absent
+[ 2422.943573] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 2422.992298] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 2423.009915] wl_diag: si_get_sromctl               absent
+[ 2423.026612] wl_diag: si_set_sromctl               absent
+[ 2423.043306] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 2423.060840] wl_diag: wlc_bmac_read_objmem16       absent
+[ 2423.077464] wl_diag: wlc_bmac_write_objmem16      absent
+[ 2423.094028] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 2423.142220] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 2423.159703] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 2423.176285] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 2423.193553] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 2423.210964] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 2423.228448] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 2423.245919] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 2423.282148] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 2423.299711] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 2423.317051] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 2423.334580] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 2423.352197] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 2423.392106] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 2423.409449] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 2423.427210] wl_diag: dma64_txfast                 absent
+[ 2423.444080] wl_diag: dma64_txunframed             absent
+[ 2423.472022] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 2423.489526] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 2423.507108] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 2423.524665] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 2423.562009] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 2423.568216] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 2457.457059] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 2457.474655] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 2457.492048] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 2457.509891] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 2457.527250] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 2457.574876] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 2457.592212] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 2457.609729] wl_diag: si_pmu_chipcontrol           absent
+[ 2457.626284] wl_diag: si_pmu_regcontrol            absent
+[ 2457.642851] wl_diag: si_pmu_pllcontrol            absent
+[ 2457.659784] wl_diag: si_corereg                   absent
+[ 2457.676751] wl_diag: si_gpiocontrol               absent
+[ 2457.693342] wl_diag: si_gpioout                   absent
+[ 2457.709963] wl_diag: si_gpioouten                 absent
+[ 2457.726818] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 2457.754841] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 2457.772481] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 2457.789713] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 2457.807462] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 2457.825302] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 2457.864726] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 2457.882220] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 2457.899884] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 2457.917672] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 2457.935081] wl_diag: otp_init                     absent
+[ 2457.951881] wl_diag: otp_read_word                absent
+[ 2457.968511] wl_diag: otp_read_region              absent
+[ 2457.985990] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 2458.003871] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 2458.021474] wl_diag: si_get_sromctl               absent
+[ 2458.038127] wl_diag: si_set_sromctl               absent
+[ 2458.094610] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 2458.112180] wl_diag: wlc_bmac_read_objmem16       absent
+[ 2458.128787] wl_diag: wlc_bmac_write_objmem16      absent
+[ 2458.145343] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 2458.163051] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 2458.180554] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 2458.197301] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 2458.234532] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 2458.251910] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 2458.269391] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 2458.286898] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 2458.304322] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 2458.324605] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 2458.344549] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 2458.362016] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 2458.379580] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 2458.397180] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 2458.414522] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 2458.432233] wl_diag: dma64_txfast                 absent
+[ 2458.449093] wl_diag: dma64_txunframed             absent
+[ 2458.494369] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 2458.511864] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 2458.529563] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 2458.547161] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 2458.564693] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 2458.570900] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 2484.354474] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 2484.372113] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 2484.389559] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 2484.406839] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 2484.424156] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 2484.471318] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 2484.488749] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 2484.506180] wl_diag: si_pmu_chipcontrol           absent
+[ 2484.523008] wl_diag: si_pmu_regcontrol            absent
+[ 2484.539556] wl_diag: si_pmu_pllcontrol            absent
+[ 2484.556417] wl_diag: si_corereg                   absent
+[ 2484.573044] wl_diag: si_gpiocontrol               absent
+[ 2484.589670] wl_diag: si_gpioout                   absent
+[ 2484.606593] wl_diag: si_gpioouten                 absent
+[ 2484.623203] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 2484.641322] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 2484.658972] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 2484.676303] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 2484.693935] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 2484.731187] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 2484.748694] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 2484.766146] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 2484.783699] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 2484.801472] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 2484.819011] wl_diag: otp_init                     absent
+[ 2484.835649] wl_diag: otp_read_word                absent
+[ 2484.852319] wl_diag: otp_read_region              absent
+[ 2484.881115] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 2484.898636] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 2484.916084] wl_diag: si_get_sromctl               absent
+[ 2484.932685] wl_diag: si_set_sromctl               absent
+[ 2484.949394] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 2484.966891] wl_diag: wlc_bmac_read_objmem16       absent
+[ 2484.983479] wl_diag: wlc_bmac_write_objmem16      absent
+[ 2485.031032] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 2485.048582] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 2485.066150] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 2485.083133] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 2485.100468] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 2485.117934] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 2485.150964] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 2485.168435] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 2485.185777] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 2485.203363] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 2485.220804] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 2485.260921] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 2485.278460] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 2485.296104] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 2485.313396] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 2485.331163] wl_diag: dma64_txfast                 absent
+[ 2485.347903] wl_diag: dma64_txunframed             absent
+[ 2485.370841] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 2485.400838] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 2485.418515] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 2485.436133] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 2485.453759] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 2485.459998] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 2511.223390] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 2511.240995] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 2511.258404] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 2511.275722] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 2511.293105] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 2511.310422] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 2511.327952] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 2511.345402] wl_diag: si_pmu_chipcontrol           absent
+[ 2511.362095] wl_diag: si_pmu_regcontrol            absent
+[ 2511.378687] wl_diag: si_pmu_pllcontrol            absent
+[ 2511.395329] wl_diag: si_corereg                   absent
+[ 2511.411878] wl_diag: si_gpiocontrol               absent
+[ 2511.428452] wl_diag: si_gpioout                   absent
+[ 2511.445058] wl_diag: si_gpioouten                 absent
+[ 2511.487684] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 2511.505073] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 2511.522707] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 2511.539988] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 2511.557570] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 2511.575354] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 2511.607621] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 2511.625168] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 2511.642786] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 2511.660583] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 2511.678135] wl_diag: otp_init                     absent
+[ 2511.694735] wl_diag: otp_read_word                absent
+[ 2511.711311] wl_diag: otp_read_region              absent
+[ 2511.728025] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 2511.745596] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 2511.763116] wl_diag: si_get_sromctl               absent
+[ 2511.779666] wl_diag: si_set_sromctl               absent
+[ 2511.796053] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 2511.813542] wl_diag: wlc_bmac_read_objmem16       absent
+[ 2511.830383] wl_diag: wlc_bmac_write_objmem16      absent
+[ 2511.867497] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 2511.885001] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 2511.902524] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 2511.919160] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 2511.936379] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 2511.953845] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 2511.987438] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 2512.004897] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 2512.022304] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 2512.039891] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 2512.057980] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 2512.075578] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 2512.093193] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 2512.137378] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 2512.154708] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 2512.172480] wl_diag: dma64_txfast                 absent
+[ 2512.189322] wl_diag: dma64_txunframed             absent
+[ 2512.217289] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 2512.234744] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 2512.252372] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 2512.270007] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 2512.287539] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 2512.293746] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 2538.081003] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 2538.098575] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 2538.116054] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 2538.134324] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 2538.151769] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 2538.169235] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 2538.214225] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 2538.231666] wl_diag: si_pmu_chipcontrol           absent
+[ 2538.248372] wl_diag: si_pmu_regcontrol            absent
+[ 2538.265266] wl_diag: si_pmu_pllcontrol            absent
+[ 2538.281795] wl_diag: si_corereg                   absent
+[ 2538.298435] wl_diag: si_gpiocontrol               absent
+[ 2538.315135] wl_diag: si_gpioout                   absent
+[ 2538.331729] wl_diag: si_gpioouten                 absent
+[ 2538.348509] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 2538.384181] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 2538.401761] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 2538.419074] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 2538.436645] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 2538.454438] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 2538.494087] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 2538.511605] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 2538.529258] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 2538.547028] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 2538.564486] wl_diag: otp_init                     absent
+[ 2538.581190] wl_diag: otp_read_word                absent
+[ 2538.597722] wl_diag: otp_read_region              absent
+[ 2538.614418] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 2538.653997] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 2538.671491] wl_diag: si_get_sromctl               absent
+[ 2538.688189] wl_diag: si_set_sromctl               absent
+[ 2538.704795] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 2538.722302] wl_diag: wlc_bmac_read_objmem16       absent
+[ 2538.739031] wl_diag: wlc_bmac_write_objmem16      absent
+[ 2538.755631] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 2538.773449] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 2538.790993] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 2538.807648] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 2538.824926] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 2538.842384] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 2538.883891] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 2538.901326] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 2538.918856] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 2538.936479] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 2538.953940] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 2538.971492] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 2539.013839] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 2539.031508] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 2539.048834] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 2539.066592] wl_diag: dma64_txfast                 absent
+[ 2539.083615] wl_diag: dma64_txunframed             absent
+[ 2539.113746] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 2539.131155] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 2539.148739] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 2539.166406] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 2539.183983] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 2539.190187] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 2572.352811] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 2572.370405] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 2572.387869] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 2572.405167] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 2572.422500] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 2572.439943] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 2572.457419] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 2572.474994] wl_diag: si_pmu_chipcontrol           absent
+[ 2572.491818] wl_diag: si_pmu_regcontrol            absent
+[ 2572.508385] wl_diag: si_pmu_pllcontrol            absent
+[ 2572.525048] wl_diag: si_corereg                   absent
+[ 2572.541637] wl_diag: si_gpiocontrol               absent
+[ 2572.558303] wl_diag: si_gpioout                   absent
+[ 2572.574877] wl_diag: si_gpioouten                 absent
+[ 2572.591627] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 2572.626872] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 2572.644488] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 2572.661816] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 2572.679397] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 2572.697164] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 2572.714677] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 2572.746823] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 2572.764444] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 2572.782125] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 2572.799608] wl_diag: otp_init                     absent
+[ 2572.816441] wl_diag: otp_read_word                absent
+[ 2572.832962] wl_diag: otp_read_region              absent
+[ 2572.849677] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 2572.876884] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 2572.894346] wl_diag: si_get_sromctl               absent
+[ 2572.910986] wl_diag: si_set_sromctl               absent
+[ 2572.927580] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 2572.945166] wl_diag: wlc_bmac_read_objmem16       absent
+[ 2572.961807] wl_diag: wlc_bmac_write_objmem16      absent
+[ 2572.996763] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 2573.014435] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 2573.031944] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 2573.048727] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 2573.065993] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 2573.106641] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 2573.124110] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 2573.141474] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 2573.158929] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 2573.176574] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 2573.194625] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 2573.212248] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 2573.256556] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 2573.274080] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 2573.291464] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 2573.309254] wl_diag: dma64_txfast                 absent
+[ 2573.325943] wl_diag: dma64_txunframed             absent
+[ 2573.346492] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 2573.376574] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 2573.394136] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 2573.411822] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 2573.429426] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 2573.435630] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 2599.218915] wl_diag: phy_reg_read                 @7f0dff6c kretprobe
+[ 2599.236523] wl_diag: phy_reg_write                @7f0dffcc kprobe
+[ 2599.253876] wl_diag: phy_reg_mod                  @7f0e9fd4 kprobe
+[ 2599.293486] wl_diag: phy_reg_and                  @7f0e9ee4 kprobe
+[ 2599.310831] wl_diag: phy_reg_or                   @7f0e9f5c kprobe
+[ 2599.328149] wl_diag: write_radio_reg              @7f0dfe24 kprobe
+[ 2599.345630] wl_diag: mod_radio_reg                @7f0e9134 kprobe
+[ 2599.363072] wl_diag: si_pmu_chipcontrol           absent
+[ 2599.380027] wl_diag: si_pmu_regcontrol            absent
+[ 2599.396706] wl_diag: si_pmu_pllcontrol            absent
+[ 2599.413226] wl_diag: si_corereg                   absent
+[ 2599.429888] wl_diag: si_gpiocontrol               absent
+[ 2599.446562] wl_diag: si_gpioout                   absent
+[ 2599.463135] wl_diag: si_gpioouten                 absent
+[ 2599.480146] wl_diag: wlc_phy_table_read_acphy     @7f089704 kprobe
+[ 2599.513307] wl_diag: wlc_phy_table_write_acphy    @7f085578 kprobe
+[ 2599.530931] wl_diag: wlc_bmac_mctrl               @7f221dd8 kprobe
+[ 2599.548230] wl_diag: wlc_bmac_mhf                 @7f220994 kprobe
+[ 2599.565915] wl_diag: wlc_bmac_mhf_get             @7f221d88 kretprobe
+[ 2599.583814] wl_diag: wlc_bmac_templateptr_wreg    @7f22251c kprobe
+[ 2599.623277] wl_diag: wlc_bmac_templatedata_wreg   @7f222578 kprobe
+[ 2599.640720] wl_diag: wlc_bmac_templateptr_rreg    @7f222544 kretprobe
+[ 2599.658362] wl_diag: wlc_bmac_templatedata_rreg   @7f2225a0 kretprobe
+[ 2599.676090] wl_diag: wlc_bmac_write_template_ram  @7f2225d4 kprobe
+[ 2599.693634] wl_diag: otp_init                     absent
+[ 2599.710416] wl_diag: otp_read_word                absent
+[ 2599.726952] wl_diag: otp_read_region              absent
+[ 2599.743728] wl_diag: wlc_phy_cal_init             @7f0ecb6c kprobe
+[ 2599.773201] wl_diag: wlc_bmac_bw_set              @7f223130 kprobe
+[ 2599.790771] wl_diag: si_get_sromctl               absent
+[ 2599.807356] wl_diag: si_set_sromctl               absent
+[ 2599.824105] wl_diag: wlc_phy_chanspec_shm_set     @7f0ef77c kprobe
+[ 2599.841618] wl_diag: wlc_bmac_read_objmem16       absent
+[ 2599.858251] wl_diag: wlc_bmac_write_objmem16      absent
+[ 2599.893126] wl_diag: wlc_bmac_copyfrom_objmem     @7f22771c kprobe
+[ 2599.910688] wl_diag: wlc_bmac_copyto_objmem       @7f227170 kprobe
+[ 2599.928294] wl_diag: wlc_bmac_set_addrmatch       absent
+[ 2599.945278] wl_diag: wlc_set_addrmatch            @7f1e8550 kprobe
+[ 2599.962491] wl_diag: wlc_bmac_set_rxe_addrmatch   @7f2224ac kprobe
+[ 2599.983190] wl_diag: wlc_bmac_write_amt           @7f222368 kprobe
+[ 2600.003945] wl_diag: wlc_bmac_set_rcmta           @7f221fd4 kprobe
+[ 2600.021464] wl_diag: phy_reg_write_array          @7f0e9540 kprobe
+[ 2600.038958] wl_diag: phy_reg_read_wide            @7f0e94f8 kretprobe
+[ 2600.056583] wl_diag: phy_reg_write_wide           @7f0e9eb4 kprobe
+[ 2600.073972] wl_diag: wlc_bmac_write_ihr           @7f224b44 kprobe
+[ 2600.091480] wl_diag: wlc_bmac_set_shm             @7f2270c4 kprobe
+[ 2600.109037] wl_diag: wlc_bmac_phyclk_fgc          @7f222e48 kprobe
+[ 2600.143004] wl_diag: wlc_ioctl                    @7f1b41bc kprobe
+[ 2600.160335] wl_diag: read_radio_reg               @7f0dfd24 kretprobe
+[ 2600.178024] wl_diag: dma64_txfast                 absent
+[ 2600.194700] wl_diag: dma64_txunframed             absent
+[ 2600.222932] wl_diag: wlc_recv                     @7f2cdbc8 kprobe
+[ 2600.243046] wl_diag: wlc_dotxstatus               @7f2cbf5c kprobe
+[ 2600.260681] wl_diag: wlc_bmac_read_shm            @7f226ee8 kretprobe
+[ 2600.278341] wl_diag: wlc_bmac_write_shm           @7f226f80 kprobe
+[ 2600.296026] wl_diag: wlc_txfifo                   @7f2c75b0 kprobe
+[ 2600.302233] wl_diag: wl: 39 of 57 hooks resolved, 39 attached
+[ 2630.151594] wl_diag: capture_hot_init
+[ 2630.155972] wl_diag: === inizio fase 20 ===
+[ 2631.179550] wl_diag: === chanspec 5g36/20 ===
+[ 2652.313273] wl_diag: === chanspec 5g40/20 ===
+[ 2673.451575] wl_diag: === chanspec 5g44/20 ===
+[ 2694.591040] wl_diag: === chanspec 5g48/20 ===
+[ 2715.740358] wl_diag: === chanspec 5g144/20 ===
+[ 2736.879843] wl_diag: === chanspec 5g149/20 ===
+[ 2758.019091] wl_diag: === chanspec 5g153/20 ===
+[ 2779.154987] wl_diag: === chanspec 5g157/20 ===
+[ 2800.305184] wl_diag: === chanspec 5g161/20 ===
+[ 2821.447126] wl_diag: === chanspec 5g165/20 ===
+[ 2842.577853] wl_diag: === fine fase 20 ===

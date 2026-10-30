@@ -41,6 +41,7 @@
 #include <linux/fs.h>
 #include <linux/uaccess.h>
 #include <linux/poll.h>
+#include <linux/mutex.h>
 #include <linux/delay.h>
 #include <linux/sched.h>
 #include <linux/workqueue.h>
@@ -548,6 +549,7 @@ static bool selftest_run(void)
 	volatile u32 *p;
 	phys_addr_t phys;
 	u32 *page, got;
+	struct page *test_pg;
 	int before;
 	bool ok = false;
 
@@ -575,14 +577,17 @@ static bool selftest_run(void)
 		goto out;
 	}
 
-	/* The alias must be uncached, like the real window, or the test
-	 * measures the cache: ioremap() is device memory on ARM, so a read
-	 * through it reaches memory and a write through it is not held in a
-	 * line. Flush the page's cached (vmalloc) view before writing the
-	 * pattern through the uncached alias, so the two agree. */
-	t.alias = ioremap(phys, PAGE_SIZE);
+	/* ARM's ioremap() refuses RAM (pfn_valid), so the test page cannot get
+	 * the device-memory alias the real window does. A second vmap() of the
+	 * same page stands in: cacheable like the vmalloc view, and the
+	 * Cortex-A9 D-cache is PIPT, so the two views agree without aliasing.
+	 * The test still proves trap, decode, emulate and resume through an
+	 * alias; that the window's alias is uncached rests on ioremap() of the
+	 * BAR. */
+	test_pg = vmalloc_to_page(page);
+	t.alias = (void __iomem *)vmap(&test_pg, 1, VM_MAP, PAGE_KERNEL);
 	if (!t.alias) {
-		pr_err("wl_mmio_trap: selftest: ioremap of the test alias failed\n");
+		pr_err("wl_mmio_trap: selftest: vmap of the test alias failed\n");
 		goto out;
 	}
 	flush_kernel_vmap_range(page, PAGE_SIZE);
@@ -617,7 +622,7 @@ static bool selftest_run(void)
 		pr_info("wl_mmio_trap: selftest passed: trapped, decoded, resumed\n");
 out:
 	if (t.alias)
-		iounmap(t.alias);
+		vunmap((__force void *)t.alias);
 	mmio_pte_release(t.win);
 	vfree(page);
 	return ok;
@@ -626,63 +631,132 @@ out:
 /* ---- /proc/wl_mmio_trap ------------------------------------------------- */
 
 /* Big-endian, the stream decode-wl-mmio.py reads, as the MIPS build writes
- * it natively. */
+ * it natively. A MARK's label and a DATA record's bytes are already in
+ * stream order in addr/val/aux (memcpy'd there), so those stay as they are. */
 static void to_wire(struct wl_mmio_rec *r)
 {
 	r->ts_ns = (__force u64)cpu_to_be64(r->ts_ns);
 	r->seq = (__force u32)cpu_to_be32(r->seq);
-	r->addr = (__force u32)cpu_to_be32(r->addr);
-	r->val = (__force u32)cpu_to_be32(r->val);
-	r->aux = (__force u32)cpu_to_be32(r->aux);
+	if (r->op != OP_MMIO_MARK && r->op != OP_MMIO_DATA) {
+		r->addr = (__force u32)cpu_to_be32(r->addr);
+		r->val = (__force u32)cpu_to_be32(r->val);
+		r->aux = (__force u32)cpu_to_be32(r->aux);
+	}
 	r->_pad = (__force u16)cpu_to_be16(r->_pad);
 }
 
-static ssize_t proc_read(struct file *f, char __user *buf, size_t count,
-			 loff_t *ppos)
+/*
+ * The stream is a byte stream: a read takes as many bytes as fit, and the
+ * rest of a record waits for that reader's next read. Returning 0 for a
+ * buffer smaller than a record would be end-of-file to a reader that fills
+ * a buffer with repeated reads (busybox cat stopped after 146 records, 4088
+ * bytes). The half-read record belongs to the open file, so the writes
+ * (on, off, mark) do not touch it, and a reader that quits mid-record only
+ * loses that record (the sequence numbers show the gap); the next reader
+ * starts on a record.
+ */
+struct rd_state {
+	struct mutex lock;
+	u8 pend[sizeof(struct wl_mmio_rec)];
+	unsigned int off, len;
+};
+
+/* Taking a record off the ring: one consumer at a time. */
+static DEFINE_MUTEX(ring_rd_lock);
+
+/* The next record, on the wire, into st->pend; false if there is none. */
+static bool rd_next(struct rd_state *st)
 {
 	struct wl_mmio_rec r;
 	const void *p;
-	u32 d, n;
+	bool ok = true;
+	u32 d;
 
-	if (count < sizeof(r))
-		return 0;
-
+	mutex_lock(&ring_rd_lock);
 	d = atomic_xchg(&drops, 0);
 	if (d) {
 		memset(&r, 0, sizeof(r));
 		r.ts_ns = now_ns();
 		r.op = OP_DROP;
 		r.aux = d;
-		to_wire(&r);
-		if (copy_to_user(buf, &r, sizeof(r)))
-			return -EFAULT;
-		return sizeof(r);
+	} else if (wl_ring_peek(&ring, 1, &p)) {
+		memcpy(&r, p, sizeof(r));
+		wl_ring_consume(&ring, 1);
+	} else {
+		ok = false;
 	}
-
-	for (;;) {
-		n = wl_ring_peek(&ring, 1, &p);
-		if (n)
-			break;
-		if (f->f_flags & O_NONBLOCK)
-			return -EAGAIN;
-		if (wait_event_interruptible_timeout(rec_waitq,
-			wl_ring_len(&ring) || atomic_read(&drops), HZ / 5) < 0)
-			return -ERESTARTSYS;
-		if (atomic_read(&drops))
-			return 0;
-	}
-	memcpy(&r, p, sizeof(r));
-	wl_ring_consume(&ring, 1);
+	mutex_unlock(&ring_rd_lock);
+	if (!ok)
+		return false;
 	to_wire(&r);
-	if (copy_to_user(buf, &r, sizeof(r)))
-		return -EFAULT;
-	return sizeof(r);
+	memcpy(st->pend, &r, sizeof(r));
+	st->off = 0;
+	st->len = sizeof(r);
+	return true;
+}
+
+static ssize_t proc_read(struct file *f, char __user *buf, size_t count,
+			 loff_t *ppos)
+{
+	struct rd_state *st = f->private_data;
+	size_t done = 0, n;
+	ssize_t ret;
+
+	if (mutex_lock_interruptible(&st->lock))
+		return -ERESTARTSYS;
+	while (done < count) {
+		if (st->off == st->len && !rd_next(st)) {
+			if (done)
+				break;
+			if (f->f_flags & O_NONBLOCK) {
+				ret = -EAGAIN;
+				goto out;
+			}
+			if (wait_event_interruptible_timeout(rec_waitq,
+				wl_ring_len(&ring) || atomic_read(&drops), HZ / 5) < 0) {
+				ret = -ERESTARTSYS;
+				goto out;
+			}
+			continue;
+		}
+		n = min_t(size_t, count - done, st->len - st->off);
+		if (copy_to_user(buf + done, st->pend + st->off, n)) {
+			ret = -EFAULT;
+			goto out;
+		}
+		st->off += n;
+		done += n;
+	}
+	ret = done;
+out:
+	mutex_unlock(&st->lock);
+	return ret;
+}
+
+static int proc_open(struct inode *inode, struct file *f)
+{
+	struct rd_state *st;
+
+	if (!(f->f_mode & FMODE_READ))
+		return 0;
+	st = kzalloc(sizeof(*st), GFP_KERNEL);
+	if (!st)
+		return -ENOMEM;
+	mutex_init(&st->lock);
+	f->private_data = st;
+	return 0;
+}
+
+static int proc_release(struct inode *inode, struct file *f)
+{
+	kfree(f->private_data);
+	return 0;
 }
 
 static ssize_t proc_write(struct file *f, const char __user *buf, size_t count,
 			  loff_t *ppos)
 {
-	char cmd[16];
+	char cmd[24];	/* "mark " + a 12-character label + newline */
 	size_t n = min(count, sizeof(cmd) - 1);
 
 	if (copy_from_user(cmd, buf, n))
@@ -703,9 +777,9 @@ static ssize_t proc_write(struct file *f, const char __user *buf, size_t count,
 			atomic_read(&n_mismatch), atomic_read(&n_cond),
 			atomic_read(&drops));
 	} else if (!strncmp(cmd, "mark ", 5)) {
-		char label[12] = { 0 };
+		char label[13] = { 0 };
 
-		strncpy(label, cmd + 5, sizeof(label) - 1);
+		strncpy(label, cmd + 5, 12);
 		emit_mark(label);
 	} else {
 		return -EINVAL;
@@ -723,6 +797,8 @@ static unsigned int proc_poll(struct file *f, poll_table *wait)
 
 static const struct file_operations proc_fops = {
 	.owner = THIS_MODULE,
+	.open = proc_open,
+	.release = proc_release,
 	.read = proc_read,
 	.write = proc_write,
 	.poll = proc_poll,
