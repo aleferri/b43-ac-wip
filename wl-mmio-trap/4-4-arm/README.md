@@ -71,7 +71,8 @@ a valid `pgd` before using it.
 
 At load, before `wl`'s window is touched, the module traps, decodes and
 resumes a load it issues itself on a fresh `vmalloc` page, through the same
-pte-invalidation and alias path the real window uses. It must print
+pte-invalidation and alias path the real window uses (the test page's alias
+is a second `vmap()` of it: ARM's `ioremap()` refuses RAM). It must print
 
 ```
 wl_mmio_trap: selftest passed: trapped, decoded, resumed

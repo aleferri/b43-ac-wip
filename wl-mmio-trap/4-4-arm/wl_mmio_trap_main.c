@@ -548,6 +548,7 @@ static bool selftest_run(void)
 	volatile u32 *p;
 	phys_addr_t phys;
 	u32 *page, got;
+	struct page *test_pg;
 	int before;
 	bool ok = false;
 
@@ -575,14 +576,17 @@ static bool selftest_run(void)
 		goto out;
 	}
 
-	/* The alias must be uncached, like the real window, or the test
-	 * measures the cache: ioremap() is device memory on ARM, so a read
-	 * through it reaches memory and a write through it is not held in a
-	 * line. Flush the page's cached (vmalloc) view before writing the
-	 * pattern through the uncached alias, so the two agree. */
-	t.alias = ioremap(phys, PAGE_SIZE);
+	/* ARM's ioremap() refuses RAM (pfn_valid), so the test page cannot get
+	 * the device-memory alias the real window does. A second vmap() of the
+	 * same page stands in: cacheable like the vmalloc view, and the
+	 * Cortex-A9 D-cache is PIPT, so the two views agree without aliasing.
+	 * The test still proves trap, decode, emulate and resume through an
+	 * alias; that the window's alias is uncached rests on ioremap() of the
+	 * BAR. */
+	test_pg = vmalloc_to_page(page);
+	t.alias = (void __iomem *)vmap(&test_pg, 1, VM_MAP, PAGE_KERNEL);
 	if (!t.alias) {
-		pr_err("wl_mmio_trap: selftest: ioremap of the test alias failed\n");
+		pr_err("wl_mmio_trap: selftest: vmap of the test alias failed\n");
 		goto out;
 	}
 	flush_kernel_vmap_range(page, PAGE_SIZE);
@@ -617,7 +621,7 @@ static bool selftest_run(void)
 		pr_info("wl_mmio_trap: selftest passed: trapped, decoded, resumed\n");
 out:
 	if (t.alias)
-		iounmap(t.alias);
+		vunmap((__force void *)t.alias);
 	mmio_pte_release(t.win);
 	vfree(page);
 	return ok;
