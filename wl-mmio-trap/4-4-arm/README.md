@@ -127,6 +127,11 @@ echo status      > /proc/wl_mmio_trap; dmesg | tail -1
 
 Decode on the host with `python3 ../decode-wl-mmio.py < trace.bin`.
 
+`/proc/wl_mmio_trap` is a byte stream, so any reader works (busybox `cat`,
+`dd` with any block size); a reader stopped in the middle of a record loses
+only that record, which the sequence numbers show, and the next reader
+starts on a record.
+
 ## TX descriptors
 
 Like the MIPS build, at a TX channel's index write the module walks the DMA

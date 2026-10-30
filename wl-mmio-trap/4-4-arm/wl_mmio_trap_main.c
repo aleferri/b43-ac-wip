@@ -41,6 +41,7 @@
 #include <linux/fs.h>
 #include <linux/uaccess.h>
 #include <linux/poll.h>
+#include <linux/mutex.h>
 #include <linux/delay.h>
 #include <linux/sched.h>
 #include <linux/workqueue.h>
@@ -644,46 +645,112 @@ static void to_wire(struct wl_mmio_rec *r)
 	r->_pad = (__force u16)cpu_to_be16(r->_pad);
 }
 
-static ssize_t proc_read(struct file *f, char __user *buf, size_t count,
-			 loff_t *ppos)
+/*
+ * The stream is a byte stream: a read takes as many bytes as fit, and the
+ * rest of a record waits for that reader's next read. Returning 0 for a
+ * buffer smaller than a record would be end-of-file to a reader that fills
+ * a buffer with repeated reads (busybox cat stopped after 146 records, 4088
+ * bytes). The half-read record belongs to the open file, so the writes
+ * (on, off, mark) do not touch it, and a reader that quits mid-record only
+ * loses that record (the sequence numbers show the gap); the next reader
+ * starts on a record.
+ */
+struct rd_state {
+	struct mutex lock;
+	u8 pend[sizeof(struct wl_mmio_rec)];
+	unsigned int off, len;
+};
+
+/* Taking a record off the ring: one consumer at a time. */
+static DEFINE_MUTEX(ring_rd_lock);
+
+/* The next record, on the wire, into st->pend; false if there is none. */
+static bool rd_next(struct rd_state *st)
 {
 	struct wl_mmio_rec r;
 	const void *p;
-	u32 d, n;
+	bool ok = true;
+	u32 d;
 
-	if (count < sizeof(r))
-		return 0;
-
+	mutex_lock(&ring_rd_lock);
 	d = atomic_xchg(&drops, 0);
 	if (d) {
 		memset(&r, 0, sizeof(r));
 		r.ts_ns = now_ns();
 		r.op = OP_DROP;
 		r.aux = d;
-		to_wire(&r);
-		if (copy_to_user(buf, &r, sizeof(r)))
-			return -EFAULT;
-		return sizeof(r);
+	} else if (wl_ring_peek(&ring, 1, &p)) {
+		memcpy(&r, p, sizeof(r));
+		wl_ring_consume(&ring, 1);
+	} else {
+		ok = false;
 	}
-
-	for (;;) {
-		n = wl_ring_peek(&ring, 1, &p);
-		if (n)
-			break;
-		if (f->f_flags & O_NONBLOCK)
-			return -EAGAIN;
-		if (wait_event_interruptible_timeout(rec_waitq,
-			wl_ring_len(&ring) || atomic_read(&drops), HZ / 5) < 0)
-			return -ERESTARTSYS;
-		if (atomic_read(&drops))
-			return 0;
-	}
-	memcpy(&r, p, sizeof(r));
-	wl_ring_consume(&ring, 1);
+	mutex_unlock(&ring_rd_lock);
+	if (!ok)
+		return false;
 	to_wire(&r);
-	if (copy_to_user(buf, &r, sizeof(r)))
-		return -EFAULT;
-	return sizeof(r);
+	memcpy(st->pend, &r, sizeof(r));
+	st->off = 0;
+	st->len = sizeof(r);
+	return true;
+}
+
+static ssize_t proc_read(struct file *f, char __user *buf, size_t count,
+			 loff_t *ppos)
+{
+	struct rd_state *st = f->private_data;
+	size_t done = 0, n;
+	ssize_t ret;
+
+	if (mutex_lock_interruptible(&st->lock))
+		return -ERESTARTSYS;
+	while (done < count) {
+		if (st->off == st->len && !rd_next(st)) {
+			if (done)
+				break;
+			if (f->f_flags & O_NONBLOCK) {
+				ret = -EAGAIN;
+				goto out;
+			}
+			if (wait_event_interruptible_timeout(rec_waitq,
+				wl_ring_len(&ring) || atomic_read(&drops), HZ / 5) < 0) {
+				ret = -ERESTARTSYS;
+				goto out;
+			}
+			continue;
+		}
+		n = min_t(size_t, count - done, st->len - st->off);
+		if (copy_to_user(buf + done, st->pend + st->off, n)) {
+			ret = -EFAULT;
+			goto out;
+		}
+		st->off += n;
+		done += n;
+	}
+	ret = done;
+out:
+	mutex_unlock(&st->lock);
+	return ret;
+}
+
+static int proc_open(struct inode *inode, struct file *f)
+{
+	struct rd_state *st;
+
+	if (!(f->f_mode & FMODE_READ))
+		return 0;
+	st = kzalloc(sizeof(*st), GFP_KERNEL);
+	if (!st)
+		return -ENOMEM;
+	mutex_init(&st->lock);
+	f->private_data = st;
+	return 0;
+}
+
+static int proc_release(struct inode *inode, struct file *f)
+{
+	kfree(f->private_data);
+	return 0;
 }
 
 static ssize_t proc_write(struct file *f, const char __user *buf, size_t count,
@@ -730,6 +797,8 @@ static unsigned int proc_poll(struct file *f, poll_table *wait)
 
 static const struct file_operations proc_fops = {
 	.owner = THIS_MODULE,
+	.open = proc_open,
+	.release = proc_release,
 	.read = proc_read,
 	.write = proc_write,
 	.poll = proc_poll,
