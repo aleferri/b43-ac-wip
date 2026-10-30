@@ -630,14 +630,17 @@ out:
 /* ---- /proc/wl_mmio_trap ------------------------------------------------- */
 
 /* Big-endian, the stream decode-wl-mmio.py reads, as the MIPS build writes
- * it natively. */
+ * it natively. A MARK's label and a DATA record's bytes are already in
+ * stream order in addr/val/aux (memcpy'd there), so those stay as they are. */
 static void to_wire(struct wl_mmio_rec *r)
 {
 	r->ts_ns = (__force u64)cpu_to_be64(r->ts_ns);
 	r->seq = (__force u32)cpu_to_be32(r->seq);
-	r->addr = (__force u32)cpu_to_be32(r->addr);
-	r->val = (__force u32)cpu_to_be32(r->val);
-	r->aux = (__force u32)cpu_to_be32(r->aux);
+	if (r->op != OP_MMIO_MARK && r->op != OP_MMIO_DATA) {
+		r->addr = (__force u32)cpu_to_be32(r->addr);
+		r->val = (__force u32)cpu_to_be32(r->val);
+		r->aux = (__force u32)cpu_to_be32(r->aux);
+	}
 	r->_pad = (__force u16)cpu_to_be16(r->_pad);
 }
 
