@@ -5323,7 +5323,12 @@ static void b43_phy_ac_crs_regs_write(struct b43_wldev *dev, u16 val)
 
 /*
  * CRS min-power threshold, the low byte of 0x0321 through 0x0336: an entry of
- * the current width's row, plus 4 when cold.
+ * the current width's row, plus 4 when cold or on PHY revs 0 and 1.
+ *
+ * wl 7.14.164 (wlc_phy_crs_min_pwr_cal_acphy) adds 4 to all three rows
+ * whenever pi->pubpi.phy_rev <= 1, not only when cold: the RT-AC66U B1
+ * (BCM4360, PHY rev 1) reads 58/61, 64 and 59 at 20, 40 and 80 MHz, every
+ * one a ladder entry plus 4, in every capture.
  *
  * The ladder is the D6220's: three zero-terminated rows of fifteen u8, from
  * the .rodata of the 7.14.89 blob at +0x40e84, +0x40e94 and +0x40ea4; see
@@ -5488,7 +5493,7 @@ static u8 b43_phy_ac_crs_min_pwr(struct b43_wldev *dev, unsigned int idx,
 {
 	u8 crs = b43_phy_ac_crs_ladder[b43_phy_ac_bw_step(dev)][idx];
 
-	if (cold)
+	if (cold || dev->phy.rev <= 1)
 		crs = (u8)(crs + 4);	/* cold bump */
 
 	return crs;
