@@ -909,7 +909,8 @@ struct b43_tpl_layout {
 	u16 bcn_base[2];
 	u16 bcn_size;
 	u8 hdr_len;
-	u8 plcp_off;
+	u8 plcp_off;		/* PLCP header offset in the template, OFDM rates */
+	u8 plcp_off_cck;	/* the same for CCK rates */
 };
 
 /*

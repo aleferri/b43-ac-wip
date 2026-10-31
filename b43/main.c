@@ -1918,6 +1918,7 @@ static const struct b43_tpl_layout b43_tpl_layout_legacy = {
 	.bcn_size	= 0x0200,
 	.hdr_len	= sizeof(struct b43_plcp_hdr6),
 	.plcp_off	= 0,
+	.plcp_off_cck	= 0,
 };
 
 static const struct b43_tpl_layout b43_tpl_layout_ac_784 = {
@@ -1926,6 +1927,7 @@ static const struct b43_tpl_layout b43_tpl_layout_ac_784 = {
 	.bcn_size	= 0x0200,
 	.hdr_len	= 12,
 	.plcp_off	= 3,
+	.plcp_off_cck	= 6,
 };
 
 static const struct b43_tpl_layout b43_tpl_layout_ac_832 = {
@@ -1934,6 +1936,7 @@ static const struct b43_tpl_layout b43_tpl_layout_ac_832 = {
 	.bcn_size	= 0x0280,
 	.hdr_len	= 12,
 	.plcp_off	= 3,
+	.plcp_off_cck	= 6,
 };
 
 static const struct b43_tpl_layout *b43_tpl_layout_find(struct b43_wldev *dev)
@@ -1994,15 +1997,16 @@ static const struct b43_shm_layout *b43_shm_layout_find(struct b43_wldev *dev)
 	return NULL;
 }
 
-/* Byte @i of a template: the header the layout asks for, then the frame. */
-static u8 b43_tpl_byte(const struct b43_tpl_layout *tpl,
+/* Byte @i of a template: a @hdr_len header with the PLCP at @plcp_off, then
+ * the frame. */
+static u8 b43_tpl_byte(u8 hdr_len, u8 plcp_off,
 		       const struct b43_plcp_hdr4 *plcp,
 		       const u8 *data, u16 size, unsigned int i)
 {
-	if (i >= tpl->hdr_len)
-		return i - tpl->hdr_len < size ? data[i - tpl->hdr_len] : 0;
-	if (i >= tpl->plcp_off && i - tpl->plcp_off < sizeof(plcp->raw))
-		return plcp->raw[i - tpl->plcp_off];
+	if (i >= hdr_len)
+		return i - hdr_len < size ? data[i - hdr_len] : 0;
+	if (i >= plcp_off && i - plcp_off < sizeof(plcp->raw))
+		return plcp->raw[i - plcp_off];
 	return 0;
 }
 
@@ -2011,22 +2015,11 @@ static void b43_write_template_common(struct b43_wldev *dev,
 				      u16 ram_offset,
 				      u16 shm_size_offset, u8 rate)
 {
-	struct b43_tpl_layout cck_tpl;
 	const struct b43_tpl_layout *tpl = dev->fw.tpl;
+	u8 plcp_off = b43_is_cck_rate(rate) ? tpl->plcp_off_cck : tpl->plcp_off;
 	unsigned int i, total = tpl->hdr_len + size;
-	struct b43_plcp_hdr4 plcp;
-
-	/*
-	 * The 12-byte AC header carries the PLCP at offset 3 for OFDM and at
-	 * offset 6 for CCK (aleferri/b43-ac-wip#4); a CCK beacon with it at 3
-	 * faulted on every TBTT on 2.4 GHz.
-	 */
-	if (tpl->hdr_len == 12 && b43_is_cck_rate(rate)) {
-		cck_tpl = *tpl;
-		cck_tpl.plcp_off = 6;
-		tpl = &cck_tpl;
-	}
 	struct b43_ram_seq seq = { .next = U16_MAX }, *s = NULL;
+	struct b43_plcp_hdr4 plcp;
 
 	if (dev->phy.type == B43_PHYTYPE_AC) {
 		seq.swap = b43_read32(dev, B43_MMIO_MACCTL) & B43_MACCTL_BE;
@@ -2041,8 +2034,8 @@ static void b43_write_template_common(struct b43_wldev *dev,
 		unsigned int b;
 
 		for (b = 0; b < sizeof(u32); b++)
-			tmp |= (u32)b43_tpl_byte(tpl, &plcp, data, size,
-						 i + b) << (8 * b);
+			tmp |= (u32)b43_tpl_byte(tpl->hdr_len, plcp_off, &plcp,
+						 data, size, i + b) << (8 * b);
 		b43_tpl_write(dev, s, ram_offset + i, tmp);
 	}
 	b43_shm_write16(dev, B43_SHM_SHARED, shm_size_offset, total);
