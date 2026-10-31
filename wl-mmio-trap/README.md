@@ -194,7 +194,8 @@ the rate blocks with their PHY TX control words, the PLCP read as L-SIG,
 HT-SIG or VHT-SIG-A by the frame type, and the 802.11 header. For register-level decoding give the binary to
 `../reverse-tools/mmio2ops.py`, which reads it directly. The offsets are the
 CPU side; on this big-endian host a 16-bit register is at `offset ^ 2`, which
-mmio2ops applies.
+mmio2ops applies. The ARM build records the device side instead and sets
+`0x200` in `aux` to say so (see `4-4-arm/README.md`).
 
 Record: `struct wl_mmio_rec`, packed, `u64 ts_ns; u32 seq; u32 addr; u32 val;
 u32 aux; u8 op; u8 cpu; u16 pad`. `op` is 60 read, 61 write, 62 mark (label in

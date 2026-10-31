@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Decode a bus-level capture of a PCIe BCMA wireless chip into op classes.
 
-Four capture formats, the same device traffic:
+Five capture formats, the same device traffic:
 
     mmiotrace     the Linux kernel's mmiotrace text, taken on an x86 host
                   (router-data/archer-t5e);
     wl-mmio-trap  the binary records of wl-mmio-trap/, taken on a MIPS
-                  big-endian router (router-data/vd625-agcombo/*.bin);
+                  big-endian router (router-data/vd625-agcombo/*.bin), or
+                  on ARM by a trap that flags its device offsets;
+    wl-mmio-trap-arm
+                  the same records from the ARM trap before it flagged its
+                  device offsets (router-data/r7000/mmio-*.zip);
     bpftrace      `<ns> R32|W16|... <va> <val>` lines from kprobes on the
                   hybrid wl's osl_read*/osl_write* (router-data/macbookair6-1);
     ftrace        the kprobe events of the same accessors as the ftrace
@@ -118,20 +122,31 @@ def parse_mmiotrace(path):
 TRAP_REC = struct.Struct(">QIIIIBBH")      # ts_ns seq addr val aux op cpu pad
 TRAP_RD, TRAP_WR, TRAP_MARK, TRAP_DROP = 60, 61, 62, 255
 TRAP_AUX_WIDTH = 0xff
+TRAP_AUX_DEV_OFFSET = 0x200
 
 
-def trap_device_offset(off, width):
+def trap_device_offset(off, width, aux, dev_offsets):
     """The register a sub-word access reaches on the device.
 
-    The trap records the offset of wl's own load or store, the CPU side. On
-    the MIPS big-endian host the 16-bit register accessors address the other
+    The MIPS trap records the offset of wl's own load or store, the CPU side.
+    On that big-endian host the 16-bit register accessors address the other
     half of the 32-bit word, r ^ 2, so the device sees offset ^ 2: taken
     literally, the capture writes PHY addresses to PHY_DATA and reads the
-    data back from PHY_CONTROL. 32-bit accesses are not moved."""
+    data back from PHY_CONTROL. 32-bit accesses are not moved. The ARM trap
+    records the device's offset and says so in aux; its captures from before
+    that flag need `dev_offsets`."""
+    if dev_offsets or aux & TRAP_AUX_DEV_OFFSET:
+        return off
     return off ^ 2 if width == 2 else off
 
 
-def parse_wl_mmio_trap(path):
+def parse_wl_mmio_trap_arm(path):
+    """An ARM wl_mmio_trap capture recorded before the trap flagged its
+    device offsets."""
+    return parse_wl_mmio_trap(path, dev_offsets=True)
+
+
+def parse_wl_mmio_trap(path, dev_offsets=False):
     """Records of a wl_mmio_trap capture; marks come as kind 'M' with the
     label in `val`, drops are reported on stderr, as the queue loses them."""
     data = open(path, "rb").read()
@@ -144,7 +159,7 @@ def parse_wl_mmio_trap(path):
         if op in (TRAP_RD, TRAP_WR):
             width = aux & TRAP_AUX_WIDTH
             yield Op(t, "R" if op == TRAP_RD else "W", width,
-                     trap_device_offset(addr, width), val)
+                     trap_device_offset(addr, width, aux, dev_offsets), val)
         elif op == TRAP_MARK:
             raw = b"".join(w.to_bytes(4, "big") for w in (addr, val, aux))
             yield Op(t, "M", 0, 0, raw.split(b"\0")[0].decode("ascii", "replace"))
@@ -225,6 +240,7 @@ def parse_ftrace(path, keep_delay=False):
 
 
 PARSERS = {"mmiotrace": parse_mmiotrace, "wl-mmio-trap": parse_wl_mmio_trap,
+           "wl-mmio-trap-arm": parse_wl_mmio_trap_arm,
            "bpftrace": parse_bpftrace, "ftrace": parse_ftrace}
 
 

@@ -128,7 +128,15 @@ echo off         > /proc/wl_mmio_trap
 echo status      > /proc/wl_mmio_trap; dmesg | tail -1
 ```
 
-Decode on the host with `python3 ../decode-wl-mmio.py < trace.bin`.
+Decode on the host with `python3 ../decode-wl-mmio.py < trace.bin`, or into
+op classes with `../../reverse-tools/mmio2ops.py trace.bin`.
+
+The records carry the offset the device sees: on this little-endian host a
+16-bit access reaches the half it names, where the MIPS records carry the
+CPU side and mmio2ops moves 16-bit accesses to `offset ^ 2`. Each access
+record sets `0x200` in `aux` to tell the two apart. Captures taken before
+that flag (`router-data/r7000/mmio-*.zip`) need
+`mmio2ops.py --format wl-mmio-trap-arm`.
 
 `/proc/wl_mmio_trap` is a byte stream, so any reader works (busybox `cat`,
 `dd` with any block size); a reader stopped in the middle of a record loses

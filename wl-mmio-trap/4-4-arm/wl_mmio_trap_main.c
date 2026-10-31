@@ -126,6 +126,11 @@ MODULE_PARM_DESC(dd_bus_off, "subtracted from a DMA bus address to get the physi
 #define OP_DROP     255
 
 #define MMIO_AUX_WIDTH_MASK 0x000000ff
+/* addr is the offset the device sees. Set on every access record here: on
+ * little-endian ARM a sub-word access reaches the offset it names, where the
+ * MIPS build's records carry the CPU side and the decoder moves 16-bit
+ * accesses to the other half of the word. 0x100 is the MIPS delay slot. */
+#define MMIO_AUX_DEV_OFFSET 0x00000200
 
 struct wl_mmio_rec {
 	u64 ts_ns; u32 seq; u32 addr; u32 val; u32 aux;
@@ -392,7 +397,8 @@ static int trap_fault_fn(unsigned long addr, unsigned int fsr,
 		regs->uregs[i] = er.r[i];
 
 	log_rec(res.is_write ? OP_MMIO_W : OP_MMIO_R,
-		(u32)(addr - r->base), res.value, res.width);
+		(u32)(addr - r->base), res.value,
+		res.width | MMIO_AUX_DEV_OFFSET);
 	atomic_inc(&n_emulated);
 	if (res.is_write && res.width == 4 && r == &live)
 		dd_on_mmio_write(r, (u32)(addr - r->base), res.value);
