@@ -1948,6 +1948,19 @@ static u16 b43_phy_ac_reg_ceiling(struct b43_wldev *dev)
 			best = lim;
 	}
 
+	/*
+	 * The configured TX power, which mac80211 has already capped to the
+	 * channel's limit, so it is in the same units as max_power.
+	 */
+	if (dev->phy.desired_txpower > 0) {
+		int lim = B43_PHY_AC_QDB(dev->phy.desired_txpower) - antgain;
+
+		if (lim < 0)
+			lim = 0;
+		if (lim < best)
+			best = lim;
+	}
+
 	{
 		u16 locale = b43_phy_ac_locale_ceiling(ac);
 

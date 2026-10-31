@@ -262,6 +262,8 @@ struct b43_phy {
 	/* Some scratch code touches phy.dacbuf_cap / phy.lpf_cap directly. */
 	u8 dacbuf_cap;
 	u8 lpf_cap;
+	/* Come in-tree: il limite di potenza da mac80211, in dBm. */
+	int desired_txpower;
 	/*
 	 * Primo bring-up contro bring-up successivo. In-tree lo gestisce
 	 * b43_phy_init(): true fino al primo ops->init riuscito. Qui lo imposta
