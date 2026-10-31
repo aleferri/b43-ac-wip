@@ -6969,6 +6969,40 @@ static void b43_phy_ac_chain_range_save(struct b43_wldev *dev,
 					  b43_phy_ac_chain_range_regs[i] + s);
 }
 
+/*
+ * Radio setup of the calibration loopback, per chain, after saving the
+ * registers for the restore: six MODs, each a read and a write, in the
+ * stock driver's order. Used by rxiqcal_apply() (B2f) and
+ * radio_chain_range_setup() (3o-3r), before the TX IQ/LO and the RX-IQ
+ * calibrations.
+ *
+ * The values depend on the band. 5 GHz: 0x?1a[7:4] = 0xb, 0x?1f bit 2 and
+ * 0x?170 bit 8 set, 0x?170 bit 14 and 0x?1e bit 2 clear. 2.4 GHz:
+ * 0x?1a[7:4] = 0x8, 0x?1f bit 2 and 0x?170 bit 8 clear, 0x?170 bit 14 and
+ * 0x?1e bit 2 set. With the 5 GHz values on 2.4 GHz the TX IQ/LO
+ * calibration returns large results that change on every run, and the
+ * RX-IQ calibration, which measures its tone through the TX path, inherits
+ * them.
+ * [capture-ref: router-data/r7000/mmio-cold-2g6.zip; records
+ *   #20232-#20288 and #26566-#26622]
+ * [capture-ref: router-data/r7000/mmio-cold-5g36-80.zip; records
+ *   #46863-#46919 and #52715-#52771]
+ */
+static void b43_phy_ac_cal_radio_setup(struct b43_wldev *dev,
+				       unsigned int core)
+{
+	bool g = b43_current_band(dev->wl) == NL80211_BAND_2GHZ;
+	u16 s = (u16)(core * 0x200);
+
+	b43_phy_ac_chain_range_save(dev, core);
+	b43_radio_maskset(dev, 0x001a + s, (u16)~0x00f0, g ? 0x0080 : 0x00b0);
+	b43_radio_maskset(dev, 0x001f + s, (u16)~0x0004, g ? 0 : 0x0004);
+	b43_radio_maskset(dev, 0x0170 + s, (u16)~0x0100, g ? 0 : 0x0100);
+	b43_radio_maskset(dev, 0x0170 + s, (u16)~0x4000, g ? 0x4000 : 0);
+	b43_radio_maskset(dev, 0x001e + s, (u16)~0x0004, g ? 0x0004 : 0);
+	b43_radio_maskset(dev, 0x001a + s, (u16)~0x0300, 0);
+}
+
 /* Save 0x040f for a later write-back, then clear its bit 9. */
 static void b43_phy_ac_rxcal_040f_save(struct b43_wldev *dev)
 {
@@ -7036,17 +7070,8 @@ void b43_phy_ac_rxiqcal_apply(struct b43_wldev *dev)
 		u8 c;
 		u8 num_cores = dev->phy.ac->num_cores;
 
-		for_each_set_bit(c, &dev->phy.ac->coremask, num_cores) {
-			u16 s = (u16)(c * 0x200);
-
-			b43_phy_ac_chain_range_save(dev, c);
-			b43_radio_maskset(dev, 0x001a + s, (u16)~0x00f0, 0x00b0);
-			b43_radio_maskset(dev, 0x001f + s, (u16)~0x0004, 0x0004);
-			b43_radio_maskset(dev, 0x0170 + s, (u16)~0x0100, 0x0100);
-			b43_radio_maskset(dev, 0x0170 + s, (u16)~0x4000, 0);
-			b43_radio_maskset(dev, 0x001e + s, (u16)~0x0004, 0);
-			b43_radio_maskset(dev, 0x001a + s, (u16)~0x0300, 0);
-		}
+		for_each_set_bit(c, &dev->phy.ac->coremask, num_cores)
+			b43_phy_ac_cal_radio_setup(dev, c);
 	}
 
 	/*
@@ -7768,18 +7793,8 @@ void b43_phy_ac_radio_chain_range_setup(struct b43_wldev *dev, bool with_tune)
 	b43_phy_ac_classctl_write_peeked(dev, true);
 
 	/* 3o-3r: per chain, seven radio reads and six radio MODs. */
-	for_each_set_bit(core, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
-		u16 s = (u16)(core * 0x200);
-
-		b43_phy_ac_chain_range_save(dev, core);
-		/* each maskset is MOD + RD + WR */
-		b43_radio_maskset(dev, 0x001a + s, (u16)~0x00f0, 0x00b0);
-		b43_radio_maskset(dev, 0x001f + s, (u16)~0x0004, 0x0004);
-		b43_radio_maskset(dev, 0x0170 + s, (u16)~0x0100, 0x0100);
-		b43_radio_maskset(dev, 0x0170 + s, (u16)~0x4000, 0);
-		b43_radio_maskset(dev, 0x001e + s, (u16)~0x0004, 0);
-		b43_radio_maskset(dev, 0x001a + s, (u16)~0x0300, 0);
-	}
+	for_each_set_bit(core, &dev->phy.ac->coremask, dev->phy.ac->num_cores)
+		b43_phy_ac_cal_radio_setup(dev, core);
 }
 
 /*
