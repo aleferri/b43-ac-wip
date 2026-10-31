@@ -789,8 +789,11 @@ static ssize_t proc_write(struct file *f, const char __user *buf, size_t count,
 
 static unsigned int proc_poll(struct file *f, poll_table *wait)
 {
+	struct rd_state *st = f->private_data;
+
 	poll_wait(f, &rec_waitq, wait);
-	if (wl_ring_len(&ring) || atomic_read(&drops))
+	if ((st && READ_ONCE(st->off) < READ_ONCE(st->len)) ||
+	    wl_ring_len(&ring) || atomic_read(&drops))
 		return POLLIN | POLLRDNORM;
 	return 0;
 }
