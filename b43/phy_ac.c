@@ -7604,12 +7604,26 @@ static u16 b43_phy_ac_loft_add(u16 a, u16 b)
  *
  * Why the base exists, why the step falls where it does and why it follows
  * the pa5g partition is not known; only that it does.
+ *
+ * The table is a 5 GHz one. On 2.4 GHz the base is 0 on every core: the
+ * R7000 at ch 6 writes the bare calibrated word in the fill pass (0x0001,
+ * 0x0101 and 0xfe00, the words it committed to IQLOCAL) and zero in the
+ * reset pass, on all 128 entries of all three LUTs. A pa5g group taken
+ * from "5000 + 5 * channel" has no meaning there: it is always group 0,
+ * which gave 0x0082 the f8fc/f6f2 step.
+ * [capture-ref: router-data/r7000/mmio-cold-2g6.zip; records
+ *   #23244-#26308 (fill), #28389-#31453 (reset)]
+ * [capture-ref: router-data/r7000/mmio-cold-5g36-80.zip; records
+ *   #54546-#57594 (0x0082 reset: f8fc, f6f2 from 0x21)]
  */
 static u16 b43_phy_ac_loft_lut_base(struct b43_wldev *dev, unsigned int core,
 				    unsigned int off)
 {
-	unsigned int grp = b43_phy_ac_pa5g_group(dev,
-			5000 + 5 * dev->phy.ac->cal_channel);
+	unsigned int grp;
+
+	if (b43_current_band(dev->wl) == NL80211_BAND_2GHZ)
+		return 0x0000;
+	grp = b43_phy_ac_pa5g_group(dev, 5000 + 5 * dev->phy.ac->cal_channel);
 
 	if (core == 0)
 		return 0x0000;
