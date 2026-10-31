@@ -719,13 +719,15 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
 				enable |= B43_DMA64_TXPARITYDISABLE;
 			/*
 			 * The engine comes out of reset with 16-byte bursts and
-			 * one outstanding read (the control word reads back 0).
-			 * On the AC cores that cannot keep the TX FIFO fed at VHT
-			 * rates: the FIFO runs dry and the hardware cuts each
-			 * A-MPDU after about 4 frames (BCM4360, 5 GHz VHT80:
-			 * 118 Mbit/s at every width). Use the values bgmac
-			 * programs into the same DMA engine on Northstar. TX only:
-			 * the RX equivalents corrupted received frames.
+			 * one outstanding read, too little to keep the TX FIFO fed
+			 * at VHT rates on the AC cores: the FIFO runs dry and the
+			 * hardware cuts each A-MPDU short. These are the values
+			 * bgmac programs into the same engine on Northstar. The
+			 * stock drivers' follow the host, not the chip (ring
+			 * control in docs/retrace-todo.md): 256-byte bursts on the
+			 * R7000 and the agcombo, 1024 on the x86 hybrid, and the
+			 * agcombo's raised descriptor protocol errors on the
+			 * DSL-3580L.
 			 */
 			if (ring->dev->dev->core_rev >= 40)
 				enable |= B43_DMA64_TXMR_2 |

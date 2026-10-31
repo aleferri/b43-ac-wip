@@ -172,9 +172,10 @@ driver:
   own: 7.14.43 on the agcombo TX `0x03700841`, RX `0x00500851`, the 6.30
   hybrid TX `0x03780841` and RX `0x036c0851`, so the values follow the
   driver and the host, not the chip. With the agcombo's the DSL-3580L raised
-  a descriptor protocol error after every MAC enable. Whether the D6220's
-  7.14.89 writes the agcombo's is not in any capture, since the wl-diag ones
-  have no MAC registers.
+  a descriptor protocol error after every MAC enable. 7.14.164 writes the
+  agcombo's on the R7000 too (`router-data/r7000/mmio-cold-2g6.zip`).
+  Whether the D6220's 7.14.89 does is not in any capture, since the wl-diag
+  ones have no MAC registers.
 - The receive index: the stock drivers keep it 256 (archer-t5e, 6.30) and
   500 (agcombo, 7.14) descriptors ahead of the engine; b43 gives the engine
   every buffer but the one before the next it reads (`b43_dma_rx_give()`),
