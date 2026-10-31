@@ -382,16 +382,18 @@ static inline
 }
 
 static inline
+    void unmap_descbuffer_attrs(struct b43_dmaring *ring, dma_addr_t addr,
+				size_t len, int tx, unsigned long attrs)
+{
+	dma_unmap_single_attrs(ring->dev->dev->dma_dev, addr, len,
+			       tx ? DMA_TO_DEVICE : DMA_FROM_DEVICE, attrs);
+}
+
+static inline
     void unmap_descbuffer(struct b43_dmaring *ring,
 			  dma_addr_t addr, size_t len, int tx)
 {
-	if (tx) {
-		dma_unmap_single(ring->dev->dev->dma_dev,
-				 addr, len, DMA_TO_DEVICE);
-	} else {
-		dma_unmap_single(ring->dev->dev->dma_dev,
-				 addr, len, DMA_FROM_DEVICE);
-	}
+	unmap_descbuffer_attrs(ring, addr, len, tx, 0);
 }
 
 static inline
@@ -590,11 +592,13 @@ address_error:
 	return true;
 }
 
+/* The bytes after the RX header that b43_poison_rx_buffer() fills. */
+#define B43_RX_POISON_LEN	(sizeof(struct b43_plcp_hdr6) + 2)
+
 static bool b43_rx_buffer_is_poisoned(struct b43_dmaring *ring, struct sk_buff *skb)
 {
-	unsigned char *f = skb->data + ring->frameoffset;
-
-	return ((f[0] & f[1] & f[2] & f[3] & f[4] & f[5] & f[6] & f[7]) == 0xFF);
+	return !memchr_inv(skb->data + ring->frameoffset, 0xFF,
+			   B43_RX_POISON_LEN);
 }
 
 static void b43_poison_rx_buffer(struct b43_dmaring *ring, struct sk_buff *skb)
@@ -607,9 +611,9 @@ static void b43_poison_rx_buffer(struct b43_dmaring *ring, struct sk_buff *skb)
 	rxhdr = (struct b43_rxhdr_fw4 *)(skb->data);
 	rxhdr->frame_len = 0;
 
-	B43_WARN_ON(ring->rx_buffersize < ring->frameoffset + sizeof(struct b43_plcp_hdr6) + 2);
+	B43_WARN_ON(ring->rx_buffersize < ring->frameoffset + B43_RX_POISON_LEN);
 	frame = skb->data + ring->frameoffset;
-	memset(frame, 0xFF, sizeof(struct b43_plcp_hdr6) + 2 /* padding */);
+	memset(frame, 0xFF, B43_RX_POISON_LEN);
 }
 
 static int setup_rx_descbuffer(struct b43_dmaring *ring,
@@ -1729,7 +1733,8 @@ static void dma_rx(struct b43_dmaring *ring, int *slot)
 	 * non-coherent DMA every byte synced is a cache line invalidated, in
 	 * L2 too, and the buffer is sized for the largest frame.
 	 */
-	sync_descbuffer_for_cpu(ring, meta->dmaaddr, ring->frameoffset + 8);
+	sync_descbuffer_for_cpu(ring, meta->dmaaddr,
+				ring->frameoffset + B43_RX_POISON_LEN);
 	skb = meta->skb;
 
 	rxhdr = (struct b43_rxhdr_fw4 *)skb->data;
@@ -1741,7 +1746,8 @@ static void dma_rx(struct b43_dmaring *ring, int *slot)
 			udelay(2);
 			barrier();
 			sync_descbuffer_for_cpu(ring, meta->dmaaddr,
-						ring->frameoffset + 8);
+						ring->frameoffset +
+						B43_RX_POISON_LEN);
 			len = le16_to_cpu(rxhdr->frame_len);
 		} while (len == 0 && i++ < 5);
 		if (unlikely(len == 0)) {
@@ -1791,8 +1797,7 @@ static void dma_rx(struct b43_dmaring *ring, int *slot)
 	}
 
 	sync_descbuffer_for_cpu(ring, dmaaddr, len + ring->frameoffset);
-	dma_unmap_single_attrs(ring->dev->dev->dma_dev, dmaaddr,
-			       ring->rx_buffersize, DMA_FROM_DEVICE,
+	unmap_descbuffer_attrs(ring, dmaaddr, ring->rx_buffersize, 0,
 			       DMA_ATTR_SKIP_CPU_SYNC);
 	skb_put(skb, len + ring->frameoffset);
 	skb_pull(skb, ring->frameoffset);
