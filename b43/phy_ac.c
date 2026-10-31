@@ -5713,7 +5713,12 @@ static void b43_phy_ac_rxgain_init(struct b43_wldev *dev, unsigned int core)
 	b43_phy_maskset(dev,  0x06f9 + ps, (u16)~0x007f, lna1_idx & 0x007f);
 
 	b43_actab_write_bulk(dev, ta, 0x0000, 16, 2, hdr_arr);
-	b43_phy_write(dev,    0x173b, 0x002c);
+	/*
+	 * wl 7.14's gain table setup (BCM4360, radio 2069): 0x2c on 5 GHz,
+	 * 0x18 on 2.4 GHz; 0x1c there while its watchdog flag at pi_ac+0xe6a
+	 * is set, which b43 does not model.
+	 */
+	b43_phy_write(dev,    0x173b, band_2g ? 0x0018 : 0x002c);
 	b43_phy_write(dev,    0x1726, 0x000c);
 	/* 2.4 GHz: 3, as the MacBook's wl leaves ch6; see the noise shaping. */
 	b43_actab_write_bulk(dev, ta, 0x0020, 16, ARRAY_SIZE(fill_07),
