@@ -2764,8 +2764,10 @@ static void b43_rx_deliver(struct b43_wl *wl)
 	 */
 	while ((skb = skb_dequeue(&wl->txstatus_queue)))
 		ieee80211_tx_status_skb(wl->hw, skb);
+	rcu_read_lock();
 	while ((skb = skb_dequeue(&wl->rx_queue)))
 		ieee80211_rx_list(wl->hw, NULL, skb, &list);
+	rcu_read_unlock();
 	netif_receive_skb_list(&list);
 	local_bh_enable();
 }
