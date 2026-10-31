@@ -3513,8 +3513,9 @@ static void b43_phy_ac_chanspec_tail(struct b43_wldev *dev);
 
 /*
  * The block that follows rfseq_tbl_init: quiesce the unwired RX cores, lock
- * the table-write gate and write 0x01ec = 0x9c40, whose meaning is not
- * known. Returns the lock's saved value; the caller unlocks.
+ * the table-write gate and write 0x01ec, whose meaning is not known: the
+ * stock driver writes 0x9c40 on 5 GHz and 0x0002 on 2.4 GHz. Returns the
+ * lock's saved value; the caller unlocks.
  * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   6905-6950]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -3538,7 +3539,9 @@ static u16 b43_phy_ac_post_rfseq_misc_setup(struct b43_wldev *dev)
 		b43_phy_ac_rxcore_setstate(dev, dev->phy.ac->coremask);
 
 	gate = b43_phy_ac_tbl_write_lock(dev);
-	b43_phy_write(dev, 0x01ec, 0x9c40);
+	b43_phy_write(dev, 0x01ec,
+		      b43_current_band(dev->wl) == NL80211_BAND_2GHZ ?
+		      0x0002 : 0x9c40);
 	return gate;
 }
 
