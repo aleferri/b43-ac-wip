@@ -232,6 +232,7 @@ struct bcma_device { struct bcma_bus *bus; };
 struct b43_bus_dev {
 	enum b43_bus_type bus_type;
 	u16 chip_id;
+	u16 board_type;	/* come in-tree (bus.h) */
 	struct ssb_sprom *bus_sprom;
 	struct bcma_device *bdev;   /* only meaningful when bus_type==BCMA */
 };
