@@ -64,8 +64,11 @@ grep ' init_mm$' System.map
 insmod wl_mmio_trap.ko init_mm_addr=0x<address> ...
 ```
 
-The module refuses to load with neither, and checks that the address holds
-a valid `pgd` before using it.
+The module refuses to load with neither, and with both when they differ.
+Before following the address it checks that it lies in the linear map, that
+its `pgd` does too, and that the `pgd`'s L1 entry for `PAGE_OFFSET` is the
+one the insmod process's own `pgd` carries, since every `pgd` copies the
+kernel half of `init_mm`'s.
 
 ## Self-test
 

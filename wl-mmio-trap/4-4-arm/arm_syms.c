@@ -79,26 +79,62 @@ fault_fn_t *as_fault_slot(void)
 	return p_fault_slot;
 }
 
+/*
+ * A wrong init_mm_addr= is refused before it is followed: the address must
+ * be in the linear map, so must its pgd, and the pgd's L1 entry for
+ * PAGE_OFFSET must be the one every other pgd copies from init_mm's at
+ * pgd_alloc(), here the insmod process's own.
+ */
+static int as_check_init_mm(unsigned long a)
+{
+	struct mm_struct *mm = (struct mm_struct *)a;
+
+	if (!IS_ALIGNED(a, sizeof(long)) || !virt_addr_valid((void *)a) ||
+	    !virt_addr_valid((void *)(a + sizeof(*mm) - 1))) {
+		pr_err("wl_mmio_trap: init_mm at 0x%lx is not a lowmem address; wrong init_mm_addr?\n",
+		       a);
+		return -EINVAL;
+	}
+	if (!virt_addr_valid(mm->pgd)) {
+		pr_err("wl_mmio_trap: init_mm at 0x%lx has pgd %p, not a lowmem address; wrong init_mm_addr?\n",
+		       a, mm->pgd);
+		return -EINVAL;
+	}
+	if (pgd_val(*pgd_offset(mm, PAGE_OFFSET)) !=
+	    pgd_val(*pgd_offset(current->active_mm, PAGE_OFFSET))) {
+		pr_err("wl_mmio_trap: init_mm at 0x%lx has a pgd whose kernel half is not the one of every pgd; wrong init_mm_addr?\n",
+		       a);
+		return -EINVAL;
+	}
+	return 0;
+}
+
 int as_init(unsigned long fsr_info_fn7_hint)
 {
 	unsigned long a;
+	int err;
 
 	if (IS_ENABLED(CONFIG_ARM_LPAE)) {
 		pr_err("wl_mmio_trap: built for a 2-level MMU; CONFIG_ARM_LPAE is on, where the fault codes differ\n");
 		return -ENOTSUPP;
 	}
 
-	a = init_mm_addr ? init_mm_addr : kallsyms_lookup_name("init_mm");
+	a = kallsyms_lookup_name("init_mm");
+	if (a && init_mm_addr && a != init_mm_addr) {
+		pr_err("wl_mmio_trap: init_mm_addr=0x%lx, kallsyms has init_mm at 0x%lx\n",
+		       init_mm_addr, a);
+		return -EINVAL;
+	}
+	if (!a)
+		a = init_mm_addr;
 	if (!a) {
 		pr_err("wl_mmio_trap: init_mm is not resolvable without KALLSYMS_ALL; pass init_mm_addr= from System.map\n");
 		return -ENOENT;
 	}
+	err = as_check_init_mm(a);
+	if (err)
+		return err;
 	p_init_mm = (struct mm_struct *)a;
-	if (!virt_addr_valid(p_init_mm->pgd)) {
-		pr_err("wl_mmio_trap: init_mm at %p has pgd %p, not a lowmem address; wrong init_mm_addr?\n",
-		       p_init_mm, p_init_mm->pgd);
-		return -EINVAL;
-	}
 
 	a = kallsyms_lookup_name("flush_tlb_kernel_range");
 	if (!a) {
