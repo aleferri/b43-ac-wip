@@ -65,8 +65,12 @@ insmod wl_mmio_trap.ko autoarm=0 win_phys=0x08000000 win_phys_len=0x8000 \
 the attach is not traced), `ap 1`, `chanspec`, `up`, 10 s, `ssid`, `bss up`,
 10 s beaconing; `drops=0`, `mismatch=0`. These two runs were taken before the
 reader and label fixes of the ARM build: the mark labels in them decode
-byte-swapped per word (the mapping is in their `README.txt`), and the stream
-was read with `dd bs=28`.
+byte-swapped per word (the mapping is in their `README.txt`), the stream
+was read with `dd bs=28`, and the records do not yet flag their device
+offsets: decode them with `mmio2ops.py --format wl-mmio-trap-arm`, as the
+`*-ops.txt` in the archives are. With the default format every 16-bit
+access lands on the other half of its word (PHY register selects read as
+data writes, shared memory 0x00cc as 0x00ce).
 
 ## What the wl-diag captures do not contain
 
@@ -86,13 +90,13 @@ operations at all**, although `check_class_coverage.py` calls them complete.
   0x80 (128 entries each) and 0x42/0x62/0x82 (first set to 0x0001 / 0x0101 /
   0xfe00 per core, then cleared), none of which appear in any `wl-diag`
   capture of this board, AP mode with a beaconing BSS included. On 5g36/80
-  the trace selects 39 table IDs, `wl-diag`'s cold 5g80 run 13; 0x0e gets
+  the trace selects 37 table IDs, `wl-diag`'s cold 5g80 run 13; 0x0e gets
   160 entries in 22 passes there, and 0x42/0x62/0x82 512 writes each. On this
   build `wl-diag` is not enough for the tables; use `wl-mmio-trap`.
 - **On 2.4 GHz the full PHY init runs at the BSS start.** `wl up` alone makes
-  163 PHY writes and selects no table; all 1946 table-ID writes and ~10.9k PHY
+  167 PHY writes and selects no table; all 1943 table-ID writes and ~11.4k PHY
   writes come 6–67 ms after `wl ssid`. On 5 GHz `up` already does a large
-  init (10.5k PHY writes) and `ssid` a second, larger one (~33k).
+  init (10.1k PHY writes) and `ssid` a second, larger one (~34.6k).
 - Table counts are from a small parser of `mmio2ops.py`'s `PHY.WR` lines
   (0x00d = ID, 0x00e = offset, 0x010 high half, then 0x00f with
   auto-increment); check them against your own decoding.
