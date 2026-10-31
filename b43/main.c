@@ -5755,8 +5755,7 @@ redo:
 		}
 	}
 	skb_queue_purge(&wl->rx_queue);
-	while (skb_queue_len(&wl->txstatus_queue))
-		ieee80211_free_txskb(wl->hw, skb_dequeue(&wl->txstatus_queue));
+	ieee80211_purge_tx_queue(wl->hw, &wl->txstatus_queue);
 
 	b43_mac_suspend(dev);
 	b43_leds_exit(dev);
