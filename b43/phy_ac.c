@@ -3939,7 +3939,7 @@ static void b43_phy_ac_set_reg_on_reset(struct b43_wldev *dev)
  * The board may give it in NVRAM as AvVmid_c0..2 (Av,Vmid for 2g, 5gl,
  * 5gml, 5gmu, 5gh), which the stock driver uses only when boardflags3 has
  * BFL3_AvVim ("load AvVim from nvram"). Otherwise the pair is the default
- * set indexed by pdgain5g. All four boards here have boardflags3=0 and no
+ * set indexed by pdgain2g on 2.4 GHz and pdgain5g on 5 GHz. All four boards here have boardflags3=0 and no
  * AvVmid in NVRAM.
  *
  * The default sets are the stock driver's avvmid_set[] (wlD6220.o, 7.14.89,
@@ -3948,6 +3948,13 @@ static void b43_phy_ac_set_reg_on_reset(struct b43_wldev *dev)
  * write (pdgain5g=10), set 19 what the tg789vac writes (pdgain5g=19) on all
  * 43 cold segments. Band 0 is 2.4 GHz, bands 1-4 follow
  * b43_phy_ac_pa5g_group().
+ *
+ * The R7000 (pdgain2g=14, pdgain5g=4) writes set 14 band 0 on 2.4 GHz,
+ * (134 << 3) | 1 = 0x0431 for all three chains, and set 4 on 5 GHz.
+ * [capture-ref: router-data/r7000/mmio-cold-2g6.zip; records
+ *   #12325-#12341]
+ * [capture-ref: router-data/r7000/mmio-cold-5g36-80.zip; records
+ *   #9108-#9124]
  */
 #define B43_BFL3_AVVIM	0x40000000
 
@@ -4123,23 +4130,24 @@ static const u8 b43_phy_ac_avvmid_set[24][5][2][3] = {
 };
 
 static u16 b43_phy_ac_avvmid_cell(struct b43_wldev *dev, unsigned int core,
-				  unsigned int grp)
+				  bool band2g, unsigned int grp)
 {
 	const struct ssb_sprom *sprom = dev->dev->bus_sprom;
-	unsigned int band = 1 + grp;
+	unsigned int band = band2g ? 0 : 1 + grp;
+	u8 pdgain = band2g ? sprom->pdgain2g : sprom->pdgain5g;
 	u8 av, vmid;
 
 	if ((sprom->boardflags3 & B43_BFL3_AVVIM) &&
 	    (sprom->avvmid_valid & BIT(core))) {
 		av = sprom->avvmid[core][band][0];
 		vmid = sprom->avvmid[core][band][1];
-	} else if (sprom->pdgain5g < ARRAY_SIZE(b43_phy_ac_avvmid_set)) {
-		av = b43_phy_ac_avvmid_set[sprom->pdgain5g][band][0][core];
-		vmid = b43_phy_ac_avvmid_set[sprom->pdgain5g][band][1][core];
+	} else if (pdgain < ARRAY_SIZE(b43_phy_ac_avvmid_set)) {
+		av = b43_phy_ac_avvmid_set[pdgain][band][0][core];
+		vmid = b43_phy_ac_avvmid_set[pdgain][band][1][core];
 	} else {
 		b43warn(dev->wl,
-			"AC-PHY: pdgain5g=%u has no AvVmid default set and the board gives none; chain %u left at reset\n",
-			sprom->pdgain5g, core);
+			"AC-PHY: pdgain%s=%u has no AvVmid default set and the board gives none; chain %u left at reset\n",
+			band2g ? "2g" : "5g", pdgain, core);
 		return 0x0c02;
 	}
 	return (u16)((vmid << 3) | (av & 0x7));
@@ -4456,7 +4464,8 @@ static void b43_phy_ac_channel_setup(struct b43_wldev *dev,
 
 		for_each_set_bit(c, &ac->coremask, ac->num_cores) {
 			u16 off = (u16)(0x03cd + 0x10 * c);
-			u16 val = b43_phy_ac_avvmid_cell(dev, c, grp);
+			u16 val = b43_phy_ac_avvmid_cell(dev, c,
+					new_channel->band == NL80211_BAND_2GHZ, grp);
 
 			b43_actab_read_log(dev, 7, off, 1);
 			b43_actab_write_bulk(dev, 7, off, 16, 1, &val);
