@@ -3098,7 +3098,12 @@ static const u32 b43_acphy_txv_for_spexp[243] = {
  *                     (b43_phy_ac_fem_040a_set()): archer-t5e
  *                     (router-data/archer-t5e/mmiotrace.zip, #7128-#7234).
  *                     The same 6.30.223 as the MacBook's sets that bit
- *                     after its table; the routers never touch 0x040a.
+ *                     after its table.
+ *   femctrl 3, sub 0  fc3_sub0_c0/c1/c2, plus b43_phy_ac_fem3_pre(): the
+ *                     5 GHz radio of the R7000, the EA6900 and the R6400.
+ *   femctrl 3, sub 3  fc3_sub3_c0/c1/c2, plus b43_phy_ac_fem3_pre(): the
+ *                     2.4 GHz radio of the R7000 and the EA6900. No
+ *                     capture has this write; the table is a read-back.
  *
  * TODO: femctrl 2 sub 2 (femctrl2_sub2_c0 on core 0, femctrl2_sub2_c12 on
  * cores 1 and 2) needs a capture of a board with it.
@@ -3157,7 +3162,84 @@ static void b43_phy_ac_fem2_sub1_setup(struct b43_wldev *dev)
 	b43_phy_ac_chipctl_set(dev, 0x00000008);
 }
 
+/*
+ * femctrl 3 sub 3, the 2.4 GHz radio of the Netgear R7000 and the Linksys
+ * EA6900. The 2.4 GHz MMIO capture has no write of it, so it is read back
+ * from the R7000 with wl 7.14.164.18 up: at ch 11 and at ch 6, two passes
+ * each, all identical. Core 0 differs from cores 1 and 2.
+ * [read-back: router-data/r7000/fem-table-2g-ch6.txt]
+ */
+static const u8 b43_phy_ac_fem_fc3_sub3_c0[32] = {
+	0x02, 0x04, 0x03, 0x02, 0x02, 0x04, 0x03, 0x02,
+	0x22, 0x24, 0x23, 0x25, 0x22, 0x24, 0x23, 0x25,
+	0x02, 0x04, 0x03, 0x02, 0x02, 0x04, 0x03, 0x02,
+	0x22, 0x24, 0x23, 0x25, 0x22, 0x24, 0x23, 0x25,
+};
+
+static const u8 b43_phy_ac_fem_fc3_sub3_c1[32] = {
+	0x02, 0x01, 0x06, 0x02, 0x02, 0x01, 0x06, 0x02,
+	0x22, 0x21, 0x26, 0x25, 0x22, 0x21, 0x26, 0x25,
+	0x02, 0x01, 0x06, 0x02, 0x02, 0x01, 0x06, 0x02,
+	0x22, 0x21, 0x26, 0x25, 0x22, 0x21, 0x26, 0x25,
+};
+
+static const u8 b43_phy_ac_fem_fc3_sub3_c2[32] = {
+	0x04, 0x01, 0x06, 0x04, 0x04, 0x01, 0x06, 0x04,
+	0x24, 0x21, 0x26, 0x23, 0x24, 0x21, 0x26, 0x23,
+	0x04, 0x01, 0x06, 0x04, 0x04, 0x01, 0x06, 0x04,
+	0x24, 0x21, 0x26, 0x23, 0x24, 0x21, 0x26, 0x23,
+};
+
+/*
+ * femctrl 3 sub 0, the 5 GHz radio of the R7000, the EA6900 and the R6400:
+ * the R7000 writes it in both passes of its 5 GHz capture; the first 16
+ * entries of each core stay 0. A read-back on an R6400 v1 gives the same.
+ * [capture-ref: router-data/r7000/mmio-cold-5g36-80.zip; records
+ *   #6714-#6815, #24771-#24872]
+ */
+static const u8 b43_phy_ac_fem_fc3_sub0_c0[32] = {
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x02, 0x0c, 0x03, 0x0b, 0x02, 0x0c, 0x03, 0x0b,
+	0x02, 0x2c, 0x03, 0x2d, 0x02, 0x2c, 0x03, 0x2d,
+};
+
+static const u8 b43_phy_ac_fem_fc3_sub0_c1[32] = {
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x02, 0x09, 0x06, 0x0e, 0x02, 0x09, 0x06, 0x0e,
+	0x02, 0x29, 0x06, 0x2d, 0x02, 0x29, 0x06, 0x2d,
+};
+
+static const u8 b43_phy_ac_fem_fc3_sub0_c2[32] = {
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x04, 0x09, 0x06, 0x0e, 0x04, 0x09, 0x06, 0x0e,
+	0x04, 0x29, 0x06, 0x2b, 0x04, 0x29, 0x06, 0x2b,
+};
+
+/*
+ * Before the table, both femctrl 3 sub-types:
+ * - PHY 0x040a bit 8 clear: the R7000 writes 0x0090 just before the table
+ *   [capture-ref: router-data/r7000/mmio-cold-5g36-80.zip; record #6704],
+ *   and reads back 0x0090 on 2.4 GHz.
+ * - PMU regctl 0 bit 2 set: the R7000 reads back 0x00200004 with wl up
+ *   (the chip-dependent field [24:20] = 2, set in pmu_regctl_gpio, plus bit
+ *   2). The PMU is outside the capture window. Without the bit an EA6900
+ *   sends nothing a client can receive on either radio (no beacon is heard,
+ *   no client connects); with it both work.
+ */
+static void b43_phy_ac_fem3_pre(struct b43_wldev *dev)
+{
+	b43_phy_mask(dev, 0x040a, (u16)~0x0100);
+	bcma_chipco_regctl_maskset(&dev->dev->bdev->bus->drv_cc, 0, ~0x4u, 0x4);
+}
+
 static const struct b43_phy_ac_fem b43_phy_ac_fems[] = {
+	{ 3, 3, { b43_phy_ac_fem_fc3_sub3_c0, b43_phy_ac_fem_fc3_sub3_c1,
+		  b43_phy_ac_fem_fc3_sub3_c2 }, b43_phy_ac_fem3_pre, NULL },
+	{ 3, 0, { b43_phy_ac_fem_fc3_sub0_c0, b43_phy_ac_fem_fc3_sub0_c1,
+		  b43_phy_ac_fem_fc3_sub0_c2 }, b43_phy_ac_fem3_pre, NULL },
 	{ 6, 0, { b43_phy_ac_fem_femctrl6, b43_phy_ac_fem_femctrl6,
 		  b43_phy_ac_fem_femctrl6 }, NULL, NULL },
 	{ 2, 1, { b43_phy_ac_fem_fem5516_fc1, b43_phy_ac_fem_x29c_c1_fc2_sub1,
