@@ -124,6 +124,8 @@ struct b43_dmadesc32 {
 #define		B43_DMA64_RXADDREXT_MASK		0x00030000
 #define		B43_DMA64_RXADDREXT_SHIFT		16
 #define		B43_DMA64_RXCTL_KEEP		0x03FC0000	/* Burst, prefetch */
+#define		B43_DMA64_RXBURST_128			0x000C0000	/* 128-byte bursts */
+#define		B43_DMA64_RXPREFETCH_8			0x00400000	/* Prefetch 8 descriptors */
 #define B43_DMA64_RXINDEX				0x24
 #define B43_DMA64_RXRINGLO				0x28
 #define B43_DMA64_RXRINGHI				0x2C

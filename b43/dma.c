@@ -724,8 +724,8 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
 			 * rates: the FIFO runs dry and the hardware cuts each
 			 * A-MPDU after about 4 frames (BCM4360, 5 GHz VHT80:
 			 * 118 Mbit/s at every width). Use the values bgmac
-			 * programs into the same DMA engine on Northstar. TX only:
-			 * the RX equivalents corrupted received frames.
+			 * programs into the same DMA engine on Northstar; the RX
+			 * side gets them in the RX branch below.
 			 */
 			if (ring->dev->dev->core_rev >= 40)
 				enable |= B43_DMA64_TXMR_2 |
@@ -775,6 +775,16 @@ static int dmacontroller_setup(struct b43_dmaring *ring)
 			    & B43_DMA64_RXADDREXT_MASK;
 			if (!parity)
 				value |= B43_DMA64_RXPARITYDISABLE;
+			/*
+			 * Out of reset the RX engine also does 16-byte bursts
+			 * without prefetch, which limits what the AC cores can
+			 * receive (BCM4360, 5 GHz VHT80: about 300 Mbit/s up).
+			 * Use bgmac's RX values: 128-byte bursts, prefetch 8,
+			 * threshold 1.
+			 */
+			if (ring->dev->dev->core_rev >= 40)
+				value |= B43_DMA64_RXBURST_128 |
+					 B43_DMA64_RXPREFETCH_8;
 			if (ring->dev->dma.index_is_addr) {
 				value |= b43_dma_read(ring, B43_DMA64_RXCTL) &
 					 B43_DMA64_RXCTL_KEEP;
