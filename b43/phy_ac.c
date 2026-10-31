@@ -3731,10 +3731,20 @@ static void b43_phy_ac_coeff_bank_init(struct b43_wldev *dev)
 	 * only by the DSL, not by the d6220.
 	 */
 	b43_phy_maskset(dev, 0x01b5, (u16)~0x00ff, bw == 40 ? 0x008b : 0x0097);
-	b43_phy_maskset(dev, 0x0250, (u16)~0x00ff, bw == 20 ? 25 : 50);
-	b43_phy_maskset(dev, 0x0261, (u16)~0x0fff, bw == 20 ? 0x0014 : 0x0028);
-	b43_phy_maskset(dev, 0x0262, (u16)~0x0fff, bw == 20 ? 200 : 400);
-	b43_phy_maskset(dev, 0x0263, (u16)~0x0fff, bw == 20 ? 25 : 50);
+	/*
+	 * On 2.4 GHz wl 7.14 keeps the 20 MHz values at 40 MHz (RT-AC66U B1,
+	 * ch6/20 and ch6/40); the doubling is a 5 GHz one.
+	 */
+	{
+		bool wide = bw != 20 &&
+			    b43_current_band(dev->wl) != NL80211_BAND_2GHZ;
+
+		b43_phy_maskset(dev, 0x0250, (u16)~0x00ff, wide ? 50 : 25);
+		b43_phy_maskset(dev, 0x0261, (u16)~0x0fff,
+				wide ? 0x0028 : 0x0014);
+		b43_phy_maskset(dev, 0x0262, (u16)~0x0fff, wide ? 400 : 200);
+		b43_phy_maskset(dev, 0x0263, (u16)~0x0fff, wide ? 50 : 25);
+	}
 	/*
 	 * These two drop at 80 MHz only: 0x13 at 20 and 40 MHz, 0x09 at 80, in
 	 * the low byte of 0x0312 and the high byte of 0x0313.
