@@ -6936,14 +6936,9 @@ static int b43_setup_bands(struct b43_wldev *dev,
 	if (dev->phy.type == B43_PHYTYPE_AC && have_2ghz_phy) {
 		struct ieee80211_supported_band *band = &dev->wl->band_2ghz_ac;
 
-		/*
-		 * HT on 2.4 GHz as on 5 GHz, at 20 MHz only: 40 MHz on 2.4 GHz
-		 * has no capture (docs/retrace-todo.md, "2.4 GHz"). No VHT.
-		 */
+		/* HT on 2.4 GHz as on 5 GHz, at 20 and 40 MHz. No VHT. */
 		*band = b43_band_2GHz;
 		b43_ac_set_ht_vht_cap(dev, band);
-		band->ht_cap.cap &= ~(IEEE80211_HT_CAP_SUP_WIDTH_20_40 |
-				      IEEE80211_HT_CAP_SGI_40);
 		memset(&band->vht_cap, 0, sizeof(band->vht_cap));
 		hw->wiphy->bands[NL80211_BAND_2GHZ] = band;
 	}
