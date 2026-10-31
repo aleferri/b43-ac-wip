@@ -234,6 +234,8 @@ struct ssb_sprom {
 	u16 rpcal5gb[4];
 	u16 pdoffset40ma[3];
 	u16 pdoffset80ma[3];
+	u8 pdoffset2g40ma[3];	/* 4 bits, signed */
+	u8 pdoffset2g40mvalid;
 	/* Explicit per-rate-group power offsets of the bonded channels'
 	 * sub-band rows (20-in-40, 20-in-80/160, 40-in-80, duplicate legacy),
 	 * low-rate and high-rate halves, and the MCS 8-9 offsets; nibbles.

@@ -640,6 +640,8 @@ static void bcm47xx_fill_sprom_path_r11(struct ssb_sprom *sprom,
 			       &sprom->pdoffset40ma[i], 0, fallback);
 		nvram_read_u16(prefix, postfix, "pdoffset80ma",
 			       &sprom->pdoffset80ma[i], 0, fallback);
+		nvram_read_u8(prefix, postfix, "pdoffset2g40ma",
+			      &sprom->pdoffset2g40ma[i], 0, fallback);
 
 		for (b = 0; b < ARRAY_SIZE(rxgains); b++) {
 			struct ssb_sprom_rxgains *rx = rxgains[b].rx;
@@ -662,6 +664,8 @@ static void bcm47xx_fill_sprom_path_r11(struct ssb_sprom *sprom,
 	nvram_read_u16_array(prefix, NULL, "tssifloor5g", sprom->tssifloor5g,
 			     ARRAY_SIZE(sprom->tssifloor5g), fallback);
 
+	nvram_read_u8(prefix, NULL, "pdoffset2g40mvalid",
+		      &sprom->pdoffset2g40mvalid, 0, fallback);
 	nvram_read_u8(prefix, NULL, "agbg0", &agbg0, 0, fallback);
 	nvram_read_u8(prefix, NULL, "aga0", &aga0, 0, fallback);
 	sprom->antenna_gain_qdb[0] = ssb_sprom_antgain_qdb(agbg0);
