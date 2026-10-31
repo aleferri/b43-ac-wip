@@ -11192,16 +11192,13 @@ static void b43_phy_ac_farrow_setup(struct b43_wldev *dev,
 			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
 			   B43_PHY_AC_STATE_CCA_RESET);
 
-	if (b43_current_band(dev->wl) == NL80211_BAND_2GHZ) {
-		if (width != NL80211_CHAN_WIDTH_20) {
-			b43_phy_ac_todo(dev,
-				"Farrow resampler not programmed at "
-				"2.4 GHz with width %d: not measured\n",
-				width);
-			return;
-		}
+	/*
+	 * 2.4 GHz uses its own mode at 20 and 40 MHz: wl 7.14 on the
+	 * RT-AC66U B1 at ch6/40 (centre 2447 MHz) writes the ratio and
+	 * deltaphase of this formula, 0x16f0ccd and 0x594621.
+	 */
+	if (b43_current_band(dev->wl) == NL80211_BAND_2GHZ)
 		m = &b43_phy_ac_farrow_mode_2g_20;
-	}
 
 	/*
 	 * The operating channel's centre frequency, and the mode that goes
