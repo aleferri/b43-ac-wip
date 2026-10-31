@@ -10640,11 +10640,10 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	 * table ID stride 0x20), from the d6220 ch36 trace.
 	 *
 	 * On 2.4 GHz the MacBookAir6,1 and the archer-t5e (6.30 hybrid) write
-	 * the nshp runs below, the same on both boards and every core. 6.30 and
-	 * 7.14 differ on the first cell of each run on 5 GHz already, and only
-	 * 6.30 has a 2.4 GHz state: the MacBook's wl as it leaves ch6
-	 * (gonsolo's traces/wl-final-tables-2g-ch6.txt), the archer agreeing on
-	 * the cells its capture has. 2.4 GHz takes that whole.
+	 * the nshp runs below, the same on both boards and every core, but for
+	 * the first cell of each run, where 6.30 and 7.14 differ as they do on
+	 * 5 GHz: the 2.4 GHz runs are wl 7.14's on the RT-AC66U B1, the same on
+	 * every core, on channels 1, 6 and 11 and at 20 and 40 MHz.
 	 */
 	{
 		static const u16 nvar_data[5] = { 0x0020, 0x0021, 0x0022, 0x0023, 0x0024 };
@@ -10655,10 +10654,10 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 		static const u16 nshp_b8[6]   = { 0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005 };
 		static const u16 nshp_a10[7]  = { 0x00f5, 0x00f8, 0x00fb, 0x00fe, 0x0002, 0x0005, 0x0009 };
 		static const u16 nshp_b10[7]  = { 0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005, 0x0006 };
-		static const u16 nshp_a8_2g[6]  = { 0x00ff, 0x00ff, 0x0006, 0x000c, 0x0012, 0x0019 };
-		static const u16 nshp_b8_2g[6]  = { 0x0001, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005 };
-		static const u16 nshp_a10_2g[7] = { 0x00f8, 0x00f8, 0x00fc, 0x00ff, 0x0002, 0x0002, 0x0002 };
-		static const u16 nshp_b10_2g[7] = { 0x0001, 0x0001, 0x0002, 0x0003, 0x0004, 0x0004, 0x0004 };
+		static const u16 nshp_a8_2g[6]  = { 0x00f6, 0x00ff, 0x0006, 0x000c, 0x0012, 0x0019 };
+		static const u16 nshp_b8_2g[6]  = { 0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005 };
+		static const u16 nshp_a10_2g[7] = { 0x00f4, 0x00f8, 0x00fc, 0x00ff, 0x0002, 0x0002, 0x0002 };
+		static const u16 nshp_b10_2g[7] = { 0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0004, 0x0004 };
 		bool band_2g = b43_current_band(dev->wl) == NL80211_BAND_2GHZ;
 		const u16 *a8 = band_2g ? nshp_a8_2g : nshp_a8;
 		const u16 *b8 = band_2g ? nshp_b8_2g : nshp_b8;
