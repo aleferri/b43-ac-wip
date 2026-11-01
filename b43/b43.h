@@ -999,6 +999,10 @@ struct b43_wldev {
 
 	bool bad_frames_preempt;	/* Use "Bad Frames Preemption" (default off) */
 	bool dfq_valid;		/* Directed frame queue valid (IBSS PS mode, ATIM) */
+	/* The A-MSDU being put together from its pieces (b43_rx_amsdu()). */
+	struct sk_buff *rx_amsdu;
+	u8 rx_amsdu_hdr[40] __aligned(4);	/* Its first receive header */
+	u32 rx_amsdu_err;
 	bool radio_hw_enable;	/* saved state of radio hardware enabled state */
 	bool qos_enabled;		/* TRUE, if QoS is used. */
 	bool hwcrypto_enabled;		/* TRUE, if HW crypto acceleration is enabled. */
