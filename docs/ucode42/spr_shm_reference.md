@@ -14,7 +14,9 @@ from `b43-tools/debug/include/spr.inc`.
 - The `[0xNNN]` addresses are word addresses: `byte = word * 2`, checked on
   the stamping (`03`) and on the host reads in the captures.
 - The `B43_SHM_SH_*` names come from b43/brcmsmac for pre-AC chips: for
-  corerev 42 they are a working base.
+  corerev 42 they are a working base. One is known wrong: `SIZE01`
+  (`0x0098`) is, on the AC, PHY control word 0 of the frames the microcode
+  builds itself (`07`, "TX core selection").
 - The `spr.inc` names are from older cores: for corerev 42 they are leads.
   The ones confirmed by the ucode's behaviour are in `05`.
 

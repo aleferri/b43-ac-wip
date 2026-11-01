@@ -119,7 +119,8 @@ at zero proves the register absent, not the phase;
 ## Exception lists
 
 `compare.py` holds `SOLO_VENDOR`, `SOLO_PORT`, `SOLO_PORT_SENZA_CLASSE`,
-`PERIMETER`, `VAL_NONDET` and `VAL_TOLLERANZA`, and `cmp_skip.py` holds `MOVED`
+`PERIMETER`, `VAL_NONDET`, `VAL_TOLLERANZA` and `VAL_BIT_FUORI_PERIMETRO`,
+and `cmp_skip.py` holds `MOVED`
 (empty: see the core sites below) and `KNOWN`, each entry with its
 reason. They are the only place where an
 operation is declared not to count, and every entry suspends a piece of the
@@ -132,7 +133,10 @@ goal:
   reachability from the PHY, and is narrowed every time the port learns to write
   a cell (`PHY_ANCHE` lists the core cells the port emits);
 - a `VAL_TOLLERANZA` applies to the positional gate only; `cmp_skip.py` still
-  counts the value as wrong.
+  counts the value as wrong;
+- `VAL_BIT_FUORI_PERIMETRO` masks bits of a shared-memory cell on which the
+  port departs from the stock driver by decision, and only in the cell's
+  `OBJ.WR` value: a `MAC.MHF` record of the same bit still counts.
 
 ## How the harness works
 

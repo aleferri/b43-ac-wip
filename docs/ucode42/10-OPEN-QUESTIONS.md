@@ -57,8 +57,9 @@
 - The meaning of [0x2]/[0x3] of the stamping block: the captures never read
   them.
 - Where off0 points when the block at 0x0374 reads [0x01,off0] (`07`).
-- The bits of PHY register 0x007 that the TX fault handler copies to SHM,
-  and the contents of [0x55] (the offset of the matching CCK register).
+- The bits of PHY register 0x007 that the TX fault handler copies to SHM
+  beyond the three whose cause is known (`07`), and the contents of [0x55]
+  (the offset of the matching CCK register).
 - Word 0xB70 of the copy (0x310), rewritten with sprE at every end of
   transmission while the latch is clear.
 

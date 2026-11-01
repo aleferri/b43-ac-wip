@@ -78,7 +78,7 @@ The sources are the listing and, where stated, b43.
 |---|---|---|---|
 | 0x09 | 0x0012 | DTIM period: the TBTT handler reloads the DTIM counter `r8` from it (0x00D5 on 0x310) | b43's `B43_SHM_SH_DTIMPER` |
 | 0x2F | 0x005E | HOSTF1: bit 2 sends the beacon at every TBTT even without the MACCMD valid bits (0x0168 on 0x310) | `B43_SHM_SH_HOSTF1` |
-| 0x66..0x68 | 0x00CC..0x00D0 | beacon phyctl, words 0..2 | listing at 0x016B (0x310), 0x0188 (0x3A0); b43 writes the first |
+| 0x66..0x68 | 0x00CC..0x00D0 | beacon phyctl, words 0..2 | listing at 0x016B (0x310), 0x0188 (0x3A0); b43 writes all three |
 | 0x7E, 0x7F | 0x00FC, 0x00FE | 0x7F: PHY TX errors (0x0B1E, 0x0B2D); 0x7E: underflows with a frame in progress (0x0B24), on 0x310 | listing |
 | 0x2EA.. | 0x05D4.. | TX core table per frame class: CCK, OFDM, then one cell per number of streams (`07`); b43 writes four of them, 0x05D4..0x05DA | listing at 0x0E07 (0x310) |
 | 0x81A | 0x1034 | low TSF saved at 0x0654 for the 8 µs wait at 0x066C (0x310) | listing |

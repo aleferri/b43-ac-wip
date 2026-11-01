@@ -84,6 +84,7 @@ On 0x310 the same path is at 0x0B6A, after UCODESTAT = 3:
 0B71 spr324 = [0x4A0]
 0B72 spr86 = [0x4C] with bits 1:0 = 1     ; PHY control word 0, OFDM
 0B73 spr8A = [0x4A5]                      ; PHY control word 1
+0B74 calls 0E07                           ; cores from the TX core table
 0B76 SPR_TXE0_CTL = 0x4001
 ```
 
@@ -209,11 +210,13 @@ The copy, at offsets from the latch:
 On 0x310 word 0xB70, in between, is rewritten with sprE at every end of
 transmission (0x07FD) while the latch is clear.
 
-The meaning of the bits of PHY register 0x007 on the AC is OPEN. Two
+The meaning of the bits of PHY register 0x007 on the AC is OPEN. Three
 values are seen on 0x310, each with its cause found: bit 13 (0x2000) on a
 CTS-to-self whose L-SIG carried no valid rate, bit 5 (0x0020) on a beacon
 whose PHY control word 1 carried 4 in the subband field (bits 2:0) at
-40 MHz. In this repository `b43_ac_report_phy_txerr()` (`b43/main.c`)
+40 MHz, bit 2 (0x0004) on the microcode's probe response (frame code 0x14)
+whose PHY control word 0 asked for cores 0x7 on a board with two chains.
+In this repository `b43_ac_report_phy_txerr()` (`b43/main.c`)
 prints the copy when `B43_IRQ_PHY_TXERR` arrives and clears the latch.
 
 In the model 0x2D, held until an EOI, blocks the beacon, because on 0x310
@@ -239,4 +242,8 @@ HT/VHT word 2 is cleared. It is the table b43-ac-wip writes at
 0x05D4..0x05DA.
 
 The beacon at 0x016B does not go through this table: it uses the cores
-written in its phyctl at 0x00CC.
+written in its phyctl at 0x00CC. Neither does the probe response at 0x0271:
+it takes PHY control word 0 from [0x4C] (byte 0x0098) as is at 0x02A6, with
+the encoding in bits 1:0, and only the initvals write that cell (0x01C4,
+cores 0x7). The CTS-to-self at 0x0B6A starts from the same cell and goes
+through the table (0x0B74).

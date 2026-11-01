@@ -87,8 +87,10 @@ pieces in order. On the D6220 `cold01` (folded, op numbers of
   only in the first segment, the `up`; `0x018a`, `0x003c`, `0x0074`,
   `0x0082`, `0x00ba` and `0x007c` only there and at the association; the TX
   power target `0x0646` and the width cell `0x005a` on every hop. The port
-  runs the whole tail on every `op_switch_channel()`, so a mac80211 scan
-  zeroes those cells and rewrites the MAC configuration on each hop. The
+  runs the PHY's part of the tail on every `op_switch_channel()`, so a
+  mac80211 scan rewrites those cells and the MAC configuration on each hop;
+  the `0x05e0`-`0x0666` zeroing is `b43_security_init()`'s, at the core init
+  only. The
   hop/`up` split of the tail rests on 6.30 alone: on the 7.14 boards, in AP
   mode, the channel changes only through `wl down`, so every 7.14 capture of
   a new channel is a whole `up`, the agcombo bus ones included.
@@ -162,8 +164,11 @@ driver:
   none of `0x0028`-`0x0048`, whose reasons it reads 43 times in all. b43's
   reads of the other channels are what catches a fatal DMA error on the TX
   rings.
-- Ring control: b43 leaves burst and prefetch at the engine's reset values,
-  0 on the agcombo before the stock setup. The stock drivers write their
+- Ring control: on TX b43 programs 2 outstanding reads, 128-byte bursts,
+  prefetch 16 and threshold 8, the values bgmac uses for the same engine on
+  Northstar (`dmacontroller_setup()`, corerev 40 and up); on RX it leaves
+  the engine's reset values, 0 on the agcombo before the stock setup. The
+  stock drivers write their
   own: 7.14.43 on the agcombo TX `0x03700841`, RX `0x00500851`, the 6.30
   hybrid TX `0x03780841` and RX `0x036c0851`, so the values follow the
   driver and the host, not the chip. With the agcombo's the DSL-3580L raised
@@ -195,10 +200,13 @@ rows; b43 does it from `b43_security_init()` at the tail of
   (`B43_AC_SITE_MACFILTER_FIRST`); b43 does not.
 - **Key material and index block.** The stock driver zeroes 480 words of
   key material and 68 of index block. `b43_security_init()` writes the
-  material of its own 54 slots, 432 words, and the last six slots stay as
-  they are: the key material lies above the 4 KiB of shared memory that
-  `b43_upload_microcode()` zeroes. The index block it zeroes over 54 words,
-  as the AC ucode reads an empty slot; the other 14 are inside those 4 KiB.
+  material of its own 54 slots, 432 words. The last six slots and the other
+  14 entries of the index block are zero all the same: the microcode clears
+  shared memory itself when it starts, words `0x000`-`0xBFF` on 784
+  (`0x0CD0`-`0x0CD4`, see `docs/ucode42/07-SUBSYSTEMS.md`), and
+  `b43_upload_microcode()` the first 4 KiB before. The index block
+  `b43_security_init()` zeroes over 54 words, as the AC ucode reads an empty
+  slot.
   `test/unit` emits the stock zeroing with the rows; at the bus the
   integration gates miss its 548 words per `up`.
 
@@ -312,19 +320,23 @@ On the DSL-3580L, coremask `0x3`, each failed with PHY `0x007 = 0x0004` and a
 saved fault, `frame 0x0014`, `phyctl 01c5 0000 0000`. HT20, retuned hot after
 `start_ap`, had the bit set and no fault.
 
-HOSTF5 bit 15 is the switch, read from the 784 disassembly (`d11ucode42` of
-`wlDSL-3580_EU.o_save`, `extract_ucode.py` + `b43-dasm -a 15`): the probe
-request handler at `0x0A7D` (reached from the management dispatch at
-`0x093C`, `r19 = fc >> 2 = 0x10`) matches the request's SSID against
+HOSTF5 bit 15 decides who gets the probe request. From the 784
+disassembly (`d11ucode42` of `wlDSL-3580_EU.o_save`, `extract_ucode.py` +
+`b43-dasm -a 15`): the probe request handler at `0x0A7D` (reached from the
+management dispatch at `0x093C`, `r19 = fc >> 2 = 0x10`) takes a wildcard
+request without comparing SSIDs (`0x0A94`) and a directed one if its SSID
+matches
 `PRSSIDLEN`/`PRSSID` (`[0x24]`, `[0xB0]`, compare at `0x0AB5`-`0x0AC9`),
-queues a response from the template (`0x0ACC`-`0x0AEE`, slot at `[0x5E]`,
-age from TSF), and then at `0x0AF2` and `0x0CAC` tests `[0x6A]` bit 15: set,
-`r20 |= 1` and the frame is flushed at `0x0A27`→`L665`, never reaching the
-host; clear, it goes to the host. The response itself is dropped at
-`0x0273`-`0x0279` when its age exceeds `PRMAXTIME`, counting in `[0xA6]`
-(SHM 0x14C). So with the bit set and `PRMAXTIME=1` nobody answers: the AP
-is invisible to an active scan and cannot be joined. The initvals leave
-`PRSSIDLEN = 0x0b64`, so the SSID compare fails anyway. The stock driver
+queues a response from the template unless HOSTF2 bit 0 is set
+(`0x0ACC`-`0x0AEE`, slot at `[0x5E]`, age from TSF), and then at `0x0AF2`
+and `0x0CAC` tests `[0x6A]` bit 15: set, `r20 |= 1` and the frame is flushed
+at `0x0A27`→`L665`, never reaching the host; clear, it goes to the host. The
+response itself is dropped at `0x0273`-`0x0279` when its age exceeds a
+non-zero `PRMAXTIME`, counting in `[0xA6]` (SHM 0x14C). With bit 15 set and
+no response from the microcode nobody answers: the AP is invisible to an
+active scan and cannot be joined. The 784 initvals leave `PRSSIDLEN` 14 and
+`PRTLEN` 71, the values b43's beacon debug prints on the DSL-3580L. The
+stock driver
 sets the bit at the `op_switch_channel` site (cold01 #9943 on the DSL,
 #13879 on the D6220, and on every `up`) because it runs the offload; b43
 writes the slot there on a first bring-up (`b43_phy_ac_mhf_write()`), with
@@ -332,7 +344,8 @@ the bit clear, and `b43_wireless_core_init()` ends HOSTF5 at `0x0088`.
 
 To implement the offload:
 
-1. keep only `b43_chip_init()`'s `PRMAXTIME=0`;
+1. drop the `PRMAXTIME=1` of `b43_wireless_core_init()` on the AC, which the
+   PHY's 0 overwrites only because it comes later;
 2. write the template at the layout's probe-response base, `0x04d8` on 784 and
    `0x0700` on 832 and 928 (the TODO above `struct b43_tpl_layout` in `b43/b43.h`),
    rewritten after every beacon once its length and the MACCMD valid bits are
@@ -381,15 +394,16 @@ from the capabilities of the stock beacon in the agcombo bus capture
 (`ch36.bin`, template RAM through `TPLWRPTR`/`TPLWRDATA`): HT `0x086e`
 (`0x086f`, LDPC added, in its later beacons), MCS `ff ff ff`, TX MCS set not
 defined; VHT `0x0f825832`, MCS 0-9 on three streams both ways. The port
-takes the streams from the SROM `rxchain` and leaves out what b43 does not
-do: A-MPDU and A-MSDU, MPDUs over 3895 bytes, LDPC reception, beamforming
-and link adaptation. It defines the TX MCS set the stock beacon leaves
+takes the streams from the SROM `rxchain`, announces A-MPDU as the stock
+beacon does (see "Aggregation") and leaves out what b43 does not do:
+A-MSDU, MPDUs over 3895 bytes, LDPC reception, beamforming and link
+adaptation. It defines the TX MCS set the stock beacon leaves
 undefined, so that HT MCS go out as well. HT MCS and VHT MCS 0-9 go out on
 as many streams as the board has TX chains, in the layout of the stock
 drivers' own descriptors (`b43_txhdr_ac_ht()`, `b43_txhdr_ac_vht()`, from
 the captures below, the DSL-3580L's 6.30 code and, for HT20, gonsolo's port
-under 832.127). On the board HT20 and HT40 work and VHT is next (see "On
-hardware"). What is open:
+under 832.127). On the board HT20, HT40 and VHT20/40/80 carry traffic
+(see "On hardware"). What is open:
 
 - **HT40.** It runs on the DSL-3580L under 784.2 with the HT20 throughput,
   so the log does not show whether minstrel took the 40 MHz rates. The
@@ -447,9 +461,10 @@ hardware"). What is open:
   cold sweep): word 0 is `0x0045` or `0x00c5` (OFDM, bit 2, chain mask),
   word 1 the power offset alone (`0x0000`-`0x0060`), word 2 zero. A legacy
   frame on a 40 or 80 MHz channel thus has the 20 MHz words, with no width
-  field set, as b43's descriptor has. The subband field is never non-zero:
-  every chanspec of every capture (agcombo, D6220, TG789vac v2) has the
-  primary at the bottom of its block.
+  field set, as b43's descriptor has. In the cold and hot sweeps (D6220,
+  TG789vac v2, agcombo) every chanspec has the primary at the bottom of its
+  block, so the subband field is zero there; the agcombo's traffic
+  captures below have primaries above it, and subbands 1 and 2.
 
   The stock driver's own TX headers are in `router-data/vd625-agcombo/`:
   the agcombo's `wl_vd625.ko` (7.14.43.21) and its microcode, not 784.2, at
@@ -1126,7 +1141,8 @@ ucode revision.
   bit in MACCMD; at the BSS setup also DTIMPER (`0x0012`) and the beacon TSF
   offset (`0x001c`, `0x3a`), and with every beacon the probe response template
   at `0x0700`, its length at `0x004a` and the SSID at `0x0160`. b43 writes the
-  same cells in the same order.
+  beacon's cells in the same order, and none of the probe response's (see
+  "Probe-response offload").
 - **Traffic.** `bringup-log-2026-10-11-ht20-40.txt`: at HT20 on 36 and at
   HT40 on 36/40 a station associates, completes the WPA2 4-way handshake at
   the first attempt and carries traffic, with no PHY TX error, no DMA error

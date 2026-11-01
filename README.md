@@ -33,9 +33,10 @@ MacBookAir6,1, are the only ones with 2.4 GHz channel sets.
 
 The MVP is **every hardware block configured and a beacon on air on every
 5 GHz channel and width.** A block is implemented because the stock driver
-emits it, not because association needs it, so the AP phases (beacon,
-probe-response template, SSID in shared memory) are in scope. Data TX/RX and
-2.4 GHz come after.
+emits it, not because association needs it. The exceptions are deliberate
+and listed under "What is missing": the probe-response offload (its template
+and SSID in shared memory) and the power management queue. Data TX/RX and
+2.4 GHz at 20 MHz followed the MVP and run (see "On hardware").
 
 The cold bring-up comes first; a bring-up on an interface that was already up
 (hot) is deferred, not dropped. The `FIRST_BRINGUP` branches in `b43/` and the
@@ -46,23 +47,29 @@ The TX power model -- locale caps, legacy and CCK rules, chain choice -- is in
 
 ## Current state
 
-Measured on 2026-10-09, see below.
+Measured on 2026-10-28, the integration and SROM rows on 2026-10-09; see
+below.
 
 | gate | result |
 |---|---|
-| unit, cold `cold01` ch36/20 | **99.91%** (29819/29845): 0 wrong values, 26 missing (core cells outside the PHY), 0 extra |
-| unit, cold, all 43 segments | min 99.80% (ch60/40), median 99.91%, max 99.95%; 0 wrong values on 38 of 43 |
+| unit, cold `cold01` ch36/20 | **99.90%** (29818/29847): 1 wrong value, 26 missing (core cells outside the PHY), 1 extra |
+| unit, cold, all 43 segments | min 99.80% (ch60/40), median 99.90%, max 99.95%; 1 wrong value on 38 of 43 |
 | unit, hot `up` ch36 / ch52 / ch104 | 98.50% / 99.00% / 98.94% |
-| unit, cold agcombo `cold01` ch36/20 | 90.47% |
-| unit, cold TG789vac v2 `cold01` ch36/20 | 99.93% |
-| unit, cold TG789vac v2, all 43 segments | min 99.77% (ch149/40), median 99.93%, max 99.99%; 0 wrong values on 27 of 43 |
+| unit, cold agcombo `cold01` ch36/20 | 90.46% |
+| unit, cold TG789vac v2 `cold01` ch36/20 | 99.92% |
+| unit, cold TG789vac v2, all 43 segments | min 99.76%, median 99.92%, max 99.99%; 1 wrong value on 27 of 43 |
 | unit, periodic watchdog tick | **`MATCH`** |
 | integration, cold `cold01` | `probe: 0`, `start: 0`; 70.57% (26781/37951) |
 | integration, agcombo ch36/80 at the bus | 70.64% (89994/127406), with the 561 interrupts and 283 received frames of the capture replayed |
 | SROM rev 11 extractor | 77/82/83 PASS, 0 FAIL (DSL-3580L, D6220, agcombo) |
 | SROM rev 11 from NVRAM | 116/123/123/123 PASS, 0 FAIL (DSL-3580L, D6220, agcombo, TG789vac v2) |
 
-The agcombo unit row runs with the capture's SSID length (7, read off
+The wrong value and the extra op on the cold rows are one port decision:
+HOSTF2 bit 0, which keeps the microcode from answering probe requests, set
+on a first bring-up where the stock driver clears it (`docs/retrace-todo.md`,
+"Probe-response offload"); the bit is masked from the cell's value, not from
+the host-flag record or the write it adds. The agcombo unit row runs with
+the capture's SSID length (7, read off
 `PRSSIDLEN` by `gates.sh`). The integration rows write the 48-bit table
 cells as the stock driver does on the bus, which a `wl-diag` capture, taken
 at the accessors, does not show: that costs `cold01` against its capture
@@ -119,9 +126,10 @@ the limit off.
   harness for both in [`bcma/harness/`](bcma/harness/).
 - **The PHY** (the AC-PHY files of `b43/`, `patches/0003`): `op_init`,
   `software_rfkill`, `switch_analog`, `switch_channel` on every row of the
-  2069 table (5170–5825 MHz) at 20, 40 and 80 MHz, the post-switch
-  calibrations, TX power from the SROM, the watchdog on `pwork_1sec`, the CRS
-  threshold on `pwork_60sec`, the radar poll and the bss-up.
+  2069 table, 5170–5825 MHz at 20, 40 and 80 MHz and 2412–2484 MHz at 20,
+  the post-switch calibrations, TX power from the SROM, the watchdog on
+  `pwork_1sec`, the CRS threshold on `pwork_60sec`, the radar poll and the
+  bss-up.
 - **The core** (the rest of `b43/`, `patches/0002`): channel set, DMA ring addressing,
   TX/RX path, address match table, shared memory, key layout, the
   `channel_calibrate` hook, LEDs above GPIO 3, the 1 s tick, the noise sample,
