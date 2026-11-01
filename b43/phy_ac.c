@@ -2870,10 +2870,11 @@ static void b43_phy_ac_rxcore_setstate(struct b43_wldev *dev, u8 coremask)
 	/*
 	 * RX-gain override companion of 0x06d8, bracketing the core-state
 	 * change: forced wide open (0xffff) before, set back to what 0x06d8
-	 * read after. The capture delays 5848 us after the wide-open write.
+	 * read after. The capture delays 5848 us after the wide-open write;
+	 * mdelay(), since ARM refuses a udelay() constant above 2 ms.
 	 */
 	b43_phy_write(dev, 0x16d8, 0xffff);
-	udelay(5850);
+	mdelay(6);
 
 	b43_phy_maskset(dev, 0x0160, (u16)~0x0007, coremask);
 	b43_phy_maskset(dev, B43_PHY_AC_RF_SEQ_MODE, (u16)~0x0070,
