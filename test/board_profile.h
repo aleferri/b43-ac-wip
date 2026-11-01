@@ -62,9 +62,13 @@ struct board_profile {
 	 */
 	u32 cc_caps, cc_capext, cc_chipstatus, pmu_caps;
 	/* Power-detector offsets per chain, one nibble per pa5g sub-band; NVRAM
-	 * pdoffset40ma{0,1,2} and pdoffset80ma{0,1,2}. Feed table 0x21. */
+	 * pdoffset40ma{0,1,2} and pdoffset80ma{0,1,2}; at 2.4 GHz one 4-bit
+	 * value per chain, pdoffset2g40ma{0,1,2}, unused when
+	 * pdoffset2g40mvalid is set. Feed table 0x21. */
 	u16 pdoffset40ma[3];
 	u16 pdoffset80ma[3];
+	u8 pdoffset2g40ma[3];
+	u8 pdoffset2g40mvalid;
 	/* rpcal2g and rpcal5gb0..3: SROM words 182, 183, 190, 191, 198. */
 	u16 rpcal[5];
 	/* mcsbw{20,40}5g{l,m,h}po, NVRAM. Index 0 = 5gl, 1 = 5gm, 2 = 5gh. */
@@ -425,7 +429,9 @@ static const struct board_profile PROFILE_ARCHER = {
 	.rccal_e = 0x0aba, .rccal_f = 0x0b9d,
 	.rccal_g = 0x01c9,
 	.antgain_raw = { 0, 0 },
-	/* pdoffset40ma/80ma and every mcsbw*po word are zero in this SROM. */
+	/* pdoffset40ma/80ma and every mcsbw*po word are zero in this SROM;
+	 * word 100 is 0xffff: pdoffset2g40ma valid, offsets unused. */
+	.pdoffset2g40ma = { 15, 15, 15 }, .pdoffset2g40mvalid = 1,
 };
 
 /*
@@ -488,6 +494,8 @@ static const struct board_profile PROFILE_MACBOOK = {
 	.antgain_raw = { 6, 6 },
 	.pdoffset40ma = { 0x3323, 0x3334, 0x3332 },
 	.pdoffset80ma = { 0x2322, 0x1112, 0x2332 },
+	/* SROM word 100 is 0xffff: valid, offsets unused. */
+	.pdoffset2g40ma = { 15, 15, 15 }, .pdoffset2g40mvalid = 1,
 	.rpcal = { 0x007c, 0x0079, 0x0067, 0x0052, 0x0060 },
 	.mcsbw5g_po = {
 		{ 0xdd666000, 0xdd666000, 0xdd666000 },
@@ -501,8 +509,7 @@ static const struct board_profile PROFILE_MACBOOK = {
  * (microcode 928), one radio per band, so one profile per radio. Values from
  * router-data/r7000/nvram-radios.txt (pci/1/1/ for eth1, pci/2/1/ for eth2):
  * the board has no SROM, and a key the NVRAM lacks is 0 as bcm47xx_sprom.c
- * reads it (0xff for the ledbh keys). rccal is the first segment's RETVALs. Both
- * radios are femctrl 3, which has no FEM control table in b43 yet.
+ * reads it (0xff for the ledbh keys). rccal is the first segment's RETVALs.
  *
  * Not in any capture: the MAC addresses (removed from the NVRAM dump) and
  * MAC_HW_CAP, which this wl writes through accessors wl_diag does not hook;
@@ -533,6 +540,8 @@ static const struct board_profile PROFILE_R7000_2G = {
 	.maxp2ga = { 106, 106, 106 },
 	.mcsbw2g_po = { 0xa976a600, 0xa976a600 },
 	.cckbw202gpo = 0,
+	/* Valid, so the offsets stay out of table 0x21. */
+	.pdoffset2g40ma = { 15, 15, 15 }, .pdoffset2g40mvalid = 1,
 	.rxgains_2g_elnagain = { 3, 3, 3 },
 	.rxgains_2g_triso    = { 7, 7, 7 },
 	/* cold-2g20.zip, cold01-ch1-bw20: E, F and G post-apply. */
@@ -637,6 +646,8 @@ static inline void board_profile_to_sprom(const struct board_profile *p,
 					      (p->antgain_raw[b] >> 6));
 	memcpy(s->pdoffset40ma, p->pdoffset40ma, sizeof(s->pdoffset40ma));
 	memcpy(s->pdoffset80ma, p->pdoffset80ma, sizeof(s->pdoffset80ma));
+	memcpy(s->pdoffset2g40ma, p->pdoffset2g40ma, sizeof(s->pdoffset2g40ma));
+	s->pdoffset2g40mvalid = p->pdoffset2g40mvalid;
 	s->rpcal2g = p->rpcal[0];
 	memcpy(s->rpcal5gb, &p->rpcal[1], sizeof(s->rpcal5gb));
 
