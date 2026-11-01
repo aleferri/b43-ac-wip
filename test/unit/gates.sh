@@ -60,6 +60,7 @@
 #   ./gates.sh --hot [segment...]               hot, three default segments
 #   ./gates.sh --hot --flow switch_channel DIR  one row per channel, over a dir
 #   ./gates.sh --board tg789 [segment...]      another board's profile
+#   COLD=/tmp/r7000-2g ./gates.sh --board r7000-2g /tmp/r7000-2g/cold01-ch1-bw20.txt
 #
 # --min-block N --gap-tol M are required, except with --table: cmp_skip.py
 # counts the equal pairs of blocks of at least N pairs, with at most M
@@ -122,6 +123,7 @@ if [ "$COND" = cold ]; then
 	: "${FLOW:=full}"
 	FIRST_INIT=1
 	DEFAULT="$COLD/cold01-ch36-bw20.txt"
+	[ "$BOARD" = r7000-2g ] && DEFAULT="$COLD/cold01-ch1-bw20.txt"
 else
 	DIR=$HOT
 	ARCHIVE=hot-sweep.zip
@@ -139,6 +141,19 @@ fi
 
 if [ ! -d "$DIR" ]; then
 	echo "missing $DIR:"
+	# The R7000 archives hold the whole sweep, not its segments.
+	case $BOARD in
+	r7000-2g|r7000-5g)
+		band=${BOARD#r7000-}
+		if [ "$COND" = cold ]; then
+			sweep=cold-${band}20 split="--on mod --prefix cold"
+		else
+			sweep=hot-${band}20 split="--on chanspec"
+		fi
+		echo "  unzip -d /tmp/r7000 $REPO/router-data/r7000/$sweep.zip"
+		echo "  python3 $TOOLS/split_trace.py $split /tmp/r7000/$sweep.txt $DIR"
+		exit 1 ;;
+	esac
 	case $BOARD in
 	dsl)   DATA=dsl3580l ;;
 	tg789) DATA=tg789vac-v2 ;;

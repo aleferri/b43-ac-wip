@@ -496,6 +496,97 @@ static const struct board_profile PROFILE_MACBOOK = {
 	},
 };
 
+/*
+ * Netgear R7000: two BCM4360 3x3 on PCIe of a BCM4709, wl 7.14.164.18
+ * (microcode 928), one radio per band, so one profile per radio. Values from
+ * router-data/r7000/nvram-radios.txt (pci/1/1/ for eth1, pci/2/1/ for eth2):
+ * the board has no SROM, and a key the NVRAM lacks is 0 as bcm47xx_sprom.c
+ * reads it (0xff for the ledbh keys). rccal is the first segment's RETVALs. Both
+ * radios are femctrl 3, which has no FEM control table in b43 yet.
+ *
+ * Not in any capture: the MAC addresses (removed from the NVRAM dump) and
+ * MAC_HW_CAP, which this wl writes through accessors wl_diag does not hook;
+ * the latter is the tg789vac's, the same chip and wl branch.
+ */
+static const struct board_profile PROFILE_R7000_2G = {
+	.name = "r7000-2g", .chip_id = 0x4360, .radio_rev = 4,
+	.chip_rev = 0x3, .pci_device = 0x43a1,
+	.radio_ver = 0x2069, .phy_rev = 1,
+	.core_rev = 42, .mac_hw_cap = 0x30518c05,
+	.boardflags = 0x00001000, .boardflags2 = 0x00100002,
+	.boardflags3 = 0x10000003,
+	.ledbh = { [0 ... 15] = 0xff },
+	.num_cores = 3, .coremask = 0x7, .rxchain = 7,
+	.subband5gver = 0x4,
+	/* femctrl=3 pdgain2g=14 tssiposslope2g=1; femctrl_sub 3 from
+	 * boardflags3. No 5 GHz key. */
+	.fem_cfg1 = 0x18e1, .fem_cfg2 = 0x0000,
+	/* tempthresh=120, nothing else of the thermal block. */
+	.thermal = 0x7800, .tempdelta = 0x0000,
+	.rpcal = { 0x01ec, 0, 0, 0, 0 },
+	.antgain_raw = { 0, 0 },
+	.pa2ga = {
+		{ 0xff32, 0x1c30, 0xfca3 },
+		{ 0xff35, 0x1be3, 0xfcb0 },
+		{ 0xff33, 0x1be1, 0xfcb0 },
+	},
+	.maxp2ga = { 106, 106, 106 },
+	.mcsbw2g_po = { 0xa976a600, 0xa976a600 },
+	.cckbw202gpo = 0,
+	.rxgains_2g_elnagain = { 3, 3, 3 },
+	.rxgains_2g_triso    = { 7, 7, 7 },
+	/* cold-2g20.zip, cold01-ch1-bw20: E, F and G post-apply. */
+	.rccal_e = 0x0b7c, .rccal_f = 0x0c76,
+	.rccal_g = 0x0165,
+};
+
+static const struct board_profile PROFILE_R7000_5G = {
+	.name = "r7000-5g", .chip_id = 0x4360, .radio_rev = 4,
+	.chip_rev = 0x3, .pci_device = 0x43a2,
+	.radio_ver = 0x2069, .phy_rev = 1,
+	.core_rev = 42, .mac_hw_cap = 0x30518c05,
+	.boardflags = 0x30000000, .boardflags2 = 0x00300002,
+	.boardflags3 = 0x10000000,
+	.ledbh = { [0 ... 15] = 0xff },
+	.num_cores = 3, .coremask = 0x7, .rxchain = 7,
+	.subband5gver = 0x4,
+	/* femctrl=3, femctrl_sub 0; pdgain5g=4 tssiposslope5g=1. No 2.4 GHz
+	 * key. */
+	.fem_cfg1 = 0x1800, .fem_cfg2 = 0x0041,
+	/* tempthresh=120 tempoffset=255; phycal_tempdelta=255
+	 * temps_period=15 temps_hysteresis=15. */
+	.thermal = 0x78ff, .tempdelta = 0xffff,
+	.tssifloor5g = { 0x3ff, 0x3ff, 0x3ff, 0x3ff },
+	.rpcal = { 0, 0x7901, 0x7cfb, 0x79fa, 0x8907 },
+	.pa5ga = {
+		{ 0xff4c, 0x1808, 0xfd1b, 0xff4c, 0x18cf, 0xfd0c,
+		  0xff4a, 0x1920, 0xfd08, 0xff4c, 0x1949, 0xfcf6 },
+		{ 0xff4a, 0x18ac, 0xfd0b, 0xff44, 0x1904, 0xfcff,
+		  0xff56, 0x1a09, 0xfcfc, 0xff4f, 0x19ab, 0xfcef },
+		{ 0xff4c, 0x1896, 0xfd11, 0xff43, 0x192d, 0xfcf5,
+		  0xff50, 0x19ee, 0xfcf1, 0xff52, 0x19c6, 0xfcf1 },
+	},
+	.maxp5ga = {
+		{ 106, 106, 106, 106 },
+		{ 106, 106, 106, 106 },
+		{ 106, 106, 106, 106 },
+	},
+	.antgain_raw = { 0, 0 },
+	.pdoffset40ma = { 0x1111, 0x1111, 0x1111 },
+	.pdoffset80ma = { 0, 0, 0 },
+	/* mcsbw{20,40,80}5g{l,m,h}po: one word for every band and width. */
+	.mcsbw5g_po = {
+		{ 0xba768600, 0xba768600, 0xba768600 },
+		{ 0xba768600, 0xba768600, 0xba768600 },
+		{ 0xba768600, 0xba768600, 0xba768600 },
+	},
+	.rxgains_5gl_elnagain = { 4, 4, 4 },
+	.rxgains_5gl_triso    = { 7, 6, 5 },
+	/* cold-5g20.zip, cold01-ch36-bw20: E, F and G post-apply. */
+	.rccal_e = 0x0b18, .rccal_f = 0x0c04,
+	.rccal_g = 0x01a8,
+};
+
 /* One-shot mock storage. Lives for the whole run. */
 /* Il profilo per nome, come lo passano le due suite (argv o B43_BOARD). */
 static inline const struct board_profile *board_profile_lookup(const char *name)
@@ -510,6 +601,10 @@ static inline const struct board_profile *board_profile_lookup(const char *name)
 		return &PROFILE_ARCHER;
 	if (name && !strcmp(name, "macbook"))
 		return &PROFILE_MACBOOK;
+	if (name && !strcmp(name, "r7000-2g"))
+		return &PROFILE_R7000_2G;
+	if (name && !strcmp(name, "r7000-5g"))
+		return &PROFILE_R7000_5G;
 	return &PROFILE_D6220;
 }
 

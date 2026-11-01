@@ -8,7 +8,8 @@
  *   ./ac_trace [flow] [board]
  *     flow  = full (default) | up | down | switch_channel | periodic |
  *             op_init | rfkill | crsmin | rxiq_est_debug | rxiq_comp
- *     board = d6220 (default) | agcombo | dsl | tg789
+ *     board = d6220 (default) | agcombo | dsl | tg789 | archer | macbook |
+ *             r7000-2g | r7000-5g
  *
  * `full` is the broadest flow, ~28k HW ops on d6220 ch36: the analog preamble,
  * rfkill, op_init, then everything run_switch_channel() drives -- the channel
@@ -532,6 +533,15 @@ static void register_board_read_plans(const struct board_profile *p)
 		 * main(): 0x041a pre-state bit 0x0004 (agcombo #60570 folds it
 		 * into WR 0x0014) and 0x0521 AFE_CAL_CLK bit 0x2000 (agcombo
 		 * #63946 RMW yields 0x2000/0x3000). */
+		b43_test_mirror_radio_set(0x041a, 0x0004);
+		b43_test_mirror_radio_set(0x0521, 0x2000);
+	} else if (!strcmp(p->name, "r7000-2g") ||
+		   !strcmp(p->name, "r7000-5g")) {
+		/* CLASSCTL reads 0x0df7 on both radios (cold01 of cold-2g20 and
+		 * of cold-5g20). The radio seeds are the other BCM4360 3x3
+		 * boards': in these captures 0x041a and 0x0521 are modified
+		 * before any read shows them. */
+		b43_test_mirror_phy_set(0x0140, 0x0800);
 		b43_test_mirror_radio_set(0x041a, 0x0004);
 		b43_test_mirror_radio_set(0x0521, 0x2000);
 	} else if (!strcmp(p->name, "tg789")) {
