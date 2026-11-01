@@ -310,6 +310,7 @@ void b43_dma_tx_resume(struct b43_wldev *dev);
 
 int b43_dma_tx(struct b43_wldev *dev,
 	       struct sk_buff *skb);
+bool b43_dma_tx_room(struct b43_wldev *dev, u8 queue_prio);
 void b43_dma_handle_txstatus(struct b43_wldev *dev,
 			     const struct b43_txstatus *status);
 

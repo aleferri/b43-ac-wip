@@ -1432,6 +1432,14 @@ static struct b43_dmaring *select_ring_by_priority(struct b43_wldev *dev,
 	return ring;
 }
 
+/* Whether the ring of @queue_prio takes another frame now. */
+bool b43_dma_tx_room(struct b43_wldev *dev, u8 queue_prio)
+{
+	struct b43_dmaring *ring = select_ring_by_priority(dev, queue_prio);
+
+	return !ring->stopped && free_slots(ring) >= TX_SLOTS_PER_FRAME;
+}
+
 int b43_dma_tx(struct b43_wldev *dev, struct sk_buff *skb)
 {
 	struct b43_dmaring *ring;

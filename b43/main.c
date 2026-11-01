@@ -4738,6 +4738,8 @@ static int b43_rng_init(struct b43_wl *wl)
 	return err;
 }
 
+static void b43_tx_pull(struct b43_wldev *dev);
+
 static void b43_tx_work(struct work_struct *work)
 {
 	struct b43_wl *wl = container_of(work, struct b43_wl, tx_work);
@@ -4774,6 +4776,7 @@ static void b43_tx_work(struct work_struct *work)
 		if (!err)
 			wl->tx_queue_stopped[queue_num] = false;
 	}
+	b43_tx_pull(dev);
 
 #if B43_DEBUG
 	dev->tx_count++;
@@ -4843,6 +4846,89 @@ static void b43_op_tx(struct ieee80211_hw *hw,
 	} else {
 		ieee80211_stop_queue(wl->hw, skb->queue_mapping);
 	}
+}
+
+/*
+ * The AC cores with DMA pull their frames from the mac80211 TX queues, and
+ * only while the ring of the access category has room: what does not fit
+ * waits in mac80211, which builds A-MSDUs and keeps its fair queueing
+ * there, instead of in wl->tx_queue. The other cores keep
+ * ieee80211_handle_wake_tx_queue(), which pushes every frame to
+ * b43_op_tx().
+ */
+/*
+ * Only full-size MSDUs go into an A-MSDU: with a OnePlus Nord 2 two rooms
+ * away, aggregating everything took its uplink from 121 to 85 Mbit/s (the
+ * TCP ACKs we send it wait for a partner), aggregating MSDUs of 1000
+ * bytes and more kept it (125) and its downlink (172 against 173).
+ */
+static bool b43_op_can_aggregate_in_amsdu(struct ieee80211_hw *hw,
+					  struct sk_buff *head,
+					  struct sk_buff *skb)
+{
+	return skb->len >= 1000;
+}
+
+static bool b43_tx_pulls(struct b43_wldev *dev)
+{
+	return dev && dev->phy.type == B43_PHYTYPE_AC &&
+	       !b43_using_pio_transfers(dev);
+}
+
+static void b43_tx_pull(struct b43_wldev *dev)
+{
+	struct b43_wl *wl = dev->wl;
+	struct ieee80211_hw *hw = wl->hw;
+	struct ieee80211_txq *txq;
+	struct sk_buff *skb;
+	int ac, err;
+
+	if (!b43_tx_pulls(dev))
+		return;
+
+	/* ieee80211_tx_dequeue() wants the bottom halves off. */
+	local_bh_disable();
+	for (ac = 0; ac < IEEE80211_NUM_ACS; ac++) {
+		if (wl->tx_queue_stopped[ac] || skb_queue_len(&wl->tx_queue[ac]))
+			continue;
+		ieee80211_txq_schedule_start(hw, ac);
+		while (b43_dma_tx_room(dev, ac) &&
+		       (txq = ieee80211_next_txq(hw, ac))) {
+			while (b43_dma_tx_room(dev, ac) &&
+			       (skb = ieee80211_tx_dequeue(hw, txq))) {
+				if (unlikely(skb->len < 2 + 2 + 6 ||
+					     !b43_tx_rates_ok(hw,
+						IEEE80211_SKB_CB(skb)))) {
+					ieee80211_free_txskb(hw, skb);
+					continue;
+				}
+				err = b43_dma_tx(dev, skb);
+				if (err == -ENOSPC) {
+					skb_queue_head(&wl->tx_queue[ac], skb);
+					wl->tx_queue_stopped[ac] = true;
+					break;
+				}
+				if (unlikely(err))
+					ieee80211_free_txskb(hw, skb);
+			}
+			ieee80211_return_txq(hw, txq, false);
+			if (wl->tx_queue_stopped[ac])
+				break;
+		}
+		ieee80211_txq_schedule_end(hw, ac);
+	}
+	local_bh_enable();
+}
+
+static void b43_op_wake_tx_queue(struct ieee80211_hw *hw,
+				 struct ieee80211_txq *txq)
+{
+	struct b43_wl *wl = hw_to_b43_wl(hw);
+
+	if (b43_tx_pulls(READ_ONCE(wl->current_dev)))
+		ieee80211_queue_work(hw, &wl->tx_work);
+	else
+		ieee80211_handle_wake_tx_queue(hw, txq);
 }
 
 static void b43_qos_params_upload(struct b43_wldev *dev,
@@ -6863,7 +6949,8 @@ static int b43_op_ampdu_action(struct ieee80211_hw *hw,
 
 static const struct ieee80211_ops b43_hw_ops = {
 	.tx			= b43_op_tx,
-	.wake_tx_queue		= ieee80211_handle_wake_tx_queue,
+	.wake_tx_queue		= b43_op_wake_tx_queue,
+	.can_aggregate_in_amsdu	= b43_op_can_aggregate_in_amsdu,
 	.conf_tx		= b43_op_conf_tx,
 	.add_interface		= b43_op_add_interface,
 	.remove_interface	= b43_op_remove_interface,
@@ -7081,6 +7168,13 @@ static int b43_setup_bands(struct b43_wldev *dev,
 		ieee80211_hw_set(hw, AMPDU_AGGREGATION);
 		/* A-MSDUs come in pieces, which b43_rx_amsdu() joins. */
 		ieee80211_hw_set(hw, SUPPORTS_AMSDU_IN_AMPDU);
+		/*
+		 * mac80211 builds A-MSDUs from what waits (b43_tx_pull()), on
+		 * its fast transmit path only, of frames that are worth it
+		 * (b43_op_can_aggregate_in_amsdu()).
+		 */
+		ieee80211_hw_set(hw, TX_AMSDU);
+		ieee80211_hw_set(hw, SUPPORT_FAST_XMIT);
 		hw->max_tx_aggregation_subframes = IEEE80211_MAX_AMPDU_BUF_HT;
 		hw->max_rx_aggregation_subframes = IEEE80211_MAX_AMPDU_BUF_HT;
 		if (have_5ghz_phy) {
