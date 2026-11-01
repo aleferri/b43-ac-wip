@@ -670,6 +670,52 @@ static unsigned int b43_sta_ampdu_exp(const struct ieee80211_sta *sta)
 			    IEEE80211_VHT_CAP_MAX_A_MPDU_LENGTH_EXPONENT_MASK);
 }
 
+/*
+ * A frame to a station with a beamforming slot (b43_txbf_link()), as
+ * wlc_d11hdrs() and wlc_acphy_txctl0_calc() of 6.30.163.46 lay it out:
+ * on each VHT rate block every TX chain, the BFM bit of word 0 and the slot
+ * in bits 15:12 of the RTS/CTS word, and the Beamformed bit of VHT-SIG-A2.
+ */
+static void b43_txhdr_ac_txbf(struct b43_wldev *dev,
+			      struct b43_txhdr_ac *txhdr, unsigned int n,
+			      const struct ieee80211_tx_info *info,
+			      const struct ieee80211_hdr *hdr)
+{
+	u8 txchain = dev->dev->bus_sprom->txchain & 0x07;
+	struct ieee80211_sta *sta;
+	unsigned int slot = 0, i;
+
+	if (!dev->txbf_base || !info->control.vif ||
+	    !ieee80211_is_data(hdr->frame_control) ||
+	    is_multicast_ether_addr(hdr->addr1))
+		return;
+
+	rcu_read_lock();
+	sta = ieee80211_find_sta(info->control.vif, hdr->addr1);
+	if (sta)
+		slot = READ_ONCE(((struct b43_sta *)sta->drv_priv)->txbf_slot);
+	rcu_read_unlock();
+	if (!slot)
+		return;
+	if (!txchain)
+		txchain = 0x03;
+
+	for (i = 0; i < n; i++) {
+		struct b43_txhdr_ac_rate *r = &txhdr->rate[i];
+		u16 phy0 = le16_to_cpu(r->phy_ctl[0]);
+
+		if ((phy0 & B43_TXH_PHY_ENC) != B43_TXH_PHY_ENC_VHT)
+			continue;
+		phy0 &= ~B43_TXH_AC_PHY0_CORES;
+		phy0 |= txchain << B43_TXH_AC_PHY0_CORES_SHIFT |
+			B43_TXH_AC_PHY0_BFM;
+		r->phy_ctl[0] = cpu_to_le16(phy0);
+		r->rts_cts_ctl |= cpu_to_le16((slot - 1) <<
+					      B43_TXH_AC_RTS_TXBF_SLOT_SHIFT);
+		r->plcp.raw[4] |= 0x01;
+	}
+}
+
 static bool b43_txhdr_ac_ampdu(struct b43_txhdr_ac *txhdr,
 			       const struct ieee80211_tx_info *info,
 			       struct ieee80211_hdr *hdr)
@@ -823,6 +869,7 @@ static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 	for (i = 0; i < n; i++)
 		txhdr->rate[i].rts_cts_ctl = cpu_to_le16(rts);
 	txhdr->rate[n - 1].rts_cts_ctl |= cpu_to_le16(B43_TXH_AC_RTS_LAST_RATE);
+	b43_txhdr_ac_txbf(dev, txhdr, n, info, wlhdr);
 
 	return 0;
 }

@@ -801,6 +801,30 @@ struct b43_stats {
  */
 struct b43_sta {
 	u8 ampdu_win[IEEE80211_NUM_TIDS];
+	/* Beamforming slot of the station plus one, 0 for none. */
+	u8 txbf_slot;
+};
+
+/*
+ * Transmit beamforming on the AC (6.30.163.46's wlc_txbf.c, whose microcode
+ * b43 loads): the microcode publishes the base of its beamforming block at
+ * shared 0x00B0, a word address. A beamformee takes one of five 16-word
+ * slots there, which the microcode sounds and keeps the steering matrix of;
+ * the station's key row in the per-row table at 0x0668 points at the slot.
+ */
+#define B43_SHM_SH_TXBF_BLK		0x00B0
+#define B43_SHM_SH_AMT_INFO		0x0668
+#define  B43_AMT_INFO_TXBF		0x1000
+#define  B43_AMT_INFO_TXBF_SLOT_SHIFT	13
+#define B43_TXBF_SLOTS			5
+#define B43_TXBF_SOUNDING		0x00E0	/* Sounding period, in the block */
+#define B43_TXBF_CTL			0x06E0	/* In the block, bit 8 cleared */
+#define B43_TXBF_SOUNDING_DEFAULT	6250
+
+struct b43_txbf_link {
+	struct b43_sta *bsta;
+	u8 row;				/* Address match row of the key */
+	u8 addr[ETH_ALEN];		/* Our address, of the station's BSS */
 };
 
 struct b43_key {
@@ -1003,6 +1027,9 @@ struct b43_wldev {
 	struct sk_buff *rx_amsdu;
 	u8 rx_amsdu_hdr[40] __aligned(4);	/* Its first receive header */
 	u32 rx_amsdu_err;
+	/* Word address of the microcode's beamforming block, 0 without. */
+	u16 txbf_base;
+	struct b43_txbf_link txbf[B43_TXBF_SLOTS];
 	bool radio_hw_enable;	/* saved state of radio hardware enabled state */
 	bool qos_enabled;		/* TRUE, if QoS is used. */
 	bool hwcrypto_enabled;		/* TRUE, if HW crypto acceleration is enabled. */
