@@ -43,8 +43,10 @@ site with `b43_phy_ac_todo()` (`grep -n 'b43_phy_ac_todo(dev' b43/*.c`).
 Some values are transcribed from captures rather than derived. On an RF chain
 other than the one they were read from they can overdrive the PA, so they are
 scaffolding: the FEM control table exists for `femctrl=6` with `femctrl_sub 0`,
-every router here, for `femctrl=2` with `femctrl_sub 1`, the MacBookAir6,1,
-and for `femctrl=1` with `femctrl_sub 0`, the archer-t5e;
+the D6220, the DSL-3580L, the tg789vac and the agcombo, for `femctrl=2` with `femctrl_sub 1`, the
+MacBookAir6,1, for `femctrl=1` with `femctrl_sub 0`, the archer-t5e, and for
+`femctrl=3` with `femctrl_sub 3` (2.4 GHz) and `0` (5 GHz), the Northstar
+boards (R7000, EA6900, RT-AC66U B1);
 `b43_phy_ac_set_regtbl_on_femctrl()` stops with a warning on any other.
 
 - A scaffold is removed by deriving the value, or by proving with captures that

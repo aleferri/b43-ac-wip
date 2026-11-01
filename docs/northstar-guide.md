@@ -18,14 +18,14 @@ use `wl-mmio-trap/4-4-arm/` for those.
 
 ## What the port needs from these boards
 
-- **2.4 GHz.** The port runs 2.4 GHz at 20 MHz from two 2.4 GHz captures
-  only; 40 MHz on 2.4 GHz has none. Cold and hot sweeps of the 2.4 GHz radio
-  are the main thing.
-- **femctrl 3.** The port loads the FEM control table for femctrl 6, 2
-  (sub 1) and 1 (sub 0), the boards captured so far
-  (`b43_phy_ac_set_regtbl_on_femctrl()`); on femctrl 3 it stops with
-  "not supported". Its table is unknown, on both bands. The sub is in
-  `boardflags3`, so the NVRAM of step 2 says which one these boards have.
+- **2.4 GHz.** The port's 2.4 GHz at 20 MHz rests on the MacBookAir6,1 and
+  archer-t5e captures and the R7000's (`router-data/r7000/`); 40 MHz on
+  2.4 GHz on read-backs under `wl` on an RT-AC66U B1, with no capture. A
+  40 MHz sweep of the 2.4 GHz radio is what is missing.
+- **femctrl 3.** The port loads the FEM control table of femctrl 3, sub 3
+  on the 2.4 GHz radios and sub 0 on the 5 GHz ones, from the R7000's
+  capture and read-back. Another sub stops with "not supported"; the sub is
+  in `boardflags3`, so the NVRAM of step 2 says which one a board has.
 - **Board data from NVRAM.** These boards have no SROM; the port now reads
   the SROM rev 11 fields from NVRAM (`bcma/drivers/firmware/broadcom/
   bcm47xx_sprom.c`), checked on dumps of other boards only.
@@ -99,8 +99,7 @@ bcma/harness/test_nvram nvram-radios.txt pci/2/1/
 ```
 
 `femctrl=3` showing up as a PASS there is the point: it means the driver
-now reads it from NVRAM. It also means the PHY code will then stop at
-"femctrl 3 not supported" until that table is filled from the captures.
+now reads it from NVRAM.
 
 ## 3. The plan, dry run
 

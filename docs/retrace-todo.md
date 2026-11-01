@@ -958,8 +958,10 @@ nothing on 2.4 GHz. What the MacBook's wl does there and the port did not:
 
 The 2.4 GHz band announces HT at 20 MHz with the same MCS as 5 GHz and no
 VHT; before, it was the legacy band of the older PHYs and a station stayed
-on legacy rates (Andreas: tx 54, rx 24 Mb/s). 40 MHz on 2.4 GHz has no
-capture and stays off.
+on legacy rates (Andreas: tx 54, rx 24 Mb/s). 40 MHz on 2.4 GHz is on,
+with the Farrow resampler at the bonded centre and 0x0250/0x0261-0x0263 at
+their 20 MHz values, as read back under wl 7.14 on an RT-AC66U B1; no
+capture in this tree has it.
 
 Not taken: 6.30.223's TX-to-RX sequencer list in table 7 starts with an
 extra `0xb3` (cells 16-31, and the delays at 128-143 get a leading 1), on
@@ -1043,8 +1045,9 @@ Table `0x21` is written as zeros on 2.4 GHz, as on both boards.
 - **Radio `0x002c`.** The core transition works on `0x002c` instead of
   `0x0033`; the bus shows a read and a write of the same value, so field and
   value are not known.
-- **40 MHz** on 2.4 GHz has no capture; the Farrow setup warns and programs
-  nothing there.
+- **40 MHz** on 2.4 GHz has no capture; the Farrow resampler and the
+  registers doubled at 5 GHz take the values read back under wl on an
+  RT-AC66U B1.
 - **Version.** The rest is 6.30. The 2.4 GHz TX gain table is 7.14's as well:
   `acphy_txgain_epa_2g_2069rev4` in the D6220's `wl.o` matches the port's on
   384 of 384 words. That object also has an `_id1` variant, 158 words alike,
