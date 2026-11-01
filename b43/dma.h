@@ -240,6 +240,8 @@ enum b43_addrtype {
 struct b43_dmaring {
 	/* Lowlevel DMA ops. */
 	const struct b43_dma_ops *ops;
+	/* RX buffers, when the kernel has page pools (b43_rx_pool_create()). */
+	struct page_pool *rx_pool;
 	/* Kernel virtual base address of the ring memory. */
 	void *descbase;
 	/* Meta data about all descriptors. */
