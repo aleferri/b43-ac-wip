@@ -7175,6 +7175,15 @@ static int b43_setup_bands(struct b43_wldev *dev,
 		 */
 		ieee80211_hw_set(hw, TX_AMSDU);
 		ieee80211_hw_set(hw, SUPPORT_FAST_XMIT);
+		/*
+		 * Airtime queue limits: mac80211 estimates each frame's
+		 * airtime when it hands it out and takes it back on its
+		 * status, which every frame gets (b43_dma_handle_txstatus(),
+		 * free_descriptor_buffer()), and holds what a station has in
+		 * flight to its limit, so the rings do not fill with one
+		 * station's backlog.
+		 */
+		wiphy_ext_feature_set(hw->wiphy, NL80211_EXT_FEATURE_AQL);
 		hw->max_tx_aggregation_subframes = IEEE80211_MAX_AMPDU_BUF_HT;
 		hw->max_rx_aggregation_subframes = IEEE80211_MAX_AMPDU_BUF_HT;
 		if (have_5ghz_phy) {
