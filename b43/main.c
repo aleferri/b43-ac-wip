@@ -6266,6 +6266,7 @@ static void b43_wireless_core_exit(struct b43_wldev *dev)
 #endif
 	}
 
+	b43_rx_amsdu_free(dev);
 	b43_dma_free(dev);
 	b43_pio_free(dev);
 	if (dev->phy.type != B43_PHYTYPE_AC)
@@ -7078,6 +7079,8 @@ static int b43_setup_bands(struct b43_wldev *dev,
 		/* A rate and its fallbacks, a block each. */
 		hw->max_rates = B43_TXH_AC_RATES;
 		ieee80211_hw_set(hw, AMPDU_AGGREGATION);
+		/* A-MSDUs come in pieces, which b43_rx_amsdu() joins. */
+		ieee80211_hw_set(hw, SUPPORTS_AMSDU_IN_AMPDU);
 		hw->max_tx_aggregation_subframes = IEEE80211_MAX_AMPDU_BUF_HT;
 		hw->max_rx_aggregation_subframes = IEEE80211_MAX_AMPDU_BUF_HT;
 		if (have_5ghz_phy) {
