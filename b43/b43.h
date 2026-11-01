@@ -458,6 +458,14 @@ enum {
 #define B43_AMT_F_BSSID			(B43_AMT_F_VALID | 0x0002)
 #define B43_AMT_F_SELF			(B43_AMT_F_VALID | 0x0008)
 #define B43_AMT_F_KEY			(B43_AMT_F_VALID | 0x0004)
+/*
+ * The further AP interfaces of a multi-BSS setup take the rows below the
+ * BSSID, matched as the receiver address (A1) and as the BSSID (A3), above
+ * the B43_NR_PAIRWISE_KEYS rows the pairwise keys use.
+ */
+#define B43_MBSS_MAX			4
+#define B43_AMT_MBSS(i)			(B43_AMT_BSSID - 1 - (i))
+#define B43_AMT_F_MBSS			(B43_AMT_F_SELF | B43_AMT_F_BSSID)
 
 /* PowerControl */
 #define B43_PCTL_IN			0xB0
@@ -1082,6 +1090,12 @@ struct b43_wl {
 	 */
 
 	struct ieee80211_vif *vif;
+	/*
+	 * The further AP interfaces on the AC (multi-BSS). vif is the one
+	 * whose beacon the microcode sends; these go out from the driver at
+	 * its TBTT.
+	 */
+	struct ieee80211_vif *mbss_vif[B43_MBSS_MAX - 1];
 	/* The MAC address of the operating interface. */
 	u8 mac_addr[ETH_ALEN];
 	/* Current BSSID */
