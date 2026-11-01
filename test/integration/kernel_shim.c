@@ -141,6 +141,21 @@ int net_ratelimit(void)
 	return 1;
 }
 
+int ___ratelimit(void *rs, const char *func)
+{
+	return 1;
+}
+
+void *memchr_inv(const void *start, int c, size_t bytes)
+{
+	const unsigned char *p = start;
+
+	for (; bytes; p++, bytes--)
+		if (*p != (unsigned char)c)
+			return (void *)p;
+	return NULL;
+}
+
 /* --- lock: la suite e' a un thread ------------------------------------ */
 
 void _raw_spin_lock(void *l) { }

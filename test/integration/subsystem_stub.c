@@ -269,6 +269,13 @@ void ieee80211_unregister_hw(struct ieee80211_hw *hw) { }
 void ieee80211_wake_queues(struct ieee80211_hw *hw) { }
 void ieee80211_stop_queue(struct ieee80211_hw *hw, int queue) { }
 void ieee80211_free_txskb(struct ieee80211_hw *hw, struct sk_buff *skb) { }
+void ieee80211_purge_tx_queue(struct ieee80211_hw *hw,
+			      struct sk_buff_head *skbs) { }
+void ieee80211_rx_list(struct ieee80211_hw *hw, struct ieee80211_sta *sta,
+		       struct sk_buff *skb, struct list_head *list) { }
+void netif_receive_skb_list(struct list_head *head) { }
+void skb_queue_purge_reason(struct sk_buff_head *list,
+			    enum skb_drop_reason reason) { }
 void ieee80211_handle_wake_tx_queue(struct ieee80211_hw *hw,
 				    struct ieee80211_txq *txq) { }
 /* Nessuna stazione e nessuna sessione block ack: le catture non ne hanno. */
