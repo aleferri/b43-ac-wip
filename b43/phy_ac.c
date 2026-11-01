@@ -1939,6 +1939,19 @@ static u16 b43_phy_ac_reg_ceiling(struct b43_wldev *dev)
 			best = lim;
 	}
 
+	/*
+	 * The configured TX power, which mac80211 has already capped to the
+	 * channel's limit, so it is in the same units as max_power.
+	 */
+	if (dev->phy.desired_txpower > 0) {
+		int lim = B43_PHY_AC_QDB(dev->phy.desired_txpower) - antgain;
+
+		if (lim < 0)
+			lim = 0;
+		if (lim < best)
+			best = lim;
+	}
+
 	{
 		u16 locale = b43_phy_ac_locale_ceiling(ac);
 
@@ -2140,16 +2153,24 @@ static void b43_phy_ac_txpwrctrl_program(struct b43_wldev *dev,
 	 * tg789vac-v2 has a different one per core and sub-band in both fields,
 	 * and all 129 writes of its 43 cold segments follow this formula.
 	 *
-	 * On 2.4 GHz the MacBookAir6,1 and the archer-t5e write zeros. The 2.4
-	 * GHz field, pdoffset2g40ma (SROM word 100), is not extracted; it is
-	 * blank on the archer-t5e.
+	 * On 2.4 GHz only entry 5 is used, at 20 and 40 MHz alike: the 4-bit
+	 * pdoffset2g40ma[core] sign-extended to a byte, unless
+	 * pdoffset2g40mvalid is set, when wl 7.14 writes zeros. The RT-AC66U B1
+	 * has 8 on every core and reads 0x00f8f8f8 on ch1, ch6 and ch11 at 20
+	 * MHz and ch6 at 40; the MacBookAir6,1 and the archer-t5e write zeros
+	 * (blank field).
 	 */
 	for_each_set_bit(core, &dev->phy.ac->coremask, num_cores) {
 		const struct ssb_sprom *sp = dev->dev->bus_sprom;
 		u32 o40, o80;
 
-		if (b43_current_band(dev->wl) == NL80211_BAND_2GHZ)
-			break;
+		if (b43_current_band(dev->wl) == NL80211_BAND_2GHZ) {
+			if (sp->pdoffset2g40mvalid)
+				break;
+			ppr[5] |= (u32)(u8)sign_extend32(sp->pdoffset2g40ma[core],
+							 3) << (8 * core);
+			continue;
+		}
 
 		o40 = (sp->pdoffset40ma[core] >> (4 * grp)) & 0xf;
 		o80 = (sp->pdoffset80ma[core] >> (4 * grp)) & 0xf;
@@ -3302,6 +3323,21 @@ static void b43_phy_ac_set_regtbl_on_femctrl(struct b43_wldev *dev)
 	if (sprom->boardflags_lo & B43_BFL_BTCOEXIST)
 		b43_phy_ac_chipctl_set(dev, 0x01000000);
 
+	/*
+	 * First TX-to-RX sequencer delay, RFSEQ cell 0x80: wl 7.14 sets it to
+	 * 0x78 at the end of its FEM setup when boardflags2 bit 20 (2.4 GHz)
+	 * or bit 21 (5 GHz) is set, except on boardtypes 0xa9c6 and 0xaa52.
+	 * The RT-AC66U B1 has both bits; the d6220 neither, which keeps the
+	 * hardware default there.
+	 */
+	if (dev->dev->board_type != 0xa9c6 && dev->dev->board_type != 0xaa52 &&
+	    (sprom->boardflags2_hi &
+	     (b43_current_band(dev->wl) == NL80211_BAND_2GHZ ? 0x0010 : 0x0020))) {
+		static const u16 tx2rx_dly0 = 0x0078;
+
+		b43_actab_write_bulk(dev, 7, 0x0080, 16, 1, &tx2rx_dly0);
+	}
+
 	b43_phy_ac_tbl_write_unlock(dev, saved);
 }
 
@@ -3492,8 +3528,9 @@ static void b43_phy_ac_chanspec_tail(struct b43_wldev *dev);
 
 /*
  * The block that follows rfseq_tbl_init: quiesce the unwired RX cores, lock
- * the table-write gate and write 0x01ec = 0x9c40, whose meaning is not
- * known. Returns the lock's saved value; the caller unlocks.
+ * the table-write gate and write 0x01ec, whose meaning is not known: the
+ * stock driver writes 0x9c40 on 5 GHz and 0x0002 on 2.4 GHz. Returns the
+ * lock's saved value; the caller unlocks.
  * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   6905-6950]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -3517,7 +3554,9 @@ static u16 b43_phy_ac_post_rfseq_misc_setup(struct b43_wldev *dev)
 		b43_phy_ac_rxcore_setstate(dev, dev->phy.ac->coremask);
 
 	gate = b43_phy_ac_tbl_write_lock(dev);
-	b43_phy_write(dev, 0x01ec, 0x9c40);
+	b43_phy_write(dev, 0x01ec,
+		      b43_current_band(dev->wl) == NL80211_BAND_2GHZ ?
+		      0x0002 : 0x9c40);
 	return gate;
 }
 
@@ -3692,16 +3731,53 @@ static void b43_phy_ac_coeff_bank_init(struct b43_wldev *dev)
 	 * only by the DSL, not by the d6220.
 	 */
 	b43_phy_maskset(dev, 0x01b5, (u16)~0x00ff, bw == 40 ? 0x008b : 0x0097);
-	b43_phy_maskset(dev, 0x0250, (u16)~0x00ff, bw == 20 ? 25 : 50);
-	b43_phy_maskset(dev, 0x0261, (u16)~0x0fff, bw == 20 ? 0x0014 : 0x0028);
-	b43_phy_maskset(dev, 0x0262, (u16)~0x0fff, bw == 20 ? 200 : 400);
-	b43_phy_maskset(dev, 0x0263, (u16)~0x0fff, bw == 20 ? 25 : 50);
+	/*
+	 * On 2.4 GHz wl 7.14 keeps the 20 MHz values at 40 MHz (RT-AC66U B1,
+	 * ch6/20 and ch6/40); the doubling is a 5 GHz one.
+	 */
+	{
+		bool wide = bw != 20 &&
+			    b43_current_band(dev->wl) != NL80211_BAND_2GHZ;
+
+		b43_phy_maskset(dev, 0x0250, (u16)~0x00ff, wide ? 50 : 25);
+		b43_phy_maskset(dev, 0x0261, (u16)~0x0fff,
+				wide ? 0x0028 : 0x0014);
+		b43_phy_maskset(dev, 0x0262, (u16)~0x0fff, wide ? 400 : 200);
+		b43_phy_maskset(dev, 0x0263, (u16)~0x0fff, wide ? 50 : 25);
+	}
 	/*
 	 * These two drop at 80 MHz only: 0x13 at 20 and 40 MHz, 0x09 at 80, in
 	 * the low byte of 0x0312 and the high byte of 0x0313.
 	 */
 	b43_phy_maskset(dev, 0x0312, (u16)~0x00ff, bw == 80 ? 0x0009 : 0x0013);
 	b43_phy_maskset(dev, 0x0313, (u16)~0xff00, bw == 80 ? 0x0900 : 0x1300);
+
+	/*
+	 * The 0x034d-0x0353 ladder (13 bits each) with 0x028d and 0x04d7/0x04db.
+	 * b43 did not write them, so they kept the power-on set (lo) unless wl
+	 * had run before a warm reboot. Under wl 7.14 they read back lo at
+	 * 5 GHz 20 and 80 MHz and hi at 5 GHz 40 MHz and on 2.4 GHz (RT-AC66U
+	 * B1); no write of them by wl was captured, so what sets them is not
+	 * known. On that board b43 needs hi at 5 GHz 80 MHz: with lo the AP's
+	 * 80 MHz downlink drops to 3-30 Mbit/s or stops, with hi it carries
+	 * 153-160 Mbit/s. Elsewhere lo, which b43 has always run with.
+	 */
+	{
+		static const u16 lo[7] = { 0x012c, 0x0145, 0x015e, 0x0177,
+					   0x0320, 0x0384, 0x03b6 };
+		static const u16 hi[7] = { 0x001e, 0x0055, 0x0080, 0x00aa,
+					   0x02bc, 0x0320, 0x0384 };
+		bool use_hi = bw == 80 &&
+			      b43_current_band(dev->wl) == NL80211_BAND_5GHZ;
+		const u16 *ladder = use_hi ? hi : lo;
+		unsigned int i;
+
+		for (i = 0; i < ARRAY_SIZE(lo); i++)
+			b43_phy_maskset(dev, 0x034d + i, (u16)~0x1fff, ladder[i]);
+		b43_phy_write(dev, 0x028d, use_hi ? 0x090d : 0x0d11);
+		b43_phy_write(dev, 0x04d7, use_hi ? 0x2055 : 0x206a);
+		b43_phy_write(dev, 0x04db, use_hi ? 0x2055 : 0x206a);
+	}
 
 	/* 4. Per-core LUT 0x06ed/0x06ef, every silicon core. */
 	for (core = 0; core < num_cores; core++) {
@@ -3915,8 +3991,8 @@ static void b43_phy_ac_analog_on_reset(struct b43_wldev *dev, u16 *saved_outer_o
 /*
  * RF sequencer command tables (table 7) and the spexp TXV (table 0x10):
  * the table-load half of the reset-time setup, under the outer gate
- * analog_on_reset() took. The band-gated 0x80 write is skipped on these
- * boards (boardflags2 = 0x2) and omitted.
+ * analog_on_reset() took. The boardflags2-gated write of cell 0x80 is in
+ * b43_phy_ac_set_regtbl_on_femctrl(), where wl 7.14 has it.
  * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   6265-6903]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -5266,7 +5342,12 @@ static void b43_phy_ac_crs_regs_write(struct b43_wldev *dev, u16 val)
 
 /*
  * CRS min-power threshold, the low byte of 0x0321 through 0x0336: an entry of
- * the current width's row, plus 4 when cold.
+ * the current width's row, plus 4 when cold or on PHY revs 0 and 1.
+ *
+ * wl 7.14.164 (wlc_phy_crs_min_pwr_cal_acphy) adds 4 to all three rows
+ * whenever pi->pubpi.phy_rev <= 1, not only when cold: the RT-AC66U B1
+ * (BCM4360, PHY rev 1) reads 58/61, 64 and 59 at 20, 40 and 80 MHz, every
+ * one a ladder entry plus 4, in every capture.
  *
  * The ladder is the D6220's: three zero-terminated rows of fifteen u8, from
  * the .rodata of the 7.14.89 blob at +0x40e84, +0x40e94 and +0x40ea4; see
@@ -5431,7 +5512,7 @@ static u8 b43_phy_ac_crs_min_pwr(struct b43_wldev *dev, unsigned int idx,
 {
 	u8 crs = b43_phy_ac_crs_ladder[b43_phy_ac_bw_step(dev)][idx];
 
-	if (cold)
+	if (cold || dev->phy.rev <= 1)
 		crs = (u8)(crs + 4);	/* cold bump */
 
 	return crs;
@@ -5674,7 +5755,12 @@ static void b43_phy_ac_rxgain_init(struct b43_wldev *dev, unsigned int core)
 	b43_phy_maskset(dev,  0x06f9 + ps, (u16)~0x007f, lna1_idx & 0x007f);
 
 	b43_actab_write_bulk(dev, ta, 0x0000, 16, 2, hdr_arr);
-	b43_phy_write(dev,    0x173b, 0x002c);
+	/*
+	 * wl 7.14's gain table setup (BCM4360, radio 2069): 0x2c on 5 GHz,
+	 * 0x18 on 2.4 GHz; 0x1c there while its watchdog flag at pi_ac+0xe6a
+	 * is set, which b43 does not model.
+	 */
+	b43_phy_write(dev,    0x173b, band_2g ? 0x0018 : 0x002c);
 	b43_phy_write(dev,    0x1726, 0x000c);
 	/* 2.4 GHz: 3, as the MacBook's wl leaves ch6; see the noise shaping. */
 	b43_actab_write_bulk(dev, ta, 0x0020, 16, ARRAY_SIZE(fill_07),
@@ -7191,75 +7277,59 @@ void b43_phy_ac_rxiqcal_apply(struct b43_wldev *dev)
 
 /*
  * The ladders the calibrations load into table 0x000c before measuring a
- * chain: eighteen cells per chain (0x00-0x11 chain 0, 0x20-0x31 chain 1), a
- * gain in the high byte and an index in the low one. The stock driver
- * writes one of three, whole, six times per cold segment with three wired
- * chains and five with two:
+ * chain: eighteen cells per chain (0x00-0x11 for the LO step, 0x20-0x31 for
+ * the IQ step), a gain in the high byte and an index in the low one. The
+ * stock driver loads one before each chain it measures:
  *
- *   after stage 2 of the RX IQ cal                    ladder A
- *   after chain 0 of the AFE cal                      ladder B
- *   before chain 2 of the AFE cal, first bring-up     see below
- *   before the second RX IQ iteration                 ladder A
- *   after chain 0 of the frequency-dependent pass     ladder B
- *   before chain 2 of that pass                       see below
+ *   after stage 2 of the RX IQ cal                    chain 0
+ *   after chain 0 of the AFE cal                      chain 1
+ *   before chain 2 of the AFE cal, first bring-up     chain 2
+ *   before the second RX IQ iteration                 chain 0
+ *   after chain 0 of the frequency-dependent pass     chain 1
+ *   before chain 2 of that pass                       chain 2
  *
- * The "before chain 2" loads are the ramp where chain 2 is unwired (d6220);
- * on the tg789vac, ladder B up to ch144 and ladder A from ch149 at every
- * width (ABBABB on 37 segments, ABAABA on the 9 in UNII-3), see
- * b43_phy_ac_cal_like_chain0(). The agcombo, captured in U-NII-1 only,
- * writes ABBABB. Each load is the eighteen pairs interleaved under a lock.
+ * The gains are the N-PHY ladder percentages scaled by the bbmult of the
+ * chain's calibration TX gain, rounded down: 64 gives the ladder the 5 GHz
+ * captures load for chain 0 and the 2.4 GHz end state of wl 7.14, 60 the
+ * one they load for the chains calibrated at index 0x1e. A chain that is
+ * not wired gets the bare index ramp (d6220).
  * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   17999-18218, 18723-18942]
  */
-struct b43_phy_ac_gain_ladder {
-	u16 c0[18];
-	u16 c1[18];
+static const u8 b43_phy_ac_ladder_lo_pct[18] = {
+	3, 4, 6, 9, 13, 18, 25, 25, 25, 25, 25, 25, 25, 25, 35, 50, 71, 100,
 };
-
-static const struct b43_phy_ac_gain_ladder b43_phy_ac_ladder_a = {
-	{ 0x0100, 0x0200, 0x0300, 0x0500, 0x0800, 0x0b00, 0x1000,
-	  0x1001, 0x1002, 0x1003, 0x1004, 0x1005, 0x1006, 0x1007,
-	  0x1607, 0x2007, 0x2d07, 0x4007 },
-	{ 0x0100, 0x0200, 0x0300, 0x0500, 0x0800, 0x0b00, 0x1000,
-	  0x1600, 0x2000, 0x2d00, 0x4000, 0x4001, 0x4002, 0x4003,
-	  0x4004, 0x4005, 0x4006, 0x4007 },
+static const u8 b43_phy_ac_ladder_lo_idx[18] = {
+	0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 7, 7, 7, 7,
 };
-
-static const struct b43_phy_ac_gain_ladder b43_phy_ac_ladder_b = {
-	{ 0x0100, 0x0200, 0x0300, 0x0500, 0x0700, 0x0a00, 0x0f00,
-	  0x0f01, 0x0f02, 0x0f03, 0x0f04, 0x0f05, 0x0f06, 0x0f07,
-	  0x1507, 0x1e07, 0x2a07, 0x3c07 },
-	{ 0x0100, 0x0200, 0x0300, 0x0500, 0x0700, 0x0a00, 0x0f00,
-	  0x1500, 0x1e00, 0x2a00, 0x3c00, 0x3c01, 0x3c02, 0x3c03,
-	  0x3c04, 0x3c05, 0x3c06, 0x3c07 },
+static const u8 b43_phy_ac_ladder_iq_pct[18] = {
+	3, 4, 6, 9, 13, 18, 25, 35, 50, 71, 100, 100, 100, 100, 100, 100, 100, 100,
 };
-
-/* The index alone, no gain: ladder A's low bytes. */
-static const struct b43_phy_ac_gain_ladder b43_phy_ac_ladder_ramp = {
-	{ 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 7, 7, 7, 7 },
-	{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7 },
+static const u8 b43_phy_ac_ladder_iq_idx[18] = {
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7,
 };
-
-static const struct b43_phy_ac_gain_ladder *
-b43_phy_ac_ladder_before_chain2(struct b43_wldev *dev)
-{
-	if (!(dev->phy.ac->coremask & BIT(2)))
-		return &b43_phy_ac_ladder_ramp;
-	return b43_phy_ac_cal_like_chain0(dev, 2) ? &b43_phy_ac_ladder_a :
-						    &b43_phy_ac_ladder_b;
-}
 
 static void b43_phy_ac_gain_ladder_write(struct b43_wldev *dev,
-				const struct b43_phy_ac_gain_ladder *l)
+					 unsigned int chain)
 {
+	struct b43_phy_ac *ac = dev->phy.ac;
+	bool wired = ac->coremask & BIT(chain);
+	unsigned int scale = ac->bbmult_cal[chain];
 	unsigned int i;
 	u16 gate;
 
 	B43_AC_FN();
 	gate = b43_phy_ac_tbl_write_lock(dev);
-	for (i = 0; i < ARRAY_SIZE(l->c0); i++) {
-		b43_actab_write_bulk(dev, 0x000c, 0x00 + i, 16, 1, &l->c0[i]);
-		b43_actab_write_bulk(dev, 0x000c, 0x20 + i, 16, 1, &l->c1[i]);
+	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_ladder_lo_pct); i++) {
+		u16 lo = b43_phy_ac_ladder_lo_idx[i];
+		u16 iq = b43_phy_ac_ladder_iq_idx[i];
+
+		if (wired) {
+			lo |= (b43_phy_ac_ladder_lo_pct[i] * scale / 100) << 8;
+			iq |= (b43_phy_ac_ladder_iq_pct[i] * scale / 100) << 8;
+		}
+		b43_actab_write_bulk(dev, 0x000c, 0x00 + i, 16, 1, &lo);
+		b43_actab_write_bulk(dev, 0x000c, 0x20 + i, 16, 1, &iq);
 	}
 	b43_phy_ac_tbl_write_unlock(dev, gate);
 }
@@ -7359,7 +7429,7 @@ void b43_phy_ac_post_rxiqcal_stage2(struct b43_wldev *dev)
 		}
 	}
 
-	b43_phy_ac_gain_ladder_write(dev, &b43_phy_ac_ladder_a);
+	b43_phy_ac_gain_ladder_write(dev, 0);
 }
 
 /*
@@ -7515,12 +7585,12 @@ void b43_phy_ac_rxcal_afe_calibrate(struct b43_wldev *dev)
 	}
 	/*
 	 * Iteration 6, cmd 0x8234, observed result 0xfe02. Ends the core-0 group
-	 * with ladder B; see b43_phy_ac_gain_ladder_write().
+	 * with chain 1's ladder; see b43_phy_ac_gain_ladder_write().
 	 */
 	{
 		b43_phy_ac_rxcal_afe_iter(dev, 0x8234, 0x0000,
 					  NULL, 0, 0x0083, 1, 0x0043);
-		b43_phy_ac_gain_ladder_write(dev, &b43_phy_ac_ladder_b);
+		b43_phy_ac_gain_ladder_write(dev, 1);
 	}
 
 	/* ==== Core 1 (cmd 0x9XXX, RAD.RD 0x0344) ==== */
@@ -7563,8 +7633,7 @@ void b43_phy_ac_rxcal_afe_calibrate(struct b43_wldev *dev)
 
 	/* The load before chain 2, on the first bring-up only. */
 	if (dev->phy.ac->status_mask & B43_PHY_AC_STATE_FIRST_BRINGUP)
-		b43_phy_ac_gain_ladder_write(dev,
-					     b43_phy_ac_ladder_before_chain2(dev));
+		b43_phy_ac_gain_ladder_write(dev, 2);
 
 	/* ==== Core 2 (cmd 0xaXXX, RAD.RD 0x0544) ==== */
 
@@ -8113,7 +8182,7 @@ void b43_phy_ac_rxiqcal_prep_second_iter(struct b43_wldev *dev)
 	}
 
 	/* Segment C: ladder A. */
-	b43_phy_ac_gain_ladder_write(dev, &b43_phy_ac_ladder_a);
+	b43_phy_ac_gain_ladder_write(dev, 0);
 }
 
 /*
@@ -8169,9 +8238,7 @@ void b43_phy_ac_rxiqcal_run_meas_iters(struct b43_wldev *dev)
 		 * the agcombo and the tg789vac.
 		 */
 		if ((i & 1) && (dev->phy.ac->coremask & ~GENMASK(i / 2, 0)))
-			b43_phy_ac_gain_ladder_write(dev, i == 1 ?
-					&b43_phy_ac_ladder_b :
-					b43_phy_ac_ladder_before_chain2(dev));
+			b43_phy_ac_gain_ladder_write(dev, i / 2 + 1);
 	}
 }
 
@@ -10649,11 +10716,10 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	 * table ID stride 0x20), from the d6220 ch36 trace.
 	 *
 	 * On 2.4 GHz the MacBookAir6,1 and the archer-t5e (6.30 hybrid) write
-	 * the nshp runs below, the same on both boards and every core. 6.30 and
-	 * 7.14 differ on the first cell of each run on 5 GHz already, and only
-	 * 6.30 has a 2.4 GHz state: the MacBook's wl as it leaves ch6
-	 * (gonsolo's traces/wl-final-tables-2g-ch6.txt), the archer agreeing on
-	 * the cells its capture has. 2.4 GHz takes that whole.
+	 * the nshp runs below, the same on both boards and every core, but for
+	 * the first cell of each run, where 6.30 and 7.14 differ as they do on
+	 * 5 GHz: the 2.4 GHz runs are wl 7.14's on the RT-AC66U B1, the same on
+	 * every core, on channels 1, 6 and 11 and at 20 and 40 MHz.
 	 */
 	{
 		static const u16 nvar_data[5] = { 0x0020, 0x0021, 0x0022, 0x0023, 0x0024 };
@@ -10664,10 +10730,10 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 		static const u16 nshp_b8[6]   = { 0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005 };
 		static const u16 nshp_a10[7]  = { 0x00f5, 0x00f8, 0x00fb, 0x00fe, 0x0002, 0x0005, 0x0009 };
 		static const u16 nshp_b10[7]  = { 0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005, 0x0006 };
-		static const u16 nshp_a8_2g[6]  = { 0x00ff, 0x00ff, 0x0006, 0x000c, 0x0012, 0x0019 };
-		static const u16 nshp_b8_2g[6]  = { 0x0001, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005 };
-		static const u16 nshp_a10_2g[7] = { 0x00f8, 0x00f8, 0x00fc, 0x00ff, 0x0002, 0x0002, 0x0002 };
-		static const u16 nshp_b10_2g[7] = { 0x0001, 0x0001, 0x0002, 0x0003, 0x0004, 0x0004, 0x0004 };
+		static const u16 nshp_a8_2g[6]  = { 0x00f6, 0x00ff, 0x0006, 0x000c, 0x0012, 0x0019 };
+		static const u16 nshp_b8_2g[6]  = { 0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0005 };
+		static const u16 nshp_a10_2g[7] = { 0x00f4, 0x00f8, 0x00fc, 0x00ff, 0x0002, 0x0002, 0x0002 };
+		static const u16 nshp_b10_2g[7] = { 0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0004, 0x0004 };
 		bool band_2g = b43_current_band(dev->wl) == NL80211_BAND_2GHZ;
 		const u16 *a8 = band_2g ? nshp_a8_2g : nshp_a8;
 		const u16 *b8 = band_2g ? nshp_b8_2g : nshp_b8;
@@ -11182,16 +11248,13 @@ static void b43_phy_ac_farrow_setup(struct b43_wldev *dev,
 			   B43_PHY_AC_STATE_RX_CCK | B43_PHY_AC_STATE_RX_OFDM |
 			   B43_PHY_AC_STATE_CCA_RESET);
 
-	if (b43_current_band(dev->wl) == NL80211_BAND_2GHZ) {
-		if (width != NL80211_CHAN_WIDTH_20) {
-			b43_phy_ac_todo(dev,
-				"Farrow resampler not programmed at "
-				"2.4 GHz with width %d: not measured\n",
-				width);
-			return;
-		}
+	/*
+	 * 2.4 GHz uses its own mode at 20 and 40 MHz: wl 7.14 on the
+	 * RT-AC66U B1 at ch6/40 (centre 2447 MHz) writes the ratio and
+	 * deltaphase of this formula, 0x16f0ccd and 0x594621.
+	 */
+	if (b43_current_band(dev->wl) == NL80211_BAND_2GHZ)
 		m = &b43_phy_ac_farrow_mode_2g_20;
-	}
 
 	/*
 	 * The operating channel's centre frequency, and the mode that goes

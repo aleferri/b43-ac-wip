@@ -81,3 +81,21 @@ tree. The names of the MAC TX control bits (`D11AC_TXC_*`: `AMPDU`, `SVHT`,
 archer-t5e and MacBookAir6,1 captures (`docs/retrace-todo.md`, "TX status");
 the descriptor is in DMA memory, which no capture records. The file is published in that public
 repository but its header carries Broadcom's proprietary notice.
+
+## RT-AC66U B1 — DD-WRT `wl.ko` 7.14.164.18 and the board captures
+
+The `wl` module of DD-WRT build r66396 for the ASUS RT-AC68U
+(`asus_rt-ac68u-firmware.trx`, sha256
+`0ea1763c0dae05db9e6a3e5464e3d80c8a1144cb329a8387e3c5425d7355c7be`), version
+string `7.14.164.18 (r692288)`, sha256
+`36079012f360de6069b067bffb5128e019ea0d57249e7159cbe4b8614aca05c2`. The 2.4 GHz
+LNA gain rows, the TX-to-RX sequencer delay gate, the 0x073b values and the
+CRS min-power bump of the RT-AC66U B1 fixes were read from its data and its
+disassembly (`objdump -d -r`); the other values of those fixes are PHY and
+radio registers and tables read back under wl, through `/dev/mem`, on an ASUS
+RT-AC66U B1 (BCM4708, two BCM4360, radio 2069 rev 4) running that DD-WRT build
+and the stock ASUS firmware. A read-back value is not a captured write: the
+0x034d set, for one, reads back per band and width under wl, but no write of
+it by wl is known.
+
+**TODO:** the download URL of the DD-WRT image was not recorded.

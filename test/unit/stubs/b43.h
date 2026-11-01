@@ -180,6 +180,8 @@ struct ssb_sprom {
 	/* Antenna gain per band, quarter-dB, SROM ag0/ag1. Index 1 is 5 GHz. */
 	u16 pdoffset40ma[3];
 	u16 pdoffset80ma[3];
+	u8 pdoffset2g40ma[3];	/* 4 bit, con segno */
+	u8 pdoffset2g40mvalid;
 	u16 rpcal2g;
 	u16 rpcal5gb[4];
 	s8 antenna_gain_qdb[2];
@@ -232,6 +234,7 @@ struct bcma_device { struct bcma_bus *bus; };
 struct b43_bus_dev {
 	enum b43_bus_type bus_type;
 	u16 chip_id;
+	u16 board_type;	/* come in-tree (bus.h) */
 	struct ssb_sprom *bus_sprom;
 	struct bcma_device *bdev;   /* only meaningful when bus_type==BCMA */
 };
@@ -262,6 +265,8 @@ struct b43_phy {
 	/* Some scratch code touches phy.dacbuf_cap / phy.lpf_cap directly. */
 	u8 dacbuf_cap;
 	u8 lpf_cap;
+	/* Come in-tree: il limite di potenza da mac80211, in dBm. */
+	int desired_txpower;
 	/*
 	 * Primo bring-up contro bring-up successivo. In-tree lo gestisce
 	 * b43_phy_init(): true fino al primo ops->init riuscito. Qui lo imposta
