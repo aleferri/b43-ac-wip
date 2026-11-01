@@ -29,6 +29,7 @@ the Netgear R6400 ([`docs/northstar-guide.md`](../../docs/northstar-guide.md)).
 | `txrx-no-traffic.zip` | three earlier `capture_txrx.sh` attempts without usable traffic (a WPA2 BSS with `nas` stopped, an open BSS without a DHCPv4 lease), for completeness |
 | `mmio-cold-2g6.zip` | `wl-mmio-trap` (`4-4-arm`) on `eth1`, cold to beaconing on 2g6/20: 52 621 MMIO accesses + 7 marks, the raw stream, `mmio2ops.py` output, the run log |
 | `mmio-cold-5g36-80.zip` | the same on `eth2`, 5g36/80: 141 979 accesses + 7 marks |
+| `fem-table-2g-ch6.txt` | PHY table 0x0a (FEM control) of `eth1` read back with `wl` up on 2g6/20, two identical passes: the femctrl 3 sub 3 table, which `mmio-cold-2g6.zip` does not contain |
 | `revinfo.txt` | `wl revinfo` of both radios |
 | `wl-info.txt` | `wl ver`, `cap`, `phylist`, `bands`, `chanspec(s)` of both radios |
 | `nvram-radios.txt` | the `pci/1/1/` and `pci/2/1/` nvram (the SROM values), MAC addresses removed |
