@@ -6985,10 +6985,15 @@ static const struct ieee80211_iface_combination b43_if_comb_dfs = {
  *    and VHT MCS 0-9 go out on up to the txchain's, in the layout of the
  *    stock drivers' descriptors (b43_txhdr_ac_ht(), b43_txhdr_ac_vht());
  *  - the long MPDUs and A-MSDUs, beyond the receive buffer;
- *  - LDPC reception, beamforming and the link adaptation the stock driver
- *    announces on VHT: nothing configures or decodes them. A VHT frame is
- *    sent with LDPC when mac80211 asks, for a station that receives it, as
- *    every VHT frame of the stock driver's is.
+ *  - beamforming and the link adaptation the stock driver announces on
+ *    VHT: nothing configures or decodes them.
+ *
+ * LDPC reception is announced on HT and VHT, as the stock beacon does: the
+ * PHY decodes it with 0x01b0 as wl leaves it, 0xa6cb (the R7000's
+ * mmio-cold-5g36-80, records #6600 and #24657; the RT-AC66U B1's
+ * read-backs), which b43's PHY init writes as well. A VHT frame is sent
+ * with LDPC when mac80211 asks, for a station that receives it, as every
+ * VHT frame of the stock driver's is.
  *
  * The stock beacon carries the 4360's three streams; the streams here are
  * the board's chains, the SROM rxchain the PHY also uses for receiving and
@@ -7014,6 +7019,7 @@ static void b43_ac_set_ht_vht_cap(struct b43_wldev *dev,
 	memset(ht, 0, sizeof(*ht));
 	ht->ht_supported = true;
 	ht->cap = IEEE80211_HT_CAP_SUP_WIDTH_20_40 |
+		  IEEE80211_HT_CAP_LDPC_CODING |
 		  IEEE80211_HT_CAP_SGI_20 |
 		  IEEE80211_HT_CAP_SGI_40 |
 		  (WLAN_HT_CAP_SM_PS_DISABLED << IEEE80211_HT_CAP_SM_PS_SHIFT);
@@ -7035,6 +7041,7 @@ static void b43_ac_set_ht_vht_cap(struct b43_wldev *dev,
 	memset(vht, 0, sizeof(*vht));
 	vht->vht_supported = true;
 	vht->cap = IEEE80211_VHT_CAP_MAX_MPDU_LENGTH_3895 |
+		   IEEE80211_VHT_CAP_RXLDPC |
 		   IEEE80211_VHT_CAP_SHORT_GI_80 |
 		   IEEE80211_VHT_CAP_MAX_A_MPDU_LENGTH_EXPONENT_MASK;
 	vht->vht_mcs.rx_mcs_map = cpu_to_le16(map);
