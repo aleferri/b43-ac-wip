@@ -22,7 +22,6 @@ Every other NVRAM variable is consumed by the core or not at all.
 | `rxgains_2g` | RX gain init on 2.4 GHz |
 | `core_pwr_info[].pa2ga` | est_pwr transfer function on 2.4 GHz |
 | `rpcal2g`, `rpcal5gb[4]` | table `0x11`: loaded when any is non-zero, filled with the phasor of the sub-band's word |
-| `tssifloor5g` | PHY `0x0724 + c·0x200` |
 | `femctrl` | guard on the FEM control table (`femctrl=6` only) |
 | `pdgain5g`, `boardflags3`, `avvmid` | selection of the AvVmid set |
 | `temps_period` | tempsense cadence in the watchdog |
@@ -37,7 +36,7 @@ Every other NVRAM variable is consumed by the core or not at all.
 | `rxgains_5gl.elnagain[c]` | `(elnagain+3)<<1` | table `0x44 + c·0x20`, offset 0 | verified |
 | `maxp5ga`, `mcsbw*po`, `aga0` | the PPR chain ([`txpwr-target-derivation.md`](txpwr-target-derivation.md)) | PHY `0x0646 + c·0x200` bits 7:0, per-rate SHM offsets | 43 cold and 44 hot configurations |
 | `pdoffset40ma`, `pdoffset80ma` | sub-band nibble per core | table `0x21`, entries 1/5/6 and 10 | 139 segments |
-| `tssifloor5g` | `& 0x3ff` per chain | PHY `0x0724 + c·0x200` | **SALAME**: `0xffff` on every board, so the destination is inferred |
+| `tssifloor5g` | none | not PHY `0x0724 + c·0x200`, which is the constant `0x03ff` | wl writes `0x03ff` there with `tssifloor2g`/`tssifloor5g` removed from the R7000's NVRAM (issue #16) |
 
 The rxgains byte packs `(trelnabyp<<7)|(triso<<3)|elnagain`. The antenna gain
 fields keep brcmsmac's encoding, whole dB in bits [5:0] and quarters in
@@ -45,8 +44,8 @@ fields keep brcmsmac's encoding, whole dB in bits [5:0] and quarters in
 
 ## Open
 
-- The destination of `tssifloor5g`, which needs a board with a programmed
-  floor.
+- What reads `tssifloor2g`/`tssifloor5g`, if anything on the AC-PHY: not
+  the tempsense bracket.
 - `tssiposslope5g`, `tworangetssi5g`: constant on every board.
 - Which of `aga0..2` the stock driver reads: all three are 133 on the
   reference boards.

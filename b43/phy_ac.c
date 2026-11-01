@@ -5022,13 +5022,10 @@ static void b43_phy_ac_rx_gain_regs_program(struct b43_wldev *dev,
 	b43_phy_maskset(dev, 0x0728 + s, (u16)~0x0010, 0x0010);
 	b43_phy_write(dev,   0x0736 + s, 0x0154);
 	/*
-	 * TSSI floor from the SROM. Unprogrammed (0x3ff) on every board here,
-	 * which looks like a literal; a board that programs it would be ignored
-	 * by one.
+	 * A constant, not the SROM's tssifloor: wl writes 0x03ff here also with
+	 * the tssifloor variables removed from the R7000's NVRAM (issue #16).
 	 */
-	b43_phy_write(dev,   0x0724 + s,
-		      dev->dev->bus_sprom->tssifloor5g[dev->phy.ac->pa5g_grp]
-		      & 0x03ff);
+	b43_phy_write(dev,   0x0724 + s, 0x03ff);
 	b43_phy_maskset(dev, 0x073a + s, (u16)~0x0007, g->f73a_07);
 	b43_phy_maskset(dev, 0x0725 + s, (u16)~0x0020, 0x0020);
 	b43_phy_maskset(dev, 0x0739 + s, (u16)~0x007e, g->f739_7e);

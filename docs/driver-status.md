@@ -52,8 +52,10 @@ boards (R7000, EA6900, RT-AC66U B1);
 - A scaffold is removed by deriving the value, or by proving with captures that
   it is invariant over the whole domain — never because the gate passes.
 - A derived value must not be replaced by the constant it reduces to on the
-  reference boards (`tssifloor5g[grp] & 0x3ff` is `0x03ff` everywhere). The
-  trace cannot see that regression, so check refactors with a source diff too.
+  reference boards: the trace cannot see that regression, so check
+  refactors with a source diff too. The converse needs the same proof:
+  `0x?724` was taken from `tssifloor5g`, `0x03ff` on every board, until a
+  board with the variable removed (the R7000, issue #16) showed a constant.
 
 ## Reading a divergence: phase, version, chip, board
 
