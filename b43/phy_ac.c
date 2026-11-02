@@ -4840,12 +4840,17 @@ static void b43_phy_ac_rx_evm_shaping_override(struct b43_wldev *dev)
  * gain table back; the one 2.4 GHz combination with elnagain 0 uses 6.
  *
  * Under wl 7.14 that gives 197 of the 200 words and all 20 table cells of
- * the twenty combinations known: the RT-AC66U B1's SROM sweep on both
- * bands and its 5 GHz trace (triso 7, 9 and 8 on its three cores), the
- * R7000 on both bands (triso 7, 6 and 5 on 5 GHz) and the d6220. The three
- * misses are read-backs at 2.4 GHz, (3, 13, 1), (0, 15, 1) and (6, 13, 0),
- * where wl ended up one step moved from biq0 to biq1 with table 7 still
- * holding the setting computed here; no 2.4 GHz trace has such a move.
+ * the twenty combinations it was derived from: the RT-AC66U B1's SROM
+ * sweep on both bands and its 5 GHz trace (triso 7, 9 and 8 on its three
+ * cores), the R7000 on both bands (triso 7, 6 and 5 on 5 GHz) and the
+ * d6220. The EA6900's 2.4 GHz (4, 7, 1), which came later, from the R7000
+ * with its SROM changed (#20), is as computed here in all ten words and
+ * the cell; on the R7000, (3, 7, 1), (6, 13, 1) and (6, 7, 1) give what
+ * the RT-AC66U B1 gives, so the settings follow the fields, not the board.
+ * The three misses are read-backs at 2.4 GHz, (3, 13, 1), (0, 15, 1) and
+ * (6, 13, 0), where wl ended up one step moved from biq0 to biq1 with
+ * table 7 still holding the setting computed here; no 2.4 GHz trace has
+ * such a move.
  * The wl 6.30 hybrid of the archer-t5e and the MacBookAir6,1, whose rx
  * gain combinations played no part in the constants, writes the first two
  * settings as computed here on all six of its band and core combinations
@@ -4982,8 +4987,10 @@ b43_phy_ac_agc_settings(struct b43_wldev *dev, unsigned int core,
 /*
  * 0x06ee, bits 1:0 in the body and 3:2 in the transition: on 2.4 GHz the
  * values the RT-AC66U B1 reads back for the combinations of its sweep,
- * which follow no rule found; with any other combination, and on 5 GHz,
- * 1 at 20 MHz and 2 from 40 on, then 2.
+ * which follow no rule found, and (4, 7, 1) as the R7000 writes it (#20);
+ * the R7000 writes the sweep's values for the three combinations both
+ * boards have. With any other combination, and on 5 GHz, 1 at 20 MHz and
+ * 2 from 40 on, then 2.
  * [read-back: router-data/rt-ac66u-b1/srom-sweep.zip!summary.txt]
  */
 struct b43_phy_ac_agc_ee {
@@ -4994,7 +5001,7 @@ struct b43_phy_ac_agc_ee {
 static const struct b43_phy_ac_agc_ee b43_phy_ac_agc_ee_2g[] = {
 	{ 6, 13, 1, 0xa }, { 6, 13, 0, 0xa }, { 6, 7, 1, 0x9 },
 	{ 6, 3, 1, 0x9 }, { 7, 13, 1, 0x9 }, { 3, 13, 1, 0xa },
-	{ 3, 7, 1, 0x6 }, { 0, 15, 1, 0x6 },
+	{ 3, 7, 1, 0x6 }, { 0, 15, 1, 0x6 }, { 4, 7, 1, 0x9 },
 };
 
 static u16 b43_phy_ac_agc_ee(struct b43_wldev *dev, unsigned int core)
