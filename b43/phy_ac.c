@@ -4805,13 +4805,89 @@ static void b43_phy_ac_rx_evm_shaping_override(struct b43_wldev *dev)
 }
 
 /*
+ * The post-noise-shaping words on 2.4 GHz under wl 7.14, by the core's
+ * rxgains2g fields (elnagain, triso, trelnabyp): 0x06dc-0x06e5, table 7 at
+ * 0xf9 + core and 0x06ee, bits 1:0 from the body and 3:2 from the
+ * transition. On the RT-AC66U B1 they are the same on channels 1, 6 and 11
+ * and at 20 and 40 MHz.
+ *
+ * Each row is a combination wl ran with on that board, read back at ch6/20.
+ * The board's own (6, 13, 1) is also its cold trace's, and the R7000's
+ * (3, 7, 1) is what the R7000 writes on channels 1 to 11. The other rows
+ * changed only core 0's fields, and only core 0 was read: the sweep's
+ * 0x1xxx and 0x2xxx are not cores 1 and 2. That a core follows its own
+ * fields rests on table 7, where 0xfa and 0xfb kept their values when only
+ * core 0's fields changed. The dependence is not modelled; a combination
+ * not listed keeps the d6220 words.
+ * [read-back: router-data/rt-ac66u-b1/srom-sweep.zip!summary.txt]
+ * [read-back: router-data/rt-ac66u-b1/readback-2g.zip]
+ * [capture-ref: router-data/rt-ac66u-b1/mmio-cold-2g6.zip; records
+ *   #12454-#12589, #26691-#26826]
+ * [capture-ref: router-data/rt-ac66u-b1/mmio-cold-2g6-40.zip; records
+ *   #12461-#12596, #26694-#26829]
+ * [capture-ref: router-data/r7000/mmio-cold-2g6.zip; records
+ *   #15448-#15583]
+ * [capture-ref: router-data/r7000/cold-2g20.zip; records
+ *   #1573008-#1573133]
+ */
+struct b43_phy_ac_agc_2g {
+	u8 elnagain, triso, trelnabyp;
+	u16 word[10];
+	u16 tbl7;
+	u16 ee;
+};
+
+static const struct b43_phy_ac_agc_2g b43_phy_ac_agc_2g_rows[] = {
+	{ 6, 13, 1, { 0x013a, 0x0624, 0x013a, 0x0014, 0x014a,
+		      0x0078, 0x014a, 0x0028, 0x014a, 0x0028 }, 0xc89d, 0x000a },
+	{ 6, 13, 0, { 0x013a, 0x0714, 0x013a, 0x0014, 0x014a,
+		      0x0078, 0x014a, 0x0028, 0x014a, 0x0028 }, 0xc89d, 0x000a },
+	{ 6,  7, 1, { 0x013a, 0x0624, 0x013a, 0x0014, 0x014a,
+		      0x0038, 0x012a, 0x0008, 0x012a, 0x0008 }, 0xc89d, 0x0009 },
+	{ 6,  3, 1, { 0x013a, 0x0624, 0x013a, 0x0014, 0x014a,
+		      0x0008, 0x010a, 0x0008, 0x010a, 0x0008 }, 0xc89d, 0x0009 },
+	{ 7, 13, 1, { 0x0148, 0x0634, 0x0148, 0x0024, 0x014a,
+		      0x0068, 0x014a, 0x0018, 0x014a, 0x0018 }, 0xcca4, 0x0009 },
+	{ 3, 13, 1, { 0x014a, 0x0724, 0x014a, 0x0024, 0x014a,
+		      0x0278, 0x014a, 0x0048, 0x014a, 0x0048 }, 0xcca5, 0x000a },
+	{ 3,  7, 1, { 0x014a, 0x0634, 0x014a, 0x0024, 0x014a,
+		      0x0058, 0x014a, 0x0008, 0x014a, 0x0008 }, 0xcca5, 0x0006 },
+	{ 0, 15, 1, { 0x016a, 0x0724, 0x016a, 0x0024, 0x016a,
+		      0x0378, 0x016a, 0x0058, 0x016a, 0x0058 }, 0xccb5, 0x0006 },
+};
+
+static const struct b43_phy_ac_agc_2g *
+b43_phy_ac_agc_2g_lookup(struct b43_wldev *dev, unsigned int core)
+{
+	const struct ssb_sprom_rxgains *rx = &dev->dev->bus_sprom->rxgains_2g;
+	unsigned int i;
+
+	if (b43_current_band(dev->wl) != NL80211_BAND_2GHZ)
+		return NULL;
+
+	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_agc_2g_rows); i++) {
+		const struct b43_phy_ac_agc_2g *r = &b43_phy_ac_agc_2g_rows[i];
+
+		if (r->elnagain == rx->elnagain[core] &&
+		    r->triso == rx->triso[core] &&
+		    r->trelnabyp == rx->trelnabyp[core])
+			return r;
+	}
+	return NULL;
+}
+
+/*
  * Per-core body of the post-noise-shaping block, at a 0x200 stride: peek
- * and write 0x06dc/0x06dd, write table 0x07 at 0xf9 + core = 0xc0b5, unlock
- * the outer gate, five groups of (clear bit 1 of 0x06e3, two writes), eight
+ * and write 0x06dc/0x06dd, write table 0x07 at 0xf9 + core, unlock the
+ * outer gate, five groups of (clear bit 1 of 0x06e3, two writes), eight
  * peeks, and a MOD of 0x06ee.
  *
  * 0x06dc-0x06e5 and 0x06ee have no known name; the per-core shape suggests
- * RX gain or RSSI programming.
+ * RX gain or RSSI programming. The values are board data: on 2.4 GHz those
+ * of b43_phy_ac_agc_2g_rows[] where the core's fields are listed. Otherwise
+ * the d6220's, with 0x06dc written back as read, 0x06de and 0x06e0 at
+ * 0x014a on 2.4 GHz as on the MacBookAir6,1 and the archer-t5e, and 0x06ee
+ * bits 1:0 at 1 at 20 MHz and 2 from 40 on.
  * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   11060-11101, 11113-11154, 11166-11207]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -4821,39 +4897,50 @@ static void
 b43_phy_ac_post_noise_shaping_rx_regprog_core(struct b43_wldev *dev,
 					      unsigned int core)
 {
-	u16 cur;
 	B43_AC_FN();
+	static const u16 d6220[10] = {
+		0x0000, 0x0604, 0x015a, 0x0004, 0x016a,
+		0x0018, 0x013a, 0x0008, 0x013a, 0x0008,
+	};
+	const struct b43_phy_ac_agc_2g *agc = b43_phy_ac_agc_2g_lookup(dev, core);
 	u16 stride = (u16)(core * 0x200);
 	u16 tbl_off = (u16)(0x00f9 + core);
-	static const u16 tbl_val = 0xc0b5;
-	/*
-	 * 0x06de and 0x06e0 are 0x014a on 2.4 GHz on both cores of the
-	 * MacBookAir6,1 and the archer-t5e, 0x015a and 0x016a on 5 GHz. The
-	 * rest of the block differs between those boards on 2.4 GHz, and 0x06e1
-	 * on 5 GHz too: board data, transcribed from the d6220.
-	 */
-	bool band_2g = b43_current_band(dev->wl) == NL80211_BAND_2GHZ;
+	u16 tbl_val = agc ? agc->tbl7 : 0xc0b5;
+	u16 ee_lo;
+	u16 w[10];
+	u16 cur;
 
-	/* 0x06dc written back as read, 0x06dd programmed */
 	cur = b43_phy_read_log(dev, 0x06dc + stride);
-	b43_phy_write(dev, 0x06dc + stride, cur);
-	b43_phy_write(dev, 0x06dd + stride, 0x0604);
+	if (agc) {
+		memcpy(w, agc->word, sizeof(w));
+		ee_lo = agc->ee & 0x0003;
+	} else {
+		memcpy(w, d6220, sizeof(w));
+		w[0] = cur;
+		if (b43_current_band(dev->wl) == NL80211_BAND_2GHZ)
+			w[2] = w[4] = 0x014a;
+		ee_lo = dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_20 ?
+			0x0001 : 0x0002;
+	}
+
+	b43_phy_write(dev, 0x06dc + stride, w[0]);
+	b43_phy_write(dev, 0x06dd + stride, w[1]);
 
 	b43_actab_write_bulk_scoped(dev, 0x07, tbl_off, 16, 1, &tbl_val);
 
 	/* Five groups: clear bit 1 of 0x06e3, then two writes. */
 	b43_phy_maskset(dev, 0x06e3 + stride, (u16)~0x0002, 0x0000);
-	b43_phy_write(dev, 0x06de + stride, band_2g ? 0x014a : 0x015a);
-	b43_phy_write(dev, 0x06df + stride, 0x0004);
+	b43_phy_write(dev, 0x06de + stride, w[2]);
+	b43_phy_write(dev, 0x06df + stride, w[3]);
 	b43_phy_maskset(dev, 0x06e3 + stride, (u16)~0x0002, 0x0000);
-	b43_phy_write(dev, 0x06e0 + stride, band_2g ? 0x014a : 0x016a);
-	b43_phy_write(dev, 0x06e1 + stride, 0x0018);
+	b43_phy_write(dev, 0x06e0 + stride, w[4]);
+	b43_phy_write(dev, 0x06e1 + stride, w[5]);
 	b43_phy_maskset(dev, 0x06e3 + stride, (u16)~0x0002, 0x0000);
-	b43_phy_write(dev, 0x06e4 + stride, 0x013a);
-	b43_phy_write(dev, 0x06e5 + stride, 0x0008);
+	b43_phy_write(dev, 0x06e4 + stride, w[8]);
+	b43_phy_write(dev, 0x06e5 + stride, w[9]);
 	b43_phy_maskset(dev, 0x06e3 + stride, (u16)~0x0002, 0x0000);
-	b43_phy_write(dev, 0x06e2 + stride, 0x013a);
-	b43_phy_write(dev, 0x06e3 + stride, 0x0008);
+	b43_phy_write(dev, 0x06e2 + stride, w[6]);
+	b43_phy_write(dev, 0x06e3 + stride, w[7]);
 	b43_phy_maskset(dev, 0x06e3 + stride, (u16)~0x0002, 0x0000);
 
 	/* Five peeks of 0x06dc, three of 0x06dd. */
@@ -4866,10 +4953,7 @@ b43_phy_ac_post_noise_shaping_rx_regprog_core(struct b43_wldev *dev,
 	b43_phy_read_log(dev, 0x06dd + stride);
 	b43_phy_read_log(dev, 0x06dd + stride);
 
-	/* 1 at 20 MHz, 2 from 40 on. */
-	b43_phy_maskset(dev, 0x06ee + stride, (u16)~0x0003,
-			dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_20
-				? 0x0001 : 0x0002);
+	b43_phy_maskset(dev, 0x06ee + stride, (u16)~0x0003, ee_lo);
 }
 
 /*
@@ -4887,13 +4971,14 @@ b43_phy_ac_post_noise_shaping_core_transition(struct b43_wldev *dev,
 					      unsigned int core)
 {
 	B43_AC_FN();
+	const struct b43_phy_ac_agc_2g *agc = b43_phy_ac_agc_2g_lookup(dev, core);
 	u16 stride = (u16)(core * 0x200);
 
 	/*
 	 * At 20 MHz radio 0x0045 gets bits 9:8 set, on a bonded channel bit 6
 	 * cleared instead (a different mask, not just a different value); radio
-	 * 0x0033's nibble goes from 0x80 to 0xc0. The 0x06ee field is always
-	 * 0x8.
+	 * 0x0033's nibble goes from 0x80 to 0xc0. The 0x06ee field is 0x8, and
+	 * on 2.4 GHz the b43_phy_ac_agc_2g_rows[] one where listed.
 	 *
 	 * Those are 5 GHz captures. On 2.4 GHz at 20 MHz wl 7.14 on the R7000
 	 * (BCM4360, femctrl 3 sub 3, ch 11) has 0x0045 bits 9:8 clear and bit 6
@@ -4908,7 +4993,8 @@ b43_phy_ac_post_noise_shaping_core_transition(struct b43_wldev *dev,
 	else
 		b43_radio_maskset(dev, 0x0045 + stride, (u16)~0x0040, 0x0000);
 	b43_phy_read_log(dev, 0x06dc + stride);
-	b43_phy_maskset(dev, 0x06ee + stride, (u16)~0x000c, 0x0008);
+	b43_phy_maskset(dev, 0x06ee + stride, (u16)~0x000c,
+			agc ? agc->ee & 0x000c : 0x0008);
 	if (b43_current_band(dev->wl) == NL80211_BAND_2GHZ &&
 	    dev->phy.ac->cal_width == NL80211_CHAN_WIDTH_20)
 		b43_radio_maskset(dev, 0x0033 + stride, (u16)~0x00f0, 0x0060);
