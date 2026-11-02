@@ -249,9 +249,11 @@ struct b43_txhdr_ac {
 #define B43_TXH_AC_MAC_SVHT		0x0004	/* Single VHT MPDU A-MPDU */
 /* PHY TX control word 0: B43_TXH_PHY_ENC in 1:0, then */
 #define B43_TXH_AC_PHY0_NON_SOUNDING	0x0004
+#define B43_TXH_AC_PHY0_BFM		0x0008	/* Beamformed */
 #define B43_TXH_AC_PHY0_SHORT_PREAMBLE	0x0010
 #define B43_TXH_AC_PHY0_CORES_SHIFT	6
 #define B43_TXH_AC_PHY0_BW_SHIFT	14	/* 0 20 MHz, 1 40, 2 80 */
+#define B43_TXH_AC_PHY0_CORES		0x01C0
 /* PHY TX control word 1: primary 20 MHz subband, power offset */
 #define B43_TXH_AC_PHY1_SUBBAND		0x0007
 #define B43_TXH_AC_PHY1_TXPWR_OFFSET	0x01F8
@@ -265,6 +267,7 @@ struct b43_txhdr_ac {
 #define B43_TXH_AC_RTS_SHORT_PREAMBLE	0x0010
 #define B43_TXH_AC_RTS_LAST_RATE	0x0020
 #define B43_TXH_AC_RTS_RATE_SHIFT	8
+#define B43_TXH_AC_RTS_TXBF_SLOT_SHIFT	12	/* Beamforming slot */
 
 static inline
 size_t b43_txhdr_size(struct b43_wldev *dev)
@@ -423,6 +426,10 @@ struct b43_rxhdr_fw4 {
 #define B43_RX_MAC_TKIP_MICATT		0x00080000 /* TKIP MIC attempted */
 #define B43_RX_MAC_AGGTYPE		0x00060000 /* Aggregation type */
 #define B43_RX_MAC_AGGTYPE_SHIFT	17
+#define  B43_RX_AGG_MIDDLE		0	/* A-MSDU piece: a subframe */
+#define  B43_RX_AGG_FIRST		1	/* Header and first subframe */
+#define  B43_RX_AGG_LAST		2	/* Last subframe, MIC and FCS */
+#define  B43_RX_AGG_SINGLE		3	/* The whole A-MSDU */
 #define B43_RX_MAC_AMSDU		0x00010000 /* A-MSDU mask */
 #define B43_RX_MAC_BEACONSENT		0x00008000 /* Beacon sent flag */
 #define B43_RX_MAC_KEYIDX		0x000007E0 /* Key index */
@@ -448,6 +455,7 @@ void b43_generate_plcp_hdr(struct b43_plcp_hdr4 *plcp,
 			   const u16 octets, const u8 bitrate);
 
 void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr);
+void b43_rx_amsdu_free(struct b43_wldev *dev);
 
 void b43_txstatus_dump(struct b43_wldev *dev,
 		       const struct b43_txstatus *status);

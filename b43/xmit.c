@@ -670,6 +670,52 @@ static unsigned int b43_sta_ampdu_exp(const struct ieee80211_sta *sta)
 			    IEEE80211_VHT_CAP_MAX_A_MPDU_LENGTH_EXPONENT_MASK);
 }
 
+/*
+ * A frame to a station with a beamforming slot (b43_txbf_link()), as
+ * wlc_d11hdrs() and wlc_acphy_txctl0_calc() of 6.30.163.46 lay it out:
+ * on each VHT rate block every TX chain, the BFM bit of word 0 and the slot
+ * in bits 15:12 of the RTS/CTS word, and the Beamformed bit of VHT-SIG-A2.
+ */
+static void b43_txhdr_ac_txbf(struct b43_wldev *dev,
+			      struct b43_txhdr_ac *txhdr, unsigned int n,
+			      const struct ieee80211_tx_info *info,
+			      const struct ieee80211_hdr *hdr)
+{
+	u8 txchain = dev->dev->bus_sprom->txchain & 0x07;
+	struct ieee80211_sta *sta;
+	unsigned int slot = 0, i;
+
+	if (!dev->txbf_base || !info->control.vif ||
+	    !ieee80211_is_data(hdr->frame_control) ||
+	    is_multicast_ether_addr(hdr->addr1))
+		return;
+
+	rcu_read_lock();
+	sta = ieee80211_find_sta(info->control.vif, hdr->addr1);
+	if (sta)
+		slot = READ_ONCE(((struct b43_sta *)sta->drv_priv)->txbf_slot);
+	rcu_read_unlock();
+	if (!slot)
+		return;
+	if (!txchain)
+		txchain = 0x03;
+
+	for (i = 0; i < n; i++) {
+		struct b43_txhdr_ac_rate *r = &txhdr->rate[i];
+		u16 phy0 = le16_to_cpu(r->phy_ctl[0]);
+
+		if ((phy0 & B43_TXH_PHY_ENC) != B43_TXH_PHY_ENC_VHT)
+			continue;
+		phy0 &= ~B43_TXH_AC_PHY0_CORES;
+		phy0 |= txchain << B43_TXH_AC_PHY0_CORES_SHIFT |
+			B43_TXH_AC_PHY0_BFM;
+		r->phy_ctl[0] = cpu_to_le16(phy0);
+		r->rts_cts_ctl |= cpu_to_le16((slot - 1) <<
+					      B43_TXH_AC_RTS_TXBF_SLOT_SHIFT);
+		r->plcp.raw[4] |= 0x01;
+	}
+}
+
 static bool b43_txhdr_ac_ampdu(struct b43_txhdr_ac *txhdr,
 			       const struct ieee80211_tx_info *info,
 			       struct ieee80211_hdr *hdr)
@@ -823,6 +869,7 @@ static int b43_generate_txhdr_ac(struct b43_wldev *dev, u8 *_txhdr,
 	for (i = 0; i < n; i++)
 		txhdr->rate[i].rts_cts_ctl = cpu_to_le16(rts);
 	txhdr->rate[n - 1].rts_cts_ctl |= cpu_to_le16(B43_TXH_AC_RTS_LAST_RATE);
+	b43_txhdr_ac_txbf(dev, txhdr, n, info, wlhdr);
 
 	return 0;
 }
@@ -1281,6 +1328,76 @@ static int b43_rx_rate_ac(struct b43_plcp_hdr6 *plcp, u16 phystat0,
 	}
 }
 
+/*
+ * The AC cores take an A-MSDU apart before it reaches the host, each piece
+ * in a buffer of its own with the A-MSDU bit and its place in the
+ * aggregation type: the first carries the PLCP, the 802.11 and CCMP
+ * headers and the first subframe, decrypted, a middle one a subframe, the
+ * last one the last subframe, the MIC and the FCS (a OnePlus Nord 2's
+ * uplink). Put together they are the MPDU as it was sent, which goes on
+ * under the first piece's receive header; a piece in error spoils it.
+ * Returns that MPDU, or NULL while it is incomplete or dropped.
+ */
+static struct sk_buff *b43_rx_amsdu(struct b43_wldev *dev,
+				    struct sk_buff *skb, const void **rxhdr)
+{
+	struct b43_rxhdr_fw4 *first = (struct b43_rxhdr_fw4 *)dev->rx_amsdu_hdr;
+	u32 macstat = le32_to_cpu(((const struct b43_rxhdr_fw4 *)*rxhdr)->
+				  format_598.mac_status);
+	unsigned int type = (macstat & B43_RX_MAC_AGGTYPE) >>
+			    B43_RX_MAC_AGGTYPE_SHIFT;
+	const u32 err = B43_RX_MAC_FCSERR | B43_RX_MAC_DECERR;
+	struct sk_buff *head = dev->rx_amsdu;
+	int need;
+
+	BUILD_BUG_ON(sizeof(*first) > sizeof(dev->rx_amsdu_hdr));
+	if (type == B43_RX_AGG_FIRST || type == B43_RX_AGG_SINGLE) {
+		if (head)
+			dev_kfree_skb_any(head);
+		dev->rx_amsdu = NULL;
+		memcpy(first, *rxhdr, sizeof(*first));
+		macstat &= ~(B43_RX_MAC_AMSDU | B43_RX_MAC_AGGTYPE);
+		first->format_598.mac_status = cpu_to_le32(macstat);
+		*rxhdr = first;
+		if (type == B43_RX_AGG_SINGLE)
+			return skb;
+		dev->rx_amsdu = skb;
+		dev->rx_amsdu_err = 0;
+		return NULL;
+	}
+
+	if (!head) {
+		dev_kfree_skb_any(skb);
+		return NULL;
+	}
+	dev->rx_amsdu_err |= macstat & err;
+	need = skb->len - skb_tailroom(head);
+	if (need > 0 && pskb_expand_head(head, 0, need, GFP_ATOMIC)) {
+		dev_kfree_skb_any(head);
+		dev_kfree_skb_any(skb);
+		dev->rx_amsdu = NULL;
+		return NULL;
+	}
+	skb_put_data(head, skb->data, skb->len);
+	dev_kfree_skb_any(skb);
+	if (type != B43_RX_AGG_LAST)
+		return NULL;
+
+	dev->rx_amsdu = NULL;
+	macstat = le32_to_cpu(first->format_598.mac_status) |
+		  dev->rx_amsdu_err;
+	first->format_598.mac_status = cpu_to_le32(macstat);
+	*rxhdr = first;
+	return head;
+}
+
+void b43_rx_amsdu_free(struct b43_wldev *dev)
+{
+	if (dev->rx_amsdu)
+		dev_kfree_skb_any(dev->rx_amsdu);
+	dev->rx_amsdu = NULL;
+}
+
 void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
 {
 	struct ieee80211_rx_status status;
@@ -1297,6 +1414,14 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
 	int padding, rate_idx;
 
 	memset(&status, 0, sizeof(status));
+
+	if (dev->fw.hdr_format == B43_FW_HDR_AC &&
+	    (le32_to_cpu(rxhdr->format_598.mac_status) & B43_RX_MAC_AMSDU)) {
+		skb = b43_rx_amsdu(dev, skb, &_rxhdr);
+		if (!skb)
+			return;
+		rxhdr = _rxhdr;
+	}
 
 	/* Get metadata about the frame from the header. */
 	phystat0 = le16_to_cpu(rxhdr->phy_status0);
@@ -1350,10 +1475,11 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
 	    (dev->phy.type != B43_PHYTYPE_AC || (macstat & B43_RX_MAC_DEC)))
 		goto drop;
 	/*
-	 * A frame with the A-MSDU bit is not a complete MPDU: the one seen had
-	 * an intact 802.11 header and unrelated data from the QoS control on,
-	 * so mac80211 would read a random CCMP PN from it and drop every later
-	 * frame of that TID as a replay. Drop it, as brcmsmac does.
+	 * A piece of an A-MSDU on another core is not a complete MPDU: the one
+	 * seen had an intact 802.11 header and unrelated data from the QoS
+	 * control on, so mac80211 would read a random CCMP PN from it and drop
+	 * every later frame of that TID as a replay. Drop it, as brcmsmac
+	 * does; the AC's are put together above.
 	 */
 	if (unlikely(macstat & B43_RX_MAC_AMSDU))
 		goto drop;

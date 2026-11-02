@@ -458,6 +458,14 @@ enum {
 #define B43_AMT_F_BSSID			(B43_AMT_F_VALID | 0x0002)
 #define B43_AMT_F_SELF			(B43_AMT_F_VALID | 0x0008)
 #define B43_AMT_F_KEY			(B43_AMT_F_VALID | 0x0004)
+/*
+ * The further AP interfaces of a multi-BSS setup take the rows below the
+ * BSSID, matched as the receiver address (A1) and as the BSSID (A3), above
+ * the B43_NR_PAIRWISE_KEYS rows the pairwise keys use.
+ */
+#define B43_MBSS_MAX			4
+#define B43_AMT_MBSS(i)			(B43_AMT_BSSID - 1 - (i))
+#define B43_AMT_F_MBSS			(B43_AMT_F_SELF | B43_AMT_F_BSSID)
 
 /* PowerControl */
 #define B43_PCTL_IN			0xB0
@@ -793,6 +801,30 @@ struct b43_stats {
  */
 struct b43_sta {
 	u8 ampdu_win[IEEE80211_NUM_TIDS];
+	/* Beamforming slot of the station plus one, 0 for none. */
+	u8 txbf_slot;
+};
+
+/*
+ * Transmit beamforming on the AC (6.30.163.46's wlc_txbf.c, whose microcode
+ * b43 loads): the microcode publishes the base of its beamforming block at
+ * shared 0x00B0, a word address. A beamformee takes one of five 16-word
+ * slots there, which the microcode sounds and keeps the steering matrix of;
+ * the station's key row in the per-row table at 0x0668 points at the slot.
+ */
+#define B43_SHM_SH_TXBF_BLK		0x00B0
+#define B43_SHM_SH_AMT_INFO		0x0668
+#define  B43_AMT_INFO_TXBF		0x1000
+#define  B43_AMT_INFO_TXBF_SLOT_SHIFT	13
+#define B43_TXBF_SLOTS			5
+#define B43_TXBF_SOUNDING		0x00E0	/* Sounding period, in the block */
+#define B43_TXBF_CTL			0x06E0	/* In the block, bit 8 cleared */
+#define B43_TXBF_SOUNDING_DEFAULT	6250
+
+struct b43_txbf_link {
+	struct b43_sta *bsta;
+	u8 row;				/* Address match row of the key */
+	u8 addr[ETH_ALEN];		/* Our address, of the station's BSS */
 };
 
 struct b43_key {
@@ -991,6 +1023,13 @@ struct b43_wldev {
 
 	bool bad_frames_preempt;	/* Use "Bad Frames Preemption" (default off) */
 	bool dfq_valid;		/* Directed frame queue valid (IBSS PS mode, ATIM) */
+	/* The A-MSDU being put together from its pieces (b43_rx_amsdu()). */
+	struct sk_buff *rx_amsdu;
+	u8 rx_amsdu_hdr[40] __aligned(4);	/* Its first receive header */
+	u32 rx_amsdu_err;
+	/* Word address of the microcode's beamforming block, 0 without. */
+	u16 txbf_base;
+	struct b43_txbf_link txbf[B43_TXBF_SLOTS];
 	bool radio_hw_enable;	/* saved state of radio hardware enabled state */
 	bool qos_enabled;		/* TRUE, if QoS is used. */
 	bool hwcrypto_enabled;		/* TRUE, if HW crypto acceleration is enabled. */
@@ -1082,6 +1121,12 @@ struct b43_wl {
 	 */
 
 	struct ieee80211_vif *vif;
+	/*
+	 * The further AP interfaces on the AC (multi-BSS). vif is the one
+	 * whose beacon the microcode sends; these go out from the driver at
+	 * its TBTT.
+	 */
+	struct ieee80211_vif *mbss_vif[B43_MBSS_MAX - 1];
 	/* The MAC address of the operating interface. */
 	u8 mac_addr[ETH_ALEN];
 	/* Current BSSID */

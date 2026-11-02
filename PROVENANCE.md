@@ -99,3 +99,22 @@ and the stock ASUS firmware. A read-back value is not a captured write: the
 it by wl is known.
 
 **TODO:** the download URL of the DD-WRT image was not recorded.
+
+## Broadcom 6.30.163.46 — `wl_apsta.o` of `broadcom-wl-6.30.163.46`
+
+The `wl_apsta.o` object (MIPS, with symbols and debug info) in the tarball the
+AC microcode comes from, `broadcom-wl-6.30.163.46.tar.bz2` (sha256
+`a07c3b6b277833c7dbe61daa511f908cd66c5e2763eb7a0859abc36cd9335c2d`), the file
+OpenWrt's `b43-firmware` packaging and b43-fwcutter take `ucode42` 784.2 from;
+the object's sha256 is
+`61b087871ee28e748f709ee6d39106d8a0b928aa2de2d7cb4b96427433bd0349`. Because its
+microcode is the one b43 loads, the shared-memory layout its driver code uses
+is the one that applies. The transmit beamforming interface
+(`b43_txbf_link()`, `b43_txhdr_ac_txbf()`: the beamforming block at shared
+0x00B0, the slot words, the 0x0668 row table, the BFM bit and the slot in the
+RTS/CTS word) is read from the disassembly (`llvm-objdump -d -r`) of
+`wlc_txbf_up()`, `wlc_txbf_upd_shm_blk()`, `wlc_txbf_init_link()`,
+`wlc_txfbf_update_amt_idx()`, `wlc_d11hdrs()` and `wlc_acphy_txctl0_calc()`,
+with the structure layouts from its DWARF; no decompiler output was used for
+it. One slot bit is left clear against that code, from an A/B test with a
+OnePlus Nord 2 (see the commit).
