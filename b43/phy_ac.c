@@ -2250,7 +2250,7 @@ static void b43_phy_ac_txpwrctrl_setup(struct b43_wldev *dev, u16 freq)
 
 /*
  * TX-gain table for 5 GHz, EPA path, radio 2069 rev 4: the vendor symbol
- * `acphy_txgain_epa_5g_2069rev4` (wlD6220.o .rodata @ 0x403af0, 768 bytes),
+ * `acphy_txgain_epa_5g_2069rev4` (wlD6220.o .data + 0x5b5b0, 768 bytes),
  * 128 big-endian u16 triplets re-expressed in host order, one 48-bit entry
  * per TX power index. Bits 7:0 are the bbmult, which table 0x20 and the 0x0c
  * cells 0x63/0x73 + 4 * core take; bits 47:8 are the three gain codes
@@ -2400,10 +2400,10 @@ static const u16 b43_acphy_txgain_epa_5g_2069rev4[128][3] = {
 
 /*
  * The same table for 2.4 GHz, acphy_txgain_epa_2g_2069rev4 of the 6.30.102.7
- * blob (wlDSL-3580_EU.o_save of impl14_v07, the source of radio_2069.c's
- * channel table). The hybrid wl on the MacBookAir6,1 and the archer-t5e loads
- * it whole into table 0x20 on 2.4 GHz, 384 of 384 words on both. Not checked
- * against a 7.14 blob.
+ * blob (wlDSL-3580_EU.o_save of impl14_v07). The hybrid wl on the
+ * MacBookAir6,1 and the archer-t5e loads it whole into table 0x20 on
+ * 2.4 GHz, 384 of 384 words on both. The symbol of the same name in
+ * wlD6220.o (7.14.89, .data + 0x5c7b0) holds the same 384 words.
  */
 static const u16 b43_acphy_txgain_epa_2g_2069rev4[128][3] = {
 	{ 0x0044, 0xffff, 0xa7ff },
@@ -3179,7 +3179,8 @@ static void b43_phy_ac_fem2_sub1_setup(struct b43_wldev *dev)
  * femctrl 3 sub 3, the 2.4 GHz radio of the Netgear R7000 and the Linksys
  * EA6900. The 2.4 GHz MMIO capture has no write of it, so it is read back
  * from the R7000 with wl 7.14.164.18 up: at ch 11 and at ch 6, two passes
- * each, all identical. Core 0 differs from cores 1 and 2.
+ * each, all identical. Core 0 differs from cores 1 and 2. The three are
+ * the .rodata objects fectrl3_sub3_c0, _c1 and _c2 of wlD6220.o (7.14.89).
  * [read-back: router-data/r7000/fem-table-2g-ch6.txt]
  */
 static const u8 b43_phy_ac_fem_fc3_sub3_c0[32] = {
@@ -3207,6 +3208,8 @@ static const u8 b43_phy_ac_fem_fc3_sub3_c2[32] = {
  * femctrl 3 sub 0, the 5 GHz radio of the R7000, the EA6900 and the R6400:
  * the R7000 writes it in both passes of its 5 GHz capture; the first 16
  * entries of each core stay 0. A read-back on an R6400 v1 gives the same.
+ * The three are the .rodata objects fectrl_mch5_c0_p200_p400_fc3_sub0,
+ * _c1_ and _c2_ of wlD6220.o (7.14.89).
  * [capture-ref: router-data/r7000/mmio-cold-5g36-80.zip; records
  *   #6714-#6815, #24771-#24872]
  */
@@ -10806,6 +10809,14 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	 * the first cell of each run, where 6.30 and 7.14 differ as they do on
 	 * 5 GHz: the 2.4 GHz runs are wl 7.14's on the RT-AC66U B1, the same on
 	 * every core, on channels 1, 6 and 11 and at 20 and 40 MHz.
+	 *
+	 * The a8 and a10 runs are the LNA1 and LNA2 gains in dB, the b runs
+	 * their gain codes. In wlD6220.o (7.14.89) a8 and a10 are the .data
+	 * objects ac_lna1_5g and ac_lna2_5g, a8_2g is ac_lna1_2g, and the first
+	 * five cells of a10_2g are ac_lna2_2g_gm2, { -12, -8, -4, -1, 2, 5, 9 }.
+	 * Its last two cells and codes are those of index 4, as the RT-AC66U B1
+	 * reads them back; the blob also has an ac_lna2_2g_gm3, { -10, -6, -2,
+	 * 1, 4, 7, 11 }, which no board here uses.
 	 */
 	{
 		static const u16 nvar_data[5] = { 0x0020, 0x0021, 0x0022, 0x0023, 0x0024 };

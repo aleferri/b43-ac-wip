@@ -19,7 +19,10 @@ struct b43_wldev;
  *
  * The rows are chan_tuning_2069rev4 of the 6.30.102.7 blob, 2.4 and 5 GHz,
  * with one register map for both bands. reverse-tools/check_channeltab.py
- * checks them against the captures' BW20 segments.
+ * checks them against the captures' BW20 segments. The symbol of the same
+ * name in wlD6220.o (7.14.89, .data + 0x63ef0) has the same 64 rows and
+ * 13 more, channels 184 to 216; each of its rows also carries five words,
+ * u16[47..51], between chan_raw6 and phy_bw, which this table leaves out.
  */
 struct b43_phy_ac_channeltab_e_radio2069 {
 	u8  channel;

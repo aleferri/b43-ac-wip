@@ -34,6 +34,20 @@ The copy the TX status layout in `wl-diag/README.md` is read from has the
 version string `7.14.89.14.cpe4.16L03.0-kdb`, sha256
 `2bbba860d1282d9d06a02f8297a150b3e38f1e21895ccb33a031f0bf0469c80b`.
 
+The same copy's `.rodata` and `.data` hold, value for value, these tables of
+`b43/`, found by symbol: `chan_tuning_2069rev4` (the 64 rows of
+`radio_2069.c`, which came from the DSL-3580L blob above),
+`acphy_txgain_epa_5g_2069rev4` and `acphy_txgain_epa_2g_2069rev4`, the
+RF sequencer command and delay tables, `acphy_txv_for_spexp`,
+`prefregs_2069_rev4`, the nine femctrl tables (`fectrl_*`, `fectrl3_sub3_c*`,
+`fectrl_mch5_c*_p200_p400_fc3_sub0`), `avvmid_set`, `farrow_vals`,
+`farrow_vals_432x_media_A1`, `AtanTbl`, the LNA gain rows `ac_lna1_5g`,
+`ac_lna2_5g`, `ac_lna1_2g` and `ac_lna2_2g_gm2` (the first five cells; see the
+noise-shaping block in `b43/phy_ac.c`), and the `acphy_*_rev0` tables of
+`tables_phy_ac.c`, whose ids, lengths, widths and order are those of the
+descriptor list `acphytbl_info_rev0` (its pointers read from `.rel.rodata`).
+The CRS min-power ladder is at the `.rodata` offsets its comment gives.
+
 ## AGSOT — `wl.ko` from `AGSOT_1_0_8.img`
 
 The `wl` module extracted from the firmware image `AGSOT_1_0_8.img`, a Sercomm
