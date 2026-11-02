@@ -3756,11 +3756,14 @@ static void b43_phy_ac_coeff_bank_init(struct b43_wldev *dev)
 	 * The 0x034d-0x0353 ladder (13 bits each) with 0x028d and 0x04d7/0x04db.
 	 * b43 did not write them, so they kept the power-on set (lo) unless wl
 	 * had run before a warm reboot. Under wl 7.14 they read back lo at
-	 * 5 GHz 20 and 80 MHz and hi at 5 GHz 40 MHz and on 2.4 GHz (RT-AC66U
-	 * B1); no write of them by wl was captured, so what sets them is not
-	 * known. On that board b43 needs hi at 5 GHz 80 MHz: with lo the AP's
-	 * 80 MHz downlink drops to 3-30 Mbit/s or stops, with hi it carries
-	 * 153-160 Mbit/s. Elsewhere lo, which b43 has always run with.
+	 * 5 GHz 20 and 80 MHz and hi at 5 GHz 40 MHz (RT-AC66U B1). On 2.4 GHz
+	 * they read back lo at ch1/20 and hi at ch6/20, ch11/20 and ch6/40, so
+	 * band and width do not decide the set there. No write of them by wl
+	 * is in any capture (the cold 2g6/20, 2g6/40 and 5g36/80 traces of the
+	 * RT-AC66U B1 and the R7000), so what sets them is not known. On that
+	 * board b43 needs hi at 5 GHz 80 MHz: with lo the AP's 80 MHz downlink
+	 * drops to 3-30 Mbit/s or stops, with hi it carries 153-160 Mbit/s.
+	 * Elsewhere lo, which b43 has always run with.
 	 */
 	{
 		static const u16 lo[7] = { 0x012c, 0x0145, 0x015e, 0x0177,
