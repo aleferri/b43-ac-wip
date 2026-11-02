@@ -57,8 +57,15 @@ What they show:
   rx-gain fields in this board's NVRAM (`rxgains2gelnagaina*=3`,
   `rxgains2gtrisoa*=7`), `wl` writes exactly what the R7000 trace has
   (0x014a 0x0634 0x014a 0x0024 0x014a 0x0058 0x014a 0x0008 0x014a 0x0008,
-  0x0006): the words are a function of the SROM fields, driven by core 0's,
-  and `srom-sweep.zip` has how each field moves them.
+  0x0006): the words are a function of the SROM fields, and `srom-sweep.zip`
+  has how each field moves them. The sweep reads cores 1 and 2 at 0x16xx and
+  0x26xx, which are not those cores: 0x16xx reads back as 0x06xx (505 of 512
+  registers the same, the rest live values), and `readback-2g.zip` and the
+  traces have cores 1 and 2 at 0x08xx and 0x0axx. So the sweep shows core
+  0's words only and does not support its `README.txt`'s conclusion that
+  core 0's field drives every core; table 7 0xfa and 0xfb, the cells of
+  cores 1 and 2, point the other way: they move only in `r7k`, the variant
+  that changes the fields of those cores too.
 - **Transmit beamforming.** With `txbf 1`, the only writes that differ are
   shared memory: `wl` reads SHM 0x00b0 = 0x0406 (in both runs) and, while the
   beamformee associates, writes slot 0 of the block at byte 0x080c: +0x08
