@@ -87,6 +87,7 @@ struct board_profile {
 	u16 cckbw202gpo;
 	u8 rxgains_2g_elnagain[3];
 	u8 rxgains_2g_triso[3];
+	u8 rxgains_2g_trelnabyp[3];
 	/* R2069_RCCAL_E/F (radio 0x0414/0x0415) read by rccal in op_init to
 	 * derive lpf_cap = ((F-E)*193)>>8. Per-board because it is an analog
 	 * measurement, not a constant. */
@@ -426,6 +427,7 @@ static const struct board_profile PROFILE_ARCHER = {
 	},
 	.rxgains_2g_elnagain = { 4, 4, 4 },
 	.rxgains_2g_triso    = { 9, 9, 9 },
+	.rxgains_2g_trelnabyp = { 1, 1, 1 },
 	.rccal_e = 0x0aba, .rccal_f = 0x0b9d,
 	.rccal_g = 0x01c9,
 	.antgain_raw = { 0, 0 },
@@ -489,6 +491,7 @@ static const struct board_profile PROFILE_MACBOOK = {
 	},
 	.rxgains_2g_elnagain = { 4, 3, 7 },
 	.rxgains_2g_triso    = { 7, 6, 15 },
+	.rxgains_2g_trelnabyp = { 1, 1, 1 },
 	.rccal_e = 0x0a7e, .rccal_f = 0x0b53,
 	.rccal_g = 0x01eb,
 	.antgain_raw = { 6, 6 },
@@ -544,6 +547,7 @@ static const struct board_profile PROFILE_R7000_2G = {
 	.pdoffset2g40ma = { 15, 15, 15 }, .pdoffset2g40mvalid = 1,
 	.rxgains_2g_elnagain = { 3, 3, 3 },
 	.rxgains_2g_triso    = { 7, 7, 7 },
+	.rxgains_2g_trelnabyp = { 1, 1, 1 },
 	/* cold-2g20.zip, cold01-ch1-bw20: E, F and G post-apply. */
 	.rccal_e = 0x0b7c, .rccal_f = 0x0c76,
 	.rccal_g = 0x0165,
@@ -684,6 +688,8 @@ static inline void board_profile_to_sprom(const struct board_profile *p,
 	       sizeof(s->rxgains_2g.elnagain));
 	memcpy(s->rxgains_2g.triso, p->rxgains_2g_triso,
 	       sizeof(s->rxgains_2g.triso));
+	memcpy(s->rxgains_2g.trelnabyp, p->rxgains_2g_trelnabyp,
+	       sizeof(s->rxgains_2g.trelnabyp));
 
 	for (c = 0; c < 3; c++) {
 		memcpy(s->core_pwr_info[c].pa5ga, p->pa5ga[c],
