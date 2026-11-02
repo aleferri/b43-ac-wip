@@ -10954,6 +10954,8 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	{
 		static const u16 nvar_data[5] = { 0x0020, 0x0021, 0x0022, 0x0023, 0x0024 };
 		static const u16 nvar_off[3]  = { 0x0008, 0x0020, 0x0038 };
+		static const u16 nvar_data_2g[5] = { 0x0000, 0x0001, 0x0002, 0x0003, 0x0004 };
+		static const u16 nvar_off_2g[3]  = { 0x0000, 0x0018, 0x0030 };
 		static const u16 glim_a[6]    = { 0x000b, 0x000c, 0x000e, 0x0020, 0x0024, 0x0028 };
 		static const u16 glim_b[7]    = { 0x0000, 0x0000, 0x0000, 0x0003, 0x0003, 0x0003, 0x0003 };
 		static const u16 nshp_a8[6]   = { 0x00f9, 0x00fe, 0x0004, 0x000a, 0x0010, 0x0017 };
@@ -10969,6 +10971,8 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 		const u16 *b8 = band_2g ? nshp_b8_2g : nshp_b8;
 		const u16 *a10 = band_2g ? nshp_a10_2g : nshp_a10;
 		const u16 *b10 = band_2g ? nshp_b10_2g : nshp_b10;
+		const u16 *nv_data = band_2g ? nvar_data_2g : nvar_data;
+		const u16 *nv_off = band_2g ? nvar_off_2g : nvar_off;
 		u16 saved, inner;
 		unsigned int core;
 
@@ -10984,10 +10988,16 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 		/*
 		 * Per-core nvar, three writes to table 0x15 before table 0x0b,
 		 * on the d6220 and the tg789vac alike; the agcombo's older
-		 * driver has no op on table 0x15.
+		 * driver has no op on table 0x15. Each core has 0x18 cells:
+		 * 5 GHz takes 0x20-0x24 at +8, 2.4 GHz 0-4 at +0, on the R7000
+		 * and the RT-AC66U B1 alike.
+		 * [capture-ref: router-data/r7000/mmio-cold-2g6.zip;
+		 *   records 15219-15241]
+		 * [capture-ref: router-data/rt-ac66u-b1/mmio-cold-2g6.zip]
+		 * [capture-ref: router-data/r7000/mmio-cold-5g36-80.zip]
 		 */
 		for (core = 0; core < dev->phy.ac->num_cores; core++)
-			b43_actab_write_bulk(dev, 0x15, nvar_off[core], 16, 5, nvar_data);
+			b43_actab_write_bulk(dev, 0x15, nv_off[core], 16, 5, nv_data);
 
 		/* Gain limit, two writes to table 0x0b. */
 		b43_actab_write_bulk(dev, 0x0b, 0x0008, 16, 6, glim_a);
@@ -11000,7 +11010,7 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 			u16 ta = 0x44 + core * 0x20;	/* core 0=0x44, 1=0x64, 2=0x84 */
 			u16 tb = 0x45 + core * 0x20;
 
-			b43_actab_read_log(dev, 0x15, nvar_off[core], 6);
+			b43_actab_read_log(dev, 0x15, nv_off[core], 6);
 			b43_actab_write_bulk(dev, ta, 0x0008, 16, 6, a8);
 			b43_actab_write_bulk(dev, tb, 0x0008, 16, 6, b8);
 		}
