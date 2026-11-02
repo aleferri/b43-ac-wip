@@ -423,6 +423,10 @@ struct b43_rxhdr_fw4 {
 #define B43_RX_MAC_TKIP_MICATT		0x00080000 /* TKIP MIC attempted */
 #define B43_RX_MAC_AGGTYPE		0x00060000 /* Aggregation type */
 #define B43_RX_MAC_AGGTYPE_SHIFT	17
+#define  B43_RX_AGG_MIDDLE		0	/* A-MSDU piece: a subframe */
+#define  B43_RX_AGG_FIRST		1	/* Header and first subframe */
+#define  B43_RX_AGG_LAST		2	/* Last subframe, MIC and FCS */
+#define  B43_RX_AGG_SINGLE		3	/* The whole A-MSDU */
 #define B43_RX_MAC_AMSDU		0x00010000 /* A-MSDU mask */
 #define B43_RX_MAC_BEACONSENT		0x00008000 /* Beacon sent flag */
 #define B43_RX_MAC_KEYIDX		0x000007E0 /* Key index */
@@ -448,6 +452,7 @@ void b43_generate_plcp_hdr(struct b43_plcp_hdr4 *plcp,
 			   const u16 octets, const u8 bitrate);
 
 void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr);
+void b43_rx_amsdu_free(struct b43_wldev *dev);
 
 void b43_txstatus_dump(struct b43_wldev *dev,
 		       const struct b43_txstatus *status);

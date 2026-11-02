@@ -23,6 +23,7 @@
 #include "xmit.h"
 
 #include <linux/dma-mapping.h>
+#include <net/page_pool/helpers.h>
 #include <linux/pci.h>
 #include <linux/delay.h>
 #include <linux/skbuff.h>
@@ -616,6 +617,82 @@ static void b43_poison_rx_buffer(struct b43_dmaring *ring, struct sk_buff *skb)
 	memset(frame, 0xFF, B43_RX_POISON_LEN);
 }
 
+/*
+ * An RX buffer with its skb_shared_info does not fit in a page: the AC
+ * core's takes 40 bytes of RX header, the PLCP and a 3895-byte MPDU, so
+ * __dev_alloc_skb() took 8 KiB from kmalloc for every received frame.
+ * A page pool hands out pieces of order-2 pages instead, three buffers a
+ * page, and gets them back when the stack frees the frame. The driver
+ * still maps each buffer itself.
+ */
+#if IS_ENABLED(CONFIG_PAGE_POOL)
+static unsigned int b43_rx_truesize(const struct b43_dmaring *ring)
+{
+	return SKB_DATA_ALIGN(NET_SKB_PAD + ring->rx_buffersize) +
+	       SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
+}
+
+static void b43_rx_pool_create(struct b43_dmaring *ring)
+{
+	struct page_pool_params pp = {
+		.order = get_order(3 * b43_rx_truesize(ring)),
+		.pool_size = ring->nr_slots,
+		.nid = NUMA_NO_NODE,
+		.dev = ring->dev->dev->dma_dev,
+	};
+	struct page_pool *pool;
+
+	pool = page_pool_create(&pp);
+	if (IS_ERR(pool))
+		return;
+	ring->rx_pool = pool;
+}
+
+static void b43_rx_pool_destroy(struct b43_dmaring *ring)
+{
+	if (ring->rx_pool)
+		page_pool_destroy(ring->rx_pool);
+	ring->rx_pool = NULL;
+}
+
+static struct sk_buff *b43_rx_alloc_skb(struct b43_dmaring *ring,
+					gfp_t gfp_flags)
+{
+	unsigned int size = b43_rx_truesize(ring);
+	struct sk_buff *skb;
+	void *data;
+
+	if (!ring->rx_pool || (gfp_flags & GFP_DMA))
+		return __dev_alloc_skb(ring->rx_buffersize, gfp_flags);
+
+	data = page_pool_alloc_va(ring->rx_pool, &size, gfp_flags);
+	if (!data)
+		return NULL;
+	skb = build_skb(data, size);
+	if (!skb) {
+		page_pool_free_va(ring->rx_pool, data, false);
+		return NULL;
+	}
+	skb_mark_for_recycle(skb);
+	skb_reserve(skb, NET_SKB_PAD);
+	return skb;
+}
+#else
+static void b43_rx_pool_create(struct b43_dmaring *ring)
+{
+}
+
+static void b43_rx_pool_destroy(struct b43_dmaring *ring)
+{
+}
+
+static struct sk_buff *b43_rx_alloc_skb(struct b43_dmaring *ring,
+					gfp_t gfp_flags)
+{
+	return __dev_alloc_skb(ring->rx_buffersize, gfp_flags);
+}
+#endif
+
 static int setup_rx_descbuffer(struct b43_dmaring *ring,
 			       struct b43_dmadesc_generic *desc,
 			       struct b43_dmadesc_meta *meta, gfp_t gfp_flags)
@@ -625,7 +702,7 @@ static int setup_rx_descbuffer(struct b43_dmaring *ring,
 
 	B43_WARN_ON(ring->tx);
 
-	skb = __dev_alloc_skb(ring->rx_buffersize, gfp_flags);
+	skb = b43_rx_alloc_skb(ring, gfp_flags);
 	if (unlikely(!skb))
 		return -ENOMEM;
 	b43_poison_rx_buffer(ring, skb);
@@ -636,7 +713,7 @@ static int setup_rx_descbuffer(struct b43_dmaring *ring,
 
 		dev_kfree_skb_any(skb);
 
-		skb = __dev_alloc_skb(ring->rx_buffersize, gfp_flags);
+		skb = b43_rx_alloc_skb(ring, gfp_flags);
 		if (unlikely(!skb))
 			return -ENOMEM;
 		b43_poison_rx_buffer(ring, skb);
@@ -999,6 +1076,8 @@ struct b43_dmaring *b43_setup_dmaring(struct b43_wldev *dev,
 				 DMA_TO_DEVICE);
 	}
 
+	if (!for_tx)
+		b43_rx_pool_create(ring);
 	err = alloc_ringmemory(ring);
 	if (err)
 		goto err_kfree_txhdr_cache;
@@ -1012,6 +1091,7 @@ struct b43_dmaring *b43_setup_dmaring(struct b43_wldev *dev,
       err_free_ringmemory:
 	free_ringmemory(ring);
       err_kfree_txhdr_cache:
+	b43_rx_pool_destroy(ring);
 	kfree(ring->txhdr_cache);
       err_kfree_meta:
 	kfree(ring->meta);
@@ -1073,6 +1153,7 @@ static void b43_destroy_dmaring(struct b43_dmaring *ring,
 	dmacontroller_cleanup(ring);
 	free_all_descbuffers(ring);
 	free_ringmemory(ring);
+	b43_rx_pool_destroy(ring);
 
 	kfree(ring->txhdr_cache);
 	kfree(ring->meta);
@@ -1430,6 +1511,14 @@ static struct b43_dmaring *select_ring_by_priority(struct b43_wldev *dev,
 		ring = dev->dma.tx_ring_AC_BE;
 
 	return ring;
+}
+
+/* Whether the ring of @queue_prio takes another frame now. */
+bool b43_dma_tx_room(struct b43_wldev *dev, u8 queue_prio)
+{
+	struct b43_dmaring *ring = select_ring_by_priority(dev, queue_prio);
+
+	return !ring->stopped && free_slots(ring) >= TX_SLOTS_PER_FRAME;
 }
 
 int b43_dma_tx(struct b43_wldev *dev, struct sk_buff *skb)

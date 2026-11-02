@@ -224,8 +224,17 @@ static bool b43_led_get_sprominfo(struct b43_wldev *dev,
 	sprom[1] = bus_sprom->gpio1;
 	sprom[2] = bus_sprom->gpio2;
 	sprom[3] = bus_sprom->gpio3;
+#ifdef CONFIG_B43_PHY_AC
 	BUILD_BUG_ON(sizeof(sprom) != 4 + sizeof(bus_sprom->gpio_ext));
 	memcpy(&sprom[4], bus_sprom->gpio_ext, sizeof(bus_sprom->gpio_ext));
+#else
+	/*
+	 * ledbh4-15 come with the SROM rev 11 support the AC-PHY needs; a
+	 * build without the AC-PHY may run on a bcma/ssb without it (as
+	 * OpenWrt's mac80211 package on its other targets does).
+	 */
+	memset(&sprom[4], 0xff, sizeof(sprom) - 4);
+#endif
 
 	/* Pins 4 and up come from NVRAM only and have no default; the
 	 * fallback SPROM leaves an unset ledbh at 0, so 0 and 0xff both
