@@ -29,6 +29,10 @@ the Netgear R6400 ([`docs/northstar-guide.md`](../../docs/northstar-guide.md)).
 | `txrx-no-traffic.zip` | three earlier `capture_txrx.sh` attempts without usable traffic (a WPA2 BSS with `nas` stopped, an open BSS without a DHCPv4 lease), for completeness |
 | `mmio-cold-2g6.zip` | `wl-mmio-trap` (`4-4-arm`) on `eth1`, cold to beaconing on 2g6/20: 52 621 MMIO accesses + 7 marks, the raw stream, `mmio2ops.py` output, the run log |
 | `mmio-cold-5g36-80.zip` | the same on `eth2`, 5g36/80: 141 979 accesses + 7 marks |
+| `mmio-tssifloor-unset.zip` | as `mmio-cold-*`, 2g6/20 and 5g36/80, with `tssifloor2g` / `tssifloor5g` removed from the nvram in RAM: 0x?724 is still written 0x03ff (#16) |
+| `mmio-nvram-checks-11.zip` | three checks of #11: 2.4 GHz ch 1 then 11 under the trace (table 7 0x80 = 0x0078); 5g36/80 with `boardflags2` bit 21 cleared (no table 7 0x80 write); 2g1/20 with `pdoffset2g40mvalid` 0 (table 0x21 entry 5 = 0x00ffffff) |
+| `mmio-rxgains2g-series.zip` | 2g6/20 with `rxgains2g*` set to 3/7/1 (as shipped), 6/13/1, 6/7/1 and 4/7/1 on all three cores (#20) |
+| `mmio-rxgains5g-subbands.zip` | 5 GHz at 80 MHz on ch 36, 52, 100, 116, 132 and 149 as shipped, and ch 100 and 149 with `rxgains5gh*` set to the `rxgains5g*` values: below ch 100 wl takes `5g`, from 100 up `5gh`, and `5gm` on none of them (#20) |
 | `fem-table-2g-ch6.txt` | PHY table 0x0a (FEM control) of `eth1` read back with `wl` up on 2g6/20, two identical passes: the femctrl 3 sub 3 table, which `mmio-cold-2g6.zip` does not contain |
 | `revinfo.txt` | `wl revinfo` of both radios |
 | `wl-info.txt` | `wl ver`, `cap`, `phylist`, `bands`, `chanspec(s)` of both radios |
