@@ -160,17 +160,17 @@ mask values the family's PMU init overwrites, for the bring-up logs.
 Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
 ---
  drivers/bcma/core.c                         |   2 +-
- drivers/bcma/driver_chipcommon.c            |  10 +
- drivers/bcma/driver_chipcommon_pmu.c        |  59 ++++-
+ drivers/bcma/driver_chipcommon.c            |  10 ++
+ drivers/bcma/driver_chipcommon_pmu.c        |  59 ++++++-
  drivers/bcma/driver_pcie2.c                 |   4 +
  drivers/bcma/host_pci.c                     |   1 +
- drivers/bcma/sprom.c                        | 212 +++++++++++++++-
- drivers/firmware/broadcom/bcm47xx_sprom.c   | 260 ++++++++++++++++++--
+ drivers/bcma/sprom.c                        | 222 ++++++++++++++++++++++-
+ drivers/firmware/broadcom/bcm47xx_sprom.c   | 264 +++++++++++++++++++++++++---
  include/linux/bcm47xx_sprom.h               |  16 ++
  include/linux/bcma/bcma_driver_chipcommon.h |   4 +
- include/linux/ssb/ssb.h                     |  86 +++++++
- include/linux/ssb/ssb_regs.h                | 110 +++++++++
- 11 files changed, 735 insertions(+), 29 deletions(-)
+ include/linux/ssb/ssb.h                     |  88 ++++++++++
+ include/linux/ssb/ssb_regs.h                | 119 +++++++++++++
+ 11 files changed, 760 insertions(+), 29 deletions(-)
 
 diff --git a/drivers/bcma/core.c b/drivers/bcma/core.c
 index 37a5ffe..f424668 100644
@@ -330,7 +330,7 @@ index 9606321..27e5104 100644
  	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 43227) },	/* 0xa8db, BCM43217 (sic!) */
  	{ PCI_DEVICE(PCI_VENDOR_ID_BROADCOM, 43228) },	/* 0xa8dc */
 diff --git a/drivers/bcma/sprom.c b/drivers/bcma/sprom.c
-index 6024d6b..1349d13 100644
+index 6024d6b..0991627 100644
 --- a/drivers/bcma/sprom.c
 +++ b/drivers/bcma/sprom.c
 @@ -11,6 +11,7 @@
@@ -361,7 +361,7 @@ index 6024d6b..1349d13 100644
  
  	return 0;
  }
-@@ -479,6 +480,201 @@ static void bcma_sprom_extract_r8(struct bcma_bus *bus, const u16 *sprom)
+@@ -479,6 +480,211 @@ static void bcma_sprom_extract_r8(struct bcma_bus *bus, const u16 *sprom)
  	     SSB_SPROM8_TEMPDELTA_HYSTERESIS_SHIFT);
  }
  
@@ -486,6 +486,16 @@ index 6024d6b..1349d13 100644
 +	SPEX(rpcal5gb[2], SSB_SPROM11_RPCAL_5GH, ~0, 0);
 +	SPEX(rpcal5gb[3], SSB_SPROM11_RPCAL_5GU, ~0, 0);
 +
++	SPEX(pdoffset2g40ma[0], SSB_SPROM11_PDOFFSET2G40M,
++	     SSB_SPROM11_PDOFFSET2G40M_MA0, SSB_SPROM11_PDOFFSET2G40M_MA0_SHIFT);
++	SPEX(pdoffset2g40ma[1], SSB_SPROM11_PDOFFSET2G40M,
++	     SSB_SPROM11_PDOFFSET2G40M_MA1, SSB_SPROM11_PDOFFSET2G40M_MA1_SHIFT);
++	SPEX(pdoffset2g40ma[2], SSB_SPROM11_PDOFFSET2G40M,
++	     SSB_SPROM11_PDOFFSET2G40M_MA2, SSB_SPROM11_PDOFFSET2G40M_MA2_SHIFT);
++	SPEX(pdoffset2g40mvalid, SSB_SPROM11_PDOFFSET2G40M,
++	     SSB_SPROM11_PDOFFSET2G40M_VALID,
++	     SSB_SPROM11_PDOFFSET2G40M_VALID_SHIFT);
++
 +	for (i = 0; i < 3; i++) {
 +		bus->sprom.pdoffset40ma[i] =
 +			sprom[SPOFF(SSB_SPROM11_PDOFFSET40MA) + i];
@@ -563,7 +573,7 @@ index 6024d6b..1349d13 100644
  /*
   * Indicates the presence of external SPROM.
   */
-@@ -645,8 +841,16 @@ int bcma_sprom_get(struct bcma_bus *bus)
+@@ -645,8 +851,16 @@ int bcma_sprom_get(struct bcma_bus *bus)
  		bcma_warn(bus, "Invalid SPROM read from the PCIe card, trying to use fallback SPROM\n");
  		err = bcma_fill_sprom_with_fallback(bus, &bus->sprom);
  	} else {
@@ -582,7 +592,7 @@ index 6024d6b..1349d13 100644
  
  	return err;
 diff --git a/drivers/firmware/broadcom/bcm47xx_sprom.c b/drivers/firmware/broadcom/bcm47xx_sprom.c
-index 14fbcd1..37d8056 100644
+index fdcd3a0..fcbebdf 100644
 --- a/drivers/firmware/broadcom/bcm47xx_sprom.c
 +++ b/drivers/firmware/broadcom/bcm47xx_sprom.c
 @@ -29,6 +29,7 @@
@@ -744,7 +754,7 @@ index 14fbcd1..37d8056 100644
  	/* TODO: rev 11 support */
  	ENTRY(0x00000700, u8, pre, "rxgainerr2ga0", rxgainerr2ga[0], 0, fb);
  	ENTRY(0x00000700, u8, pre, "rxgainerr2ga1", rxgainerr2ga[1], 0, fb);
-@@ -480,6 +604,70 @@ static void bcm47xx_fill_sprom_path_r45(struct ssb_sprom *sprom,
+@@ -480,6 +604,74 @@ static void bcm47xx_fill_sprom_path_r45(struct ssb_sprom *sprom,
  	}
  }
  
@@ -784,6 +794,8 @@ index 14fbcd1..37d8056 100644
 +			       &sprom->pdoffset40ma[i], 0, fallback);
 +		nvram_read_u16(prefix, postfix, "pdoffset80ma",
 +			       &sprom->pdoffset80ma[i], 0, fallback);
++		nvram_read_u8(prefix, postfix, "pdoffset2g40ma",
++			      &sprom->pdoffset2g40ma[i], 0, fallback);
 +
 +		for (b = 0; b < ARRAY_SIZE(rxgains); b++) {
 +			struct ssb_sprom_rxgains *rx = rxgains[b].rx;
@@ -806,6 +818,8 @@ index 14fbcd1..37d8056 100644
 +	nvram_read_u16_array(prefix, NULL, "tssifloor5g", sprom->tssifloor5g,
 +			     ARRAY_SIZE(sprom->tssifloor5g), fallback);
 +
++	nvram_read_u8(prefix, NULL, "pdoffset2g40mvalid",
++		      &sprom->pdoffset2g40mvalid, 0, fallback);
 +	nvram_read_u8(prefix, NULL, "agbg0", &agbg0, 0, fallback);
 +	nvram_read_u8(prefix, NULL, "aga0", &aga0, 0, fallback);
 +	sprom->antenna_gain_qdb[0] = ssb_sprom_antgain_qdb(agbg0);
@@ -815,7 +829,7 @@ index 14fbcd1..37d8056 100644
  static bool bcm47xx_is_valid_mac(u8 *mac)
  {
  	return mac && !(mac[0] == 0x00 && mac[1] == 0x90 && mac[2] == 0x4c);
-@@ -585,6 +773,9 @@ void bcm47xx_fill_sprom(struct ssb_sprom *sprom, const char *prefix,
+@@ -585,6 +777,9 @@ void bcm47xx_fill_sprom(struct ssb_sprom *sprom, const char *prefix,
  	case 9:
  		bcm47xx_fill_sprom_path_r4589(sprom, prefix, fallback);
  		break;
@@ -825,7 +839,7 @@ index 14fbcd1..37d8056 100644
  	}
  
  	bcm47xx_sprom_fill_auto(sprom, prefix, fallback);
-@@ -646,45 +837,70 @@ static void bcm47xx_sprom_apply_prefix_alias(char *prefix, size_t prefix_size)
+@@ -646,45 +841,70 @@ static void bcm47xx_sprom_apply_prefix_alias(char *prefix, size_t prefix_size)
  	}
  }
  
@@ -919,11 +933,11 @@ index 14fbcd1..37d8056 100644
  	nvram_read_u16(prefix, NULL, "boardvendor", &binfo->vendor, 0, true);
  	if (!binfo->vendor)
 diff --git a/include/linux/bcm47xx_sprom.h b/include/linux/bcm47xx_sprom.h
-index f8254fd..0af1b9c 100644
+index 40a7da3..b52c028 100644
 --- a/include/linux/bcm47xx_sprom.h
 +++ b/include/linux/bcm47xx_sprom.h
 @@ -9,6 +9,7 @@
- #include <linux/kernel.h>
+ #include <linux/types.h>
  #include <linux/vmalloc.h>
  
 +struct bcma_bus;
@@ -973,7 +987,7 @@ index 0cb6638..45c37b6 100644
  #define BCMA_CC_PMU1_PLL0_PC0_P1DIV_MASK	0x00f00000
  #define BCMA_CC_PMU1_PLL0_PC0_P1DIV_SHIFT	20
 diff --git a/include/linux/ssb/ssb.h b/include/linux/ssb/ssb.h
-index e1fb11e..9349b78 100644
+index e1fb11e..b5e0734 100644
 --- a/include/linux/ssb/ssb.h
 +++ b/include/linux/ssb/ssb.h
 @@ -23,6 +23,19 @@ struct ssb_sprom_core_pwr_info {
@@ -1008,7 +1022,7 @@ index e1fb11e..9349b78 100644
  	u8 maxpwr_bg;		/* 2.4GHz Amplifier Max Power (in dBm Q5.2) */
  	u8 maxpwr_al;		/* 5.2GHz Amplifier Max Power (in dBm Q5.2) */
  	u8 maxpwr_a;		/* 5.3GHz Amplifier Max Power (in dBm Q5.2) */
-@@ -192,8 +210,76 @@ struct ssb_sprom {
+@@ -192,8 +210,78 @@ struct ssb_sprom {
  	u16 legofdm40duppo;
  	u8 sar2g;
  	u8 sar5g;
@@ -1036,6 +1050,8 @@ index e1fb11e..9349b78 100644
 +	u16 rpcal5gb[4];
 +	u16 pdoffset40ma[3];
 +	u16 pdoffset80ma[3];
++	u8 pdoffset2g40ma[3];	/* 4 bits, signed */
++	u8 pdoffset2g40mvalid;
 +	/* Explicit per-rate-group power offsets of the bonded channels'
 +	 * sub-band rows (20-in-40, 20-in-80/160, 40-in-80, duplicate legacy),
 +	 * low-rate and high-rate halves, and the MCS 8-9 offsets; nibbles.
@@ -1086,10 +1102,10 @@ index e1fb11e..9349b78 100644
  struct ssb_boardinfo {
  	u16 vendor;
 diff --git a/include/linux/ssb/ssb_regs.h b/include/linux/ssb/ssb_regs.h
-index 210f464..7053800 100644
+index 210f464..f6fd729 100644
 --- a/include/linux/ssb/ssb_regs.h
 +++ b/include/linux/ssb/ssb_regs.h
-@@ -606,6 +606,116 @@
+@@ -606,6 +606,125 @@
  #define SSB_SPROM8_BW40PO		0x0196
  #define SSB_SPROM8_BWDUPPO		0x0198
  
@@ -1144,6 +1160,15 @@ index 210f464..7053800 100644
 +#define SSB_SPROM11_TSSIFLOOR_2G	0x00BE
 +#define SSB_SPROM11_TSSIFLOOR_5GL	0x00C0
 +#define SSB_SPROM11_TSSIFLOOR_MASK	0x03FF
++#define SSB_SPROM11_PDOFFSET2G40M	0x00C8	/* 4 bits per chain */
++#define  SSB_SPROM11_PDOFFSET2G40M_MA0		0x000F
++#define  SSB_SPROM11_PDOFFSET2G40M_MA0_SHIFT	0
++#define  SSB_SPROM11_PDOFFSET2G40M_MA1		0x00F0
++#define  SSB_SPROM11_PDOFFSET2G40M_MA1_SHIFT	4
++#define  SSB_SPROM11_PDOFFSET2G40M_MA2		0x0F00
++#define  SSB_SPROM11_PDOFFSET2G40M_MA2_SHIFT	8
++#define  SSB_SPROM11_PDOFFSET2G40M_VALID	0x8000
++#define  SSB_SPROM11_PDOFFSET2G40M_VALID_SHIFT	15
 +#define SSB_SPROM11_PDOFFSET40MA	0x00CA	/* 3 x u16, one per chain */
 +#define SSB_SPROM11_PDOFFSET80MA	0x00D0	/* 3 x u16, one per chain */
 +#define SSB_SPROM11_SUBBAND5GVER	0x00D6
