@@ -1042,9 +1042,34 @@ Table `0x21` is written as zeros on 2.4 GHz, as on both boards.
   `gpiocontrol`; with no change on the bus, field and value are not known
   and the port does not emit them. The 6.30 `ifup` captures (`wl-init-*`)
   do not write the table at all, where 7.14 rewrites it on every `up`.
-- **Radio `0x002c`.** The core transition works on `0x002c` instead of
-  `0x0033`; the bus shows a read and a write of the same value, so field and
-  value are not known.
+- **Radio `0x002c` and `0x0033`, bits 7:4, and `0x06ee` bits 3:2.** At the
+  core transition wl writes bits 7:4 of `0x?2c` on 2.4 GHz and of `0x?33` on
+  5 GHz (every 2.4 GHz capture: the R7000 and the RT-AC66U B1 under 7.14,
+  the archer-t5e and the MacBookAir6,1 under 6.30). On 2.4 GHz the port
+  writes `0x60` into `0x?33`, which already holds it, and leaves `0x?2c` at
+  its reset `0x6`; on 5 GHz it writes `0x8` at 20 MHz and `0xc` bonded, the
+  D6220's. What wl writes, per core where they differ (elnagain/triso of
+  the band or sub-band):
+
+  | board, band | elna/triso | 20 MHz | 40 MHz | 80 MHz |
+  |---|---|---|---|---|
+  | R7000 2.4 | 3/7 | e | | |
+  | RT-AC66U B1 2.4 | 6/13 | c | f | |
+  | D6220, TG789vac 5gl | 3/6 | 8 | c | c |
+  | R7000 5gl | 4/7, 4/6, 4/5 | a/9/9 | d/c/c | d/d/d |
+  | R7000 5gh | 3/5, 3/4, 4/4 | e/e/8 | b/b/c | c/c/c |
+  | RT-AC66U B1 5gl | 2/7, 2/9, 2/8 | | | b/b/b |
+
+  Where `0x?6ee` bits 3:2 are 1 the field is `0xe`: the R7000 on 2.4 GHz
+  and on 5gh cores 0 and 1 at 20 MHz, where the port writes 2 in `0x?6ee`
+  (its 5 GHz constant). No rule fits the rest; the RT-AC66U B1's SROM
+  sweep (`srom-sweep.zip`) reads back the PHY and table 7, not the radio,
+  so a sweep that also reads `0x?2c` and `0x?33` would pin it. The R7000's
+  NVRAM has 5gm and 5gh rx gain fields the board profiles do not carry.
+  [capture-ref: router-data/r7000/cold-5g20.zip, cold-5g40.zip,
+  cold-5g80.zip, cold-2g20.zip; router-data/rt-ac66u-b1/mmio-cold-2g6.zip,
+  mmio-cold-2g6-40.zip, mmio-txbf-5g36-80.zip]
+  [read-back: router-data/rt-ac66u-b1/readback-2g.zip]
 - **40 MHz** on 2.4 GHz has no capture; the Farrow resampler and the
   registers doubled at 5 GHz take the values read back under wl on an
   RT-AC66U B1.
@@ -1093,6 +1118,13 @@ Table `0x21` is written as zeros on 2.4 GHz, as on both boards.
   task migrating); where the double entry was seen is not recorded. On the
   hybrid 6.30.223 (MacBookAir6,1) the two arms of the attach are two entries,
   each after its own core reset, with the DMA rings probed in between.
+
+- **Idle-TSSI iterations under wl 7.14.164.** The R7000's wl measures the
+  idle TSSI twice in a calibration, on both bands (`cold-2g20.zip`,
+  `cold-5g20.zip`): there is no third iteration
+  (`b43_phy_ac_post_cal_finalize_iter3()`), which the D6220 and the
+  TG789vac v2 on 7.14.89 run. A version difference; the port follows
+  7.14.89.
 
 ## DSL-3580L (6.30): version differences, not debt
 
