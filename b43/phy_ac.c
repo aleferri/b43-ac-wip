@@ -9275,6 +9275,42 @@ static void meas_v2_peek_c0_c5(struct b43_wldev *dev, unsigned int core)
 }
 
 /*
+ * Setup of the v2 variant: 0x0272 is 0x4000 at 20 and 40 MHz and 0x3000 at
+ * 80, on the d6220, the agcombo and the tg789vac.
+ */
+static void meas_v2_setup(struct b43_wldev *dev)
+{
+	b43_phy_write(dev,   0x0272,
+		      b43_phy_ac_bw_step(dev) == 2 ? 0x3000 : 0x4000);
+	b43_phy_maskset(dev, 0x0271, (u16)~0x00ff, 0x0020);
+	b43_phy_maskset(dev, 0x0270, (u16)~0x0002, 0);
+}
+
+/* One measurement on every wired chain: arm, wait, peek them in order. */
+static void meas_v2_arm_all(struct b43_wldev *dev, bool measurement)
+{
+	unsigned int c;
+
+	b43_phy_maskset(dev, 0x0270, (u16)~0x0001, 0x0001);
+	b43_phy_ac_rxiqcal_meas_wait(dev);
+	b43_phy_read_log(dev, 0x0270);
+	for_each_set_bit(c, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
+		u16 s = (u16)(c * 0x200);
+
+		if (measurement) {
+			b43_phy_ac_iq_acc_peek(dev, c, true);
+			continue;
+		}
+		b43_phy_read_log(dev, 0x06c3 + s);
+		b43_phy_read_log(dev, 0x06c2 + s);
+		b43_phy_read_log(dev, 0x06c5 + s);
+		b43_phy_read_log(dev, 0x06c4 + s);
+		b43_phy_read_log(dev, 0x06c1 + s);
+		b43_phy_read_log(dev, 0x06c0 + s);
+	}
+}
+
+/*
  * IQ-cal measurement, v2 variant (143 ops).
  * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   29743-29957, 30045-30381]
@@ -9294,18 +9330,36 @@ void b43_phy_ac_rxiqcal_meas_post_dds_apply_v2(struct b43_wldev *dev)
 	/* Blocks A to D */
 	b43_phy_ac_rxiqcal_meas_readback_kick_tail(dev);
 
-	/*
-	 * Setup: 0x0272 is 0x4000 at 20 and 40 MHz and 0x3000 at 80, on the
-	 * d6220, the agcombo and the tg789vac.
-	 */
-	b43_phy_write(dev,   0x0272,
-		      b43_phy_ac_bw_step(dev) == 2 ? 0x3000 : 0x4000);
-	b43_phy_maskset(dev, 0x0271, (u16)~0x00ff, 0x0020);
-	b43_phy_maskset(dev, 0x0270, (u16)~0x0002, 0);
+	meas_v2_setup(dev);
 
-	for_each_set_bit(c, &dev->phy.ac->coremask, dev->phy.ac->num_cores) {
-		meas_v2_gain_prog_poll(dev, dev->phy.ac->coremask & ~BIT(c));
-		meas_v2_peek_c0_c5(dev, c);
+	if (b43_current_band(dev->wl) == NL80211_BAND_2GHZ) {
+		/*
+		 * On 2.4 GHz every chain is measured at once, twice: with the
+		 * radio's IQ-cal loopback set up, then with it torn down, and
+		 * the setup taken again for the next tone. No chain's gains are
+		 * programmed, on wl 7.14 and 6.30 alike. The coefficients come
+		 * from the first measurement; the second is read and not used:
+		 * on the R7000 the first gives what wl writes to 0x?a0/0x?a1,
+		 * the second and the two together do not.
+		 * [capture-ref: router-data/r7000/mmio-cold-2g6.zip; records
+		 *   33076-33882]
+		 * [capture-ref: router-data/r7000/cold-2g20.zip; cold01-ch1-bw20]
+		 * [capture-ref: router-data/macbookair6-1/
+		 *   wl-init-20260926-132021.trace.xz; the ch6/20 calibration]
+		 */
+		meas_v2_arm_all(dev, true);
+		b43_phy_ac_radio_iqcal_teardown(dev);
+		b43_phy_ac_rxgain_perchan_tail(dev);
+		meas_v2_setup(dev);
+		meas_v2_arm_all(dev, false);
+		b43_phy_ac_radio_iqcal_config(dev);
+	} else {
+		for_each_set_bit(c, &dev->phy.ac->coremask,
+				 dev->phy.ac->num_cores) {
+			meas_v2_gain_prog_poll(dev,
+					       dev->phy.ac->coremask & ~BIT(c));
+			meas_v2_peek_c0_c5(dev, c);
+		}
 	}
 
 	/* G: per-core bbmult apply, as in v1 */
