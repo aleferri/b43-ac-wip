@@ -26,6 +26,7 @@
 #include <linux/kernel.h>
 #include <linux/skbuff.h>
 #include <linux/slab.h>
+#include <net/page_pool/types.h>
 #include <net/mac80211.h>
 
 #include "trace_out.h"
@@ -128,6 +129,22 @@ void *skb_pull(struct sk_buff *skb, unsigned int len)
 	skb->data += len;
 	return skb->data;
 }
+
+/*
+ * Il page pool dei buffer RX non si crea: dma.c ripiega su
+ * __dev_alloc_skb(), qui sopra, e i buffer restano quelli che il poison e
+ * la traccia conoscono. Gli altri simboli del pool li chiedono solo i rami
+ * con un pool, e stanno in kernel_shim.c.
+ */
+struct page_pool *page_pool_create(const struct page_pool_params *params)
+{
+	return ERR_PTR(-EOPNOTSUPP);
+}
+
+void page_pool_destroy(struct page_pool *pool) { }
+
+/* Letta in linea da virt_to_head_page() in page_pool_free_va(). */
+DEFINE_STATIC_KEY_FALSE(hugetlb_optimize_vmemmap_key);
 
 void consume_skb(struct sk_buff *skb)
 {

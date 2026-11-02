@@ -278,6 +278,16 @@ void skb_queue_purge_reason(struct sk_buff_head *list,
 			    enum skb_drop_reason reason) { }
 void ieee80211_handle_wake_tx_queue(struct ieee80211_hw *hw,
 				    struct ieee80211_txq *txq) { }
+/* Le txq da cui l'AC tira i frame (b43_tx_pull()): vuote. */
+void ieee80211_txq_schedule_start(struct ieee80211_hw *hw, u8 ac) { }
+struct ieee80211_txq *ieee80211_next_txq(struct ieee80211_hw *hw, u8 ac)
+{
+	return NULL;
+}
+struct sk_buff *ieee80211_tx_dequeue(struct ieee80211_hw *hw,
+				     struct ieee80211_txq *txq) { return NULL; }
+void __ieee80211_schedule_txq(struct ieee80211_hw *hw,
+			      struct ieee80211_txq *txq, bool force) { }
 /* Nessuna stazione e nessuna sessione block ack: le catture non ne hanno. */
 struct ieee80211_sta *ieee80211_find_sta(struct ieee80211_vif *vif,
 					 const u8 *addr) { return NULL; }

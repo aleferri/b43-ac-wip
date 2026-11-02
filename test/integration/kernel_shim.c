@@ -136,6 +136,52 @@ unsigned int cfg80211_calculate_bitrate(void *rate)
 	abort();
 }
 
+/*
+ * Il page pool dei buffer RX: page_pool_create() fallisce (dma_stub.c),
+ * quindi dma.c non arriva mai qui. Un'esecuzione che ci arriva ha un pool,
+ * e lo shim non lo sa servire.
+ */
+static void shim_no_page_pool(const char *fn)
+{
+	fprintf(stderr, "b43-integration: %s senza page pool\n", fn);
+	abort();
+}
+
+void *page_pool_alloc_pages(void *pool, unsigned int gfp)
+{
+	shim_no_page_pool(__func__);
+	return NULL;
+}
+
+void *page_pool_alloc_frag(void *pool, unsigned int *offset,
+			   unsigned int size, unsigned int gfp)
+{
+	shim_no_page_pool(__func__);
+	return NULL;
+}
+
+void page_pool_put_unrefed_page(void *pool, void *page, unsigned int dma_sync,
+				int allow_direct)
+{
+	shim_no_page_pool(__func__);
+}
+
+void *build_skb(void *data, unsigned int frag_size)
+{
+	shim_no_page_pool(__func__);
+	return NULL;
+}
+
+/*
+ * Lo allarga b43_rx_amsdu() per attaccarci i pezzi di un A-MSDU ricevuto.
+ * I buffer RX qui portano il poison, frame_len 0, e dma.c li scarta prima.
+ */
+int pskb_expand_head(void *skb, int nhead, int ntail, unsigned int gfp)
+{
+	fprintf(stderr, "b43-integration: pskb_expand_head not shimmed\n");
+	abort();
+}
+
 int net_ratelimit(void)
 {
 	return 1;
