@@ -67,8 +67,43 @@ insmod wl_mmio_trap.ko init_mm_addr=0x<address> ...
 The module refuses to load with neither, and with both when they differ.
 Before following the address it checks that it lies in the linear map, that
 its `pgd` does too, and that the `pgd`'s L1 entry for `PAGE_OFFSET` is the
-one the insmod process's own `pgd` carries, since every `pgd` copies the
-kernel half of `init_mm`'s.
+one the insmod process's own `pgd` carries (read from TTBR0, so the check
+does not depend on the layout of `task_struct`), since every `pgd` copies
+the kernel half of `init_mm`'s.
+
+## A stock DD-WRT firmware, without its System.map
+
+Taken on an RT-AC66U B1 with DD-WRT r66396 (`4.4.302-rt232-st79`, built
+2026-10-24), whose own build tree and System.map are not published:
+
+- **Kernel tree**: `src/linux/universal/linux-4.4` of the DD-WRT sources with
+  `.config_northstar_smp`, `olddefconfig` and `modules_prepare` (the
+  `rt3352`, `rt5592`, `rt7612` and `rt7620` Kconfig sources it names live
+  outside the public tree; empty files in their place). DD-WRT's modules
+  carry no `vermagic` and no CRCs, and the kernel checks neither; its
+  `struct module` (`.gnu.linkonce.this_module`, 0x160 bytes) was the same
+  in this build and in the firmware's modules.
+- **printk**: that tree's Makefile builds every module with
+  `-DCONFIG_NOPRINTK`, which leaves the module silent. Build with
+  `make ... KBUILD_CFLAGS_MODULE=-DMODULE`.
+- **fsr_info**: `do_DataAbort` (in `/proc/kallsyms`) loads the table's
+  address with a `movw`/`movt` pair; its text is read through `/dev/mem`
+  (Kernel code in `/proc/iomem`, physical = virtual − `PAGE_OFFSET`,
+  0x80000000 on this VMSPLIT_2G build). `do_PrefetchAbort` loads
+  `ifsr_info` the same way, whose row 7 is `do_page_fault` too, so take
+  `do_DataAbort`'s: `fsr_info_fn7` = that + 0x70. A cross-check: in
+  `fsr_info` row 1 is `do_alignment` (SIGBUS), row 2 SIGKILL, row 4 and 5
+  `do_translation_fault`.
+- **init_mm**: the word in kernel data that holds `swapper_pg_dir`
+  (`PAGE_OFFSET` + 0x4000) at `offsetof(struct mm_struct, pgd)` (36 in
+  that tree), with `mm_users` 2 and `mm_count` 1 after it; one match.
+
+```sh
+insmod wl_mmio_trap.ko autoarm=0 win_phys=0x08000000 win_phys_len=0x8000 \
+    fsr_info_fn7=0x805702cc init_mm_addr=0x80576c68 fifo_recs=2097152 poll_secs=10
+```
+
+(r66396 on the RT-AC66U B1; `win_phys=0x20000000` for `eth2`.)
 
 ## Self-test
 

@@ -23,6 +23,7 @@
 #include <linux/sched.h>
 #include <linux/mm.h>
 #include <linux/moduleparam.h>
+#include <asm/proc-fns.h>
 
 #include "arm_syms.h"
 
@@ -83,7 +84,12 @@ fault_fn_t *as_fault_slot(void)
  * A wrong init_mm_addr= is refused before it is followed: the address must
  * be in the linear map, so must its pgd, and the pgd's L1 entry for
  * PAGE_OFFSET must be the one every other pgd copies from init_mm's at
- * pgd_alloc(), here the insmod process's own.
+ * pgd_alloc(), here the insmod process's own. That pgd is taken from the
+ * CPU (TTBR0, cpu_get_pgd()), not from current->active_mm: the module is
+ * often built against a tree whose configuration is not quite the
+ * firmware's, and task_struct moves with the configuration where TTBR0
+ * does not (DD-WRT r66396: active_mm at 476, 440 in its published
+ * .config_northstar_smp; an Oops at insmod).
  */
 static int as_check_init_mm(unsigned long a)
 {
@@ -101,7 +107,7 @@ static int as_check_init_mm(unsigned long a)
 		return -EINVAL;
 	}
 	if (pgd_val(*pgd_offset(mm, PAGE_OFFSET)) !=
-	    pgd_val(*pgd_offset(current->active_mm, PAGE_OFFSET))) {
+	    pgd_val(*(cpu_get_pgd() + pgd_index(PAGE_OFFSET)))) {
 		pr_err("wl_mmio_trap: init_mm at 0x%lx has a pgd whose kernel half is not the one of every pgd; wrong init_mm_addr?\n",
 		       a);
 		return -EINVAL;
