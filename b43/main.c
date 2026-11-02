@@ -934,15 +934,17 @@ static void b43_mbss_amt_upload(struct b43_wldev *dev)
 	struct b43_wl *wl = dev->wl;
 	unsigned int i;
 
+	/*
+	 * Only the rows in use: the core init clears the whole table before
+	 * this, and removing an interface clears its row, so with one AP the
+	 * table gets no write the stock driver does not make.
+	 */
 	if (!b43_amt_wide(dev))
 		return;
-	for (i = 0; i < ARRAY_SIZE(wl->mbss_vif); i++) {
+	for (i = 0; i < ARRAY_SIZE(wl->mbss_vif); i++)
 		if (wl->mbss_vif[i])
 			b43_amt_write(dev, B43_AMT_MBSS(i), wl->mbss_vif[i]->addr,
 				      B43_AMT_F_MBSS);
-		else
-			b43_amt_write(dev, B43_AMT_MBSS(i), NULL, 0);
-	}
 }
 
 static void b43_upload_card_macaddress(struct b43_wldev *dev)
@@ -6725,11 +6727,14 @@ static void b43_op_remove_interface(struct ieee80211_hw *hw,
 	B43_WARN_ON(wl->vif != vif);
 
 	/* A further AP interface takes over the beacon template. */
-	for (i = 0; i < ARRAY_SIZE(wl->mbss_vif) && !next; i++) {
+	for (i = 0; i < ARRAY_SIZE(wl->mbss_vif); i++) {
 		next = wl->mbss_vif[i];
-		wl->mbss_vif[i] = NULL;
+		if (next)
+			break;
 	}
 	if (next) {
+		wl->mbss_vif[i] = NULL;
+		b43_amt_write(dev, B43_AMT_MBSS(i), NULL, 0);
 		wl->vif = next;
 		memcpy(wl->mac_addr, next->addr, ETH_ALEN);
 		b43_upload_card_macaddress(dev);
