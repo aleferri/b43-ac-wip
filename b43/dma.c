@@ -36,6 +36,8 @@
  * This currently is 2, because we put the header and the ieee80211 frame
  * into separate slots. */
 #define TX_SLOTS_PER_FRAME	2
+/* A frame with the most buffers: its header and B43_TX_MAX_FRAGS. */
+#define TX_SLOTS_MAX		(1 + B43_TX_MAX_FRAGS)
 
 static u32 b43_dma_address(struct b43_dma *dma, dma_addr_t dmaaddr,
 			   enum b43_addrtype addrtype)
@@ -934,13 +936,19 @@ static void free_all_descbuffers(struct b43_dmaring *ring)
 		/* get meta - ignore returned value */
 		ring->ops->idx2desc(ring, i, &meta);
 
+		if (ring->tx && !meta->skb && meta->len) {
+			/* A subframe of an A-MSDU still on the ring */
+			unmap_descbuffer(ring, meta->dmaaddr, meta->len, 1);
+			meta->len = 0;
+			continue;
+		}
 		if (!meta->skb || b43_dma_ptr_is_poisoned(meta->skb)) {
 			B43_WARN_ON(!ring->tx);
 			continue;
 		}
 		if (ring->tx) {
-			unmap_descbuffer(ring, meta->dmaaddr,
-					 meta->skb->len, 1);
+			unmap_descbuffer(ring, meta->dmaaddr, meta->len, 1);
+			meta->len = 0;
 		} else {
 			unmap_descbuffer(ring, meta->dmaaddr,
 					 ring->rx_buffersize, 0);
@@ -1373,6 +1381,82 @@ struct b43_dmaring *parse_cookie(struct b43_wldev *dev, u16 cookie, int *slot)
 	return ring;
 }
 
+/* The slots @skb takes: its TX header, its head and each skb on its frag_list. */
+static int b43_tx_slots(struct sk_buff *skb)
+{
+	struct sk_buff *frag;
+	int n = TX_SLOTS_PER_FRAME;
+
+	skb_walk_frags(skb, frag)
+		n++;
+	return n;
+}
+
+/* Whether each buffer of the chain @skb fits in a slot of its own. */
+static bool b43_tx_chain_ok(struct sk_buff *skb)
+{
+	struct sk_buff *frag;
+
+	if (skb_shinfo(skb)->nr_frags)
+		return false;
+	skb_walk_frags(skb, frag) {
+		if (skb_shinfo(frag)->nr_frags || skb_has_frag_list(frag))
+			return false;
+	}
+	return b43_tx_slots(skb) <= TX_SLOTS_MAX;
+}
+
+/*
+ * Put the head of @skb and each skb on its frag_list, the subframes of an
+ * A-MSDU that mac80211 built, in slots of their own after the TX header, so
+ * nothing is copied (IEEE80211_HW_TX_FRAG_LIST). The engine takes them as
+ * one frame up to the slot with FRAMEEND. On a mapping error the slots
+ * mapped so far are unmapped again; the caller rewinds the ring.
+ */
+static int dma_tx_map_chain(struct b43_dmaring *ring, struct sk_buff *skb)
+{
+	const struct b43_dma_ops *ops = ring->ops;
+	struct b43_dmadesc_generic *desc;
+	struct b43_dmadesc_meta *meta;
+	struct sk_buff *buf = skb;
+	struct sk_buff *next = skb_shinfo(skb)->frag_list;
+	int first = next_slot(ring, ring->current_slot);
+	int slot, mapped = 0;
+	unsigned int len;
+	bool last;
+
+	for (;;) {
+		len = skb_headlen(buf);
+		last = !next;
+		slot = request_slot(ring);
+		desc = ops->idx2desc(ring, slot, &meta);
+		memset(meta, 0, sizeof(*meta));
+		meta->dmaaddr = map_descbuffer(ring, buf->data, len, 1);
+		if (b43_dma_mapping_error(ring, meta->dmaaddr, len, 1))
+			goto unwind;
+		meta->len = len;
+		mapped++;
+		if (last) {
+			meta->skb = skb;
+			meta->is_last_fragment = true;
+		}
+		ops->fill_descriptor(ring, desc, meta->dmaaddr, len,
+				     0, last, last);
+		if (last)
+			return 0;
+		buf = next;
+		next = buf->next;
+	}
+
+unwind:
+	for (slot = first; mapped--; slot = next_slot(ring, slot)) {
+		ops->idx2desc(ring, slot, &meta);
+		unmap_descbuffer(ring, meta->dmaaddr, meta->len, 1);
+		meta->len = 0;
+	}
+	return -EIO;
+}
+
 static int dma_tx_fragment(struct b43_dmaring *ring,
 			   struct sk_buff *skb)
 {
@@ -1421,14 +1505,26 @@ static int dma_tx_fragment(struct b43_dmaring *ring,
 	ops->fill_descriptor(ring, desc, meta_hdr->dmaaddr,
 			     hdrsize, 1, 0, 0);
 
+	priv_info->bouncebuffer = NULL;
+	if (skb_has_frag_list(skb)) {
+		err = dma_tx_map_chain(ring, skb);
+		if (unlikely(err)) {
+			ring->current_slot = old_top_slot;
+			ring->used_slots = old_used_slots;
+			goto out_unmap_hdr;
+		}
+		slot = ring->current_slot;
+		goto out_poke;
+	}
+
 	/* Get a slot for the payload. */
 	slot = request_slot(ring);
 	desc = ops->idx2desc(ring, slot, &meta);
 	memset(meta, 0, sizeof(*meta));
 
 	meta->skb = skb;
+	meta->len = skb->len;
 	meta->is_last_fragment = true;
-	priv_info->bouncebuffer = NULL;
 
 	meta->dmaaddr = map_descbuffer(ring, skb->data, skb->len, 1);
 	/* create a bounce buffer in zone_dma on mapping failure. */
@@ -1455,6 +1551,7 @@ static int dma_tx_fragment(struct b43_dmaring *ring,
 
 	ops->fill_descriptor(ring, desc, meta->dmaaddr, skb->len, 0, 1, 1);
 
+out_poke:
 	if (info->flags & IEEE80211_TX_CTL_SEND_AFTER_DTIM) {
 		/* Tell the firmware about the cookie of the last
 		 * mcast frame, so it can clear the more-data bit in it. */
@@ -1529,7 +1626,7 @@ bool b43_dma_tx_room(struct b43_wldev *dev, u8 queue_prio)
 {
 	struct b43_dmaring *ring = select_ring_by_priority(dev, queue_prio);
 
-	return !ring->stopped && free_slots(ring) >= TX_SLOTS_PER_FRAME;
+	return !ring->stopped && free_slots(ring) >= TX_SLOTS_MAX;
 }
 
 int b43_dma_tx(struct b43_wldev *dev, struct sk_buff *skb)
@@ -1565,6 +1662,17 @@ int b43_dma_tx(struct b43_wldev *dev, struct sk_buff *skb)
 		goto out;
 	}
 
+	/*
+	 * A chain the ring cannot take as it is goes out copied into one
+	 * buffer, as mac80211 does without IEEE80211_HW_TX_FRAG_LIST.
+	 */
+	if (skb_has_frag_list(skb) &&
+	    (!b43_tx_chain_ok(skb) || free_slots(ring) < b43_tx_slots(skb)) &&
+	    skb_linearize(skb)) {
+		err = -ENOMEM;
+		goto out;
+	}
+
 	if (WARN_ON(free_slots(ring) < TX_SLOTS_PER_FRAME)) {
 		/* If we get here, we have a real error with the queue
 		 * full, but queues not stopped. */
@@ -1579,6 +1687,10 @@ int b43_dma_tx(struct b43_wldev *dev, struct sk_buff *skb)
 	ring->queue_prio = skb_get_queue_mapping(skb);
 
 	err = dma_tx_fragment(ring, skb);
+	if (unlikely(err == -EIO && skb_has_frag_list(skb))) {
+		/* A buffer of the chain could not be mapped: try it whole. */
+		err = skb_linearize(skb) ? -ENOMEM : dma_tx_fragment(ring, skb);
+	}
 	if (unlikely(err == -ENOKEY)) {
 		/* Drop this packet, as we don't have the encryption key
 		 * anymore and must not transmit it unencrypted. */
@@ -1590,7 +1702,7 @@ int b43_dma_tx(struct b43_wldev *dev, struct sk_buff *skb)
 		b43err(dev->wl, "DMA tx mapping failure\n");
 		goto out;
 	}
-	if ((free_slots(ring) < TX_SLOTS_PER_FRAME) ||
+	if ((free_slots(ring) < TX_SLOTS_MAX) ||
 	    should_inject_overflow(ring)) {
 		/* This TX ring is full. */
 		unsigned int skb_mapping = skb_get_queue_mapping(skb);
@@ -1611,6 +1723,21 @@ static int first_used_slot(struct b43_dmaring *ring)
 	int firstused = ring->current_slot - ring->used_slots + 1;
 
 	return firstused < 0 ? ring->nr_slots + firstused : firstused;
+}
+
+/* The slots of the frame from @slot on, 0 when its last one is not found. */
+static int tx_frame_slots(struct b43_dmaring *ring, int slot)
+{
+	struct b43_dmadesc_meta *meta;
+	int n;
+
+	for (n = 1; n <= TX_SLOTS_MAX && n <= ring->used_slots; n++) {
+		ring->ops->idx2desc(ring, slot, &meta);
+		if (meta->is_last_fragment)
+			return n;
+		slot = next_slot(ring, slot);
+	}
+	return 0;
 }
 
 /* One frame's status. Returns its ring, NULL when it could not be matched. */
@@ -1646,12 +1773,14 @@ dma_handle_txstatus_one(struct b43_wldev *dev,
 		/* This possibly is a firmware bug and will result in
 		 * malfunction, memory leaks and/or stall of DMA functionality.
 		 */
-		if (slot == next_slot(ring, next_slot(ring, firstused))) {
-			/* If a single header/data pair was missed, skip over
-			 * the first two slots in an attempt to recover.
+		int n = tx_frame_slots(ring, firstused);
+
+		if (n && slot == (firstused + n) % ring->nr_slots) {
+			/* If a single frame was missed, skip over its
+			 * slots in an attempt to recover.
 			 */
 			slot = firstused;
-			skip = 2;
+			skip = n;
 			if (!err_out1) {
 				/* Report the error once. */
 				b43warn(dev->wl,
@@ -1687,17 +1816,20 @@ dma_handle_txstatus_one(struct b43_wldev *dev,
 			break;
 		}
 
+		if (meta->len) {
+			/* A data slot: a frame, or a buffer of a chain */
+			unmap_descbuffer(ring, meta->dmaaddr, meta->len, 1);
+			meta->len = 0;
+		} else {
+			unmap_descbuffer(ring, meta->dmaaddr,
+					 b43_txhdr_size(dev), 1);
+		}
 		if (meta->skb) {
 			struct b43_private_tx_info *priv_info =
 			     b43_get_priv_tx_info(IEEE80211_SKB_CB(meta->skb));
 
-			unmap_descbuffer(ring, meta->dmaaddr,
-					 meta->skb->len, 1);
 			kfree(priv_info->bouncebuffer);
 			priv_info->bouncebuffer = NULL;
-		} else {
-			unmap_descbuffer(ring, meta->dmaaddr,
-					 b43_txhdr_size(dev), 1);
 		}
 
 		if (meta->is_last_fragment) {

@@ -4761,7 +4761,8 @@ static void b43_tx_work(struct work_struct *work)
 		while (skb_queue_len(&wl->tx_queue[queue_num])) {
 			skb = skb_dequeue(&wl->tx_queue[queue_num]);
 			if (b43_using_pio_transfers(dev))
-				err = b43_pio_tx(dev, skb);
+				/* PIO writes one buffer per frame */
+				err = skb_linearize(skb) ?: b43_pio_tx(dev, skb);
 			else
 				err = b43_dma_tx(dev, skb);
 			if (err == -ENOSPC) {
@@ -7185,6 +7186,14 @@ static int b43_setup_bands(struct b43_wldev *dev,
 		 * (b43_op_can_aggregate_in_amsdu()).
 		 */
 		ieee80211_hw_set(hw, TX_AMSDU);
+		/*
+		 * The subframes stay on the frag_list, each mapped into a DMA
+		 * slot of its own (dma_tx_map_chain()): otherwise mac80211
+		 * copies every A-MSDU into one buffer first, which cost a
+		 * three-stream client's download on a BCM4708 (EA6900) a tenth.
+		 */
+		ieee80211_hw_set(hw, TX_FRAG_LIST);
+		hw->max_tx_fragments = B43_TX_MAX_FRAGS;
 		ieee80211_hw_set(hw, SUPPORT_FAST_XMIT);
 		/*
 		 * Airtime queue limits: mac80211 estimates each frame's
