@@ -1,14 +1,18 @@
 # Captures and tests on a Northstar router
 
 How to take traces of the stock `wl` driver on an ARM Northstar router
-(BCM4709 with BCM4360 radios: Netgear R7000 and R6400, Linksys EA6900) and
-send back what the port needs. Written for a router running a kernel the
-user builds, with `wl` as a loadable module.
+(BCM4708 or BCM4709 with BCM4360 radios: Netgear R7000 and R6400, Linksys
+EA6900, ASUS RT-AC66U B1) and send back what the port needs. Written for a
+router running a kernel the user builds, with `wl` as a loadable module.
+b43 itself runs on the EA6900 and the RT-AC66U B1 (README, "On
+hardware").
 
 `wl-diag/4-4-arm/` is built against v4.4 only. Start with the dry run of
 step 3, and send its output before arming anything.
 
-It has run on a Netgear R7000 under DD-WRT ([`router-data/r7000/`](../router-data/r7000/)).
+It has run on a Netgear R7000 under DD-WRT ([`router-data/r7000/`](../router-data/r7000/));
+`wl-mmio-trap/4-4-arm/` also on an RT-AC66U B1 under a stock DD-WRT build
+([`router-data/rt-ac66u-b1/`](../router-data/rt-ac66u-b1/)).
 DD-WRT's `wl` lacks `up`, `isup`, `revinfo`, `bss` and `ap`, and its build
 compiles `printk` out of out-of-tree modules: see
 [`wl-capture-scripts/ddwrt/`](../wl-capture-scripts/ddwrt/) for both. On
@@ -19,16 +23,17 @@ use `wl-mmio-trap/4-4-arm/` for those.
 ## What the port needs from these boards
 
 - **2.4 GHz.** The port's 2.4 GHz at 20 MHz rests on the MacBookAir6,1 and
-  archer-t5e captures and the R7000's (`router-data/r7000/`); 40 MHz on
-  2.4 GHz on read-backs under `wl` on an RT-AC66U B1, with no capture. A
-  40 MHz sweep of the 2.4 GHz radio is what is missing.
+  archer-t5e captures and the R7000's and the RT-AC66U B1's; 40 MHz on
+  read-backs under `wl` on the RT-AC66U B1 and its cold capture at 2g6/40.
+  A 40 MHz sweep over the 2.4 GHz channels is what is missing.
 - **femctrl 3.** The port loads the FEM control table of femctrl 3, sub 3
   on the 2.4 GHz radios and sub 0 on the 5 GHz ones, from the R7000's
   capture and read-back. Another sub stops with "not supported"; the sub is
   in `boardflags3`, so the NVRAM of step 2 says which one a board has.
-- **Board data from NVRAM.** These boards have no SROM; the port now reads
+- **Board data from NVRAM.** These boards have no SROM; the port reads
   the SROM rev 11 fields from NVRAM (`bcma/drivers/firmware/broadcom/
-  bcm47xx_sprom.c`), checked on dumps of other boards only.
+  bcm47xx_sprom.c`), in use on the EA6900 and the RT-AC66U B1; the
+  harness checks it on dumps of other boards (`bcma/harness/`).
 
 ## 1. Kernel and module
 

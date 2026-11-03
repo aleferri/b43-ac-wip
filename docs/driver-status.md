@@ -101,7 +101,7 @@ the adaptations to their base.
 
 | patch | content | files |
 |---|---|---|
-| 0001 | bcma/ssb: SROM revision 11, PMU init, the BCM4352 PCI ID, NVRAM `ledbh4..ledbh15`, `boardflags3` and `AvVmid_c0..2`, one section per change | everything under `bcma/drivers/` and `bcma/include/` |
+| 0001 | bcma/ssb: SROM revision 11, PMU init, the BCM4352 PCI ID, NVRAM `ledbh4..ledbh15`, `boardflags3` and `AvVmid_c0..2`, `pdoffset2g40ma`, one section per change | everything under `bcma/drivers/` and `bcma/include/` |
 | 0002 | b43: core support for the AC-PHY, one section per change | everything in `b43/` but the AC-PHY files |
 | 0003 | b43: AC-PHY bring-up | `b43/Makefile` and the files it builds under `CONFIG_B43_PHY_AC`, with their headers |
 

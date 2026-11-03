@@ -75,6 +75,8 @@ power info and the rxgains stayed zero there.
      including the rxgains pack
      `byte = (trelnabyp << 7) | (triso << 3) | elnagain`, with
      `RXGAINS0 lo=5gm, hi=5gh; RXGAINS1 lo=2g, hi=5gl`;
+   - `pdoffset2g40ma0..2` and `pdoffset2g40mvalid` at `0xC8`, four bits per
+     chain and the valid flag in bit 15;
    - `pdoffset40ma` at `0xCA`;
    - the rev 11 power-per-rate region `0x150`–`0x190`. Its layout differs from
      rev 9: `mcsbw20/40/80` per 5 GHz sub-band followed by `rpcal` words, and

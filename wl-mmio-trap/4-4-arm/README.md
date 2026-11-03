@@ -1,15 +1,16 @@
 # wl_mmio_trap, ARM variant (kernel 4.4, Northstar)
 
-The ARM build of the MMIO trap, for the Broadcom Northstar routers (BCM4709,
-Cortex-A9, 2-level MMU, little-endian). It traces the register accesses
+The ARM build of the MMIO trap, for the Broadcom Northstar routers (BCM4708
+and BCM4709, Cortex-A9, 2-level MMU, little-endian). It traces the register accesses
 `wl-diag` cannot see -- the inline `readl`/`writel` and the `R_REG`/`W_REG`
 loads and stores through `wl`'s own register pointer -- by faulting them. The
 mechanism and the record format are the parent directory's; see `../README.md`
 for the capture workflow and the decoder. Only what differs on ARM is here.
 
-Nothing here has run on Northstar hardware; it is built against v4.4 and the
-load/store emulator is checked natively (`tools/`). The self-test (below) is
-the first thing to read on the device.
+It has run under DD-WRT on a Netgear R7000 (`router-data/r7000/`) and an
+ASUS RT-AC66U B1 (`router-data/rt-ac66u-b1/`); it is built against v4.4 and
+the load/store emulator is checked natively (`tools/`). The self-test
+(below) is the first thing to read on a new device.
 
 ## How the hook differs
 

@@ -277,6 +277,10 @@ station (`archer-t5e/mmiotrace.zip`); the field names are `d11.h`'s.
   microcode leaves the IV and the MIC in a frame it decrypts, as b43
   assumes on the older cores: mac80211 strips them and traffic flows both
   ways (see "Throughput" under "On hardware").
+- **Further APs.** The key index block has one set of group key entries,
+  so the group keys of every AP but the first stay with mac80211, which
+  encrypts their multicast; the pairwise keys of their stations go to the
+  hardware as the first AP's do.
 - **Open.** Whether the microcode encrypts a protected management frame:
   mac80211 does those (`IEEE80211_KEY_FLAG_SW_MGMT_TX`). TKIP would need the
   phase 1 key (`TkipPH1Key`), `AMIC` and the RX TKIP table, whose place on
@@ -396,10 +400,10 @@ from the capabilities of the stock beacon in the agcombo bus capture
 (`0x086f`, LDPC added, in its later beacons), MCS `ff ff ff`, TX MCS set not
 defined; VHT `0x0f825832`, MCS 0-9 on three streams both ways. The port
 takes the streams from the SROM `rxchain`, announces A-MPDU as the stock
-beacon does (see "Aggregation") and leaves out what b43 does not do:
-A-MSDU, MPDUs over 3895 bytes, LDPC reception, beamforming and link
-adaptation. It defines the TX MCS set the stock beacon leaves
-undefined, so that HT MCS go out as well. HT MCS and VHT MCS 0-9 go out on
+beacon does (see "Aggregation"), LDPC reception on HT and VHT as its later
+beacons do, and leaves out what b43 does not do: MPDUs over 3895 bytes,
+A-MSDUs inside A-MPDUs, beamforming and link adaptation. It defines the TX
+MCS set the stock beacon leaves undefined, so that HT MCS go out as well. HT MCS and VHT MCS 0-9 go out on
 as many streams as the board has TX chains, in the layout of the stock
 drivers' own descriptors (`b43_txhdr_ac_ht()`, `b43_txhdr_ac_vht()`, from
 the captures below, the DSL-3580L's 6.30 code and, for HT20, gonsolo's port
@@ -415,6 +419,14 @@ under 832.127). On the board HT20, HT40 and VHT20/40/80 carry traffic
 - **Aggregation.** See "A-MPDU" under "MAC and DMA": block ack sessions
   are taken both ways, the microcode builds the A-MPDUs on TX and answers
   them with its own block ack on RX, and mac80211 reorders.
+- **A-MSDU.** On RX the core takes an A-MSDU apart before DMA, one buffer
+  per piece, with the A-MSDU bit and the aggregation type (1 first, 0
+  middle, 2 last, 3 whole) in the MAC status; `b43_rx_amsdu()` joins the
+  pieces into the MPDU as sent. On TX mac80211 builds them from the TX
+  queues b43 pulls, of MSDUs of 1000 bytes and more
+  (`b43_op_can_aggregate_in_amsdu()`). A-MSDUs inside A-MPDUs are not
+  announced: joining copies the pieces, and on a BCM4708 the receive path
+  of a three-stream client is CPU-bound with them (`f1e5eee`).
 - **Transmit beamforming.** TODO, not implemented. b43 announces no SU
   beamformer capability, so a station never sends the compressed
   beamforming feedback, and every multi-chain frame goes out with CDD on
@@ -426,10 +438,13 @@ under 832.127). On the board HT20, HT40 and VHT20/40/80 carry traffic
   from MCS 4 up, on every chain, `bfm` `0x43`-`0x48` in its high byte
   (`router-data/vd625-agcombo/`); 7.14.89 sets bit 3 outside
   `wlc_acphy_txctl0_calc()` and the SIG-A2 bit in `wlc_compute_plcp()` on a
-  rate with `RSPEC_TXBF`. Who sends the sounding, where the matrix goes
-  and what `bfm` encodes are in nothing read so far; a `wl-mmio-trap` run
-  with beamforming on would show the shared memory and PHY tables it
-  writes.
+  rate with `RSPEC_TXBF`. The RT-AC66U B1's `mmio-txbf-5g36-80.zip` has
+  7.14.164.18 with `txbf 1` and `txbf 0` around a VHT beamformee: the only
+  register writes that differ are to shared memory, a slot of the block at
+  byte `0x080c` written while the beamformee associates, and the TX headers
+  of its frames have word 0 bit 3 set and `0x0009` in the rate block's last
+  word (`router-data/rt-ac66u-b1/README.md`). Who sends the sounding, where the
+  matrix goes and what `bfm` encodes are still open.
 
 - **TX.** The TX descriptor is the AC microcode's long format,
   `d11actxh_t` of Broadcom's `d11.h` (see `PROVENANCE.md`), 124 bytes:
@@ -906,6 +921,21 @@ order, as it already does for the BSS templates, or the perimeter learns the
 block by position (after the last PHY op of the flow). The 16 extra ops are
 the two rewrites of the 0x033a-0x0343 gain block at 0x3bf.
 
+### The `0x034d` ladder
+
+PHY `0x034d`-`0x0353`, `0x028d` and `0x04d7`/`0x04db` are written in the
+channel setup: the "hi" set at 5 GHz 80 MHz, the power-on "lo" set
+elsewhere (`82420f5`). Under wl 7.14 on the RT-AC66U B1 they read back lo
+at 5 GHz 20 and 80 MHz and hi at 5 GHz 40 MHz; on 2.4 GHz lo at ch1/20 and
+hi at ch6/20, ch11/20 and ch6/40, so band and width do not decide the set
+there. On that board the AP's 80 MHz downlink needs hi: with lo it drops
+to 3-30 Mbit/s or stops. These are the ten extra ops of the d6220 and
+TG789vac cold rows: no capture has a write of them, neither the d6220's
+and TG789vac's cold sweeps nor the RT-AC66U B1's and the R7000's MMIO
+traces, and the only constant-address write of `0x034d`/`0x0353` in
+`wl.ko` 7.14.164.18 is in `wlc_phy_btc_adjust_acphy`, to 0. Open: what sets
+them.
+
 ### When the CRS block is written
 
 The value is closed ([`crs-min-power.md`](crs-min-power.md)), and so is the
@@ -929,9 +959,10 @@ open too.
 
 ## 2.4 GHz
 
-2.4 GHz runs at 20 MHz; Andreas has the MacBookAir6,1 associating, scanning
-and passing traffic there. A band change on a running interface is synchronous,
-inside `b43_op_config()`: the PHY goes through a reset and a full init for the
+2.4 GHz runs at 20 and 40 MHz: Andreas has the MacBookAir6,1 associating,
+scanning and passing traffic there, and the EA6900 and the RT-AC66U B1 run
+it as an AP (README, "On hardware"). A band change on a running interface
+is synchronous, inside `b43_op_config()`: the PHY goes through a reset and a full init for the
 new band, the MAC's GMODE and the slot time follow, and DMA, interrupts and
 keys stay (`b43_ac_switch_band()`). The MacBookAir6,1's wl does less in the
 middle of a scan, no PHY reset and some 4400 PHY writes of band setup; the
@@ -956,12 +987,12 @@ nothing on 2.4 GHz. What the MacBook's wl does there and the port did not:
   where 7.14 writes 7 on 5 GHz (`traces/wl-final-tables-2g-ch6.txt` in
   gonsolo's repository).
 
-The 2.4 GHz band announces HT at 20 MHz with the same MCS as 5 GHz and no
-VHT; before, it was the legacy band of the older PHYs and a station stayed
-on legacy rates (Andreas: tx 54, rx 24 Mb/s). 40 MHz on 2.4 GHz is on,
-with the Farrow resampler at the bonded centre and 0x0250/0x0261-0x0263 at
-their 20 MHz values, as read back under wl 7.14 on an RT-AC66U B1; no
-capture in this tree has it.
+The 2.4 GHz band announces HT at 20 and 40 MHz with the same MCS as 5 GHz
+and no VHT; before, it was the legacy band of the older PHYs and a station
+stayed on legacy rates (Andreas: tx 54, rx 24 Mb/s). At 40 MHz the Farrow
+resampler is at the bonded centre and 0x0250/0x0261-0x0263 keep their
+20 MHz values, as read back under wl 7.14 on an RT-AC66U B1; the cold
+capture of that board at 2g6/40 (`mmio-cold-2g6-40.zip`) came after.
 
 Not taken: 6.30.223's TX-to-RX sequencer list in table 7 starts with an
 extra `0xb3` (cells 16-31, and the delays at 128-143 get a leading 1), on
@@ -1070,9 +1101,10 @@ Table `0x21` is written as zeros on 2.4 GHz, as on both boards.
   cold-5g80.zip, cold-2g20.zip; router-data/rt-ac66u-b1/mmio-cold-2g6.zip,
   mmio-cold-2g6-40.zip, mmio-txbf-5g36-80.zip]
   [read-back: router-data/rt-ac66u-b1/readback-2g.zip]
-- **40 MHz** on 2.4 GHz has no capture; the Farrow resampler and the
-  registers doubled at 5 GHz take the values read back under wl on an
-  RT-AC66U B1.
+- **40 MHz** on 2.4 GHz: the Farrow resampler and the registers doubled
+  at 5 GHz take the values read back under wl on an RT-AC66U B1. The cold
+  capture at 2g6/40 (`router-data/rt-ac66u-b1/mmio-cold-2g6-40.zip`)
+  came after; the port's AGC block reproduces it (`15df866`).
 - **Version.** The rest is 6.30. The 2.4 GHz TX gain table is 7.14's as well:
   `acphy_txgain_epa_2g_2069rev4` in the D6220's `wl.o` matches the port's on
   384 of 384 words. That object also has an `_id1` variant, 158 words alike,
@@ -1199,7 +1231,8 @@ ucode revision.
   `bcm6362.dtsi` declares only the RX DMA line, and Broadcom's
   `6362_intr.h` has no other) and frees its TX descriptors only from the
   RX poll: UDP out of the router alone stalls at ~1.5 Mbit/s, TCP flows
-  run since their ACKs come in.
+  run since their ACKs come in. Measured before TX block ack sessions were
+  taken; the boards measured since are in the README, "On hardware".
 - **RX under traffic.** With 128 slots no `RX descriptor underrun` while
   stations send single frames (the 2026-10-11 log); with A-MPDUs from the
   phone they underrun, so the 816-02 sets 192 over the 32 of OpenWrt's
