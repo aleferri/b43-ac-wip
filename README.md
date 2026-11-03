@@ -212,20 +212,23 @@ How the pieces fit is in [`docs/driver-status.md`](docs/driver-status.md).
   the R7000's and the RT-AC66U B1's captures (`docs/retrace-todo.md`, "2.4
   GHz"); the 40 MHz values come from read-backs under `wl` on the
   RT-AC66U B1.
-- Radar detection without pattern matching: `CONFIG_B43_DFS` reports a radar
-  on 17 pulses within 100 ms, one more than the stock driver let pass as
-  noise, and does not decode the pulse width or the fine time
-  (`b43_phy_ac_radar_pulse()`); bursts of fewer pulses go unseen. The
-  RT-AC66U B1's `radar-fifo.zip` has the FIFO words of known pulses and
-  their decode.
+- Radar detection at 20 and 40 MHz and of the long and staggered radars:
+  `CONFIG_B43_DFS` arms the detector as the stock driver does and matches
+  the pulses against the short-pulse types of ETSI EN 301 893 (1-4) and
+  FCC KDB 905462 (0-4) (`b43/radar_ac.c`), at 80 MHz only, the one width
+  the arm is traced at; ETSI 5-6 and FCC 5-6 are not matched, and the
+  regulatory domain is not looked at (`docs/retrace-todo.md`, "Radar
+  pulses").
 - Probe-response offload and the power management queue: deliberately off, see
   `docs/retrace-todo.md`.
-- Transmit beamforming and A-MSDUs inside A-MPDUs: HT MCS go out to an HT
-  station and VHT MCS 0-9 to a VHT one, on up to the board's TX chains, laid
-  out as the stock drivers lay them out, and A-MPDUs in both directions,
-  built by the microcode on TX and acknowledged by it on RX; A-MSDUs inside
-  A-MPDUs are not announced, and no frame is beamformed
-  (`docs/retrace-todo.md`, "HT and VHT").
+- A-MSDUs inside A-MPDUs on RX and beamforming on an open BSS: HT MCS go
+  out to an HT station and VHT MCS 0-9 to a VHT one, on up to the board's
+  TX chains, laid out as the stock drivers lay them out, A-MPDUs in both
+  directions, and A-MSDUs on TX from their `frag_list`. A-MSDUs inside
+  A-MPDUs are not announced: joining them costs more CPU than they save on
+  the Northstar boards. SU beamforming is opt-in (`txbf=1`) and starts with
+  the station's pairwise key, where the stock driver also beamforms on an
+  open BSS (`docs/retrace-todo.md`, "HT and VHT").
 - Hardware encryption: CCMP and WEP keys go to the hardware, TKIP stays
   with mac80211, and so do protected management frames on TX and the group
   keys of every AP but the first (`docs/retrace-todo.md`, "Hardware
