@@ -21,6 +21,11 @@
  *   w3 7:4    2 on CW and chirped pulses, mostly 0 on noise (not used)
  *
  * The time is a 32-bit count of 12.5 ns that wraps every 53.7 s.
+ *
+ * Those are the units at 80 MHz. They follow the channel's width: at 40 MHz
+ * 25 ns and 0.4 us, at 20 MHz 50 ns and 0.8 us (radar-widths.zip: a 1000 us
+ * PRI reads 40000 and 20000, a 20 us pulse 50 and 25). b43_radar_entry()
+ * brings an entry to the 80 MHz units by struct b43_radar's shift.
  */
 #define B43_RADAR_FIFO_WORDS	0x0600
 #define B43_RADAR_FIFO_PULSES	(B43_RADAR_FIFO_WORDS / 4)
@@ -41,6 +46,8 @@ struct b43_radar_pulse {
 struct b43_radar_type;
 
 struct b43_radar {
+	/* log2 of 80 MHz over the channel's width: 0, 1 or 2. */
+	unsigned int shift;
 	/* One poll's entries of each FIFO, decoded. */
 	struct b43_radar_pulse fifo[2][B43_RADAR_FIFO_PULSES];
 	unsigned int nfifo[2];

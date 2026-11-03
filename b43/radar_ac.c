@@ -158,8 +158,13 @@ bool b43_radar_entry(struct b43_radar *r, unsigned int fifo, const u16 w[4])
 	if (r->nfifo[fifo] >= B43_RADAR_FIFO_PULSES)
 		return false;
 	p = &r->fifo[fifo][r->nfifo[fifo]++];
-	p->ts = (u32)w[0] << 16 | (u32)(w[1] & 0x0fff) << 4 | (w[3] & 0x000f);
-	p->width = w[2] & 0x00ff;
+	/*
+	 * Modulo 2^32 the shifted times keep their differences, which is all
+	 * the matching takes of them.
+	 */
+	p->ts = ((u32)w[0] << 16 | (u32)(w[1] & 0x0fff) << 4 |
+		 (w[3] & 0x000f)) << r->shift;
+	p->width = (w[2] & 0x00ff) << r->shift;
 	p->coherent = (w[2] >> 8) >= B43_RADAR_COHERENT;
 	return true;
 }

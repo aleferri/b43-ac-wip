@@ -286,9 +286,11 @@ station (`archer-t5e/mmiotrace.zip`); the field names are `d11.h`'s.
 
 Open, for `CONFIG_B43_DFS` (`b43_phy_ac_radar_arm()`, `b43/radar_ac.c`):
 
-- 20 and 40 MHz: the arm is traced at 80 MHz only, and the AP detects radars
-  only there (`b43_if_comb_dfs`). A `wl` trace at ch52/20 and ch52/40 with
-  the radar on gives the per-width values.
+- 20 MHz noise: there `w2 >> 8` reads 0xe1-0xfb on fifo 1 on most noise
+  bursts as on radar pulses, so a train of noise bursts with a radar's PRI
+  is a radar (`noise10` of `radar-widths.zip` matches ETSI 2); at 40 and 80
+  MHz it is not.
+- 160 MHz is not offered at all, and the detector is not traced there.
 - ETSI 5 and 6 (staggered PRF), FCC 5 (long chirped pulses, 1-3 a burst over
   12 s) and FCC 6 (frequency hopping) are not matched.
 - The regulatory domain is not looked at: both regions' types are matched.

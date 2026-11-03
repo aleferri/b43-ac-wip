@@ -2,15 +2,18 @@
 /*
  * Replay radar FIFO reads through b43/radar_ac.c.
  *
- *   replay FILE...
+ *   replay [-w 20|40|80] FILE...
  *
  * A file holds polls: a line that does not start with "0 " or "1 " opens a
  * poll (the runs of router-data/rt-ac66u-b1/radar-fifo.zip have the two fill
  * levels there), and each "<fifo> <word>" line after it is one word read from
  * that FIFO, in hex. Prints, per file, the type matched and the poll it was
- * matched in, or "none".
+ * matched in, or "none". A line "radar <fifo> <w0> <w1> <w2> <w3> ..." (the
+ * test log of radar-widths.zip) is one entry of the open poll, a poll opened
+ * by the first.
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "radar_ac.h"
@@ -22,7 +25,7 @@ struct fifo_words {
 	unsigned int n;
 };
 
-static int replay(const char *path)
+static int replay(const char *path, unsigned int shift)
 {
 	struct fifo_words fw[2] = { 0 };
 	const struct b43_radar_type *seen = NULL;
@@ -36,10 +39,25 @@ static int replay(const char *path)
 		return -1;
 	}
 	b43_radar_reset(&radar);
+	radar.shift = shift;
 
 	for (;;) {
 		bool eof = !fgets(line, sizeof(line), f);
-		unsigned int fifo, word;
+		unsigned int fifo, word, e[4];
+
+		/* "radar <fifo> <w0> <w1> <w2> <w3> ...": one entry a line */
+		if (!eof && !strncmp(line, "radar ", 6) &&
+		    sscanf(line + 6, "%u %x %x %x %x", &fifo, &e[0], &e[1],
+			   &e[2], &e[3]) == 5 && fifo < 2) {
+			u16 w[4] = { e[0], e[1], e[2], e[3] };
+
+			if (!open) {
+				open = true;
+				fw[0].n = fw[1].n = 0;
+			}
+			b43_radar_entry(&radar, fifo, w);
+			continue;
+		}
 
 		if (!eof && (line[0] == '0' || line[0] == '1') &&
 		    line[1] == ' ' &&
@@ -76,10 +94,19 @@ static int replay(const char *path)
 
 int main(int argc, char **argv)
 {
+	unsigned int shift = 0;
 	int i;
 
-	for (i = 1; i < argc; i++)
-		if (replay(argv[i]) < 0)
+	for (i = 1; i < argc; i++) {
+		/* -w 20|40|80: the channel width the files were read at */
+		if (!strcmp(argv[i], "-w") && i + 1 < argc) {
+			unsigned int mhz = atoi(argv[++i]);
+
+			shift = mhz == 20 ? 2 : mhz == 40 ? 1 : 0;
+			continue;
+		}
+		if (replay(argv[i], shift) < 0)
 			return 2;
+	}
 	return 0;
 }
