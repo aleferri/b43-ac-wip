@@ -288,35 +288,17 @@ station (`archer-t5e/mmiotrace.zip`); the field names are `d11.h`'s.
 
 ### Radar pulses
 
-The two radar FIFOs (PHY `0x0253`/`0x0254`, levels in `0x0251`/`0x0252`)
-hold four words a pulse, decoded against known pulses from a HackRF on the
-RT-AC66U B1 (`rt-ac66u-b1/radar-fifo.zip`, `README.md`): a 32-bit time in
-12.5 ns units (`w0 << 16 | (w1 & 0xfff) << 4 | (w3 & 0xf)`), the width in
-0.2 us units (`w2 & 0xff`; past about 27 us a pulse comes as two entries),
-and `w2 >> 8`, 0xfd-0xff on every CW and chirped pulse and 0x00-0x87 on 31 of
-32 noise pulses, which the matching takes as "a radar pulse" from 0xc0 up.
-Not used: `w1 >> 12` (moves with frequency and chirp) and `w3 >> 4`. The agcombo's 182
-pulses (`vd625-agcombo/bss-up.zip`) have widths 0-3: its `wl` had the radar
-off, as the d6220's, whose FIFOs stayed empty.
-
-The FIFOs fill only with the detector armed: `b43_phy_ac_radar_arm()`, the
-block `wl` writes with its radar on, traced, with SHM `0x0066` and HOSTF1 bit
-13 blanking the AP's own transmissions (without them the beacons come as two
-0.0-0.2 us entries every 102.4 ms). `radar_ac.c` merges the two FIFOs and
-matches the pulses against ETSI 1-4 and FCC 0-4 as PRI trains; `test/radar`
-replays the recorded runs and synthetic bursts through it.
-
-Open:
+Open, for `CONFIG_B43_DFS` (`b43_phy_ac_radar_arm()`, `b43/radar_ac.c`):
 
 - 20 and 40 MHz: the arm is traced at 80 MHz only, and the AP detects radars
-  only there (`b43_if_comb_dfs`). The doubling of `0x0250`/`0x0261`-`0x0263`
-  suggests per-width values, as at radar off; a `wl` trace at ch52/20 and
-  ch52/40 with the radar on would give them.
+  only there (`b43_if_comb_dfs`). A `wl` trace at ch52/20 and ch52/40 with
+  the radar on gives the per-width values.
 - ETSI 5 and 6 (staggered PRF), FCC 5 (long chirped pulses, 1-3 a burst over
   12 s) and FCC 6 (frequency hopping) are not matched.
 - The regulatory domain is not looked at: both regions' types are matched.
 - What `w2 >> 8` measures is not known; the 0xc0 cut is from one board's
   runs (CW and chirped pulses all 0xfd-0xff, noise pulses one in 32 above).
+  `w1 >> 12` (moves with frequency and chirp) and `w3 >> 4` are not used.
 - The centre of an 80 MHz channel is blind: a CW pulse there falls on the
   receiver's DC and comes as two 0.2 us entries at its edges (5 and 20 us) or
   with `w2 >> 8` below 0xc0 (1.1 us). At 1 MHz off the centre the pulses read
@@ -422,7 +404,7 @@ defined; VHT `0x0f825832`, MCS 0-9 on three streams both ways. The port
 takes the streams from the SROM `rxchain`, announces A-MPDU as the stock
 beacon does (see "Aggregation"), LDPC reception on HT and VHT as its later
 beacons do, and leaves out what b43 does not do: MPDUs over 3895 bytes,
-A-MSDUs inside A-MPDUs, beamforming and link adaptation. It defines the TX
+A-MSDUs inside A-MPDUs and link adaptation. It defines the TX
 MCS set the stock beacon leaves undefined, so that HT MCS go out as well. HT MCS and VHT MCS 0-9 go out on
 as many streams as the board has TX chains, in the layout of the stock
 drivers' own descriptors (`b43_txhdr_ac_ht()`, `b43_txhdr_ac_vht()`, from
@@ -436,35 +418,16 @@ under 832.127). On the board HT20, HT40 and VHT20/40/80 carry traffic
   D6220's 7.14.89 sends the same (`0x40ce`, HT-SIG byte 0 `0x87` for MCS 7,
   word 1 0 on a primary in the upper half of ch38), in
   `router-data/d6220/rxtx-1s-ht20-40-vht20-40-80-txbf0.zip`.
-- **Aggregation.** See "A-MPDU" under "MAC and DMA": block ack sessions
-  are taken both ways, the microcode builds the A-MPDUs on TX and answers
-  them with its own block ack on RX, and mac80211 reorders.
-- **A-MSDU.** On RX the core takes an A-MSDU apart before DMA, one buffer
-  per piece, with the A-MSDU bit and the aggregation type (1 first, 0
-  middle, 2 last, 3 whole) in the MAC status; `b43_rx_amsdu()` joins the
-  pieces into the MPDU as sent. On TX mac80211 builds them from the TX
-  queues b43 pulls, of MSDUs of 1000 bytes and more
-  (`b43_op_can_aggregate_in_amsdu()`). A-MSDUs inside A-MPDUs are not
-  announced: joining copies the pieces, and on a BCM4708 the receive path
-  of a three-stream client is CPU-bound with them (`f1e5eee`).
-- **Transmit beamforming.** TODO, not implemented. b43 announces no SU
-  beamformer capability, so a station never sends the compressed
-  beamforming feedback, and every multi-chain frame goes out with CDD on
-  the chains of the TX core table. What it takes, in 802.11ac's explicit
-  form: sounding (NDP Announcement, then the NDP), the VHT Compressed
-  Beamforming frames received and their steering matrix handed to the
-  PHY, and on the beamformed frames word 0 bit 3, the `bfm` field and the
-  beamformed bit of VHT-SIG-A2 (bit 8). What is known: 7.14.43 beamforms
-  from MCS 4 up, on every chain, `bfm` `0x43`-`0x48` in its high byte
-  (`router-data/vd625-agcombo/`); 7.14.89 sets bit 3 outside
-  `wlc_acphy_txctl0_calc()` and the SIG-A2 bit in `wlc_compute_plcp()` on a
-  rate with `RSPEC_TXBF`. The RT-AC66U B1's `mmio-txbf-5g36-80.zip` has
-  7.14.164.18 with `txbf 1` and `txbf 0` around a VHT beamformee: the only
-  register writes that differ are to shared memory, a slot of the block at
-  byte `0x080c` written while the beamformee associates, and the TX headers
-  of its frames have word 0 bit 3 set and `0x0009` in the rate block's last
-  word (`router-data/rt-ac66u-b1/README.md`). Who sends the sounding, where the
-  matrix goes and what `bfm` encodes are still open.
+- **A-MSDUs inside A-MPDUs** are not announced: on a BCM4708 the receive
+  path of a three-stream client is CPU-bound with them (`f1e5eee`), and
+  joining the pieces without a copy did not help (#17); where the cost is
+  is not known.
+- **Transmit beamforming.** Open: the meaning of `bfm` (7.14.43 puts
+  `0x43`-`0x48` in its high byte from MCS 4 up, `router-data/vd625-agcombo/`;
+  7.14.164.18 `0x0009`) and of slot word 5 bit 0, which 7.14 sets for a
+  station with more than one stream and which makes the downlink drop under
+  784.2; beamforming on an open BSS, which 7.14 does and b43 does not (the
+  slot waits for the pairwise key).
 
 - **TX.** The TX descriptor is the AC microcode's long format,
   `d11actxh_t` of Broadcom's `d11.h` (see `PROVENANCE.md`), 124 bytes:
