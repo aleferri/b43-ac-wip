@@ -4812,6 +4812,35 @@ static void b43_phy_ac_rx_evm_shaping_override(struct b43_wldev *dev)
 }
 
 /*
+ * The rx gain fields a core takes on the current channel: rxgains2g on
+ * 2.4 GHz; on 5 GHz rxgains5g below channel 100 and rxgains5gh from 100
+ * up, as the R7000 (wl 7.14.164.18, subband5gver 4) takes them on channels
+ * 36, 52, 100, 116, 132 and 149, and rxgains5gm on none of them. A core
+ * whose 5gh byte is erased (7, 15, 1) keeps rxgains5g: the d6220, the
+ * tg789vac and the agcombo, all with that byte erased, write their 5g
+ * values on every channel. They run older builds (7.14.89, 7.14.43), so a
+ * build that never takes 5gh fits them as well; no capture tells the two
+ * apart. An NVRAM board without the rxgains5gh keys reads them as 0, not
+ * as erased.
+ * [capture-ref: router-data/r7000/mmio-rxgains5g-subbands.zip; s5-b to
+ *   s5-h, README.txt]
+ */
+static const struct ssb_sprom_rxgains *
+b43_phy_ac_rxgains(struct b43_wldev *dev, unsigned int core)
+{
+	const struct ssb_sprom *sprom = dev->dev->bus_sprom;
+	const struct ssb_sprom_rxgains *gh = &sprom->rxgains_5gh;
+
+	if (b43_current_band(dev->wl) == NL80211_BAND_2GHZ)
+		return &sprom->rxgains_2g;
+	if (dev->phy.chandef->chan->hw_value < 100 ||
+	    (gh->elnagain[core] == 7 && gh->triso[core] == 15 &&
+	     gh->trelnabyp[core] == 1))
+		return &sprom->rxgains_5gl;
+	return gh;
+}
+
+/*
  * The post-noise-shaping block programs five RX gain settings per core,
  * one in each pair 0x06dc/0x06dd, 0x06de/0x06df, 0x06e0/0x06e1,
  * 0x06e2/0x06e3 and 0x06e4/0x06e5, and the first of them once more in
@@ -4824,8 +4853,8 @@ static void b43_phy_ac_rx_evm_shaping_override(struct b43_wldev *dev)
  * In dB, LNA1 and LNA2 are the rows of wlD6220.o's .data below, a biquad
  * step is 3, and the eLNA is 2 * (elnagain + 3), the header
  * b43_phy_ac_rxgain_init() writes to table 0x44. Under wl 7.14 the
- * settings then follow from the core's rx gain fields of the band
- * (rxgains2g, or rxgains5g on every 5 GHz channel) with a few constants:
+ * settings then follow from the core's rx gain fields,
+ * b43_phy_ac_rxgains(), with a few constants:
  *
  * - The first two: the highest front end, eLNA + LNA1 + LNA2, not above
  *   a cap, LNA1 lowered only when no LNA2 from lna2_min up fits; then the
@@ -4956,12 +4985,10 @@ static const struct b43_phy_ac_agc_band *
 b43_phy_ac_agc_settings(struct b43_wldev *dev, unsigned int core,
 			struct b43_phy_ac_gain g[5])
 {
-	const struct ssb_sprom *sprom = dev->dev->bus_sprom;
 	bool band_2g = b43_current_band(dev->wl) == NL80211_BAND_2GHZ;
 	const struct b43_phy_ac_agc_band *b =
 		band_2g ? &b43_phy_ac_agc_2g : &b43_phy_ac_agc_5g;
-	const struct ssb_sprom_rxgains *rx =
-		band_2g ? &sprom->rxgains_2g : &sprom->rxgains_5gl;
+	const struct ssb_sprom_rxgains *rx = b43_phy_ac_rxgains(dev, core);
 	int elna = 2 * (rx->elnagain[core] + 3);
 	int md = 2 * rx->triso[core] + b->md;
 	int lo = 2 * rx->triso[core] + b->lo;
@@ -5946,9 +5973,10 @@ static void b43_phy_ac_chanspec_tail(struct b43_wldev *dev)
  * The core loop is the caller's; the stock driver emits this for every
  * silicon core, 2x2 boards included.
  *
- * On 5 GHz it uses rxgains_5gl (U-NII-1); 5gm and 5gh need a per-sub-band
- * selection. On 2.4 GHz rxgains_2g: the archer-t5e has elnagain 4 there and
- * 3 in 5gl, and writes the header as 0x0e on 2.4 GHz and 0x0c on 5 GHz.
+ * The fields are b43_phy_ac_rxgains()'s: the archer-t5e has elnagain 4 in
+ * rxgains2g and 3 in rxgains5g, and writes the header as 0x0e on 2.4 GHz
+ * and 0x0c on 5 GHz; the R7000 writes 0x?6f9 and the header from its 5gh
+ * fields from channel 100 up.
  * [capture-ref: router-data/d6220/cold-sweep.zip!cold01-ch36-bw20.txt;
  *   10578-10621, 10738-10781, 10898-10941]
  * [capture-ref: router-data/d6220/hot-sweep.zip!segmenti/01-up-ch36-bw20.txt;
@@ -5961,9 +5989,7 @@ static void b43_phy_ac_rxgain_init(struct b43_wldev *dev, unsigned int core)
 	static const u16 fill_03[10] = { 3, 3, 3, 3, 3, 3, 3, 3, 3, 3 };
 	static const u16 fill_02[10] = { 2, 2, 2, 2, 2, 2, 2, 2, 2, 2 };
 	bool band_2g = b43_current_band(dev->wl) == NL80211_BAND_2GHZ;
-	const struct ssb_sprom *sprom = dev->dev->bus_sprom;
-	const struct ssb_sprom_rxgains *rxgains =
-		band_2g ? &sprom->rxgains_2g : &sprom->rxgains_5gl;
+	const struct ssb_sprom_rxgains *rxgains = b43_phy_ac_rxgains(dev, core);
 	u16 ps = (u16)(core * 0x0200);
 	u16 ta = (u16)(0x0044 + core * 0x0020);
 	u16 tb = (u16)(0x0045 + core * 0x0020);
