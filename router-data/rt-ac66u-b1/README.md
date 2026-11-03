@@ -89,3 +89,17 @@ ETSI 1-4 and FCC 0-4 bursts with every pulse sent (`patterns/`); the scripts. It
 - `w1 >> 12`: a 4-bit value that moves with frequency and chirp;
 - the 13 writes `wl` makes when radar is on, which b43 lacks: without them its FIFOs stay empty.
 
+
+## Transmit beamforming at 20/40/80 MHz, WPA2, two beamformees (2026-11-03)
+
+`mmio-txbf2.zip`: `wl-mmio-trap` captures of `wl` 7.14.164.18 (DD-WRT r63734) bringing up txbf on 36/20, 36/40
+and 36/80 with a OnePlus Nord 2 (two streams) joining, the last with WPA2, and with the rtl8821ae (one stream) as a
+second beamformee, open and with WPA2, TX headers recorded during traffic; and SHM read-backs of the txbf block with the stations
+joined. Its `README.txt` has the details:
+
+- slot word 6 at the join: 0x000d / 0x200d / 0x400d at 20 / 40 / 80 MHz, the same in slot 1;
+- word 5: 0x0003 for the two-stream station, 0x0002 for the one-stream one;
+- words 7 and 8 are not written at a join: 0x1471 and 0x8492 at every width, in both slots;
+- with WPA2, the key's row in the table at SHM 0x0668 gets 0x1000 | slot << 13 right after the station's AMT entry
+  (0x0668 0x1000 for slot 0, 0x066a 0x3000 for slot 1); nothing on an open BSS;
+- the RTS/CTS word of the rate blocks: 0x0905 to the slot-0 station, 0x1905 to the slot-1 one.
