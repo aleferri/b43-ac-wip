@@ -75,3 +75,17 @@ What they show:
   without txbf), on all four rate blocks; the RTS/CTS word and the VHT-SIG-A
   the host writes are the same with and without.
 
+## Radar FIFO decode with known pulses (2026-11-02)
+
+`radar-fifo.zip`: known radar pulses from a HackRF One next to the board (5254-5326 MHz, ch 52/80), the
+four words of every pulse read back from the radar FIFOs (PHY 0x0253/0x0254, single reads), under `wl`
+7.14.164.18 (DD-WRT r66396, radar and 802.11h on through `WLC_SET_RADAR` / `WLC_SET_SPECT_MANAGMENT`) and
+under b43 with `wl`'s radar block written live; the `wl-mmio-trap` capture of that block (`radar-on-5g52`);
+ETSI 1-4 and FCC 0-4 bursts with every pulse sent (`patterns/`); the scripts. Its `README.md` has the decode:
+
+- time in 12.5 ns units: `w0 << 16 | (w1 & 0xfff) << 4 | (w3 & 0xf)` (1000 us PRI -> 80004);
+- width in 0.2 us units: `w2 & 0xff` (5/10/20 us -> 25/50/100, floor ~2 us, ~27 us per entry);
+- `w2 >> 8`: 0xff for CW and chirped pulses, erratic for noise-like ones and the AP's own beacons (meaning open);
+- `w1 >> 12`: a 4-bit value that moves with frequency and chirp;
+- the 13 writes `wl` makes when radar is on, which b43 lacks: without them its FIFOs stay empty.
+
