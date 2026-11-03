@@ -4,6 +4,7 @@
 
 #include "phy_common.h"
 #include "ppr_ac.h"
+#include "radar_ac.h"
 
 struct ieee80211_channel;
 
@@ -325,12 +326,6 @@ void b43_phy_ac_write_chanspec(struct b43_wldev *dev);
 /* Bit 11 of the same readback, surviving the shift by two. */
 #define B43_PHY_AC_IDLE_TSSI_BASE		0x0200
 
-/*
- * Distinct radar pulses within B43_PHY_AC_RADAR_WINDOW that make a radar:
- * one more than the stock driver let pass (b43_phy_ac_radar_pulse()).
- */
-#define B43_PHY_AC_RADAR_PULSES		17
-
 struct b43_phy_ac {
 	/* physical core count (PHY reg 0x0b & 0x07), set by probe_cores */
 	u8 num_cores;
@@ -391,16 +386,13 @@ struct b43_phy_ac {
 	 * another meanwhile.
 	 */
 	bool noise_pending;
-	/* A radar was seen since the last b43_phy_ac_radar_poll(). */
-	bool radar_pulses;
 	/*
-	 * Recent radar pulses, by the FIFO's coarse timestamp unwrapped
-	 * (b43_phy_ac_radar_pulse()), oldest first.
+	 * The radar detector is armed (b43_phy_ac_radar_arm()): the stock
+	 * driver's radar-on block is in and its own transmissions blanked.
 	 */
-	u32 radar_ts[B43_PHY_AC_RADAR_PULSES];
-	unsigned int radar_n;
-	u32 radar_wrap;
-	u16 radar_last;
+	bool radar_armed;
+	/* The pulses of the radar FIFOs, matched against the radar types. */
+	struct b43_radar radar;
 	/* One more turn without a peek, after the entry turn. */
 	bool peek_skip_one;
 	/*
@@ -758,9 +750,9 @@ void b43_phy_ac_reset_cca(struct b43_wldev *dev);
 /*
  * One turn of the radar detector poll: mac_suspend, the levels of the two
  * pulse FIFOs (PHY 0x0251 and 0x0252), draining the non-empty ones,
- * mac_enable. The core calls it every 150 ms while mac80211 asks for
- * detection, also after the check has closed. Returns whether a pulse
- * arrived since the last poll.
+ * mac_enable. The core calls it every 150 ms while an AP is on a channel
+ * with the radar duty, the check and after it. Returns whether the pulses
+ * matched a radar type while mac80211 asks for radar detection.
  */
 bool b43_phy_ac_radar_poll(struct b43_wldev *dev);
 

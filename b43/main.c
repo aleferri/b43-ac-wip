@@ -4738,9 +4738,19 @@ out:
 }
 
 /*
- * The detector is read while mac80211 asks for radar detection, which is the
- * availability check and, after it, the whole time the AP stays on the
- * channel.
+ * The detector is read while the AP is on a channel with the radar duty
+ * (dev->radar_arm), which is the availability check and, after it, the whole
+ * time the AP stays on the channel.
+ *
+ * Not while mac80211 asks for radar detection: a driver without channel
+ * contexts learns that from conf->radar_enabled, but not always on a config
+ * call. mac80211 creates the context with radar_enabled false, tunes, and
+ * turns it on after (_ieee80211_link_use_channel(),
+ * ieee80211_recalc_radar_chanctx()); the chandef has not changed, so the
+ * emulated change_chanctx does not call the driver. After the check, when
+ * start_ap takes the channel again, the poll keyed on radar_enabled stopped
+ * for good and the FIFOs filled up undrained. radar_enabled is read here
+ * instead, to report.
  */
 #define B43_RADAR_POLL_MS	150
 
@@ -4751,11 +4761,10 @@ static void b43_radar_work_handler(struct work_struct *work)
 	struct b43_wl *wl = dev->wl;
 
 	mutex_lock(&wl->mutex);
-	if (likely(b43_status(dev) == B43_STAT_STARTED) &&
-	    wl->hw->conf.radar_enabled) {
+	if (likely(b43_status(dev) == B43_STAT_STARTED) && dev->radar_arm) {
 		/*
-		 * The PHY counts pulses, it does not match them against the
-		 * radar types (b43_phy_ac_radar_pulse()).
+		 * The PHY matches the pulses against the radar types, and
+		 * reports a match while mac80211 asks for detection.
 		 */
 		if (dev->phy.ops->radar_poll(dev))
 			ieee80211_radar_detected(wl->hw);
@@ -5464,19 +5473,40 @@ static bool b43_ac_beaconing(struct b43_wl *wl)
 }
 
 /*
- * mac80211 runs the channel availability check. A driver without channel
- * contexts learns about it from conf->radar_enabled on the config call that
- * tunes the channel, and learns that it is over when beaconing is enabled:
- * after the check mac80211 releases the channel, and start_ap tunes it again,
- * radar detection still on, before it enables the beacon. So until then the
- * channel may not be transmitted on, whichever of the two tunes this is.
+ * mac80211 runs the channel availability check, and the driver learns that it
+ * is over when beaconing is enabled: after the check mac80211 releases the
+ * channel, and start_ap tunes it again before it enables the beacon. So an AP
+ * on a channel with the radar duty may not transmit until it beacons,
+ * whichever of the two tunes this is.
+ *
+ * Not conf->radar_enabled: without channel contexts it is not set on the
+ * config call that tunes the channel. mac80211 creates the context with it
+ * off, tunes, and turns it on after without a config call (see
+ * b43_radar_work_handler()); on the RT-AC66U B1 every config call through a
+ * check read it 0, so the gate never closed: MACCTL kept B43_MACCTL_AP and
+ * the transmitting calibrations ran on the radar channel.
  */
 static bool b43_ac_cac_needed(struct b43_wl *wl,
 			      const struct ieee80211_conf *conf)
 {
-	return conf->radar_enabled &&
-	       (conf->chandef.chan->flags & IEEE80211_CHAN_RADAR) &&
+	return (conf->chandef.chan->flags & IEEE80211_CHAN_RADAR) &&
+	       b43_is_mode(wl, NL80211_IFTYPE_AP) &&
 	       !b43_ac_beaconing(wl);
+}
+
+/*
+ * Whether the AP on this channel detects radars: built with CONFIG_B43_DFS,
+ * an AP, on a channel with the radar duty, at 80 MHz, the one width the
+ * detector setup is traced at (b43_phy_ac_radar_arm()) and the one
+ * b43_if_comb_dfs lets cfg80211 check radars on.
+ */
+static bool b43_ac_radar_arm_wanted(struct b43_wl *wl,
+				    const struct ieee80211_conf *conf)
+{
+	return IS_ENABLED(CONFIG_B43_DFS) &&
+	       (conf->chandef.chan->flags & IEEE80211_CHAN_RADAR) &&
+	       conf->chandef.width == NL80211_CHAN_WIDTH_80 &&
+	       b43_is_mode(wl, NL80211_IFTYPE_AP);
 }
 
 /*
@@ -5486,7 +5516,9 @@ static bool b43_ac_cac_needed(struct b43_wl *wl,
  * without HT on the same primary -- and tunes it again for start_ap. On the AC
  * PHY a retune is a full channel setup with its calibrations, and none of
  * these calls needs one: the radio stays where it is, and nothing transmits
- * while nothing beacons.
+ * while nothing beacons. With OpenWrt's backports 7.2 (RT-AC66U B1, ch 52/80)
+ * the release after the check goes to mac80211's default chandef instead,
+ * ch 36, which is a retune, and start_ap retunes ch 52.
  */
 static bool b43_ac_retune_needed(struct b43_wldev *dev,
 				 const struct cfg80211_chan_def *def)
@@ -5620,6 +5652,15 @@ static int b43_op_config(struct ieee80211_hw *hw, u32 changed)
 			retune = b43_ac_retune_needed(dev, &conf->chandef);
 			if (cac || retune)
 				dev->cac_pending = cac;
+			/*
+			 * With the tune only: a release on the same primary is
+			 * no retune and leaves the detector as it is. A release
+			 * to another channel disarms it, and start_ap's retune
+			 * arms it again.
+			 */
+			if (retune)
+				dev->radar_arm =
+					b43_ac_radar_arm_wanted(wl, conf);
 		}
 
 		if (retune) {
@@ -5642,7 +5683,7 @@ static int b43_op_config(struct ieee80211_hw *hw, u32 changed)
 
 		if (ac && dev->cac_pending != cac_was)
 			b43_ac_cac_match_gate(dev, !dev->cac_pending);
-		if (ac && conf->radar_enabled && phy->ops->radar_poll)
+		if (ac && dev->radar_arm && phy->ops->radar_poll)
 			ieee80211_queue_delayed_work(hw, &dev->radar_work,
 				msecs_to_jiffies(B43_RADAR_POLL_MS));
 	}
@@ -7228,10 +7269,7 @@ static const struct ieee80211_iface_combination b43_if_comb_dfs = {
 	.max_interfaces = B43_MBSS_MAX,
 	.num_different_channels = 1,
 	.beacon_int_infra_match = true,
-	.radar_detect_widths = BIT(NL80211_CHAN_WIDTH_20_NOHT) |
-			       BIT(NL80211_CHAN_WIDTH_20) |
-			       BIT(NL80211_CHAN_WIDTH_40) |
-			       BIT(NL80211_CHAN_WIDTH_80),
+	.radar_detect_widths = BIT(NL80211_CHAN_WIDTH_80),
 };
 
 /*
@@ -7414,9 +7452,10 @@ static int b43_setup_bands(struct b43_wldev *dev,
 	/*
 	 * An AP on a radar channel needs the combination to say which widths
 	 * radar detection covers, or cfg80211 refuses the check. Behind
-	 * CONFIG_B43_DFS, as ath9k and ath10k do; the pulses are counted, not
-	 * matched against the radar patterns (b43_phy_ac_radar_pulse()). It is
-	 * the one above with those widths: the same APs on a radar channel as
+	 * CONFIG_B43_DFS, as ath9k and ath10k do; the pulses are matched
+	 * against the short-pulse radar types (radar_ac.c). 80 MHz only: the
+	 * detector setup is traced at 80 MHz (b43_phy_ac_radar_arm()). It is
+	 * the one above with that width: the same APs on a radar channel as
 	 * on any other (detection is per channel), and on a channel without
 	 * radar duty cfg80211 does not look at the widths.
 	 */

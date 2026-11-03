@@ -289,21 +289,41 @@ station (`archer-t5e/mmiotrace.zip`); the field names are `d11.h`'s.
 ### Radar pulses
 
 The two radar FIFOs (PHY `0x0253`/`0x0254`, levels in `0x0251`/`0x0252`)
-hold four words a pulse. On the agcombo's 7.14.43 at this driver's threshold
-(`vd625-agcombo/bss-up.zip`, ch100/80) the stock driver drains 182 pulses in
-31 of 1155 polls over 175 s, finishes its channel availability check after
-60 s and keeps the channel: noise. Word 0 is a coarse timestamp, rising on
-all 148 consecutive pairs by about 1220 a second (0.82 ms a step); the
-second FIFO mostly repeats the first's pulses within a step. The low byte of
-word 2 takes only 0-3 and word 3 sits in `0x20`-`0x2f`; **SALAME**, the
-sub-channel of the pulse and a power. The fine time is not in word 1:
-`word0:word1` rises on 102 of 148 pairs, 71 of 95 per low byte of word 2.
-`b43_phy_ac_radar_pulse()` therefore counts: a radar is 17 distinct pulses
-within 100 ms, one more than the stock driver let pass in any such window.
-FCC types 1 and 2 and ETSI bursts of 17 pulses and more are seen in a
-replay of the rule over synthetic bursts; FCC type 4 (12-16 pulses) and the
-shorter ETSI bursts are not. Open: the fine time, the width and the chirp,
-for which a known radar in front of the board is the way.
+hold four words a pulse, decoded against known pulses from a HackRF on the
+RT-AC66U B1 (`rt-ac66u-b1/radar-fifo.zip`, `README.md`): a 32-bit time in
+12.5 ns units (`w0 << 16 | (w1 & 0xfff) << 4 | (w3 & 0xf)`), the width in
+0.2 us units (`w2 & 0xff`; past about 27 us a pulse comes as two entries),
+and `w2 >> 8`, 0xfd-0xff on every CW and chirped pulse and 0x00-0x87 on 31 of
+32 noise pulses, which the matching takes as "a radar pulse" from 0xc0 up.
+Not used: `w1 >> 12` (moves with frequency and chirp) and `w3 >> 4`. The agcombo's 182
+pulses (`vd625-agcombo/bss-up.zip`) have widths 0-3: its `wl` had the radar
+off, as the d6220's, whose FIFOs stayed empty.
+
+The FIFOs fill only with the detector armed: `b43_phy_ac_radar_arm()`, the
+block `wl` writes with its radar on, traced, with SHM `0x0066` and HOSTF1 bit
+13 blanking the AP's own transmissions (without them the beacons come as two
+0.0-0.2 us entries every 102.4 ms). `radar_ac.c` merges the two FIFOs and
+matches the pulses against ETSI 1-4 and FCC 0-4 as PRI trains; `test/radar`
+replays the recorded runs and synthetic bursts through it.
+
+Open:
+
+- 20 and 40 MHz: the arm is traced at 80 MHz only, and the AP detects radars
+  only there (`b43_if_comb_dfs`). The doubling of `0x0250`/`0x0261`-`0x0263`
+  suggests per-width values, as at radar off; a `wl` trace at ch52/20 and
+  ch52/40 with the radar on would give them.
+- ETSI 5 and 6 (staggered PRF), FCC 5 (long chirped pulses, 1-3 a burst over
+  12 s) and FCC 6 (frequency hopping) are not matched.
+- The regulatory domain is not looked at: both regions' types are matched.
+- What `w2 >> 8` measures is not known; the 0xc0 cut is from one board's
+  runs (CW and chirped pulses all 0xfd-0xff, noise pulses one in 32 above).
+- The centre of an 80 MHz channel is blind: a CW pulse there falls on the
+  receiver's DC and comes as two 0.2 us entries at its edges (5 and 20 us) or
+  with `w2 >> 8` below 0xc0 (1.1 us). At 1 MHz off the centre the pulses read
+  as anywhere else. Whether `wl` does better there is not known: its runs in
+  `radar-fifo.zip` are all off the centre.
+- The pulses of other boards: only the RT-AC66U B1 (BCM4360, femctrl 3) has
+  been tried.
 
 ### Probe-response offload
 

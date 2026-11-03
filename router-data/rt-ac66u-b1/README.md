@@ -103,3 +103,18 @@ joined. Its `README.txt` has the details:
 - with WPA2, the key's row in the table at SHM 0x0668 gets 0x1000 | slot << 13 right after the station's AMT entry
   (0x0668 0x1000 for slot 0, 0x066a 0x3000 for slot 1); nothing on an open BSS;
 - the RTS/CTS word of the rate blocks: 0x0905 to the slot-0 station, 0x1905 to the slot-1 one.
+
+## b43's radar detector against known pulses (2026-11-03)
+
+`radar-b43.zip`: the detector as b43 arms it (`b43_phy_ac_radar_arm()`) on ch 52/80, with pulses from a HackRF One;
+its `README.md` has the details:
+
+- the blanking A/B: SHM 0x0066 = 0x0030 with HOSTF1 bit 13 keeps the AP's own beacons out of the FIFOs, the flag
+  without SHM 0x0066 saturates both;
+- every FIFO entry the driver drained for 1, 1.1, 5 and 20 us pulses (CW and chirped) and noise bursts at 5270 MHz,
+  HackRF gain 15-47 (`sweep-5270/`): w2 15:8 is 0xc0 or more on 1197 of 1205 pulse entries, on 2 of 138 noise ones;
+- the centre of the 80 MHz channel (`dc-5290/`): at 5290 MHz pulses come as edges or with w2 15:8 low, at 1 MHz off
+  as anywhere else;
+- the check's gate logged from inside b43 (`cac-gate/`): keyed on `conf->radar_enabled` it never closed, MACCTL
+  kept the AP bit through the check; keyed on an AP on a radar channel that does not beacon yet, it did;
+- the in-service and in-check detections (`inservice/`, `cac/`) and the scripts.

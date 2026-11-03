@@ -1076,6 +1076,12 @@ struct b43_wldev {
 	 */
 	bool cac_pending;
 	struct cfg80211_chan_def tuned_chandef;
+	/*
+	 * AC PHY: the AP on the tuned channel detects radars, which arms the
+	 * detector on the PHY and keeps radar_work polling it. Set with the
+	 * tune, see b43_ac_radar_arm_wanted().
+	 */
+	bool radar_arm;
 
 	/* AC: rate limit of the TX state dump on a PHY TX error. */
 	struct ratelimit_state txerr_dump_rs;

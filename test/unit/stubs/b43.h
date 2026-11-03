@@ -98,6 +98,8 @@ struct ieee80211_channel {
 
 struct ieee80211_conf {
 	struct cfg80211_chan_def chandef;
+	/* Come in-tree: mac80211 chiede il rilevamento dei radar. */
+	bool radar_enabled;
 };
 
 struct wiphy;
@@ -298,6 +300,8 @@ struct b43_wldev {
 	struct b43_phy phy;
 	/* Come in-tree: il channel availability check tiene ferma la TX. */
 	bool cac_pending;
+	/* Come in-tree: l'AP rileva i radar, il detector e' armato. */
+	bool radar_arm;
 	/* Come in-tree: la disposizione della shared memory della microcode. */
 	struct {
 		const struct b43_shm_layout *shm;
@@ -434,6 +438,8 @@ void bcma_core_set_clockmode(struct bcma_device *core,
  * verifica).
  */
 #define B43_SHM_SH_HOSTF1         0x005E
+#define B43_SHM_SH_RADAR          0x0066
+#define B43_HF_RADARW             0x2000
 #define B43_SHM_SH_HOSTF2         0x0060
 #define B43_SHM_SH_HOSTF3         0x0062
 #define B43_SHM_SH_HOSTF4         0x0078
