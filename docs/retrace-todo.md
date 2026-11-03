@@ -387,13 +387,29 @@ that bit on the integration gate, and `test/unit` emits the stock value
 from its own model of the core (`emit_core_bss_mode()`).
 
 What turning it on takes: `B43_TXH_MAC_IGNPMQ` on the frames mac80211 sends
-to a sleeping station on purpose (`NO_PS_BUFFER`, `CLEAR_PS_FILT`);
-`IEEE80211_TX_STAT_TX_FILTERED` for a status with suppression reason 1,
-which `b43_txstatus_read_ac()` already decodes; and a reading of the queue
-entries, which no capture shows the stock driver doing: the agcombo has no
-client in power save, so no `B43_IRQ_PMQ`. `handle_irq_pmq()` drains at
-most 256 entries per interrupt and warns with the last value read if the
-queue is still not empty.
+to a sleeping station on purpose (`NO_PS_BUFFER`, `CLEAR_PS_FILT`; on the AC
+`D11AC_TXC_IPMQ`, `0x0200` of the low MAC control word by `d11.h`, not seen
+in a capture); `IEEE80211_TX_STAT_TX_FILTERED` for a status with
+suppression reason 1, which `b43_txstatus_read_ac()` already decodes; and
+draining the queue as the stock driver does. 7.14.164.18 on the RT-AC66U B1
+(`rt-ac66u-b1/pmq-5g36-80.zip`, a phone in power save on an open BSS,
+pinged) drains one entry per pass of the `B43_IRQ_PMQ` (`0x40`) handler:
+`0x0140` (bit 3 set, an entry; the high half `0x0001` on most entries,
+`0x0002` on some, before and after the phone sleeps alike: not its power
+state), `0x0144` and `0x0148` (the station's address, low four bytes and
+high two), then a 16-bit write of `0x0002` to `0x0140`; nothing else around
+it. 853 entries in the 70 s.
+
+Tried on b43 (the four parts above, `DISCPMQ` clear on the AC as an AP),
+on the RT-AC66U B1 with a OnePlus Nord 2: no difference to b43 with it
+discarded. Screen off, 60 pings at 1 s and 30 s of UDP at 2 Mbit/s lose
+nothing either way (2 rounds each). Under a TCP downlink at 266 Mbit/s,
+screen off twice in it, the queue gives about 500 entries a second
+(19650 in 70 s), each an interrupt and a drain, and not one TX status
+suppressed for the queue: mac80211 already holds the frames of a station
+that sleeps, so none is left in the FIFOs for the microcode to hold back.
+What the queue would add is only the frames in flight when a station
+falls asleep; no test here has shown one lost.
 
 ### HT and VHT
 

@@ -140,3 +140,10 @@ and 0x025b (0x0008 / 0x0010 / 0x001f) following it; the FIFO's time and width un
 and 6 (staggered PRF), FCC 2 and FCC 4 from a HackRF in service; its `README.md` has the table. Under FI the
 staggered bursts are a radar and FCC 4 at 12.2 us / 454 us is not, also with FI set before the module loads;
 under US ETSI 5 is not, FCC 2 and the same FCC 4 burst are.
+
+## The power management queue (2026-11-04)
+
+`pmq-5g36-80.zip`: `wl` 7.14 draining its power management queue while a phone sleeps (an entry is `0x0140` bit 3,
+the station's address in `0x0144`/`0x0148`, popped by a 16-bit write of `0x0002` to `0x0140`), and b43 run with and
+without the queue: no difference measured, many entries and no frame held back by it. Its `README.md` has the
+details.
