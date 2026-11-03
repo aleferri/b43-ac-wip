@@ -182,6 +182,16 @@ int pskb_expand_head(void *skb, int nhead, int ntail, unsigned int gfp)
 	abort();
 }
 
+/*
+ * Lo chiama skb_linearize() nel path TX di b43, su un frame con frag_list.
+ * Le code TX qui sono vuote: nessun frame ci arriva.
+ */
+void *__pskb_pull_tail(void *skb, int delta)
+{
+	fprintf(stderr, "b43-integration: __pskb_pull_tail not shimmed\n");
+	abort();
+}
+
 int net_ratelimit(void)
 {
 	return 1;
