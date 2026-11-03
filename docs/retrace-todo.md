@@ -277,10 +277,6 @@ station (`archer-t5e/mmiotrace.zip`); the field names are `d11.h`'s.
   microcode leaves the IV and the MIC in a frame it decrypts, as b43
   assumes on the older cores: mac80211 strips them and traffic flows both
   ways (see "Throughput" under "On hardware").
-- **Further APs.** The key index block has one set of group key entries,
-  so the group keys of every AP but the first stay with mac80211, which
-  encrypts their multicast; the pairwise keys of their stations go to the
-  hardware as the first AP's do.
 - **Open.** Whether the microcode encrypts a protected management frame:
   mac80211 does those (`IEEE80211_KEY_FLAG_SW_MGMT_TX`). TKIP would need the
   phase 1 key (`TkipPH1Key`), `AMIC` and the RX TKIP table, whose place on
