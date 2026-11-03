@@ -118,3 +118,10 @@ its `README.md` has the details:
 - the check's gate logged from inside b43 (`cac-gate/`): keyed on `conf->radar_enabled` it never closed, MACCTL
   kept the AP bit through the check; keyed on an AP on a radar channel that does not beacon yet, it did;
 - the in-service and in-check detections (`inservice/`, `cac/`) and the scripts.
+
+## Group keys of a further BSS (2026-11-04)
+
+`mbss-keys.zip`: `wl` 7.14 with two WPA2 BSSes on the 5 GHz radio (DD-WRT's own `wl1_vifs` setup), a station on each.
+The first BSS's group key goes to the group entries of the key index block by key ID; the further BSS's to the next
+free per-row entry (4 + row), whose address match row has the zero address and flags `0x8004`. Its `README.md` has
+the writes.
