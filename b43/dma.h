@@ -204,9 +204,18 @@ struct b43_dmadesc_meta {
 	struct sk_buff *skb;
 	/* DMA base bus-address of the descriptor buffer. */
 	dma_addr_t dmaaddr;
+	/* TX: bytes mapped for a data slot, 0 for the slot of the header. */
+	unsigned int len;
 	/* ieee80211 TX status. Only used once per 802.11 frag. */
 	bool is_last_fragment;
 };
+
+/*
+ * Most buffers of one TX frame (mac80211's max_tx_fragments): the head of
+ * an A-MSDU and the subframes on its frag_list, each in a slot of its own
+ * after the slot of the TX header.
+ */
+#define B43_TX_MAX_FRAGS	8
 
 struct b43_dmaring;
 
