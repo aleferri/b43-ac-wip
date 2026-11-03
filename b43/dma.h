@@ -204,7 +204,7 @@ struct b43_dmadesc_meta {
 	struct sk_buff *skb;
 	/* DMA base bus-address of the descriptor buffer. */
 	dma_addr_t dmaaddr;
-	/* TX: bytes mapped for a data slot, 0 for the slot of the header. */
+	/* TX: bytes mapped for the slot, 0 when nothing is. */
 	unsigned int len;
 	/* ieee80211 TX status. Only used once per 802.11 frag. */
 	bool is_last_fragment;

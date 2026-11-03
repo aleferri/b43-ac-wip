@@ -495,6 +495,9 @@ int b43_pio_tx(struct b43_wldev *dev, struct sk_buff *skb)
 	int err = 0;
 	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
 
+	/* The queue is written from skb->data, skb->len bytes. */
+	if (skb_linearize(skb))
+		return -ENOMEM;
 	hdr = (struct ieee80211_hdr *)skb->data;
 
 	if (info->flags & IEEE80211_TX_CTL_SEND_AFTER_DTIM) {
