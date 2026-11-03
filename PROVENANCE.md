@@ -113,3 +113,18 @@ and the stock ASUS firmware. A read-back value is not a captured write: the
 it by wl is known.
 
 **TODO:** the download URL of the DD-WRT image was not recorded.
+
+## RT-AC66U B1 — radar detector and pulse matching (`radar_ac.c`, `b43_phy_ac_radar_arm()`)
+
+No binary was read for these. The detector's arm block, its order and the
+blanking cell are writes of the DD-WRT `wl` above with its radar on
+(`WLC_SET_RADAR`), recorded with `wl-mmio-trap` (`radar-on-5g52` in
+`router-data/rt-ac66u-b1/radar-fifo.zip`); the off values are PHY read-backs
+under the same `wl` with the radar off. That SHM 0x0066 and HOSTF1 bit 13 are
+the blanking, and that they need each other, is a live A/B on b43 (writes
+through `/dev/mem`, FIFO levels read back). The FIFO word layout was decoded
+against known pulses from a HackRF One (same zip, `README.md`). The radar
+types are the short-pulse test signals of ETSI EN 301 893 (Table D.4,
+reference DFS test signals 1-4) and FCC KDB 905462 D02 (Table 5, radar types
+0-4); the matching code was written for b43 and takes no code from another
+driver.

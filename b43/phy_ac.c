@@ -352,6 +352,7 @@ static void b43_phy_ac_radio_percore_setup_1(struct b43_wldev *dev);
 static void b43_phy_ac_tx_gain_bbmult_load(struct b43_wldev *dev);
 static bool b43_phy_ac_may_calibrate_tx(struct b43_wldev *dev);
 static void b43_phy_ac_radar_thresh(struct b43_wldev *dev);
+static void b43_phy_ac_radar_arm(struct b43_wldev *dev, bool on);
 
 /*
  * Warn once per call site that the driver writes something it cannot
@@ -5486,10 +5487,11 @@ static void b43_phy_ac_txpwrctrl_enable(struct b43_wldev *dev)
 	/* ADC config. */
 	b43_phy_write(dev, 0x0339, 0x0fff);
 	/*
-	 * Clear MHF slot 0 bit 13 through b43_phy_ac_mhf_maskset():
+	 * The radar detector, armed or not. Not armed is MHF slot 0 bit 13
+	 * (B43_HF_RADARW) clear through b43_phy_ac_mhf_maskset():
 	 * b43_hf_write() covers three slots, the AC-PHY uses five.
 	 */
-	b43_phy_ac_mhf_maskset(dev, 0, (u16)~0x2000, 0x0000);
+	b43_phy_ac_radar_arm(dev, dev->radar_arm);
 
 	/*
 	 * ADC config: 0x03ac/0x032c, then, from the second bring-up on, a
@@ -10449,7 +10451,10 @@ void b43_phy_ac_rxiqcal_finalize(struct b43_wldev *dev, u16 gate)
  * wl 6.30 on the DSL-3580L writes 0x08 and the FIFOs fill continuously up
  * to saturation, while wl 7.14 on the d6220 writes 0x0f and on about 22700
  * reads of both sweeps they are always empty. 7.14's value is used on every
- * board. The unit is dB-related; two values do not tell the step.
+ * board. The d6220's were empty because its radar was off: the FIFOs fill
+ * only with the detector armed (b43_phy_ac_radar_arm()), and armed, bits
+ * 13:8 from 0x04 to 0x15 change neither FIFO's sensitivity to known pulses
+ * on the RT-AC66U B1.
  */
 static void b43_phy_ac_radar_thresh(struct b43_wldev *dev)
 {
@@ -10472,91 +10477,130 @@ static void b43_phy_ac_radar_thresh(struct b43_wldev *dev)
  *
  * 0x0251 and 0x0252 are the fill levels in 16-bit words of the two radar
  * pulse FIFOs, 0x0253 and 0x0254 their data ports: four words a pulse, the
- * levels saturating at 0x05fc.
+ * levels saturating at 0x05fc. radar_ac.c has the decode and the matching.
  */
-#define B43_PHY_AC_RADAR_FIFO_WORDS	0x0600
 
 /*
- * The radar test. Of the four words of a pulse only the first is decoded,
- * a coarse timestamp of about 1220 steps a second (0.82 ms): on the
- * agcombo's 7.14.43 at this threshold (vd625-agcombo/bss-up.zip, ch100/80)
- * it rises on every consecutive pair. Fine time, width and chirp are not
- * established, so the pulses cannot be matched against the radar types.
+ * The radar detector armed or not, where the stock driver writes it on every
+ * channel bring-up: after the ADC config write of 0x0339, before the 0x033a
+ * ladder. Traced on the RT-AC66U B1 under wl 7.14.164.18 at ch 52/80 with
+ * the radar on (router-data/rt-ac66u-b1/radar-fifo.zip, radar-on-5g52, ops
+ * #10437-#10453):
  *
- * What the stock driver let pass is known: over 175 s of that capture, 182
- * pulses, at most 16 distinct within any 100 ms, and it kept the channel.
- * A radar is B43_PHY_AC_RADAR_PULSES distinct pulses within 100 ms
- * (B43_PHY_AC_RADAR_WINDOW steps), one more; bursts of fewer pulses go
- * unseen, and the window catches a burst split across two polls. The
- * timestamp wraps every 54 s and polls come every 150 ms, so a timestamp
- * below the last one is a wrap.
+ *   PHY 025b 0261 0262 0263 0250 0255 0256 025d 0259 025f, SHM 0x0066,
+ *   PHY 025c 0260 0264, HOSTF1 bit 13 (B43_HF_RADARW) set
+ *
+ * Its bring-ups at ch 36 and ch 52 without the radar have none of it but the
+ * flag, cleared. The off values are wl's PHY read-back at ch 52/80 with the
+ * radar off, the on values the trace's; 025b, 025d, 0259 and 025f are the
+ * same both ways. 0x0250 and 0x0261-0x0263 double, as they do from 20 to 40
+ * MHz on 5 GHz, and 0x025c bit 0 goes on.
+ *
+ * Only 80 MHz is traced; the AP detects radars there only (b43_if_comb_dfs
+ * and dev->radar_arm in main.c).
+ *
+ * SHM 0x0066 and the flag blank the detector during the AP's own
+ * transmissions. On b43 at ch 36 with the PHY block in, idle, fifo 0 takes
+ * two entries every 102.4 ms, the beacon (0x18c words in 5 s); with SHM
+ * 0x0066 = 0x0030 and the flag, none; with SHM 0x0066 alone, the beacons
+ * again; with the flag and SHM 0x0066 at 0, both FIFOs saturate. So SHM goes
+ * before the flag on the way in, as wl writes them, and after it on the way
+ * out.
  */
-#define B43_PHY_AC_RADAR_WINDOW		122
+/*
+ * The way out writes back only what the arm alone changes: 0x0250 and
+ * 0x0261-0x0263 belong to the bandwidth setup, which writes them earlier in
+ * the same bring-up for the new width (bw_owned), and 025b, 025d, 0259 and
+ * 025f are the same both ways.
+ */
+static const struct {
+	u16 reg, on, off;
+	bool bw_owned;
+} b43_phy_ac_radar_block[] = {
+	{ 0x025b, 0x001f, 0x001f },
+	{ 0x0261, 0x0000, 0x0028, true },
+	{ 0x0262, 0x0320, 0x0190, true },
+	{ 0x0263, 0x0064, 0x0032, true },
+	{ 0x0250, 0xac64, 0xac32, true },
+	{ 0x0255, 0x06b8, 0x06a8 },
+	{ 0x0256, 0x0030, 0x0040 },
+	{ 0x025d, 0x0000, 0x0000 },
+	{ 0x0259, 0x7f09, 0x7f09 },
+	{ 0x025f, 0x5f88, 0x5f88 },
+	/* SHM 0x0066 */
+	{ 0x025c, 0x0001, 0x0000 },
+	{ 0x0260, 0x3206, 0x3207 },
+	{ 0x0264, 0x0141, 0x0040 },
+};
+#define B43_PHY_AC_RADAR_BLOCK_SHM	10
+#define B43_PHY_AC_RADAR_BLANK		0x0030
 
-static void b43_phy_ac_radar_pulse(struct b43_phy_ac *ac, u16 stamp)
+static void b43_phy_ac_radar_arm(struct b43_wldev *dev, bool on)
 {
-	u32 ts, oldest = 0;
-	unsigned int i, keep;
+	struct b43_phy_ac *ac = dev->phy.ac;
+	unsigned int i;
 
-	if (stamp < ac->radar_last)
-		ac->radar_wrap += 0x10000;
-	ac->radar_last = stamp;
-	ts = ac->radar_wrap + stamp;
+	if (!on) {
+		b43_phy_ac_mhf_maskset(dev, 0, (u16)~B43_HF_RADARW, 0);
+		/*
+		 * A bring-up without the radar writes only the flag; what the
+		 * arm changed goes back only after an arm.
+		 */
+		if (!ac->radar_armed)
+			return;
+		b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_RADAR, 0);
+		for (i = 0; i < ARRAY_SIZE(b43_phy_ac_radar_block); i++)
+			if (!b43_phy_ac_radar_block[i].bw_owned &&
+			    b43_phy_ac_radar_block[i].on !=
+			    b43_phy_ac_radar_block[i].off)
+				b43_phy_write(dev,
+					      b43_phy_ac_radar_block[i].reg,
+					      b43_phy_ac_radar_block[i].off);
+		ac->radar_armed = false;
+		return;
+	}
 
-	if (ts > B43_PHY_AC_RADAR_WINDOW)
-		oldest = ts - B43_PHY_AC_RADAR_WINDOW;
-	for (keep = 0, i = 0; i < ac->radar_n; i++)
-		if (ac->radar_ts[i] >= oldest)
-			ac->radar_ts[keep++] = ac->radar_ts[i];
-	if (keep == ARRAY_SIZE(ac->radar_ts))
-		memmove(ac->radar_ts, ac->radar_ts + 1, --keep * sizeof(u32));
-	ac->radar_ts[keep++] = ts;
-	ac->radar_n = keep;
-
-	if (keep >= B43_PHY_AC_RADAR_PULSES)
-		ac->radar_pulses = true;
+	B43_AC_FN();
+	for (i = 0; i < ARRAY_SIZE(b43_phy_ac_radar_block); i++) {
+		if (i == B43_PHY_AC_RADAR_BLOCK_SHM)
+			b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_RADAR,
+					B43_PHY_AC_RADAR_BLANK);
+		b43_phy_write(dev, b43_phy_ac_radar_block[i].reg,
+			      b43_phy_ac_radar_block[i].on);
+	}
+	b43_phy_ac_mhf_maskset(dev, 0, (u16)~B43_HF_RADARW, B43_HF_RADARW);
+	ac->radar_armed = true;
+	b43_radar_reset(&ac->radar);
 }
 
 /*
- * One poll's pulses. Those of the second FIFO within a step of one of the
- * first's are its pulses again; past B43_PHY_AC_RADAR_POLL_PULSES in the
- * first the poll alone is a radar, so no more are kept for the comparison.
+ * One FIFO drained: all the words its level says, as the stock driver reads
+ * them, decoded four at a time.
  */
-#define B43_PHY_AC_RADAR_POLL_PULSES	32
-
-static void b43_phy_ac_radar_fifos(struct b43_wldev *dev, u16 level0,
-				   u16 level1)
+static void b43_phy_ac_radar_fifo(struct b43_wldev *dev, unsigned int fifo,
+				  u16 level)
 {
-	u16 first[B43_PHY_AC_RADAR_POLL_PULSES];
-	unsigned int nfirst = 0, i, j;
-	u16 n0 = min_t(u16, level0, B43_PHY_AC_RADAR_FIFO_WORDS);
-	u16 n1 = min_t(u16, level1, B43_PHY_AC_RADAR_FIFO_WORDS);
+	u16 n = min_t(u16, level, B43_RADAR_FIFO_WORDS);
+	u16 port = fifo ? 0x0254 : 0x0253;
+	u16 w[4];
+	unsigned int i;
 
-	for (i = 0; i < n0; i++) {
-		u16 w = b43_phy_read(dev, 0x0253);
-
-		if (i % 4 || n0 - i < 4)
-			continue;
-		if (nfirst < ARRAY_SIZE(first))
-			first[nfirst++] = w;
-		b43_phy_ac_radar_pulse(dev->phy.ac, w);
-	}
-	for (i = 0; i < n1; i++) {
-		u16 w = b43_phy_read(dev, 0x0254);
-		bool again = false;
-
-		if (i % 4 || n1 - i < 4)
-			continue;
-		for (j = 0; j < nfirst; j++)
-			again |= (u16)(w - first[j] + 1) <= 2;
-		if (!again)
-			b43_phy_ac_radar_pulse(dev->phy.ac, w);
+	for (i = 0; i < n; i++) {
+		w[i % 4] = b43_phy_read(dev, port);
+		if (i % 4 == 3)
+			b43_radar_entry(&dev->phy.ac->radar, fifo, w);
 	}
 }
 
-static void b43_phy_ac_cac_poll(struct b43_wldev *dev, unsigned int turns)
+/*
+ * A turn: the levels, the FIFOs drained, the pulses matched. Returns whether
+ * they matched a radar type.
+ */
+static bool b43_phy_ac_cac_poll(struct b43_wldev *dev)
 {
-	unsigned int i;
+	struct b43_phy_ac *ac = dev->phy.ac;
+	const struct b43_radar_type *t;
+	u16 level0, level1;
 
 	/*
 	 * The duty alone, not the calibration gate: the poll is in-service
@@ -10565,28 +10609,32 @@ static void b43_phy_ac_cac_poll(struct b43_wldev *dev, unsigned int turns)
 	 * +73.6 s).
 	 */
 	if (!b43_phy_ac_chan_has_radar_duty(dev))
-		return;
+		return false;
 
 	B43_AC_FN();
-	for (i = 0; i < turns; i++) {
-		u16 level0, level1;
+	b43_mac_suspend(dev);
+	level0 = b43_phy_read_log(dev, 0x0251);
+	level1 = b43_phy_read_log(dev, 0x0252);
+	b43_phy_ac_radar_fifo(dev, 0, level0);
+	b43_phy_ac_radar_fifo(dev, 1, level1);
+	b43_mac_enable(dev);
 
-		b43_mac_suspend(dev);
-		level0 = b43_phy_read_log(dev, 0x0251);
-		level1 = b43_phy_read_log(dev, 0x0252);
-		b43_phy_ac_radar_fifos(dev, level0, level1);
-		b43_mac_enable(dev);
-	}
+	if (!ac->radar_armed)
+		return false;
+	t = b43_radar_match(&ac->radar);
+	if (t)
+		b43info(dev->wl, "radar: %s pulses\n", b43_radar_type_name(t));
+	return !!t;
 }
 
 bool b43_phy_ac_radar_poll(struct b43_wldev *dev)
 {
-	bool seen;
-
-	b43_phy_ac_cac_poll(dev, 1);
-	seen = dev->phy.ac->radar_pulses;
-	dev->phy.ac->radar_pulses = false;
-	return seen;
+	/*
+	 * Drained in any case; reported only while mac80211 asks for radar
+	 * detection, read here because it does not always say so on a
+	 * config call (b43_radar_work_handler()).
+	 */
+	return b43_phy_ac_cac_poll(dev) && dev->wl->hw->conf.radar_enabled;
 }
 
 /* Arm the check, and the turn that goes with it. */
@@ -10598,7 +10646,7 @@ static void b43_phy_ac_cac_arm(struct b43_wldev *dev)
 	B43_AC_FN();
 	b43_phy_ac_radar_thresh(dev);
 	B43_AC_CORE_SITE(dev, CAC_CLOSE);
-	b43_phy_ac_cac_poll(dev, 1);
+	b43_phy_ac_cac_poll(dev);
 }
 
 /*
@@ -10921,7 +10969,8 @@ static int b43_phy_ac_op_switch_channel(struct b43_wldev *dev, unsigned int new_
 	if (dev->phy.ac->tuned &&
 	    dev->phy.ac->cal_channel == channel->hw_value &&
 	    dev->phy.ac->cal_width == width &&
-	    dev->phy.ac->cac_pending == dev->cac_pending)
+	    dev->phy.ac->cac_pending == dev->cac_pending &&
+	    dev->phy.ac->radar_armed == dev->radar_arm)
 		return 0;
 
 	/*
