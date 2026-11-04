@@ -90,8 +90,7 @@
  * below it on short pulses. There an entry is also taken as coherent only
  * with w3 7:4 at 2 (router-data/rt-ac66u-b1/radar-20mhz.zip, 52/20): 0 of
  * the 142 entries of five noise runs, 2 to 30 us long, have both; 20-100
- * entries of each radar test signal do, ETSI 3 aside (its entries there
- * read as garble, with any w3 7:4 and w2 15:8 low).
+ * entries of each radar test signal do, one a pulse.
  */
 #define B43_RADAR_COHERENT	0xc0
 

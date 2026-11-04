@@ -286,11 +286,12 @@ station (`archer-t5e/mmiotrace.zip`); the field names are `d11.h`'s.
 
 Open, for `CONFIG_B43_DFS` (`b43_phy_ac_radar_arm()`, `b43/radar_ac.c`):
 
-- ETSI 3 at 20 MHz (2.4 us at 3741 Hz, `rt-ac66u-b1/radar-20mhz.zip`) is
-  not matched: its burst reads as 713 entries of garble (any `w3 >> 4`,
-  `w2 >> 8` low), where every other test signal reads one entry a pulse
-  in each FIFO. Whether the detector setup differs at that PRF, or the
-  pulses overlap the AP's own frames, is not known.
+- A continuous carrier floods the FIFOs: in 2 of some 45 runs
+  (`rt-ac66u-b1/radar-20mhz.zip` `etsi3-flooded`, and fifo 0 of the FCC 5
+  run in `radar-long.zip`) both FIFOs filled with 23-27 us entries 28.8 us
+  apart, as a CW long pulse reads, `w2 >> 8` low, and a burst played then
+  was lost. The source is not known (the HackRF sending zeros gives none).
+  Whether `wl` resets or blanks the detector on a full FIFO is not traced.
 - 160 MHz is not offered at all, and the detector is not traced there.
 - FCC 5 (1-3 pulses of 50-100 us a burst, 8-20 bursts over 12 s, chirped
   by 5-20 MHz) is not matched. The FIFOs do not read its pulses as long

@@ -56,9 +56,9 @@ done
 for w in 20 40; do
 	n=$(expect none -w $w "$W"/widths/fifo-$w/w$w-noise10.txt); fail=$((fail + n))
 done
-# 20 MHz in service (radar-20mhz.zip): the noise bursts are not a radar in any
-# region, every test signal is one with all types, but ETSI 3 (not matched at
-# 20 MHz: its entries read as garble).
+# 20 MHz in service (radar-20mhz.zip): the noise bursts and the HackRF
+# sending nothing are not a radar in any region, every test signal is one
+# with all types (etsi3-flooded aside: a carrier filled the FIFOs over it).
 mkdir -p "$W/w20"
 unzip -q -d "$W/w20" "$REPO/router-data/rt-ac66u-b1/radar-20mhz.zip" 'fifo/*.txt'
 for f in "$W"/w20/fifo/*.txt; do
@@ -66,9 +66,10 @@ for f in "$W"/w20/fifo/*.txt; do
 		"$f" > "${f%.txt}.rp"
 done
 for r in all fcc etsi; do
-	n=$(expect none -w 20 -r $r "$W"/w20/fifo/noise*.rp); fail=$((fail + n))
+	n=$(expect none -w 20 -r $r "$W"/w20/fifo/noise*.rp "$W"/w20/fifo/silent*.rp)
+	fail=$((fail + n))
 done
-n=$(expect radar -w 20 $(ls "$W"/w20/fifo/*.rp | grep -v -e /noise -e /etsi3 -e /summary)); fail=$((fail + n))
+n=$(expect radar -w 20 $(ls "$W"/w20/fifo/*.rp | grep -v -e /noise -e /silent -e /etsi3-flooded -e /summary)); fail=$((fail + n))
 
 if [ "$fail" -ne 0 ]; then
 	echo "$fail failed"

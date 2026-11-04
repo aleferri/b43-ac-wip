@@ -216,8 +216,8 @@ How the pieces fit is in [`docs/driver-status.md`](docs/driver-status.md).
   detector as the stock driver does and matches the pulses against the
   types of the regulatory domain's DFS region, ETSI EN 301 893 (1-6) or
   FCC KDB 905462 (0-4, 6) (`b43/radar_ac.c`), at 20, 40 and 80 MHz; FCC 5
-  is not matched (its chirped pulses do not read as long), nor ETSI 3 at
-  20 MHz (`docs/retrace-todo.md`, "Radar pulses").
+  is not matched (its chirped pulses do not read as long)
+  (`docs/retrace-todo.md`, "Radar pulses").
 - Probe-response offload and the power management queue: deliberately off, see
   `docs/retrace-todo.md`.
 - A-MSDUs inside A-MPDUs on RX and beamforming on an open BSS: HT MCS go
