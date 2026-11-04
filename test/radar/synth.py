@@ -10,8 +10,9 @@ FIFOs read known pulses (router-data/rt-ac66u-b1/radar-fifo.zip):
 - times in 12.5 ns units, +-4 units of jitter, from a random start (so that
   some bursts cross the 32-bit wrap);
 - widths in 0.2 us units: pulses under 1.5 us read 1.2-2.0 us, longer ones
-  0-0.2 us over; fifo 1 one unit more; pulses past 27 us split in two entries
-  (27.0 us, and 28.8 us after the start the rest);
+  0-0.2 us over; fifo 1 one unit more; pulses past 27 us split in entries
+  28.8 us apart, each 27.0 us but the last (as CW pulses of 50, 80 and 100 us
+  read, radar-long.zip);
 - a fraction of the pulses missed (MISS, default 0.3), each FIFO on its own;
 - read in polls every 150 ms, at a random phase.
 """
@@ -56,7 +57,12 @@ def entries(t_us, pw, rnd):
     ts = int(t_us * TICKS_US) + rnd.randint(-4, 4)
     if pw <= 27:
         return [(ts, width_units(pw, rnd))]
-    return [(ts, 135), (ts + int(28.8 * TICKS_US), max(1, round((pw - 28.8) * 5) + 1))]
+    out, off = [], 0.0
+    while pw - off > 27:
+        out.append((ts + int(off * TICKS_US), 135))
+        off += 28.8
+    out.append((ts + int(off * TICKS_US), max(1, round((pw - off) * 5) + 1)))
+    return out
 
 
 def write(path, pulses, rnd, miss):
@@ -112,6 +118,18 @@ def staggered(kind, rnd):
     return out
 
 
+def fcc6(rnd, mhz=80):
+    """FCC 6 (Table 7): 1 us pulses at 333 us, 9 a hop, a hop every 3 ms over
+    475 MHz for 300 ms; only the hops that fall in the channel are seen."""
+    out = []
+    for h in range(100):
+        if rnd.random() >= mhz / 475:
+            continue
+        for i in range(9):
+            out.append((h * 3000 + i * 333.3, 1.0))
+    return out
+
+
 def noise(rate, rnd, secs=60):
     t, out = 0.0, []
     while t < secs * 1e6:
@@ -129,6 +147,10 @@ def main():
         for s in range(seeds):
             rnd = random.Random(f'{kind}-{s}')
             write(f'{out}/{kind}-{s}.txt', burst(kind, rnd), rnd, miss)
+    for kind, gen in (('fcc6', fcc6),):
+        for s in range(seeds):
+            rnd = random.Random(f'{kind}-{s}')
+            write(f'{out}/{kind}-{s}.txt', gen(rnd), rnd, miss)
     for kind in STAGGERED:
         for s in range(seeds):
             rnd = random.Random(f'{kind}-{s}')

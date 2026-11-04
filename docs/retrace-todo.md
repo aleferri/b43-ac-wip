@@ -291,10 +291,17 @@ Open, for `CONFIG_B43_DFS` (`b43_phy_ac_radar_arm()`, `b43/radar_ac.c`):
   is a radar (`noise10` of `radar-widths.zip` matches ETSI 2); at 40 and 80
   MHz it is not.
 - 160 MHz is not offered at all, and the detector is not traced there.
-- FCC 5 (long chirped pulses, 1-3 a burst, 8-20 bursts over 12 s) is not
-  matched: the matcher empties its history after a poll without a pulse,
-  so a type spread over seconds needs state of its own. FCC 6 (frequency
-  hopping, 9 pulses of 1 us at 333 us a hop) is not matched either.
+- FCC 5 (1-3 pulses of 50-100 us a burst, 8-20 bursts over 12 s, chirped
+  by 5-20 MHz) is not matched. The FIFOs do not read its pulses as long
+  (`rt-ac66u-b1/radar-long.zip`, b43 at 52/80): CW pulses of 50-100 us come
+  in parts 28.8 us apart (27.0 us each, the rest in the last), but chirped
+  ones as one entry, 80 us chirped by 10 MHz as 28.8 us and FCC 5's 63 and
+  69 us pulses chirped by 13.5 MHz as 11.6 and 17.8 us, all at `w2 >> 8`
+  0xff. A long pulse is then not told by its width from a short one; what
+  else in the entry tells a chirp (`w1 >> 12` reads 0xe-0xf on the chirped
+  80 us pulses, 0xb-0xd on CW ones) and how `wl` matches FCC 5 is not
+  traced. The matcher also empties its history after a poll without a
+  pulse, so a type spread over 12 s needs state of its own.
 - JP: the regions other than FCC and ETSI match both regions' types; the JP
   test signals are not checked against them.
 - What `w2 >> 8` measures is not known; the 0xc0 cut is from one board's

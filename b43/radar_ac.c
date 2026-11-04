@@ -5,8 +5,9 @@
  *
  * The pulses of the two radar FIFOs (see radar_ac.h) are matched against the
  * short-pulse radar test signals of ETSI EN 301 893 (reference DFS test
- * signals 1-6, Table D.4) and FCC KDB 905462 D02 (radar types 0-4, Table 5):
- * a burst of pulses of one width at one pulse repetition interval. A pulse
+ * signals 1-6, Table D.4) and FCC KDB 905462 D02 (radar types 0-4 and 6,
+ * Tables 5 and 7): a burst of pulses of one width at one pulse repetition
+ * interval. A pulse
  * that fits a type's width is the end of a candidate train with every
  * earlier pulse in that type's PRI range; the train is the pulses at whole
  * multiples of that interval, so missed pulses leave gaps but do not break
@@ -16,10 +17,14 @@
  * turn, so each third or second pulse is on a train at their sum: those
  * types are matched at that interval.
  *
+ * FCC 6 hops over 475 MHz every 3 ms with 9 pulses a hop: each hop that
+ * falls in the channel is a train of its own.
+ *
  * Only pulses that w2 15:8 says are coherent are matched (see
  * B43_RADAR_COHERENT), and only the types of the regulatory domain's DFS
  * region (struct b43_radar's region). Not matched: FCC 5 (long chirped
- * pulses in bursts over 12 s) and FCC 6 (frequency hopping).
+ * pulses in bursts over 12 s), whose pulses the FIFOs do not read as long
+ * (docs/retrace-todo.md, "Radar pulses").
  */
 
 #include <linux/kernel.h>
@@ -45,9 +50,10 @@
 #define B43_RADAR_SAME		B43_RADAR_US(2)
 
 /*
- * A pulse longer than about 27 us comes as two entries: 50 us as 27.0 us and,
- * 28.8 us after its start, 21.2 us. The second starts within this gap of the
- * end of a first that long.
+ * A CW pulse longer than about 27 us comes in parts 28.8 us apart: 50 us as
+ * 27.0 and 21.2 us, 80 us as 27.0, 26.8 and 22.4 us, 100 us as 27.0, 26.8,
+ * 26.8 and 13.8 us (router-data/rt-ac66u-b1/radar-long.zip). Each part
+ * starts within this gap of the end of the pulse so far.
  */
 #define B43_RADAR_SPLIT_WIDTH	125
 #define B43_RADAR_SPLIT_GAP	B43_RADAR_US(3)
@@ -126,6 +132,8 @@ struct b43_radar_type {
  *   FCC 2     1-5       150-230     23-29    29 x 230 us
  *   FCC 3     6-10      200-500     16-18    18 x 500 us
  *   FCC 4     11-20     200-500     12-16    16 x 500 us
+ *   FCC 6     1         333         9 a hop  9 x 333 us (one hop, of a
+ *                                            hop every 3 ms over 475 MHz)
  *   ETSI 1    0.5-5     1000-5000   10       10 x 5000 us (200-1000 pps)
  *   ETSI 2    0.5-15    625-5000    15       15 x 5000 us (200-1600 pps)
  *   ETSI 3    0.5-15    250-435     25       25 x 435 us (2300-4000 pps)
@@ -145,6 +153,7 @@ static const struct b43_radar_type b43_radar_types[] = {
 	B43_RADAR_TYPE(FCC,  "FCC 2",   10,  50,  150,  230,   7, 12),
 	B43_RADAR_TYPE(FCC,  "FCC 3",   60, 100,  200,  500,   9,  8),
 	B43_RADAR_TYPE(FCC,  "FCC 4",  110, 200,  200,  500,   8,  6),
+	B43_RADAR_TYPE(FCC,  "FCC 6",   10,  10,  325,  341,   4,  6),
 	B43_RADAR_TYPE(ETSI, "ETSI 1",   5,  50, 1000, 5000,  50,  5),
 	B43_RADAR_TYPE(ETSI, "ETSI 2",   5, 150,  625, 5000,  75,  8),
 	B43_RADAR_TYPE(ETSI, "ETSI 3",   5, 150,  250,  435,  11, 13),

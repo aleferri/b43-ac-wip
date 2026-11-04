@@ -39,7 +39,7 @@ n=$(expect radar "$W"/fifo/runs-wl/std-*.txt); fail=$((fail + n))
 n=$(expect none "$W/fifo/runs-b43/idle5s.txt" "$W/fifo/runs-b43/noise10.txt" \
 	"$W/agcombo.txt"); fail=$((fail + n))
 # Every type with all regions' types matched, and with only its region's.
-for t in fcc0 fcc1 fcc2 fcc3 fcc4 etsi1 etsi2 etsi3 etsi4 etsi5 etsi6; do
+for t in fcc0 fcc1 fcc2 fcc3 fcc4 fcc6 etsi1 etsi2 etsi3 etsi4 etsi5 etsi6; do
 	n=$(expect radar "$W"/syn/$t-*.txt); fail=$((fail + n))
 	n=$(expect radar -r "${t%%[0-9]*}" "$W"/syn/$t-*.txt); fail=$((fail + n))
 done
