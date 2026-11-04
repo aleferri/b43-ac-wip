@@ -169,9 +169,8 @@ config B43_DFS
 	  while the AP transmits, and polls its pulse FIFOs every 150 ms. The
 	  pulses are matched against the radar test signals of the regulatory
 	  domain's DFS region: ETSI EN 301 893 (1-6, the staggered 5 and 6
-	  included) or FCC KDB 905462 (types 0-4), both regions' where it is
-	  neither. Not matched: FCC type 5 (long chirped pulses) and type 6
-	  (frequency hopping).
+	  included) or FCC KDB 905462 (types 0-4 and 6), both regions' where
+	  it is neither. Not matched: FCC type 5 (long chirped pulses).
 
 	  Tested on the RT-AC66U B1 only, with pulses from an SDR; this is
 	  not a certified radar detector.
