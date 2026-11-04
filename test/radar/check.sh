@@ -46,15 +46,29 @@ done
 for r in all fcc etsi; do
 	n=$(expect none -r $r "$W"/syn/noise-*.txt); fail=$((fail + n))
 done
-# 20 and 40 MHz (radar-widths.zip): the noise bursts are left out at 20 MHz,
-# where w2 15:8 does not tell them from a radar's pulses.
+# 20 and 40 MHz (radar-widths.zip).
 for w in 20 40; do
 	F=$W/widths/fifo-$w/w$w
 	n=$(expect radar -w $w "$F"-etsi1.txt "$F"-pw1-pri1000.txt \
 		"$F"-pw5-pri1000.txt); fail=$((fail + n))
 	n=$(expect none -w $w "$F"-pw20-pri1000.txt); fail=$((fail + n))
 done
-n=$(expect none -w 40 "$W"/widths/fifo-40/w40-noise10.txt); fail=$((fail + n))
+for w in 20 40; do
+	n=$(expect none -w $w "$W"/widths/fifo-$w/w$w-noise10.txt); fail=$((fail + n))
+done
+# 20 MHz in service (radar-20mhz.zip): the noise bursts are not a radar in any
+# region, every test signal is one with all types, but ETSI 3 (not matched at
+# 20 MHz: its entries read as garble).
+mkdir -p "$W/w20"
+unzip -q -d "$W/w20" "$REPO/router-data/rt-ac66u-b1/radar-20mhz.zip" 'fifo/*.txt'
+for f in "$W"/w20/fifo/*.txt; do
+	sed -n -e 's/^b43-radar poll .*/poll/p' -e 's/^b43-radar \([01] .*\)/radar \1/p' \
+		"$f" > "${f%.txt}.rp"
+done
+for r in all fcc etsi; do
+	n=$(expect none -w 20 -r $r "$W"/w20/fifo/noise*.rp); fail=$((fail + n))
+done
+n=$(expect radar -w 20 $(ls "$W"/w20/fifo/*.rp | grep -v -e /noise -e /etsi3 -e /summary)); fail=$((fail + n))
 
 if [ "$fail" -ne 0 ]; then
 	echo "$fail failed"
