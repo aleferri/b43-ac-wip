@@ -119,8 +119,10 @@ it by wl is known.
 No binary was read for these. The detector's arm block, its order and the
 blanking cell are writes of the DD-WRT `wl` above with its radar on
 (`WLC_SET_RADAR`), recorded with `wl-mmio-trap` (`radar-on-5g52` in
-`router-data/rt-ac66u-b1/radar-fifo.zip`); the off values are PHY read-backs
-under the same `wl` with the radar off. That SHM 0x0066 and HOSTF1 bit 13 are
+`router-data/rt-ac66u-b1/radar-fifo.zip`, and at 20 and 40 MHz in
+`radar-widths.zip` with read-backs of the running AP); the off values are PHY
+read-backs under the same `wl` with the radar off. The FIFO units at 20 and
+40 MHz are from known pulses at those widths, logged by b43 (same zip). That SHM 0x0066 and HOSTF1 bit 13 are
 the blanking, and that they need each other, is a live A/B on b43 (writes
 through `/dev/mem`, FIFO levels read back). The FIFO word layout was decoded
 against known pulses from a HackRF One (same zip, `README.md`). The radar

@@ -125,3 +125,11 @@ its `README.md` has the details:
 The first BSS's group key goes to the group entries of the key index block by key ID; the further BSS's to the next
 free per-row entry (4 + row), whose address match row has the zero address and flags `0x8004`. Its `README.md` has
 the writes.
+
+## The radar detector at 20, 40 and 80 MHz (2026-11-03)
+
+`radar-widths.zip`: `wl` 7.14 arming its radar detector at 52/20, 52/40 and 52/80 (`wl-mmio-trap`, read-backs of the
+running AP), and b43's FIFO entries for known pulses from a HackRF at 52/20 and 52/40; its `README.md` has the
+details. The block is the same at every width, with 0x0250, 0x0262, 0x0263 (25/200/25 times the width over 20 MHz)
+and 0x025b (0x0008 / 0x0010 / 0x001f) following it; the FIFO's time and width units scale with the width (50 ns and
+0.8 us at 20 MHz, 25 ns and 0.4 us at 40).

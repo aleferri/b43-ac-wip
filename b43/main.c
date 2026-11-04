@@ -5496,16 +5496,24 @@ static bool b43_ac_cac_needed(struct b43_wl *wl,
 
 /*
  * Whether the AP on this channel detects radars: built with CONFIG_B43_DFS,
- * an AP, on a channel with the radar duty, at 80 MHz, the one width the
- * detector setup is traced at (b43_phy_ac_radar_arm()) and the one
+ * an AP, on a channel with the radar duty, at 20, 40 or 80 MHz, the widths
+ * the detector setup is traced at (b43_phy_ac_radar_arm()) and the ones
  * b43_if_comb_dfs lets cfg80211 check radars on.
  */
 static bool b43_ac_radar_arm_wanted(struct b43_wl *wl,
 				    const struct ieee80211_conf *conf)
 {
+	switch (conf->chandef.width) {
+	case NL80211_CHAN_WIDTH_20_NOHT:
+	case NL80211_CHAN_WIDTH_20:
+	case NL80211_CHAN_WIDTH_40:
+	case NL80211_CHAN_WIDTH_80:
+		break;
+	default:
+		return false;
+	}
 	return IS_ENABLED(CONFIG_B43_DFS) &&
 	       (conf->chandef.chan->flags & IEEE80211_CHAN_RADAR) &&
-	       conf->chandef.width == NL80211_CHAN_WIDTH_80 &&
 	       b43_is_mode(wl, NL80211_IFTYPE_AP);
 }
 
@@ -7273,7 +7281,10 @@ static const struct ieee80211_iface_combination b43_if_comb_dfs = {
 	.max_interfaces = B43_MBSS_MAX,
 	.num_different_channels = 1,
 	.beacon_int_infra_match = true,
-	.radar_detect_widths = BIT(NL80211_CHAN_WIDTH_80),
+	.radar_detect_widths = BIT(NL80211_CHAN_WIDTH_20_NOHT) |
+			       BIT(NL80211_CHAN_WIDTH_20) |
+			       BIT(NL80211_CHAN_WIDTH_40) |
+			       BIT(NL80211_CHAN_WIDTH_80),
 };
 
 /*
@@ -7457,11 +7468,11 @@ static int b43_setup_bands(struct b43_wldev *dev,
 	 * An AP on a radar channel needs the combination to say which widths
 	 * radar detection covers, or cfg80211 refuses the check. Behind
 	 * CONFIG_B43_DFS, as ath9k and ath10k do; the pulses are matched
-	 * against the short-pulse radar types (radar_ac.c). 80 MHz only: the
-	 * detector setup is traced at 80 MHz (b43_phy_ac_radar_arm()). It is
-	 * the one above with that width: the same APs on a radar channel as
-	 * on any other (detection is per channel), and on a channel without
-	 * radar duty cfg80211 does not look at the widths.
+	 * against the short-pulse radar types (radar_ac.c). 20, 40 and 80 MHz:
+	 * the widths the detector setup is traced at (b43_phy_ac_radar_arm()).
+	 * It is the one above with those widths: the same APs on a radar
+	 * channel as on any other (detection is per channel), and on a
+	 * channel without radar duty cfg80211 does not look at the widths.
 	 */
 	if (IS_ENABLED(CONFIG_B43_DFS) && have_5ghz_phy &&
 	    dev->phy.type == B43_PHYTYPE_AC && dev->phy.ops->radar_poll) {

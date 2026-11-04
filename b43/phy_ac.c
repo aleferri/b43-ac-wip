@@ -10492,12 +10492,15 @@ static void b43_phy_ac_radar_thresh(struct b43_wldev *dev)
  *
  * Its bring-ups at ch 36 and ch 52 without the radar have none of it but the
  * flag, cleared. The off values are wl's PHY read-back at ch 52/80 with the
- * radar off, the on values the trace's; 025b, 025d, 0259 and 025f are the
- * same both ways. 0x0250 and 0x0261-0x0263 double, as they do from 20 to 40
- * MHz on 5 GHz, and 0x025c bit 0 goes on.
+ * radar off, the on values the trace's; 025d, 0259 and 025f are the same
+ * both ways, and 0x025c bit 0 goes on.
  *
- * Only 80 MHz is traced; the AP detects radars there only (b43_if_comb_dfs
- * and dev->radar_arm in main.c).
+ * At 20 and 40 MHz (router-data/rt-ac66u-b1/radar-widths.zip, the same
+ * block in the same order, and read back on the running AP) four of them
+ * follow the width, 25/200/25 times the width over 20 MHz in 0x0250 (low
+ * byte), 0x0262 and 0x0263, and 0x025b 0x0008 / 0x0010 / 0x001f at 20 / 40
+ * / 80; 0x0261 is 0 at every width. 0x025b reads 0x001f with the radar
+ * off, the power-on value no bring-up without the radar writes.
  *
  * SHM 0x0066 and the flag blank the detector during the AP's own
  * transmissions. On b43 at ch 36 with the PHY block in, idle, fifo 0 takes
@@ -10517,6 +10520,7 @@ static const struct {
 	u16 reg, on, off;
 	bool bw_owned;
 } b43_phy_ac_radar_block[] = {
+	/* The on values of 025b, 0262, 0263 and 0250 are 80 MHz's. */
 	{ 0x025b, 0x001f, 0x001f },
 	{ 0x0261, 0x0000, 0x0028, true },
 	{ 0x0262, 0x0320, 0x0190, true },
@@ -10535,6 +10539,25 @@ static const struct {
 #define B43_PHY_AC_RADAR_BLOCK_SHM	10
 #define B43_PHY_AC_RADAR_BLANK		0x0030
 
+/* An entry's value with the radar on, at this channel's width. */
+static u16 b43_phy_ac_radar_on(struct b43_wldev *dev, unsigned int i)
+{
+	unsigned int bw = b43_phy_ac_bw_mhz(dev), k = bw / 20;
+
+	switch (b43_phy_ac_radar_block[i].reg) {
+	case 0x025b:
+		return bw == 80 ? 0x001f : 0x0008 * k;
+	case 0x0262:
+		return 200 * k;
+	case 0x0263:
+		return 25 * k;
+	case 0x0250:
+		return 0xac00 | 25 * k;
+	default:
+		return b43_phy_ac_radar_block[i].on;
+	}
+}
+
 static void b43_phy_ac_radar_arm(struct b43_wldev *dev, bool on)
 {
 	struct b43_phy_ac *ac = dev->phy.ac;
@@ -10549,10 +10572,15 @@ static void b43_phy_ac_radar_arm(struct b43_wldev *dev, bool on)
 		if (!ac->radar_armed)
 			return;
 		b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_RADAR, 0);
+		/*
+		 * 0x025b went in for the width of the arm, which may not be
+		 * this bring-up's: it goes back whatever the width.
+		 */
 		for (i = 0; i < ARRAY_SIZE(b43_phy_ac_radar_block); i++)
 			if (!b43_phy_ac_radar_block[i].bw_owned &&
-			    b43_phy_ac_radar_block[i].on !=
-			    b43_phy_ac_radar_block[i].off)
+			    (b43_phy_ac_radar_block[i].reg == 0x025b ||
+			     b43_phy_ac_radar_block[i].on !=
+			     b43_phy_ac_radar_block[i].off))
 				b43_phy_write(dev,
 					      b43_phy_ac_radar_block[i].reg,
 					      b43_phy_ac_radar_block[i].off);
@@ -10566,11 +10594,13 @@ static void b43_phy_ac_radar_arm(struct b43_wldev *dev, bool on)
 			b43_shm_write16(dev, B43_SHM_SHARED, B43_SHM_SH_RADAR,
 					B43_PHY_AC_RADAR_BLANK);
 		b43_phy_write(dev, b43_phy_ac_radar_block[i].reg,
-			      b43_phy_ac_radar_block[i].on);
+			      b43_phy_ac_radar_on(dev, i));
 	}
 	b43_phy_ac_mhf_maskset(dev, 0, (u16)~B43_HF_RADARW, B43_HF_RADARW);
 	ac->radar_armed = true;
 	b43_radar_reset(&ac->radar);
+	ac->radar.shift = b43_phy_ac_bw_mhz(dev) == 20 ? 2 :
+			  b43_phy_ac_bw_mhz(dev) == 40 ? 1 : 0;
 }
 
 /*
