@@ -631,6 +631,12 @@ static void b43_poison_rx_buffer(struct b43_dmaring *ring, struct sk_buff *skb)
  * A page pool hands out pieces of order-2 pages instead, three buffers a
  * page, and gets them back when the stack frees the frame. The driver
  * still maps each buffer itself.
+ *
+ * The buffer's size is the microcode's: its RX header layout
+ * (dev->fw.hdr_format) sets the frame offset and how long a frame may be.
+ * A ring whose buffer fits in a page with its skb_shared_info, as the 598
+ * and 351 layouts' do, gains nothing from a pool and keeps
+ * __dev_alloc_skb(); today only the AC layout's does not fit.
  */
 #if IS_ENABLED(CONFIG_PAGE_POOL)
 static unsigned int b43_rx_truesize(const struct b43_dmaring *ring)
@@ -649,6 +655,8 @@ static void b43_rx_pool_create(struct b43_dmaring *ring)
 	};
 	struct page_pool *pool;
 
+	if (b43_rx_truesize(ring) <= PAGE_SIZE)
+		return;
 	pool = page_pool_create(&pp);
 	if (IS_ERR(pool))
 		return;
