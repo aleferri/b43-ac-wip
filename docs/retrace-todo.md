@@ -300,8 +300,12 @@ Open, for `CONFIG_B43_DFS` (`b43_phy_ac_radar_arm()`, `b43/radar_ac.c`):
   0xff. A long pulse is then not told by its width from a short one; what
   else in the entry tells a chirp (`w1 >> 12` reads 0xe-0xf on the chirped
   80 us pulses, 0xb-0xd on CW ones) and how `wl` matches FCC 5 is not
-  traced. The matcher also empties its history after a poll without a
-  pulse, so a type spread over 12 s needs state of its own.
+  traced: `wl` 7.14.164.18 under DD-WRT r63734 does not run its radar
+  detection at all (`rt-ac66u-b1/wl-radar-idle.zip`: its DFS state stays
+  idle with radar and 802.11h on, also with `dfs_ism_monitor` 1, and the
+  armed FIFOs fill without a read), so another `wl` build is needed. The
+  matcher also empties its history after a poll without a pulse, so a
+  type spread over 12 s needs state of its own.
 - JP: the regions other than FCC and ETSI match both regions' types; the JP
   test signals are not checked against them.
 - What `w2 >> 8` measures is not known; the 0xc0 cut is from one board's

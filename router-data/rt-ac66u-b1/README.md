@@ -154,3 +154,10 @@ details.
 FCC 6 from a HackRF at 52/80, and the detector in service on FCC 5 and 6; its `README.md` has the table. A CW long
 pulse comes in parts 28.8 us apart; a chirped one as a single entry much shorter than the pulse (FCC 5's 63 and
 69 us pulses as 11.6 and 17.8 us).
+
+## wl's radar detection under DD-WRT: idle (2026-11-04)
+
+`wl-radar-idle.zip`: `wl` 7.14 at 52/80 with radar and 802.11h on, FCC 0 from a HackRF as a positive control.
+`wl` never reads its radar FIFOs (no access to 0x0251-0x0254 in the capture), its DFS state stays idle, also with
+`dfs_ism_monitor` set, and the armed FIFOs fill undrained. This build cannot show how `wl` judges FCC 5 or the
+20 MHz noise. Its raw `radarargs` is kept.
