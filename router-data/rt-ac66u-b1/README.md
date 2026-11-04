@@ -147,3 +147,10 @@ under US ETSI 5 is not, FCC 2 and the same FCC 4 burst are.
 the station's address in `0x0144`/`0x0148`, popped by a 16-bit write of `0x0002` to `0x0140`), and b43 run with and
 without the queue: no difference measured, many entries and no frame held back by it. Its `README.md` has the
 details.
+
+## Long pulses and FCC 5/6 in the radar FIFOs (2026-11-04)
+
+`radar-long.zip`: b43's radar FIFO entries for CW pulses of 50-100 us, an 80 us pulse chirped by 10 MHz, FCC 5 and
+FCC 6 from a HackRF at 52/80, and the detector in service on FCC 5 and 6; its `README.md` has the table. A CW long
+pulse comes in parts 28.8 us apart; a chirped one as a single entry much shorter than the pulse (FCC 5's 63 and
+69 us pulses as 11.6 and 17.8 us).
