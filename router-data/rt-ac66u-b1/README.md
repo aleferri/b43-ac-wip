@@ -161,3 +161,9 @@ pulse comes in parts 28.8 us apart; a chirped one as a single entry much shorter
 `wl` never reads its radar FIFOs (no access to 0x0251-0x0254 in the capture), its DFS state stays idle, also with
 `dfs_ism_monitor` set, and the armed FIFOs fill undrained. This build cannot show how `wl` judges FCC 5 or the
 20 MHz noise. Its raw `radarargs` is kept.
+
+## The radar FIFOs at 20 MHz: noise against the test signals (2026-11-04)
+
+`radar-20mhz.zip`: every FIFO entry b43 reads at 52/20 for five noise runs (2, 10 and 30 us bursts every
+1000 us) and the ETSI 1-6 and FCC 0, 2-4, 6 test signals from a HackRF. No noise entry has w3 7:4 at 2 with
+w2 15:8 at 0xc0 or more; 20-100 entries of each test signal do, ETSI 3 aside (its burst reads as garble).

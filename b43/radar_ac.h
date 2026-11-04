@@ -18,7 +18,8 @@
  *   w2 15:8   0xfd-0xff on every CW or chirped pulse at every level,
  *             0x00-0x87 on 31 of 32 noise pulses (see radar_ac.c)
  *   w3 3:0    time, in 1/16 of 0.2 us
- *   w3 7:4    2 on CW and chirped pulses, mostly 0 on noise (not used)
+ *   w3 7:4    2 on CW and chirped pulses, mostly 0 on noise (used at
+ *             20 MHz, see radar_ac.c)
  *
  * The time is a 32-bit count of 12.5 ns that wraps every 53.7 s.
  *

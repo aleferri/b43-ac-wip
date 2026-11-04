@@ -286,10 +286,11 @@ station (`archer-t5e/mmiotrace.zip`); the field names are `d11.h`'s.
 
 Open, for `CONFIG_B43_DFS` (`b43_phy_ac_radar_arm()`, `b43/radar_ac.c`):
 
-- 20 MHz noise: there `w2 >> 8` reads 0xe1-0xfb on fifo 1 on most noise
-  bursts as on radar pulses, so a train of noise bursts with a radar's PRI
-  is a radar (`noise10` of `radar-widths.zip` matches ETSI 2); at 40 and 80
-  MHz it is not.
+- ETSI 3 at 20 MHz (2.4 us at 3741 Hz, `rt-ac66u-b1/radar-20mhz.zip`) is
+  not matched: its burst reads as 713 entries of garble (any `w3 >> 4`,
+  `w2 >> 8` low), where every other test signal reads one entry a pulse
+  in each FIFO. Whether the detector setup differs at that PRF, or the
+  pulses overlap the AP's own frames, is not known.
 - 160 MHz is not offered at all, and the detector is not traced there.
 - FCC 5 (1-3 pulses of 50-100 us a burst, 8-20 bursts over 12 s, chirped
   by 5-20 MHz) is not matched. The FIFOs do not read its pulses as long

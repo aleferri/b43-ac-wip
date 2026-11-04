@@ -85,6 +85,13 @@
  * on the receiver's DC: 1.1 us pulses read 0x4c-0x9d there, longer ones come
  * as two 0.2 us entries at their edges; at 1 MHz off the centre they read as
  * anywhere else.
+ *
+ * At 20 MHz fifo 1 reads 0xc0 or more on most noise entries too, and fifo 0
+ * below it on short pulses. There an entry is also taken as coherent only
+ * with w3 7:4 at 2 (router-data/rt-ac66u-b1/radar-20mhz.zip, 52/20): 0 of
+ * the 142 entries of five noise runs, 2 to 30 us long, have both; 20-100
+ * entries of each radar test signal do, ETSI 3 aside (its entries there
+ * read as garble, with any w3 7:4 and w2 15:8 low).
  */
 #define B43_RADAR_COHERENT	0xc0
 
@@ -189,7 +196,8 @@ bool b43_radar_entry(struct b43_radar *r, unsigned int fifo, const u16 w[4])
 	p->ts = ((u32)w[0] << 16 | (u32)(w[1] & 0x0fff) << 4 |
 		 (w[3] & 0x000f)) << r->shift;
 	p->width = (w[2] & 0x00ff) << r->shift;
-	p->coherent = (w[2] >> 8) >= B43_RADAR_COHERENT;
+	p->coherent = (w[2] >> 8) >= B43_RADAR_COHERENT &&
+		      (r->shift != 2 || ((w[3] >> 4) & 0xf) == 2);
 	return true;
 }
 
