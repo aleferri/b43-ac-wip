@@ -35,6 +35,15 @@ TYPES = {
     'etsi4': (20, 30, 250, 500, 20, 20),
 }
 
+# Staggered PRF (ETSI EN 301 893 Table D.4, reference signals 5 and 6): the
+# pulses take 2 or 3 PRFs in turn, each PRF differing from the others by the
+# least spacing given, and each PRF has the count of pulses of a burst.
+# name: (width us lo, hi, PRF pps lo, hi, least PRF spacing, pulses per PRF)
+STAGGERED = {
+    'etsi5': (0.5, 2, 300, 400, 20, 10),
+    'etsi6': (0.5, 2, 400, 1200, 80, 15),
+}
+
 
 def width_units(pw, rnd):
     if pw < 1.5:
@@ -86,6 +95,23 @@ def burst(kind, rnd):
     return [(lead + i * pri, pw) for i in range(int(n))]
 
 
+def staggered(kind, rnd):
+    wlo, whi, flo, fhi, gap, per = STAGGERED[kind]
+    pw = rnd.uniform(wlo, whi)
+    nprf = rnd.choice((2, 3))
+    while True:
+        prfs = [rnd.uniform(flo, fhi) for _ in range(nprf)]
+        if all(abs(a - b) >= gap for i, a in enumerate(prfs) for b in prfs[i + 1:]):
+            break
+    pris = [1e6 / f for f in prfs]
+    t = rnd.uniform(0, 100000)
+    out = []
+    for i in range(per * nprf):
+        out.append((t, pw))
+        t += pris[i % nprf]
+    return out
+
+
 def noise(rate, rnd, secs=60):
     t, out = 0.0, []
     while t < secs * 1e6:
@@ -103,6 +129,10 @@ def main():
         for s in range(seeds):
             rnd = random.Random(f'{kind}-{s}')
             write(f'{out}/{kind}-{s}.txt', burst(kind, rnd), rnd, miss)
+    for kind in STAGGERED:
+        for s in range(seeds):
+            rnd = random.Random(f'{kind}-{s}')
+            write(f'{out}/{kind}-{s}.txt', staggered(kind, rnd), rnd, miss)
     for rate in (20, 100, 500, 2000):
         for s in range(3):
             rnd = random.Random(f'noise-{rate}-{s}')

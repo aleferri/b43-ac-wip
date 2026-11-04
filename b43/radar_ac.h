@@ -45,9 +45,21 @@ struct b43_radar_pulse {
 
 struct b43_radar_type;
 
+/*
+ * The radar types to match: those of the regulatory domain's DFS region,
+ * or all of them where it is neither FCC nor ETSI (unset, or JP, whose
+ * test signals the two regions' types cover).
+ */
+enum b43_radar_region {
+	B43_RADAR_ALL,
+	B43_RADAR_FCC,
+	B43_RADAR_ETSI,
+};
+
 struct b43_radar {
 	/* log2 of 80 MHz over the channel's width: 0, 1 or 2. */
 	unsigned int shift;
+	enum b43_radar_region region;
 	/* One poll's entries of each FIFO, decoded. */
 	struct b43_radar_pulse fifo[2][B43_RADAR_FIFO_PULSES];
 	unsigned int nfifo[2];

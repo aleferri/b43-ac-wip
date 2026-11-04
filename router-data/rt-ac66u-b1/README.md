@@ -133,3 +133,10 @@ running AP), and b43's FIFO entries for known pulses from a HackRF at 52/20 and 
 details. The block is the same at every width, with 0x0250, 0x0262, 0x0263 (25/200/25 times the width over 20 MHz)
 and 0x025b (0x0008 / 0x0010 / 0x001f) following it; the FIFO's time and width units scale with the width (50 ns and
 0.8 us at 20 MHz, 25 ns and 0.4 us at 40).
+
+## Radar types by DFS region, ETSI 5 and 6 (2026-11-04)
+
+`radar-regions.zip`: b43's detector at 52/80 with the country set to FI (ETSI) and to US (FCC), against ETSI 5
+and 6 (staggered PRF), FCC 2 and FCC 4 from a HackRF in service; its `README.md` has the table. Under FI the
+staggered bursts are a radar and FCC 4 at 12.2 us / 454 us is not, also with FI set before the module loads;
+under US ETSI 5 is not, FCC 2 and the same FCC 4 burst are.

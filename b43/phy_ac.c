@@ -10651,6 +10651,7 @@ static bool b43_phy_ac_cac_poll(struct b43_wldev *dev)
 
 	if (!ac->radar_armed)
 		return false;
+	ac->radar.region = READ_ONCE(dev->wl->radar_region);
 	t = b43_radar_match(&ac->radar);
 	if (t)
 		b43info(dev->wl, "radar: %s pulses\n", b43_radar_type_name(t));

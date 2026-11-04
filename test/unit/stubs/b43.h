@@ -280,6 +280,7 @@ struct b43_phy {
 
 struct b43_wl {
 	struct ieee80211_hw *hw;
+	u8 radar_region;
 };
 
 /* Come in-tree (b43.h). */

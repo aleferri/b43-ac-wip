@@ -9,9 +9,10 @@
 #    the stock driver kept the channel through: not a radar;
 #  - the runs at 20 and 40 MHz of radar-widths.zip: ETSI 1 and trains of 1
 #    and 5 us at 1000 us a radar, of 20 us not, the noise bursts not at 40;
-#  - synthetic bursts of every type, 100 each with 30 % of the pulses missed
-#    in each FIFO, all radars, and 60 s of random pulses at 20-2000 a second,
-#    none (synth.py).
+#  - synthetic bursts of every type, ETSI 5 and 6 (staggered) included, 100
+#    each with 30 % of the pulses missed in each FIFO, all radars with every
+#    region's types matched and with their own region's (replay -r), and 60 s
+#    of random pulses at 20-2000 a second, none in any region (synth.py).
 set -eu
 cd "$(dirname "$0")"
 REPO=../..
@@ -26,7 +27,7 @@ python3 -I agcombo.py "$W/agc/bss-up-ch100-bw80.txt" > "$W/agcombo.txt"
 MISS=0.3 SEEDS=100 python3 -I synth.py "$W/syn"
 
 fail=0
-expect() {	# expect radar|none [-w MHz] FILE...
+expect() {	# expect radar|none [-w MHz] [-r region] FILE...
 	want=$1; shift
 	./replay "$@" | grep -v '^  poll' | while read -r f got _; do
 		case $want:$got in
@@ -37,10 +38,14 @@ expect() {	# expect radar|none [-w MHz] FILE...
 n=$(expect radar "$W"/fifo/runs-wl/std-*.txt); fail=$((fail + n))
 n=$(expect none "$W/fifo/runs-b43/idle5s.txt" "$W/fifo/runs-b43/noise10.txt" \
 	"$W/agcombo.txt"); fail=$((fail + n))
-for t in fcc0 fcc1 fcc2 fcc3 fcc4 etsi1 etsi2 etsi3 etsi4; do
+# Every type with all regions' types matched, and with only its region's.
+for t in fcc0 fcc1 fcc2 fcc3 fcc4 etsi1 etsi2 etsi3 etsi4 etsi5 etsi6; do
 	n=$(expect radar "$W"/syn/$t-*.txt); fail=$((fail + n))
+	n=$(expect radar -r "${t%%[0-9]*}" "$W"/syn/$t-*.txt); fail=$((fail + n))
 done
-n=$(expect none "$W"/syn/noise-*.txt); fail=$((fail + n))
+for r in all fcc etsi; do
+	n=$(expect none -r $r "$W"/syn/noise-*.txt); fail=$((fail + n))
+done
 # 20 and 40 MHz (radar-widths.zip): the noise bursts are left out at 20 MHz,
 # where w2 15:8 does not tell them from a radar's pulses.
 for w in 20 40; do

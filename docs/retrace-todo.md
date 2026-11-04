@@ -291,9 +291,12 @@ Open, for `CONFIG_B43_DFS` (`b43_phy_ac_radar_arm()`, `b43/radar_ac.c`):
   is a radar (`noise10` of `radar-widths.zip` matches ETSI 2); at 40 and 80
   MHz it is not.
 - 160 MHz is not offered at all, and the detector is not traced there.
-- ETSI 5 and 6 (staggered PRF), FCC 5 (long chirped pulses, 1-3 a burst over
-  12 s) and FCC 6 (frequency hopping) are not matched.
-- The regulatory domain is not looked at: both regions' types are matched.
+- FCC 5 (long chirped pulses, 1-3 a burst, 8-20 bursts over 12 s) is not
+  matched: the matcher empties its history after a poll without a pulse,
+  so a type spread over seconds needs state of its own. FCC 6 (frequency
+  hopping, 9 pulses of 1 us at 333 us a hop) is not matched either.
+- JP: the regions other than FCC and ETSI match both regions' types; the JP
+  test signals are not checked against them.
 - What `w2 >> 8` measures is not known; the 0xc0 cut is from one board's
   runs (CW and chirped pulses all 0xfd-0xff, noise pulses one in 32 above).
   `w1 >> 12` (moves with frequency and chirp) and `w3 >> 4` are not used.
