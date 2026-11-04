@@ -3,6 +3,20 @@ From: Alessio Ferri <alessio.ferri.3012@gmail.com>
 Date: Fri, 2 Oct 2026 17:12:17 +0000
 Subject: [PATCH 1/2] b43: core support for the AC-PHY
 
+The b43 core for the AC-PHY cores (core rev 42, BCM4352 and BCM4360):
+what the core does differently outside the PHY. Built with
+CONFIG_B43_PHY_AC; the other PHYs keep their paths.
+
+- DMA: the AC core's RX header and buffer size; its RX buffers come from
+  a page pool, the other cores' as before;
+- TX: the AC TX header, A-MPDU aggregation, A-MSDUs, transmit
+  beamforming (off unless the txbf module parameter is set);
+- hardware keys of the AC core's key table;
+- AP: beacons and their PHY TX control, several BSSes on one radio, and
+  the radar handling behind CONFIG_B43_DFS;
+- LEDs: the SROM LED behaviour words on the chip's GPIOs;
+- Kconfig: B43_PHY_AC and B43_DFS.
+
 Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
 
 ---

@@ -3,6 +3,13 @@ From: Alessio Ferri <alessio.ferri.3012@gmail.com>
 Date: Fri, 2 Oct 2026 17:12:17 +0000
 Subject: [PATCH 2/2] b43: AC-PHY bring-up from the reverse-engineered port
 
+The AC-PHY rev 1 and the radio 2069 rev 4 themselves, reverse-engineered
+from MMIO traces of Broadcom's wl: the PHY and radio bring-up, channel
+switching on both bands at 20, 40 and 80 MHz, the calibrations, TX power
+control and its per-rate limits (ppr_ac), the radar FIFOs and their
+pulse matcher, and the PHY and radio tables. Built only with
+CONFIG_B43_PHY_AC.
+
 Signed-off-by: Alessio Ferri <alessio.ferri.3012@gmail.com>
 
 ---

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Rigenera le patch b43 per OpenWrt, patches/816-02 e 816-03, e le installa in
-# un albero OpenWrt.
+# un albero OpenWrt, con il commit di b43-ac-wip da cui vengono.
 #
 # Stanno sul b43 di backports con le patch di OpenWrt che lo precedono nel
 # pacchetto mac80211 (le brcm/ prima di 816 e le altre directory in ordine di
@@ -130,8 +130,15 @@ done
 carry_record "backports $VERSION"
 carry_done
 
+# Nell'albero OpenWrt ogni patch dice da quale commit viene, prima del
+# Signed-off-by.
+SRC=$(git -C "$REPO" rev-parse --short=7 HEAD)
 mkdir -p "$OUT_DIR"
 for p in $CARRY_PATCHES; do
-	cp "$p" "$OUT_DIR/"
+	awk -v src="$SRC" '!done && /^Signed-off-by:/ {
+		print "Generated from b43-ac-wip " src " by scripts/phase1-to-openwrt.sh."
+		print ""
+		done = 1
+	} { print }' "$p" > "$OUT_DIR/$(basename "$p")"
 	echo "  $(basename "$p")  ->  $OUT_DIR/"
 done
