@@ -20,11 +20,13 @@
  * FCC 6 hops over 475 MHz every 3 ms with 9 pulses a hop: each hop that
  * falls in the channel is a train of its own.
  *
+ * FCC 5 (Table 6, long pulses) has no train: 8 to 20 bursts of 1 to 3
+ * pulses 50-100 us wide over 12 s. Its bursts are counted over the last
+ * 12 s of polls (b43_radar_long()).
+ *
  * Only pulses that w2 15:8 says are coherent are matched (see
  * B43_RADAR_COHERENT), and only the types of the regulatory domain's DFS
- * region (struct b43_radar's region). Not matched: FCC 5 (long chirped
- * pulses in bursts over 12 s), whose pulses the FIFOs do not read as long
- * (docs/retrace-todo.md, "Radar pulses").
+ * region (struct b43_radar's region).
  */
 
 #include <linux/kernel.h>
@@ -52,11 +54,15 @@
 /*
  * A CW pulse longer than about 27 us comes in parts 28.8 us apart: 50 us as
  * 27.0 and 21.2 us, 80 us as 27.0, 26.8 and 22.4 us, 100 us as 27.0, 26.8,
- * 26.8 and 13.8 us (router-data/rt-ac66u-b1/radar-long.zip). Each part
- * starts within this gap of the end of the pulse so far.
+ * 26.8 and 13.8 us (router-data/rt-ac66u-b1/radar-long.zip; a chirped one
+ * comes whole, see radar_ac.h). An entry is taken as the next part of a
+ * pulse only when the part before it is a full 26.8-27.0 us and it starts
+ * 28.8 us after that part, within B43_RADAR_SPLIT_TOL (the CW runs: within
+ * 0.15 us): the next of two pulses that close is not a part.
  */
-#define B43_RADAR_SPLIT_WIDTH	125
-#define B43_RADAR_SPLIT_GAP	B43_RADAR_US(3)
+#define B43_RADAR_SPLIT_WIDTH	133
+#define B43_RADAR_SPLIT_STEP	(B43_RADAR_US(28) + B43_RADAR_TICKS_PER_US * 8 / 10)
+#define B43_RADAR_SPLIT_TOL	B43_RADAR_US(1)
 
 /*
  * The AP's own beacons, when its transmissions are not blanked, and other
@@ -88,7 +94,7 @@
  *
  * At 20 MHz fifo 1 reads 0xc0 or more on most noise entries too, and fifo 0
  * below it on short pulses. There an entry is also taken as coherent only
- * with w3 7:4 at 2 (router-data/rt-ac66u-b1/radar-20mhz.zip, 52/20): 0 of
+ * with w3 bit 5 set (router-data/rt-ac66u-b1/radar-20mhz.zip, 52/20): 0 of
  * the 142 entries of five noise runs, 2 to 30 us long, have both; 20-100
  * entries of each radar test signal do, one a pulse.
  */
@@ -179,6 +185,9 @@ void b43_radar_reset(struct b43_radar *r)
 	r->nfifo[1] = 0;
 	r->head = 0;
 	r->n = 0;
+	r->poll = 0;
+	r->long_head = 0;
+	r->long_n = 0;
 }
 
 bool b43_radar_entry(struct b43_radar *r, unsigned int fifo, const u16 w[4])
@@ -194,9 +203,9 @@ bool b43_radar_entry(struct b43_radar *r, unsigned int fifo, const u16 w[4])
 	 */
 	p->ts = ((u32)w[0] << 16 | (u32)(w[1] & 0x0fff) << 4 |
 		 (w[3] & 0x000f)) << r->shift;
-	p->width = (w[2] & 0x00ff) << r->shift;
+	p->width = ((w[2] & 0x00ff) | (w[3] & 0x0010) << 4) << r->shift;
 	p->coherent = (w[2] >> 8) >= B43_RADAR_COHERENT &&
-		      (r->shift != 2 || ((w[3] >> 4) & 0xf) == 2);
+		      (r->shift != 2 || (w[3] & 0x0020));
 	return true;
 }
 
@@ -281,6 +290,66 @@ static bool b43_radar_type_seen(const struct b43_radar *r,
 	return false;
 }
 
+/*
+ * FCC 5 (KDB 905462 D02 Table 6): over 12 s, 8 to 20 bursts, one in each
+ * of as many equal parts of it; a burst is 1 to 3 pulses of one width,
+ * 50-100 us, chirped by 5-20 MHz, 1000-2000 us apart. A chirped one comes
+ * as one entry as long as it is, a CW one in parts (both measured,
+ * router-data/rt-ac66u-b1/radar-fcc5.zip). A long pulse within
+ * B43_RADAR_LONG_GAP of the previous one, in this poll or the one before,
+ * is on its burst; any other starts a burst. The type is reported when
+ * B43_RADAR_LONG_NEED bursts started in the last 12 s: with the fewest
+ * bursts, 8, and one pulse a burst, 5 is what a detector that misses
+ * three in ten still reaches four times in five.
+ *
+ * A poll's FCC 5 burst is at most 3 pulses of 4 parts in both FIFOs, 24
+ * entries. A poll of more than B43_RADAR_LONG_BUSY entries does not count
+ * its long pulses: random pulses up to 40 us wide at 2000 a second make
+ * 2-3 long ones a second of parts of close short ones, and a carrier that
+ * fills both FIFOs (twice in 180 s idle at 52/80, radar-fcc5.zip) reads
+ * as runs of parts and long entries.
+ */
+static const struct b43_radar_type b43_radar_fcc5 = {
+	.name = "FCC 5", .region = B43_RADAR_FCC,
+	.wmin = 240, .wmax = 520,
+};
+
+#define B43_RADAR_LONG_GAP	B43_RADAR_US(2000 + 100 + 10)
+#define B43_RADAR_LONG_POLLS	(12000 / B43_RADAR_POLL_MS)
+#define B43_RADAR_LONG_NEED	5
+#define B43_RADAR_LONG_BUSY	64
+
+static bool b43_radar_long(struct b43_radar *r, const struct b43_radar_pulse *p)
+{
+	unsigned int last, i, count = 0;
+
+	if (r->long_busy ||
+	    p->width < b43_radar_fcc5.wmin || p->width > b43_radar_fcc5.wmax)
+		return false;
+	if (r->long_n) {
+		last = r->long_poll[(r->long_head + B43_RADAR_LONG_BURSTS - 1) %
+				    B43_RADAR_LONG_BURSTS];
+		if (r->poll - last <= 1 &&
+		    p->ts - r->long_ts <= B43_RADAR_LONG_GAP) {
+			r->long_ts = p->ts;
+			return false;
+		}
+	}
+	r->long_ts = p->ts;
+	r->long_poll[r->long_head] = r->poll;
+	r->long_head = (r->long_head + 1) % B43_RADAR_LONG_BURSTS;
+	if (r->long_n < B43_RADAR_LONG_BURSTS)
+		r->long_n++;
+
+	for (i = 0; i < r->long_n; i++)
+		if (r->poll - r->long_poll[i] < B43_RADAR_LONG_POLLS)
+			count++;
+	if (count < B43_RADAR_LONG_NEED)
+		return false;
+	r->long_n = 0;
+	return true;
+}
+
 /* Add a pulse to the history and match the types on it. */
 static const struct b43_radar_type *
 b43_radar_add(struct b43_radar *r, const struct b43_radar_pulse *p)
@@ -289,6 +358,8 @@ b43_radar_add(struct b43_radar *r, const struct b43_radar_pulse *p)
 
 	if (p->width < B43_RADAR_MIN_WIDTH || !p->coherent)
 		return NULL;
+	if (r->region != B43_RADAR_ETSI && b43_radar_long(r, p))
+		return &b43_radar_fcc5;
 	/* Time runs forward; an entry out of order is a FIFO glitch. */
 	if (r->n && (s32)(p->ts - b43_radar_hist(r, 0)->ts) <= 0)
 		return NULL;
@@ -318,10 +389,16 @@ const struct b43_radar_type *b43_radar_match(struct b43_radar *r)
 	const struct b43_radar_type *seen = NULL;
 	struct b43_radar_pulse cur = { 0 };
 	unsigned int i = 0, j = 0;
+	/* The newest part of the pulse in cur: its start and width. */
+	u32 part_ts = 0;
+	u16 part_w = 0;
 	bool have = false;
 
+	r->poll++;
+	r->long_busy = r->nfifo[0] + r->nfifo[1] > B43_RADAR_LONG_BUSY;
+
 	/*
-	 * Polls come every 150 ms and the longest burst lasts 96 ms: after a
+	 * Polls come every 150 ms and the longest train lasts 96 ms: after a
 	 * poll without a pulse nothing earlier can be on a train with what
 	 * follows. Emptying the history then also keeps the 53.7 s wrap of
 	 * the time from bringing old pulses back.
@@ -333,8 +410,8 @@ const struct b43_radar_type *b43_radar_match(struct b43_radar *r)
 
 	/*
 	 * Each FIFO's entries are in time order: merge the two, take the two
-	 * FIFOs' entries of one pulse as one (the wider), and the two entries
-	 * of a split pulse as one.
+	 * FIFOs' entries of one pulse, or of one part of it, as one (the
+	 * wider), and the parts of a split pulse as one.
 	 */
 	while (!seen && (i < r->nfifo[0] || j < r->nfifo[1])) {
 		const struct b43_radar_pulse *p;
@@ -348,25 +425,34 @@ const struct b43_radar_type *b43_radar_match(struct b43_radar *r)
 			p = &r->fifo[1][j++];
 
 		if (have) {
-			d = (s32)(p->ts - cur.ts);
-			if (d >= -(s32)B43_RADAR_SAME &&
-			    d <= (s32)B43_RADAR_SAME) {
-				if (p->width > cur.width)
-					cur.width = p->width;
-				cur.coherent |= p->coherent;
-				continue;
-			}
-			if (cur.width >= B43_RADAR_SPLIT_WIDTH && d > 0 &&
-			    d <= (s32)(cur.width * B43_RADAR_WIDTH_TICKS +
-				       B43_RADAR_SPLIT_GAP)) {
-				u32 w = d / B43_RADAR_WIDTH_TICKS + p->width;
+			bool part;
+			u32 w;
 
-				cur.width = w > 0xffff ? 0xffff : w;
+			d = (s32)(p->ts - part_ts);
+			part = part_w >= B43_RADAR_SPLIT_WIDTH &&
+			       d >= (s32)(B43_RADAR_SPLIT_STEP - B43_RADAR_SPLIT_TOL) &&
+			       d <= (s32)(B43_RADAR_SPLIT_STEP + B43_RADAR_SPLIT_TOL);
+			if (part ||
+			    (d >= -(s32)B43_RADAR_SAME && d <= (s32)B43_RADAR_SAME)) {
+				if (part) {
+					part_ts = p->ts;
+					part_w = p->width;
+				} else if (p->width > part_w) {
+					part_w = p->width;
+				}
+				w = (part_ts - cur.ts) / B43_RADAR_WIDTH_TICKS +
+				    part_w;
+				w = min_t(u32, w, 0xffff);
+				if (w > cur.width)
+					cur.width = w;
+				cur.coherent |= p->coherent;
 				continue;
 			}
 			seen = b43_radar_add(r, &cur);
 		}
 		cur = *p;
+		part_ts = p->ts;
+		part_w = p->width;
 		have = true;
 	}
 	if (!seen && have)

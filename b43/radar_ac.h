@@ -14,12 +14,14 @@
  *   w0 15:0   time, bits 27:12, in 0.2 us units
  *   w1 11:0   time, bits 11:0, in 0.2 us units
  *   w1 15:12  moves with the pulse's frequency and chirp (not used)
- *   w2 7:0    width, in 0.2 us units
+ *   w2 7:0    width, bits 7:0, in 0.2 us units
  *   w2 15:8   0xfd-0xff on every CW or chirped pulse at every level,
  *             0x00-0x87 on 31 of 32 noise pulses (see radar_ac.c)
  *   w3 3:0    time, in 1/16 of 0.2 us
- *   w3 7:4    2 on CW and chirped pulses, mostly 0 on noise (used at
- *             20 MHz, see radar_ac.c)
+ *   w3 4      width, bit 8: a pulse chirped by 5-20 MHz comes as one
+ *             entry as long as it is, 75 us as 0x0177 (radar-fcc5.zip)
+ *   w3 5      set on CW and chirped pulses, clear on most noise (used at
+ *             20 MHz, see radar_ac.c); w3 7:6 clear on both
  *
  * The time is a 32-bit count of 12.5 ns that wraps every 53.7 s.
  *
@@ -43,6 +45,16 @@ struct b43_radar_pulse {
 
 /* The pulses kept for the matching, about the longest burst's worth. */
 #define B43_RADAR_HISTORY	128
+
+/*
+ * The FIFOs are drained and matched every B43_RADAR_POLL_MS while the
+ * detector is armed (b43_radar_work_handler()); FCC 5 counts its 12 s in
+ * polls.
+ */
+#define B43_RADAR_POLL_MS	150
+
+/* The long-pulse bursts (FCC 5) kept: at most 20 in its 12 s. */
+#define B43_RADAR_LONG_BURSTS	32
 
 struct b43_radar_type;
 
@@ -68,6 +80,19 @@ struct b43_radar {
 	struct b43_radar_pulse hist[B43_RADAR_HISTORY];
 	unsigned int head;
 	unsigned int n;
+	/* Polls matched since the reset. */
+	unsigned int poll;
+	/*
+	 * FCC 5: the poll of each long-pulse burst's first pulse, a ring
+	 * with the newest at long_poll[long_head - 1], and the start of the
+	 * newest long pulse.
+	 */
+	unsigned int long_poll[B43_RADAR_LONG_BURSTS];
+	unsigned int long_head;
+	unsigned int long_n;
+	u32 long_ts;
+	/* This poll has too many entries to count long pulses in. */
+	bool long_busy;
 };
 
 void b43_radar_reset(struct b43_radar *r);

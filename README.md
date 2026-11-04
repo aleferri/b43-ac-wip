@@ -212,12 +212,13 @@ How the pieces fit is in [`docs/driver-status.md`](docs/driver-status.md).
   the R7000's and the RT-AC66U B1's captures (`docs/retrace-todo.md`, "2.4
   GHz"); the 40 MHz values come from read-backs under `wl` on the
   RT-AC66U B1.
-- Radar detection of the long-pulse radar: `CONFIG_B43_DFS` arms the
-  detector as the stock driver does and matches the pulses against the
-  types of the regulatory domain's DFS region, ETSI EN 301 893 (1-6) or
-  FCC KDB 905462 (0-4, 6) (`b43/radar_ac.c`), at 20, 40 and 80 MHz; FCC 5
-  is not matched (its chirped pulses do not read as long)
-  (`docs/retrace-todo.md`, "Radar pulses").
+- Radar detection on other boards: `CONFIG_B43_DFS` arms the detector as
+  the stock driver does and matches the pulses against the types of the
+  regulatory domain's DFS region, ETSI EN 301 893 (1-6) or FCC KDB 905462
+  (0-6) (`b43/radar_ac.c`), at 20, 40 and 80 MHz, tested with an SDR on
+  the RT-AC66U B1 only. FCC 5 is matched by its burst count alone, and a
+  carrier that fills the FIFOs hides a burst (`docs/retrace-todo.md`,
+  "Radar pulses").
 - Probe-response offload and the power management queue: deliberately off, see
   `docs/retrace-todo.md`.
 - A-MSDUs inside A-MPDUs on RX and beamforming on an open BSS: HT MCS go
