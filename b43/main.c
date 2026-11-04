@@ -44,6 +44,7 @@
 #include "pio.h"
 #include "sysfs.h"
 #include "xmit.h"
+#include "radar_ac.h"
 #include "lo.h"
 #include "sdio.h"
 #include <linux/mmc/sdio_func.h>
@@ -7770,6 +7771,30 @@ static void b43_wireless_exit(struct b43_bus_dev *dev, struct b43_wl *wl)
 }
 #endif
 
+/*
+ * cfg80211 calls this when the wiphy registers and on every change of the
+ * regulatory domain: the radar types to match follow its DFS region.
+ */
+static void b43_reg_notifier(struct wiphy *wiphy,
+			     struct regulatory_request *request)
+{
+	struct b43_wl *wl = hw_to_b43_wl(wiphy_to_ieee80211_hw(wiphy));
+	u8 region;
+
+	switch (request->dfs_region) {
+	case NL80211_DFS_FCC:
+		region = B43_RADAR_FCC;
+		break;
+	case NL80211_DFS_ETSI:
+		region = B43_RADAR_ETSI;
+		break;
+	default:
+		region = B43_RADAR_ALL;
+		break;
+	}
+	WRITE_ONCE(wl->radar_region, region);
+}
+
 static struct b43_wl *b43_wireless_init(struct b43_bus_dev *dev)
 {
 	struct ssb_sprom *sprom = dev->bus_sprom;
@@ -7796,6 +7821,8 @@ static struct b43_wl *b43_wireless_init(struct b43_bus_dev *dev)
 		BIT(NL80211_IFTYPE_ADHOC);
 
 	hw->wiphy->flags |= WIPHY_FLAG_IBSS_RSN;
+	if (IS_ENABLED(CONFIG_B43_DFS))
+		hw->wiphy->reg_notifier = b43_reg_notifier;
 
 	wiphy_ext_feature_set(hw->wiphy, NL80211_EXT_FEATURE_CQM_RSSI_LIST);
 

@@ -1204,6 +1204,12 @@ struct b43_wl {
 	struct ieee80211_supported_band band_5ghz_ac;
 	struct ieee80211_supported_band band_2ghz_ac;
 
+	/*
+	 * The radar types the AC PHY matches (enum b43_radar_region), from
+	 * the DFS region of the regulatory domain (b43_reg_notifier()).
+	 */
+	u8 radar_region;
+
 	/* Kmalloc'ed scratch space for PIO TX/RX. Protected by wl->mutex. */
 	u8 pio_scratchspace[128] __attribute__((__aligned__(8)));
 	u8 pio_tailspace[4] __attribute__((__aligned__(8)));

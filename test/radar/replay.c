@@ -2,7 +2,7 @@
 /*
  * Replay radar FIFO reads through b43/radar_ac.c.
  *
- *   replay [-w 20|40|80] FILE...
+ *   replay [-w 20|40|80] [-r all|fcc|etsi] FILE...
  *
  * A file holds polls: a line that does not start with "0 " or "1 " opens a
  * poll (the runs of router-data/rt-ac66u-b1/radar-fifo.zip have the two fill
@@ -10,7 +10,8 @@
  * that FIFO, in hex. Prints, per file, the type matched and the poll it was
  * matched in, or "none". A line "radar <fifo> <w0> <w1> <w2> <w3> ..." (the
  * test log of radar-widths.zip) is one entry of the open poll, a poll opened
- * by the first.
+ * by the first. -r gives the DFS region whose types are matched, all by
+ * default.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,6 +25,8 @@ struct fifo_words {
 	u16 w[4];
 	unsigned int n;
 };
+
+static enum b43_radar_region region = B43_RADAR_ALL;
 
 static int replay(const char *path, unsigned int shift)
 {
@@ -40,6 +43,7 @@ static int replay(const char *path, unsigned int shift)
 	}
 	b43_radar_reset(&radar);
 	radar.shift = shift;
+	radar.region = region;
 
 	for (;;) {
 		bool eof = !fgets(line, sizeof(line), f);
@@ -103,6 +107,14 @@ int main(int argc, char **argv)
 			unsigned int mhz = atoi(argv[++i]);
 
 			shift = mhz == 20 ? 2 : mhz == 40 ? 1 : 0;
+			continue;
+		}
+		/* -r all|fcc|etsi: the DFS region */
+		if (!strcmp(argv[i], "-r") && i + 1 < argc) {
+			i++;
+			region = !strcmp(argv[i], "fcc") ? B43_RADAR_FCC :
+				 !strcmp(argv[i], "etsi") ? B43_RADAR_ETSI :
+				 B43_RADAR_ALL;
 			continue;
 		}
 		if (replay(argv[i], shift) < 0)

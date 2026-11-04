@@ -5,18 +5,21 @@
  *
  * The pulses of the two radar FIFOs (see radar_ac.h) are matched against the
  * short-pulse radar test signals of ETSI EN 301 893 (reference DFS test
- * signals 1-4, Table D.4) and FCC KDB 905462 D02 (radar types 0-4, Table 5):
+ * signals 1-6, Table D.4) and FCC KDB 905462 D02 (radar types 0-4, Table 5):
  * a burst of pulses of one width at one pulse repetition interval. A pulse
  * that fits a type's width is the end of a candidate train with every
  * earlier pulse in that type's PRI range; the train is the pulses at whole
  * multiples of that interval, so missed pulses leave gaps but do not break
  * it. A type is reported when its train reaches the type's count.
  *
+ * A burst at a staggered PRF (ETSI 5 and 6) takes two or three intervals in
+ * turn, so each third or second pulse is on a train at their sum: those
+ * types are matched at that interval.
+ *
  * Only pulses that w2 15:8 says are coherent are matched (see
- * B43_RADAR_COHERENT). Both regions' types are matched whatever the
- * regulatory domain. Not
- * matched: ETSI 5 and 6 (staggered PRF), FCC 5 (long chirped pulses in
- * bursts over 12 s) and FCC 6 (frequency hopping).
+ * B43_RADAR_COHERENT), and only the types of the regulatory domain's DFS
+ * region (struct b43_radar's region). Not matched: FCC 5 (long chirped
+ * pulses in bursts over 12 s) and FCC 6 (frequency hopping).
  */
 
 #include <linux/kernel.h>
@@ -84,6 +87,7 @@
 
 struct b43_radar_type {
 	const char *name;
+	enum b43_radar_region region;
 	/* FIFO width bounds, 0.2 us units. */
 	u16 wmin, wmax;
 	/* Pulse repetition interval bounds, us. */
@@ -103,8 +107,9 @@ struct b43_radar_type {
 				 (t) / 2 - 2 : B43_RADAR_MIN_WIDTH)
 #define B43_RADAR_WHI(t)	((t) / 2 + 6)
 
-#define B43_RADAR_TYPE(_name, _wlo, _whi, _pmin, _pmax, _burst, _need) { \
-	.name = _name,							 \
+#define B43_RADAR_TYPE(_region, _name, _wlo, _whi, _pmin, _pmax, _burst, \
+		       _need) {						 \
+	.name = _name, .region = B43_RADAR_##_region,			 \
 	.wmin = B43_RADAR_WLO(_wlo), .wmax = B43_RADAR_WHI(_whi),	 \
 	.pri_min = _pmin, .pri_max = _pmax,				 \
 	.burst_ms = _burst, .need = _need,				 \
@@ -126,16 +131,26 @@ struct b43_radar_type {
  *   ETSI 3    0.5-15    250-435     25       25 x 435 us (2300-4000 pps)
  *   ETSI 4    20-30     250-500     20       20 x 500 us (2000-4000 pps,
  *                                            chirped)
+ *   ETSI 5    0.5-2     2500-3333   10       30 x 3333 us (300-400 pps,
+ *                       x 2 or 3    a PRF    2 or 3 PRFs 20 pps apart)
+ *   ETSI 6    0.5-2     833-2500    15       45 x 2500 us (400-1200 pps,
+ *                       x 2 or 3    a PRF    2 or 3 PRFs 80 pps apart)
+ *
+ * ETSI 5 and 6 are matched at the sum of two or three of their intervals,
+ * 5132-9399 us and 1726-6369 us with the PRFs that far apart, on the
+ * pulses of one PRF; their longest bursts last 94 and 96 ms.
  */
 static const struct b43_radar_type b43_radar_types[] = {
-	B43_RADAR_TYPE("FCC 1",  10,  10,  518, 3066, 56,  9),
-	B43_RADAR_TYPE("FCC 2",  10,  50,  150,  230,  7, 12),
-	B43_RADAR_TYPE("FCC 3",  60, 100,  200,  500,  9,  8),
-	B43_RADAR_TYPE("FCC 4", 110, 200,  200,  500,  8,  6),
-	B43_RADAR_TYPE("ETSI 1",  5,  50, 1000, 5000, 50,  5),
-	B43_RADAR_TYPE("ETSI 2",  5, 150,  625, 5000, 75,  8),
-	B43_RADAR_TYPE("ETSI 3",  5, 150,  250,  435, 11, 13),
-	B43_RADAR_TYPE("ETSI 4", 200, 300, 250,  500, 10, 10),
+	B43_RADAR_TYPE(FCC,  "FCC 1",   10,  10,  518, 3066,  56,  9),
+	B43_RADAR_TYPE(FCC,  "FCC 2",   10,  50,  150,  230,   7, 12),
+	B43_RADAR_TYPE(FCC,  "FCC 3",   60, 100,  200,  500,   9,  8),
+	B43_RADAR_TYPE(FCC,  "FCC 4",  110, 200,  200,  500,   8,  6),
+	B43_RADAR_TYPE(ETSI, "ETSI 1",   5,  50, 1000, 5000,  50,  5),
+	B43_RADAR_TYPE(ETSI, "ETSI 2",   5, 150,  625, 5000,  75,  8),
+	B43_RADAR_TYPE(ETSI, "ETSI 3",   5, 150,  250,  435,  11, 13),
+	B43_RADAR_TYPE(ETSI, "ETSI 4", 200, 300,  250,  500,  10, 10),
+	B43_RADAR_TYPE(ETSI, "ETSI 5",   5,  20, 5000, 9500,  95,  5),
+	B43_RADAR_TYPE(ETSI, "ETSI 6",   5,  20, 1600, 6500,  97,  7),
 };
 
 const char *b43_radar_type_name(const struct b43_radar_type *t)
@@ -271,9 +286,14 @@ b43_radar_add(struct b43_radar *r, const struct b43_radar_pulse *p)
 	if (r->n < B43_RADAR_HISTORY)
 		r->n++;
 
-	for (i = 0; i < ARRAY_SIZE(b43_radar_types); i++)
-		if (b43_radar_type_seen(r, &b43_radar_types[i]))
-			return &b43_radar_types[i];
+	for (i = 0; i < ARRAY_SIZE(b43_radar_types); i++) {
+		const struct b43_radar_type *t = &b43_radar_types[i];
+
+		if (r->region != B43_RADAR_ALL && t->region != r->region)
+			continue;
+		if (b43_radar_type_seen(r, t))
+			return t;
+	}
 	return NULL;
 }
 
@@ -285,7 +305,7 @@ const struct b43_radar_type *b43_radar_match(struct b43_radar *r)
 	bool have = false;
 
 	/*
-	 * Polls come every 150 ms and the longest burst lasts 75 ms: after a
+	 * Polls come every 150 ms and the longest burst lasts 96 ms: after a
 	 * poll without a pulse nothing earlier can be on a train with what
 	 * follows. Emptying the history then also keeps the 53.7 s wrap of
 	 * the time from bringing old pulses back.
