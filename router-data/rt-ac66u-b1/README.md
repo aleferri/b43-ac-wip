@@ -175,3 +175,10 @@ two repeats are kept).
 waveforms, and 180 s with nothing sent. A chirped long pulse is one entry as long as the pulse, its width's bit 8
 in w3 bit 4 (75 us reads 0x77 + 0x100); a CW one comes in parts 28.8 us apart. FCC 5's pulses read as long as they
 are. The idle run: 40 polls of one or two entries, and two in which a carrier filled both FIFOs.
+
+## Beamforming on an open BSS with b43 (2026-11-04)
+
+b43 with `txbf=1` at 36/80, a OnePlus Nord 2: on WPA2 its pairwise key takes slot 0 (words 4-6 0x0015 0x0002 0x400d)
+and marks its row (0x0668 0x1000), as before; on an open BSS the station gets slot 0 the same when it is authorized
+and no row is marked, which is what `mmio-txbf-5g36-80.zip` shows `wl` 7.14 doing. Downlink 252 Mbit/s with
+`txbf=1`, 256 with `txbf=0` (-45 dBm, close range: no gain to show there, as on WPA2).

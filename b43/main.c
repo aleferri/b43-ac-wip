@@ -1028,8 +1028,10 @@ static void b43_txbf_init(struct b43_wldev *dev)
  * then beamformed (b43_txhdr_ac_txbf()). wl 7.14 fills the slot when the
  * station joins and marks the row when the key goes in, right after the
  * key's address match entry (mmio-txbf2.zip, WPA2: 0x0668 0x0000 ->
- * 0x1000); on an open BSS it beamforms without a row. Here both wait for
- * the key, so an open BSS is not beamformed.
+ * 0x1000); on an open BSS it beamforms without a row (mmio-txbf-5g36-80.zip:
+ * the slot is filled, no row is marked). A station whose frames are not
+ * encrypted in hardware has no key here: it gets its slot when it is
+ * authorized, with no row (B43_TXBF_NO_ROW, b43_op_sta_state()).
  */
 static void b43_txbf_link(struct b43_wldev *dev, struct ieee80211_vif *vif,
 			  struct ieee80211_sta *sta, u8 row)
@@ -1053,7 +1055,8 @@ static void b43_txbf_link(struct b43_wldev *dev, struct ieee80211_vif *vif,
 	memcpy(dev->txbf[i].addr, vif->addr, ETH_ALEN);
 	b43_mac_suspend(dev);
 	b43_txbf_write_slot(dev, i);
-	b43_txbf_set_row(dev, row, i);
+	if (row != B43_TXBF_NO_ROW)
+		b43_txbf_set_row(dev, row, i);
 	b43_mac_enable(dev);
 	WRITE_ONCE(bsta->txbf_slot, i + 1);
 	b43dbg(dev->wl, "TX beamforming to %pM in slot %u\n", sta->addr, i);
@@ -1067,7 +1070,8 @@ static void b43_txbf_unlink(struct b43_wldev *dev, struct ieee80211_sta *sta)
 	if (!slot || slot > B43_TXBF_SLOTS || dev->txbf[slot - 1].bsta != bsta)
 		return;
 	WRITE_ONCE(bsta->txbf_slot, 0);
-	b43_txbf_set_row(dev, dev->txbf[slot - 1].row, -1);
+	if (dev->txbf[slot - 1].row != B43_TXBF_NO_ROW)
+		b43_txbf_set_row(dev, dev->txbf[slot - 1].row, -1);
 	dev->txbf[slot - 1].bsta = NULL;
 }
 
@@ -7076,6 +7080,37 @@ static void b43_op_sta_notify(struct ieee80211_hw *hw,
 	B43_WARN_ON(!vif || (wl->vif != vif && b43_mbss_slot(wl, vif) < 0));
 }
 
+/*
+ * An AP's station that is authorized without a slot has no pairwise key in
+ * the hardware: an open BSS, or keys left to mac80211. It is beamformed as
+ * wl 7.14 does on an open BSS, without an address match row; it loses the
+ * slot when it is no longer authorized. With a key, the key took the slot
+ * first (b43_op_set_key()).
+ */
+static int b43_op_sta_state(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
+			    struct ieee80211_sta *sta,
+			    enum ieee80211_sta_state old_state,
+			    enum ieee80211_sta_state new_state)
+{
+	struct b43_wl *wl = hw_to_b43_wl(hw);
+	struct b43_wldev *dev;
+
+	if (vif->type != NL80211_IFTYPE_AP)
+		return 0;
+	mutex_lock(&wl->mutex);
+	dev = wl->current_dev;
+	if (dev && b43_status(dev) >= B43_STAT_INITIALIZED) {
+		if (old_state == IEEE80211_STA_ASSOC &&
+		    new_state == IEEE80211_STA_AUTHORIZED)
+			b43_txbf_link(dev, vif, sta, B43_TXBF_NO_ROW);
+		else if (old_state == IEEE80211_STA_AUTHORIZED &&
+			 new_state == IEEE80211_STA_ASSOC)
+			b43_txbf_unlink(dev, sta);
+	}
+	mutex_unlock(&wl->mutex);
+	return 0;
+}
+
 static void b43_op_sw_scan_start_notifier(struct ieee80211_hw *hw,
 					  struct ieee80211_vif *vif,
 					  const u8 *mac_addr)
@@ -7193,6 +7228,7 @@ static const struct ieee80211_ops b43_hw_ops = {
 	.stop			= b43_op_stop,
 	.set_tim		= b43_op_beacon_set_tim,
 	.sta_notify		= b43_op_sta_notify,
+	.sta_state		= b43_op_sta_state,
 	.sw_scan_start		= b43_op_sw_scan_start_notifier,
 	.sw_scan_complete	= b43_op_sw_scan_complete_notifier,
 	.get_survey		= b43_op_get_survey,

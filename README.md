@@ -221,14 +221,15 @@ How the pieces fit is in [`docs/driver-status.md`](docs/driver-status.md).
   "Radar pulses").
 - Probe-response offload and the power management queue: deliberately off, see
   `docs/retrace-todo.md`.
-- A-MSDUs inside A-MPDUs on RX and beamforming on an open BSS: HT MCS go
+- A-MSDUs inside A-MPDUs on RX: HT MCS go
   out to an HT station and VHT MCS 0-9 to a VHT one, on up to the board's
   TX chains, laid out as the stock drivers lay them out, A-MPDUs in both
   directions, and A-MSDUs on TX from their `frag_list`. A-MSDUs inside
   A-MPDUs are not announced: joining them costs more CPU than they save on
-  the Northstar boards. SU beamforming is opt-in (`txbf=1`) and starts with
-  the station's pairwise key, where the stock driver also beamforms on an
-  open BSS (`docs/retrace-todo.md`, "HT and VHT").
+  the Northstar boards. SU beamforming is opt-in (`txbf=1`): it starts with
+  the station's pairwise key, or on an open BSS when the station is
+  authorized, as the stock driver does (`docs/retrace-todo.md`, "HT and
+  VHT").
 - Hardware encryption: CCMP and WEP keys go to the hardware, those of
   every AP included; TKIP stays with mac80211, and so do protected
   management frames on TX (`docs/retrace-todo.md`, "Hardware encryption");

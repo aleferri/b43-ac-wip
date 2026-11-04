@@ -824,9 +824,12 @@ struct b43_sta {
 #define B43_TXBF_CTL			0x06E0	/* In the block, bit 8 cleared */
 #define B43_TXBF_SOUNDING_DEFAULT	6250
 
+#define B43_TXBF_NO_ROW		0xff
+
 struct b43_txbf_link {
 	struct b43_sta *bsta;
-	u8 row;				/* Address match row of the key */
+	u8 row;				/* Address match row of the key, or
+					 * B43_TXBF_NO_ROW on an open BSS */
 	u8 addr[ETH_ALEN];		/* Our address, of the station's BSS */
 };
 
