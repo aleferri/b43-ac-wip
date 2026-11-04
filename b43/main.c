@@ -5886,16 +5886,6 @@ static int b43_op_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 		return -EOPNOTSUPP;
 	}
 
-	/*
-	 * The hardware has one set of group key slots; the group keys of the
-	 * further AP interfaces stay with mac80211, which encrypts their
-	 * multicast in software. Their stations' pairwise keys go to the
-	 * hardware as anyone's.
-	 */
-	if (!(key->flags & IEEE80211_KEY_FLAG_PAIRWISE) &&
-	    b43_mbss_slot(wl, vif) >= 0)
-		return -EOPNOTSUPP;
-
 	mutex_lock(&wl->mutex);
 
 	dev = wl->current_dev;
@@ -5958,6 +5948,20 @@ static int b43_op_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 			if (!err && b43_amt_wide(dev))
 				b43_txbf_link(dev, vif, sta,
 					      key->hw_key_idx - B43_NR_GROUP_KEYS);
+		} else if (b43_mbss_slot(wl, vif) >= 0) {
+			/*
+			 * The key index block has one set of group key slots,
+			 * the first AP's. wl 7.14 puts the group key of a
+			 * further BSS in a free per-row slot whose address
+			 * match row has the zero address and B43_AMT_F_KEY
+			 * (router-data/rt-ac66u-b1/mbss-keys.zip: slot 4,
+			 * 0x0045, row 0 0x00000000/0x80040000); its multicast
+			 * takes that slot from the TX header.
+			 */
+			static const u8 zero[ETH_ALEN];
+
+			err = b43_key_write(dev, -1, algorithm,
+					    key->key, key->keylen, zero, key);
 		} else {
 			/* Group key */
 			err = b43_key_write(dev, index, algorithm,

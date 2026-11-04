@@ -229,10 +229,10 @@ How the pieces fit is in [`docs/driver-status.md`](docs/driver-status.md).
   the Northstar boards. SU beamforming is opt-in (`txbf=1`) and starts with
   the station's pairwise key, where the stock driver also beamforms on an
   open BSS (`docs/retrace-todo.md`, "HT and VHT").
-- Hardware encryption: CCMP and WEP keys go to the hardware, TKIP stays
-  with mac80211, and so do protected management frames on TX and the group
-  keys of every AP but the first (`docs/retrace-todo.md`, "Hardware
-  encryption"); `nohwcrypt=1` leaves all of it to mac80211.
+- Hardware encryption: CCMP and WEP keys go to the hardware, those of
+  every AP included; TKIP stays with mac80211, and so do protected
+  management frames on TX (`docs/retrace-todo.md`, "Hardware encryption");
+  `nohwcrypt=1` leaves all of it to mac80211.
 - Temperature: converted on a three-point fit from one board; it runs the
   calibrations again after a move of `phycal_tempdelta` (40 deg C above 64,
   so when unprogrammed) and drops TX to one chain at `tempthresh` (150 deg C
