@@ -448,8 +448,7 @@ under 832.127). On the board HT20, HT40 and VHT20/40/80 carry traffic
   `0x43`-`0x48` in its high byte from MCS 4 up, `router-data/vd625-agcombo/`;
   7.14.164.18 `0x0009`) and of slot word 5 bit 0, which 7.14 sets for a
   station with more than one stream and which makes the downlink drop under
-  784.2; beamforming on an open BSS, which 7.14 does and b43 does not (the
-  slot waits for the pairwise key).
+  784.2.
 
 - **TX.** The TX descriptor is the AC microcode's long format,
   `d11actxh_t` of Broadcom's `d11.h` (see `PROVENANCE.md`), 124 bytes:
