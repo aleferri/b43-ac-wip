@@ -4751,9 +4751,8 @@ out:
  * emulated change_chanctx does not call the driver. After the check, when
  * start_ap takes the channel again, the poll keyed on radar_enabled stopped
  * for good and the FIFOs filled up undrained. radar_enabled is read here
- * instead, to report.
+ * instead, to report. B43_RADAR_POLL_MS is radar_ac.h's.
  */
-#define B43_RADAR_POLL_MS	150
 
 static void b43_radar_work_handler(struct work_struct *work)
 {

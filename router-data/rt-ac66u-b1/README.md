@@ -166,4 +166,12 @@ pulse comes in parts 28.8 us apart; a chirped one as a single entry much shorter
 
 `radar-20mhz.zip`: every FIFO entry b43 reads at 52/20 for five noise runs (2, 10 and 30 us bursts every
 1000 us) and the ETSI 1-6 and FCC 0, 2-4, 6 test signals from a HackRF. No noise entry has w3 7:4 at 2 with
-w2 15:8 at 0xc0 or more; 20-100 entries of each test signal do, ETSI 3 aside (its burst reads as garble).
+w2 15:8 at 0xc0 or more; 20-100 entries of each test signal do, one a pulse, ETSI 3 included (its first run was flooded by a carrier;
+two repeats are kept).
+
+## Chirped long pulses and FCC 5 (2026-11-04)
+
+`radar-fcc5.zip`: b43's FIFO entries at 52/80 for 50-100 us pulses, CW and chirped by 5-20 MHz, four FCC 5
+waveforms, and 180 s with nothing sent. A chirped long pulse is one entry as long as the pulse, its width's bit 8
+in w3 bit 4 (75 us reads 0x77 + 0x100); a CW one comes in parts 28.8 us apart. FCC 5's pulses read as long as they
+are. The idle run: 40 polls of one or two entries, and two in which a carrier filled both FIFOs.

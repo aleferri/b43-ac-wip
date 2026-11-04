@@ -39,12 +39,12 @@ n=$(expect radar "$W"/fifo/runs-wl/std-*.txt); fail=$((fail + n))
 n=$(expect none "$W/fifo/runs-b43/idle5s.txt" "$W/fifo/runs-b43/noise10.txt" \
 	"$W/agcombo.txt"); fail=$((fail + n))
 # Every type with all regions' types matched, and with only its region's.
-for t in fcc0 fcc1 fcc2 fcc3 fcc4 fcc6 etsi1 etsi2 etsi3 etsi4 etsi5 etsi6; do
+for t in fcc0 fcc1 fcc2 fcc3 fcc4 fcc5 fcc6 etsi1 etsi2 etsi3 etsi4 etsi5 etsi6; do
 	n=$(expect radar "$W"/syn/$t-*.txt); fail=$((fail + n))
 	n=$(expect radar -r "${t%%[0-9]*}" "$W"/syn/$t-*.txt); fail=$((fail + n))
 done
 for r in all fcc etsi; do
-	n=$(expect none -r $r "$W"/syn/noise-*.txt); fail=$((fail + n))
+	n=$(expect none -r $r "$W"/syn/noise-*.txt "$W"/syn/long-*.txt); fail=$((fail + n))
 done
 # 20 and 40 MHz (radar-widths.zip).
 for w in 20 40; do
@@ -56,9 +56,9 @@ done
 for w in 20 40; do
 	n=$(expect none -w $w "$W"/widths/fifo-$w/w$w-noise10.txt); fail=$((fail + n))
 done
-# 20 MHz in service (radar-20mhz.zip): the noise bursts are not a radar in any
-# region, every test signal is one with all types, but ETSI 3 (not matched at
-# 20 MHz: its entries read as garble).
+# 20 MHz in service (radar-20mhz.zip): the noise bursts and the HackRF
+# sending nothing are not a radar in any region, every test signal is one
+# with all types (etsi3-flooded aside: a carrier filled the FIFOs over it).
 mkdir -p "$W/w20"
 unzip -q -d "$W/w20" "$REPO/router-data/rt-ac66u-b1/radar-20mhz.zip" 'fifo/*.txt'
 for f in "$W"/w20/fifo/*.txt; do
@@ -66,9 +66,24 @@ for f in "$W"/w20/fifo/*.txt; do
 		"$f" > "${f%.txt}.rp"
 done
 for r in all fcc etsi; do
-	n=$(expect none -w 20 -r $r "$W"/w20/fifo/noise*.rp); fail=$((fail + n))
+	n=$(expect none -w 20 -r $r "$W"/w20/fifo/noise*.rp "$W"/w20/fifo/silent*.rp)
+	fail=$((fail + n))
 done
-n=$(expect radar -w 20 $(ls "$W"/w20/fifo/*.rp | grep -v -e /noise -e /etsi3 -e /summary)); fail=$((fail + n))
+n=$(expect radar -w 20 $(ls "$W"/w20/fifo/*.rp | grep -v -e /noise -e /silent -e /etsi3-flooded -e /summary)); fail=$((fail + n))
+# FCC 5 in service at 52/80 (radar-fcc5.zip): a radar with the FCC types,
+# not with the ETSI types; 180 s of nothing sent and single bursts of long
+# pulses are not a radar.
+mkdir -p "$W/fcc5"
+unzip -q -d "$W/fcc5" "$REPO/router-data/rt-ac66u-b1/radar-fcc5.zip" 'fifo/*.txt'
+for f in "$W"/fcc5/fifo/*.txt; do
+	sed -n -e 's/^b43-radar poll .*/poll/p' -e 's/^b43-radar \([01] .*\)/radar \1/p' \
+		"$f" > "${f%.txt}.rp"
+done
+for r in all fcc; do
+	n=$(expect radar -r $r "$W"/fcc5/fifo/fcc5-*.rp); fail=$((fail + n))
+done
+n=$(expect none -r etsi "$W"/fcc5/fifo/fcc5-*.rp); fail=$((fail + n))
+n=$(expect none "$W"/fcc5/fifo/idle-*.rp "$W"/fcc5/fifo/lp*.rp); fail=$((fail + n))
 
 if [ "$fail" -ne 0 ]; then
 	echo "$fail failed"

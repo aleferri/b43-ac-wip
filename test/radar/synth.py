@@ -52,10 +52,11 @@ def width_units(pw, rnd):
     return round(pw * 5) + rnd.randint(0, 1)
 
 
-def entries(t_us, pw, rnd):
+def entries(t_us, pw, rnd, chirp=False):
     """-> [(ts, width)] for one pulse as one FIFO reads it"""
     ts = int(t_us * TICKS_US) + rnd.randint(-4, 4)
-    if pw <= 27:
+    if pw <= 27 or chirp:
+        # a chirped pulse comes whole, its width in 9 bits (radar-fcc5.zip)
         return [(ts, width_units(pw, rnd))]
     out, off = [], 0.0
     while pw - off > 27:
@@ -70,13 +71,14 @@ def write(path, pulses, rnd, miss):
     start = rnd.randrange(1 << 32)
     phase = rnd.uniform(0, POLL_US)
     fifo = [[], []]
-    for t, pw in pulses:
+    for pulse in pulses:
+        t, pw, chirp = pulse if len(pulse) == 3 else (*pulse, False)
         for f in (0, 1):
             if rnd.random() < miss:
                 continue
-            for ts, w in entries(t, pw, rnd):
-                fifo[f].append((t, (start + ts) & 0xffffffff, min(255, w + f)))
-    end = max(t for t, _ in pulses) if pulses else 0
+            for ts, w in entries(t, pw, rnd, chirp):
+                fifo[f].append((t, (start + ts) & 0xffffffff, min(511, w + f)))
+    end = max(p[0] for p in pulses) if pulses else 0
     nxt = [0, 0]
     with open(path, 'w') as o:
         poll_t = -phase
@@ -88,7 +90,8 @@ def write(path, pulses, rnd, miss):
                     t, ts, w = fifo[f][nxt[f]]
                     nxt[f] += 1
                     w0, w1, w3 = ts >> 16, (ts >> 4) & 0xfff, ts & 0xf
-                    for word in (w0, w1, 0xff00 | w, 0x20 | w3):
+                    w3 |= 0x20 | (w >> 8) << 4
+                    for word in (w0, w1, 0xff00 | (w & 0xff), w3):
                         o.write(f'{f} {word:04x}\n')
 
 
@@ -118,6 +121,22 @@ def staggered(kind, rnd):
     return out
 
 
+def fcc5(rnd):
+    """FCC 5 (KDB 905462 D02 Table 6): 8-20 bursts over 12 s, one in each
+    equal part at a random place, 1-3 chirped pulses of 50-100 us (one width
+    a burst) 1000-2000 us apart."""
+    nb = rnd.randint(8, 20)
+    part = 12e6 / nb
+    out = []
+    for b in range(nb):
+        k, pw = rnd.randint(1, 3), rnd.uniform(50, 100)
+        t = b * part + rnd.uniform(0, part - 3 * 2100)
+        for j in range(k):
+            out.append((t, pw, True))
+            t += rnd.uniform(1000, 2000)
+    return out
+
+
 def fcc6(rnd, mhz=80):
     """FCC 6 (Table 7): 1 us pulses at 333 us, 9 a hop, a hop every 3 ms over
     475 MHz for 300 ms; only the hops that fall in the channel are seen."""
@@ -127,6 +146,15 @@ def fcc6(rnd, mhz=80):
             continue
         for i in range(9):
             out.append((h * 3000 + i * 333.3, 1.0))
+    return out
+
+
+def long_noise(rate, rnd, secs=60):
+    """Chirped long pulses (50-100 us) at random times, <rate> a second."""
+    t, out = 0.0, []
+    while t < secs * 1e6:
+        t += rnd.expovariate(rate / 1e6)
+        out.append((t, rnd.uniform(50, 100), True))
     return out
 
 
@@ -147,7 +175,7 @@ def main():
         for s in range(seeds):
             rnd = random.Random(f'{kind}-{s}')
             write(f'{out}/{kind}-{s}.txt', burst(kind, rnd), rnd, miss)
-    for kind, gen in (('fcc6', fcc6),):
+    for kind, gen in (('fcc5', fcc5), ('fcc6', fcc6)):
         for s in range(seeds):
             rnd = random.Random(f'{kind}-{s}')
             write(f'{out}/{kind}-{s}.txt', gen(rnd), rnd, miss)
@@ -155,6 +183,12 @@ def main():
         for s in range(seeds):
             rnd = random.Random(f'{kind}-{s}')
             write(f'{out}/{kind}-{s}.txt', staggered(kind, rnd), rnd, miss)
+    # chirped long pulses at 0.1 a second, none a radar (at 0.2 a second one
+    # run in three passes for FCC 5: its bursts are only counted)
+    for rate in (0.1,):
+        for s in range(3):
+            rnd = random.Random(f'long-{rate}-{s}')
+            write(f'{out}/long-{rate}-{s}.txt', long_noise(rate, rnd), rnd, 0)
     for rate in (20, 100, 500, 2000):
         for s in range(3):
             rnd = random.Random(f'noise-{rate}-{s}')
