@@ -346,6 +346,8 @@ static bool b43_radar_long(struct b43_radar *r, const struct b43_radar_pulse *p)
 			count++;
 	if (count < B43_RADAR_LONG_NEED)
 		return false;
+	/* Start the ring over: the count above only reads long_poll[0..n-1] */
+	r->long_head = 0;
 	r->long_n = 0;
 	return true;
 }
