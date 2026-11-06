@@ -23,6 +23,7 @@
 #include <linux/kernel.h>
 
 #include "trace_out.h"
+#include "chip_link.h"
 
 /*
  * I registri di b43 che ci interessano stanno nella finestra del core 802.11.
@@ -371,10 +372,18 @@ static bool other_core_read(struct bcma_device *core, u16 off, int width,
 	return true;
 }
 
+/* With the virtual chip, all but clk_ctl_st (bcma wrapper) are the chip's. */
+static bool chip_owns(u16 off)
+{
+	return b43_chip_active() && off != BCMA_CLKCTLST;
+}
+
 static void note_write(struct bcma_device *core, u16 off, u32 val, int width)
 {
 	if (other_core_write(core, off, val, width))
 		return;
+	if (chip_owns(off))
+		b43_chip_write(off, val, width);
 	switch (off) {
 	case B43_MMIO_PHY_CONTROL:
 		phy_addr = (u16)val;
@@ -454,12 +463,49 @@ static u32 phy_version_word(void)
 	       (D6220_PHY_REV & 0x00ff);
 }
 
+/* A read served by the virtual chip, traced with note_read()'s classes. */
+static u32 chip_note_read(u16 off, int width)
+{
+	u32 routing = shm_routing_off & SHM_CTL_ROUTING;
+	u32 v = b43_chip_read(off, width);
+	u16 shm_off;
+
+	switch (off) {
+	case B43_MMIO_PHY_DATA:
+		b43_trace_op("PHY.RD", phy_addr, v, 0, -1);
+		return v;
+	case B43_MMIO_RADIO24_DATA:
+	case B43_MMIO_RADIO_DATA_LOW:
+		b43_trace_op("RAD.RD", radio_addr, v, 0, -1);
+		return v;
+	case B43_MMIO_SHM_DATA:
+	case B43_MMIO_SHM_DATA_UNALIGNED:
+		shm_off = shm_byte_off(off);
+		if (width != 32) {
+			b43_trace_shm("OBJ.RD", routing | shm_off, v, 16);
+		} else if (routing >> 16 != B43_SHM_SHARED) {
+			b43_trace_shm("OBJ.RD", routing | shm_off, v, 32);
+		} else {
+			b43_trace_shm("OBJ.RD", routing | shm_off, v & 0xffff, 16);
+			b43_trace_shm("OBJ.RD", routing | (u16)(shm_off + 2),
+				      v >> 16, 16);
+		}
+		shm_autoinc(SHM_CTL_AUTOINC_R, width);
+		return v;
+	default:
+		b43_trace_raw("REG.RD", off, v, width);
+		return v;
+	}
+}
+
 static u32 note_read(struct bcma_device *core, u16 off, int width)
 {
 	u32 v;
 
 	if (other_core_read(core, off, width, &v))
 		return v;
+	if (chip_owns(off))
+		return chip_note_read(off, width);
 	switch (off) {
 	case B43_MMIO_PHY_VER:
 		v = phy_version_word();

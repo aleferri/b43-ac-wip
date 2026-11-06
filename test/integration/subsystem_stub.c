@@ -30,6 +30,7 @@
 #include <net/mac80211.h>
 
 #include "trace_out.h"
+#include "chip_link.h"
 
 /* --- bcma: il lato host PCI, che passa dallo spazio di configurazione --- */
 
@@ -350,6 +351,17 @@ int b43_test_dwork_cancel(void *w)
 }
 
 /* Fa scattare, in ordine di scadenza, i work che scadono entro @until. */
+/* With the virtual chip, jiffies that pass are its time too. */
+void b43_chip_deliver_irq(void);
+
+static void chip_follow(unsigned long to)
+{
+	if (b43_chip_active() && time_after(to, jiffies)) {
+		b43_chip_time((to - jiffies) * (1000000UL / HZ));
+		b43_chip_deliver_irq();
+	}
+}
+
 void b43_test_run_until(unsigned long until)
 {
 	for (;;) {
@@ -363,11 +375,13 @@ void b43_test_run_until(unsigned long until)
 		if (next < 0)
 			break;
 		w = dworks[next].work;
+		chip_follow(dworks[next].due);
 		if (time_after(dworks[next].due, jiffies))
 			jiffies = dworks[next].due;
 		dworks[next].work = NULL;
 		w->work.func(&w->work);
 	}
+	chip_follow(until);
 	if (time_after(until, jiffies))
 		jiffies = until;
 }

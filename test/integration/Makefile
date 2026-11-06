@@ -90,7 +90,7 @@ LOCAL := bcma_stub.c subsystem_stub.c dma_stub.c main.c
 
 # trace_out.c e' codice UTENTE: gli servono stdio e getenv, e non e' codice di
 # driver. Si compila coi flag normali, non con -nostdinc.
-USER := trace_out.c kernel_shim.c
+USER := trace_out.c kernel_shim.c chip_link.c
 UFLAGS := -O2 -Wall -std=gnu11
 ifeq ($(DEBUG),1)
 UFLAGS += -g
@@ -108,7 +108,7 @@ endif
 
 # Cio' che trace_out.c chiede a libc: si risolve al link finale, quindi va
 # tenuto fuori dal conto del lavoro rimasto o il numero mente.
-LIBC := memmove|fprintf|fopen|fclose|fgets|fwrite|getenv|memset|memcpy|stdout|stderr|strcmp|strstr|strnlen|snprintf|sscanf|__isoc99_sscanf|calloc|realloc|free|abort|_GLOBAL_OFFSET_TABLE_|__stack_chk_fail|__printf_chk|__fprintf_chk|__vfprintf_chk|setvbuf|strtol|rewind|fseek|ftell|fread|__fread_chk|malloc|strlen|__snprintf_chk
+LIBC := pipe|fork|execl|dup2|close|waitpid|fdopen|fflush|fputs|perror|_exit|exit|atexit|memmove|fprintf|fopen|fclose|fgets|fwrite|getenv|memset|memcpy|stdout|stderr|strcmp|strstr|strnlen|snprintf|sscanf|__isoc99_sscanf|calloc|realloc|free|abort|_GLOBAL_OFFSET_TABLE_|__stack_chk_fail|__printf_chk|__fprintf_chk|__vfprintf_chk|setvbuf|strtol|rewind|fseek|ftell|fread|__fread_chk|malloc|strlen|__snprintf_chk
 
 .PHONY: all check link run clean fetch
 all: b43-trace
@@ -159,14 +159,20 @@ b43-trace: link
 # (TRACE_OUT.fn), quella con i marcatori di funzione per attribuire. Uscire da
 # una sola corsa toglie il modo di ragionare su una traccia annotata di una
 # build precedente, che non si distingue a occhio da quella corrente.
+# VCHIP: the command that starts b43-tools' vchipd.py, to run the 802.11 core
+# on the virtual chip (chip_link.h); FW_DIR: the directory b43-fwcutter -w
+# wrote the firmware to.
+CHIP_ENV = $(if $(VCHIP),B43_VCHIP="$(VCHIP)") $(if $(FW_DIR),B43_FW_DIR=$(FW_DIR)) \
+	   $(if $(B43_BOARD),B43_BOARD=$(B43_BOARD))
+
 run: b43-trace
 	@test -n "$(ORACLE)" || { \
 	    echo "uso: make run ORACLE=<cattura ripiegata> [TRACE_OUT=<file>]"; exit 1; }
-	B43_READ_ORACLE=$(ORACLE) $(if $(TRACE_OUT),B43_TRACE_OUT=$(TRACE_OUT)) \
+	$(CHIP_ENV) B43_READ_ORACLE=$(ORACLE) $(if $(TRACE_OUT),B43_TRACE_OUT=$(TRACE_OUT)) \
 	    $(if $(B43_CHANNEL),B43_CHANNEL=$(B43_CHANNEL)) \
 	    $(if $(B43_BW),B43_BW=$(B43_BW)) \
 	    $(if $(B43_TIMELINE),B43_TIMELINE=$(B43_TIMELINE)) ./b43-trace
-	$(if $(TRACE_OUT),B43_FN_MARKERS=1 B43_READ_ORACLE=$(ORACLE) \
+	$(if $(TRACE_OUT),$(CHIP_ENV) B43_FN_MARKERS=1 B43_READ_ORACLE=$(ORACLE) \
 	    B43_TRACE_OUT=$(TRACE_OUT).fn \
 	    $(if $(B43_CHANNEL),B43_CHANNEL=$(B43_CHANNEL)) \
 	    $(if $(B43_BW),B43_BW=$(B43_BW)) \

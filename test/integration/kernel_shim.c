@@ -29,6 +29,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "chip_link.h"
+
 /* Il debug dinamico del kernel: muto. */
 void __dynamic_pr_debug(void *descriptor, const char *fmt, ...) { }
 void __dynamic_dev_dbg(void *descriptor, const void *dev, const char *fmt, ...) { }
@@ -228,10 +230,27 @@ int mutex_is_locked(void *l) { return 0; }
 /* --- tempo: non si aspetta, vedi il commento in testa ----------------- */
 
 unsigned long jiffies;
-void __const_udelay(unsigned long x) { }
-void __udelay(unsigned long x) { }
-void msleep(unsigned int m) { }
-void usleep_range_state(unsigned long a, unsigned long b, unsigned int s) { }
+/*
+ * With the virtual chip the delays pass its time. Only the sleeping ones
+ * deliver its interrupt: udelay() may run with interrupts off.
+ * __const_udelay() gets microseconds * 0x10c7, as udelay() calls it on x86.
+ */
+static void shim_sleep(unsigned long us);
+
+void __const_udelay(unsigned long x)
+{
+	if (b43_chip_active())
+		b43_chip_time(x / 0x10c7);
+}
+
+void __udelay(unsigned long x)
+{
+	if (b43_chip_active())
+		b43_chip_time(x);
+}
+
+void msleep(unsigned int m) { shim_sleep(m * 1000UL); }
+void usleep_range_state(unsigned long a, unsigned long b, unsigned int s) { shim_sleep(a); }
 unsigned long round_jiffies(unsigned long j) { return j; }
 unsigned long round_jiffies_relative(unsigned long j) { return j; }
 void timer_init_key(void *t, void *f, unsigned int fl, const char *n, void *k) { }
@@ -607,6 +626,26 @@ void b43_test_irq(void)
 	if (irq_hard && irq_hard(0, irq_dev) == SHIM_IRQ_WAKE_THREAD &&
 	    irq_thread)
 		irq_thread(0, irq_dev);
+}
+
+/* Run b43's handler if the chip's IRQ line is raised, never re-entrantly. */
+void b43_chip_deliver_irq(void)
+{
+	static int in_handler;
+
+	if (in_handler || !irq_hard || !b43_chip_irq())
+		return;
+	in_handler = 1;
+	b43_test_irq();
+	in_handler = 0;
+}
+
+static void shim_sleep(unsigned long us)
+{
+	if (!b43_chip_active())
+		return;
+	b43_chip_time(us);
+	b43_chip_deliver_irq();
 }
 
 void free_irq(unsigned int irq, void *dev)

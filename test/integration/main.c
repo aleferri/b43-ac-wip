@@ -31,6 +31,7 @@
 #include <linux/etherdevice.h>
 
 #include "../board_profile.h"
+#include "chip_link.h"
 #include "bcma/bcma_private.h"
 
 void b43_test_cc_seed(u16 off, u32 val);
@@ -70,10 +71,29 @@ static struct bcma_device test_core;
 static struct bcma_device test_cc_core;
 static struct bcma_device test_pcie2_core;
 
+#define TEST_PHY_TYPE_AC	0x0b	/* B43_PHYTYPE_AC */
+
+static char vchip_board[256];
+
 static void build_core(void)
 {
 	const struct board_profile *board =
 		board_profile_lookup(b43_test_env("B43_BOARD"));
+
+	/*
+	 * The virtual chip's board: the core revision b43 sees, the PHY
+	 * revision, and the radio's identity as b43 reads it on corerev 40/42
+	 * (0: revision, 1: id). PHY 0x000b (core count) reads 0x2bdb and radio
+	 * 0x090b (PLL locked) 0x0100 on the D6220 and vd625 captures; the chip
+	 * models neither.
+	 */
+	snprintf(vchip_board, sizeof(vchip_board),
+		 "--corerev %u --phy-ver 0x%04x --phy 0xb=0x2bdb "
+		 "--radio-id 0x%x --radio 0=0x%x --radio 1=0x%x --radio 0x90b=0x100 "
+		 "--tx-engine 20,10,30",
+		 TEST_CORE_REV, TEST_PHY_TYPE_AC << 8 | board->phy_rev,
+		 board->radio_ver, board->radio_rev, board->radio_ver);
+	b43_chip_board(vchip_board);
 
 	test_bus.ops = &b43_test_bcma_ops;
 	test_bus.hosttype = BCMA_HOSTTYPE_PCI;
@@ -313,6 +333,10 @@ static void test_environment(bool cac)
 			(rel < 0 ? 0 : rel * (n - 1) * HZ / (t1 - t0));
 
 		b43_test_run_until(j);
+		/* With the virtual chip the ucode raises the interrupts. */
+		if (b43_chip_active() &&
+		    (!strcmp(kind, "NOISE") || !strcmp(kind, "IRQ")))
+			continue;
 		if (!strcmp(kind, "NOISE")) {
 			b43_test_raise_irq(TEST_IRQ_NOISESAMPLE_OK);
 			b43_test_irq();

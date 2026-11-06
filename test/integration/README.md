@@ -132,6 +132,24 @@ chipstatus bit 5 clear and set. Chip revs 2 and 4 (`B43_CHIP_REV`) must write
 nothing, a USB-strapped 4360 (`B43_CC_CHIPSTATUS`) no PLL. Every line must
 say `PASS`.
 
+### On the virtual chip
+
+`VCHIP` runs the 802.11 core on b43-tools' virtual chip
+(`interpreter/vchipd.py`, branch `vchip`) instead of the oracle: it runs the
+ucode b43 uploads, answers the core's MMIO and raises its interrupts; the
+delays and the timeline pass its time. The other cores still read the oracle.
+`FW_DIR` is the directory `b43-fwcutter -w` wrote the firmware to:
+
+```sh
+make run ORACLE=/tmp/m01 B43_TIMELINE=/tmp/tl01 \
+    VCHIP="pypy3 ../../../b43-tools/interpreter/vchipd.py" FW_DIR=/tmp/fw
+```
+
+The harness gives `vchipd` the board from `../board_profile.h` (core and PHY
+revision, radio id and revision), and `B43_VCHIP_ARGS` adds options. With
+DSL-3580_EU's ucode on cold01, probe and start return 0 in about 30 s under
+`pypy3`, a minute under `python3`.
+
 ### Why `--bus`
 
 The bus has none of the accessor classes: a `PHY.MOD` is a `PHY.RD` plus a
@@ -169,6 +187,7 @@ The regulatory ceiling is not a knob: the D6220 has an empty `ccode`, and
 | `kernel_shim.c` | kernel services in user code, `__sw_hweight32` with the kernel's register contract; `cfg80211_calculate_bitrate` aborts, since no timeline sends a data frame |
 | `compat.h` | macros of kernels newer than the headers |
 | `trace_out.c` | trace output and the environment |
+| `chip_link.c` | the `vchipd` process, when `B43_VCHIP` is set |
 
 `bcma_core_enable/disable`, `bcma_core_set_clockmode` and `bcma_core_pll_ctl`
 are `drivers/bcma/core.c` itself, fetched with b43, and so are bcma's
