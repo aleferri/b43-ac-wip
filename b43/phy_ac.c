@@ -3245,11 +3245,20 @@ static const u8 b43_phy_ac_fem_fc3_sub0_c2[32] = {
  *   2). The PMU is outside the capture window. Without the bit an EA6900
  *   sends nothing a client can receive on either radio (no beacon is heard,
  *   no client connects); with it both work.
+ * - chipcommon chipcontrol bit 4: wl reads chipcontrol and writes 0x00000010
+ *   back on every bring-up of the RT-AC66U B1 and the R7000
+ *   [capture-ref: router-data/rt-ac66u-b1/mmio-txbf-5g36-80.zip; record #6812]
+ *   [capture-ref: router-data/r7000/mmio-cold-5g36-80.zip; record #6817].
+ *   It reads as 0 after a power-on and stays set over a warm reboot: on an
+ *   RT-AC56U's BCM4352 the port beacons only after wl has run, no client
+ *   hears it after a power-on, and setting or clearing just this bit turns
+ *   that on and off.
  */
 static void b43_phy_ac_fem3_pre(struct b43_wldev *dev)
 {
 	b43_phy_mask(dev, 0x040a, (u16)~0x0100);
 	bcma_chipco_regctl_maskset(&dev->dev->bdev->bus->drv_cc, 0, ~0x4u, 0x4);
+	b43_phy_ac_chipctl_set(dev, 0x00000010);
 }
 
 static const struct b43_phy_ac_fem b43_phy_ac_fems[] = {
