@@ -127,6 +127,10 @@ build with the calibration, femctrl 3 and DMA changes passed a 16 h soak
 with two clients on both bands, with no b43 error and no CCMP replay. The RT-AC66U B1 runs
 two APs on one radio at the throughput of one (128/158 Mbit/s up/down on
 each, `12028df`).
+At 5 GHz HT40 a two-stream HT station gets MCS 15 at 40 MHz, with the
+primary in either half (ch36 HT40+, ch40 HT40-): 198-204 Mbit/s down
+against 99 at HT20, with all of minstrel's attempts at 40 MHz (84-100 % at
+MCS 15). VHT80 with the primary on ch40 runs as on ch36 (281 Mbit/s down).
 
 What brought the throughput there, each change with its profile or its
 measurement in its commit: the TX and

@@ -434,12 +434,6 @@ the captures below, the DSL-3580L's 6.30 code and, for HT20, gonsolo's port
 under 832.127). On the board HT20, HT40 and VHT20/40/80 carry traffic
 (see "On hardware"). What is open:
 
-- **HT40.** It runs on the DSL-3580L under 784.2 with the HT20 throughput,
-  so the log does not show whether minstrel took the 40 MHz rates. The
-  width field and the HT-SIG's 40 MHz bit are written from 6.30's code; the
-  D6220's 7.14.89 sends the same (`0x40ce`, HT-SIG byte 0 `0x87` for MCS 7,
-  word 1 0 on a primary in the upper half of ch38), in
-  `router-data/d6220/rxtx-1s-ht20-40-vht20-40-80-txbf0.zip`.
 - **A-MSDUs inside A-MPDUs** are not announced: on a BCM4708 the receive
   path of a three-stream client is CPU-bound with them (`f1e5eee`), and
   joining the pieces without a copy did not help (#17); where the cost is
