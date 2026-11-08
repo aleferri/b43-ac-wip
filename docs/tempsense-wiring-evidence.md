@@ -1,4 +1,4 @@
-# Tempsense: from raw samples to a temperature (agcombo, BCM4360)
+# Tempsense: from raw samples to a temperature (BCM4360, BCM4352)
 
 The port replays the stock measurement and converts it on the fit below
 (`b43_phy_ac_temp_update()`); the watchdog runs the calibrations again when
@@ -68,18 +68,52 @@ driver runs on the AC-PHY built-in defaults and the conversion must too.
 A `phy_tempsense` GET is not recorded, but each call runs its own tempsense
 block off the watchdog's ten-turn grid, which pairs it with the printed value.
 
-On the chain average this gives
+On the chain average these three gave `0.0485 * diff + 100` (39.6, 54.6 and
+56.1), which the port used first. The warm pair alone is 2 degrees over 31
+counts and pins nothing, and the cold point turned out to mislead: see the
+next section.
 
-    T[degC] ~= 0.0485 * diff + 100
+## A ramp on a BCM4352 (RT-AC56U, wl 6.30.163)
 
-(54.6 and 56.1 for the warm blocks, 39.6 for the cold one). The warm pair alone
-is 2 degrees over 31 counts and pins nothing. Chain 0 alone gives the same
-slope; chain 1 alone does not fit the warm pair, so the stock driver reads the
-average or chain 0.
+An RT-AC56U under DD-WRT r66477, with `wl_mmio_trap` on the BCM4352 (eth2,
+two chains). Each `wl -i eth2 phy_tempsense` call is bracketed by its own
+trace mark, so every printed value is paired with the samples of that very
+call, three calls a second apart per point:
+
+- start: both radios up, idle;
+- cooling: both radios down for 5 minutes, `wl up`, three calls, `wl down`,
+  ten times;
+- heating: both radios up and two CPU spinners, three calls every 5 minutes,
+  ten times.
+
+That covered 42 to 53 deg C. On the chain average, `round(diff / 15) + 117`
+reproduces 58 of the 63 printed values and is within one degree of the
+other five; a least-squares fit gives 0.0666 a count and 117.0 (rms 0.30,
+which is the integer rounding), per chain 0.0660 / 116.6 and
+0.0672 / 117.3.
+
+| point | diff, chains 0/1 | average | `wl phy_tempsense` | `diff / 15 + 117` |
+|---|---|---|---|---|
+| start-1 | -1011.0 / -1006.0 | -1008.5 | 50 | 49.8 |
+| c50-1 (radios down 5 min, first call after `up`) | -1127.2 / -1114.0 | -1120.6 | 42 | 42.3 |
+| c50-3 (two seconds later) | -1086.8 / -1080.0 | -1083.4 | 45 | 44.8 |
+| h10-1 | -988.5 / -982.0 | -985.2 | 51 | 51.3 |
+| h50-3 (radios up, CPU loaded, 50 min) | -965.5 / -962.0 | -963.8 | 53 | 52.8 |
+
+The cooling rows show why the agcombo's cold point does not fit: after
+`wl up` the die warms by about 40 counts (2-3 degrees) in two seconds, and
+the stock driver follows it call by call, with no smoothing. A bss-up
+reading paired with a value printed at another moment can be degrees off.
+The agcombo's two warm points, each from its own call, land within a degree
+of the BCM4352 line (54.6 for 54, 56.7 for 56), the cold one does not (34.0
+for 39-40).
+
+The port converts with `DIV_ROUND_CLOSEST(sum, 16 * 15 * n) + 117`.
 
 ## To close it
 
-- more (diff, `phy_tempsense`) pairs over a wider span;
+- pairs outside 42-56 deg C (a heat gun or a cold chamber), since the
+  thresholds at 120-150 deg C are far out on the line;
 - a capture where the stock driver recalibrates on a temperature change, for
   its trigger and for what it runs then (the port runs the bss-up's block);
 - the AC-PHY default slope and offset from the blob's `.rodata`, to check the

@@ -6439,12 +6439,13 @@ static void b43_phy_ac_tempsense(struct b43_wldev *dev)
  * The temperature of the last reading. The samples are 12-bit two's
  * complement; on each chain the thermal signal is
  * ((step 1 - step 0) + (step 3 - step 2)) / 2 over the eight-sample means,
- * and the chains are averaged. On the agcombo's 7.14.43 that signal is
- * -1245 at the 39-40 deg C of a cold bss-up and -936 and -905 at the 54 and
- * 56 its `wl phy_tempsense` printed warm (vd625-agcombo/bss-up.zip,
- * up-nobss-ioctl.zip; docs/tempsense-wiring-evidence.md): about
- * 0.0485 deg C a count, 100 at zero. Three points from one board give the
- * direction and the size, not the exact line.
+ * and the chains are averaged. On an RT-AC56U's BCM4352 under wl 6.30.163,
+ * 63 `wl phy_tempsense` calls traced one by one between 42 and 53 deg C
+ * give 1/15 deg C a count, 117 at zero, rounded: that reproduces 58 of
+ * them exactly and the rest within one degree. The agcombo BCM4360's warm
+ * points (-936 at 54, -905 at 56) lie within a degree of the same line
+ * (docs/tempsense-wiring-evidence.md). Outside 42-56 deg C it is an
+ * extrapolation.
  */
 static void b43_phy_ac_temp_update(struct b43_phy_ac *ac)
 {
@@ -6464,8 +6465,8 @@ static void b43_phy_ac_temp_update(struct b43_phy_ac *ac)
 	}
 	if (!n)
 		return;
-	/* sum is 16 times the signal per chain, at most 2^18 in magnitude. */
-	ac->temp = sum * 485 / (16 * 10000 * n) + 100;
+	/* sum is 16 times the signal per chain. */
+	ac->temp = DIV_ROUND_CLOSEST(sum, 16 * 15 * n) + 117;
 	ac->temp_valid = true;
 }
 
