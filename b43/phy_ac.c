@@ -9608,6 +9608,13 @@ static void b43_phy_ac_iq_solve(struct b43_phy_ac_iq_acc *acc,
  *
  * The bin edges are midpoints of the gaps, not a rule; the bins are not
  * evenly spaced in this slope, so the stock estimator is not exactly this.
+ *
+ * A negative slope takes the row of its magnitude with the taps in reverse
+ * order. On the RT-AC56U's BCM4352 at 36/80 this port measures core 1 at
+ * -2.2 to -2.8 on every bring-up, and wl 6.30.163 writes row A reversed
+ * there (0x08a4: -12, 15, -20, 30, -60, 0x0400, 61, -30, 20, -15, 12), on
+ * both bring-ups read back; the R7000's captures have the same row on its
+ * core 2 (0x0aa4 = 0xfff4, mmio-cold-5g36-80.zip and three more).
  */
 static const s16 b43_phy_ac_bw80_fir[][11] = {
 	{ 0, 0, 0, 0, 0, 0x0400, 0, 0, 0, 0, 0 },
@@ -9659,20 +9666,22 @@ static void b43_phy_ac_bw80_fir_write(struct b43_wldev *dev)
 	for_each_set_bit(c, &ac->coremask, ac->num_cores) {
 		u16 stride = (u16)(c * 0x200);
 		const struct b43_phy_ac_iq_acc *acc = &ac->iq_acc[c];
+		const s16 *tap;
 		int s = acc->rounds >= n ? b43_phy_ac_iq_slope10(acc, n) : 0;
 		unsigned int row = 0;
 
 		while (row < ARRAY_SIZE(b43_phy_ac_bw80_fir_edge) &&
-		       s >= b43_phy_ac_bw80_fir_edge[row])
+		       abs(s) >= b43_phy_ac_bw80_fir_edge[row])
 			row++;
 
 		b43_phy_maskset(dev, 0x0210, (u16)~0x0007, 0x0004);
 		b43_phy_maskset(dev, 0x0211, (u16)~0x0004, 0);
 		b43_phy_maskset(dev, 0x0211, (u16)~0x0002, 0);
 		b43_phy_maskset(dev, 0x0212, (u16)~0x000f, 0x000a);
+		tap = b43_phy_ac_bw80_fir[row];
 		for (i = 0; i < 11; i++)
 			b43_phy_write(dev, (u16)(0x06a4 + stride + i),
-				      (u16)b43_phy_ac_bw80_fir[row][i]);
+				      (u16)tap[s < 0 ? 10 - i : i]);
 	}
 	b43_phy_maskset(dev, 0x0211, (u16)~0x0001, 0x0001);
 }
