@@ -5499,10 +5499,32 @@ static bool b43_ac_cac_needed(struct b43_wl *wl,
 }
 
 /*
+ * Whether the radio is tuned to the AP's own channel and not to one of a
+ * software scan's. b43 has no hw_scan, and mac80211 lets an AP on a channel
+ * with the radar duty scan: each scan channel is a config call with that
+ * channel, the DFS ones (ch 56-64, 100-140 seen from ch 52) included. Armed
+ * there, the detector took in the scan channel's pulses (its FIFOs fill
+ * during the dwell), and a match would have been reported as a radar on the
+ * AP's channel. The tune back to the AP's channel at the end of the scan is a
+ * config call too, and arms it again.
+ *
+ * The AP's channel is already in bss_conf.chanreq when the availability check
+ * tunes it: mac80211 updates the link's chanreq before it assigns the channel
+ * context (_ieee80211_link_use_channel()).
+ */
+static bool b43_ac_on_ap_channel(struct b43_wl *wl,
+				 const struct ieee80211_conf *conf)
+{
+	return wl->vif &&
+	       wl->vif->bss_conf.chanreq.oper.chan == conf->chandef.chan;
+}
+
+/*
  * Whether the AP on this channel detects radars: built with CONFIG_B43_DFS,
- * an AP, on a channel with the radar duty, at 20, 40 or 80 MHz, the widths
- * the detector setup is traced at (b43_phy_ac_radar_arm()) and the ones
- * b43_if_comb_dfs lets cfg80211 check radars on.
+ * an AP, on its own channel (b43_ac_on_ap_channel()) with the radar duty, at
+ * 20, 40 or 80 MHz, the widths the detector setup is traced at
+ * (b43_phy_ac_radar_arm()) and the ones b43_if_comb_dfs lets cfg80211 check
+ * radars on.
  */
 static bool b43_ac_radar_arm_wanted(struct b43_wl *wl,
 				    const struct ieee80211_conf *conf)
@@ -5518,7 +5540,8 @@ static bool b43_ac_radar_arm_wanted(struct b43_wl *wl,
 	}
 	return IS_ENABLED(CONFIG_B43_DFS) &&
 	       (conf->chandef.chan->flags & IEEE80211_CHAN_RADAR) &&
-	       b43_is_mode(wl, NL80211_IFTYPE_AP);
+	       b43_is_mode(wl, NL80211_IFTYPE_AP) &&
+	       b43_ac_on_ap_channel(wl, conf);
 }
 
 /*
