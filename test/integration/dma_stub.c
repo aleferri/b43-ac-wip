@@ -86,10 +86,10 @@ dma_addr_t dma_map_page_attrs(struct device *dev, struct page *page,
 
 void dma_unmap_page_attrs(struct device *dev, dma_addr_t addr, size_t size,
 			  enum dma_data_direction dir, unsigned long attrs) { }
-void dma_sync_single_for_cpu(struct device *dev, dma_addr_t addr, size_t size,
-			     enum dma_data_direction dir) { }
-void dma_sync_single_for_device(struct device *dev, dma_addr_t addr,
-				size_t size, enum dma_data_direction dir) { }
+void __dma_sync_single_for_cpu(struct device *dev, dma_addr_t addr, size_t size,
+			       enum dma_data_direction dir) { }
+void __dma_sync_single_for_device(struct device *dev, dma_addr_t addr,
+				  size_t size, enum dma_data_direction dir) { }
 
 /* --- skb: solo cio' che dma.c tocca --------------------------------------- */
 
@@ -141,7 +141,9 @@ struct page_pool *page_pool_create(const struct page_pool_params *params)
 	return ERR_PTR(-EOPNOTSUPP);
 }
 
+#ifdef CONFIG_PAGE_POOL
 void page_pool_destroy(struct page_pool *pool) { }
+#endif
 
 /* Letta in linea da virt_to_head_page() in page_pool_free_va(). */
 DEFINE_STATIC_KEY_FALSE(hugetlb_optimize_vmemmap_key);
@@ -154,7 +156,7 @@ void consume_skb(struct sk_buff *skb)
 	kfree(skb);
 }
 
-void *kmemdup(const void *src, size_t len, gfp_t gfp)
+void *kmemdup_noprof(const void *src, size_t len, gfp_t gfp)
 {
 	void *p = kmalloc(len, gfp);
 

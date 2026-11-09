@@ -55,6 +55,13 @@ KFLAGS := -nostdinc -I$(CURDIR)/$(UP) $(KINC) -D__KERNEL__ -DMODULE -DKBUILD_MOD
           -include $(CURDIR)/compat.h \
           -include $(CURDIR)/../ac_trace.h
 
+# What the kernel's own Makefile adds from the headers' configuration: the C
+# dialect's extensions (CONFIG_CC_MS_EXTENSIONS, -fms-extensions from 6.19)
+# and CC_USING_FENTRY, which asm/ftrace.h requires with the function tracer.
+AUTOCONF := $(KG)/include/config/auto.conf
+KFLAGS += $(shell sed -n 's/^CONFIG_CC_MS_EXTENSIONS=//p' $(AUTOCONF))
+KFLAGS += $(if $(shell grep -s '^CONFIG_FUNCTION_TRACER=y' $(AUTOCONF)),-DCC_USING_FENTRY)
+
 # CONFIG_BCM63XX: il bersaglio e le board della collezione sono router BCM63xx
 # con la radio su PCIe, e su quegli host b43 rilegge gli indirizzi dei
 # registri come il driver stock (flush_writes in b43/bus.c). Gli header non

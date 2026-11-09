@@ -425,7 +425,37 @@ struct sk_buff *ieee80211_beacon_get_tim(struct ieee80211_hw *hw,
 	return &shim_beacon_skb;
 }
 
-void ieee80211_radar_detected(struct ieee80211_hw *hw)
+/*
+ * The channel-context ops b43 takes from mac80211's emulation. mac80211
+ * calls them; the harness drives config directly and never does.
+ */
+int ieee80211_emulate_add_chanctx(struct ieee80211_hw *hw,
+				  struct ieee80211_chanctx_conf *ctx)
+{
+	return 0;
+}
+
+void ieee80211_emulate_remove_chanctx(struct ieee80211_hw *hw,
+				      struct ieee80211_chanctx_conf *ctx)
+{
+}
+
+void ieee80211_emulate_change_chanctx(struct ieee80211_hw *hw,
+				      struct ieee80211_chanctx_conf *ctx,
+				      u32 changed)
+{
+}
+
+int ieee80211_emulate_switch_vif_chanctx(struct ieee80211_hw *hw,
+					 struct ieee80211_vif_chanctx_switch *vifs,
+					 int n_vifs,
+					 enum ieee80211_chanctx_switch_mode mode)
+{
+	return 0;
+}
+
+void ieee80211_radar_detected(struct ieee80211_hw *hw,
+			      struct ieee80211_chanctx_conf *chanctx_conf)
 {
 	b43_trace_note("ieee80211_radar_detected()%.0d\n", 0);
 }

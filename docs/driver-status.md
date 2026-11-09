@@ -95,7 +95,7 @@ open.
 ## Source → patch map
 
 `b43/` and `bcma/` are the source of truth: whole kernel files, changed or
-new, over v6.8, the kernel `test/integration` builds against. The patches are
+new, over v6.18, the kernel `test/integration` builds against. The patches are
 generated from them and are not edited by hand, except for their message and
 the adaptations to their base.
 

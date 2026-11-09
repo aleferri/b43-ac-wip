@@ -191,7 +191,7 @@ static struct ieee80211_vif *test_vif;
 
 static void test_config(u32 changed)
 {
-	b43_test_hw_ops->config(b43_test_hw, changed);
+	b43_test_hw_ops->config(b43_test_hw, -1, changed);
 }
 
 static void test_bss(u64 changed)
@@ -376,7 +376,7 @@ int main(void)
 			test_environment(cac);
 			b43_test_hw_ops->remove_interface(b43_test_hw, test_vif);
 			if (b43_test_hw_ops->stop)
-				b43_test_hw_ops->stop(b43_test_hw);
+				b43_test_hw_ops->stop(b43_test_hw, false);
 		}
 	}
 

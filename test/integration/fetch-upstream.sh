@@ -1,15 +1,15 @@
 #!/bin/sh
 # I sorgenti di b43 dal tag che combacia con gli header installati.
 #
-# La versione conta: b43 da master include linux/unaligned.h, che esiste da
-# 6.12, e contro header 6.8 da un errore che non e' del codice.
+# La versione conta: b43/ sta su v6.18, e un tag di b43 diverso dagli header
+# da errori che non sono del codice.
 #
 # Un fetch parziale NON passa in silenzio. Prima questo script segnalava il
 # file mancante con un echo e continuava, e il make falliva molti passi dopo
 # con "rfkill.h: No such file or directory" -- lontano dalla causa, che era un
 # curl andato male una volta. Ora si ritenta e, se non basta, si esce.
 set -e
-KVER=${1:?uso: fetch-upstream.sh <versione-header, es. 6.8.0-139>}
+KVER=${1:?uso: fetch-upstream.sh <versione-header, es. 6.18.0-0>}
 TAG=v$(echo "$KVER" | cut -d. -f1,2)
 # La destinazione e' sovrascrivibile con OUTDIR.
 DIR=${OUTDIR:-$(dirname "$0")/b43-upstream}

@@ -8,7 +8,7 @@
  * `b43_phy_ac_op_allocate`. Per questo il Makefile ora tiene
  * `-Werror=implicit-function-declaration` anche con `-w`.
  *
- * `kzalloc_obj` e' una macro dei kernel piu' recenti di 6.8. Che `b43/` la
+ * `kzalloc_obj` e' una macro dei kernel piu' recenti di 6.18. Che `b43/` la
  * usi vuol dire che punta a un kernel piu' nuovo degli header con cui la
  * suite compila: e' un fatto da sapere, non da nascondere.
  */

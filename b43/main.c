@@ -32,7 +32,7 @@
 #include <linux/io.h>
 #include <linux/dma-mapping.h>
 #include <linux/slab.h>
-#include <asm/unaligned.h>
+#include <linux/unaligned.h>
 
 #include "b43.h"
 #include "main.h"
@@ -3107,7 +3107,7 @@ static void b43_print_fw_helptext(struct b43_wl *wl, bool error)
 {
 	const char text[] =
 		"You must go to " \
-		"https://wireless.wiki.kernel.org/en/users/Drivers/b43#devicefirmware " \
+		"https://wireless.docs.kernel.org/en/latest/en/users/drivers/b43/developers.html#list-of-firmware " \
 		"and download the correct firmware for this driver version. " \
 		"Please carefully read all instructions on this website.\n";
 
@@ -3528,7 +3528,8 @@ static void b43_request_firmware(struct work_struct *work)
 
 start_ieee80211:
 	wl->hw->queues = B43_QOS_QUEUE_NUM;
-	if (!modparam_qos || dev->fw.opensource)
+	if (!modparam_qos || dev->fw.opensource ||
+	    dev->dev->chip_id == BCMA_CHIP_ID_BCM4331)
 		wl->hw->queues = 1;
 
 	err = ieee80211_register_hw(wl->hw);
@@ -4771,7 +4772,7 @@ static void b43_radar_work_handler(struct work_struct *work)
 		 * reports a match while mac80211 asks for detection.
 		 */
 		if (dev->phy.ops->radar_poll(dev))
-			ieee80211_radar_detected(wl->hw);
+			ieee80211_radar_detected(wl->hw, NULL);
 		ieee80211_queue_delayed_work(wl->hw, &dev->radar_work,
 					     msecs_to_jiffies(B43_RADAR_POLL_MS));
 	}
@@ -4940,7 +4941,7 @@ static void b43_tx_work(struct work_struct *work)
 				err = b43_dma_tx(dev, skb);
 			if (err == -ENOSPC) {
 				wl->tx_queue_stopped[queue_num] = true;
-				ieee80211_stop_queue(wl->hw, queue_num);
+				b43_stop_queue(dev, queue_num);
 				skb_queue_head(&wl->tx_queue[queue_num], skb);
 				break;
 			}
@@ -4999,6 +5000,7 @@ static void b43_op_tx(struct ieee80211_hw *hw,
 		      struct sk_buff *skb)
 {
 	struct b43_wl *wl = hw_to_b43_wl(hw);
+	u16 skb_queue_mapping;
 
 	if (unlikely(skb->len < 2 + 2 + 6)) {
 		/* Too short, this can't be a valid frame. */
@@ -5016,12 +5018,12 @@ static void b43_op_tx(struct ieee80211_hw *hw,
 		return;
 	}
 
-	skb_queue_tail(&wl->tx_queue[skb->queue_mapping], skb);
-	if (!wl->tx_queue_stopped[skb->queue_mapping]) {
+	skb_queue_mapping = skb_get_queue_mapping(skb);
+	skb_queue_tail(&wl->tx_queue[skb_queue_mapping], skb);
+	if (!wl->tx_queue_stopped[skb_queue_mapping])
 		ieee80211_queue_work(wl->hw, &wl->tx_work);
-	} else {
-		ieee80211_stop_queue(wl->hw, skb->queue_mapping);
-	}
+	else
+		b43_stop_queue(wl->current_dev, skb_queue_mapping);
 }
 
 /*
@@ -5646,7 +5648,7 @@ static void b43_ac_cac_match_gate(struct b43_wldev *dev, bool open)
 		b43_maskset32(dev, B43_MMIO_MACCTL, ~B43_MACCTL_AP, 0);
 }
 
-static int b43_op_config(struct ieee80211_hw *hw, u32 changed)
+static int b43_op_config(struct ieee80211_hw *hw, int radio_idx, u32 changed)
 {
 	struct b43_wl *wl = hw_to_b43_wl(hw);
 	struct b43_wldev *dev = wl->current_dev;
@@ -7053,12 +7055,12 @@ static int b43_op_start(struct ieee80211_hw *hw)
 	 * may hang the system.
 	 */
 	if (!err)
-		b43_op_config(hw, ~0);
+		b43_op_config(hw, -1, ~0);
 
 	return err;
 }
 
-static void b43_op_stop(struct ieee80211_hw *hw)
+static void b43_op_stop(struct ieee80211_hw *hw, bool suspend)
 {
 	struct b43_wl *wl = hw_to_b43_wl(hw);
 	struct b43_wldev *dev = wl->current_dev;
@@ -7233,6 +7235,10 @@ static int b43_op_ampdu_action(struct ieee80211_hw *hw,
 }
 
 static const struct ieee80211_ops b43_hw_ops = {
+	.add_chanctx = ieee80211_emulate_add_chanctx,
+	.remove_chanctx = ieee80211_emulate_remove_chanctx,
+	.change_chanctx = ieee80211_emulate_change_chanctx,
+	.switch_vif_chanctx = ieee80211_emulate_switch_vif_chanctx,
 	.tx			= b43_op_tx,
 	.wake_tx_queue		= b43_op_wake_tx_queue,
 	.can_aggregate_in_amsdu	= b43_op_can_aggregate_in_amsdu,
@@ -7314,7 +7320,7 @@ out:
 	}
 
 	/* reload configuration */
-	b43_op_config(wl->hw, ~0);
+	b43_op_config(wl->hw, -1, ~0);
 	if (wl->vif)
 		b43_op_bss_info_changed(wl->hw, wl->vif, &wl->vif->bss_conf, ~0);
 

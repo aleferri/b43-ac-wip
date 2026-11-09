@@ -12,10 +12,26 @@ README.
 ## Running it
 
 Prerequisites: `gcc`, `binutils`, `make`, `curl`, `python3`, `unzip`
-(`gdb` for backtraces); kernel headers in `/usr/src`
-(`apt-get install linux-headers-generic`), which decide the b43 tag
-(`6.8.0-142` → `v6.8`; with several installed, pass `KVER=` to every `make`);
-network access to `raw.githubusercontent.com` for `make fetch`.
+(`gdb` for backtraces); 6.18 kernel headers in `/usr/src`, the base of
+`b43/` and `bcma/`, which decide the b43 tag (`6.18.0-0` → `v6.18`; with
+several installed, pass `KVER=` to every `make`); network access to
+`raw.githubusercontent.com` for `make fetch`.
+
+Without a 6.18 headers package, a v6.18 tree prepared for modules does, with
+b43 and what it needs enabled (`CONFIG_BCMA_BLOCKIO`, which b43's bcma bus
+calls, comes with them):
+
+```sh
+git clone --depth 1 --branch v6.18 https://github.com/torvalds/linux linux-6.18
+cd linux-6.18
+make O=../build-6.18 defconfig
+scripts/config --file ../build-6.18/.config --enable WLAN \
+    --enable WLAN_VENDOR_BROADCOM --module CFG80211 --module MAC80211 \
+    --module SSB --module BCMA --module B43 --enable B43_BCMA --enable B43_SSB
+make O=../build-6.18 olddefconfig modules_prepare
+ln -s $PWD /usr/src/linux-headers-6.18.0-0
+ln -s $(realpath ../build-6.18) /usr/src/linux-headers-6.18.0-0-generic
+```
 
 ```sh
 make fetch          # vanilla b43 and bcma at the headers' tag, b43/ over it

@@ -120,9 +120,9 @@ void _dev_info(const void *dev, const char *fmt, ...)
 	va_end(ap);
 }
 
-void fortify_panic(const char *name)
+void __fortify_panic(unsigned char reason, unsigned long avail, unsigned long size)
 {
-	fprintf(stderr, "b43-integration: fortify_panic in %s\n", name);
+	fprintf(stderr, "b43-integration: fortify_panic, reason %u\n", reason);
 	abort();
 }
 
@@ -234,7 +234,7 @@ void msleep(unsigned int m) { }
 void usleep_range_state(unsigned long a, unsigned long b, unsigned int s) { }
 unsigned long round_jiffies(unsigned long j) { return j; }
 unsigned long round_jiffies_relative(unsigned long j) { return j; }
-void init_timer_key(void *t, void *f, unsigned int fl, const char *n, void *k) { }
+void timer_init_key(void *t, void *f, unsigned int fl, const char *n, void *k) { }
 void delayed_work_timer_fn(void *t) { }
 void __SCT__might_resched(void) { }
 void __init_swait_queue_head(void *q, const char *n, void *k) { }
@@ -242,6 +242,7 @@ void __init_swait_queue_head(void *q, const char *n, void *k) { }
 /* --- lavoro differito: eseguito subito o ignorato --------------------- */
 
 void *system_wq;
+void *system_percpu_wq;
 /* queue_work_on() sta in subsystem_stub.c: ha bisogno di struct
  * work_struct, e questo file e' codice utente senza header kernel. */
 int cancel_work_sync(void *w) { return 0; }
@@ -258,13 +259,18 @@ void wait_for_completion(void *c) { }
 void *kmalloc_caches[8][64];
 unsigned long random_kmalloc_seed;
 
-void *kmalloc_trace(void *s, unsigned int flags, unsigned long size)
+void *__kmalloc_cache_noprof(void *s, unsigned int flags, unsigned long size)
 {
 	return calloc(1, size ? size : 1);
 }
 
 /* Le allocazioni grandi non passano dalle cache: kmalloc() dispaccia qui. */
-void *__kmalloc(unsigned long size, unsigned int flags)
+void *__kmalloc_noprof(unsigned long size, unsigned int flags)
+{
+	return calloc(1, size ? size : 1);
+}
+
+void *__kmalloc_large_noprof(unsigned long size, unsigned int flags)
 {
 	return calloc(1, size ? size : 1);
 }
@@ -360,6 +366,33 @@ unsigned long _find_next_bit(const unsigned long *addr1, unsigned long nbits,
 
 void __local_bh_enable_ip(unsigned long ip, unsigned int cnt) { }
 char pcpu_hot[256];
+int __preempt_count;
+
+/* Referenced by the networking headers' inline code; b43 never calls them. */
+static void shim_unexpected(const char *what)
+{
+	fprintf(stderr, "b43-integration: unexpected call to %s\n", what);
+	abort();
+}
+
+void *page_pool_alloc_netmems(void *pool, unsigned int gfp)
+{
+	shim_unexpected("page_pool_alloc_netmems");
+	return 0;
+}
+
+void *page_pool_alloc_frag_netmem(void *pool, unsigned int *offset,
+				  unsigned int size, unsigned int gfp)
+{
+	shim_unexpected("page_pool_alloc_frag_netmem");
+	return 0;
+}
+
+void page_pool_put_unrefed_netmem(void *pool, unsigned long netmem,
+				  int dma_sync_size, int allow_direct)
+{
+	shim_unexpected("page_pool_put_unrefed_netmem");
+}
 
 unsigned long strnlen(const char *s, unsigned long n)
 {
@@ -371,7 +404,7 @@ unsigned long strnlen(const char *s, unsigned long n)
 }
 
 /* Il contratto del kernel: -E2BIG (-7) se tronca, altrimenti la lunghezza. */
-long strscpy(char *dst, const char *src, unsigned long n)
+long sized_strscpy(char *dst, const char *src, unsigned long n)
 {
 	unsigned long len = strnlen(src, n);
 
