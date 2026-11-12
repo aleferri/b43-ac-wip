@@ -86,7 +86,7 @@ MODULE_PARM_DESC(win_phys_len, "length of win_phys (default 8192)");
 
 static int poll_ms = 200;
 module_param(poll_ms, int, 0444);
-MODULE_PARM_DESC(poll_ms, "interval between discovery attempts while waiting for the ioremap");
+MODULE_PARM_DESC(poll_ms, "interval between discovery attempts while waiting for the ioremap; 0=spin (attach capture)");
 
 static int poll_secs = 60;
 module_param(poll_secs, int, 0444);
@@ -492,10 +492,26 @@ static int arm_window(void)
 	if (err)
 		return err;
 
-	for (tries = 0; tries <= poll_secs * 1000 / (poll_ms ?: 1); tries++) {
-		if (win_find_mapping(phys, len, &va, &mapped) == 0)
-			break;
-		msleep(poll_ms);
+	if (poll_ms) {
+		for (tries = 0; tries <= poll_secs * 1000 / poll_ms; tries++) {
+			if (win_find_mapping(phys, len, &va, &mapped) == 0)
+				break;
+			msleep(poll_ms);
+		}
+	} else {
+		/* poll_ms=0: rescan without sleeping, so a wl loaded after this
+		 * module (on the other CPU) is caught within one scan of its
+		 * ioremap rather than a jiffy or more later; its probe runs
+		 * right after the mapping, and a sleeping poll misses it.
+		 * cond_resched() keeps a single-CPU or same-CPU insmod wl
+		 * running. */
+		unsigned long until = jiffies + (unsigned long)poll_secs * HZ;
+
+		do {
+			if (win_find_mapping(phys, len, &va, &mapped) == 0)
+				break;
+			cond_resched();
+		} while (time_before(jiffies, until));
 	}
 	if (!va) {
 		pr_err("wl_mmio_trap: no mapping of %pa appeared; is wl loaded and the interface up?\n",
