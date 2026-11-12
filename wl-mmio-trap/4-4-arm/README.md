@@ -129,6 +129,15 @@ make KDIR=/path/to/kernel-4.4 ARCH=arm CROSS_COMPILE=arm-linux-gnueabi- -j
 make -C tools check    # the ARM load/store emulator, natively
 ```
 
+DD-WRT's 4.4 tree adds `-DCONFIG_NOPRINTK` to every module's flags
+(`KBUILD_CFLAGS_MODULE` in its top Makefile), which compiles `pr_info` and
+`pr_err` out: the module then loads and runs but prints nothing, not even the
+self-test line. Override it on the command line:
+
+```sh
+make -C <kernel build dir> M=$PWD ARCH=arm CROSS_COMPILE=... KBUILD_CFLAGS_MODULE=-DMODULE modules
+```
+
 Kernel configuration, in the Makefile's head: `CONFIG_KALLSYMS=y` (and
 `KALLSYMS_ALL` to skip `fsr_info_fn7`), `CONFIG_PCI=y` (or `win_phys=`), not
 `CONFIG_ARM_LPAE`, not `CONFIG_THUMB2_KERNEL` (the emulator decodes A32; the
@@ -149,10 +158,48 @@ The workflow is `../README.md`'s, with these differences:
 - load it once `wl` is up and the interface has been brought up at least
   once, so the BAR is mapped; this build does not watch `wl`'s `ioremap` the
   way the MIPS one can, it polls `init_mm` for the mapping at load and gives
-  up after `poll_secs`;
+  up after `poll_secs` (for the attach, see below);
 - `autoarm`, `on`/`off`, `mark <label>` and `status` on `/proc/wl_mmio_trap`
   work as on MIPS, and so do the `dd_*` TX descriptor parameters (below);
   `redirect` and `klookup` do not exist here; `init_mm_addr` does (above).
+
+### The attach
+
+To trace `wl`'s probe, load the trap first with `autoarm=1 poll_ms=0`, in the
+background (its `insmod` blocks while it waits), then `insmod wl`. With
+`poll_ms=0` the wait rescans `init_mm` without sleeping, so on a two-CPU
+Northstar the trap arms within a scan of `wl`'s `ioremap`; a sleeping poll
+arms up to a jiffy (10 ms here) later, while the probe runs on.
+
+Mute the console first (`echo 1 > /proc/sys/kernel/printk`): the "is mapped
+at" line, printed between finding the mapping and arming, takes about 7 ms
+at 115200 Bd, and `wl` goes on without the trap in that time. `dmesg` still
+gets every line.
+
+```sh
+echo 1 > /proc/sys/kernel/printk
+insmod wl_mmio_trap.ko autoarm=1 poll_ms=0 poll_secs=120 ... &
+cat /proc/wl_mmio_trap > /tmp/mmio.bin &     # the proc file exists during the wait
+echo "mark attach" > /proc/wl_mmio_trap
+insmod wl.ko
+```
+
+The RT-AC56U's BCM43217 under DD-WRT r66477, accesses trapped between
+`insmod wl` and its return:
+
+| poll | console | runs | accesses |
+|---|---|---|---|
+| `poll_ms=1` | on | 1 | 3 |
+| `poll_ms=0` | on | 1 | 455 |
+| `poll_ms=1` | muted | 4 | 478, 250, 286, 288 |
+| `poll_ms=0` | muted | 4 | 482, 481, 468, 476 |
+
+With `poll_ms=0` and the console muted, the trace starts at the PCIe core's
+MDIO, about 80 ms after `insmod wl` starts. The chip id and core scan before
+it are not in the trace: they go through another mapping, or one that is gone
+before a scan sees it, and the trace does not tell which.
+
+### After the attach
 
 ```sh
 insmod wl_mmio_trap.ko autoarm=0     # dry run: the self-test must pass
