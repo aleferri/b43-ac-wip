@@ -340,11 +340,24 @@ static const struct dd_ops dd_ops = {
 	.emit = dd_emit,
 };
 
+/*
+ * Handlers running, and set once the module is going: the exit gives the
+ * fault slot back, then waits for this to drain before it unmaps the alias
+ * and frees the window. A handler that read 'active' just before 'off' or
+ * the exit cleared it still uses the alias, and with dd_len set it stays
+ * here long enough (the descriptor walk, its buffer copies) for an unload
+ * to pull the alias and the module text from under it.
+ */
+static atomic_t n_inside = ATOMIC_INIT(0);
+static bool unloading;
+
 static void dd_on_mmio_write(struct trap_region *r, u32 off, u32 val)
 {
 	unsigned long flags;
 	u32 budget;
 
+	if (READ_ONCE(unloading))
+		return;
 	raw_spin_lock_irqsave(&dd_lock, flags);
 	budget = ACCESS_ONCE(dd_budget);
 	dd_on_write(&dd, &dd_ops, r, off, val, ACCESS_ONCE(dd_len), &budget);
@@ -358,8 +371,8 @@ static void dd_on_mmio_write(struct trap_region *r, u32 off, u32 val)
  * the handler this one replaced. Runs in the data-abort with interrupts as
  * do_DataAbort left them.
  */
-static int trap_fault_fn(unsigned long addr, unsigned int fsr,
-			 struct pt_regs *regs)
+static int trap_fault_one(unsigned long addr, unsigned int fsr,
+			  struct pt_regs *regs)
 {
 	struct trap_region *r = READ_ONCE(active);
 	struct arm_emu_result res;
@@ -403,6 +416,29 @@ static int trap_fault_fn(unsigned long addr, unsigned int fsr,
 	if (res.is_write && res.width == 4 && r == &live)
 		dd_on_mmio_write(r, (u32)(addr - r->base), res.value);
 	return 0;
+}
+
+static int trap_fault_fn(unsigned long addr, unsigned int fsr,
+			 struct pt_regs *regs)
+{
+	int ret;
+
+	atomic_inc(&n_inside);
+	smp_mb__after_atomic();	/* counted before 'active' is read */
+	ret = trap_fault_one(addr, fsr, regs);
+	atomic_dec(&n_inside);
+	return ret;
+}
+
+/* After the slot was given back: a CPU may have read the slot just before
+ * and not be counted yet, so wait again after a pause. */
+static void wait_handlers(void)
+{
+	do {
+		while (atomic_read(&n_inside))
+			cpu_relax();
+		msleep(10);
+	} while (atomic_read(&n_inside));
 }
 
 static void take_slot(void)
@@ -890,7 +926,11 @@ static int __init wmt_init(void)
 
 static void __exit wmt_exit(void)
 {
+	WRITE_ONCE(unloading, true);
 	region_open();
+	give_slot_back();
+	smp_mb();		/* the slot back before the count is read */
+	wait_handlers();
 	disarm_window();
 	flush_work(&overflow_work);
 	remove_proc_entry(PROC_NAME, NULL);
